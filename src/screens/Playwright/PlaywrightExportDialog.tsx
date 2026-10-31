@@ -23,6 +23,7 @@
 // names one of the clone's folders beside (or inside) its area's, the row
 // suggests it (folderSuggest); taking it only edits the draft.
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useCallback, useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -84,6 +85,8 @@ export default function PlaywrightExportDialog({
   modules: [number, string][];
   onClose: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const titleId = useId();
   const { prefs } = useFieldRefs(org, project);
   const [clone, setClone] = useState("");

@@ -299,8 +299,14 @@ async fn a_refused_switch_leaves_the_bridge_and_the_allow_files_alone() {
 /// The switch's locks: the same ones `environments.rs`'s switch tests take
 /// (the Auto Run claims, the template run slot, the held browsers).
 type Guard = std::sync::MutexGuard<'static, ()>;
-fn switch_locks() -> (Guard, Guard, Guard) {
-    (crate::serial::autorun(), crate::serial::api_template_run(), crate::serial::held_browsers())
+fn switch_locks() -> (Guard, Guard, Guard, Guard) {
+    (
+        crate::serial::autorun(),
+        crate::serial::api_template_run(),
+        crate::serial::held_browsers(),
+        // A switch looks at the leases.
+        crate::serial::account_leases(),
+    )
 }
 
 #[test]

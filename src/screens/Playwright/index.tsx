@@ -20,6 +20,7 @@ import {
   usePlaywrightExportRequest,
 } from "../../lib/playwrightExport";
 import Accounts, { ACCOUNTS_KEY } from "./Accounts";
+import ExportEnvironment from "./ExportEnvironment";
 import FeatureTree from "./FeatureTree";
 import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
 import { Hint, STRUCTURE_KEY, Stat, SubTabs, type TabSpec } from "./parts";
@@ -221,6 +222,7 @@ export default function Playwright({ org, project }: { org: string; project: str
             </Button>
           </div>
         </div>
+        <ExportEnvironment />
         <div className="flex flex-wrap items-center gap-2">
           {s && <HealthLine issues={s.health} />}
           {structure.isLoading && <Hint>Reading the clone…</Hint>}

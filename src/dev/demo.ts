@@ -505,6 +505,7 @@ let accountProposals: ProposedAccount[] = [
 
 let environments: EnvListView = {
   active: "staging",
+  playwright_export: "staging",
   environments: [
     {
       id: "staging",

@@ -560,6 +560,8 @@ fn recorded_recipe() -> SignInRecipe {
 
 #[tokio::test]
 async fn the_check_signs_in_through_the_recorded_steps_never_a_saved_session() {
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let saved = SavedSession {
         saved_at_ms: now_ms(),
@@ -577,6 +579,8 @@ async fn the_check_signs_in_through_the_recorded_steps_never_a_saved_session() {
 
 #[tokio::test]
 async fn a_check_whose_step_finds_nothing_says_which_step_and_never_the_password() {
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (mut d, _state) = stateful_app(false, Some("#pass"));
     let err = check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup()).await.unwrap_err();

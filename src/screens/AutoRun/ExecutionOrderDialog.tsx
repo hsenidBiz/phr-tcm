@@ -5,6 +5,7 @@
 // cases - the order the review, Past runs and the report use too. Run Tests
 // has its own order and this does not touch it.
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands, type PlanView } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -31,6 +32,8 @@ export default function ExecutionOrderDialog({
   cases: SuiteCase[];
   onClose: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const titleId = useId();
   const titles = useMemo(() => new Map(cases.map((c) => [c.id, c.title])), [cases]);
   const titleOf = (id: number) => titles.get(id);

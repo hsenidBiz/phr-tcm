@@ -701,6 +701,35 @@ pub fn load_recipe(root: &Path, org: &str, project: &str) -> Result<Option<SignI
     }
 }
 
+/// What bringing the saved sign-in recipe of one environment to another
+/// would add: `None` when the target already has one or the source has none,
+/// else the site address the recipe carries (empty when it names none or the
+/// file cannot be read as a recipe, which is then copied as it is).
+pub fn saved_recipe_to_bring(source: &Path, target: &Path, org: &str, project: &str) -> Result<Option<String>, String> {
+    if recipe_path(target, org, project).exists() || !recipe_path(source, org, project).exists() {
+        return Ok(None);
+    }
+    Ok(Some(load_recipe(source, org, project).ok().flatten().map(|r| r.start_url).unwrap_or_default()))
+}
+
+/// Copies the saved recipe file of `source` to `target` as it is, only when
+/// the target has none. Never resolves an address and never signs in.
+/// Answers whether it copied.
+pub fn copy_saved_recipe_if_absent(source: &Path, target: &Path, org: &str, project: &str) -> Result<bool, String> {
+    let (from, to) = (recipe_path(source, org, project), recipe_path(target, org, project));
+    if to.exists() {
+        return Ok(false);
+    }
+    let text = match std::fs::read_to_string(&from) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    };
+    crate::autorun::roots::create_dir_all(target, to.parent().expect("projects folder")).map_err(|e| e.to_string())?;
+    crate::autorun::roots::write_file(target, &to, &text)?;
+    Ok(true)
+}
+
 /// The recipe as it runs in `env`: an environment with an address signs in
 /// there, and `navigate` may go to that address and the environment's own
 /// allowed sites - never the recipe's, which belong to another site. An
@@ -721,7 +750,7 @@ pub const BUILTIN_RECIPE_JSON: &str = include_str!("builtin_recipe.json");
 /// Said when a project has no saved recipe and the active environment has
 /// no site address: the built-in recipe has nowhere to sign in. Names the
 /// Setup row whose Edit sets the address.
-pub const NO_SITE_ADDRESS: &str = "set the site address first - Auto Run, Setup, Site address";
+pub const NO_SITE_ADDRESS: &str = "set the site address first - Auto Run, Setup, Site address - or copy this environment's Auto Run data from another one in Edit environments on the AI Bridge tab";
 
 /// `BUILTIN_RECIPE_JSON` as a recipe, with an empty `start_url` - it does
 /// not validate until an address is filled in (`effective_recipe`).
@@ -762,8 +791,8 @@ pub fn save_recipe(root: &Path, org: &str, project: &str, recipe: &SignInRecipe)
         return Err("pick an organization and a project first".to_string());
     }
     let path = recipe_path(root, org, project);
-    std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(recipe).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &json)?;
+    crate::autorun::roots::write_file(root, &path, &json)?;
     Ok(())
 }

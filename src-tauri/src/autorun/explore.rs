@@ -223,7 +223,7 @@ fn load_locked(root: &Path, session: &str) -> Result<ExploreSession, String> {
 
 fn write_locked(root: &Path, s: &ExploreSession) -> Result<(), String> {
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&session_path(root, &s.session), &json)
+    crate::autorun::roots::write_file(root, &session_path(root, &s.session), &json)
 }
 
 /// Starts a session's change list for the signed-in account `account` (a
@@ -232,22 +232,29 @@ fn write_locked(root: &Path, s: &ExploreSession) -> Result<(), String> {
 pub fn begin(root: &Path, org: &str, project: &str, account: &str, started_at_ms: u64) -> Result<String, String> {
     let env = crate::environments::active(root)?;
     let _held = lock();
-    let dir = root.join(EXPLORE_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("the explore folder could not be made: {e}"))?;
-    let base = session_id(started_at_ms, account);
-    let mut id = base.clone();
-    let mut n = 1u32;
-    // The name is taken by creating the file, so two sessions never share one.
-    loop {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(session_path(root, &id)) {
-            Ok(_) => break,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                n += 1;
-                id = format!("{base}-{n}");
+    let id = {
+        // Held while the folder and the file are made, so a switch cannot
+        // come between the check and the making. Dropped before the first
+        // write below, which takes the guard itself.
+        let _switch = crate::autorun::roots::guard(root)?;
+        let dir = root.join(EXPLORE_DIR);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("the explore folder could not be made: {e}"))?;
+        let base = session_id(started_at_ms, account);
+        let mut id = base.clone();
+        let mut n = 1u32;
+        // The name is taken by creating the file, so two sessions never share one.
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(session_path(root, &id)) {
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    n += 1;
+                    id = format!("{base}-{n}");
+                }
+                Err(e) => return Err(format!("the explore session's change list could not be made: {e}")),
             }
-            Err(e) => return Err(format!("the explore session's change list could not be made: {e}")),
         }
-    }
+        id
+    };
     let s = ExploreSession {
         session: id.clone(),
         organization: org.to_string(),

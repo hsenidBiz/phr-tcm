@@ -114,6 +114,15 @@ impl Placement {
     }
 }
 
+/// Held across anything that reads then writes the export records as a
+/// whole: Save map, a folder rename's placements, and a change of the export
+/// environment (which moves them). Lock order: this, then the switch lock,
+/// then the environments lock. Never taken by `save`/`save_at` themselves.
+pub fn records_lock() -> &'static std::sync::Mutex<()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    &L
+}
+
 pub fn path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}.pwexport.json", project_slug(org, project)))
 }
@@ -150,14 +159,23 @@ pub fn load_at(p: &Path) -> Result<ExportMap, String> {
 }
 
 pub fn save(root: &Path, org: &str, project: &str, map: &ExportMap) -> Result<(), String> {
-    save_at(&path(root, org, project), map)
+    save_at(root, &path(root, org, project), map)
 }
 
-/// Writes the export file at `p`, replacing it whole.
-pub fn save_at(p: &Path, map: &ExportMap) -> Result<(), String> {
+/// Writes the export file at `p`, replacing it whole. `p` is one of the
+/// records under `root` (the Playwright folder rename rewrites them), so it
+/// is guarded like `save`: refused once `root` stopped being active.
+pub fn save_at(root: &Path, p: &Path, map: &ExportMap) -> Result<(), String> {
+    // Refused before the folder is made.
+    crate::autorun::roots::guard(root).map(drop)?;
+    let body = prepare(p, map)?;
+    crate::autorun::roots::write_file(root, p, &body)
+}
+
+/// Makes the folder for `p` and serialises `map`.
+fn prepare(p: &Path, map: &ExportMap) -> Result<String, String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
     }
-    let body = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(p, &body)
+    serde_json::to_string_pretty(map).map_err(|e| e.to_string())
 }

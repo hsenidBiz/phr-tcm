@@ -70,6 +70,7 @@ import { clearReviewRequest, useBackgroundRun } from "./lib/backgroundRun";
 import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunDataSync } from "./hooks/useAutoRunDataSync";
+import { useEnvironmentChangeSync } from "./hooks/useEnvironmentChangeSync";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import SpecsStatusPill from "./components/SpecsStatusPill";
@@ -608,6 +609,9 @@ export default function App() {
   // What the assistant adds beside the scripts (areas, components, the map,
   // quirks, test files, accounts, fixtures) shows on Auto Run at once too.
   useAutoRunDataSync();
+  // A switch, copy or import of environments reads everything of the old
+  // environment's again.
+  useEnvironmentChangeSync();
   // The unattended run outlives the Auto Run screen (lib/backgroundRun):
   // its end is caught here, and Review on its pill or toast brings the
   // person to the run's PBI in Auto Run, whose screen opens the review.

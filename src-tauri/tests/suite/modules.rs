@@ -281,7 +281,7 @@ fn each_ipc_command_reads_its_own_module() {
         assert!(!src.contains("autorun_offered") && !src.contains("features_on"), "{file} still reads the old gate");
     }
     let export = read("commands/pw_export.rs");
-    assert_eq!(export.matches("ensure_offered()?;").count(), 3, "every Export to Playwright command is gated");
+    assert_eq!(export.matches("ensure_offered()?;").count(), 5, "every Export to Playwright command is gated");
 }
 
 /// The writing guide carries the person's style only while Writing Style

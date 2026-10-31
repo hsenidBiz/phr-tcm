@@ -430,32 +430,109 @@ pub async fn export_app_backup(
     .map_err(|e| format!("the backup could not be made: {e}"))?
 }
 
+/// What importing a backup file would do, for the confirmation: whether it
+/// is from before each environment had its own Auto Run data, and which
+/// environments' data it would then replace. Writes nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_app_backup(app: tauri::AppHandle, path: String) -> Result<crate::backup::BackupPreview, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let doc = crate::backup::read_doc(std::path::Path::new(&path))?;
+        crate::backup::preview(&data_dir, &doc)
+    })
+    .await
+    .map_err(|e| format!("the backup could not be read: {e}"))?
+}
+
 /// Read a backup file, restore its disk half, and hand the localStorage
 /// half back to the frontend to apply (only the webview can write it).
 /// The frontend reloads afterwards so every screen re-reads its state.
+///
+/// Refused while anything records, runs or holds a browser, as a switch is
+/// (an import changes the very folders those work in). The Playwright
+/// records lock then the switch lock are held for the whole restore, and
+/// the active environment is selected again from disk, and the bridge moved
+/// to it, before they are let go.
 #[tauri::command]
 #[specta::specta]
 pub async fn import_app_backup(
     app: tauri::AppHandle,
+    secrets: tauri::State<'_, crate::db::credentials::DbSecrets>,
     path: String,
 ) -> Result<crate::backup::BackupImportResult, String> {
+    use crate::commands::environments as envs;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    // Reading one big file and writing every file back: on a blocking thread.
-    tauri::async_runtime::spawn_blocking(move || {
-        let doc = crate::backup::read_doc(std::path::Path::new(&path))?;
-        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-        let files_restored = crate::backup::restore_files(&data_dir, &doc.files)?;
-        crate::applog::info(format!(
-            "Imported a backup from {path} (made {} by version {}; {} setting(s), {files_restored} file(s))",
-            doc.exported_at, doc.app_version, doc.local_storage.len()
-        ));
-        Ok(crate::backup::BackupImportResult {
-            local_storage: doc.local_storage,
-            files_restored,
-            exported_at: doc.exported_at,
-            app_version: doc.app_version,
-        })
+    // Reading one big file: on a blocking thread, before any guard is taken.
+    let doc = {
+        let path = path.clone();
+        tauri::async_runtime::spawn_blocking(move || crate::backup::read_doc(std::path::Path::new(&path)))
+            .await
+            .map_err(|e| format!("the backup could not be restored: {e}"))??
+    };
+    let bridge = crate::commands::ai_bridge::running_bridge(&app);
+    // The same guards a switch takes, in the same order.
+    let _opening = crate::commands::autorun_slots::opening().write().await;
+    let slots = crate::commands::autorun::lock_every_slot().await;
+    if slots.busy {
+        return Err(envs::SWITCH_BUSY.to_string());
+    }
+    envs::refuse_switch(slots.any_open())?;
+    let _run_slot = crate::api_templates::runner::claim().ok_or_else(|| envs::SWITCH_TEMPLATE_RUNNING.to_string())?;
+
+    let store = secrets.0.clone();
+    let for_work = bridge.clone();
+    let (restored, settled, doc) = tauri::async_runtime::spawn_blocking(move || {
+        let restored = (|| {
+            std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+            // Records, then switch: the order every other holder takes.
+            let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
+            let held = crate::autorun::roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+            let restored = crate::backup::restore_files_held(&held, &data_dir, &doc.files);
+            // Whatever the restore did, the app must name the same
+            // environment as the files do: the list may have been replaced
+            // before a later file failed.
+            let settled = envs::settle_after_import(
+                &data_dir.join("autorun"),
+                &*store,
+                for_work.as_deref().map(|b| &b.ctx),
+            );
+            // The hold on the bridge's writes is let go by the caller, after
+            // the locks: only its release is left to do.
+            Ok::<_, String>((restored, settled))
+        })();
+        (restored, doc)
     })
     .await
-    .map_err(|e| format!("the backup could not be restored: {e}"))?
+    .map_err(|e| format!("the backup could not be restored: {e}"))
+    .map(|(r, doc)| match r {
+        Ok((restored, settled)) => (restored, settled, doc),
+        Err(e) => (Err(e), Ok(None), doc),
+    })?;
+    // The hold `settle_after_import` took on the bridge ends here, however
+    // the import ended.
+    let _release = match &settled {
+        Ok(Some((_, true))) => Some(crate::commands::ai_bridge::HeldWrites(bridge.as_deref().map(|b| &b.ctx))),
+        _ => None,
+    };
+    // Every open screen reads the active environment's data again.
+    if let Ok(Some((id, _))) = &settled {
+        use tauri_specta::Event as _;
+        let _ = crate::events::AutorunEnvironmentChanged { env_id: id.clone() }.emit(&app);
+    }
+    let files_restored = restored?;
+    if let Err(e) = settled {
+        crate::applog::warn(format!("Backup import: the app could not be moved to the imported environment: {e}"));
+        return Err("the backup was restored, but the app could not switch to its environment - restart the app".to_string());
+    }
+    crate::applog::info(format!(
+        "Imported a backup (made {} by version {}; {} setting(s), {files_restored} file(s))",
+        doc.exported_at, doc.app_version, doc.local_storage.len()
+    ));
+    Ok(crate::backup::BackupImportResult {
+        local_storage: doc.local_storage,
+        files_restored,
+        exported_at: doc.exported_at,
+        app_version: doc.app_version,
+    })
 }

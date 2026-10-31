@@ -498,21 +498,14 @@ pub fn describe_session_error() -> String {
 
 /// Where scripts and runs live: beside the app's other data.
 ///
-/// Prefers the value app setup published process-wide, because the AI
-/// bridge writes through that same value and has no `AppHandle` to derive
-/// one from. Two independent derivations of "the autorun directory" is
-/// exactly how an assistant's saved script ends up somewhere this screen
-/// never looks. The handle is the fallback for any path that runs before
-/// setup.
-pub fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    if let Some(configured) = store::configured_root() {
-        return Ok(configured);
-    }
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("autorun"))
+/// The value app setup published process-wide: the active environment's
+/// folder. The AI bridge writes through that same value and has no
+/// `AppHandle` to derive one from, and two independent derivations of "the
+/// autorun directory" is exactly how an assistant's saved script ends up
+/// somewhere this screen never looks. There is no fallback, so the handle
+/// is unused; it stays so every caller keeps its shape.
+pub fn root(_app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    store::resolve_root()
 }
 
 /// Guards a run id from escaping the runs directory. The rule itself lives
@@ -3628,13 +3621,16 @@ pub fn write_report_at(
     );
     let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));
-    std::fs::create_dir_all(&dir).map_err(|e| {
+    // Both through the switch guard: a report for a run of an environment
+    // that is no longer the active one must not recreate its folder.
+    let refusal = |e: &str| (e == crate::autorun::roots::ENVIRONMENT_SWITCHED).then(|| e.to_string());
+    crate::autorun::roots::create_dir_all(root, &dir).map_err(|e| {
         crate::applog::warn(format!("auto run report: the reports folder could not be made: {e}"));
-        REPORT_NOT_WRITTEN.to_string()
+        refusal(&e.to_string()).unwrap_or_else(|| REPORT_NOT_WRITTEN.to_string())
     })?;
-    crate::ai_tools::atomic_write(&path, &html).map_err(|e| {
+    crate::autorun::roots::write_file(root, &path, &html).map_err(|e| {
         crate::applog::warn(format!("auto run report for {run_id} could not be written: {e}"));
-        REPORT_NOT_WRITTEN.to_string()
+        refusal(&e).unwrap_or_else(|| REPORT_NOT_WRITTEN.to_string())
     })?;
     crate::applog::info(format!("auto run report for {run_id} written"));
     Ok(path)

@@ -57,7 +57,7 @@ pub fn scope_key(tool: &str, repo: Option<&str>) -> String {
 
 impl AllowRecord {
     pub fn path(root: &Path) -> PathBuf {
-        root.join(FILE_NAME)
+        crate::autorun::roots::shared_of(root).join(FILE_NAME)
     }
 
     /// The record kept in `root`. When there is none, or it cannot be read,
@@ -114,7 +114,7 @@ impl AllowRecord {
             return Ok(());
         }
         let text = serde_json::to_string_pretty(self).map_err(|e| format!("could not write the record: {e}"))?;
-        if let Err(e) = std::fs::create_dir_all(root) {
+        if let Err(e) = std::fs::create_dir_all(crate::autorun::roots::shared_of(root)) {
             return Err(format!("could not create the record's folder: {e}"));
         }
         // The path is the app's own data folder; the message carries none.

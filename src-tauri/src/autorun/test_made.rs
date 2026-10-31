@@ -52,8 +52,8 @@ pub struct TestMade {
     pub status: String,
 }
 
-fn path(root: &Path) -> PathBuf {
-    root.join("test-made.json")
+pub fn path(root: &Path) -> PathBuf {
+    crate::autorun::roots::shared_of(root).join("test-made.json")
 }
 
 /// Every read-change-write of the file holds this, so a record and a status
@@ -78,7 +78,7 @@ fn load(root: &Path) -> Result<Vec<TestMade>, String> {
 }
 
 fn write(root: &Path, entries: &[TestMade]) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(crate::autorun::roots::shared_of(root)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path(root), &json)
 }

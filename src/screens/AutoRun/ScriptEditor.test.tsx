@@ -2,8 +2,9 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { setActiveEnvId } from "../../lib/activeEnv";
 import ScriptEditor from "./ScriptEditor";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
@@ -945,4 +946,128 @@ test("refuses to save when the existing script fails to load", async () => {
   fireEvent.click(saveButton);
   expect(saved).toBe(0);
   expect(await screen.findByText(/could not load the existing script/i)).toBeInTheDocument();
+});
+
+test("script_editor_closes_when_the_environment_changes", async () => {
+  setActiveEnvId("env-0000000a");
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "auto_run_load_script") return { case_id: 7, title: "t", steps: ONE_STEP };
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    return null;
+  });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("button", { name: "Save script" });
+  act(() => setActiveEnvId("env-0000000b"));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(calls).not.toContain("auto_run_save_script");
+  localStorage.clear();
+});
+
+function mountWithEnvironments(count: number, script: unknown) {
+  setActiveEnvId("env-00000001");
+  const env = (n: number) => ({
+    id: `env-0000000${n}`, name: `Env ${n}`, start_url: "", allowed_origins: [], db_id: "d",
+    test_environment: false, test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false,
+  });
+  mockIPC((cmd) => {
+    if (cmd === "env_list")
+      return { active: "env-00000001", environments: Array.from({ length: count }, (_, i) => env(i + 1)) };
+    if (cmd === "auto_run_load_script") return script;
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+}
+
+test("offers Copy to environment only with two or more environments", async () => {
+  mountWithEnvironments(1, { case_id: 7, title: "t", steps: ONE_STEP });
+  await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs as" })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy from environment…" })).not.toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("with two environments and a saved script, Copy to environment opens the copy dialog", async () => {
+  mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  fireEvent.click(await screen.findByRole("button", { name: "Copy to environment…" }));
+  expect(await screen.findByRole("combobox", { name: "Copy to" })).toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("Copy to environment needs a saved script; Copy from environment does not", async () => {
+  mountWithEnvironments(2, null);
+  expect(await screen.findByRole("button", { name: "Copy from environment…" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("Copy from environment is refused while the editor has unsaved edits", async () => {
+  mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  const button = await screen.findByRole("button", { name: "Copy from environment…" });
+  expect(button).toBeEnabled();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  const box = await screen.findByRole("textbox", { name: /script/i });
+  fireEvent.change(box, { target: { value: "[]" } });
+  expect(screen.getByRole("button", { name: "Copy from environment…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Copy from environment…" })).toHaveAttribute(
+    "title",
+    "Save or discard your changes first",
+  );
+  localStorage.clear();
+});
+
+test("after a pull the editor shows the pulled script", async () => {
+  setActiveEnvId("env-00000001");
+  const env = (n: number) => ({
+    id: `env-0000000${n}`, name: `Env ${n}`, start_url: "", allowed_origins: [], db_id: "d",
+    test_environment: false, test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false,
+  });
+  const plan = {
+    target_has_script: false, components_added: [], components_kept: [], missing_components: [],
+    areas_added: [], areas_kept: [], uses_default_area: false, recipe_added: false, recipe_address: null,
+    missing_accounts: [], missing_api: [],
+  };
+  let pulled = false;
+  mockIPC((cmd) => {
+    if (cmd === "env_list") return { active: "env-00000001", environments: [env(1), env(2)] };
+    if (cmd === "auto_run_load_script")
+      return { case_id: 7, title: "t", steps: pulled ? [{ step_number: 1, actions: [{ kind: "check_text", value: "pulled-text" }] }] : ONE_STEP };
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    if (cmd === "auto_run_copy_case_from") {
+      pulled = true;
+      return plan;
+    }
+    if (cmd.startsWith("auto_run_copy_case")) return plan;
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Copy from environment…" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: "Copy from" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Env 2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: "Copy from" })).not.toBeInTheDocument());
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  await waitFor(() =>
+    expect((screen.getByRole("textbox", { name: /script/i }) as HTMLTextAreaElement).value).toContain("pulled-text"),
+  );
+  localStorage.clear();
 });

@@ -18,25 +18,172 @@ pub fn safe_run_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// How the app's Auto Run files are laid out on disk.
+enum Layout {
+    /// `set_root` has not run.
+    Unset,
+    /// One flat folder: tests, and a session whose update to the
+    /// per-environment layout failed (retried on the next start).
+    Flat(PathBuf),
+    /// `shared` holds the shared stores and `envs/<id>/` one environment's.
+    /// `active` is that environment's root once one has been selected.
+    PerEnv { shared: PathBuf, active: Option<PathBuf> },
+}
+
 /// Where scripts and runs live, remembered process-wide.
 ///
 /// Commands get the path from their `AppHandle`, but the AI bridge has no
 /// handle - it is a router, not a Tauri command - and still has to write
 /// a script an assistant sends. The app sets this once at startup, the
 /// same way `/begin` publishes its plan path, and the bridge reads it.
-static ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+static ROOT: Mutex<Layout> = Mutex::new(Layout::Unset);
 
-/// Called once during app setup.
+fn layout() -> std::sync::MutexGuard<'static, Layout> {
+    ROOT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Called once during app setup, or by a test: one flat folder.
 pub fn set_root(root: PathBuf) {
-    if let Ok(mut slot) = ROOT.lock() {
-        *slot = Some(root);
+    *layout() = Layout::Flat(root);
+}
+
+/// Called during app setup once the per-environment layout is in force.
+/// No environment is selected yet; `configured_root` picks the active one.
+pub fn set_shared_root(shared: PathBuf) {
+    *layout() = Layout::PerEnv { shared, active: None };
+}
+
+/// The shared root: the flat folder, or the folder `envs/` sits in.
+pub fn shared_root() -> Option<PathBuf> {
+    match &*layout() {
+        Layout::Unset => None,
+        Layout::Flat(root) => Some(root.clone()),
+        Layout::PerEnv { shared, .. } => Some(shared.clone()),
     }
 }
 
-/// `None` before setup has run - a caller with no handle must say so
-/// rather than guessing a path and writing somewhere nobody reads.
+/// Said when the list of environments cannot be read, so no environment's
+/// folder can be chosen. Restarting changes nothing; the log says why.
+pub const ENVIRONMENTS_UNREADABLE: &str =
+    "the environments could not be read, so Auto Run has no folder to use - see Settings, Logs for why";
+
+/// Said when no environment exists yet: the first list of environments
+/// makes Default (with the Company database the person chose), and only
+/// then is there a folder to use.
+pub const NO_ENVIRONMENT_YET: &str =
+    "the environments are not loaded yet - they appear a moment after sign-in, so try again shortly";
+
+/// The environment folder for `env_id` under `shared`, made. Takes no lock:
+/// a slow disk must not hold every other reader of the root.
+fn make_env_root(shared: &Path, env_id: &str) -> Result<PathBuf, String> {
+    if !crate::environments::valid_id(env_id) {
+        return Err("that environment is not there any more".to_string());
+    }
+    let root = crate::autorun::roots::env_root(shared, env_id);
+    std::fs::create_dir_all(&root).map_err(|e| {
+        crate::applog::warn(format!("auto-run: an environment's folder could not be made: {e}"));
+        "that environment's folder could not be made - see Settings, Logs".to_string()
+    })?;
+    Ok(root)
+}
+
+/// Make `env_id` the environment whose root `configured_root` returns, and
+/// make its folder. Flat keeps its one folder. Only a real environment
+/// (not the seed) can be selected. Nothing changes when it fails.
+pub fn select_environment(env_id: &str) -> Result<PathBuf, String> {
+    select_inner(env_id, false)
+}
+
+/// `select_environment`; with `only_if_unset`, an environment already
+/// selected (a switch that got there first) is left alone and returned.
+fn select_inner(env_id: &str, only_if_unset: bool) -> Result<PathBuf, String> {
+    let shared = match &*layout() {
+        Layout::Unset => return Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+        Layout::Flat(root) => return Ok(root.clone()),
+        Layout::PerEnv { shared, .. } => shared.clone(),
+    };
+    let root = make_env_root(&shared, env_id)?;
+    let mut held = layout();
+    match &mut *held {
+        Layout::PerEnv { shared: now, active } if *now == shared => {
+            if only_if_unset {
+                if let Some(taken) = active {
+                    return Ok(taken.clone());
+                }
+            }
+            *active = Some(root.clone());
+            Ok(root)
+        }
+        // The layout was replaced while the folder was made: the choice is moot.
+        Layout::Flat(root) => Ok(root.clone()),
+        _ => Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+    }
+}
+
+/// The root the stores read and write, or the sentence that says why there
+/// is none: the active environment's under the per-environment layout. A
+/// caller with no handle must say so rather than guessing a path and
+/// writing somewhere nobody reads. Never makes an environment.
+pub fn resolve_root() -> Result<PathBuf, String> {
+    let shared = {
+        let held = layout();
+        match &*held {
+            Layout::Unset => return Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+            Layout::Flat(root) => return Ok(root.clone()),
+            Layout::PerEnv { active: Some(root), .. } => return Ok(root.clone()),
+            Layout::PerEnv { shared, active: None } => shared.clone(),
+        }
+    };
+    // No lock held here: reading the environments takes their own lock.
+    match crate::environments::read_active(&shared) {
+        Ok(Some(env)) => select_inner(&env.id, true),
+        Ok(None) => Err(NO_ENVIRONMENT_YET.to_string()),
+        Err(e) => {
+            // Said once per distinct reason, not on every call.
+            static LAST: Mutex<String> = Mutex::new(String::new());
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != e {
+                crate::applog::warn(format!("auto-run: the environments could not be read: {e}"));
+                *last = e;
+            }
+            Err(ENVIRONMENTS_UNREADABLE.to_string())
+        }
+    }
+}
+
+/// The root that is selected right now, as it is: nothing is resolved,
+/// selected or made, and no other lock is taken. For a caller that may hold
+/// the environments lock, where `resolve_root` (which reads the active
+/// environment from that file) would wait on itself.
+pub fn selected_root() -> Option<PathBuf> {
+    match &*layout() {
+        Layout::Unset => None,
+        Layout::Flat(root) => Some(root.clone()),
+        Layout::PerEnv { active, .. } => active.clone(),
+    }
+}
+
+/// `resolve_root` for a caller with no sentence to give.
 pub fn configured_root() -> Option<PathBuf> {
-    ROOT.lock().ok().and_then(|s| s.clone())
+    resolve_root().ok()
+}
+
+/// Read the active environment from disk again and select it (after the
+/// environments file changed under us, such as a backup import).
+pub fn reselect_from_disk() -> Result<Option<PathBuf>, String> {
+    let shared = {
+        let held = layout();
+        match &*held {
+            Layout::Unset => return Ok(None),
+            Layout::Flat(root) => return Ok(Some(root.clone())),
+            Layout::PerEnv { shared, .. } => shared.clone(),
+        }
+    };
+    // Never makes Default: that is the list's job, with the chosen database.
+    match crate::environments::read_active(&shared)? {
+        Some(env) => select_environment(&env.id).map(Some),
+        None => Err(NO_ENVIRONMENT_YET.to_string()),
+    }
 }
 
 fn scripts_dir(root: &Path) -> PathBuf {
@@ -118,9 +265,9 @@ fn cleared_on_disk(root: &Path, case_id: i32) -> Option<ClearedDefect> {
 /// the mark on disk; this one is for setting up a store by hand.
 pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let dir = scripts_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    super::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("case-{}.json", script.case_id)), json).map_err(|e| e.to_string())?;
+    super::roots::write_bytes(root, &dir.join(format!("case-{}.json", script.case_id)), json.as_bytes())?;
     scripts_changed(root, &[script.case_id]);
     Ok(())
 }
@@ -144,6 +291,9 @@ pub enum SaveScriptsError {
     /// time (the file is damaged or the disk said no), so nothing can be
     /// said of whether it changed. Nothing is written; a retry might work.
     Unreadable { case_id: i32 },
+    /// The environment was switched while the save was being made, so its
+    /// root is no longer the active one. Nothing is written.
+    EnvironmentSwitched,
 }
 
 impl std::fmt::Display for SaveScriptsError {
@@ -161,6 +311,7 @@ impl std::fmt::Display for SaveScriptsError {
             SaveScriptsError::Unreadable { case_id } => {
                 write!(f, "case {case_id} could not be read while this save was checked - try again")
             }
+            SaveScriptsError::EnvironmentSwitched => write!(f, "{}", super::roots::ENVIRONMENT_SWITCHED),
         }
     }
 }
@@ -574,6 +725,15 @@ impl ScriptReads {
     }
 }
 
+/// A refusal from the roots module as this save reports it.
+fn switched_or_io(e: String) -> SaveScriptsError {
+    if e == super::roots::ENVIRONMENT_SWITCHED {
+        SaveScriptsError::EnvironmentSwitched
+    } else {
+        SaveScriptsError::Io(e)
+    }
+}
+
 /// The writing half of a bundle save, for a caller that holds `scripts_lock`
 /// (the guard is the proof).
 fn write_scripts_held(
@@ -581,8 +741,12 @@ fn write_scripts_held(
     root: &Path,
     scripts: &[CaseScript],
 ) -> Result<(), SaveScriptsError> {
+    // Refused before anything is made, so a save from before a switch leaves
+    // no folder behind either. Each write below is checked again.
     let dir = scripts_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
+    // The folder is made under the guard too, so a save cannot recreate an
+    // environment folder a copy has just set aside.
+    super::roots::create_dir_all(root, &dir).map_err(|e| switched_or_io(e.to_string()))?;
 
     // One moment for the whole bundle: it lands as one unit.
     let saved_at = crate::applog::iso_stamp();
@@ -628,9 +792,14 @@ fn write_scripts_held(
         }
     }
 
-    // Pass 3: stage then commit.
-    for (path, json) in &entries {
-        crate::ai_tools::atomic_write(path, json).map_err(SaveScriptsError::Io)?;
+    // Pass 3: stage then commit. ONE guard across the whole bundle, so a
+    // switch waits for it (or refuses it before the first file): the bundle
+    // lands wholly in the environment it was made for, or not at all.
+    {
+        let held = super::roots::guard(root).map_err(switched_or_io)?;
+        for (path, json) in &entries {
+            super::roots::write_file_held(&held, path, json).map_err(SaveScriptsError::Io)?;
+        }
     }
     let ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
     scripts_changed(root, &ids);
@@ -735,7 +904,7 @@ fn clear_mark(
 fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
     let path = scripts_dir(root).join(format!("case-{}.json", script.case_id));
-    crate::ai_tools::atomic_write(&path, &json)?;
+    super::roots::write_file(root, &path, &json)?;
     scripts_changed(root, &[script.case_id]);
     Ok(())
 }
@@ -826,9 +995,11 @@ pub fn load_scripts(root: &Path, case_ids: &[i32]) -> Vec<ScriptLookup> {
 
 pub fn save_run(root: &Path, run: &LocalRun) -> Result<(), String> {
     let dir = runs_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    super::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(run).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("{}.json", run.id)), json).map_err(|e| e.to_string())
+    // Atomic, so a run that was linked into place at the update is replaced
+    // rather than rewritten through the link, and a crash never half-writes it.
+    super::roots::write_file(root, &dir.join(format!("{}.json", run.id)), &json)
 }
 
 /// `save_run`, but refuses to overwrite a run that has already been sent
@@ -1177,16 +1348,28 @@ pub fn shot_exists(root: &Path, name: &str) -> bool {
 /// Names sort by time: epoch milliseconds, then a zero-padded counter for
 /// shots in the same millisecond.
 pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
+    // Held across the write: a switch waits for it.
+    let _held = super::roots::guard(root)?;
     let dir = shots_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or_default();
-    let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let name = format!("shot-{ms}-{seq:06}.jpg");
-    std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
-    Ok(name)
+    // Create-new, so a name that is already there (a clock stepping back)
+    // is never written through, whatever it is linked to.
+    loop {
+        let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let name = format!("shot-{ms}-{seq:06}.jpg");
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(&name)) {
+            Ok(mut f) => {
+                std::io::Write::write_all(&mut f, bytes).map_err(|e| e.to_string())?;
+                return Ok(name);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }
 
 /// Drop the oldest screenshots beyond the newest `MAX_SHOTS`, sparing any
@@ -1275,14 +1458,21 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     // file into place, and a delete landing between would be undone.
     let _held = scripts_lock();
     let dir = scripts_dir(root);
+    // A clear aimed at a root that stopped being the active environment's
+    // removes nothing; each removal below is checked again.
+    super::roots::guard(root).map(drop)?;
     let mut removed: Vec<i32> = vec![];
     for id in case_ids {
         let path = dir.join(format!("case-{id}.json"));
-        match std::fs::remove_file(&path) {
+        match super::roots::remove_file(root, &path) {
             Ok(()) => removed.push(*id),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 scripts_changed(root, &removed);
+                // A refusal is already a sentence; an I/O error names the file.
+                if e.raw_os_error().is_none() {
+                    return Err(e.to_string());
+                }
                 return Err(format!("could not remove {}: {e}", path.display()));
             }
         }
@@ -1302,7 +1492,7 @@ fn deleted_dir(root: &Path) -> PathBuf {
 /// How long a deleted script is kept aside before it is purged.
 pub const DELETED_KEPT_DAYS: u64 = 30;
 
-const DAY_MS: u64 = 86_400_000;
+pub const DAY_MS: u64 = 86_400_000;
 
 /// The cases a replay is running right now: a replay to a step, a case of
 /// an unattended run, or the case a watched step-by-step run is on. Their
@@ -1372,7 +1562,7 @@ pub fn delete_script(root: &Path, case_id: i32, now_ms: u64) -> Result<String, S
         return Err(no_script(case_id));
     }
     let aside = deleted_dir(root);
-    std::fs::create_dir_all(&aside).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    super::roots::create_dir_all(root, &aside).map_err(|e| format!("the script could not be kept aside: {e}"))?;
     // Two deletes of one case in the same millisecond still keep both.
     let mut stamp = now_ms;
     let to = loop {
@@ -1382,7 +1572,10 @@ pub fn delete_script(root: &Path, case_id: i32, now_ms: u64) -> Result<String, S
         }
         stamp += 1;
     };
-    std::fs::rename(&from, &to).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    {
+        let _held = super::roots::guard(root)?;
+        std::fs::rename(&from, &to).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    }
     super::replay_record::forget(root, case_id);
     scripts_changed(root, &[case_id]);
     Ok(to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
@@ -1535,16 +1728,17 @@ const LAST_BROWSER: &str = "last-browser.txt";
 /// `edge` when none was chosen yet, or the file cannot be read. A replay
 /// to a step that finds no browser open opens this one.
 pub fn last_browser(root: &Path) -> String {
-    let name = std::fs::read_to_string(root.join(LAST_BROWSER)).unwrap_or_default();
+    let name = std::fs::read_to_string(crate::autorun::roots::shared_of(root).join(LAST_BROWSER)).unwrap_or_default();
     browser_name(&name)
 }
 
 /// Remember `name` as the browser last chosen. Best effort: a choice that
 /// cannot be written is logged, and the next replay opens Edge.
 pub fn remember_browser(root: &Path, name: &str) {
-    let written = std::fs::create_dir_all(root)
+    let shared = crate::autorun::roots::shared_of(root);
+    let written = std::fs::create_dir_all(&shared)
         .map_err(|e| e.to_string())
-        .and_then(|()| crate::ai_tools::atomic_write(&root.join(LAST_BROWSER), &browser_name(name)));
+        .and_then(|()| crate::ai_tools::atomic_write(&shared.join(LAST_BROWSER), &browser_name(name))); // outside the Auto Run root
     if let Err(e) = written {
         crate::applog::warn(format!("auto-run: the browser chosen could not be remembered: {e}"));
     }
@@ -1598,6 +1792,7 @@ pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
 /// appears. Written by a temporary file and a rename, so a reader never
 /// sees half of it. An empty order is refused: clearing is `clear_order`.
 pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
+    super::roots::guard(root).map(drop)?;
     let mut ids: Vec<i32> = Vec::with_capacity(case_ids.len());
     for id in case_ids {
         if !ids.contains(id) {
@@ -1615,10 +1810,19 @@ pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), Stri
         ORDER_NOT_SAVED.to_string()
     };
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| not_saved(e.to_string()))?;
+        // Under the guard: a folder made for a root that stopped being the
+        // active one (or while a copy has the environment) is refused.
+        match super::roots::create_dir_all(root, dir) {
+            Err(e) if e.to_string() == super::roots::ENVIRONMENT_SWITCHED => return Err(e.to_string()),
+            other => other.map_err(|e| not_saved(e.to_string()))?,
+        }
     }
     let json = serde_json::to_string_pretty(&SavedOrder { case_ids: ids }).map_err(|e| not_saved(e.to_string()))?;
-    crate::ai_tools::atomic_write(&path, &json).map_err(not_saved)
+    match super::roots::write_file(root, &path, &json) {
+        // Not a disk failure: nothing to look up in the log.
+        Err(e) if e == super::roots::ENVIRONMENT_SWITCHED => Err(e),
+        other => other.map_err(not_saved),
+    }
 }
 
 /// Said when an order could not be written; the details are in the log.
@@ -1700,9 +1904,11 @@ pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
     let path = order_path(root, pbi_id);
     // Under the order lock, so a clear cannot land between an append's read
     // and its write and then be written back over.
-    with_order_locked(|| match std::fs::remove_file(&path) {
+    with_order_locked(|| match super::roots::remove_file(root, &path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        // Not a disk failure: nothing to look up in the log.
+        Err(e) if e.to_string() == super::roots::ENVIRONMENT_SWITCHED => Err(e.to_string()),
         Err(e) => {
             crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be removed from {}: {e}", path.display()));
             Err(ORDER_NOT_CLEARED.to_string())

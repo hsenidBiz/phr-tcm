@@ -80,9 +80,19 @@ pub struct EnvFile {
     /// exactly once.
     #[serde(default)]
     pub auto_approve_adopted: bool,
+    /// The environment the Playwright export writes from: its scripts are
+    /// the ones exported, and its folder holds the export records. Unset
+    /// (a file from before) or naming an environment that is not listed, it
+    /// is the active one at the next `export_env` / `adopt_export_env`.
+    /// Changed only by `set_export_env`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playwright_export: Option<String>,
 }
 
 const DEFAULT_NAME: &str = "Default";
+
+/// Said when the only environment is asked to be removed.
+const LAST_ENV: &str = "the last environment cannot be removed";
 
 /// Said for allowed sites saved on an environment with no address: they
 /// would never be used, since an empty address means the recipe's own.
@@ -98,12 +108,12 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub(crate) fn file_path(root: &Path) -> PathBuf {
-    root.join("environments.json")
+    crate::autorun::roots::shared_of(root).join("environments.json")
 }
 
 /// The assistant's proposed accounts for one environment.
 pub fn proposals_path_for(root: &Path, env_id: &str) -> PathBuf {
-    root.join("proposals").join(format!("{env_id}.json"))
+    crate::autorun::roots::shared_of(root).join("proposals").join(format!("{env_id}.json"))
 }
 
 /// Where an environment's default password is kept in the secret store.
@@ -215,10 +225,57 @@ fn read(root: &Path) -> Result<Option<EnvFile>, String> {
     Ok(Some(file))
 }
 
+/// An `environments.json` as the app reads it (a byte-order mark allowed),
+/// checked the same way: for a file that did not come from this machine.
+pub fn parse_file(bytes: &[u8]) -> Result<EnvFile, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "the environments file is not readable".to_string())?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let file: EnvFile =
+        serde_json::from_str(text).map_err(|e| format!("the environments file is not readable: {e}"))?;
+    check_structure(&file).map_err(|e| format!("the environments file is not readable: {e}"))?;
+    Ok(file)
+}
+
+/// The text of `file` as `write` saves it.
+pub fn file_text(file: &EnvFile) -> Result<String, String> {
+    serde_json::to_string_pretty(file).map_err(|e| e.to_string())
+}
+
+/// Copies the Playwright export records of environment folder `from` into
+/// `to` (staging names first, then renamed into place), leaving `from` as it
+/// is. Answers how many were copied. The caller holds the records lock and
+/// the switch lock.
+pub fn copy_export_records(from: &Path, to: &Path) -> Result<usize, String> {
+    move_export_records(from, to).map(|m| m.old.len())
+}
+
 fn write(root: &Path, file: &EnvFile) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(crate::autorun::roots::shared_of(root)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&file_path(root), &json)
+}
+
+/// The environment ids and the active id, or `None` while there is no file.
+/// Never makes one. An unreadable file is an error, left as it is.
+pub fn read_ids(root: &Path) -> Result<Option<(Vec<String>, String)>, String> {
+    let _held = lock();
+    Ok(read(root)?.map(|f| (f.environments.into_iter().map(|e| e.id).collect(), f.active)))
+}
+
+/// Hands `envs/_seed` (what the update left for the first environment) to
+/// `id`, when there is one. Run AFTER the file that names `id` is saved, so
+/// a failed save never strands the data under an id nobody has. A failed
+/// handover is logged (no path) and the data stays in `_seed` for the next
+/// environment made; it never fails the caller.
+fn take_seed(root: &Path, id: &str) {
+    let shared = crate::autorun::roots::shared_of(root);
+    match crate::autorun::roots::seed_into(&shared, id) {
+        Ok(true) => crate::applog::info("Environments: the first environment took over the data the update copied"),
+        Ok(false) => {}
+        Err(e) => crate::applog::warn(format!(
+            "Environments: the data the update copied could not be handed to the new environment yet: {e}"
+        )),
+    }
 }
 
 /// The file, made on first use. A file that exists but cannot be read is an
@@ -236,12 +293,13 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
     // The machine's one accounts list becomes Default's. Copied before the
     // file is written: if the copy fails nothing is saved, and the next
     // call tries again from scratch.
-    let legacy = root.join("accounts.json");
+    let legacy = crate::autorun::roots::shared_of(root).join("accounts.json");
     if legacy.is_file() {
         let to = accounts_path_for(root, &id);
         std::fs::create_dir_all(to.parent().unwrap_or(root)).map_err(|e| e.to_string())?;
         std::fs::copy(&legacy, &to).map_err(|e| format!("the accounts could not be moved to Default: {e}"))?;
     }
+    let first_id = id.clone();
     let file = EnvFile {
         active: id.clone(),
         environments: vec![Environment {
@@ -255,8 +313,10 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             db_auto_approve: false,
         }],
         auto_approve_adopted: false,
+        playwright_export: Some(first_id.clone()),
     };
     write(root, &file)?;
+    take_seed(root, &file.active);
     crate::applog::info("Environments: made Default from this machine's settings");
     // Only now - the copy is written and the file that points at it is
     // saved - are the old single list and its sessions dead weight. The
@@ -271,6 +331,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
 /// (`sessions/<env id>/`) are not touched. Best effort: a file that will
 /// not go is logged, and nothing reads it any more.
 pub fn remove_legacy_files(root: &Path) {
+    let root = &crate::autorun::roots::shared_of(root);
     let warn = |e: std::io::Error| {
         crate::applog::warn(format!("Environments: an old accounts or session file stayed behind: {e}"))
     };
@@ -357,6 +418,231 @@ pub fn adopt_legacy_auto_approve(root: &Path, legacy_on: bool) -> Result<bool, S
     Ok(legacy_on)
 }
 
+// ---- the Playwright export environment ------------------------------------
+
+/// Said when the export environment is the one to be removed.
+pub const REMOVE_EXPORT_ENV: &str = "this is the Playwright export environment - name another one on the Playwright tab first";
+
+/// Said when Export, Sync or Finish in the repo is asked in any environment
+/// but the export one.
+pub fn not_export_env(name: &str) -> String {
+    format!("Export and Sync run only in {name}, the Playwright export environment - switch to {name} on the AI Bridge tab first")
+}
+
+/// Said when no environment exists yet to be the export environment.
+pub const NO_ENVIRONMENTS: &str = "no environment has been set up yet";
+/// Said when the environment to be named export environment is not listed.
+pub const EXPORT_ENV_UNKNOWN: &str = "that environment is not there any more";
+/// Said when the export records could not be moved to the new export
+/// environment; nothing was changed.
+pub const EXPORT_ENV_NOT_MOVED: &str = "the Playwright export settings could not be moved to that environment - nothing was changed; close anything using the Auto Run files and try again";
+
+/// The id the file names as the export environment, when it is listed.
+fn export_id_of(file: &EnvFile) -> Option<&str> {
+    file.playwright_export.as_deref().filter(|id| file.environments.iter().any(|e| e.id == *id))
+}
+
+/// The export environment's id: the one the file names when it is listed,
+/// else the active one.
+pub fn export_id(file: &EnvFile) -> &str {
+    export_id_of(file).unwrap_or(&file.active)
+}
+
+/// The id of the export environment as the file names it right now, read
+/// WITHOUT the environments lock and without making anything: `None` while
+/// the file is missing, unreadable, or names none that is listed. This is
+/// what `roots::is_export_environment` calls, from under the switch lock.
+pub fn export_id_unlocked(root: &Path) -> Option<String> {
+    let file = read(root).ok().flatten()?;
+    export_id_of(&file).map(str::to_string)
+}
+
+/// Gives the export environment to the active one when the file names none
+/// that is listed. Under the lock; the file must exist.
+fn adopt_locked(root: &Path, file: &mut EnvFile) -> Result<bool, String> {
+    if export_id_of(file).is_some() {
+        return Ok(false);
+    }
+    file.playwright_export = Some(file.active.clone());
+    write(root, file)?;
+    Ok(true)
+}
+
+/// The Playwright export environment. One that is unset, or names an
+/// environment that is gone, becomes the active one, saved.
+pub fn export_env(root: &Path) -> Result<Environment, String> {
+    let _held = lock();
+    // Never makes the first environment: only `env_list` does (it knows the
+    // database the Company database card chose).
+    let mut file = read(root)?.ok_or_else(|| NO_ENVIRONMENTS.to_string())?;
+    adopt_locked(root, &mut file)?;
+    let id = export_id_of(&file).unwrap_or(&file.active).to_string();
+    file.environments.into_iter().find(|e| e.id == id).ok_or_else(|| EXPORT_ENV_UNKNOWN.to_string())
+}
+
+/// Gives the export environment to the active one when none is named. Only
+/// when `environments.json` exists - it never makes one. Answers whether it
+/// changed the file.
+pub fn adopt_export_env(root: &Path) -> Result<bool, String> {
+    let _held = lock();
+    let Some(mut file) = read(root)? else { return Ok(false) };
+    let changed = adopt_locked(root, &mut file)?;
+    if changed {
+        crate::applog::info("Environments: the active environment is now the Playwright export environment");
+    }
+    Ok(changed)
+}
+
+/// `Ok` when work on `root` may export: `root` is the export environment's
+/// root (or the shared root of the flat layout, judged by the active
+/// environment). Otherwise the one sentence that names the export
+/// environment. Makes no file; with no file there is nothing to refuse.
+pub fn check_export_env(root: &Path) -> Result<(), String> {
+    let _held = lock();
+    let Some(file) = read(root)? else { return Ok(()) };
+    let here = crate::autorun::roots::env_id_of(root).unwrap_or_else(|| file.active.clone());
+    let export = export_id_of(&file).unwrap_or(&file.active);
+    if here == export {
+        return Ok(());
+    }
+    let name = file.environments.iter().find(|e| e.id == export).map(|e| e.name.clone()).unwrap_or_default();
+    Err(not_export_env(&name))
+}
+
+/// Makes `id` the export environment and moves every
+/// `projects/*.pwexport.json` from the old export environment's folder to
+/// its. The new folder's own file of the same name is replaced (logged).
+///
+/// Held under the switch lock for writing (so no guarded write is in
+/// flight and none starts), then the environments lock. Each record is
+/// first copied beside its destination under a staging name; only when
+/// every copy exists are they renamed into place (a held rename retried),
+/// the file written, and the old records removed. A failure before the file
+/// is written changes nothing that matters: the old records are still
+/// there and still the export environment's. A flat layout has one folder
+/// for all, so only the name changes.
+pub fn set_export_env(root: &Path, id: &str) -> Result<EnvFile, String> {
+    use crate::autorun::roots;
+    let shared = roots::shared_of(root);
+    // First: never interleaves with Save map or a folder rename's placements.
+    let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _switching = roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+    let _held = lock();
+    let mut file = load_or_init_locked(root, None)?;
+    if !file.environments.iter().any(|e| e.id == id) {
+        return Err(EXPORT_ENV_UNKNOWN.to_string());
+    }
+    let old = export_id_of(&file).unwrap_or(&file.active).to_string();
+    if old != id && roots::is_per_env_layout(&shared) {
+        let (from, to) = (roots::env_root(&shared, &old), roots::env_root(&shared, id));
+        let moved = move_export_records(&from, &to).map_err(|e| {
+            crate::applog::warn(format!("Environments: the Playwright export settings could not be moved: {e}"));
+            EXPORT_ENV_NOT_MOVED.to_string()
+        })?;
+        file.playwright_export = Some(id.to_string());
+        write(root, &file)?;
+        for p in &moved.old {
+            if let Err(e) = std::fs::remove_file(p) {
+                crate::applog::warn(format!("Environments: an old Playwright export record stayed behind: {e}"));
+            }
+        }
+        // A record the new folder held for a project the old one did not is
+        // from an earlier stint: set aside, so it never becomes current.
+        for p in &moved.leftovers {
+            let mut stale = p.clone().into_os_string();
+            stale.push(".stale");
+            let stale = PathBuf::from(stale);
+            let _ = std::fs::remove_file(&stale);
+            if let Err(e) = std::fs::rename(p, &stale) {
+                crate::applog::warn(format!("Environments: an old Playwright export record could not be set aside: {e}"));
+            }
+        }
+        crate::applog::info(format!(
+            "Environments: the Playwright export environment changed ({} record(s) moved, {} replaced)",
+            moved.old.len(),
+            moved.replaced
+        ));
+        return Ok(file);
+    }
+    file.playwright_export = Some(id.to_string());
+    write(root, &file)?;
+    Ok(file)
+}
+
+struct MovedRecords {
+    /// The records in the old folder, to remove once the file names the new one.
+    old: Vec<PathBuf>,
+    /// The new folder's own records for projects the old one has none of.
+    leftovers: Vec<PathBuf>,
+    replaced: usize,
+}
+
+/// Short on purpose: the switch lock is held while a rename waits.
+const EXPORT_MOVE_WAITS_MS: [u64; 3] = [50, 100, 200];
+
+/// Copies each record to `to` (staging names first, then renamed into
+/// place). Nothing in `from` is touched. On failure the staging copies are
+/// removed.
+fn move_export_records(from: &Path, to: &Path) -> Result<MovedRecords, String> {
+    let records = crate::pw_export::mapping::files(from);
+    if records.is_empty() {
+        let leftovers = crate::pw_export::mapping::files(to);
+        return Ok(MovedRecords { old: vec![], leftovers, replaced: 0 });
+    }
+    let dir = to.join("projects");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Staging copies a cut-short move left: copies only, safe to discard.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().ends_with(crate::autorun::roots::EXPORT_MOVING) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let cleanup = |staged: &[(PathBuf, PathBuf)]| {
+        for (tmp, _) in staged {
+            let _ = std::fs::remove_file(tmp);
+        }
+    };
+    for rec in &records {
+        let Some(name) = rec.file_name() else { continue };
+        let dest = dir.join(name);
+        let tmp = dir.join(format!("{}.moving", name.to_string_lossy()));
+        if let Err(e) = std::fs::copy(rec, &tmp) {
+            cleanup(&staged);
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        staged.push((tmp, dest));
+    }
+    let mut replaced = 0;
+    for (i, (tmp, dest)) in staged.iter().enumerate() {
+        if dest.exists() {
+            replaced += 1;
+        }
+        let r = crate::ai_tools::rename_retrying_waits(
+            tmp,
+            dest,
+            &mut |a, b| std::fs::rename(a, b),
+            &mut |d| std::thread::sleep(d),
+            &EXPORT_MOVE_WAITS_MS,
+        );
+        if let Err(e) = r {
+            // Those already in place are copies of records the old folder
+            // still holds; the rest are removed.
+            cleanup(&staged[i..]);
+            return Err(e);
+        }
+    }
+    let moved_names: Vec<_> = records.iter().filter_map(|r| r.file_name().map(|n| n.to_os_string())).collect();
+    let leftovers = crate::pw_export::mapping::files(to)
+        .into_iter()
+        .filter(|p| p.file_name().is_some_and(|n| !moved_names.iter().any(|m| m == n)))
+        .collect();
+    Ok(MovedRecords { old: records, leftovers, replaced })
+}
+
 fn tidy(mut env: Environment) -> Environment {
     env.name = env.name.trim().to_string();
     env.start_url = env.start_url.trim().to_string();
@@ -431,33 +717,86 @@ pub fn when_db_unused<T>(
     }
 }
 
+/// Every listed environment as `(id, name)`, or `None` when the file is not
+/// there or cannot be read. Takes the environments lock.
+pub fn listed_names(root: &Path) -> Option<Vec<(String, String)>> {
+    let _held = lock();
+    read(root).ok().flatten().map(|f| f.environments.into_iter().map(|e| (e.id, e.name)).collect())
+}
+
+/// The name of the listed environment `id`, or `None`. Takes the
+/// environments lock.
+pub fn listed_name(root: &Path, id: &str) -> Option<String> {
+    let _held = lock();
+    read(root).ok().flatten()?.environments.into_iter().find(|e| e.id == id).map(|e| e.name)
+}
+
+/// The ids in `environments.json`, or `None` when the file is not there or
+/// cannot be read. Takes the environments lock.
+pub fn listed_ids(root: &Path) -> Option<Vec<String>> {
+    let _held = lock();
+    read(root).ok().flatten().map(|f| f.environments.into_iter().map(|e| e.id).collect())
+}
+
 /// Remove an environment and its local files: accounts, saved sessions and
 /// proposals. Refused for the last one and the active one.
 pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
-    let _held = lock();
-    let mut file = load_or_init_locked(root, None)?;
-    if !file.environments.iter().any(|e| e.id == id) {
-        return Err("that environment is not there any more".to_string());
-    }
-    if file.environments.len() == 1 {
-        return Err("the last environment cannot be removed".to_string());
-    }
-    if file.active == id {
-        return Err("the active environment cannot be removed - switch to another one first".to_string());
-    }
-    file.environments.retain(|e| e.id != id);
-    write(root, &file)?;
-    // `id` matched an entry that passed `check_structure`, so it is a
-    // well-formed id and these paths stay inside the root.
-    let gone = |r: std::io::Result<()>| match r {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            crate::applog::warn(format!("Environments: a removed environment's file stayed behind: {e}"))
+    // Busy or the export environment: refused before anything changes. This
+    // is before the lock on purpose - the refusal must never wait on it.
+    let shared = crate::autorun::roots::shared_of(root);
+    // The only environment, and the active one, are the export environment
+    // too (it starts as the active one): "last" and "active" are the
+    // sentences that help there. Read without the lock, like the refusal.
+    if let Some(f) = read(root).ok().flatten() {
+        if f.environments.len() == 1 && f.environments[0].id == id {
+            return Err(LAST_ENV.to_string());
         }
-        _ => {}
+        if f.active == id {
+            return Err(crate::autorun::roots::REMOVE_ACTIVE.to_string());
+        }
+    }
+    if let Some(why) = crate::autorun::roots::removal_refusal(&shared, id) {
+        return Err(why.to_string());
+    }
+    let (file, name) = {
+        let _held = lock();
+        let mut file = load_or_init_locked(root, None)?;
+        let Some(name) = file.environments.iter().find(|e| e.id == id).map(|e| e.name.clone()) else {
+            return Err("that environment is not there any more".to_string());
+        };
+        if file.environments.len() == 1 {
+            return Err(LAST_ENV.to_string());
+        }
+        if file.active == id {
+            return Err(crate::autorun::roots::REMOVE_ACTIVE.to_string());
+        }
+        // Checked again here, from the list already held: naming it the
+        // export environment may have landed after the check above.
+        if export_id_of(&file) == Some(id) {
+            return Err(REMOVE_EXPORT_ENV.to_string());
+        }
+        file.environments.retain(|e| e.id != id);
+        write(root, &file)?;
+        // `id` matched an entry that passed `check_structure`, so it is a
+        // well-formed id and these paths stay inside the root.
+        let gone = |r: std::io::Result<()>| match r {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                crate::applog::warn(format!("Environments: a removed environment's file stayed behind: {e}"))
+            }
+            _ => {}
+        };
+        gone(std::fs::remove_file(accounts_path_for(root, id)));
+        gone(std::fs::remove_dir_all(sessions_dir_for(root, id)));
+        gone(std::fs::remove_file(proposals_path_for(root, id)));
+        (file, name)
     };
-    gone(std::fs::remove_file(accounts_path_for(root, id)));
-    gone(std::fs::remove_dir_all(sessions_dir_for(root, id)));
-    gone(std::fs::remove_file(proposals_path_for(root, id)));
+    // The Auto Run folder waits in the removed area for 30 days. This runs
+    // after the environments lock is released (the move takes the switch
+    // lock), and a failure is logged, not fatal: the environment is gone
+    // from the list already.
+    if let Err(e) = crate::autorun::roots::retire(&shared, id, &name, "removed", crate::autorun::sessions::now_ms()) {
+        crate::applog::warn(format!("Environments: a removed environment's Auto Run folder stayed in place: {e}"));
+    }
     Ok(file)
 }
 

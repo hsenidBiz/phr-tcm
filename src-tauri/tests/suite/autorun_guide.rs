@@ -2687,3 +2687,35 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
     let at = |t: &str| titles.iter().position(|x| *x == t).unwrap();
     assert_eq!(at("Working beside other assistants"), at("Discovering the app") + 1, "{titles:?}");
 }
+
+/// Auto Run data is per environment now: the assistant must know a save
+/// belongs to the active environment only, and that copying between
+/// environments is the person's action, not a tool it has.
+#[test]
+fn guide_says_each_environment_has_its_own_scripts() {
+    let g = autorun_guide();
+    assert!(g.contains("belongs to the active environment only"), "{g}");
+    assert!(g.contains("You cannot copy between environments yourself"), "{g}");
+    assert!(g.contains("Copy Auto Run data"), "{g}");
+    assert!(g.contains("Copy to environment"), "{g}");
+    assert!(g.contains("Copy from environment"), "{g}");
+}
+
+#[test]
+fn active_environment_section_says_its_scripts_are_its_own() {
+    let env = v2_lib::environments::Environment {
+        id: "env-0000000a".into(),
+        name: "Scratch".into(),
+        start_url: String::new(),
+        allowed_origins: vec![],
+        db_id: String::new(),
+        test_environment: false,
+        test_prefix: "AUTOTEST".into(),
+        db_auto_approve: false,
+    };
+    let text = v2_lib::autorun::guide::active_environment_section(&env, None);
+    assert!(
+        text.contains("leaves passwords out. Its scripts, areas, components and API templates are its own."),
+        "{text}"
+    );
+}

@@ -10,6 +10,7 @@
 // Opened from Auto Run's Setup card; the map and the summary are Rust's
 // (`autorun/discovery_map.rs`, `autorun/mapping_summary.rs`).
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { commands, type MappingSummary, type MapView } from "../../bindings";
@@ -116,6 +117,8 @@ export default function DiscoveryDialog({
   project: string;
   onClose: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const headingId = useId();
   const qc = useQueryClient();
   const map = useDiscoveryMap(org, project);

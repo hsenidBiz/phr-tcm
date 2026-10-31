@@ -9,7 +9,9 @@ export default function EnvironmentPill({ name, className }: { name: string; cla
     <span
       title="Active environment"
       className={cn(
-        "rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent-fill",
+        // inline-flex: its label is a block (label-trim), and inside an inline
+        // parent a plain span drew its background as a sliver beside the text.
+        "inline-flex items-center rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent-fill",
         className,
       )}
     >

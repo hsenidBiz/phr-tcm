@@ -11,7 +11,7 @@ import {
 } from "../lib/extras";
 import { isCaptureMode } from "../dev/capture";
 import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
-import { commands, events, type AppSettings, type GuideStatus } from "../bindings";
+import { commands, events, type AppSettings, type BackupPreview, type GuideStatus } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
@@ -29,6 +29,8 @@ import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { useAllProjects } from "../lib/projectScope";
 import { Collapse } from "../components/ui/collapse";
 import { Modal } from "../components/ui/modal";
+import { loadEnvironments, switchEnvironment } from "../lib/environments";
+import { logUi } from "../lib/uiLog";
 import { Input, Textarea } from "../components/ui/input";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../tour/tourState";
@@ -124,6 +126,54 @@ function guideProgressText(p: { received: number; total: number } | null): strin
 function guideProgressPercent(p: { received: number; total: number } | null): number | null {
   if (!p || !(p.total > 0)) return null;
   return Math.min(100, Math.floor((p.received / p.total) * 100));
+}
+
+
+/** The two sentences Rust gives when an import cannot go ahead or stopped
+ * part-way: both are cured by restarting the app. */
+function needsRestart(message: string): boolean {
+  return message.startsWith("an earlier import has not finished") || message.startsWith("the import did not finish");
+}
+
+/** A Rust sentence, capitalised, ending in a full stop. */
+function sentence(message: string): string {
+  const m = message.trim();
+  if (m === "") return m;
+  const cap = m[0].toUpperCase() + m.slice(1);
+  return /[.!?]$/.test(cap) ? cap : `${cap}.`;
+}
+
+/** What an import would do to the Auto Run data, from Rust's preview. */
+function previewSentence(p: BackupPreview): string {
+  const names = p.replaces.join(", ");
+  const origin = p.pre_update
+    ? "This backup is from before each environment had its own Auto Run data, so its scripts, areas and templates go into every environment. "
+    : "";
+  if (p.replaces.length === 0) {
+    return `${origin}This backup replaces no environment's Auto Run data.`;
+  }
+  return `${origin}Replaces the Auto Run data of ${names}. What they hold now is kept in the removed area for 30 days and can be copied back from Copy Auto Run data….`;
+}
+
+/** After an import: every Auto Run browser is closed (what it held is the
+ * old data's), and the AI tools' own allow files are brought in line with
+ * the environment now active - the same reconcile a switch does, which the
+ * import command has no working folder for. Neither is worth failing an
+ * import that has already landed; the reload that follows reads it all
+ * afresh. */
+async function settleAfterImport(): Promise<void> {
+  try {
+    const r = await commands.autoRunReleaseBrowser();
+    if (r.status === "error") logUi(`import: Auto Run browsers were not closed: ${r.error}`);
+  } catch {
+    logUi("import: Auto Run browsers were not closed");
+  }
+  try {
+    const view = await loadEnvironments();
+    if (view.active) await switchEnvironment(view.active);
+  } catch {
+    logUi("import: the AI tools' settings were not brought in line with the active environment");
+  }
 }
 
 export default function Settings({
@@ -338,6 +388,23 @@ export default function Settings({
   // a modal - it overwrites this machine's settings and cache and reloads
   // the app, which is not something a stray double-click should do.
   const [importPath, setImportPath] = useState<string | null>(null);
+  // Said by Rust when an import cannot go ahead or did not finish: the app
+  // has to be restarted, which a toast that fades would not say clearly.
+  const [restartNeeded, setRestartNeeded] = useState<string | null>(null);
+  // What importing this file would do to the Auto Run data, for the
+  // confirmation: asked before anything is imported, never cached.
+  const preview = useQuery({
+    queryKey: ["backup-preview", importPath],
+    queryFn: async () => {
+      const r = await commands.previewAppBackup(importPath ?? "");
+      if (r.status === "error") throw new Error(r.error);
+      return r.data ?? null;
+    },
+    enabled: importPath !== null,
+    retry: false,
+    gcTime: 0,
+    staleTime: 0,
+  });
 
   const exportBackup = useMutation({
     mutationFn: async () => {
@@ -372,6 +439,7 @@ export default function Settings({
       const r = await commands.importAppBackup(path);
       if (r.status === "error") throw new Error(r.error);
       applyLocalStorage(r.data.local_storage);
+      await settleAfterImport();
       return r.data;
     },
     onSuccess: () => {
@@ -382,7 +450,8 @@ export default function Settings({
     },
     onError: (e) => {
       setImportPath(null);
-      toast.error(`Import failed: ${e.message}`);
+      if (needsRestart(e.message)) setRestartNeeded(e.message);
+      else toast.error(`Import failed: ${e.message}`);
     },
   });
 
@@ -454,6 +523,21 @@ export default function Settings({
             </>
           }
         />
+        {restartNeeded && (
+          <Modal
+            onClose={() => setRestartNeeded(null)}
+            label="Restart the app"
+            className="w-full max-w-md space-y-4 p-5"
+          >
+            <h3 className="text-sm font-semibold text-text">Restart the app</h3>
+            <p className="text-sm text-muted">{sentence(restartNeeded)}</p>
+            <div className="flex justify-end">
+              <Button size="sm" variant="outline" onClick={() => setRestartNeeded(null)}>
+                Close
+              </Button>
+            </div>
+          </Modal>
+        )}
         {importPath && (
           <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
             <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
@@ -462,6 +546,17 @@ export default function Settings({
               the backup&apos;s copy, then reloads the app. Anything you
               changed here since the backup was made will be overwritten.
             </p>
+            {!preview.data && !preview.isError && (
+              <p className="text-sm text-muted">
+                Importing replaces this computer&apos;s Auto Run data in every environment with the backup&apos;s.
+              </p>
+            )}
+            {preview.isError && (
+              <p role="alert" className="text-sm text-danger">
+                {sentence(preview.error.message)}
+              </p>
+            )}
+            {preview.data && <p className="text-sm text-muted">{previewSentence(preview.data)}</p>}
             <p className="break-all text-xs text-faint">{importPath}</p>
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
@@ -469,7 +564,7 @@ export default function Settings({
               </Button>
               <Button
                 size="sm"
-                disabled={importBackup.isPending}
+                disabled={importBackup.isPending || preview.isPending || preview.isError}
                 onClick={() => importBackup.mutate(importPath)}
               >
                 {importBackup.isPending ? "Importing" : "Import and reload"}

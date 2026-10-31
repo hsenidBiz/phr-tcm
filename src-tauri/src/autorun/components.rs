@@ -165,10 +165,10 @@ fn update_with<T>(
     }
     let path = components_path(root, org, project);
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        crate::autorun::roots::create_dir_all(root, dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)?;
+    crate::autorun::roots::write_file(root, &path, &text)?;
     drop(guard);
     super::data_changed::notify(root, crate::events::AutorunDataKind::Components);
     Ok(out)
@@ -196,6 +196,18 @@ pub fn put(root: &Path, org: &str, project: &str, c: Component) -> Result<(), St
     update(root, org, project, |f| put_in(f, c))
 }
 
+/// Saves `c` only if no component of that name is there when the file is
+/// written; answers whether it was saved.
+pub fn put_if_absent(root: &Path, org: &str, project: &str, c: Component) -> Result<bool, String> {
+    update_with(root, org, project, |f| {
+        if find(f, &c.name).is_some() {
+            return Ok(false);
+        }
+        put_in(f, c);
+        Ok(true)
+    })
+}
+
 pub fn remove(root: &Path, org: &str, project: &str, name: &str) -> Result<(), String> {
     update(root, org, project, |f| {
         let k = key(name);
@@ -217,8 +229,11 @@ pub fn reset_components(root: &Path, org: &str, project: &str) -> Result<String,
         return Err(format!("The components file {file} can be read, so there is nothing to reset."));
     }
     let aside = format!("{}-components.corrupt-{}.json", project_slug(org, project), super::sessions::now_ms());
-    std::fs::rename(&from, from.with_file_name(&aside))
-        .map_err(|e| format!("The components file {file} could not be moved aside: {e}"))?;
+    {
+        let _held = crate::autorun::roots::guard(root)?;
+        std::fs::rename(&from, from.with_file_name(&aside))
+            .map_err(|e| format!("The components file {file} could not be moved aside: {e}"))?;
+    }
     crate::applog::info(format!("Components: a damaged file was moved aside as projects/{aside}"));
     drop(guard);
     super::data_changed::notify(root, crate::events::AutorunDataKind::Components);

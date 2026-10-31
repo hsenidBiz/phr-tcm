@@ -964,6 +964,7 @@ export const autoRun: Screen = {
     "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
+    "Each environment keeps its own scripts, areas, components, quirks, saved setups and run history, because each can run a different version of the app. What you see in Auto Run is the active environment's, and it changes when you switch environment. To bring another environment's in, use **Copy Auto Run data…** in Edit environments on the AI Bridge tab, or copy one case from its script.",
     "Auto Run works in your home project (Settings, under General), because its scripts, areas, runs and test files belong to one project. That holds with **Treat all projects as one** on or off; with it off the home project is the project you pick in the bar. When you send a reviewed run, the results go to the project of the Product Backlog Item the cases belong to.",
     "An assistant connected on the AI Bridge tab can write scripts for a whole Product Backlog Item, repair one that broke, and walk you through the setup.",
     "When a step fails and the reason is not on the page, your assistant can inspect one element and, once you switch **Network tools** on, on the AI Bridge tab, look at the requests the page made and try a header or cookie of its own; passwords, tokens and session cookies are always hidden from it. Each environment keeps its own Network tools switch, off until you turn it on.",
@@ -1024,6 +1025,14 @@ export const autoRun: Screen = {
         "Run the selection. Auto Run puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
         "The run window says which batch is running, such as **Batch 2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
+      ],
+    },
+    {
+      title: "Copy a script to another environment",
+      steps: [
+        "Open the case's script. This needs two or more environments and a saved script.",
+        "Press **Copy to environment…**, choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
+        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy from environment…**; save or discard your changes to the open script first.",
       ],
     },
     {

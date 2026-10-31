@@ -81,7 +81,7 @@ pub fn bad_name(name: &str) -> String {
 /// This project's Test files folder. Not created here: `list` reads a
 /// missing one as empty, and `add` and the open-folder command create it.
 pub fn folder(root: &Path, org: &str, project: &str) -> PathBuf {
-    root.join("test-files").join(crate::autorun::recipe::project_slug(org, project))
+    crate::autorun::roots::shared_of(root).join("test-files").join(crate::autorun::recipe::project_slug(org, project))
 }
 
 /// `folder.join(name)`, only for a name `valid_test_file_name` accepts.

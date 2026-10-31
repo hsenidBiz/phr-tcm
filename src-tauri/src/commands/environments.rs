@@ -32,6 +32,9 @@ pub struct EnvView {
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct EnvListView {
     pub active: String,
+    /// The Playwright export environment's id (the active one while none is
+    /// named). Changed only by `pw_set_export_env`.
+    pub playwright_export: String,
     pub environments: Vec<EnvView>,
 }
 
@@ -49,6 +52,11 @@ pub struct EnvInput {
     #[serde(default)]
     pub test_prefix: Option<String>,
 }
+
+/// Said while an Auto Run browser holds a signed-in account: the person
+/// closes it before the environment changes.
+pub const SWITCH_BROWSER_SIGNED_IN: &str =
+    "the environment cannot be switched while an Auto Run browser is signed in to an account - close it first";
 
 /// Said when a switch would land in the middle of a run, recording, check
 /// or Try - which would mix two environments' accounts and sessions.
@@ -74,6 +82,7 @@ fn has_password(store: &dyn SecretStore, id: &str) -> bool {
 
 fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
     EnvListView {
+        playwright_export: crate::environments::export_id(&file).to_string(),
         active: file.active,
         environments: file
             .environments
@@ -266,10 +275,35 @@ pub fn refuse_switch(supervised_open: bool) -> Result<(), String> {
     if crate::api_templates::runner::is_running() {
         return Err(SWITCH_TEMPLATE_RUNNING.to_string());
     }
+    // A browser signed in to an account belongs to the environment it signed
+    // in to; only the person closes it.
+    if crate::autorun::lease::a_browser_is_held() {
+        return Err(SWITCH_BROWSER_SIGNED_IN.to_string());
+    }
     if supervised_open {
         return Err(SWITCH_SUPERVISED_OPEN.to_string());
     }
     Ok(())
+}
+
+/// Brings the app in line with an `environments.json` an import replaced:
+/// the active environment's folder is selected again from disk (never made
+/// from nothing), and the bridge is moved to it as a switch moves it. Answers
+/// the active id and whether the bridge's writes are now held (the caller
+/// ends the hold with `HeldWrites` once the locks are let go); `None` when
+/// there is no environment yet. The caller holds the switch lock for writing.
+pub fn settle_after_import(
+    shared: &Path,
+    store: &dyn SecretStore,
+    bridge: Option<&Mutex<BridgeContext>>,
+) -> Result<Option<(String, bool)>, String> {
+    let Some(env) = environments::read_active(shared)? else { return Ok(None) };
+    crate::autorun::store::reselect_from_disk()?;
+    if bridge.is_none() {
+        return Ok(Some((env.id, false)));
+    }
+    let file = move_bridge_to(shared, store, &env.id, bridge)?;
+    Ok(Some((file.active, true)))
 }
 
 pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<EnvListView, String> {
@@ -318,7 +352,23 @@ pub fn move_bridge_to(
     bridge: Option<&Mutex<BridgeContext>>,
 ) -> Result<EnvFile, String> {
     let mut held = bridge.map(|b| b.lock().unwrap_or_else(|e| e.into_inner()));
+    let previous = environments::active_id(root)?;
     let file = environments::set_active(root, id)?;
+    // Every Auto Run store now reads and writes the new environment's folder.
+    // If that cannot be made, the file goes back: the list, the Auto Run
+    // folder and the bridge must all name the same environment.
+    // (Before app set-up there is no layout to move: tests of the bridge alone.)
+    let selected = if crate::autorun::store::shared_root().is_some() {
+        crate::autorun::store::select_environment(&file.active).map(|_| ())
+    } else {
+        Ok(())
+    };
+    if let Err(e) = selected {
+        if let Err(back) = environments::set_active(root, &previous) {
+            crate::applog::warn(format!("Environments: the switch could not be undone: {back}"));
+        }
+        return Err(e);
+    }
     if let (Some(ctx), Some(env)) = (held.as_deref_mut(), file.environments.iter().find(|e| e.id == file.active)) {
         // Held until the caller has brought the allow files in line
         // (`release_writes`, which `switch_with` calls once they are).
@@ -374,7 +424,12 @@ pub async fn switch_with<T: Send + 'static>(
     // that started between the look in `refuse_switch` and the write would
     // otherwise sign in to one environment and finish in another.
     let run_slot = crate::api_templates::runner::claim().ok_or_else(|| SWITCH_TEMPLATE_RUNNING.to_string())?;
-    let file = move_bridge_to(root, store, id, bridge)?;
+    // The writes in flight finish first; one that starts after sees the new
+    // environment. No store write happens inside this lock (see `switch_lock`).
+    let file = {
+        let _switching = crate::autorun::roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+        move_bridge_to(root, store, id, bridge)?
+    };
     // The hold `move_bridge_to` took ends when this does, however it ends.
     let release = super::ai_bridge::HeldWrites(bridge);
     // A browser a template run kept signed in belongs to the environment
@@ -564,8 +619,14 @@ pub fn env_list(
     current_db: Option<String>,
     working_dir: Option<String>,
 ) -> Result<EnvListView, String> {
-    let root = super::autorun::root(&app)?;
+    // The shared root: this call is the one that makes Default (with the
+    // Company database the person chose), so it cannot need an
+    // environment's folder to exist first.
+    let root = crate::autorun::store::shared_root().ok_or_else(|| super::autorun::NO_DATA_DIRECTORY.to_string())?;
     let view = env_list_with(&root, &*secrets.0, current_db.as_deref())?;
+    // No selection here: a list must never move the Auto Run folder (a
+    // stale one would undo a switch) or fail for want of a folder. The
+    // first read of the root selects the active environment.
     // Once a run, with the working repository the bridge's start could not
     // know: each AI tool's own "always allow" made to match the active
     // environment, writes held off meanwhile (`repair_allow_files`).
@@ -631,6 +692,11 @@ pub async fn env_set_active(
     // taken out when it does not. What was done comes back with the list.
     let after = switch_reconciler(root.clone(), working_dir, super::ai_tools::ToolHome::real());
     let (view, allow) = switch_with(&root, &*secrets.0, &id, bridge.as_deref().map(|b| &b.ctx), after).await?;
+    // Every open screen reads the new environment's data again.
+    {
+        use tauri_specta::Event as _;
+        let _ = crate::events::AutorunEnvironmentChanged { env_id: view.active.clone() }.emit(&app);
+    }
     let allow = allow.unwrap_or_else(|| {
         vec![crate::commands::ai_tools::AutoApproveOutcome {
             tool: "Your AI tools".to_string(),

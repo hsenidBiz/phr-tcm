@@ -5,10 +5,12 @@
 // the JSON itself - the full detail, and what Save writes - and Back to
 // readable view returns once the JSON parses.
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type Action, type Precondition, type StepScript } from "../../bindings";
+import { useEnvironments } from "../../lib/environments";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -19,12 +21,23 @@ import { MODAL_LARGE } from "./modalWidths";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import CaseText from "../../components/CaseText";
 import { unwrapStr } from "../../lib/ipc";
-import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove, IconUndo } from "../../lib/actionIcons";
+import {
+  IconAdd,
+  IconBack,
+  IconCancel,
+  IconConfirm,
+  IconCopyFromEnvironment,
+  IconCopyToEnvironment,
+  IconEdit,
+  IconRemove,
+  IconUndo,
+} from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
 import { uncheckedText } from "./unchecked";
+import CopyCaseDialog from "./CopyCaseDialog";
 import SetupSection from "./SetupSection";
 import { canPutBack, preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
 import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
@@ -45,14 +58,15 @@ const PLACEHOLDER = `[
  * label line it replaced, so nothing under the script moves down. */
 const HEADER_BUTTON = "-my-0.5 py-0.5";
 
-export default function ScriptEditor({
-  caseId,
-  title,
-  steps,
-  org,
-  project,
-  onClose,
-}: {
+/** A pull replaces the script on disk, and every field of the editor that
+ * was touched would keep showing what was typed before it: the body is
+ * mounted afresh after one, so it shows what was pulled. */
+export default function ScriptEditor(props: ScriptEditorProps) {
+  const [pulls, setPulls] = useState(0);
+  return <ScriptEditorBody key={pulls} {...props} onPulled={() => setPulls((n) => n + 1)} />;
+}
+
+type ScriptEditorProps = {
   caseId: number;
   title: string;
   steps: { action: string; expected: string; shared?: number | null }[];
@@ -61,8 +75,24 @@ export default function ScriptEditor({
   org: string;
   project: string;
   onClose: () => void;
-}) {
+};
+
+function ScriptEditorBody({
+  caseId,
+  title,
+  steps,
+  org,
+  project,
+  onClose,
+  onPulled,
+}: ScriptEditorProps & { onPulled: () => void }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const queryClient = useQueryClient();
+  // Copying to or from another environment needs one to copy with.
+  const environments = useEnvironments();
+  const hasOthers = (environments.data?.environments.length ?? 0) >= 2;
+  const [copying, setCopying] = useState<"to" | "from" | null>(null);
 
   const existing = useQuery({
     queryKey: ["autorun-script", caseId],
@@ -168,6 +198,20 @@ export default function ScriptEditor({
   // failed to load) would write an empty `steps: []` over whatever is
   // already there - silent data loss. Block it rather than let an empty
   // textarea pass for "this case genuinely has no script".
+  // Anything the person has changed and not saved: a pull would put another
+  // script under it, and Save would then overwrite what was pulled.
+  const unsaved =
+    text !== null ||
+    picked !== null ||
+    pickedArea !== null ||
+    pickedNoSave !== null ||
+    pickedChanges !== null ||
+    pickedNeeds !== null ||
+    pickedState !== null ||
+    removedPre.length > 0 ||
+    putBack.length > 0;
+  const UNSAVED_REASON = "Save or discard your changes first";
+
   const blockedReason = existing.isLoading
     ? "Still loading the existing script - wait for it before saving."
     : existing.isError
@@ -462,7 +506,27 @@ export default function ScriptEditor({
       )}
       {problem && <p className="text-xs text-danger">{problem}</p>}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
+        {hasOthers && (
+          <div className="mr-auto flex flex-wrap gap-2">
+            {existing.data && (
+              <Button variant="outline" size="sm" onClick={() => setCopying("to")}>
+                <IconCopyToEnvironment aria-hidden />
+                Copy to environment…
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={unsaved}
+              title={unsaved ? UNSAVED_REASON : undefined}
+              onClick={() => setCopying("from")}
+            >
+              <IconCopyFromEnvironment aria-hidden />
+              Copy from environment…
+            </Button>
+          </div>
+        )}
         <Button variant="ghost" size="sm" onClick={onClose}>
           <IconCancel aria-hidden />
           Cancel
@@ -472,6 +536,19 @@ export default function ScriptEditor({
           Save script
         </Button>
       </div>
+      {copying && (
+        <CopyCaseDialog
+          caseId={caseId}
+          org={org}
+          project={project}
+          direction={copying}
+          blockedReason={unsaved && copying === "from" ? UNSAVED_REASON : undefined}
+          onCopied={() => {
+            if (copying === "from") onPulled();
+          }}
+          onClose={() => setCopying(null)}
+        />
+      )}
     </Modal>
   );
 }

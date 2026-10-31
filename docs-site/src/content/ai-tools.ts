@@ -214,6 +214,7 @@ export const aiBridge: Screen = {
         "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
         "Switching moves the **Database** below with it, and the environment's name shows in the title bar. " +
         "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking**, **API templates** and **Network tools** switches. Switching shows the new environment's, and they apply to every call an assistant makes from then on; an assistant's own list of tools refreshes when it next asks for it, or when it is restarted. " +
+        "Each environment also keeps its own Auto Run scripts, areas, components and API templates, so switching shows that environment's. " +
         "The working repositories, their AI tools switches and the list of databases are the same in every environment.",
     },
     {
@@ -224,6 +225,7 @@ export const aiBridge: Screen = {
       name: "Edit environments",
       does:
         "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
+        "**Copy Auto Run data…** brings another environment's scripts, areas, components and API templates into this one; a removed environment's stay available there for 30 days. " +
         "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -.",
     },
     {

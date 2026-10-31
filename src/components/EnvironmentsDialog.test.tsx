@@ -292,7 +292,7 @@ test("Remove asks first, and removing the active environment shows the refusal",
   await screen.findByText("QA");
   fireEvent.click(screen.getByRole("button", { name: "Remove Default" }));
   // Asked, nothing sent yet.
-  expect(await screen.findByText(/Its accounts and saved sign-ins are deleted/)).toBeInTheDocument();
+  expect(await screen.findByText(/Its accounts and saved sign-ins go now/)).toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "env_remove")).toBe(false);
 
   fireEvent.click(screen.getByRole("button", { name: "Remove" }));
@@ -336,4 +336,42 @@ test("the database select offers your own databases after the shipped ones", asy
   fireEvent.click(await screen.findByRole("combobox", { name: "Environment database" }));
   const options = (await screen.findAllByRole("option")).map((o) => o.textContent);
   expect(options).toEqual(["Dev - read only", "QA - read only", "Your own database", "Staging"]);
+});
+
+test("says the Auto Run data of a removed environment is kept for 30 days", async () => {
+  mount();
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
+  expect(
+    await screen.findByText(
+      "Remove QA? Its accounts and saved sign-ins go now. Its Auto Run scripts, areas and templates are kept for 30 days and can be copied into another environment from Copy Auto Run data…",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("removing the Playwright export environment shows the refusal and keeps it listed", async () => {
+  mount({
+    env_remove: () => {
+      throw "this is the Playwright export environment - name another one on the Playwright tab first";
+    },
+  });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("name another one on the Playwright tab first");
+  expect(screen.getByText("QA")).toBeInTheDocument();
+});
+
+test("each environment has a Copy Auto Run data button that opens the copy dialog for it", async () => {
+  const { calls } = mount({
+    env_copy_choices: () => ({
+      target_empty: true,
+      sources: [{ key: DEFAULT.id, name: "Default", removed: false, days_left: null }],
+    }),
+  });
+  await screen.findByText("QA");
+  expect(screen.getByRole("button", { name: "Copy Auto Run data into Default" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Copy Auto Run data into QA" }));
+  expect(await screen.findByRole("combobox", { name: "Copy from" })).toBeInTheDocument();
+  expect(calls.find((c) => c.cmd === "env_copy_choices")!.args).toEqual({ targetId: QA.id });
 });

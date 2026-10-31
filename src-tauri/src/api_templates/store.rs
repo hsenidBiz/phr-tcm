@@ -120,9 +120,9 @@ pub fn save(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Result<()
         return Err(invalid_id(&t.id));
     }
     let dir = templates_dir(root, org, project);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(t).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&template_path(root, org, project, &t.id), &json)
+    crate::autorun::roots::write_file(root, &template_path(root, org, project, &t.id), &json)
 }
 
 /// Every saved template for this project, with its run history, sorted by
@@ -183,7 +183,7 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
         return Err(invalid_id(id));
     }
     for path in [template_path(root, org, project, id), runs_path(root, org, project, id)] {
-        match std::fs::remove_file(&path) {
+        match crate::autorun::roots::remove_file(root, &path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
@@ -213,7 +213,7 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: RunRecord)
     runs.insert(0, r);
     runs.truncate(MAX_RUNS);
     let dir = templates_dir(root, org, project);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&runs).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&runs_path(root, org, project, id), &json)
+    crate::autorun::roots::write_file(root, &runs_path(root, org, project, id), &json)
 }

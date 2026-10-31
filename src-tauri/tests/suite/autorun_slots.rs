@@ -1965,13 +1965,22 @@ mod card {
         fresh();
         let a = register(ID_A, "claude-code", T0);
         bind(SlotNo::MAIN, &a);
+        // A mark in the log tail: only what the release wrote after it is
+        // read, so lines other tests left behind cannot decide the result.
+        let mark = "autorun_slots test: the label-only release starts here";
+        v2_lib::applog::info(mark);
         release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
         let lines = logged();
-        assert!(lines.contains("Auto Run: released Assistant 1's browser (the person released it)"), "{lines}");
-        assert!(!lines.contains(ID_A) && !lines.contains("4242"));
+        let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
+        assert!(after.contains("Auto Run: released Assistant 1's browser (the person released it)"), "{after}");
+        assert!(!after.contains(ID_A) && !after.contains("4242"), "{after}");
+        let mark = "autorun_slots test: the second label-only release starts here";
+        v2_lib::applog::info(mark);
         release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
         let lines = logged();
-        assert!(lines.contains("Auto Run: released the main Auto Run browser (the person released it)"), "{lines}");
+        let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
+        assert!(after.contains("Auto Run: released the main Auto Run browser (the person released it)"), "{after}");
+        assert!(!after.contains(ID_A) && !after.contains("4242"), "{after}");
         fresh();
     }
 

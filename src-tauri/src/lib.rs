@@ -82,7 +82,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
+        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -113,6 +113,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::CrystalReportChanged,
             events::AutorunScriptsChanged,
             events::AutorunDataChanged,
+            events::AutorunEnvironmentChanged,
             events::AutorunCleanupProgress,
             events::GuideProgress,
             events::PwOutput,
@@ -171,6 +172,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::watch_assigned_work_all,
             misc::export_app_backup,
             misc::import_app_backup,
+            misc::preview_app_backup,
             misc::dev_probe_boards_suite,
             cases::list_test_case_fields,
             cases::pbi_test_cases_full,
@@ -212,6 +214,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             environments::env_save,
             environments::env_remove,
             environments::env_set_active,
+            env_copy::env_copy_choices,
+            env_copy::env_copy_autorun,
+            env_copy::auto_run_copy_case_plan,
+            env_copy::auto_run_copy_case,
+            env_copy::auto_run_copy_case_from_plan,
+            env_copy::auto_run_copy_case_from,
             environments::env_set_default_password,
             environments::env_clear_default_password,
             environments::env_proposals,
@@ -363,6 +371,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_export::pw_export_preview,
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
+            pw_export::pw_export_env,
+            pw_export::pw_set_export_env,
             pw_repo::pw_repo_structure,
             pw_repo::pw_repo_specs_status,
             pw_repo::pw_repo_create_folder,
@@ -558,8 +568,12 @@ pub fn run() {
             // the window: the Auto Run screen reads those scripts again.
             {
                 let app = app.handle().clone();
-                autorun::store::on_scripts_changed(move |_, ids| {
+                autorun::store::on_scripts_changed(move |root, ids| {
                     use tauri_specta::Event as _;
+                    // Only the active environment's scripts are on screen.
+                    if !autorun::roots::is_on_screen(root) {
+                        return;
+                    }
                     let _ = events::AutorunScriptsChanged { case_ids: ids.to_vec() }.emit(&app);
                 });
             }
@@ -567,8 +581,13 @@ pub fn run() {
             // (areas, components, the map, quirks, test files, accounts).
             {
                 let app = app.handle().clone();
-                autorun::data_changed::on_data_changed(move |_, kinds| {
+                autorun::data_changed::on_data_changed(move |at, kinds| {
                     use tauri_specta::Event as _;
+                    // Only the active environment's data is on screen (the
+                    // shared kinds are told from the shared root as well).
+                    if !autorun::roots::is_on_screen(at) {
+                        return;
+                    }
                     let _ = events::AutorunDataChanged { kinds: kinds.to_vec() }.emit(&app);
                 });
             }
@@ -635,16 +654,81 @@ pub fn run() {
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
-                autorun::store::set_root(dir.join("autorun"));
-                // Scripts deleted more than 30 days ago go for good.
-                let purged = autorun::store::purge_deleted_scripts(&dir.join("autorun"), autorun::sessions::now_ms());
+                let shared = dir.join("autorun");
+                // Each environment's own folder is built once, before the
+                // layout is chosen. When it cannot be built the flat folder
+                // stays in charge for this session and the copy is tried
+                // again at the next start. A development build shares the
+                // installed app's data, so it copies only when asked.
+                let started = autorun::roots::start_up(
+                    &shared,
+                    autorun::roots::migration_allowed(
+                        cfg!(debug_assertions),
+                        std::env::var("TCM_MIGRATE_ENVS").ok().as_deref(),
+                    ),
+                );
+                if started.skipped {
+                    applog::info("Auto Run: the per-environment copy is skipped in a development build");
+                }
+                if let Some(r) = &started.report {
+                    applog::info(autorun::roots::migration_log_line(r));
+                }
+                if let Some(why) = &started.failed {
+                    // `why` is empty when the reason would have named a path.
+                    applog::warn(autorun::roots::failure_warning(why, started.failed_starts));
+                }
+                if started.settled_copies > 0 {
+                    applog::info(format!("Auto Run: {} unfinished copy(ies) settled", started.settled_copies));
+                }
+                let per_env = started.per_env;
+                if per_env {
+                    autorun::store::set_shared_root(shared.clone());
+                } else {
+                    autorun::store::set_root(shared.clone());
+                }
+                // The environment the update copied the Playwright export
+                // records to is the export environment: the active one, named
+                // once. Makes no file of its own.
+                if let Err(e) = crate::environments::adopt_export_env(&shared) {
+                    applog::warn(format!("Environments: the Playwright export environment was not set: {e}"));
+                }
+                // Scripts deleted more than 30 days ago go for good, in
+                // every environment's folder.
+                if per_env {
+                    let now = autorun::sessions::now_ms();
+                    let moved = autorun::roots::retire_unlisted(&shared, now);
+                    if moved > 0 {
+                        applog::info(format!(
+                            "Auto Run: {moved} removed environment folder(s) moved to the removed area"
+                        ));
+                    }
+                    let swept = autorun::roots::sweep_export_staging(&shared);
+                    if swept > 0 {
+                        applog::info(format!("Auto Run: {swept} unfinished Playwright export record copy(ies) discarded"));
+                    }
+                    let gone = autorun::roots::purge_removed(&shared, now);
+                    if gone > 0 {
+                        applog::info(format!(
+                            "Auto Run: {gone} removed environment folder(s) older than 30 days purged"
+                        ));
+                    }
+                }
+                let stores = if per_env {
+                    autorun::roots::env_roots(&shared)
+                } else {
+                    vec![shared.clone()]
+                };
+                let now = autorun::sessions::now_ms();
+                let purged: usize = stores.iter().map(|r| autorun::store::purge_deleted_scripts(r, now)).sum();
                 if purged > 0 {
                     applog::info(format!("Auto Run: {purged} deleted script(s) older than 30 days purged"));
                 }
                 // Downloads whose run is gone, swept here, before any run can
                 // be started and saving into a folder its file does not
                 // name yet.
-                autorun::store::sweep_orphan_downloads(&dir.join("autorun"));
+                for r in &stores {
+                    autorun::store::sweep_orphan_downloads(r);
+                }
             }
             applog::info(format!(
                 "Test Case Manager {} started (set up {} ms after launch)",

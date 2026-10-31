@@ -230,8 +230,20 @@ export const commands = {
 	 *  Read a backup file, restore its disk half, and hand the localStorage
 	 *  half back to the frontend to apply (only the webview can write it).
 	 *  The frontend reloads afterwards so every screen re-reads its state.
+	 * 
+	 *  Refused while anything records, runs or holds a browser, as a switch is
+	 *  (an import changes the very folders those work in). The Playwright
+	 *  records lock then the switch lock are held for the whole restore, and
+	 *  the active environment is selected again from disk, and the bridge moved
+	 *  to it, before they are let go.
 	 */
 	importAppBackup: (path: string) => typedError<BackupImportResult, string>(__TAURI_INVOKE("import_app_backup", { path })),
+	/**
+	 *  What importing a backup file would do, for the confirmation: whether it
+	 *  is from before each environment had its own Auto Run data, and which
+	 *  environments' data it would then replace. Writes nothing.
+	 */
+	previewAppBackup: (path: string) => typedError<BackupPreview, string>(__TAURI_INVOKE("preview_app_backup", { path })),
 	/**
 	 *  Take the Boards fallback route once, by hand, and say what it
 	 *  answered. Development builds only.
@@ -408,6 +420,35 @@ export const commands = {
 	envSave: (env: EnvInput) => typedError<EnvListView, string>(__TAURI_INVOKE("env_save", { env })),
 	envRemove: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_remove", { id })),
 	envSetActive: (id: string, workingDir: string | null) => typedError<EnvSwitched, string>(__TAURI_INVOKE("env_set_active", { id, workingDir })),
+	/**  Where the environment can copy from. */
+	envCopyChoices: (targetId: string) => typedError<CopyChoices, string>(__TAURI_INVOKE("env_copy_choices", { targetId })),
+	/**
+	 *  Copy a source's Auto Run data into the environment. A target that already
+	 *  holds data needs `replace`; what it held is kept for 30 days.
+	 */
+	envCopyAutorun: (targetId: string, sourceKey: string, replace: boolean) => typedError<CopyDone, string>(__TAURI_INVOKE("env_copy_autorun", { targetId, sourceKey, replace })),
+	/**
+	 *  Push: what copying a case from the environment on screen (`active_id`)
+	 *  into `target_id` would bring (components, areas, sign-in recipe), what
+	 *  the target keeps its own version of, and what the person has to add
+	 *  there. Writes nothing.
+	 */
+	autoRunCopyCasePlan: (organization: string, project: string, caseId: number, activeId: string, targetId: string) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_plan", { organization, project, caseId, activeId, targetId })),
+	/**
+	 *  Push: copy a case's script, with what it needs, into another environment.
+	 *  `replace` agrees to replace a script the target already has for the case.
+	 */
+	autoRunCopyCase: (organization: string, project: string, caseId: number, activeId: string, targetId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case", { organization, project, caseId, activeId, targetId, replace })),
+	/**
+	 *  Pull ("Copy from environment..."): the same dry run, for a case coming
+	 *  from `source_id` into the environment on screen (`active_id`).
+	 */
+	autoRunCopyCaseFromPlan: (organization: string, project: string, caseId: number, activeId: string, sourceId: string) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from_plan", { organization, project, caseId, activeId, sourceId })),
+	/**
+	 *  Pull: copy a case from another environment into the one on screen.
+	 *  `replace` agrees to replace the script it already has for the case.
+	 */
+	autoRunCopyCaseFrom: (organization: string, project: string, caseId: number, activeId: string, sourceId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from", { organization, project, caseId, activeId, sourceId, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	/**  The assistant's proposed accounts for the active environment. */
@@ -1459,6 +1500,14 @@ export const commands = {
 	 *  Auto Run order goes into each test-case file's order notes.
 	 */
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null, pbiId: number | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef, pbiId })),
+	/**  Which environment Export and Sync run in. */
+	pwExportEnv: () => typedError<PwExportEnv, string>(__TAURI_INVOKE("pw_export_env")),
+	/**
+	 *  Names the environment Export and Sync run in, moving the export records
+	 *  (area placements and account choices) from the old one's folder to the
+	 *  new one's. The only place the export environment changes.
+	 */
+	pwSetExportEnv: (id: string) => typedError<PwExportEnv, string>(__TAURI_INVOKE("pw_set_export_env", { id })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**
@@ -1698,6 +1747,7 @@ export const events = {
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
 	autorunDataChanged: makeEvent<AutorunDataChanged>("autorun-data-changed"),
 	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
+	autorunEnvironmentChanged: makeEvent<AutorunEnvironmentChanged>("autorun-environment-changed"),
 	autorunNetworkWait: makeEvent<AutorunNetworkWait>("autorun-network-wait"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunResetNeeded: makeEvent<AutorunResetNeeded>("autorun-reset-needed"),
@@ -2739,6 +2789,16 @@ export type AutorunDiscoveryChanged = {
 };
 
 /**
+ *  Emitted once a switch of environment has landed, after Rust's Auto Run
+ *  folder, the environments file and the bridge all name the new one. Every
+ *  screen that shows per-environment Auto Run data reads it again, and an
+ *  editor open on the old environment's data closes.
+ */
+export type AutorunEnvironmentChanged = {
+	env_id: string,
+};
+
+/**
  *  An unattended run started waiting for the company network, or stopped
  *  waiting. `waiting: true` when it starts; `waiting: false` with `ended`
  *  ("resumed", "stopped" or "gave_up") when it is over. Never the database
@@ -2808,6 +2868,25 @@ export type BackupImportResult = {
 	files_restored: number,
 	exported_at: string,
 	app_version: string,
+};
+
+/**  What importing a backup would do, for the confirmation. */
+export type BackupPreview = {
+	exported_at: string,
+	app_version: string,
+	/**  The backup is from before each environment had its own Auto Run data. */
+	pre_update: boolean,
+	/**  The backup brings a folder per environment. */
+	post_update: boolean,
+	/**
+	 *  The environments whose Auto Run data the import replaces, by name:
+	 *  exactly the ones the import will replace. Each replaced folder keeps
+	 *  its run history, screenshots and Playwright records, and the rest
+	 *  waits 30 days. Empty when nothing is replaced (a backup of history
+	 *  alone, or a machine without per-environment folders, where the next
+	 *  start does the update's copy).
+	 */
+	replaces: string[],
 };
 
 /**  Where a check's value comes from when the case does not hold it word for word. */
@@ -2980,6 +3059,48 @@ export type BuildStage = {
 	started: string,
 	finished: string,
 	jobs: BuildJob[],
+};
+
+/**
+ *  What copying one case would do, or did. Names only: nothing here holds a
+ *  path, a password or a script body.
+ */
+export type CaseCopyPlan = {
+	/**  The target already has a script for the case (copying replaces it). */
+	target_has_script: boolean,
+	/**  Components the target lacks, brought across. */
+	components_added: string[],
+	/**  Components the target has in a different version; its version is used. */
+	components_kept: string[],
+	/**
+	 *  Components the script (or a component it uses) names that NEITHER
+	 *  environment has. The copy still goes ahead; the case fails to run
+	 *  until the component is added.
+	 */
+	missing_components: string[],
+	/**
+	 *  Areas the case visits (its own, a `return_to_area`, those of its
+	 *  components) that the target lacks, brought across with their variants.
+	 */
+	areas_added: string[],
+	/**  Areas the target has in a different version; its version is used. */
+	areas_kept: string[],
+	/**  The case names no area: it goes where its Module goes, nothing to copy. */
+	uses_default_area: boolean,
+	/**  The target had no sign-in recipe and the source has one: it is brought across. */
+	recipe_added: boolean,
+	/**
+	 *  The site address the brought recipe carries, when it names one: runs
+	 *  in a target with no address of its own then sign in at the source's site.
+	 */
+	recipe_address: string | null,
+	/**
+	 *  Account keys the script signs in as (its own and each `sign_in`, in
+	 *  its components too) that the target has no account for.
+	 */
+	missing_accounts: string[],
+	/**  Fixture and flow ids the script names that the target lacks. Not copied. */
+	missing_api: string[],
 };
 
 export type CaseFinding = CaseFinding_Serialize | CaseFinding_Deserialize;
@@ -3703,6 +3824,32 @@ export type CopiedIn = {
 	displaced: string | null,
 };
 
+/**  What the copy dialog needs to know about a target. */
+export type CopyChoices = {
+	/**  The target has no Auto Run data a copy would replace. */
+	target_empty: boolean,
+	/**  Every other environment, then the removed folders still kept. */
+	sources: CopySource[],
+};
+
+/**  What a finished copy did. */
+export type CopyDone = {
+	/**  Top-level items brought in. */
+	items: number,
+	/**  What the copy replaced was kept in the removed area. */
+	kept_aside: boolean,
+};
+
+/**  Somewhere to copy from. */
+export type CopySource = {
+	/**  An environment id, or `removed:<folder key>`. */
+	key: string,
+	name: string,
+	removed: boolean,
+	/**  Whole days a removed folder is still kept; `None` for an environment. */
+	days_left: number | null,
+};
+
 export type CreatedItem = {
 	id: number,
 	url: string,
@@ -4127,6 +4274,11 @@ export type EnvInput = {
 
 export type EnvListView = {
 	active: string,
+	/**
+	 *  The Playwright export environment's id (the active one while none is
+	 *  named). Changed only by `pw_set_export_env`.
+	 */
+	playwright_export: string,
 	environments: EnvView[],
 };
 
@@ -5708,6 +5860,14 @@ export type PullRequest = {
 export type PwDone = {
 	run: number,
 	code: number | null,
+};
+
+/**  The Playwright export environment, as the Playwright tab shows it. */
+export type PwExportEnv = {
+	id: string,
+	name: string,
+	/**  The export environment is the active one: Export and Sync are open. */
+	is_active: boolean,
 };
 
 /**

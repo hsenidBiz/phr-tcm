@@ -7,6 +7,7 @@
 // file aside (never deleting it). Opened from Auto Run's Setup card; the
 // components themselves are Rust's (`autorun/components.rs`).
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { commands, type ComponentsView } from "../../bindings";
@@ -57,6 +58,8 @@ export default function ComponentsDialog({
   project: string;
   onClose: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const headingId = useId();
   const qc = useQueryClient();
   const view = useComponents(org, project);

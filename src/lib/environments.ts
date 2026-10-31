@@ -29,15 +29,35 @@ export const envKeys = {
   apiTemplates: ["api-templates"] as const,
 };
 
+/** Whether a query holds data that belongs to one environment: its Auto
+ * Run files (scripts, areas, components, runs, accounts...), its API
+ * templates, fixtures and flows, and the Playwright tab's Sync and export
+ * state. After a switch these must be read again, never shown from the
+ * other environment. The browsers' own queries are about processes, not data;
+ * Test files, the databases and the environment list itself are shared. */
+export function isEnvironmentScopedKey(key: readonly unknown[]): boolean {
+  const head = key[0];
+  if (typeof head !== "string") return false;
+  if (head.startsWith("autorun-")) return !UNSCOPED_AUTORUN.has(head);
+  return SCOPED_HEADS.has(head);
+}
+
+const UNSCOPED_AUTORUN: ReadonlySet<string> = new Set(["autorun-agents", "autorun-discovery-active"]);
+const SCOPED_HEADS: ReadonlySet<string> = new Set([
+  "api-templates",
+  "api-fixtures",
+  "env-proposals",
+  "pw-sync",
+  "pw-export",
+  "pw-export-env",
+]);
+
 /** Forgets everything read for the environment that was active: after a
  * switch, a screen must never show - or save back - the previous
- * environment's accounts. A screen showing one of these reads it afresh. */
+ * environment's accounts, scripts or templates. A screen showing one of
+ * these reads it afresh. */
 export async function forgetEnvironmentData(qc: QueryClient): Promise<void> {
-  await Promise.all(
-    [envKeys.accounts, envKeys.proposals, envKeys.apiTemplates].map((queryKey) =>
-      qc.resetQueries({ queryKey }),
-    ),
-  );
+  await qc.resetQueries({ predicate: (q) => isEnvironmentScopedKey(q.queryKey) });
 }
 
 /** Set once the first list has been compared with the Database Read Access
@@ -82,7 +102,7 @@ export function toInput(env: EnvView): EnvInput {
   };
 }
 
-const EMPTY: EnvListView = { active: "", environments: [] };
+const EMPTY: EnvListView = { active: "", playwright_export: "", environments: [] };
 
 /** The repository whose AI tools' settings Rust brings in line with the
  * active environment - the same rule the Run changes without asking switch

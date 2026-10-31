@@ -1,3 +1,4 @@
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useMutation } from "@tanstack/react-query";
 import { useId } from "react";
 import { commands, type TemplatesImportResult } from "../../bindings";
@@ -72,6 +73,8 @@ export default function ImportTemplates({
   onClose: () => void;
   onImported: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const headingId = useId();
   const name = fileName(path);
   const run = useMutation({

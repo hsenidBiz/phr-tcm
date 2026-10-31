@@ -34,6 +34,7 @@ import {
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
+import EnvironmentLabel from "../../components/EnvironmentLabel";
 import { toast } from "../../lib/toast";
 import { logUi } from "../../lib/uiLog";
 import {
@@ -823,6 +824,7 @@ export default function AutoRun({
                     toolbar below, which stays at the top while the list
                     scrolls. The tab's own label carries the count. */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <EnvironmentLabel prefix="Scripts for" />
                   {rows.length > 0 &&
                     (runsFailed ? (
                       <span className="text-xs text-muted">Past results could not be read</span>

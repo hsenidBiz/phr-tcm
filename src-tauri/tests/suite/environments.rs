@@ -31,7 +31,7 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
 }
 
 fn file(envs: Vec<Environment>) -> EnvFile {
-    EnvFile { active: envs[0].id.clone(), environments: envs, auto_approve_adopted: false }
+    EnvFile { active: envs[0].id.clone(), environments: envs, auto_approve_adopted: false, playwright_export: None }
 }
 
 fn input(name: &str) -> EnvInput {
@@ -401,6 +401,8 @@ async fn switching_is_refused_while_recording_or_running() {
     let _slot = crate::serial::api_template_run();
     // Reaches `held::close_all`, which closes every held template browser.
     let _held = crate::serial::held_browsers();
+    // A switch looks at the leases (a signed-in browser refuses it).
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
@@ -428,6 +430,8 @@ async fn switching_is_refused_while_an_api_template_runs() {
     let _slot = crate::serial::api_template_run();
     // Reaches `held::close_all`, which closes every held template browser.
     let _held = crate::serial::held_browsers();
+    // A switch looks at the leases (a signed-in browser refuses it).
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
@@ -457,6 +461,8 @@ async fn switching_is_refused_while_an_api_template_runs() {
 fn switching_is_refused_while_the_supervised_browser_is_open() {
     let _claims = crate::serial::autorun();
     let _slot = crate::serial::api_template_run();
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
     let err = refuse_switch(true).unwrap_err();
     assert_eq!(err, SWITCH_SUPERVISED_OPEN);
     assert!(err.contains("supervised browser") && err.contains("close it first"), "{err}");
@@ -479,6 +485,8 @@ async fn a_switch_while_an_extra_browser_is_opening_does_not_hang() {
     let _claims = crate::serial::autorun();
     let _slot = crate::serial::api_template_run();
     let _held = crate::serial::held_browsers();
+    // A switch looks at the leases (a signed-in browser refuses it).
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();

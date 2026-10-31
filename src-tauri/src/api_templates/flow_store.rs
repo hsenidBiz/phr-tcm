@@ -90,9 +90,9 @@ fn write(root: &Path, org: &str, project: &str, f: &Flow) -> Result<(), String> 
     if !valid_id(&f.id) {
         return Err(invalid_id(&f.id));
     }
-    std::fs::create_dir_all(flows_dir(root, org, project)).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, flows_dir(root, org, project)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(f).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&flow_path(root, org, project, &f.id), &json)
+    crate::autorun::roots::write_file(root, &flow_path(root, org, project, &f.id), &json)
 }
 
 /// Every saved flow for this project, sorted by `title`. A flow file that
@@ -137,7 +137,7 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
         return Err(invalid_id(id));
     }
     let _held = flows_lock();
-    match std::fs::remove_file(flow_path(root, org, project, id)) {
+    match crate::autorun::roots::remove_file(root, &flow_path(root, org, project, id)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
