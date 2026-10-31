@@ -23,6 +23,10 @@ import { Switch } from "./ui/switch";
 export const TEST_ENVIRONMENT_WARNING =
   "The AI assistant can read the full logins of this environment's accounts. Use only for test environments.";
 
+/** What sits under the reset switch. */
+export const RESET_EXPIRED_HELP =
+  "When a sign-in lands on the site's password reset page, the app sets a simple new password, saves it on that account and signs in. Off unless you turn it on.";
+
 /** Said for an environment with no address of its own. */
 export const RECIPE_ADDRESS = "Using the sign-in recipe's address";
 
@@ -194,6 +198,16 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       const res = await commands.envSetDefaultPassword(form.id, typed);
       if (res.status === "error") throw new Error(res.error);
       await qc.invalidateQueries({ queryKey: envKeys.list });
+    });
+
+  /** The reset switch changes at once, by its own command: a save of the
+   *  form never carries it. */
+  const setResetExpired = (on: boolean) =>
+    run(async () => {
+      if (!form?.id) return;
+      const res = await commands.envSetResetExpiredPasswords(form.id, on);
+      if (res.status === "error") throw new Error(res.error);
+      take(res.data);
     });
 
   const clearDefaultPassword = () =>
@@ -389,6 +403,21 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
               </div>
               <p className="text-xs text-muted">{TEST_ENVIRONMENT_WARNING}</p>
             </div>
+
+            {form.id && editing?.test_environment && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={editing.reset_expired_passwords}
+                    ariaLabel="Reset expired passwords"
+                    disabled={busy}
+                    onCheckedChange={setResetExpired}
+                  />
+                  <span className="text-xs font-medium text-text">Reset expired passwords</span>
+                </div>
+                <p className="text-xs text-muted">{RESET_EXPIRED_HELP}</p>
+              </div>
+            )}
 
             {form.id ? (
               <div className="space-y-1">

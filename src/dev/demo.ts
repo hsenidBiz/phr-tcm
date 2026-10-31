@@ -516,7 +516,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
-      db_auto_approve: false, password_expiry_query: "", active_session_query: "",
+      db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false,
     },
     {
       id: "qa",
@@ -527,7 +527,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
-      db_auto_approve: false, password_expiry_query: "", active_session_query: "",
+      db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false,
     },
   ],
 };
@@ -1687,6 +1687,7 @@ function applyPatches() {
         db_auto_approve: old?.db_auto_approve ?? false,
         password_expiry_query: env.password_expiry_query ?? old?.password_expiry_query ?? "",
         active_session_query: env.active_session_query ?? old?.active_session_query ?? "",
+        reset_expired_passwords: old?.reset_expired_passwords ?? false,
       };
       environments = {
         ...environments,

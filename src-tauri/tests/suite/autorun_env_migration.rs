@@ -23,6 +23,7 @@ fn env_named(id: &str, name: &str) -> Environment {
         db_auto_approve: false,
         password_expiry_query: String::new(),
         active_session_query: String::new(),
+        reset_expired_passwords: false,
     }
 }
 

@@ -222,6 +222,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             env_copy::auto_run_copy_case_from,
             environments::env_set_default_password,
             environments::env_clear_default_password,
+            environments::env_set_reset_expired_passwords,
             environments::env_proposals,
             environments::env_dismiss_proposals,
             environments::env_add_proposals,

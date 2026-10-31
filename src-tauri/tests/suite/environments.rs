@@ -29,6 +29,7 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
         db_auto_approve: false,
         password_expiry_query: String::new(),
         active_session_query: String::new(),
+        reset_expired_passwords: false,
     }
 }
 
@@ -1786,4 +1787,42 @@ mod accounts_for_the_assistant {
         assert!(add_proposals_with(root, &store, vec![pick("hr.sup", "hr.sup-user", "")], vec![]).unwrap().is_empty());
         assert_eq!(load_accounts(root).unwrap()[0].password, "Default-Pw1");
     }
+}
+
+#[test]
+fn old_environment_reads_reset_switch_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let id = load_or_init(root, Some("dev-read")).unwrap().active;
+    let path = v2_lib::autorun::roots::shared_of(root).join("environments.json");
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["environments"][0].as_object_mut().unwrap().remove("reset_expired_passwords");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let e = active(root).unwrap();
+    assert_eq!(e.id, id);
+    assert!(!e.reset_expired_passwords);
+}
+
+#[test]
+fn the_reset_switch_moves_only_by_its_own_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let id = load_or_init(root, Some("dev-read")).unwrap().active;
+    assert!(!active(root).unwrap().reset_expired_passwords);
+    set_reset_expired_passwords(root, &id, true).unwrap();
+    assert!(active(root).unwrap().reset_expired_passwords);
+    // A save from a form (which cannot say) keeps what the file holds.
+    let mut e = active(root).unwrap();
+    e.reset_expired_passwords = false;
+    e.name = "Renamed".into();
+    save_env_with(root, e, known).unwrap();
+    assert!(active(root).unwrap().reset_expired_passwords);
+    // A new environment never arrives with it on.
+    let mut fresh = env("", "Another", "");
+    fresh.reset_expired_passwords = true;
+    let file = save_env_with(root, fresh, known).unwrap();
+    assert!(file.environments.iter().filter(|e| e.name == "Another").all(|e| !e.reset_expired_passwords));
+    set_reset_expired_passwords(root, &id, false).unwrap();
+    assert!(!active(root).unwrap().reset_expired_passwords);
+    assert!(set_reset_expired_passwords(root, "env-nothere", true).is_err());
 }

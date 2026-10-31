@@ -451,6 +451,7 @@ export const commands = {
 	autoRunCopyCaseFrom: (organization: string, project: string, caseId: number, activeId: string, sourceId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from", { organization, project, caseId, activeId, sourceId, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
+	envSetResetExpiredPasswords: (id: string, on: boolean) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_reset_expired_passwords", { id, on })),
 	/**  The assistant's proposed accounts for the active environment. */
 	envProposals: () => typedError<ProposedAccount[], string>(__TAURI_INVOKE("env_proposals")),
 	/**  Dismiss the active environment's whole proposal. */
@@ -4398,6 +4399,11 @@ export type EnvView = {
 	 *  when not checked.
 	 */
 	active_session_query: string,
+	/**
+	 *  "Reset expired passwords", this environment's own. Matters only
+	 *  while it is marked a test environment.
+	 */
+	reset_expired_passwords: boolean,
 };
 
 export type Expect = {
@@ -5341,8 +5347,23 @@ export type PasswordResetPage = PasswordResetPage_Serialize | PasswordResetPage_
 export type PasswordResetPage_Deserialize = {
 	/**  Part of the page's PATH (case ignored): `/security/PasswordReset`. */
 	path_contains: string,
-	/**  A field only that page has - recognised by it, not by the wording. */
+	/**
+	 *  A field only that page has - recognised by it, not by the wording.
+	 *  It is also the page's current password field, which a reset fills.
+	 */
 	field: Target_Deserialize,
+	/**
+	 *  The new password field a reset fills; left out, the built-in
+	 *  `#txtNewPassword`.
+	 */
+	new?: Target_Deserialize | null,
+	/**  The confirmation field; left out, the built-in `#txtConfirmPassword`. */
+	confirm?: Target_Deserialize | null,
+	/**
+	 *  The button that sends the form - never the one that clears it; left
+	 *  out, the built-in `#btnsubmit`.
+	 */
+	submit?: Target_Deserialize | null,
 };
 
 /**
@@ -5354,8 +5375,23 @@ export type PasswordResetPage_Deserialize = {
 export type PasswordResetPage_Serialize = {
 	/**  Part of the page's PATH (case ignored): `/security/PasswordReset`. */
 	path_contains: string,
-	/**  A field only that page has - recognised by it, not by the wording. */
+	/**
+	 *  A field only that page has - recognised by it, not by the wording.
+	 *  It is also the page's current password field, which a reset fills.
+	 */
 	field: Target_Serialize,
+	/**
+	 *  The new password field a reset fills; left out, the built-in
+	 *  `#txtNewPassword`.
+	 */
+	new?: Target_Serialize | null,
+	/**  The confirmation field; left out, the built-in `#txtConfirmPassword`. */
+	confirm?: Target_Serialize | null,
+	/**
+	 *  The button that sends the form - never the one that clears it; left
+	 *  out, the built-in `#btnsubmit`.
+	 */
+	submit?: Target_Serialize | null,
 };
 
 /**

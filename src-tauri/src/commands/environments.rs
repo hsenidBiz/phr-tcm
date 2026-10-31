@@ -33,6 +33,9 @@ pub struct EnvView {
     /// The SELECT that reads whether a login is signed in elsewhere; empty
     /// when not checked.
     pub active_session_query: String,
+    /// "Reset expired passwords", this environment's own. Matters only
+    /// while it is marked a test environment.
+    pub reset_expired_passwords: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -111,6 +114,7 @@ fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
                 db_auto_approve: e.db_auto_approve,
                 password_expiry_query: e.password_expiry_query,
                 active_session_query: e.active_session_query,
+                reset_expired_passwords: e.reset_expired_passwords,
             })
             .collect(),
     }
@@ -206,6 +210,8 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         db_auto_approve: false,
         password_expiry_query,
         active_session_query,
+        // Not the form's to set either (`set_reset_expired_passwords`).
+        reset_expired_passwords: false,
     };
     let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
@@ -269,6 +275,12 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
 /// saved already, so a strip that fails is logged, not fatal: a password
 /// left behind is still never used or reported outside a test environment.
 fn strip_proposed_passwords(root: &Path, id: &str) {
+    // And it resets no expired password any more: the switch only means
+    // something on a test environment, and is off again if it is marked
+    // one later.
+    if let Err(e) = environments::set_reset_expired_passwords(root, id, false) {
+        crate::applog::warn(format!("Environments: the reset switch of an unmarked environment stayed on: {e}"));
+    }
     match environments::strip_proposed_passwords(root, id) {
         Ok(0) => {}
         Ok(n) => crate::applog::info(format!(
@@ -479,6 +491,18 @@ pub fn set_default_password_with(root: &Path, store: &dyn SecretStore, id: &str,
     }
     must_exist(root, id)?;
     store.put(&environments::password_target(id), password)
+}
+
+/// Switch "Reset expired passwords" for one environment. Only a test
+/// environment can have it turned on.
+pub fn set_reset_expired_passwords_with(root: &Path, store: &dyn SecretStore, id: &str, on: bool) -> Result<EnvListView, String> {
+    must_exist(root, id)?;
+    if on && !environments::load_or_init(root, None)?.environments.iter().any(|e| e.id == id && e.test_environment) {
+        return Err("mark this environment as a test environment first - an expired password is reset only on one".to_string());
+    }
+    let file = environments::set_reset_expired_passwords(root, id, on)?;
+    crate::applog::info(format!("Environments: resetting expired passwords is now {}", if on { "on" } else { "off" }));
+    Ok(view(store, file))
 }
 
 pub fn clear_default_password_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<(), String> {
@@ -742,6 +766,17 @@ pub fn env_set_default_password(
     password: String,
 ) -> Result<(), String> {
     set_default_password_with(&super::autorun::root(&app)?, &*secrets.0, &id, &password)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn env_set_reset_expired_passwords(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    id: String,
+    on: bool,
+) -> Result<EnvListView, String> {
+    set_reset_expired_passwords_with(&super::autorun::root(&app)?, &*secrets.0, &id, on)
 }
 
 #[tauri::command]

@@ -1086,6 +1086,7 @@ fn a_report_for_an_environment_that_was_left_is_refused_and_makes_no_folder() {
         db_auto_approve: false,
         password_expiry_query: String::new(),
         active_session_query: String::new(),
+        reset_expired_passwords: false,
     };
     let b = environments::save_env(dir.path(), qa, &["dev-read".to_string()])
         .unwrap()

@@ -1173,7 +1173,14 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
     recorded earlier uses too) fails as "password expired", not as a missing
     signed-in marker or a wrong password: that is the account's, not the
     script's, and no repair helps - use another account or ask the person to
-    reset the password. A database that is off or does not answer never
+    reset the password. The app resets it itself only on an environment the
+    person marked as a test environment AND gave "Reset expired passwords"
+    (off unless they turn it on, in the Environments dialog): it then types
+    the current password and a simple new one, saves the new one on the
+    account and signs in, once per sign-in, and logs that it did so (never
+    the password). If the site refuses it, the stop reads "password expired
+    - the reset did not go through" and the saved password is unchanged. You
+    never type or see either password. A database that is off or does not answer never
     blocks a sign-in; the check is skipped and said once. A query that is
     wrong is said as that ("could not run"), not as a database that is down.
 - A password comes from the database, from the person or from the

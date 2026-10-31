@@ -55,6 +55,14 @@ pub struct Environment {
     /// right now (see `autorun::active_login`). Empty means not checked.
     #[serde(default)]
     pub active_session_query: String,
+    /// "Reset expired passwords": on a test environment, a sign-in the site
+    /// sends to its password reset page has the app set a new simple
+    /// password and save it on the account (see `autorun::signin`). Off
+    /// unless turned on, and changed only by `set_reset_expired_passwords` -
+    /// a save keeps what the file holds, as `db_auto_approve` does. It does
+    /// nothing on an environment that is not marked a test environment.
+    #[serde(default)]
+    pub reset_expired_passwords: bool,
 }
 
 /// What a new environment, and one saved before prefixes existed, uses.
@@ -325,6 +333,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             db_auto_approve: false,
             password_expiry_query: String::new(),
             active_session_query: String::new(),
+            reset_expired_passwords: false,
         }],
         auto_approve_adopted: false,
         playwright_export: Some(first_id.clone()),
@@ -404,6 +413,21 @@ pub fn set_db_auto_approve(root: &Path, id: &str, on: bool) -> Result<EnvFile, S
         .find(|e| e.id == id)
         .ok_or_else(|| "that environment is not there any more".to_string())?;
     env.db_auto_approve = on;
+    write(root, &file)?;
+    Ok(file)
+}
+
+/// Switch "Reset expired passwords" on or off for one environment. Nothing
+/// else in the file changes.
+pub fn set_reset_expired_passwords(root: &Path, id: &str, on: bool) -> Result<EnvFile, String> {
+    let _held = lock();
+    let mut file = load_or_init_locked(root, None)?;
+    let env = file
+        .environments
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| "that environment is not there any more".to_string())?;
+    env.reset_expired_passwords = on;
     write(root, &file)?;
     Ok(file)
 }
@@ -692,6 +716,7 @@ pub fn save_env_with(
         env.id = new_id(&env.name, &file.environments);
         // A new environment never arrives with writes asked about less.
         env.db_auto_approve = false;
+        env.reset_expired_passwords = false;
         file.environments.push(env.clone());
     } else {
         let slot = file
@@ -702,6 +727,7 @@ pub fn save_env_with(
         // Kept from the file, read under this lock: only
         // `set_db_auto_approve` moves it.
         env.db_auto_approve = slot.db_auto_approve;
+        env.reset_expired_passwords = slot.reset_expired_passwords;
         *slot = env.clone();
     }
     let mut known = known_db_ids.to_vec();

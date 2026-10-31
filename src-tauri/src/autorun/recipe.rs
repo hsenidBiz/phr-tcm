@@ -126,7 +126,19 @@ pub struct PasswordResetPage {
     /// Part of the page's PATH (case ignored): `/security/PasswordReset`.
     pub path_contains: String,
     /// A field only that page has - recognised by it, not by the wording.
+    /// It is also the page's current password field, which a reset fills.
     pub field: Target,
+    /// The new password field a reset fills; left out, the built-in
+    /// `#txtNewPassword`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new: Option<Target>,
+    /// The confirmation field; left out, the built-in `#txtConfirmPassword`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<Target>,
+    /// The button that sends the form - never the one that clears it; left
+    /// out, the built-in `#btnsubmit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit: Option<Target>,
 }
 
 /// A loading indicator the runner waits out by itself
@@ -580,6 +592,9 @@ impl SignInRecipe {
                 return Err("password_reset: path_contains is part of the page's path, for example /security/PasswordReset".to_string());
             }
             page.field.validate().map_err(|e| format!("password_reset: {e}"))?;
+            for t in [&page.new, &page.confirm, &page.submit].into_iter().flatten() {
+                t.validate().map_err(|e| format!("password_reset: {e}"))?;
+            }
         }
         for o in &self.allowed_origins {
             if !is_bare_origin(o) {

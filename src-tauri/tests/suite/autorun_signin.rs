@@ -676,3 +676,215 @@ fn the_built_in_recipe_knows_the_reset_page() {
     assert_eq!(page.path_contains, "/security/PasswordReset");
     assert_eq!(serde_json::to_value(&page.field).unwrap(), json!({ "css": "#txtOldPassword" }));
 }
+
+// ------------------------------------------- resetting an expired password
+
+use std::sync::{Arc, Mutex};
+use v2_lib::autorun::accounts::{load_accounts, Account};
+use v2_lib::autorun::signin::{next_password, PASSWORD_RESET_FAILED, RESET_PASSWORDS};
+
+const HOME_URL: &str = "https://hr.example.internal/hr/home/index";
+const KEY: &str = "automation51";
+
+#[test]
+fn next_password_skips_current_and_refused() {
+    assert_eq!(RESET_PASSWORDS, ["Abc@123", "Test@1234"]);
+    assert_eq!(next_password("old-one", &[]), Some("Abc@123"));
+    assert_eq!(next_password("Abc@123", &[]), Some("Test@1234"));
+    assert_eq!(next_password("Test@1234", &[]), Some("Abc@123"));
+    assert_eq!(next_password("old-one", &["Abc@123".to_string()]), Some("Test@1234"));
+    assert_eq!(next_password("Abc@123", &["Test@1234".to_string()]), None);
+    assert_eq!(next_password("old-one", &["Abc@123".to_string(), "Test@1234".to_string()]), None);
+}
+
+fn reset_account() -> Account {
+    Account { key: KEY.into(), label: "Automation 51".into(), username: "kim".into(), password: PASSWORD.into() }
+}
+
+/// A data folder whose active environment is (or is not) marked a test
+/// environment, with the reset switch on or off, holding `reset_account`.
+fn reset_root(test_environment: bool, switch: bool) -> tempfile::TempDir {
+    use v2_lib::environments::{load_or_init, save_env_with, set_reset_expired_passwords};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut e = load_or_init(root, Some("dev-read")).unwrap().environments[0].clone();
+    e.test_environment = test_environment;
+    let id = e.id.clone();
+    save_env_with(root, e, || vec!["dev-read".to_string()]).unwrap();
+    if switch {
+        set_reset_expired_passwords(root, &id, true).unwrap();
+    }
+    save_accounts(root, &[reset_account()]).unwrap();
+    dir
+}
+
+struct ResetApp {
+    /// (the field's selector, what was typed into it), in order.
+    typed: Arc<Mutex<Vec<(String, String)>>>,
+    submits: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ResetApp {
+    fn typed_into(&self, selector: &str) -> Vec<String> {
+        self.typed.lock().unwrap().iter().filter(|(s, _)| s == selector).map(|(_, t)| t.clone()).collect()
+    }
+    fn count_of(&self, text: &str) -> usize {
+        self.typed.lock().unwrap().iter().filter(|(_, t)| t == text).count()
+    }
+}
+
+/// A site that sends the login to its reset page. Submitting the reset form
+/// is accepted when the new password and its confirmation agree and are one
+/// of `accepts`; then the page goes to the login page, and the next sign-in
+/// (with whatever was typed) reaches the marker.
+fn reset_app(accepts: &'static [&'static str]) -> (ScriptedDriver, ResetApp) {
+    let (d, state) = stateful_app(false, None);
+    let (signed_in, typed_flag) = (state.signed_in.clone(), state.typed_password.clone());
+    let accepted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let last = Arc::new(Mutex::new(String::new()));
+    let typed: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let submits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app = ResetApp { typed: typed.clone(), submits: submits.clone() };
+    let d = d.answering_first(move |method, params| {
+        let page_now = || {
+            if !accepted.load(Ordering::SeqCst) {
+                (RESET_URL, "Reset Password")
+            } else if signed_in.load(Ordering::SeqCst) {
+                (HOME_URL, "Home")
+            } else {
+                (LOGIN_URL, "Sign in")
+            }
+        };
+        match method {
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                Some(Ok(json!({ "result": { "value": page_now().0 } })))
+            }
+            "Runtime.evaluate" if params["expression"] == "document.title" => {
+                Some(Ok(json!({ "result": { "value": page_now().1 } })))
+            }
+            "Runtime.callFunctionOn" if params["objectId"] == "doc" && params["arguments"][0]["value"].is_string() => {
+                *last.lock().unwrap() = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                None
+            }
+            "Input.insertText" => {
+                let text = params["text"].as_str().unwrap_or("").to_string();
+                if text != "kim" {
+                    typed_flag.store(true, Ordering::SeqCst);
+                }
+                typed.lock().unwrap().push((last.lock().unwrap().clone(), text));
+                None
+            }
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" && !accepted.load(Ordering::SeqCst) => {
+                if last.lock().unwrap().as_str() == "#btnsubmit" {
+                    submits.fetch_add(1, Ordering::SeqCst);
+                    let into = |sel: &str| {
+                        typed.lock().unwrap().iter().rev().find(|(s, _)| s == sel).map(|(_, t)| t.clone()).unwrap_or_default()
+                    };
+                    let (new, confirm) = (into("#txtNewPassword"), into("#txtConfirmPassword"));
+                    if new == confirm && accepts.contains(&new.as_str()) {
+                        accepted.store(true, Ordering::SeqCst);
+                    }
+                }
+                Some(Ok(json!({})))
+            }
+            "Runtime.getProperties" if accepted.load(Ordering::SeqCst) && last.lock().unwrap().as_str() == "#txtOldPassword" => {
+                Some(Ok(json!({ "result": [] })))
+            }
+            _ => None,
+        }
+    });
+    (d, app)
+}
+
+fn account_file_password(root: &std::path::Path) -> String {
+    load_accounts(root).unwrap().into_iter().find(|a| a.key == KEY).unwrap().password
+}
+
+#[tokio::test]
+async fn reset_on_test_environment_saves_new_password_and_signs_in() {
+    let _log = crate::serial::log_tail();
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "signed in as Automation 51");
+    // The current password was the old one, the alternate the new and its confirmation.
+    assert_eq!(app.typed_into("#txtOldPassword"), [PASSWORD]);
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123"]);
+    assert_eq!(app.typed_into("#txtConfirmPassword"), ["Abc@123"]);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    // The sign-in carried on with the new password; the account holds it.
+    assert_eq!(app.count_of(PASSWORD), 2, "the old password: the first sign-in and the form");
+    assert_eq!(app.count_of("Abc@123"), 3, "new, confirm and the sign-in again");
+    assert_eq!(account_file_password(dir.path()), "Abc@123");
+    let log = v2_lib::applog::recent(6000);
+    assert!(log.iter().any(|l| l.message.contains("the expired password of automation51 was reset")));
+    assert!(!log.iter().any(|l| l.message.contains("Abc@123") || l.message.contains(PASSWORD)));
+    assert!(!out.detail.contains("Abc@123"));
+}
+
+#[tokio::test]
+async fn the_alternate_is_used_when_the_current_password_is_the_first() {
+    let dir = reset_root(true, true);
+    let mut acct = reset_account();
+    acct.password = "Abc@123".into();
+    save_accounts(dir.path(), &[acct.clone()]).unwrap();
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &acct, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Test@1234"]);
+    assert_eq!(account_file_password(dir.path()), "Test@1234");
+}
+
+#[tokio::test]
+async fn no_reset_on_non_test_environment() {
+    let dir = reset_root(false, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(out.detail.contains("Reset expired passwords"), "{}", out.detail);
+    assert!(app.typed_into("#txtNewPassword").is_empty());
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn no_reset_when_switch_off() {
+    let dir = reset_root(true, false);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(is_password_expired(&out.detail));
+    assert!(out.detail.contains("Reset expired passwords"), "{}", out.detail);
+    assert!(app.typed_into("#txtNewPassword").is_empty());
+    assert_eq!(app.submits.load(Ordering::SeqCst), 0);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn refused_new_password_tries_the_next_once() {
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123", "Test@1234"]);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 2);
+    assert_eq!(account_file_password(dir.path()), "Test@1234");
+}
+
+#[tokio::test]
+async fn a_reset_the_site_refuses_every_time_stops_and_leaves_the_password() {
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&[]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_FAILED), "{}", out.detail);
+    assert!(is_password_expired(&out.detail));
+    // Both candidates tried once, then no more: it never loops.
+    assert_eq!(app.submits.load(Ordering::SeqCst), 2);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    assert!(!out.detail.contains("Abc@123") && !out.detail.contains("Test@1234"), "{}", out.detail);
+    no_password_anywhere(&out);
+}

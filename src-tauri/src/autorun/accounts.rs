@@ -200,3 +200,19 @@ pub fn save_accounts_for(root: &Path, env_id: &str, accounts: &[Account]) -> Res
     }
     Ok(dropped)
 }
+
+/// Give one account of one environment a new password, as the app does
+/// after the site accepted a reset of an expired one. Everything else in the
+/// list stays as it is, and the account's saved session goes, as it does
+/// whenever a login changes (`save_accounts_for`). Never says either password.
+pub fn set_password_for(root: &Path, env_id: &str, key: &str, new: &str) -> Result<(), String> {
+    if new.is_empty() {
+        return Err("a new password is needed".to_string());
+    }
+    let mut all = load_accounts_for(root, env_id)?;
+    let Some(account) = all.iter_mut().find(|a| a.key == key) else {
+        return Err(format!("there is no account \"{key}\" on this machine"));
+    };
+    account.password = new.to_string();
+    save_accounts_for(root, env_id, &all).map(|_| ())
+}

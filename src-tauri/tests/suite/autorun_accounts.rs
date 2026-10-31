@@ -139,3 +139,33 @@ fn the_account_for_a_run_is_a_real_key_on_this_machine_or_nothing() {
         "there is no account \"ghost\" on this machine - add it in Auto Run, Accounts"
     );
 }
+
+#[test]
+fn set_password_for_drops_saved_session() {
+    use v2_lib::autorun::accounts::set_password_for;
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1"), account("emp", "lee", "Emp-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    for key in ["admin", "emp"] {
+        let p = session_path(dir.path(), key).unwrap();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{}").unwrap();
+    }
+    set_password_for(dir.path(), &env_id, "admin", "Abc@123").unwrap();
+    let all = load_accounts(dir.path()).unwrap();
+    assert_eq!(all.iter().find(|a| a.key == "admin").unwrap().password, "Abc@123");
+    assert_eq!(all.iter().find(|a| a.key == "emp").unwrap().password, "Emp-Pw1");
+    assert!(!session_path(dir.path(), "admin").unwrap().exists(), "the old login's session was kept");
+    assert!(session_path(dir.path(), "emp").unwrap().exists(), "another account lost its session");
+}
+
+#[test]
+fn set_password_for_an_unknown_account_changes_nothing() {
+    use v2_lib::autorun::accounts::set_password_for;
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    let err = set_password_for(dir.path(), &env_id, "ghost", "Abc@123").unwrap_err();
+    assert!(!err.contains("Abc@123") && !err.contains("Old-Pw1"), "{err}");
+    assert_eq!(load_accounts(dir.path()).unwrap()[0].password, "Old-Pw1");
+}

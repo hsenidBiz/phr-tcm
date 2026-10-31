@@ -2714,6 +2714,7 @@ fn active_environment_section_says_its_scripts_are_its_own() {
         db_auto_approve: false,
         password_expiry_query: String::new(),
         active_session_query: String::new(),
+        reset_expired_passwords: false,
     };
     let text = v2_lib::autorun::guide::active_environment_section(&env, None);
     assert!(
