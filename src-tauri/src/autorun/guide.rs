@@ -302,7 +302,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json`, `timeout_ms`, `not_before_ms`, `started_within_ms` and `same_document` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
-- `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
+- `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "settle_ms": 5000, "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
@@ -640,11 +640,14 @@ depends on. Never repeat a `when_visible` several times for this.
   there after `max` passes fail the action, and the step stops:
   "still 3 rows after max 20 passes". Pick a `max` well above the leftovers you
   expect, not 200 by habit.
-- After each pass the run waits (up to 5 seconds) for the row it worked on
-  to go before it looks again, so a slow delete is not clicked twice.
+- After each pass the loop waits for the page's requests to finish, then
+  for the row to go, up to `settle_ms` (default 5000, at most 30000) -
+  raise it on a slow site. A pass that fails because its row has already
+  gone ends quietly.
 - `then` holds plain actions only, as a `when_visible`'s does: no checks,
   no `when_visible` or another loop, no `sign_in`, `use_component`, tab
-  action or `expire_session`. A `then` action that fails fails the step.
+  action or `expire_session`. A `then` action that fails fails the step,
+  unless its row has already gone.
 - The step's outcome says how many passes ran and what it kept: "ran 3
   passes, none left; kept 2 protected (Customer Focus, Operational
   Excellence)".

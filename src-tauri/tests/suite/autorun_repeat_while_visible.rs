@@ -14,6 +14,7 @@ use crate::common;
 
 use common::{quick, ScriptedDriver};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::autorun::components::ComponentFile;
 use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement};
@@ -72,6 +73,12 @@ struct Rows {
     in_frame: bool,
     /// The read of the except texts fails.
     read_fails: bool,
+    /// The fake clock the driver's idles add to; a confirmed row goes `slow_ms` later.
+    clock: Arc<AtomicU64>,
+    slow_ms: u64,
+    pending: Vec<(usize, u64)>,
+    /// A delete click removes its row at once and no confirm is ever shown.
+    vanish_on_delete: bool,
 }
 
 type Shared = Arc<Mutex<Rows>>;
@@ -101,13 +108,29 @@ fn goal_groups(names: Vec<&'static str>) -> (ScriptedDriver, Shared) {
 }
 
 fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>) -> (ScriptedDriver, Shared) {
+    page_with(names, blind, on_page, 0, false)
+}
+
+/// A page on a fake clock whose confirmed rows go `slow_ms` after the click.
+fn slow_groups(names: Vec<&'static str>, slow_ms: u64) -> (ScriptedDriver, Shared) {
+    page_with(names, false, None, slow_ms, false)
+}
+
+fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, slow_ms: u64, vanish_on_delete: bool) -> (ScriptedDriver, Shared) {
     let n = names.len();
-    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()) }));
+    let clock: Arc<AtomicU64> = Default::default();
+    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()), clock: clock.clone(), slow_ms, pending: vec![], vanish_on_delete }));
     let page = rows.clone();
-    let d = ScriptedDriver::new(move |method, params| {
+    let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         let on = params["objectId"].as_str().unwrap_or("").to_string();
         let mut r = page.lock().unwrap();
+        let now = r.clock.load(Ordering::SeqCst);
+        let due: Vec<usize> = r.pending.iter().filter(|(_, t)| *t <= now).map(|(i, _)| *i).collect();
+        for i in due {
+            r.alive[i] = false;
+        }
+        r.pending.retain(|(_, t)| *t > now);
         Ok(match method {
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
@@ -119,6 +142,7 @@ fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&
                     ("doc", s) if s == ROW_SCOPE => {
                         r.marked.filter(|i| r.alive[*i]).map(|i| format!("row-{i}")).into_iter().collect()
                     }
+                    ("doc", "#confirm") if r.vanish_on_delete => vec![],
                     ("doc", "#confirm") => vec!["confirm".to_string()],
                     (row, ".delete") if row.starts_with("row-") => {
                         index(row).filter(|i| r.alive[*i]).map(|i| format!("del-{i}")).into_iter().collect()
@@ -197,7 +221,11 @@ fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&
                     let i = (x - 100.0) as usize;
                     let said = format!("delete {}", r.names[i]);
                     r.clicks.push(said);
-                    r.armed = Some(i);
+                    if r.vanish_on_delete {
+                        r.alive[i] = false;
+                    } else {
+                        r.armed = Some(i);
+                    }
                 } else if (200.0..300.0).contains(&x) {
                     let i = (x - 200.0) as usize;
                     let said = format!("noop {}", r.names[i]);
@@ -205,7 +233,12 @@ fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&
                 } else {
                     r.clicks.push("confirm".to_string());
                     if let Some(i) = r.armed.take() {
-                        r.alive[i] = false;
+                        if r.slow_ms > 0 {
+                            let due = r.clock.load(Ordering::SeqCst) + r.slow_ms;
+                            r.pending.push((i, due));
+                        } else {
+                            r.alive[i] = false;
+                        }
                     }
                 }
                 json!({})
@@ -213,6 +246,7 @@ fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&
             _ => json!({}),
         })
     });
+    d.idle_clock = Some(clock);
     (d, rows)
 }
 
@@ -651,4 +685,91 @@ async fn a_loop_deletes_nothing_when_the_except_text_read_fails() {
     assert!(!out[0].ok, "{:?}", out[0]);
     assert!(out[0].detail.contains("nothing was deleted"), "{}", out[0].detail);
     assert!(clicks(&rows).is_empty(), "{:?}", clicks(&rows));
+}
+
+// ---- settle_ms and a row that has already gone ------------------------------
+
+fn delete_loop(extra: Value) -> Action {
+    let mut v = json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3,
+        "then": [
+            { "kind": "click", "selector": [ { "css": ROW_SCOPE }, { "css": ".delete" } ] },
+            { "kind": "click", "selector": { "css": "#confirm" } }
+        ]
+    });
+    for (k, x) in extra.as_object().unwrap() {
+        v[k] = x.clone();
+    }
+    action(v)
+}
+
+#[test]
+fn settle_ms_is_checked() {
+    for n in [99, 30001] {
+        let why = delete_loop(json!({ "settle_ms": n })).validate().expect_err("out of range");
+        assert_eq!(why, format!("repeat_while_visible settle_ms is 100 to 30000, not {n}"));
+    }
+    for ok in [json!({ "settle_ms": 100 }), json!({ "settle_ms": 30000 }), json!({})] {
+        delete_loop(ok).validate().expect("in range, or absent");
+    }
+}
+
+#[test]
+fn settle_ms_round_trips_and_is_left_out_when_absent() {
+    let without = serde_json::to_value(delete_loop(json!({}))).unwrap();
+    assert!(without.get("settle_ms").is_none(), "{without}");
+    let with = serde_json::to_value(delete_loop(json!({ "settle_ms": 2500 }))).unwrap();
+    assert_eq!(with["settle_ms"], 2500);
+    let back: Action = serde_json::from_value(with).unwrap();
+    assert!(matches!(back, Action::RepeatWhileVisible { settle_ms: Some(2500), .. }));
+}
+
+#[tokio::test]
+async fn a_slow_row_is_waited_for_up_to_settle_ms() {
+    let (mut d, rows) = slow_groups(vec!["Old A"], 7_000);
+    let out = run(&mut d, vec![delete_loop(json!({ "settle_ms": 10000 }))]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("1 pass"), "{}", out[0].detail);
+    assert!(out[0].detail.contains("none left"), "{}", out[0].detail);
+    assert_eq!(clicks(&rows), vec!["delete Old A", "confirm"]);
+
+    // Without it the wait is the default 5 s, the row is still there, and
+    // the loop takes it again: today's behaviour, pinned.
+    let (mut d, rows) = slow_groups(vec!["Old A"], 7_000);
+    let out = run(&mut d, vec![delete_loop(json!({}))]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("2 passes"), "{}", out[0].detail);
+    assert_eq!(clicks(&rows).len(), 4, "{:?}", clicks(&rows));
+}
+
+#[tokio::test]
+async fn a_pass_whose_row_went_while_it_worked_ends_the_loop() {
+    let (mut d, rows) = page_with(vec!["Old A", "Old B"], false, None, 0, true);
+    let out = run(&mut d, vec![delete_loop(json!({}))]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("the row had already gone"), "{}", out[0].detail);
+    assert!(out[0].detail.contains("none left"), "{}", out[0].detail);
+    assert!(left(&rows).is_empty(), "{:?}", left(&rows));
+}
+
+#[tokio::test]
+async fn a_pass_that_fails_with_its_row_still_there_still_fails() {
+    let (mut d, rows) = goal_groups(vec!["Old A"]);
+    let a = action(json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3,
+        "then": [
+            { "kind": "click", "selector": [ { "css": ROW_SCOPE }, { "css": ".delete" } ] },
+            { "kind": "click", "selector": { "css": "#broken" } }
+        ]
+    }));
+    let out = run(&mut d, vec![a]).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(!out[0].detail.contains("already gone"), "{}", out[0].detail);
+    assert_eq!(left(&rows), vec!["Old A"]);
+}
+
+#[test]
+fn only_a_gone_row_ends_a_failed_pass_quietly() {
+    assert!(v2_lib::autorun::runner::pass_failure_ends_quietly(true));
+    assert!(!v2_lib::autorun::runner::pass_failure_ends_quietly(false));
 }

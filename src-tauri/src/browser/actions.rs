@@ -264,6 +264,10 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         except: Vec<String>,
         then: Vec<Action>,
+        /// How long a pass waits for its row to go once the page's requests
+        /// have finished, 100 to 30000 ms (5000 when left out).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settle_ms: Option<u32>,
     },
     /// Reload the page, as a person pressing F5 would, and wait for it to
     /// load again. Where it lands is the application's business: a page
@@ -937,7 +941,7 @@ pub const NESTED_REPEAT: &str = "repeat_while_visible \"then\" cannot hold anoth
 /// say something, and a `then` of plain actions that - when rows are
 /// protected - acts inside the row the pass works on and never on the
 /// loop's own selector across the whole page.
-fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[Action]) -> Result<(), String> {
+fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[Action], settle_ms: Option<u32>) -> Result<(), String> {
     use super::repeat::{is_row_scoped, ROW_SCOPE};
     match max {
         None => return Err(format!("repeat_while_visible needs max - the most passes it may make, 1 to {REPEAT_MAX}")),
@@ -950,6 +954,9 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
         return Err("repeat_while_visible needs a locator object for selector, not a selector string".to_string());
     }
     selector.validate()?;
+    if let Some(n) = settle_ms.filter(|n| !(100..=30_000).contains(n)) {
+        return Err(format!("repeat_while_visible settle_ms is 100 to 30000, not {n}"));
+    }
     if let Some(i) = except.iter().position(|e| e.trim().is_empty()) {
         return Err(format!("repeat_while_visible except {} is empty - give the protected text", i + 1));
     }
@@ -1565,7 +1572,7 @@ impl Action {
                 selector.validate()?;
                 check_guarded(then)
             }
-            Action::RepeatWhileVisible { selector, max, except, then } => check_repeat(selector, *max, except, then),
+            Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => check_repeat(selector, *max, except, then, *settle_ms),
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key, times } => keys::check(key, *times),
             Action::ExpectRow { table, cells, exact, .. } | Action::ExpectNoRow { table, cells, exact, .. } => {

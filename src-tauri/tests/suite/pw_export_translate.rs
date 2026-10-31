@@ -1757,3 +1757,20 @@ fn the_todo_lines_are_the_cards_expectations() {
         assert_eq!(got, want, "{}", e.name);
     }
 }
+
+/// A delete loop's row wait in the export is the loop's `settle_ms`, or 5 s.
+#[test]
+fn a_repeat_loop_waits_for_its_row_as_long_as_settle_ms() {
+    let loop_with = |extra: Value| {
+        let mut v = json!({
+            "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3,
+            "then": [{ "kind": "click", "selector": { "css": "#confirm" } }]
+        });
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        one_step(json!([v])).run().unwrap()
+    };
+    assert!(loop_with(json!({ "settle_ms": 12000 })).contains("toHaveCount(0, { timeout: 12000 })"));
+    assert!(loop_with(json!({})).contains("toHaveCount(0, { timeout: 5000 })"));
+}

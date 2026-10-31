@@ -1902,13 +1902,16 @@ async fn repeat_while_visible<D: Driver>(
     if let Err(why) = action.validate() {
         return (ActionOutcome::failed(format!("{CANNOT_RUN}{why}")), None);
     }
-    let Action::RepeatWhileVisible { selector, max, except, then } = action else {
+    let Action::RepeatWhileVisible { selector, max, except, then, settle_ms } = action else {
         return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a repeat_while_visible")), None);
     };
     let max = max.unwrap_or(1);
     let target = selector.describe();
     let scoped = then.iter().any(|a| a.targets().into_iter().any(repeat::is_row_scoped));
     let mut passes: u32 = 0;
+    let row_wait_ms = settle_ms.map_or(ROW_GONE_WAIT_MS, u64::from);
+    // What passes ended quietly because their row had already gone.
+    let mut notes: Vec<String> = Vec::new();
     loop {
         if passes > 0 && here.stop_heard() {
             return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
@@ -1943,7 +1946,8 @@ async fn repeat_while_visible<D: Driver>(
         let Some(next) = open.first() else {
             let said = passes_said(passes);
             let kept_said = kept_said(&kept);
-            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}")), None);
+            let noted = if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) };
+            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}{noted}")), None);
         };
         if (!except.is_empty() || scoped) && !next.row {
             let why = format!(
@@ -1967,6 +1971,7 @@ async fn repeat_while_visible<D: Driver>(
         };
         passes += 1;
         let mut said: Vec<String> = Vec::with_capacity(then.len());
+        let mut quiet = false;
         for step in then {
             if here.stop_heard() {
                 repeat::unmark(d).await;
@@ -1976,28 +1981,50 @@ async fn repeat_while_visible<D: Driver>(
                 Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, account, timing).await,
                 _ => plain(d, here, step, timing).await,
             };
-            said.push(out.detail);
+            said.push(out.detail.clone());
             if !out.ok {
+                // A pass whose row has already gone did its work: what it
+                // still had to do was for a row that is no longer there.
+                let gone = marked && stop.is_none() && !out.harness && matches!(repeat::row_still_there(d).await, Ok(false));
+                if pass_failure_ends_quietly(gone) {
+                    notes.push(format!("pass {passes}: the row had already gone ({})", out.detail));
+                    quiet = true;
+                    break;
+                }
                 repeat::unmark(d).await;
                 let mut failed = ActionOutcome::failed(format!("{target}, pass {passes}: {}", said.join("; ")));
                 failed.harness = out.harness;
                 return (failed, stop);
             }
         }
-        // The page may take a moment to drop the row the pass worked on:
-        // the next look waits for that, up to the expect wait, so the same
-        // row is not taken twice while it goes.
-        if marked {
-            let until = Instant::now() + Duration::from_millis(timing.expect_ms.min(ROW_GONE_WAIT_MS));
-            while matches!(repeat::row_still_there(d).await, Ok(true)) && Instant::now() < until {
+        // The delete's own request finishes first, then the page may take a
+        // moment to drop the row the pass worked on: the next look waits
+        // for that, up to `settle_ms`, so the same row is not taken twice
+        // while it goes.
+        crate::browser::actions::settle(d, timing).await;
+        if marked && !quiet {
+            let began = Instant::now();
+            let mut waited: u64 = 0;
+            while matches!(repeat::row_still_there(d).await, Ok(true))
+                && waited.max(began.elapsed().as_millis() as u64) < row_wait_ms
+            {
                 d.idle(Duration::from_millis(timing.poll_ms)).await;
+                waited += timing.poll_ms;
             }
         }
         repeat::unmark(d).await;
     }
 }
 
-/// The longest a `repeat_while_visible` pass waits for its row to go.
+/// Whether a failed `then` action ends its pass quietly: when the marked
+/// row has already gone, what the pass was still doing was for a row that
+/// is no longer there (a second confirm the page never showed).
+pub fn pass_failure_ends_quietly(row_gone: bool) -> bool {
+    row_gone
+}
+
+/// The longest a `repeat_while_visible` pass waits for its row to go
+/// unless the loop says `settle_ms`.
 pub const ROW_GONE_WAIT_MS: u64 = 5_000;
 
 fn passes_said(n: u32) -> String {

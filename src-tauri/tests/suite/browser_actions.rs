@@ -643,7 +643,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         // A guard is a tidy-up, never a check - even holding one.
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
-        Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }] },
+        Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }], settle_ms: None },
         Action::ExpectDownload {
             name: "report.csv".into(),
             within_ms: None,

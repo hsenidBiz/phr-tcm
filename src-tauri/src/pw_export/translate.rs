@@ -1235,7 +1235,7 @@ impl Em<'_> {
     /// marks the first other one's row with `data-autorun-row` and runs the
     /// `then` actions, whose row-scoped locators resolve inside it. It ends
     /// when none is left and throws once `max` passes left some.
-    fn repeat(&mut self, selector: &Target, max: Option<u32>, except: &[String], then: &[Action], indent: usize) -> Res<()> {
+    fn repeat(&mut self, selector: &Target, max: Option<u32>, except: &[String], then: &[Action], settle_ms: Option<u32>, indent: usize) -> Res<()> {
         use crate::browser::repeat::{KEPT_OF_JS, ROW_OF_JS, ROW_SCOPE};
         let Some(max) = max else {
             return no("repeat_while_visible without max cannot be exported");
@@ -1289,7 +1289,7 @@ impl Em<'_> {
             &format!(
                 "await expect({}).toHaveCount(0, {{ timeout: {} }}).catch(() => {{}});",
                 locator("cur", &Target::Legacy(ROW_SCOPE.to_string())),
-                crate::autorun::runner::ROW_GONE_WAIT_MS
+                settle_ms.map_or(crate::autorun::runner::ROW_GONE_WAIT_MS, u64::from)
             ),
         );
         self.line(i, "}");
@@ -1743,7 +1743,7 @@ impl Em<'_> {
                 }
                 self.line(indent, "}");
             }
-            Action::RepeatWhileVisible { selector, max, except, then } => self.repeat(selector, *max, except, then, indent)?,
+            Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => self.repeat(selector, *max, except, then, *settle_ms, indent)?,
             Action::ExpectResponse {
                 method, url_contains, status, json, timeout_ms, not_before_ms, started_within_ms, same_document, ..
             } => {
