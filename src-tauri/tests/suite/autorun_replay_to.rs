@@ -3163,7 +3163,8 @@ async fn a_landing_page_that_will_not_load_falls_back_to_the_start_page() {
 }
 
 /// The recipe's `after_sign_in` runs again on the landing page, and the
-/// landing page is kept without a query string.
+/// landing page is kept whole, query string and fragment included: an app
+/// routed by them would otherwise land somewhere else.
 #[tokio::test]
 async fn a_reset_reruns_after_sign_in_on_the_landing_page() {
     use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
@@ -3172,10 +3173,66 @@ async fn a_reset_reruns_after_sign_in_on_the_landing_page() {
     project(dir.path(), &script(three_steps()));
     with_after_sign_in(dir.path());
     let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing?ticket=abc").await;
-    assert_eq!(slot.as_ref().unwrap().lease.landing(), Some("https://hr.example.internal/hr/home/landing"));
+    assert_eq!(slot.as_ref().unwrap().lease.landing(), Some("https://hr.example.internal/hr/home/landing?ticket=abc"));
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
     assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
     assert_eq!(log(&app), vec!["navigate /hr/home/landing".to_string(), "click #menu".to_string()]);
+}
+
+/// `answering_first` for a marker that shows on every page but the landing
+/// page (`/hr/home/landing`): the page the sign-in ended on lacks it.
+fn marker_missing_on_landing(b: &mut Kept, everywhere: bool) {
+    let on_landing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    answering_first(b, move |method, params| match method {
+        "Page.navigate" => {
+            on_landing.store(params["url"].as_str().is_some_and(|u| u.contains("/hr/home/landing")), Ordering::SeqCst);
+            None
+        }
+        "Runtime.callFunctionOn" if params["arguments"][0]["value"] == "#marker" && (everywhere || on_landing.load(Ordering::SeqCst)) => {
+            Some(Ok(json!({ "result": { "objectId": "no-marker" } })))
+        }
+        "Runtime.getProperties" if params["objectId"] == "no-marker" => Some(Ok(json!({ "result": [] }))),
+        _ => None,
+    });
+}
+
+/// A landing page whose signed-in marker does not show (the steps after
+/// sign-in moved on to a page without it) is no sign-in gone: the reset
+/// forgets the landing page and loads the start page in the same reset.
+#[tokio::test]
+async fn a_landing_page_without_the_marker_falls_back_to_the_start_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    marker_missing_on_landing(slot.as_mut().unwrap(), false);
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    let navigations: Vec<String> = log(&app).into_iter().filter(|l| l.starts_with("navigate")).collect();
+    assert_eq!(navigations, vec!["navigate /hr/home/landing".to_string(), "navigate /hr/home/index".to_string()]);
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(b.lease.landing(), None, "the landing page without the marker was kept");
+    assert_eq!(b.account.as_deref(), Some("admin"), "the sign-in was reported gone");
+}
+
+/// Only when the start page does not show the marker either is the sign-in
+/// gone.
+#[tokio::test]
+async fn a_sign_in_whose_start_page_also_lacks_the_marker_is_gone() {
+    use v2_lib::commands::autorun::reset_in_for_assistant;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    marker_missing_on_landing(slot.as_mut().unwrap(), true);
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::HomeNeverSignedIn).as_str()), "{:?}", log(&app));
+    let navigations: Vec<String> = log(&app).into_iter().filter(|l| l.starts_with("navigate")).collect();
+    assert_eq!(navigations, vec!["navigate /hr/home/landing".to_string(), "navigate /hr/home/index".to_string()]);
+    assert_eq!(slot.as_ref().unwrap().account, None);
 }
 
 /// A landing page goes with the sign-in it belongs to, and is only noted
@@ -3385,7 +3442,7 @@ fn page(path: &str) -> (String, String, u32) {
     (path.to_string(), "main".to_string(), 0)
 }
 
-/// The stand case `a` left after a whole replay: a checkpoint after each of
+/// The stand case `a` left after a partial replay (to its fifth step): a checkpoint after each of
 /// its four steps, all on the Leave page.
 fn left_by(a: &CaseScript) -> ReplayStand {
     ReplayStand::of(a, 5, HERE, AT, (1..=4).map(|k| cp(a, k, HERE, false)).collect())
@@ -3498,8 +3555,8 @@ fn a_new_stand_keeps_the_checkpoints_it_still_stands_after() {
     assert!(v2_lib::autorun::replay_to::wrote_before(None, 3), "no checkpoint to say: it is taken to have saved");
 }
 
-/// A whole replay of `case` in `d`, learning back its checkpoints.
-async fn whole_replay(
+/// A replay of `case` (five steps) to its last step in `d`, learning back its checkpoints.
+async fn replay_to_step_five(
     d: &mut ScriptedDriver,
     root: &Path,
     case: &CaseScript,
@@ -3545,7 +3602,7 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
     let (mut d, app) = app();
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
 
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { whole: None, .. }), "{end:?} {:?}", log(&app));
     assert_eq!(
         marks.checkpoints.iter().map(|c| (c.k, c.wrote)).collect::<Vec<_>>(),
@@ -3597,7 +3654,7 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     let (mut d, app) = app();
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
 
-    let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (_, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let now = page_state(&mut d).await;
     let stand_a = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints);
     let from = carry_across(Some(&stand_a), &b, 5, &now, AT + 1);
@@ -3705,7 +3762,7 @@ async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across
     d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
 
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     assert_eq!(marks.unclean, Some(Unclean::Saved));
     assert_eq!(marks.checkpoints.iter().map(|c| c.wrote).collect::<Vec<_>>(), vec![false, false, false, true]);
@@ -3729,7 +3786,7 @@ async fn a_look_only_replay_never_reports_a_save_but_is_not_carried_on_from() {
     let mut d = d.with_net_record();
     d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     // Never "saved", but the page sent a write the guard let through: the next
     // case still starts from the beginning, and the sentence says so truthfully.
@@ -3757,7 +3814,7 @@ async fn a_look_only_case_carried_on_after_a_post_never_says_saved() {
     let (d, _app) = app();
     let mut d = d.with_net_record();
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, _) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, _) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     let r = ReplayRequest { case_id: 77, step: 5, db_read_access: false };
     let state = ReplayState::new();
@@ -3782,7 +3839,7 @@ async fn a_replay_with_no_network_record_cannot_rule_a_save_out() {
     let (mut d, _app) = app();
     d.no_record = true;
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(marks.unclean, Some(Unclean::Unrecorded));
 }
@@ -3808,7 +3865,7 @@ async fn a_replay_that_opened_another_tab_even_one_it_closed_is_not_carried_acro
         vec![],
     ));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     assert_eq!(marks.unclean, Some(Unclean::Tabs));
 }
@@ -3824,7 +3881,7 @@ async fn a_save_once_seen_stays_seen_at_every_later_checkpoint() {
     let mut d = d.with_net_record();
     d.events_when = Some((post_after_clicking(&app, "#s2"), vec![a_post()]));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (_, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let wrote: Vec<bool> = marks.checkpoints.iter().map(|c| c.wrote).collect();
     assert_eq!(wrote, vec![false, true, true, true], "{wrote:?}");
 }
@@ -4020,6 +4077,30 @@ async fn a_fired_guard_files_its_then_as_seen() {
     assert_eq!(seen.matched, 1);
     // The guard's own selector is no `then` target: nothing is filed for it.
     assert!(!area.sightings.iter().any(|s| s.key == v2_lib::browser::locator::SeenKey::Css("#banner".into())));
+}
+
+/// A script with no area files nothing for its guards: it would count for
+/// every area. With an area the same fired guard is filed.
+#[tokio::test]
+async fn a_fired_guard_in_a_script_with_no_area_files_nothing() {
+    use v2_lib::browser::actions::{Action, ActionOutcome};
+    use v2_lib::browser::locator::SeenKey;
+    let guard: Action = serde_json::from_value(json!({
+        "kind": "when_visible", "selector": { "css": "#banner" }, "then": [click("#activate")]
+    }))
+    .unwrap();
+    let filed = |dir: &Path| {
+        let map = v2_lib::autorun::discovery_map::load_map(dir, "acme", "Web").unwrap_or_default();
+        map.areas.iter().flat_map(|a| &a.sightings).any(|s| s.key == SeenKey::Css("#activate".into()))
+    };
+    for (area, expect) in [(None, false), (Some("  ".to_string()), false), (Some("Leave".to_string()), true)] {
+        let dir = tempfile::tempdir().unwrap();
+        project(dir.path(), &script(json!([{ "step_number": 1, "actions": [click("#s1")] }])));
+        let (mut d, _app) = app();
+        let outcomes = [ActionOutcome::passed("#banner showed: ok".to_string())];
+        v2_lib::ai_bridge::file_guard_finds(&mut d, dir.path(), "acme", "Web", area.clone(), std::slice::from_ref(&guard), &outcomes).await;
+        assert_eq!(filed(dir.path()), expect, "area {area:?}");
+    }
 }
 
 /// A fired guard's `wait_for` is filed too (count not known), a `then` that

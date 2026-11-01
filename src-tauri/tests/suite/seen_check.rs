@@ -3814,3 +3814,79 @@ fn a_guarded_clean_up_then_seen_another_way_is_still_refused() {
     assert_eq!(check_seen(&map, &none(), &wait, &[], None), Ok(()));
     assert_eq!(guarded_cleanup_notes(&map, &none(), &wait, &[], None, &[]).len(), 1);
 }
+
+/// "Click it if it shows": the guard's selector and its `then` click are
+/// the same locator. A probe that matched none satisfies the selector, and
+/// the click then waits for the guard like any other `then` target.
+#[test]
+fn a_clean_up_guard_clicking_its_own_selector_saves_with_a_note() {
+    use v2_lib::autorun::seen_check::guarded_cleanup_notes;
+    let activate = css("#activate");
+    let s = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [] },
+            { "step_number": 2, "cleanup": true, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#activate" }, "then": [click(serde_json::json!({ "css": "#activate" }))] }
+            ] }
+        ]),
+    );
+    // Probed while hidden: matched none, never one.
+    let hidden = sighted_matching("Cycles", activate.clone(), 0);
+    assert_eq!(check_seen(&hidden, &none(), &s, &[], None), Ok(()));
+    let notes = guarded_cleanup_notes(&hidden, &none(), &s, &[], None, &[]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("step 2: #activate"), "{notes:?}");
+    // The guard's selector, never probed at all, is still refused.
+    assert!(check_seen(&nothing_seen(), &none(), &s, &[], None).is_err());
+    // Seen matching one, it needs no note.
+    let shown = map_with("Cycles", "/cycles", &[activate]);
+    assert_eq!(check_seen(&shown, &none(), &s, &[], None), Ok(()));
+    assert!(guarded_cleanup_notes(&shown, &none(), &s, &[], None, &[]).is_empty());
+}
+
+/// A `then` target the writer probed while it was hidden (matched none) is
+/// still one nobody has seen: the probe does not end the wait for its guard.
+#[test]
+fn a_clean_up_guard_target_probed_while_hidden_still_waits() {
+    use v2_lib::autorun::seen_check::guarded_cleanup_notes;
+    let map = joined(
+        map_with("Cycles", "/cycles", &[css("#banner")]),
+        sighted_matching("Cycles", role("button", "Activate"), 0),
+    );
+    let s = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [] },
+            { "step_number": 2, "cleanup": true, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" },
+                  "then": [click(serde_json::json!({ "role": "button", "name": "Activate" }))] }
+            ] }
+        ]),
+    );
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
+    let notes = guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("step 2: button \"Activate\""), "{notes:?}");
+}
+
+/// A `then` target holding a data placeholder is never filed when the guard
+/// fires, so waiting for the guard would prove nothing: it keeps the
+/// normal rule.
+#[test]
+fn a_clean_up_guard_target_with_a_placeholder_is_not_deferred() {
+    use v2_lib::autorun::seen_check::guarded_cleanup_notes;
+    let map = map_with("Cycles", "/cycles", &[css("#banner")]);
+    let s = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [] },
+            { "step_number": 2, "cleanup": true, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" },
+                  "then": [click(serde_json::json!({ "role": "button", "name": "Remove {{setup.name}}" }))] }
+            ] }
+        ]),
+    );
+    assert!(check_seen(&map, &none(), &s, &[], None).is_err());
+    assert!(guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]).is_empty());
+}

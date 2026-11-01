@@ -2874,6 +2874,53 @@ async fn a_repair_quirk_refused_at_the_cap_leads_the_answer() {
     assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), MAX_QUIRKS);
 }
 
+/// Several repair quirks refused at the cap: each has its own leading line
+/// (quoted, with the short reason), and the retire advice and the candidates
+/// are said once, after them - not once per quirk.
+#[tokio::test]
+async fn several_repair_quirks_refused_at_the_cap_name_the_candidates_once() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, MAX_QUIRKS};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"]), (8, "Save a rating", &["", "A toast says Saved"])]).await;
+    // Cases 7 and 8 are the same script: one entry per case in "edits".
+    let both = |selector: &str| {
+        let mut two = case_7(selector, "Saved");
+        let mut eight = two[0].clone();
+        eight["case_id"] = serde_json::json!(8);
+        two.as_array_mut().unwrap().push(eight);
+        two
+    };
+    see_scripts(dir.path(), &both("#toast").to_string());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &both("#toast").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let list: Vec<Quirk> =
+        (0..MAX_QUIRKS).map(|i| Quirk::new(&format!("note {i}"), "assistant", "autorun", 100 + i as u64)).collect();
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+    let body = serde_json::json!({
+        "scripts": both(".toast"),
+        "edits": [
+            { "case_id": 7, "steps": [2], "why": "the toast has no id", "quirk": "the toast is rendered into a portal" },
+            { "case_id": 8, "steps": [2], "why": "the toast has no id", "quirk": "the toast fades after three seconds" },
+        ],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with("quirk not recorded: \"the toast is rendered into a portal\" - "), "{out}");
+    assert!(lines[1].starts_with("quirk not recorded: \"the toast fades after three seconds\" - "), "{out}");
+    for line in &lines[..2] {
+        assert!(line.contains("already has") && !line.contains("Best candidates"), "{out}");
+    }
+    assert_eq!(out.matches("Best candidates").count(), 1, "{out}");
+    assert_eq!(out.matches("Oldest of the others").count(), 1, "{out}");
+    assert!(lines[2].contains("record_quirk { retire: id") && lines[2].contains("Best candidates"), "{out}");
+}
+
 /// A repair save with one `quirk`, on a fresh project (a person's retired
 /// notes given first); the answer to it.
 async fn repair_save_answer(dir: &TempDir, retired_by_person: &[&str], quirk: &str) -> String {

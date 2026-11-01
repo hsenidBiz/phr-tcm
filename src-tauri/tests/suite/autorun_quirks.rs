@@ -789,3 +789,17 @@ fn an_old_quirks_file_without_a_class_loads_unchanged() {
     save_quirks(dir.path(), "Acme", "Web", &list).unwrap();
     assert!(!std::fs::read_to_string(&path).unwrap().contains("class"));
 }
+
+/// `is_cap_refusal` reads the text `cap_refusal` writes, in both the
+/// assistant's and the person's wording, and nothing else.
+#[test]
+fn is_cap_refusal_matches_the_real_cap_refusal_text() {
+    use v2_lib::autorun::quirks::is_cap_refusal;
+    let list = full_list();
+    assert!(is_cap_refusal(&cap_refusal(&list, Some(RETIRE_TOOL))));
+    assert!(is_cap_refusal(&cap_refusal(&list, None)));
+    // As the bridge hands it over: the last full stop trimmed.
+    assert!(is_cap_refusal(cap_refusal(&list, Some(RETIRE_TOOL)).trim_end_matches('.')));
+    assert!(!is_cap_refusal("a person retired this note; ask them to restore it."));
+    assert!(!is_cap_refusal("a quirk is at most 300 characters"));
+}

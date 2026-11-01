@@ -1917,10 +1917,13 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
         }
     }
     let mut home = crate::autorun::nav::load_home(p.driver, &to, timing).await;
-    // A landing page that will not load is forgotten and the start page
-    // loaded in its place, in this same reset: a reset never sticks on an
-    // address that no longer opens.
-    if used_landing && !home.ok && !home.harness && home.detail != crate::autorun::nav::HOME_NEVER_SIGNED_IN
+    // A landing page that will not load, or whose signed-in marker never
+    // shows (the steps after sign-in can end on a page without it), is
+    // forgotten and the start page loaded in its place, in this same reset:
+    // a reset never sticks on an address that no longer opens. The sign-in
+    // is reported gone only if the start page does not show the marker
+    // either.
+    if used_landing && !home.ok && !home.harness
         && !home.detail.starts_with(crate::autorun::nav::AFTER_SIGN_IN_STOPPED_AT_HOME)
     {
         p.lease.note_landing(None);

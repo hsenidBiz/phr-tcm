@@ -1444,7 +1444,8 @@ fn gives_up_naming_more_than_the_repair_removes_is_refused() {
     );
     // Naming a check the repair keeps matches nothing it removes.
     let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
-    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the old step 2 has none")), "{r:?}");
+    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the repair keeps every expect_visible check on step 2")), "{r:?}");
+    assert!(!r.iter().any(|l| l.contains("the old step 2 has none")), "{r:?}");
     // A kind the old step lacks is a different refusal.
     let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_text", "step 4 already proves it")]);
     assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_text check, and the old step 2 has none")), "{r:?}");
@@ -1886,9 +1887,10 @@ fn a_gives_up_entry_must_match_a_check_actually_removed() {
     // The count is still there: naming it gives up nothing real.
     let r = repair(&old, &new, &[give(2, "expect_count", "step 4 already counts the same rows")]);
     assert!(
-        r.contains(&"step 2: gives_up names a expect_count check, and the old step 2 has none - name the kind of a check the repair removes".to_string()),
+        r.contains(&"step 2: gives_up names a expect_count check, and the repair keeps every expect_count check on step 2 - name only the checks it removes".to_string()),
         "{r:?}"
     );
+    assert!(!r.iter().any(|l| l.contains("the old step 2 has none")), "{r:?}");
     assert!(r.iter().any(|l| l.starts_with("step 2: the repair removes 1 of its checks and gives_up names 0")), "{r:?}");
     // The text is what went.
     let r = repair(&old, &new, &[give(2, "expect_text", "step 4 already proves the text")]);
@@ -2274,7 +2276,7 @@ fn gives_up_cannot_name_a_timing_the_repair_keeps_or_the_old_step_never_had() {
     let old = search_script(json!({ "not_before_ms": 800 }), json!([]));
     let r = search_repair(&old, &old, &[give(3, "not_before_ms", "step 5 times it")]);
     assert!(
-        r.iter().any(|l| l.starts_with("step 3: gives_up names a not_before_ms check, and the old step 3 has none")),
+        r.iter().any(|l| l.starts_with("step 3: gives_up names a not_before_ms check, and the repair keeps every not_before_ms check on step 3")),
         "{r:?}"
     );
     let r = search_repair(&old, &old, &[give(3, "same_document", "step 5 proves it")]);

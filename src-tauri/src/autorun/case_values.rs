@@ -1259,9 +1259,15 @@ pub fn check_repair_values(
             // the count test below, which says how many go. A kind it removes none of keeps the
             // refusal below.
             None if !is_timing_field(&kind) && removed_kinds(old, new, n).contains(&kind) => excess.push(n),
+            // The entry passed `gives_up_refusal`, so the old step has this kind: the repair either keeps
+            // every one of them, or removes fewer than the entries name (a timing field).
             None => push(
                 &mut out,
-                format!("step {n}: gives_up names a {kind} check, and the old step {n} has none - name the kind of a check the repair removes"),
+                if removed_kinds(old, new, n).contains(&kind) {
+                    format!("step {n}: gives_up names a {kind} check more times than the repair removes it - name only the checks it removes")
+                } else {
+                    format!("step {n}: gives_up names a {kind} check, and the repair keeps every {kind} check on step {n} - name only the checks it removes")
+                },
             ),
         }
     }

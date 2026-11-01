@@ -4198,7 +4198,11 @@ async fn file_step_finds<D: crate::browser::cdp::Driver>(
     }
     let Ok((expanded, _)) = crate::autorun::components::expand_step(root, organization, project, actions) else { return };
     let mut finds = if components { component_finds(&expanded, outcomes) } else { Vec::new() };
-    finds.extend(guard_finds(&expanded, outcomes));
+    // A guard's finds are filed under the script's area: with none, they
+    // would count for every area, so nothing is filed.
+    if area.as_deref().is_some_and(|a| !a.trim().is_empty()) {
+        finds.extend(guard_finds(&expanded, outcomes));
+    }
     if finds.is_empty() {
         return;
     }
@@ -13546,20 +13550,10 @@ pub async fn save_autorun_scripts_carrying(
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 // A clean-up guard's target nobody has seen yet is checked
                 // when the guard first fires: said here, never a refusal.
-                let guarded = cases
-                    .iter()
-                    .find(|c| c.id == *case_id)
-                    .map(|case| {
-                        crate::autorun::seen_check::guarded_cleanup_notes(
-                            &map,
-                            &components,
-                            script,
-                            &case_step_text(case),
-                            only.as_deref(),
-                            &files,
-                        )
-                    })
-                    .unwrap_or_default();
+                // A case the save does not hold is read as having no text: the
+                // note is still said.
+                let text = cases.iter().find(|c| c.id == *case_id).map(case_step_text).unwrap_or_default();
+                let guarded = crate::autorun::seen_check::guarded_cleanup_notes(&map, &components, script, &text, only.as_deref(), &files);
                 let sentences = guarded
                     .into_iter()
                     .chain(crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref()))
@@ -13760,7 +13754,8 @@ pub async fn save_autorun_scripts_carrying(
     // answer.
     // Each quirk keeps the case and steps of its repair, and the class of
     // the failure that led to it, so later runs can say whether it helped.
-    let mut refused_quirks: Vec<String> = Vec::new();
+    // Each refused one: its quote, why, and whether it is the cap's refusal.
+    let mut refused: Vec<(String, String, bool)> = Vec::new();
     for edit in &edits {
         let Some(text) = edit.quirk.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
@@ -13795,16 +13790,32 @@ pub async fn save_autorun_scripts_carrying(
                 // retire-one-and-record-again answer, the rest keep their
                 // own advice.
                 let quoted: String = text.trim().lines().next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
-                let why = why.trim_end_matches('.');
-                let again = if crate::autorun::quirks::is_cap_refusal(why) {
-                    " Retire one and record it again with record_quirk."
-                } else {
-                    ""
-                };
-                refused_quirks.push(format!("quirk not recorded: \"{quoted}\" - {why}.{again}"))
+                let why = why.trim_end_matches('.').to_string();
+                let cap = crate::autorun::quirks::is_cap_refusal(&why);
+                refused.push((quoted, why, cap));
             }
         }
     }
+    // With several refused at the cap, the retire advice and the list of
+    // what to retire are the same for each: said once, after their lines.
+    let several = refused.iter().filter(|(_, _, cap)| *cap).count() > 1;
+    let mut refused_quirks: Vec<String> = Vec::new();
+    let mut advice: Option<String> = None;
+    for (quoted, why, cap) in &refused {
+        let again = if *cap { " Retire one and record it again with record_quirk." } else { "" };
+        match why.split_once(" - ").filter(|_| *cap && several) {
+            Some((reason, rest)) => {
+                advice.get_or_insert_with(|| {
+                    let mut chars = rest.chars();
+                    let first = chars.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+                    format!("{first}{}.", chars.as_str())
+                });
+                refused_quirks.push(format!("quirk not recorded: \"{quoted}\" - {reason}.{again}"));
+            }
+            None => refused_quirks.push(format!("quirk not recorded: \"{quoted}\" - {why}.{again}")),
+        }
+    }
+    refused_quirks.extend(advice);
     refused_quirks.extend(report);
     answer((200, refused_quirks.join("\n")))
 }

@@ -108,14 +108,17 @@
 //! and any count, none included (`seen_many`, `takes_none`); a target in
 //! its `then` keeps its own action's rule. One exception, in the script's
 //! clean-up step only: a target inside the `then` of a `when_visible` there
-//! (other than the guard's own locator) that was never seen is not refused.
+//! (the guard's own selector excepted, but the same locator in its `then`
+//! included) that no sighting found is not refused.
 //! The save notes that it is checked the first time its guard fires
 //! (`guarded_cleanup_notes`), and a run or replay in which the guard fires
 //! and the `then` action works files that target as seen, matching one, in
 //! the script's area (`ai_bridge::guard_finds`; a `wait_for` is filed with
-//! its count not known). Only a target with no sighting at all waits for
-//! its guard: one seen in any way (matching several, only in checks)
-//! keeps its refusal and hint, and so does a `page_until`'s locator.
+//! its count not known). Only a target no sighting found matching anything
+//! waits for its guard (a probe that matched none, taken while it was hidden,
+//! does not end the wait): one seen matching one or more (several, or only in
+//! checks) keeps its refusal and hint, and so does a `page_until`'s locator
+//! and a target holding a placeholder, which is never filed.
 //! Every other locator keeps its rule.
 //!
 //! A refused save names every locator never seen at once, in step order,
@@ -2371,8 +2374,10 @@ struct InputLocator {
     /// child inside its list), not link by link.
     whole: bool,
     /// Whether it is a target in the `then` of a `when_visible` in the
-    /// clean-up step (other than the guard's own locator): left unseen, it
-    /// is not refused but checked when the guard first fires.
+    /// clean-up step (a `then` target equal to the guard's selector
+    /// included, but not the selector itself): left without a sighting
+    /// matching anything, it is not refused but checked when the guard
+    /// first fires.
     in_cleanup_guard: bool,
 }
 
@@ -2549,8 +2554,7 @@ fn scan_deferring(
                                 && !matches!(
                                     action,
                                     Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. } | Action::PageUntil { .. }
-                                )
-                                && !guards(top, t),
+                                ),
                         })
                     })
                     .collect();
@@ -2630,9 +2634,19 @@ fn scan_deferring(
                         continue;
                     }
                     if let Some(link) = first_unseen(&n.links, &chain, seen.for_use(n.many, legacy, n.none), &own) {
-                        // Only a target with no sighting at all waits for its guard:
-                        // one seen in any other way keeps its refusal and hint.
-                        if n.in_cleanup_guard && !seen.none.has(link, true) && !seen.none_whole(&chain, true) {
+                        // Only a target no sighting found (a probe that matched
+                        // none is consistent with "not shown today") waits for
+                        // its guard: one seen matching one or more, or only in
+                        // checks, keeps its refusal and hint. A target holding a
+                        // placeholder is never filed when the guard fires, so it
+                        // keeps the normal rule.
+                        if n.in_cleanup_guard
+                            && !n.links.iter().any(link_holds_placeholder)
+                            && !seen.any.has(link, true)
+                            && !seen.many_wholes.iter().chain(&seen.each_wholes).any(|w| {
+                                w.len() == chain.len() && w.iter().zip(&chain).all(|(a, b)| same_link_filled(a, b))
+                            })
+                        {
                             deferred.push((step.step_number, n.target.describe()));
                             continue;
                         }
