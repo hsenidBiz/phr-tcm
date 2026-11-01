@@ -268,3 +268,13 @@ fn a_delete_picked_by_has_text_is_not_a_positional_pick() {
     let notes = positional(&by_position, None, None);
     assert!(notes[0].contains("has_text"), "{notes:?}");
 }
+
+#[test]
+fn the_delete_after_check_note_allows_a_delete_the_case_asks_for() {
+    let notes = after_check(&delete_after_check_script(), None, None);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("unless the case asks for the delete") && notes[0].contains("add a guarded fallback to the clean-up"),
+        "{notes:?}"
+    );
+}
