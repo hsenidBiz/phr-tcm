@@ -860,6 +860,24 @@ pub fn set_checked(root: &Path, case_id: i32, checked: bool) -> Result<(), Strin
     write_script(root, &script)
 }
 
+/// Take `entries` off a case's `unfired_guards`, and nothing else: the script is read again under
+/// the scripts lock, so another writer's save is never overwritten by a copy read earlier, and
+/// only the entries named go. Says whether the script was written; nothing is written when none
+/// of them is on the saved script, or the case has no script here.
+pub fn remove_unfired_guards(root: &Path, case_id: i32, entries: &[String]) -> Result<bool, String> {
+    let _held = scripts_lock();
+    let Some(mut script) = load_script(root, case_id)? else {
+        return Ok(false);
+    };
+    let before = script.unfired_guards.len();
+    script.unfired_guards.retain(|e| !entries.contains(e));
+    if script.unfired_guards.len() == before {
+        return Ok(false);
+    }
+    write_script(root, &script)?;
+    Ok(true)
+}
+
 /// Remove a case's mark, but only when the mark on disk is on
 /// `step_number`, and say whether it was removed. The check and the write
 /// happen together under the scripts lock, so a mark that moved to another

@@ -3794,6 +3794,39 @@ fn a_guarded_clean_up_then_saves_unseen_with_a_note() {
     assert!(notes[0].contains("in the clean-up's when_hidden was not seen"), "{notes:?}");
 }
 
+/// What a save keeps in `unfired_guards`: one "step N: <locator>" per deferred
+/// target, the old entries of steps the save did not look at, and nothing for a
+/// target a later save no longer defers.
+#[test]
+fn a_save_keeps_its_deferred_targets_as_unfired_entries() {
+    use v2_lib::autorun::seen_check::{guarded_cleanup_deferred, guarded_cleanup_notes, merged_unfired};
+    let map = map_with("Cycles", "/cycles", &[css("#banner")]);
+    let activate = click(serde_json::json!({ "role": "button", "name": "Activate" }));
+    let s = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [] },
+            { "step_number": 2, "cleanup": true, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" }, "then": [activate] }
+            ] }
+        ]),
+    );
+    let deferred = guarded_cleanup_deferred(&map, &none(), &s, &[], None, &[]);
+    let list = merged_unfired(&[], None, &deferred);
+    // Exactly the opening of the note.
+    let notes = guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]);
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(notes[0].starts_with(&format!("{}", list[0])), "{list:?} {notes:?}");
+    assert_eq!(list[0], "step 2: button \"Activate\"");
+    // Saved twice, still once.
+    assert_eq!(merged_unfired(&list, None, &deferred), list);
+    // A repair that looked only at step 1 keeps step 2's entry.
+    assert_eq!(merged_unfired(&list, Some(&[1]), &[]), list);
+    // A save of step 2 that no longer defers it drops it; a whole save too.
+    assert!(merged_unfired(&list, Some(&[2]), &[]).is_empty());
+    assert!(merged_unfired(&list, None, &[]).is_empty());
+}
+
 /// Only a target with no sighting at all waits for its guard: one seen
 /// matching several keeps its refusal and hint, and a `page_until`'s locator
 /// keeps its rule. A `wait_for` in the `then` waits like a click.

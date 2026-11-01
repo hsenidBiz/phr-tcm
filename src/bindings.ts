@@ -759,6 +759,14 @@ export const commands = {
 	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
 	 */
 	checks?: number,
+	/**
+	 *  Clean-up guard targets nobody has seen on the live app: one entry per target, "step N: <locator>",
+	 *  as the save's note words it. Set by every save from what the save defers (a later save that no
+	 *  longer defers one drops it), never from what was sent; removed when a run or replay in which the
+	 *  guard fires files the target as seen. Not part of what makes a save a change. Written only when
+	 *  there are any.
+	 */
+	unfired_guards?: string[],
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
 	given_up?: GivenUp_Serialize[],
 	/**
@@ -3605,6 +3613,14 @@ export type CaseScript_Deserialize = {
 	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
 	 */
 	checks?: number,
+	/**
+	 *  Clean-up guard targets nobody has seen on the live app: one entry per target, "step N: <locator>",
+	 *  as the save's note words it. Set by every save from what the save defers (a later save that no
+	 *  longer defers one drops it), never from what was sent; removed when a run or replay in which the
+	 *  guard fires files the target as seen. Not part of what makes a save a change. Written only when
+	 *  there are any.
+	 */
+	unfired_guards?: string[],
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
 	given_up?: GivenUp_Deserialize[],
 	/**
@@ -3769,6 +3785,14 @@ export type CaseScript_Serialize = {
 	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
 	 */
 	checks?: number,
+	/**
+	 *  Clean-up guard targets nobody has seen on the live app: one entry per target, "step N: <locator>",
+	 *  as the save's note words it. Set by every save from what the save defers (a later save that no
+	 *  longer defers one drops it), never from what was sent; removed when a run or replay in which the
+	 *  guard fires files the target as seen. Not part of what makes a save a change. Written only when
+	 *  there are any.
+	 */
+	unfired_guards?: string[],
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
 	given_up?: GivenUp_Serialize[],
 	/**

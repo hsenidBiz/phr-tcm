@@ -3765,7 +3765,7 @@ fn scripted(case_id: i32) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), unfired_guards: Vec::new(), cleared_defect: None,
     }
 }
 
@@ -4936,6 +4936,57 @@ async fn a_save_notes_a_loose_record_name_and_an_undeclared_record_without_refus
     // Saved again unchanged, it is not read for notes.
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
     assert_eq!((status, out.as_str()), (200, "saved 1 script(s): case 7 (unchanged)"));
+}
+
+/// A clean-up guard's target nobody has seen is kept on the saved script
+/// (`unfired_guards`) as "step N: <locator>", whatever the sender put there;
+/// an unchanged re-save keeps it and does not count as a change because of
+/// it; a later save that no longer defers it drops it.
+#[tokio::test]
+async fn a_deferred_clean_up_target_is_stored_kept_and_dropped_when_no_longer_deferred() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let body = |then: serde_json::Value, extra: serde_json::Value| {
+        let mut v = case_7("#toast", "Saved");
+        v[0]["steps"].as_array_mut().unwrap().push(serde_json::json!({ "step_number": 3, "cleanup": true, "unchecked": "removes the banner it opened", "actions": [
+            { "kind": "when_visible", "selector": "#banner", "then": [then] }
+        ]}));
+        v[0]["unfired_guards"] = extra;
+        v
+    };
+    let activate = serde_json::json!({ "kind": "click", "selector": { "role": "button", "name": "Activate" } });
+    // Seen: everything but the Activate button.
+    let mut seen = case_7("#toast", "Saved");
+    seen[0]["steps"].as_array_mut().unwrap().push(serde_json::json!({ "step_number": 3, "cleanup": true, "unchecked": "removes the banner it opened", "actions": [
+        { "kind": "click", "selector": "#banner" }
+    ]}));
+    see_scripts(dir.path(), &seen.to_string());
+
+    let first = body(activate.clone(), serde_json::json!(["step 9: made up by the sender"]));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("checked the first time its guard fires"), "{out}");
+    let entry = "step 3: button \"Activate\"".to_string();
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().unfired_guards, vec![entry.clone()]);
+
+    // Saved again, even sending something else there: unchanged, and kept.
+    let again = body(activate.clone(), serde_json::json!([]));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &again.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "saved 1 script(s): case 7 (unchanged)"));
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().unfired_guards, vec![entry.clone()]);
+
+    // A repair of the clean-up whose target was seen: no longer deferred, dropped.
+    let seen_then = serde_json::json!({ "kind": "click", "selector": "#banner" });
+    let repair = serde_json::json!({
+        "scripts": body(seen_then, serde_json::json!([entry])),
+        "edits": [{ "case_id": 7, "steps": [3], "why": "the guard's target moved" }]
+    });
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("(repaired)"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().unwrap().unfired_guards.is_empty());
 }
 
 /// A script that deletes by position after a check saves, and the answer

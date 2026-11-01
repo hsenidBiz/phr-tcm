@@ -23,6 +23,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
 - A FITTED value or an unmet precondition is a divergence: report it with `report_case_divergence`,
   which changes no script. Everything else goes in your report.
 - A positional pick (nth, nth-child, first-child) of a row in a list that another script in the same area changes (its changes marks) is a finding: a deleted and re-applied row goes to the end, so the position moves; the row should be picked by its text (has_text).
+- A clean-up guard target listed under unfired_guards in the script (its locator was never seen on the live app, and its guard has not fired since) is a finding until it has fired: report it with its step, and that the case counts as checked without it.
 - Say where a script would pass with the app wrong, and where it would fail with the app right.
 - When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - Report per case: each finding with its class, the step, the case's words and the script's check,

@@ -469,3 +469,20 @@ test("scriptFacts names each needed record with its reason", () => {
   const facts = scriptFacts({ ...BARE, needs_records: [{ setup: "Rating scale", why: "the AUTOTEST scale" }] } as CaseScript);
   expect(facts).toContainEqual({ label: "Needs records", value: "Rating scale (the AUTOTEST scale)" });
 });
+
+test("the open card shows a clean-up guard that has never fired, whatever the case result, and nothing when none", () => {
+  mockIPC(() => null);
+  const unfired = {
+    ...BARE,
+    checked: true,
+    unfired_guards: ['step 3: button "Activate"', 'step 3: css "#done"'],
+  } as CaseScript;
+  const { unmount } = renderCard({ open: true, script: unfired, result: "Passed" });
+  expect(screen.getByText("Clean-up guard never fired")).toBeInTheDocument();
+  const list = screen.getByRole("list", { name: `Clean-up guards that never fired of #${CASE.id}` });
+  expect(list).toHaveTextContent('step 3: button "Activate"');
+  expect(list).toHaveTextContent('step 3: css "#done"');
+  unmount();
+  renderCard({ open: true, script: BARE, result: "Passed" });
+  expect(screen.queryByText("Clean-up guard never fired")).not.toBeInTheDocument();
+});

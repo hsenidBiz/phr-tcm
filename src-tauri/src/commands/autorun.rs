@@ -3149,6 +3149,7 @@ pub fn save_script_from_editor(
         checked: false,
         checks: 0,
         given_up: Vec::new(),
+        unfired_guards: Vec::new(),
         cleared_defect: None,
     });
     let CaseScript {
@@ -3182,6 +3183,8 @@ pub fn save_script_from_editor(
         given_up: _,
         // Kept by the store like the mark.
         cleared_defect: _,
+        // The stored script's, for the steps the editor's script still has.
+        unfired_guards,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back.
         setup,
@@ -3190,6 +3193,10 @@ pub fn save_script_from_editor(
         ignore_page_errors,
     } = stored;
     script.setup = setup;
+    script.unfired_guards = unfired_guards
+        .into_iter()
+        .filter(|e| script.steps.iter().any(|s| e.starts_with(&format!("step {}:", s.step_number))))
+        .collect();
     script.fail_on_unexpected_dialog = fail_on_unexpected_dialog;
     script.page_errors = page_errors;
     script.ignore_page_errors = ignore_page_errors;

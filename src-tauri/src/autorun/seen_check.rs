@@ -2205,14 +2205,58 @@ pub fn guarded_cleanup_notes(
     only_steps: Option<&[i32]>,
     files: &[TestFile],
 ) -> Vec<String> {
-    let mut deferred = Vec::new();
-    scan_deferring(map, components, script, case_text, only_steps, None, files, &mut deferred);
-    deferred
+    guarded_cleanup_deferred(map, components, script, case_text, only_steps, files)
         .into_iter()
         .map(|(step, what, guard)| {
             format!("step {step}: {what} in the clean-up's {guard} was not seen on the live app; it is checked the first time its guard fires.")
         })
         .collect()
+}
+
+/// The step, the locator and the guard's kind of each target
+/// `guarded_cleanup_notes` words, in step order.
+pub fn guarded_cleanup_deferred(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    files: &[TestFile],
+) -> Vec<(i32, String, String)> {
+    let mut deferred = Vec::new();
+    scan_deferring(map, components, script, case_text, only_steps, None, files, &mut deferred);
+    deferred
+}
+
+/// The entry `CaseScript::unfired_guards` keeps for one deferred target:
+/// the opening of its note, "step N: <locator>".
+pub fn unfired_entry(step: i32, what: &str) -> String {
+    format!("step {step}: {what}")
+}
+
+/// `unfired` as a save leaves it: the entries of `kept` (the script's old
+/// list) for steps the save did not look at (`only_steps`), then one entry
+/// per target the save deferred, once each.
+pub fn merged_unfired(kept: &[String], only_steps: Option<&[i32]>, deferred: &[(i32, String, String)]) -> Vec<String> {
+    let mut out: Vec<String> = match only_steps {
+        None => Vec::new(),
+        Some(only) => kept
+            .iter()
+            .filter(|e| entry_step(e).is_some_and(|n| !only.contains(&n)))
+            .cloned()
+            .collect(),
+    };
+    for (step, what, _) in deferred {
+        let entry = unfired_entry(*step, what);
+        if !out.contains(&entry) {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+fn entry_step(entry: &str) -> Option<i32> {
+    entry.strip_prefix("step ")?.split(':').next()?.trim().parse().ok()
 }
 
 /// Notes, never refusals: a name in a click or another use that needs one

@@ -1430,6 +1430,7 @@ async fn run_steps_marked<D: Driver>(
         // before anyone can probe it.
         crate::ai_bridge::file_component_finds(d, root, organization, project, script.area.clone(), &step.actions, &outcomes)
             .await;
+        crate::ai_bridge::forget_fired_guards(root, organization, project, script, step, &outcomes);
         // A save the page sent after the step's last action passed is
         // still this step's.
         if outcomes.iter().all(|o| o.ok) {

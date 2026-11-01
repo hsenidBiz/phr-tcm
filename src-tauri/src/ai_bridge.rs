@@ -4201,6 +4201,36 @@ pub async fn file_guard_finds<D: crate::browser::cdp::Driver>(
     file_step_finds(d, root, organization, project, area, actions, outcomes, false).await;
 }
 
+/// Takes off the saved script's `unfired_guards` each target a guard of `step` just proved: the
+/// ones `file_guard_finds` files (`guard_finds`, under the same conditions - a project and an
+/// area). The script is read again and saved through the store, which removes only these
+/// entries from what is on disk now. A failure to save is said in the log only.
+pub fn forget_fired_guards(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    script: &crate::autorun::CaseScript,
+    step: &crate::autorun::StepScript,
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) {
+    let has_area = script.area.as_deref().is_some_and(|a| !a.trim().is_empty());
+    if script.unfired_guards.is_empty() || !has_area || project.trim().is_empty() {
+        return;
+    }
+    let Ok((expanded, _)) = crate::autorun::components::expand_step(root, organization, project, &step.actions) else { return };
+    let entries: Vec<String> = guard_finds(&expanded, outcomes)
+        .iter()
+        .map(|(t, _, _)| crate::autorun::seen_check::unfired_entry(step.step_number, &t.describe()))
+        .filter(|e| script.unfired_guards.contains(e))
+        .collect();
+    if entries.is_empty() {
+        return;
+    }
+    if let Err(why) = crate::autorun::store::remove_unfired_guards(root, script.case_id, &entries) {
+        crate::applog::warn(format!("Auto Run: case {} could not drop a clean-up guard that fired from its script: {why}", script.case_id));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn file_step_finds<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -13208,6 +13238,8 @@ pub async fn save_autorun_scripts_carrying(
         }
         // A needed record whose setup is gone is not one a repair must keep.
         let existing = existing.map(|old| crate::autorun::needs_records::forgive_stale(old, &root, &ctx.org, &ctx.project));
+        // Never what was sent: the list a save leaves is the one it works out below, from the old one.
+        script.unfired_guards = existing.as_ref().map(|old| old.unfired_guards.clone()).unwrap_or_default();
         match existing {
             // A re-send that changes nothing is not a repair. The count
             // is of changes made without a person looking, so an
@@ -13500,6 +13532,8 @@ pub async fn save_autorun_scripts_carrying(
     let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
         // What the save noticed without refusing: said after its answer.
         let mut notes: Vec<String> = Vec::new();
+        // Each checked script's clean-up targets never seen, as the script will keep them.
+        let mut unfired: Vec<(i32, Vec<String>)> = Vec::new();
         if !seen_scope.is_empty() {
             let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts, &carried)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
@@ -13578,6 +13612,8 @@ pub async fn save_autorun_scripts_carrying(
                 // A case the save does not hold is read as having no text: the
                 // note is still said.
                 let text = cases.iter().find(|c| c.id == *case_id).map(case_step_text).unwrap_or_default();
+                let deferred = crate::autorun::seen_check::guarded_cleanup_deferred(&map, &components, script, &text, only.as_deref(), &files);
+                unfired.push((*case_id, crate::autorun::seen_check::merged_unfired(&script.unfired_guards, only.as_deref(), &deferred)));
                 let guarded = crate::autorun::seen_check::guarded_cleanup_notes(&map, &components, script, &text, only.as_deref(), &files);
                 let sentences = guarded
                     .into_iter()
@@ -13625,7 +13661,13 @@ pub async fn save_autorun_scripts_carrying(
                 .map(|()| notes)
                 .map_err(|e| SaveRefusal::Other(400, e));
         }
-        match crate::autorun::store::save_scripts_checked(&root, &prepared, &read) {
+        let mut to_write = prepared.clone();
+        for (case_id, list) in unfired {
+            if let Some(script) = to_write.iter_mut().find(|s| s.case_id == case_id) {
+                script.unfired_guards = list;
+            }
+        }
+        match crate::autorun::store::save_scripts_checked(&root, &to_write, &read) {
             Ok(()) => Ok(notes),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
             Err(changed @ crate::autorun::store::SaveScriptsError::Changed { .. }) => {

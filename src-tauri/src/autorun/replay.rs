@@ -608,6 +608,7 @@ async fn run_case_in<D: Driver>(
         // A guard of the step that fired and worked has proved its `then`
         // targets were there: filed as seen in the case's area.
         crate::ai_bridge::file_guard_finds(d, root, organization, project, script.area.clone(), &step.actions, &outcomes).await;
+        crate::ai_bridge::forget_fired_guards(root, organization, project, script, step, &outcomes);
         // A save the step before's picture was taken through: that step's.
         let mut late_save = in_run.picture.take().and_then(|p| p.late_save.take());
         let (tab, dialog, components, seen_errors) =

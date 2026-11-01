@@ -322,6 +322,19 @@ function CaseCard({
                 </div>
               )}
 
+              {(script.unfired_guards ?? []).length > 0 && (
+                <div className="space-y-1">
+                  <SectionLabel>Clean-up guard never fired</SectionLabel>
+                  <ul aria-label={`Clean-up guards that never fired of #${c.id}`} className="space-y-0.5 text-xs text-text">
+                    {(script.unfired_guards ?? []).map((g) => (
+                      <li key={g} className="break-words">
+                        {g}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {showFiles && (
                 <div className="space-y-2">
                   <SectionLabel>Files</SectionLabel>

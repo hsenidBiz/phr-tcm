@@ -4079,6 +4079,40 @@ async fn a_fired_guard_files_its_then_as_seen() {
     assert!(!area.sightings.iter().any(|s| s.key == v2_lib::browser::locator::SeenKey::Css("#banner".into())));
 }
 
+/// A clean-up guard's target nobody has seen is listed on the script
+/// (`unfired_guards`) until a replay in which the guard fires files it as seen;
+/// then the entry goes and the script is saved. A guard that did not fire
+/// leaves the entry.
+#[tokio::test]
+async fn a_fired_guard_removes_its_unfired_entry_and_one_that_did_not_fire_leaves_it() {
+    let _l = crate::serial::account_leases();
+    for (kind, fires) in [("when_visible", true), ("when_hidden", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let target: v2_lib::browser::locator::Target = serde_json::from_value(json!({ "css": "#activate" })).unwrap();
+        let entry = format!("step 1: {}", target.describe());
+        let other = "step 2: button \"Elsewhere\"".to_string();
+        let mut sc = script(json!([
+            { "step_number": 1, "actions": [
+                { "kind": kind, "selector": { "css": "#banner" }, "within_ms": 100, "then": [click("#activate")] }
+            ] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ]));
+        sc.unfired_guards = vec![entry.clone(), other.clone()];
+        project(dir.path(), &sc);
+        let (mut d, app) = app();
+        let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+        replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
+        let saved = v2_lib::autorun::store::load_script(dir.path(), ID).unwrap().unwrap();
+        if fires {
+            assert!(clicked(&app, "#activate"), "{:?}", log(&app));
+            // Only the filed entry goes; another guard's stays.
+            assert_eq!(saved.unfired_guards, vec![other], "{:?}", saved.unfired_guards);
+        } else {
+            assert_eq!(saved.unfired_guards, vec![entry, other], "a guard that did not fire kept nothing off");
+        }
+    }
+}
+
 /// A script with no area files nothing for its guards: it would count for
 /// every area. With an area the same fired guard is filed.
 #[tokio::test]
