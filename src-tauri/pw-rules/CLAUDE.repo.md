@@ -404,8 +404,8 @@ them are inferable from reading the code:
    URL-navigation ban means there's no way to verify a guessed one either.
 
 **The navigation map — `src/navigation.json`.** One JSON object,
-`entries["<module>/<feature>"] -> { side, menu, moduleNav?, verifiedOn,
-capturedBy }`, validated informally against `src/navigation.schema.json`.
+`entries["<module>/<feature>"] -> { side, menu, moduleNav?, menuModuleId?,
+verifiedOn, capturedBy }`, validated informally against `src/navigation.schema.json`.
 `side` is `self` or `admin`; `menu` is the ordered list of visible sidebar
 labels to click, top-level first. `moduleNav` is **optional** and holds one
 further in-page click *after* the sidebar chain lands on a module's home
@@ -413,7 +413,10 @@ page — a module's own entry point (e.g. "Definition Wizard") that sits
 outside `#phr-sidebar` and is clicked as a link, not as a sidebar `<div>`.
 Most features need only `menu`; a feature that needs `moduleNav` and is
 captured without it stops one screen short, on the module home page, and
-every assertion after that runs against the wrong screen. Every entry is
+every assertion after that runs against the wrong screen. `menuModuleId` is
+also optional: the module id the last `menu` label opens, set only when two
+visible sidebar entries share that label (legacy Attendance and Attendance
+Management System both read "Attendance" under Time). Every entry is
 captured live, with a human present, during step 2 of the pipeline (see
 above) or the equivalent handoff in `.claude/commands/gen-test.md` —
 **never invented, never reconstructed from a raw generated spec.** The map
