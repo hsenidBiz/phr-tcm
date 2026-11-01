@@ -46,6 +46,19 @@ pub fn suite(base_url: &str, org: &str, project: &str, pbi_id: i32) -> String {
     format!("suite:{base_url}|{org}|{project}|{pbi_id}")
 }
 
+/// How long a completed test run's per-case outcomes are kept (session
+/// tier only). A completed run's results do not change, so this is in
+/// effect the session; a different account signing in clears it
+/// (`claim_for`). Session, not durable: a deep sweep keeps up to 150
+/// runs per plan and the durable file is rewritten whole on every change.
+pub const RUN_OUTCOMES_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// One completed run's verdict rows, for Run Tests' history sweep
+/// (session tier only). The base_url is in the key for the same reason as `suite`.
+pub fn run_outcomes(base_url: &str, org: &str, project: &str, run_id: i32) -> String {
+    format!("run-outcomes:{base_url}|{org}|{project}|{run_id}")
+}
+
 /// The AI bridge's scanned plans-and-suites tree (session tier only).
 pub fn suite_tree(base_url: &str, org: &str, project: &str) -> String {
     format!("suite-tree:{base_url}|{org}|{project}")

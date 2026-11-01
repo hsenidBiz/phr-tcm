@@ -190,6 +190,7 @@ test("cache keys are the strings earlier versions stored", () => {
   // from now on, since changing it throws away every reader's copy.
   expect(cacheKeys.suiteCases("acme", "Web", 9, 91)).toBe("suite-cases:acme/Web/9/91");
   expect(cacheKeys.runHistory("acme", "Web", 7)).toBe("run-history:acme/Web/7");
+  expect(cacheKeys.suiteRunHistory("acme", "Web", 7, 71)).toBe("run-history:acme/Web/7/71");
   expect(cacheKeys.points("acme", "Web", 7, 71)).toBe("points:acme/Web/7/71");
   expect(cacheKeys.boardPrs("acme", "Web")).toBe("board-prs:acme/Web");
   expect(cacheKeys.boardPrsAll("acme")).toBe("board-prs-all:acme");

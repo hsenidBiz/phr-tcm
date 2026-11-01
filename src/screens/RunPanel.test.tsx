@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { emit } from "@tauri-apps/api/event";
 import { toast } from "../lib/toast";
 import { afterEach, expect, test, vi } from "vitest";
 import { writeSuiteSeed } from "../lib/suiteSeed";
@@ -107,8 +108,8 @@ test("loads suite + points as a read-only overview (outcomes live in the runner)
   expect(screen.getAllByText("Failed").some((el) => el.tagName === "TD")).toBe(true);
 
   // History dots render for case 201 (newest first, tooltip carries date).
-  expect(screen.getByTitle("Failed · 2026-07-12 (run #7)")).toBeInTheDocument();
-  expect(screen.getByTitle("Passed · 2026-07-11 (run #6)")).toBeInTheDocument();
+  expect(await screen.findByTitle("Failed · 2026-07-12 (run #7)")).toBeInTheDocument();
+  expect(await screen.findByTitle("Passed · 2026-07-11 (run #6)")).toBeInTheDocument();
 
   // The quick-record flow is gone: no per-row outcome select, no comment
   // box, no Record button - the runner is the only way to set outcomes.
@@ -1263,4 +1264,121 @@ test("the scan bar shows only this PBI's search, and starts over when the PBI ch
   expect(screen.queryByText("2 / 5")).not.toBeInTheDocument();
   await send(43, 302, 482);
   expect(screen.getByText("302 / 482")).toBeInTheDocument();
+});
+
+test("run history is asked for the suite's own cases", async () => {
+  let seen: unknown = null;
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        seen = args;
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          { point_id: 7, test_case_id: 201, test_case_name: "Valid login", config_name: "Windows 10", tester: "", last_outcome: "failed", last_run_id: 3, last_result_id: 30 },
+          { point_id: 8, test_case_id: 202, test_case_name: "Invalid login", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+        ];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+  await waitFor(() =>
+    expect(seen).toEqual({ organization: "acme", project: "Web", planId: 9, testCaseIds: [201, 202] }),
+  );
+});
+
+test("a suite with no cases never starts a history sweep", async () => {
+  let historyCalls = 0;
+  let pointCalls = 0;
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        historyCalls += 1;
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        pointCalls += 1;
+        return [];
+    }
+  });
+  renderPanel();
+  await waitFor(() => expect(pointCalls).toBeGreaterThan(0));
+  await screen.findByText(/Auth - Test Plan/);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(historyCalls).toBe(0);
+});
+
+// The runner window saves an outcome and announces it; this window must show
+// it at once, from the announcement alone - the result is already saved, so
+// nothing may wait for a fetch from Azure DevOps.
+test("an outcome recorded in the runner repaints its row without fetching the points again", async () => {
+  let pointFetches = 0;
+  mockIPC(
+    (cmd) => {
+      switch (cmd) {
+        case "run_history":
+          return [];
+        case "ensure_pbi_suite":
+          return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+        case "list_test_points":
+          pointFetches += 1;
+          return [
+            {
+              point_id: 7,
+              test_case_id: 201,
+              test_case_name: "Valid login",
+              config_name: "Windows 10",
+              tester: "",
+              last_outcome: "Passed",
+              last_run_id: 3,
+              last_result_id: 30,
+            },
+            {
+              point_id: 8,
+              test_case_id: 202,
+              test_case_name: "Invalid login",
+              config_name: "Windows 10",
+              tester: "",
+              last_outcome: "",
+              last_run_id: null,
+              last_result_id: null,
+            },
+          ];
+      }
+    },
+    { shouldMockEvents: true },
+  );
+  renderPanel();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  const cell = (name: string) => within(screen.getByText(name).closest("tr") as HTMLElement).getAllByRole("cell")[1];
+  expect(cell("Valid login")).toHaveTextContent("Passed");
+  // The panel may read the points more than once while it loads; what matters
+  // is that the announcement itself causes no read.
+  await vi.waitFor(() => expect(pointFetches).toBeGreaterThan(0));
+  const fetchedBefore = pointFetches;
+
+  const recorded = (testCaseId: number, outcome: string, resultId: number) =>
+    emit("runner:point-recorded", { org: "acme", project: "Web", planId: 9, suiteId: 91, testCaseId, outcome, runId: 11, resultId });
+
+  // Passed -> Failed on a case that was already run, and a first result on one that never was.
+  await act(async () => {
+    await recorded(201, "Failed", 110);
+    await recorded(202, "Passed", 111);
+  });
+  await vi.waitFor(() => expect(cell("Valid login")).toHaveTextContent("Failed"));
+  expect(cell("Invalid login")).toHaveTextContent("Passed");
+  expect(pointFetches).toBe(fetchedBefore);
 });

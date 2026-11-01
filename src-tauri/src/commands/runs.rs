@@ -280,7 +280,9 @@ pub async fn result_screenshots(
         .await
 }
 
-/// Recent outcome history per test case for a plan (last 5, newest first).
+/// Recent outcome history (last 5, newest first) for the given test
+/// cases of a plan - the suite's cases, so the sweep knows when it can
+/// stop. An empty list returns every case in the plan's 15 newest runs.
 #[tauri::command]
 #[specta::specta]
 pub async fn run_history(
@@ -288,10 +290,11 @@ pub async fn run_history(
     organization: String,
     project: String,
     plan_id: i32,
+    test_case_ids: Vec<i32>,
 ) -> Result<Vec<ado_testplan::CaseHistory>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token)
-        .run_history(&organization, &project, plan_id)
+        .run_history(&organization, &project, plan_id, &test_case_ids)
         .await
 }
 

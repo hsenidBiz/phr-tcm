@@ -190,10 +190,15 @@ export default function RunnerWindow() {
   });
 
   // Last-5 outcome history (shared shape with Run Tests, own QueryClient).
+  const historyCaseIds = useMemo(
+    () => [...new Set((points.data ?? []).flatMap((p) => (p.test_case_id == null ? [] : [p.test_case_id])))].sort((a, b) => a - b),
+    [points.data],
+  );
   const history = useQuery({
-    queryKey: ["run-history", session?.org, session?.project, session?.planId],
-    queryFn: () => unwrap(commands.runHistory(session!.org, session!.project, session!.planId)),
-    enabled: Boolean(session),
+    queryKey: ["run-history", session?.org, session?.project, session?.planId, session?.suiteId, historyCaseIds.join(",")],
+    queryFn: () =>
+      unwrap(commands.runHistory(session!.org, session!.project, session!.planId, historyCaseIds)),
+    enabled: Boolean(session && points.data && historyCaseIds.length > 0),
     staleTime: 5 * 60_000,
     retry: false,
   });

@@ -26,7 +26,7 @@ fn iteration_details_match_v1_shape() {
     let d = build_iteration_details(&ids, &outcomes, "").unwrap();
     assert_eq!(d[0]["outcome"], "Failed");
 }
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
@@ -356,10 +356,11 @@ async fn run_lifecycle_create_update_complete() {
 
 #[tokio::test]
 async fn run_history_aggregates_newest_first_and_caps_at_five() {
+    let (o, p) = unique_scope();
     let server = MockServer::start().await;
     // Three runs, listed out of order - the sweep must sort newest first.
     Mock::given(method("GET"))
-        .and(path("/o/p/_apis/test/runs"))
+        .and(path(format!("/{o}/{p}/_apis/test/runs")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [
                 {"id": 1, "completedDate": "2026-07-10T10:00:00Z"},
@@ -372,7 +373,7 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
     // Run 3 (newest): case 201 failed, plus an "Unspecified" and a "None"
     // result (no verdict yet) that must both be skipped.
     Mock::given(method("GET"))
-        .and(path("/o/p/_apis/test/Runs/3/results"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/3/results")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [
                 {"id": 9001, "outcome": "Failed", "completedDate": "2026-07-12T10:05:00Z", "testCase": {"id": "201"}},
@@ -385,7 +386,7 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
         .await;
     // Runs 2 and 1: five more outcomes for case 201 (total 6 -> capped at 5).
     Mock::given(method("GET"))
-        .and(path("/o/p/_apis/test/Runs/2/results"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/2/results")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [
                 {"outcome": "Passed", "completedDate": "2026-07-11T10:01:00Z", "testCase": {"id": "201"}},
@@ -396,7 +397,7 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/o/p/_apis/test/Runs/1/results"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/1/results")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [
                 {"outcome": "Passed", "completedDate": "2026-07-10T10:01:00Z", "testCase": {"id": "201"}},
@@ -407,7 +408,7 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let mut history = client.run_history("o", "p", 9).await.unwrap();
+    let mut history = client.run_history(&o, &p, 9, &[]).await.unwrap();
     history.sort_by_key(|h| h.test_case_id);
 
     assert_eq!(history.len(), 2);
@@ -425,6 +426,270 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
     let c202 = &history[1];
     assert_eq!(c202.outcomes.len(), 1);
     assert_eq!(c202.outcomes[0].outcome, "Passed");
+}
+
+// ---- run history depth ----
+
+/// An org/project pair no other test in this process uses. Completed runs are
+/// kept in the process-wide session cache keyed by base URL + org + project +
+/// run id; the OS reuses mock-server ports, so a shared name could be served
+/// another test's cached runs.
+fn unique_scope() -> (String, String) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    (format!("org-{n}"), format!("proj-{n}"))
+}
+
+
+/// ISO date for run `id`, increasing with the id (sorts lexicographically).
+fn run_date(id: i32) -> String {
+    format!("2026-07-01T{:02}:{:02}:00Z", id / 60, id % 60)
+}
+
+fn run_row(id: i32, state: &str) -> serde_json::Value {
+    serde_json::json!({"id": id, "state": state, "completedDate": run_date(id)})
+}
+
+fn passed_row(case: &str) -> serde_json::Value {
+    serde_json::json!({"id": 1, "outcome": "Passed", "completedDate": "2026-07-01T00:00:00Z", "testCase": {"id": case}})
+}
+
+async fn mount_runs(server: &MockServer, o: &str, p: &str, runs: Vec<serde_json::Value>) {
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/runs")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": runs })))
+        .mount(server)
+        .await;
+}
+
+async fn mount_catch_all(server: &MockServer, o: &str, p: &str, rows: Vec<serde_json::Value>) {
+    Mock::given(method("GET"))
+        .and(path_regex(&format!(r"^/{o}/{p}/_apis/test/Runs/\d+/results$")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": rows })))
+        .mount(server)
+        .await;
+}
+
+async fn mount_run_results(server: &MockServer, o: &str, p: &str, run: i32, rows: Vec<serde_json::Value>) {
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/{run}/results")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": rows })))
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+async fn count_requests(server: &MockServer, path_: &str) -> usize {
+    server.received_requests().await.unwrap().iter().filter(|r| r.url.path() == path_).count()
+}
+
+async fn count_results_requests(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().contains("/test/Runs/") && r.url.path().ends_with("/results"))
+        .count()
+}
+
+#[tokio::test]
+async fn run_history_reaches_a_case_whose_only_results_are_in_the_twentieth_newest_run() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(
+        &server,
+        &o,
+        &p,
+        (1..=25)
+            .map(|i| serde_json::json!({"id": i, "state": "Completed", "completedDate": format!("2026-07-{i:02}T10:00:00Z")}))
+            .collect(),
+    )
+    .await;
+    mount_catch_all(&server, &o, &p, vec![passed_row("900")]).await;
+    mount_run_results(
+        &server, &o, &p,
+        6,
+        vec![serde_json::json!({
+            "id": 60, "outcome": "Passed", "completedDate": "2026-07-06T10:05:00Z", "testCase": {"id": "501"}
+        })],
+    )
+    .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history(&o, &p, 9, &[501]).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].test_case_id, 501);
+    assert_eq!(history[0].outcomes.len(), 1);
+    assert_eq!(history[0].outcomes[0].run_id, 6);
+    assert_eq!(history[0].outcomes[0].result_id, 60);
+}
+
+#[tokio::test]
+async fn run_history_reads_every_page_of_a_large_run() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, vec![run_row(1, "Completed")]).await;
+    let full: Vec<serde_json::Value> = (0..200).map(|_| passed_row("601")).collect();
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/1/results")))
+        .and(query_param("$skip", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": full })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/1/results")))
+        .and(query_param("$skip", "200"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"outcome": "Failed", "testCase": {"id": "602"}}]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let mut history = client.run_history(&o, &p, 9, &[601, 602]).await.unwrap();
+    history.sort_by_key(|h| h.test_case_id);
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].outcomes.len(), 5);
+    assert_eq!(history[1].outcomes.len(), 1);
+    assert_eq!(history[1].outcomes[0].outcome, "Failed");
+}
+
+#[tokio::test]
+async fn run_history_reads_every_page_of_the_run_list() {
+    let _pacer = crate::serial::pacer();
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    let first: Vec<serde_json::Value> = (1..=200)
+        .map(|i| serde_json::json!({"id": i, "state": "Completed", "completedDate": "2026-01-01T10:00:00Z"}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/runs")))
+        .and(query_param("$skip", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": first })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/runs")))
+        .and(query_param("$skip", "200"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": 201, "state": "Completed", "completedDate": "2026-09-01T10:00:00Z"}]
+        })))
+        .mount(&server)
+        .await;
+    mount_catch_all(&server, &o, &p, vec![]).await;
+    mount_run_results(&server, &o, &p, 201, vec![passed_row("801")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history(&o, &p, 9, &[801]).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].outcomes[0].run_id, 201);
+}
+
+#[tokio::test]
+async fn run_history_stops_once_every_asked_case_has_five() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=40).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_catch_all(&server, &o, &p, vec![passed_row("301")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history(&o, &p, 9, &[301]).await.unwrap();
+    assert_eq!(count_results_requests(&server).await, 8);
+    let ids: Vec<i32> = history[0].outcomes.iter().map(|o| o.run_id).collect();
+    assert_eq!(ids, vec![40, 39, 38, 37, 36]);
+}
+
+#[tokio::test]
+async fn run_history_stops_at_the_run_cap() {
+    let _pacer = crate::serial::pacer();
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=160).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_catch_all(&server, &o, &p, vec![]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history(&o, &p, 9, &[302]).await.unwrap();
+    assert_eq!(count_results_requests(&server).await, 150);
+    assert!(history.is_empty());
+}
+
+#[tokio::test]
+async fn run_history_skips_runs_it_may_not_read() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_run_results(&server, &o, &p, 1, vec![passed_row("303")]).await;
+    for (run, status) in [(2, 403), (3, 404)] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{o}/{p}/_apis/test/Runs/{run}/results")))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&server)
+            .await;
+    }
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history(&o, &p, 9, &[303]).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].outcomes.len(), 1);
+    assert_eq!(history[0].outcomes[0].run_id, 1);
+    client.run_history(&o, &p, 9, &[303]).await.unwrap();
+    assert_eq!(count_requests(&server, &format!("/{o}/{p}/_apis/test/Runs/2/results")).await, 2);
+    assert_eq!(count_requests(&server, &format!("/{o}/{p}/_apis/test/Runs/3/results")).await, 2);
+}
+
+#[tokio::test]
+async fn run_history_does_not_keep_an_in_progress_run() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(
+        &server,
+        &o,
+        &p,
+        vec![serde_json::json!({"id": 1, "state": "InProgress", "startedDate": "2026-07-01T10:00:00Z"})],
+    )
+    .await;
+    mount_catch_all(&server, &o, &p, vec![passed_row("304")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let a = client.run_history(&o, &p, 9, &[304]).await.unwrap();
+    let b = client.run_history(&o, &p, 9, &[304]).await.unwrap();
+    assert_eq!(count_requests(&server, &format!("/{o}/{p}/_apis/test/Runs/1/results")).await, 2);
+    assert_eq!(a[0].outcomes.len(), 1);
+    assert_eq!(b[0].outcomes.len(), 1);
+}
+
+#[tokio::test]
+async fn run_history_reads_a_completed_run_once() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=2).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_catch_all(&server, &o, &p, vec![passed_row("305")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let a = client.run_history(&o, &p, 9, &[305]).await.unwrap();
+    let b = client.run_history(&o, &p, 9, &[305]).await.unwrap();
+    assert_eq!(count_requests(&server, &format!("/{o}/{p}/_apis/test/Runs/1/results")).await, 1);
+    assert_eq!(count_requests(&server, &format!("/{o}/{p}/_apis/test/Runs/2/results")).await, 1);
+    assert_eq!(count_requests(&server, &format!("/{o}/{p}/_apis/test/runs")).await, 2);
+    let ids = |h: &Vec<v2_lib::ado_testplan::CaseHistory>| -> Vec<i32> {
+        h[0].outcomes.iter().map(|o| o.run_id).collect()
+    };
+    assert_eq!(ids(&a), vec![2, 1]);
+    assert_eq!(ids(&b), ids(&a));
+}
+
+#[tokio::test]
+async fn run_history_logs_one_summary_line() {
+    let _log = crate::serial::log_tail();
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=2).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_catch_all(&server, &o, &p, vec![passed_row("306")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    client.run_history(&o, &p, 9306, &[306]).await.unwrap();
+    let lines: Vec<String> = v2_lib::applog::recent(500)
+        .into_iter()
+        .map(|l| l.message)
+        .filter(|m| m.starts_with("run history: plan 9306:"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("runs listed"), "{}", lines[0]);
+    assert!(lines[0].contains("1/1 asked cases with history"), "{}", lines[0]);
+    assert!(lines[0].contains("stopped: runs exhausted"), "{}", lines[0]);
+    assert!(!lines[0].contains("http"), "{}", lines[0]);
 }
 
 #[tokio::test]
@@ -997,4 +1262,88 @@ async fn an_existing_suite_is_still_used_when_the_area_is_remembered_as_refused(
     for req in server.received_requests().await.unwrap() {
         assert_eq!(req.method.as_str(), "GET", "nothing is created: {}", req.url);
     }
+}
+
+#[tokio::test]
+async fn run_history_keeps_what_it_gathered_when_a_later_run_fails() {
+    let _log = crate::serial::log_tail();
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_run_results(&server, &o, &p, 3, vec![passed_row("307")]).await;
+    mount_run_results(&server, &o, &p, 2, vec![passed_row("307")]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/1/results")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history(&o, &p, 9307, &[307]).await.unwrap();
+    assert_eq!(history.len(), 1);
+    let ids: Vec<i32> = history[0].outcomes.iter().map(|o| o.run_id).collect();
+    assert_eq!(ids, vec![3, 2]);
+    let lines: Vec<String> = v2_lib::applog::recent(500)
+        .into_iter()
+        .map(|l| l.message)
+        .filter(|m| m.contains("run history") && m.contains("9307"))
+        .collect();
+    assert!(lines.iter().any(|l| l.contains("partial")), "{lines:?}");
+    assert!(lines.iter().all(|l| !l.contains("http")), "{lines:?}");
+    // The warning is one tidy sentence, not one padded with source indentation.
+    let warning = lines.iter().find(|l| l.contains("could not be read")).expect("a warning");
+    assert!(!warning.contains("   "), "{warning}");
+}
+
+#[tokio::test]
+async fn run_history_still_fails_when_the_first_run_fails() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/3/results")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_catch_all(&server, &o, &p, vec![passed_row("308")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    assert!(client.run_history(&o, &p, 9, &[308]).await.is_err());
+}
+
+/// Two good runs that hold none of the asked cases, then a failure: returning
+/// an empty history would overwrite a good saved one, so it is an error.
+#[tokio::test]
+async fn run_history_fails_when_the_runs_read_held_none_of_the_asked_cases() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_run_results(&server, &o, &p, 3, vec![passed_row("999")]).await;
+    mount_run_results(&server, &o, &p, 2, vec![passed_row("999")]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/1/results")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    assert!(client.run_history(&o, &p, 9, &[309]).await.is_err());
+}
+
+#[tokio::test]
+async fn run_history_reports_unauthorized_even_after_some_runs_were_read() {
+    let (o, p) = unique_scope();
+    let server = MockServer::start().await;
+    mount_runs(&server, &o, &p, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_run_results(&server, &o, &p, 3, vec![passed_row("310")]).await;
+    mount_run_results(&server, &o, &p, 2, vec![passed_row("310")]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{o}/{p}/_apis/test/Runs/1/results")))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let err = client.run_history(&o, &p, 9, &[310]).await.unwrap_err();
+    assert!(matches!(err, AdoError::Unauthorized), "{err:?}");
 }
