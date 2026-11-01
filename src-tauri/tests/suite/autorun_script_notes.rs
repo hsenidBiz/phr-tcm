@@ -238,13 +238,22 @@ fn a_guarded_fallback_alongside_the_kept_delete_is_not_noted() {
 }
 
 #[test]
-fn a_new_script_is_not_noted() {
+fn no_clean_up_step_and_no_lost_check_are_not_noted() {
     let old = script(serde_json::json!([{ "step_number": 6, "actions": [delete_click()] }]));
     let new = two(serde_json::json!([gone()]), serde_json::json!([delete_click()]));
     // No clean-up step in the new script: nothing moved to it.
     assert!(moved_with_check(&old, &old).is_empty());
     // No old check lost: the step kept its count.
     assert!(moved_with_check(&old, &new).is_empty());
+}
+
+#[test]
+fn a_target_less_action_is_noted_without_a_double_space() {
+    let old = script(serde_json::json!([{ "step_number": 6, "actions": [{ "kind": "reload" }, gone()] }]));
+    let new = two(serde_json::json!([]), serde_json::json!([{ "kind": "reload" }]));
+    let notes = moved_with_check(&old, &new);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(!notes[0].contains("  ") && notes[0].contains("reload moved"), "{notes:?}");
 }
 
 #[test]

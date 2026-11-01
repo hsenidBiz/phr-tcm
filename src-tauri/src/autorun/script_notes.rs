@@ -164,7 +164,7 @@ pub fn delete_after_check_notes(
         }
         if noted && listed(only_steps, step.step_number) {
             notes.push(format!(
-                "step {} deletes what the case made after a check; put it in the clean-up step so it runs even when an earlier check fails",
+                "step {} deletes what the case made after a check; put it in the clean-up step so it runs even when an earlier check fails, unless the case asks for the delete: then keep it in its step with its check and add a guarded fallback to the clean-up",
                 step.step_number
             ));
         }
@@ -254,8 +254,9 @@ pub fn moved_with_check(old: &CaseScript, new: &CaseScript) -> Vec<String> {
             .map(|a| identity(a))
             .find(|id| !kept.contains(id) && in_cleanup.contains(id));
         if let Some((kind, target)) = moved {
+            let what = if target.is_empty() { kind } else { format!("{kind} on {target}") };
             notes.push(format!(
-                "step {}: {kind} on {target} moved to the clean-up and the step lost a check - {KEEP_THE_CASES_DELETE}",
+                "step {}: {what} moved to the clean-up and the step lost a check - {KEEP_THE_CASES_DELETE}",
                 old_step.step_number
             ));
         }
