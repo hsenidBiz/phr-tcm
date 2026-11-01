@@ -2498,7 +2498,8 @@ pub(crate) async fn replay_supervised(
     // Where it starts: the assistant's own browser, open and alive, that
     // its last replay of this case left before an earlier step, with
     // nothing used in it since, carries on from there; anything else
-    // starts from the beginning. The stand is used up either way.
+    // starts from the beginning, and so does a replay of the whole case,
+    // which proves it from its first step. The stand is used up either way.
     note_session_use_in(n);
     let stand = session.replay_stand.take();
     // A watched run's last page change is not carried past a replay.
@@ -2508,7 +2509,7 @@ pub(crate) async fn replay_supervised(
     let saved = store::load_script(&root, case_id).ok().flatten();
     let mut not_carried: Option<String> = None;
     let from = match (by, had_browser, session.opened_by, &stand, &saved) {
-        (ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) => {
+        (ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) if replay_to::may_carry_on(saved, step) => {
             let (here, _) = crate::ai_bridge::current_page(&mut session.cdp).await;
             let now_ms = crate::autorun::sessions::now_ms();
             match replay_to::carry_from(Some(stand), saved, step, &here, now_ms) {

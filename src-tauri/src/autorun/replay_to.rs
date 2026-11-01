@@ -1264,6 +1264,13 @@ pub fn whole_case(script: &CaseScript, step: i32) -> Option<i32> {
     (step > last).then(|| i32::try_from(script.case_steps().count()).unwrap_or(i32::MAX))
 }
 
+/// Whether a replay to `step` of `script` may start from where a browser
+/// already stands, its own case's or another's. A replay of the whole case
+/// (`whole_case`) proves it from its first step, so it never may.
+pub fn may_carry_on(script: &CaseScript, step: i32) -> bool {
+    whole_case(script, step).is_none()
+}
+
 /// The number of the clean-up step, beside a replay to `step` that ran the
 /// whole case: it ran too when `step` is past it. `None` when the replay
 /// did not run the whole case or the script has no clean-up.

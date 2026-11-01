@@ -1410,6 +1410,34 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
     assert_eq!(ReplayFrom::Beginning.said(ID, 4), "Started from the beginning.");
 }
 
+/// A replay past a case's last step (the whole case) never carries on, from
+/// the case's own stand or another case's checkpoints: it proves the case
+/// from its first step. A replay to an earlier step still carries on.
+#[test]
+fn a_whole_case_replay_never_carries_on() {
+    use v2_lib::autorun::replay_to::may_carry_on;
+    let saved = script(three_steps());
+    assert!(may_carry_on(&saved, 3), "a replay to the last step carries on");
+    assert!(may_carry_on(&saved, 2));
+    assert!(!may_carry_on(&saved, 4), "past the last step is the whole case");
+    assert!(!may_carry_on(&saved, 9));
+    // The clean-up step is not one of the case's steps: step 4 is past the
+    // last of its three, so it is still the whole case.
+    let tidy = script(three_steps_and_a_clean_up());
+    assert!(!may_carry_on(&tidy, 4));
+    assert!(may_carry_on(&tidy, 3));
+
+    // The app decides with it before either kind of carry: the same case's
+    // stand and another case's checkpoints.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
+    let replay = &replay[..replay.find("\n}\n").unwrap()];
+    let gate = replay.find("replay_to::may_carry_on(saved, step)").expect("the whole case is not kept from carrying on");
+    let same = replay.find("replay_to::carry_from(Some(stand), saved,").unwrap();
+    let across = replay.find("replay_to::carry_across_why(").unwrap();
+    assert!(gate < same && gate < across, "{replay}");
+}
+
 /// A carry-on arms the case's no-save guard, as every replay does: a
 /// script marked Must not save is guarded however the browser got there.
 #[tokio::test]
@@ -1593,7 +1621,7 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     assert!(body(&source, "async fn open_into").contains("replay_stand: None,"), "a new browser starts with a stand");
     let replay = body(&source, "pub(crate) async fn replay_supervised");
     assert!(replay.contains("let stand = session.replay_stand.take();"), "{replay}");
-    assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) =>"), "{replay}");
+    assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) if replay_to::may_carry_on(saved, step) =>"), "{replay}");
     assert!(replay.contains("(ReplayEnd::Ready { .. }, Some(saved)) if by == ReplayBy::Assistant =>"), "{replay}");
     assert!(replay.contains("&mut session.guarded_case,"), "{replay}");
 }
