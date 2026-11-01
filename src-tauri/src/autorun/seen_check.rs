@@ -391,6 +391,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::WaitFor { .. }
         | Action::RepeatWhileVisible { .. } => true,
         Action::Click { .. }
+        | Action::Hover { .. }
         | Action::Fill { .. }
         | Action::Upload { .. }
         | Action::Drag { .. }

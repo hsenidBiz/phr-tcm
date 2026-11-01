@@ -1087,6 +1087,8 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "use_component", "component": "c" }), true),
         (json!({ "kind": "click", "selector": css }), true),
         (json!({ "kind": "fill", "selector": css, "value": "v" }), true),
+        // It reveals UI, so a picture still being taken is settled first.
+        (json!({ "kind": "hover", "selector": css }), true),
         (json!({ "kind": "sign_in", "account": "a" }), true),
         (json!({ "kind": "upload", "selector": css, "file": "f.txt" }), true),
         (json!({ "kind": "api_request", "path": "/api/x" }), true),

@@ -398,6 +398,8 @@ function describeKnown(a: Action): Sentence {
       return [words(`Go to ${pathOnly(str(a.url))}`)];
     case "click":
       return [words("Click "), ...describeTarget(a.selector)];
+    case "hover":
+      return [words("Hover over "), ...describeTarget(a.selector)];
     case "fill": {
       const into = describeTarget(a.selector);
       str(a.value);

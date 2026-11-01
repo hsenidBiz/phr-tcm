@@ -19,6 +19,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "navigate",
     "click",
     "fill",
+    "hover",
     "wait_for",
     "check_text",
     "check_url",
@@ -284,6 +285,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "fill", "selector": ..., "value": "..." }` - also picks an
   option in a native list by its label, and sets a date, time, colour or
   range field directly
+- `{ "kind": "hover", "selector": ... }` - moves the pointer onto the element (waited for and scrolled into view as a click is) and gives what it reveals 300 ms to show; presses nothing, and `within_ms` is how long the element is waited for. It is not a check: a later check in the same step proves the reveal (`expect_visible` of the tooltip or menu)
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
 - `{ "kind": "expect_hidden", "selector": ... }` - gone counts as hidden

@@ -44,6 +44,7 @@ pub fn checks_for_loading(action: &Action) -> bool {
     matches!(
         action,
         Action::Click { .. }
+            | Action::Hover { .. }
             | Action::Fill { .. }
             | Action::Drag { .. }
             | Action::Upload { .. }

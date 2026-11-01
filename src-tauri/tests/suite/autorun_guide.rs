@@ -27,6 +27,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
         Action::Fill { selector: "s".into(), value: "v".into() },
+        Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
         Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
@@ -2782,5 +2783,17 @@ fn the_live_environment_section_promises_no_password() {
         let text = v2_lib::autorun::guide::active_environment_section(&env, None);
         assert!(!text.to_lowercase().contains("password"), "{text}");
         assert!(text.contains(if test_environment { "It is marked as a test environment." } else { "It is not marked as a test environment." }), "{text}");
+    }
+}
+
+/// Backlog 73: `hover` is taught with the rule that a later check in the same
+/// step proves what the hover revealed.
+#[test]
+fn the_guide_teaches_hover_and_proving_the_reveal() {
+    let g = autorun_guide();
+    let flat: String = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("{ \"kind\": \"hover\""), "no hover line");
+    for term in ["moves the pointer", "presses nothing", "later check in the same step"] {
+        assert!(flat.contains(term), "the guide never says {term:?}");
     }
 }

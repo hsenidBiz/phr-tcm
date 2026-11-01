@@ -622,6 +622,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
         Action::Fill { selector: "s".into(), value: "v".into() },
+        Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
         Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
@@ -644,6 +645,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         // A guard is a tidy-up, never a check - even holding one.
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
+        Action::WhenHidden { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
         Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }], settle_ms: None },
         Action::ExpectDownload {
             name: "report.csv".into(),
@@ -1791,4 +1793,46 @@ async fn a_text_noted_from_a_password_field_is_never_said() {
     let out = execute_with(&mut d2, &same, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
     assert!(!out.detail.contains("hunter2") && !out.detail.contains("other-secret"), "{}", out.detail);
+}
+
+/// Backlog 73: `hover` moves the pointer onto the element and presses nothing.
+#[tokio::test]
+async fn a_hover_moves_the_pointer_to_the_centre_and_presses_nothing() {
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &Action::Hover { selector: "#go".into(), within_ms: None }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "hovered #go");
+    let mouse = d.calls_to("Input.dispatchMouseEvent");
+    assert!(!mouse.is_empty());
+    assert!(mouse.iter().all(|m| m["type"] == "mouseMoved"), "no press or release: {mouse:?}");
+    assert!(mouse.iter().all(|m| m["buttons"] == 0 && m["clickCount"] == 0));
+    assert_eq!((mouse[0]["x"].as_f64(), mouse[0]["y"].as_f64()), (Some(10.0), Some(20.0)));
+}
+
+#[tokio::test]
+async fn a_hover_on_a_missing_or_covered_target_fails_like_a_click() {
+    let mut d = FakePage { found: 0, ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &Action::Hover { selector: "#nope".into(), within_ms: None }, &quick()).await;
+    assert!(!out.ok && out.detail.contains("not found") && out.detail.contains("#nope"), "{}", out.detail);
+    assert!(d.calls_to("Input.dispatchMouseEvent").is_empty());
+
+    let mut covered = ready_probe();
+    covered["hit"] = json!(false);
+    covered["covered_by"] = json!("div.modal-backdrop");
+    let mut d = FakePage { probes: vec![covered], ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &Action::Hover { selector: "#go".into(), within_ms: None }, &quick()).await;
+    assert!(!out.ok && out.detail.contains("covered by div.modal-backdrop"), "{}", out.detail);
+    assert!(d.calls_to("Input.dispatchMouseEvent").is_empty());
+}
+
+#[test]
+fn a_hover_is_validated_but_is_not_a_check() {
+    let ok: Action = serde_json::from_value(json!({ "kind": "hover", "selector": { "css": "#help" } })).unwrap();
+    assert!(ok.validate().is_ok() && !ok.is_check());
+    assert_eq!(serde_json::to_value(&ok).unwrap(), json!({ "kind": "hover", "selector": { "css": "#help" } }));
+    let bad = serde_json::from_value::<Action>(json!({ "kind": "hover", "selector": {} })).unwrap();
+    assert!(bad.validate().unwrap_err().contains("role, text or css"));
+    let zero = serde_json::from_value::<Action>(json!({ "kind": "hover", "selector": "#a", "within_ms": 0 })).unwrap();
+    assert!(zero.validate().unwrap_err().contains("within_ms"));
+    assert_eq!(ok.targets().len(), 1);
 }

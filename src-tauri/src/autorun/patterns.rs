@@ -594,6 +594,7 @@ pub fn action_kind(action: &Action) -> String {
 pub fn action_target(action: &Action) -> Option<String> {
     match action {
         Action::Click { selector }
+        | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }

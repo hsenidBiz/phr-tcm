@@ -12,6 +12,7 @@ describe("a sentence for every action kind", () => {
   const cases: [Action, string][] = [
     [{ kind: "navigate", url: "https://hr.example.test/hr/home/index?tab=2#top" }, "Go to /hr/home/index"],
     [{ kind: "click", selector: SAVE }, 'Click the "Save & Continue" button'],
+    [{ kind: "hover", selector: SAVE }, 'Hover over the "Save & Continue" button'],
     [
       { kind: "fill", selector: { role: "textbox", name: "Reason" }, value: "Family event" },
       'Type "Family event" into the "Reason" field',
@@ -404,7 +405,7 @@ describe("a sentence for every action kind", () => {
     const kinds = new Set(cases.map(([a]) => a.kind));
     expect([...kinds].sort()).toEqual(
       [
-        "navigate", "click", "fill", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
+        "navigate", "click", "hover", "fill", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "expect_no_change", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "when_hidden", "reload", "expire_session", "return_to_area",

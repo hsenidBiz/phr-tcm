@@ -108,6 +108,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
             page_goals(until, until_all).into_iter().try_for_each(check_target)
         }
         Action::Click { selector }
+        | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }
@@ -1471,6 +1472,7 @@ impl Em<'_> {
         match a {
             Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url, self.input.origins)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
+            Action::Hover { selector, .. } => self.line(indent, &format!("await {}.hover();", one(selector))),
             Action::Fill { selector, value } => {
                 self.line(indent, &format!("await {}.fill({});", one(selector), lit(value)))
             }

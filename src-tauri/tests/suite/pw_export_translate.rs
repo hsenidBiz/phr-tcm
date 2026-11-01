@@ -1842,3 +1842,17 @@ fn a_guard_inside_a_guard_is_a_nested_if() {
         "{got}"
     );
 }
+
+/// Backlog 73: a `hover` is Playwright's `hover()`, before the check that proves the reveal.
+#[test]
+fn a_hover_is_a_locator_hover() {
+    let got = one_step(json!([
+        { "kind": "hover", "selector": "#help" },
+        { "kind": "expect_visible", "selector": "#tip" }
+    ]))
+    .run()
+    .unwrap();
+    let hover = got.find("await cur.locator('#help').first().hover();").expect("hover");
+    let check = got.find("#tip").expect("check");
+    assert!(hover < check, "{got}");
+}

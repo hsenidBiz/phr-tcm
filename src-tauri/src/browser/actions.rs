@@ -44,6 +44,17 @@ pub enum Action {
         inputs: serde_json::Map<String, serde_json::Value>,
     },
     Click { selector: Target },
+    /// Move the pointer onto `selector` (waited for as a click waits, scrolled
+    /// into view) and let what it reveals show (`HOVER_SETTLE_MS`): a tooltip,
+    /// a hover menu. Presses nothing. Not a check: a later check in the same
+    /// step (an `expect_visible` of the tooltip) proves the reveal.
+    /// `within_ms` is how long the element is waited for (the action wait when
+    /// left out).
+    Hover {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
     Fill { selector: Target, value: String },
     WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
@@ -1408,6 +1419,13 @@ impl Action {
                 Err("use_component names no component".to_string())
             }
             Action::UseComponent { .. } => Ok(()),
+            Action::Hover { selector, within_ms } => {
+                selector.validate()?;
+                match within_ms {
+                    Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+                    _ => Ok(()),
+                }
+            }
             Action::Click { selector }
             | Action::Fill { selector, .. }
             | Action::WaitFor { selector, .. }
@@ -1864,6 +1882,7 @@ impl Action {
     pub fn targets(&self) -> Vec<&Target> {
         match self {
             Action::Click { selector }
+            | Action::Hover { selector, .. }
             | Action::Fill { selector, .. }
             | Action::WaitFor { selector, .. }
             | Action::ExpectVisible { selector, .. }
@@ -1921,6 +1940,7 @@ impl Action {
     pub fn targets_mut(&mut self) -> Vec<&mut Target> {
         match self {
             Action::Click { selector }
+            | Action::Hover { selector, .. }
             | Action::Fill { selector, .. }
             | Action::WaitFor { selector, .. }
             | Action::ExpectVisible { selector, .. }
@@ -2592,6 +2612,32 @@ fn written_note(ready: &input::Ready) -> String {
     }
 }
 
+/// How long a `hover` waits after the pointer lands for what it reveals (a
+/// tooltip, a hover menu) to show.
+pub const HOVER_SETTLE_MS: u64 = 300;
+
+async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, timing: &Timing) -> ActionOutcome {
+    settle(d, timing).await;
+    let mut own = timing.clone();
+    if let Some(ms) = within_ms {
+        own.action_ms = u64::from(ms);
+    }
+    let ready = match input::wait_ready(d, selector, false, &own).await {
+        Ok(r) => r,
+        Err(b) => return blocked(b),
+    };
+    if let Err(e) = point_and_pause(d, &ready, timing).await {
+        return failed_by(e);
+    }
+    match input::hover(d, &ready).await {
+        Ok(()) => {
+            d.idle(Duration::from_millis(HOVER_SETTLE_MS)).await;
+            ActionOutcome::passed(format!("hovered {}{}", selector.describe(), written_note(&ready)))
+        }
+        Err(b) => blocked(b),
+    }
+}
+
 async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
@@ -2618,6 +2664,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 }
             }
         }
+        Action::Hover { selector, within_ms } => hover(d, selector, *within_ms, timing).await,
         Action::Fill { selector, value } => {
             settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, true, timing).await {

@@ -79,6 +79,7 @@ pub fn action_words(action: &Action) -> String {
     match action {
         Action::Navigate { url } => format!("go to {}", without_query(url)),
         Action::Click { selector } => format!("click {}", selector.describe()),
+        Action::Hover { selector, .. } => format!("hover over {}", selector.describe()),
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
         Action::CheckText { value } => format!("check the page says \"{value}\""),

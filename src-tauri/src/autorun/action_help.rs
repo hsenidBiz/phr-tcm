@@ -59,6 +59,7 @@ const EXAMPLES: &[(&str, &str)] = &[
     ("expect_disabled", r##"{"kind":"expect_disabled","selector":{"css":"#save"}}"##),
     ("expect_checked", r##"{"kind":"expect_checked","selector":{"css":"#agree"},"checked":true}"##),
     ("expect_no_change", r##"{"kind":"expect_no_change","selector":{"css":"#save"},"within_ms":1000}"##),
+    ("hover", r##"{"kind":"hover","selector":{"css":"#help"}}"##),
     ("sign_in", r#"{"kind":"sign_in","account":"hr.supervisor"}"#),
     ("upload", r##"{"kind":"upload","selector":{"css":"input[type=file]","visible":false},"file":"form.pdf"}"##),
     (

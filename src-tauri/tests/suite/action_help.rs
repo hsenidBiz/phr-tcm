@@ -193,3 +193,10 @@ fn a_when_hidden_has_its_example_and_its_nested_waits_are_filled() {
     assert!(fill_wait_defaults(&mut nested, 7_000));
     assert_eq!(nested["then"][0]["then"][0]["timeout_ms"], 7_000);
 }
+
+/// A `hover` has an example of its own kind.
+#[test]
+fn a_hover_has_its_example() {
+    let example = example_for("hover").expect("hover has an example");
+    assert!(example.contains(r#""kind":"hover""#), "{example}");
+}

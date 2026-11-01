@@ -633,12 +633,14 @@ async fn probe_point<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Resul
     Ok((p["x"].as_f64().unwrap_or(ready.x), p["y"].as_f64().unwrap_or(ready.y)))
 }
 
-/// The pointer moved to where `click_forced` will click, and no more: what a
-/// page does only because the pointer is over the control (a hint, a hover
-/// menu) is already showing when `expect_no_change` reads the page before
-/// its click, so that is never taken for what the click did.
-pub async fn hover_forced<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
-    let (x, y) = probe_point(d, ready, true).await?;
+/// The pointer moved onto the element and nothing pressed: re-probed first,
+/// as a click is, so a control that moved or is now covered is refused.
+pub async fn hover<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
+    let (x, y) = probe_point(d, ready, false).await?;
+    move_to(d, x, y).await
+}
+
+async fn move_to<D: Driver>(d: &mut D, x: f64, y: f64) -> Result<(), Blocked> {
     d.call(
         "Input.dispatchMouseEvent",
         json!({ "type": "mouseMoved", "x": x, "y": y, "button": "none", "clickCount": 0, "buttons": 0 }),
@@ -646,6 +648,15 @@ pub async fn hover_forced<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blo
     .await
     .map_err(blame)?;
     Ok(())
+}
+
+/// The pointer moved to where `click_forced` will click, and no more: what a
+/// page does only because the pointer is over the control (a hint, a hover
+/// menu) is already showing when `expect_no_change` reads the page before
+/// its click, so that is never taken for what the click did.
+pub async fn hover_forced<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
+    let (x, y) = probe_point(d, ready, true).await?;
+    move_to(d, x, y).await
 }
 
 async fn click_as<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Result<(), Blocked> {

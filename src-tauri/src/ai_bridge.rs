@@ -4260,6 +4260,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
     use crate::browser::actions::Action;
     match action {
         Action::Click { selector }
+        | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
         | Action::Upload { selector, .. }
         | Action::ExpectVisible { selector, .. }
@@ -4875,6 +4876,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
             crate::autorun::report::without_query(address.trim()).to_string()
         }
         Action::Click { selector }
+        | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }
