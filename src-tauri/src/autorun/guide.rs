@@ -2707,9 +2707,10 @@ the answer says so; start a new one to explore again.
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the
   answer starts with "Carried on from step K" or "Started from the
-  beginning". Already standing before the step, nothing runs. A replay to one
-  past the last step (the whole case) never carries on, from your last
-  replay or another case's: it always starts from the beginning.
+  beginning". Already standing before the step, nothing runs. A replay past the
+  last step (the whole case) never carries on, from your last replay or
+  another case's: "Started from the beginning: a replay of the whole case
+  always does."
 - A replay of another case carries on from where your last replay left the
   browser when its first K steps are the same in every action, its account,
   area, preconditions and save mode are the same, it has no setup, the

@@ -62,6 +62,15 @@ fn script(steps: Value) -> CaseScript {
     .unwrap()
 }
 
+fn four_steps() -> Value {
+    json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [click("#s2")] },
+        { "step_number": 3, "actions": [click("#s3")] },
+        { "step_number": 4, "actions": [click("#s4")] }
+    ])
+}
+
 fn three_steps() -> Value {
     json!([
         { "step_number": 1, "actions": [click("#s1")] },
@@ -1373,7 +1382,7 @@ async fn carry(
 async fn a_replay_carries_on_from_where_the_last_one_stood() {
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
-    let saved = script(three_steps());
+    let saved = script(four_steps());
     project(dir.path(), &saved);
     let (mut d, app) = app();
     let mut held = Held::supervised();
@@ -1400,7 +1409,7 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
 
     let before = log(&app).len();
     let end = carry(&mut d, dir.path(), &req(4), 2, &mut account, &mut held, &mut guarded).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None, cleanup: None });
     let after: Vec<String> = log(&app)[before..].to_vec();
     assert!(after.contains(&"click #s2".to_string()) && after.contains(&"click #s3".to_string()), "{after:?}");
     for not_again in ["click #go", "click Leave", "click #s1"] {
@@ -1415,27 +1424,32 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
 /// from its first step. A replay to an earlier step still carries on.
 #[test]
 fn a_whole_case_replay_never_carries_on() {
-    use v2_lib::autorun::replay_to::may_carry_on;
+    use v2_lib::autorun::replay_to::{may_carry_on, WHOLE_CASE_WHY};
     let saved = script(three_steps());
-    assert!(may_carry_on(&saved, 3), "a replay to the last step carries on");
-    assert!(may_carry_on(&saved, 2));
-    assert!(!may_carry_on(&saved, 4), "past the last step is the whole case");
-    assert!(!may_carry_on(&saved, 9));
-    // The clean-up step is not one of the case's steps: step 4 is past the
-    // last of its three, so it is still the whole case.
+    // The same case's stand: before the last step it carries on; at the
+    // whole case (4 is past the last of three) it starts over, even when
+    // the browser stands exactly there.
+    assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 3), ReplayFrom::CarriedOn(2));
+    assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 4), ReplayFrom::Beginning);
+    assert_eq!(from_here(Some(&stand(&saved, 4)), &saved, 4), ReplayFrom::Beginning, "not already standing");
+    assert_eq!(from_here(Some(&stand(&saved, 3)), &saved, 9), ReplayFrom::Beginning);
+    // The clean-up is not one of the case's steps: past the third is whole.
     let tidy = script(three_steps_and_a_clean_up());
-    assert!(!may_carry_on(&tidy, 4));
-    assert!(may_carry_on(&tidy, 3));
+    assert!(may_carry_on(&tidy, 3) && !may_carry_on(&tidy, 4));
+    assert_eq!(from_here(Some(&stand(&tidy, 2)), &tidy, 4), ReplayFrom::Beginning);
 
-    // The app decides with it before either kind of carry: the same case's
-    // stand and another case's checkpoints.
-    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
-    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
-    let replay = &replay[..replay.find("\n}\n").unwrap()];
-    let gate = replay.find("replay_to::may_carry_on(saved, step)").expect("the whole case is not kept from carrying on");
-    let same = replay.find("replay_to::carry_from(Some(stand), saved,").unwrap();
-    let across = replay.find("replay_to::carry_across_why(").unwrap();
-    assert!(gate < same && gate < across, "{replay}");
+    // Another case's checkpoints: the same stand carries to step 4 of b but
+    // not to step 5, the whole case, which says why.
+    let a = case_with_fourth(77, &["#open"]);
+    let b = case_with_fourth(78, &["#b4"]);
+    let left = left_by(&a);
+    assert_eq!(carry_across_why(Some(&left), &b, 4, &page(HERE), AT + 1), (ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 }, None));
+    assert_eq!(carry_across(Some(&left), &b, 5, &page(HERE), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(
+        carry_across_why(Some(&left), &b, 5, &page(HERE), AT + 1),
+        (ReplayFrom::Beginning, Some(WHOLE_CASE_WHY.to_string()))
+    );
+    assert_eq!(WHOLE_CASE_WHY, "a replay of the whole case always does.");
 }
 
 /// A carry-on arms the case's no-save guard, as every replay does: a
@@ -1475,7 +1489,7 @@ fn a_replay_already_standing_before_the_step_runs_nothing() {
 /// the step, or a script whose earlier steps changed since.
 #[test]
 fn a_replay_starts_over_for_another_case_a_later_stand_or_a_changed_script() {
-    let saved = script(three_steps());
+    let saved = script(four_steps());
     assert_eq!(from_here(None, &saved, 3), ReplayFrom::Beginning);
     let mut other = saved.clone();
     other.case_id = 78;
@@ -1505,7 +1519,7 @@ fn the_fingerprint_ignores_precondition_repairs_but_not_the_preconditions() {
     use v2_lib::autorun::replay_to::run_fingerprint;
     let pre: v2_lib::autorun::Precondition =
         serde_json::from_value(serde_json::json!({ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 })).unwrap();
-    let mut saved = script(three_steps());
+    let mut saved = script(four_steps());
     saved.preconditions = vec![pre.clone()];
     let mut recorded = saved.clone();
     recorded.precondition_repairs = vec![v2_lib::autorun::PreconditionRepair {
@@ -1525,7 +1539,7 @@ fn the_fingerprint_ignores_precondition_repairs_but_not_the_preconditions() {
 /// or page-error choice.
 #[test]
 fn a_script_setting_changed_since_starts_over() {
-    let saved = script(three_steps());
+    let saved = script(four_steps());
     let at_2 = stand(&saved, 2);
     let mut guarded = saved.clone();
     guarded.no_save = true;
@@ -1545,7 +1559,7 @@ fn a_script_setting_changed_since_starts_over() {
 /// replay ran makes the next replay start from the beginning.
 #[test]
 fn a_repair_saved_during_a_replay_makes_the_next_start_over() {
-    let ran = script(three_steps());
+    let ran = script(four_steps());
     let at_3 = stand(&ran, 3);
     let mut repaired = ran.clone();
     repaired.steps[1].actions = vec![serde_json::from_value(click("#fixed")).unwrap()];
@@ -1621,7 +1635,7 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     assert!(body(&source, "async fn open_into").contains("replay_stand: None,"), "a new browser starts with a stand");
     let replay = body(&source, "pub(crate) async fn replay_supervised");
     assert!(replay.contains("let stand = session.replay_stand.take();"), "{replay}");
-    assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) if replay_to::may_carry_on(saved, step) =>"), "{replay}");
+    assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) =>"), "{replay}");
     assert!(replay.contains("(ReplayEnd::Ready { .. }, Some(saved)) if by == ReplayBy::Assistant =>"), "{replay}");
     assert!(replay.contains("&mut session.guarded_case,"), "{replay}");
 }
@@ -3379,19 +3393,19 @@ fn cases_sharing_three_steps_carry_on_from_the_third() {
     let a = case_with_fourth(77, &["#open", "#close"]);
     let b = case_with_fourth(78, &["#b4"]);
     let stand = left_by(&a);
-    let from = carry_across(Some(&stand), &b, 5, &page(HERE), AT + 1);
+    let from = carry_across(Some(&stand), &b, 4, &page(HERE), AT + 1);
     assert_eq!(from, ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 });
-    assert_eq!(from.said(78, 5), "Carried on from step 3 of case 77 (the same first 3 steps).");
+    assert_eq!(from.said(78, 4), "Carried on from step 3 of case 77 (the same first 3 steps).");
     // Asked only up to step 3, step 2 is the last one the replay stood after.
     assert_eq!(carry_across(Some(&stand), &b, 3, &page(HERE), AT + 1), ReplayFrom::CarriedOnFrom { case_id: 77, k: 2 });
     // The page, the tab or the dialogs not as the checkpoint left them.
-    assert_eq!(carry_across(Some(&stand), &b, 5, &page("/hr/other"), AT + 1), ReplayFrom::Beginning);
-    assert_eq!(carry_across(Some(&stand), &b, 5, &(HERE.into(), "report".into(), 0), AT + 1), ReplayFrom::Beginning);
-    assert_eq!(carry_across(Some(&stand), &b, 5, &(HERE.into(), "main".into(), 1), AT + 1), ReplayFrom::Beginning);
-    assert_eq!(carry_across(Some(&stand), &b, 5, &(HERE.into(), "main".into(), u32::MAX), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &page("/hr/other"), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &(HERE.into(), "report".into(), 0), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &(HERE.into(), "main".into(), 1), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &(HERE.into(), "main".into(), u32::MAX), AT + 1), ReplayFrom::Beginning);
     // The same case is the same-case carry's, never this one's.
-    assert_eq!(carry_across(Some(&stand), &a, 5, &page(HERE), AT + 1), ReplayFrom::Beginning);
-    assert_eq!(carry_across(None, &b, 5, &page(HERE), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &a, 4, &page(HERE), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(None, &b, 4, &page(HERE), AT + 1), ReplayFrom::Beginning);
 }
 
 #[test]
@@ -3399,7 +3413,7 @@ fn a_differing_action_account_area_save_mode_or_precondition_starts_from_the_beg
     let a = case_with_fourth(77, &["#open"]);
     let stand = left_by(&a);
     let same = case_with_fourth(78, &["#b4"]);
-    assert_ne!(carry_across(Some(&stand), &same, 5, &page(HERE), AT + 1), ReplayFrom::Beginning, "the control case never carried");
+    assert_ne!(carry_across(Some(&stand), &same, 4, &page(HERE), AT + 1), ReplayFrom::Beginning, "the control case never carried");
 
     let mut action = same.clone();
     action.steps[0].actions = vec![serde_json::from_value(click("#other")).unwrap()];
@@ -3419,7 +3433,7 @@ fn a_differing_action_account_area_save_mode_or_precondition_starts_from_the_beg
         ("the save mode", save_mode),
         ("a precondition", precondition),
     ] {
-        assert_eq!(carry_across(Some(&stand), &other, 5, &page(HERE), AT + 1), ReplayFrom::Beginning, "{what} differed");
+        assert_eq!(carry_across(Some(&stand), &other, 4, &page(HERE), AT + 1), ReplayFrom::Beginning, "{what} differed");
     }
 }
 
@@ -3435,9 +3449,9 @@ fn a_prefix_that_wrote_data_is_never_shared() {
         vec![cp(&a, 1, HERE, false), cp(&a, 2, HERE, false), cp(&a, 3, "/hr/other", true), cp(&a, 4, "/hr/other", true)],
     );
     // The page is back at the unwritten checkpoint 2: the largest that wrote nothing.
-    assert_eq!(carry_across(Some(&stand), &b, 5, &page(HERE), AT + 1), ReplayFrom::CarriedOnFrom { case_id: 77, k: 2 });
+    assert_eq!(carry_across(Some(&stand), &b, 4, &page(HERE), AT + 1), ReplayFrom::CarriedOnFrom { case_id: 77, k: 2 });
     // The page is where checkpoint 3 left it, but checkpoint 3 saved.
-    assert_eq!(carry_across(Some(&stand), &b, 5, &page("/hr/other"), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &page("/hr/other"), AT + 1), ReplayFrom::Beginning);
 }
 
 #[test]
@@ -3448,7 +3462,7 @@ fn a_case_with_a_setup_never_carries_across() {
     b.setup = Some(v2_lib::autorun::Setup { fixture: "made".into() });
     // Even a stand of an identical script (setup and all) is not carried on from.
     stand.settings = v2_lib::autorun::replay_to::settings_fingerprint(&b);
-    assert_eq!(carry_across(Some(&stand), &b, 5, &page(HERE), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &page(HERE), AT + 1), ReplayFrom::Beginning);
 }
 
 #[test]
@@ -3456,8 +3470,8 @@ fn an_old_stand_starts_from_the_beginning() {
     let a = case_with_fourth(77, &["#open"]);
     let b = case_with_fourth(78, &["#b4"]);
     let stand = left_by(&a);
-    assert_ne!(carry_across(Some(&stand), &b, 5, &page(HERE), AT + STAND_FRESH_MS - 1), ReplayFrom::Beginning);
-    assert_eq!(carry_across(Some(&stand), &b, 5, &page(HERE), AT + STAND_FRESH_MS), ReplayFrom::Beginning);
+    assert_ne!(carry_across(Some(&stand), &b, 4, &page(HERE), AT + STAND_FRESH_MS - 1), ReplayFrom::Beginning);
+    assert_eq!(carry_across(Some(&stand), &b, 4, &page(HERE), AT + STAND_FRESH_MS), ReplayFrom::Beginning);
 }
 
 /// A new stand keeps what the old one still holds: nothing from the
@@ -3539,9 +3553,9 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
 
     let now = page_state(&mut d).await;
     let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
-    let from = carry_across(Some(&stand), &b, 5, &now, AT + 1);
+    let from = carry_across(Some(&stand), &b, 4, &now, AT + 1);
     assert_eq!(from, ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 });
-    assert_eq!(from.said(78, 5), "Carried on from step 3 of case 77 (the same first 3 steps).");
+    assert_eq!(from.said(78, 4), "Carried on from step 3 of case 77 (the same first 3 steps).");
 
     let before = log(&app).len();
     let r = ReplayRequest { case_id: 78, step: 5, db_read_access: false };
@@ -3583,7 +3597,7 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let now = page_state(&mut d).await;
     let stand_a = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints);
-    let from = carry_across(Some(&stand_a), &b, 5, &now, AT + 1);
+    let from = carry_across(Some(&stand_a), &b, 4, &now, AT + 1);
     assert_eq!(from, ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 });
 
     let r = ReplayRequest { case_id: 78, step: 5, db_read_access: false };
@@ -3602,7 +3616,7 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     let stand_b = ReplayStand::of(&b, 5, &now_b.0, AT, kept);
 
     // Case 79 shares the first 3 steps, but case 78 ended away from them.
-    let from_c = carry_across(Some(&stand_b), &c, 5, &now_b, AT + 1);
+    let from_c = carry_across(Some(&stand_b), &c, 4, &now_b, AT + 1);
     assert_eq!(from_c, ReplayFrom::Beginning);
     assert_eq!(from_c.said(79, 5), "Started from the beginning.");
 }
@@ -3635,7 +3649,7 @@ fn a_stand_whose_replay_did_anything_is_never_carried_across_and_the_answer_says
     let a = case_with_fourth(77, &["#open"]);
     let b = case_with_fourth(78, &["#b4"]);
     let why = |u: Option<Unclean>, wrote_at_4: bool| {
-        carry_across_why(Some(&stand_with(&a, u, wrote_at_4)), &b, 5, &page(HERE), AT + 1)
+        carry_across_why(Some(&stand_with(&a, u, wrote_at_4)), &b, 4, &page(HERE), AT + 1)
     };
     assert_eq!(why(None, false), (ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 }, None));
     // Saved after the shared steps (the best shared checkpoint, 3, saved nothing).
@@ -3647,7 +3661,7 @@ fn a_stand_whose_replay_did_anything_is_never_carried_across_and_the_answer_says
     let mut early = stand_with(&a, Some(Unclean::Saved), false);
     early.checkpoints[2].wrote = true;
     assert_eq!(
-        carry_across_why(Some(&early), &b, 5, &page(HERE), AT + 1),
+        carry_across_why(Some(&early), &b, 4, &page(HERE), AT + 1),
         (ReplayFrom::Beginning, Some("case 77 saved something in the shared steps.".to_string()))
     );
     assert_eq!(
@@ -3657,7 +3671,7 @@ fn a_stand_whose_replay_did_anything_is_never_carried_across_and_the_answer_says
     assert_eq!(why(Some(Unclean::Tabs), false), (ReplayFrom::Beginning, Some("case 77 opened another tab.".to_string())));
     // Nothing shared, nothing to say: the plain start.
     assert_eq!(
-        carry_across_why(Some(&stand_with(&a, Some(Unclean::Saved), false)), &b, 5, &page("/hr/other"), AT + 1),
+        carry_across_why(Some(&stand_with(&a, Some(Unclean::Saved), false)), &b, 4, &page("/hr/other"), AT + 1),
         (ReplayFrom::Beginning, None)
     );
 }
@@ -3694,7 +3708,7 @@ async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across
     assert_eq!(marks.checkpoints.iter().map(|c| c.wrote).collect::<Vec<_>>(), vec![false, false, false, true]);
     let now = page_state(&mut d).await;
     let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
-    let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
+    let (from, why) = carry_across_why(Some(&stand), &b, 4, &now, AT + 1);
     assert_eq!(from, ReplayFrom::Beginning);
     assert_eq!(why.as_deref(), Some("case 77 saved something after the shared steps."));
 }
@@ -3721,7 +3735,7 @@ async fn a_look_only_replay_never_reports_a_save_but_is_not_carried_on_from() {
     let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
     let mut b = case_with_fourth(78, &["#b4"]);
     b.no_save = true;
-    let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
+    let (from, why) = carry_across_why(Some(&stand), &b, 4, &now, AT + 1);
     assert_eq!(from, ReplayFrom::Beginning);
     let why = why.expect("a sentence");
     assert!(why.starts_with("case 77's page sent a request the save guard let through"), "{why}");
