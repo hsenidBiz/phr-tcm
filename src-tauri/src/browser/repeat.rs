@@ -201,7 +201,7 @@ pub fn within_row(t: &Target) -> Option<Target> {
 /// iframe lives in the frame's document, which the top one does not hold.
 pub async fn except_on_page<D: Driver>(d: &mut D, except: &[String], found: &[Match]) -> Result<Vec<String>, CdpError> {
     let mut shown: Vec<String> = Vec::new();
-    let mut ask = |v: Value, shown: &mut Vec<String>| {
+    let ask = |v: Value, shown: &mut Vec<String>| {
         for t in v.as_array().into_iter().flatten().filter_map(|t| t.as_str()) {
             if !shown.iter().any(|s| s == t) {
                 shown.push(t.to_string());

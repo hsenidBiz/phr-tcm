@@ -1019,15 +1019,10 @@ pub fn check_count(script: &CaseScript) -> usize {
 }
 
 /// The kind of every check of a step (nested ones included, exactly the
-/// actions `check_count` counts), as `Action` serializes its `kind`.
+/// actions `check_count` counts: a loop's own `expect_hidden` is a wait for
+/// the row to go, not a check), as `Action` serializes its `kind`.
 pub fn check_kinds_of_step(step: &StepScript) -> Vec<String> {
-    let mut kinds = Vec::new();
-    walk(&step.actions, &mut |a| {
-        if a.is_check() {
-            kinds.push(kind_of(a));
-        }
-    });
-    kinds
+    step.actions.iter().flat_map(Action::judging).filter(|a| a.is_check()).map(|a| kind_of(a)).collect()
 }
 
 fn kind_of(a: &Action) -> String {

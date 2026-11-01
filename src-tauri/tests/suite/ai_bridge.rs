@@ -4601,6 +4601,40 @@ fn patch_steps_replaces_the_cleanup_step() {
     assert_eq!(serde_json::to_value(&last.actions).unwrap(), new_actions);
 }
 
+/// The guide's example sends actions only: the saved clean-up's other
+/// fields (`unchecked`) stay, and the step takes the patch's number.
+#[test]
+fn a_cleanup_patch_merges_into_the_saved_cleanup() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 5, "cleanup": true, "unchecked": "puts the record back", "actions": [{ "kind": "reload" }] }
+    ]));
+    let new_actions = serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Close" } }]);
+    let out = patched(&saved, serde_json::json!([{ "step": 6, "cleanup": true, "actions": new_actions }])).unwrap();
+    let last = out.steps.last().unwrap();
+    assert!(last.cleanup);
+    assert_eq!(last.step_number, 6);
+    assert_eq!(last.unchecked, Some("puts the record back".into()));
+    assert_eq!(serde_json::to_value(&last.actions).unwrap(), new_actions);
+    // The patch's own field wins.
+    let out = patched(&saved, serde_json::json!([{ "step": 5, "cleanup": true, "unchecked": "new words", "actions": [] }])).unwrap();
+    assert_eq!(out.steps.last().unwrap().unchecked, Some("new words".into()));
+}
+
+#[test]
+fn two_cleanup_patches_in_one_entry_are_refused() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 5, "cleanup": true, "unchecked": "x", "actions": [{ "kind": "reload" }] }
+    ]));
+    let why = patched(
+        &saved,
+        serde_json::json!([{ "step": 5, "cleanup": true, "actions": [] }, { "step": 6, "cleanup": true, "actions": [] }]),
+    )
+    .unwrap_err();
+    assert!(why.contains("two clean-up patches"), "{why}");
+}
+
 #[test]
 fn a_cleanup_patch_on_a_case_step_number_is_refused() {
     let saved = patch_fixture(serde_json::json!([

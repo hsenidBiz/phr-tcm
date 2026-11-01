@@ -801,7 +801,12 @@ pub fn place_runs(flat: &Path, envs: &[(String, String)], active: &str) -> Resul
         let target = run_target(run.environment.as_deref(), envs, active);
         for case in &run.cases {
             for step in case.steps.iter().chain(case.cleanup.iter()) {
-                if let Some(shot) = step.screenshot.as_deref().filter(|s| !s.is_empty()) {
+                // A failure picture lives on the action's outcome, not the step.
+                let named = step
+                    .screenshot
+                    .iter()
+                    .chain(step.outcomes.iter().filter_map(|o| o.screenshot.as_ref()));
+                for shot in named.map(String::as_str).filter(|s| !s.is_empty()) {
                     let at = placed.shots.entry(shot_key(shot)).or_default();
                     if !at.contains(&target) {
                         at.push(target.clone());
@@ -933,8 +938,13 @@ pub fn fan_out(
                 let file = entry.file_name();
                 let target = if name == "orders" {
                     let json = entry.path().extension().and_then(|e| e.to_str()) == Some("json");
-                    if json && !order_has_a_script(flat, &std::fs::read_to_string(entry.path()).unwrap_or_default()) {
-                        continue;
+                    if json {
+                        match std::fs::read_to_string(entry.path()) {
+                            Ok(text) if !order_has_a_script(flat, &text) => continue,
+                            Ok(_) => {}
+                            // Unreadable is not empty: keep it where it can be tried again.
+                            Err(_) => crate::applog::warn("Auto Run: a saved run order could not be read for the update and goes to the active environment"),
+                        }
                     }
                     active.clone()
                 } else {

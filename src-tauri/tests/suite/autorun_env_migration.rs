@@ -790,6 +790,42 @@ fn an_unreadable_run_goes_to_the_active_environment() {
     assert!(!at(t.path(), B, "runs/run-3.json").exists());
 }
 
+/// A failure picture lives on the action's outcome, in a case step or in the clean-up.
+#[test]
+fn failure_shots_on_outcomes_go_with_their_run() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    let mut run = a_run("run-1");
+    run.environment = Some("QA Automation".into());
+    run.cases = vec![serde_json::from_value(serde_json::json!({
+        "case_id": 1, "title": "t", "verdict": "fail", "note": "",
+        "steps": [{"step_number": 1, "outcomes": [{"ok": false, "detail": "d", "screenshot": "fail-step.jpg"}]}],
+        "cleanup": {"step_number": 2, "outcomes": [{"ok": false, "detail": "d", "screenshot": "fail-cleanup.jpg"}]}
+    }))
+    .unwrap()];
+    put(t.path(), "runs/run-1.json", &serde_json::to_string(&run).unwrap());
+    put(t.path(), "shots/fail-step.jpg", "P1");
+    put(t.path(), "shots/fail-cleanup.jpg", "P2");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    for rel in ["shots/fail-step.jpg", "shots/fail-cleanup.jpg"] {
+        assert!(at(t.path(), B, rel).is_file(), "{rel} should be under QA");
+        assert!(!at(t.path(), A, rel).exists(), "{rel} should not be under Default");
+    }
+}
+
+/// An order file that cannot be read is carried, not dropped.
+#[test]
+fn an_unreadable_order_is_carried_to_the_active_environment() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    std::fs::create_dir_all(t.path().join("orders")).unwrap();
+    std::fs::write(t.path().join("orders/12.json"), [0xff, 0xfe, 0xfd]).unwrap();
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    assert!(at(t.path(), A, "orders/12.json").is_file());
+}
+
 #[test]
 fn an_order_with_no_scripted_case_is_not_carried() {
     let _s = serial::autorun();

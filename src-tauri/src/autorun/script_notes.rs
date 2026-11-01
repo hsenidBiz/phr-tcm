@@ -80,9 +80,9 @@ fn listed(only_steps: Option<&[i32]>, step: i32) -> bool {
 /// A step's actions as they run, `when_visible` bodies and components
 /// expanded (a component that cannot be expanded is read as written).
 fn flat(step: &StepScript, components: Option<&ComponentFile>) -> Vec<Action> {
-    let written: Vec<Action> = step.actions.iter().flat_map(|a| a.each()).cloned().collect();
+    let written: Vec<Action> = step.actions.iter().flat_map(|a| a.judging()).cloned().collect();
     match components.map(|f| expand_actions(f, &step.actions)) {
-        Some(Ok((expanded, _))) => expanded.iter().flat_map(|a| a.each()).cloned().collect(),
+        Some(Ok((expanded, _))) => expanded.iter().flat_map(|a| a.judging()).cloned().collect(),
         _ => written,
     }
 }
@@ -214,7 +214,7 @@ pub fn positional_delete_notes(
 
 /// The same note for a component's actions, which have no steps.
 pub fn positional_delete_notes_for_actions(actions: &[Action]) -> Vec<String> {
-    let flat: Vec<Action> = actions.iter().flat_map(|a| a.each()).cloned().collect();
+    let flat: Vec<Action> = actions.iter().flat_map(|a| a.judging()).cloned().collect();
     positional_picks(&flat).map(picks_sentence).into_iter().collect()
 }
 

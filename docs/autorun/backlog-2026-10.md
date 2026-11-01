@@ -1119,6 +1119,20 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
 
     - **Done in 2.4.3-beta.10.** `get_accounts` shows key, label, username, role and `has_password`, never a password; `propose_accounts` still carries it. Left: a live check on QA Automation.
 
+63. **The Playwright export of a delete loop with `except` does not carry Auto Run's refusal.**
+    Auto Run refuses to delete in a loop whose rows cannot be told apart, but the exported spec
+    has no such guard, so it can delete where Auto Run would stop. Found in the final review of
+    55-62.
+
+    - **Open.** The export should carry the same refusal, or say in its header that it does not.
+
+64. **A discovery try that never ran the rows guard is recorded as a pass.** When the loop's
+    condition is false or the first look is empty, the guard is skipped and the try is saved as a
+    pass, which can erase an older refusal recorded when the script was saved. Every run still
+    runs the guard, so deletes are protected. Found in the final review of 55-62.
+
+    - **Open.** A try that did not run the guard should leave an older refusal in place.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through

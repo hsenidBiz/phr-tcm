@@ -12792,6 +12792,7 @@ pub fn apply_patch_steps(
             return Err(format!("case {case_id}: its saved script has no steps to patch"));
         };
         let mut patched: Vec<i64> = Vec::new();
+        let mut cleanup_patched = false;
         for patch in patches {
             let Some(fields) = patch.as_object() else {
                 return Err(format!("case {case_id}: each of \"patch_steps\" is {{ step, actions }}"));
@@ -12811,20 +12812,33 @@ pub fn apply_patch_steps(
             let is_cleanup_step = |s: &serde_json::Value| s.get("cleanup").and_then(serde_json::Value::as_bool) == Some(true);
             let others = fields.iter().filter(|(k, _)| !matches!(k.as_str(), "step" | "step_number"));
             if is_cleanup {
-                // The clean-up step: replaced whatever its number, or added
-                // after the last case step when the script has none.
+                // The clean-up step: the patch merges into the saved one
+                // (fields it does not send are kept, its number is the
+                // patch's), or is added after the last case step when the
+                // script has none.
+                if cleanup_patched {
+                    return Err(format!("case {case_id}: patch_steps holds two clean-up patches; a case has one clean-up step"));
+                }
+                cleanup_patched = true;
                 let last = steps.iter().filter(|s| !is_cleanup_step(s)).filter_map(number_of).max();
                 if let Some(last) = last.filter(|l| n <= *l) {
                     return Err(format!("case {case_id}: a clean-up step comes after the case's last step ({last})"));
                 }
-                let mut step = serde_json::Map::new();
-                step.insert("step_number".to_string(), serde_json::json!(n));
-                for (k, v) in others {
-                    step.insert(k.clone(), v.clone());
-                }
                 match steps.iter().position(is_cleanup_step) {
-                    Some(at) => steps[at] = serde_json::Value::Object(step),
-                    None => steps.push(serde_json::Value::Object(step)),
+                    Some(at) => {
+                        steps[at]["step_number"] = serde_json::json!(n);
+                        for (k, v) in others {
+                            steps[at][k.as_str()] = v.clone();
+                        }
+                    }
+                    None => {
+                        let mut step = serde_json::Map::new();
+                        step.insert("step_number".to_string(), serde_json::json!(n));
+                        for (k, v) in others {
+                            step.insert(k.clone(), v.clone());
+                        }
+                        steps.push(serde_json::Value::Object(step));
+                    }
                 }
                 continue;
             }

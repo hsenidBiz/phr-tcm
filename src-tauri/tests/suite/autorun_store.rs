@@ -1880,6 +1880,17 @@ fn a_stand_in_must_name_a_check_of_the_step() {
 }
 
 #[test]
+fn a_stand_in_cannot_name_a_loops_wait() {
+    let acts = serde_json::json!([{ "kind": "repeat_while_visible", "selector": "#row", "max": 3,
+        "then": [{ "kind": "click", "selector": "#del" }, { "kind": "expect_hidden", "selector": "#row" }] }]);
+    let sc = unchecked_script(acts, serde_json::json!([{ "item": "the row is gone", "why": "y", "stand_in": "expect_hidden" }]));
+    assert_eq!(
+        refusal(sc),
+        "case 7 step 1: \"stand_in\": \"expect_hidden\" names no check of this step - name the kind of the check that stands in for \"the row is gone\""
+    );
+}
+
+#[test]
 fn a_cleanup_unchecked_is_one_sentence() {
     let mut sc: CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t", "steps": [
         { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },

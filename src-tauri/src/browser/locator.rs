@@ -397,6 +397,14 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
     Ok(n.as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)))
 }
 
+/// `this` is a match; true when its text holds `want` (contains, case-insensitive, whitespace runs folded).
+pub const HAS_TEXT_JS: &str = r#"function(want) {
+  const fold = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
+  const w = fold(want);
+  if (!w) return false;
+  return fold(this.textContent).includes(w);
+}"#;
+
 /// `this` is the element. Could a person see it: drawn with a size, and
 /// not hidden by `display`, `visibility` or `content-visibility`.
 ///
@@ -408,14 +416,6 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
 /// person's click on the slider does. A node that is not an element (the
 /// document a `RootWebArea` names, a list marker's pseudo-element) is
 /// never seen: nothing can be done to it.
-/// `this` is a match; true when its text holds `want` (contains, case-insensitive, whitespace runs folded).
-pub const HAS_TEXT_JS: &str = r#"function(want) {
-  const fold = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
-  const w = fold(want);
-  if (!w) return false;
-  return fold(this.textContent).includes(w);
-}"#;
-
 pub const VISIBLE_JS: &str = concat!(
     r#"function() {
   if (!(this instanceof Element)) return false;

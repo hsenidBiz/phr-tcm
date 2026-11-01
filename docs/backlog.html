@@ -105,6 +105,8 @@
       <li>Hand check owed: 135342 gets its clean-up step through one patch.</li>
       <li>Hand check owed: get_accounts on QA Automation lists no password.</li>
       <li>Owed: retake the How To Use shot of the Auto Run Setup panel (the Environment row now has Import scripts…) and rebuild the guide.</li>
+      <li>Open (63): the Playwright export of a delete loop with <code>except</code> does not carry Auto Run's refusal of a loop whose rows cannot be told apart, so an exported spec can delete where Auto Run refuses. Found in the final review of 55-62.</li>
+      <li>Open (64): a discovery try that passes without the rows guard ever running (condition false, empty first look) is recorded as a pass and can erase an older save-time refusal; every run still runs the guard. Found in the final review of 55-62.</li>
     </ul>
   </div>
 

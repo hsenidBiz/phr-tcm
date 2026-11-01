@@ -2689,7 +2689,7 @@ the answer says so; start a new one to explore again.
   reloaded and the form never sent twice; with the form still showing
   (wrong password, locked account, reset page) nothing is tried again.
   A site that is slow to wake (the first page does not open) is given
-  about 2 minutes, opened again after 5, 15 and 30 seconds; it then fails
+  about 2 minutes, opened again up to three more times in that time; it then fails
   as "the site is slow to start", which is the site, not the browser and
   not the script.
 - Replaying the same case to a later step carries on from where your last
@@ -2790,9 +2790,12 @@ that step of the saved script, every other step is kept as saved, and any
 other key of the entry (`title`, `area`) replaces the saved one. It is
 checked exactly as the whole script would be, so `edits` must still
 declare every patched step. A step the saved script lacks is ADDED, in
-step order; with `"cleanup": true` the patch adds or replaces the clean-up
-step (numbered after the case's last step), e.g. `{ "step": 9, "cleanup":
-true, "actions": [...] }`.
+step order; with `"cleanup": true` the patch changes the clean-up step
+(numbered after the case's last step) the same way: what it sends replaces
+the saved field and what it leaves out, such as `unchecked`, is kept, e.g.
+`{ "step": 9, "cleanup": true, "actions": [...] }`. A case with no clean-up
+yet gets a new one, which also needs its `"unchecked": "..."`. One clean-up
+patch to an entry.
 
 When a save is refused, every case's refusals of the same kind come back
 in one answer: every undeclared change, every expected result nothing
