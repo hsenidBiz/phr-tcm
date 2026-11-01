@@ -2826,6 +2826,170 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
     assert!(others.contains("\"note 3\""), "the next oldest is named after the candidates: {out}");
 }
 
+/// A repair's quirk the full list cannot take no longer hides at the end
+/// of the answer: the answer opens with it, quotes it, and names the tool
+/// to retire one and record it again. The repaired scripts are saved.
+#[tokio::test]
+async fn a_repair_quirk_refused_at_the_cap_leads_the_answer() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, MAX_QUIRKS};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &case_7("#toast", "Saved").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    let list: Vec<Quirk> =
+        (0..MAX_QUIRKS).map(|i| Quirk::new(&format!("note {i}"), "assistant", "autorun", 100 + i as u64)).collect();
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+
+    let body = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [{
+            "case_id": 7,
+            "steps": [2],
+            "why": "the toast has no id, only a class",
+            "quirk": "the toast is rendered into a portal at the end of the body",
+        }],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let first = out.lines().next().unwrap_or("");
+    assert!(first.starts_with("quirk not recorded"), "{out}");
+    assert!(first.contains("the toast is rendered into a portal at the end of the body"), "{out}");
+    assert!(first.contains("record_quirk"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some(), "the repaired script is saved");
+    assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), MAX_QUIRKS);
+}
+
+/// Several repair quirks refused at the cap: each has its own leading line
+/// (quoted, with the short reason), and the retire advice and the candidates
+/// are said once, after them - not once per quirk.
+#[tokio::test]
+async fn several_repair_quirks_refused_at_the_cap_name_the_candidates_once() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, MAX_QUIRKS};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"]), (8, "Save a rating", &["", "A toast says Saved"])]).await;
+    // Cases 7 and 8 are the same script: one entry per case in "edits".
+    let both = |selector: &str| {
+        let mut two = case_7(selector, "Saved");
+        let mut eight = two[0].clone();
+        eight["case_id"] = serde_json::json!(8);
+        two.as_array_mut().unwrap().push(eight);
+        two
+    };
+    see_scripts(dir.path(), &both("#toast").to_string());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &both("#toast").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let list: Vec<Quirk> =
+        (0..MAX_QUIRKS).map(|i| Quirk::new(&format!("note {i}"), "assistant", "autorun", 100 + i as u64)).collect();
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+    let body = serde_json::json!({
+        "scripts": both(".toast"),
+        "edits": [
+            { "case_id": 7, "steps": [2], "why": "the toast has no id", "quirk": "the toast is rendered into a portal" },
+            { "case_id": 8, "steps": [2], "why": "the toast has no id", "quirk": "the toast fades after three seconds" },
+        ],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with("quirk not recorded: \"the toast is rendered into a portal\" - "), "{out}");
+    assert!(lines[1].starts_with("quirk not recorded: \"the toast fades after three seconds\" - "), "{out}");
+    for line in &lines[..2] {
+        assert!(line.contains("already has") && !line.contains("Best candidates"), "{out}");
+    }
+    assert_eq!(out.matches("Best candidates").count(), 1, "{out}");
+    assert_eq!(out.matches("Oldest of the others").count(), 1, "{out}");
+    assert!(lines[2].contains("record_quirk { retire: id") && lines[2].contains("Best candidates"), "{out}");
+}
+
+/// A repair save with one `quirk`, on a fresh project (a person's retired
+/// notes given first); the answer to it.
+async fn repair_save_answer(dir: &TempDir, retired_by_person: &[&str], quirk: &str) -> String {
+    use v2_lib::autorun::quirks::{retire_in, save_quirks, Quirk};
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &case_7("#toast", "Saved").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    let mut list: Vec<Quirk> = Vec::new();
+    for (i, t) in retired_by_person.iter().enumerate() {
+        list.push(Quirk::new(t, "assistant", "autorun", 100 + i as u64));
+    }
+    v2_lib::autorun::quirks::ensure_ids(&mut list);
+    let ids: Vec<String> = list.iter().map(|q| q.id.clone()).collect();
+    for id in ids {
+        retire_in(&mut list, &id, Some("wrong"), None, false, 500).unwrap();
+    }
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+    let body = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [{ "case_id": 7, "steps": [2], "why": "the toast has no id, only a class", "quirk": quirk }],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some(), "the repaired script is saved");
+    out
+}
+
+/// A note a person retired is refused with its own advice (ask them), not
+/// the full list's "retire one and record it again".
+#[tokio::test]
+async fn a_repair_quirk_a_person_retired_has_no_retire_advice() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let out = repair_save_answer(&dir, &["the toast is rendered into a portal"], "The toast is rendered into a portal").await;
+    let first = out.lines().next().unwrap_or("");
+    assert!(first.starts_with("quirk not recorded: \"The toast is rendered into a portal\" - a person retired this note"), "{out}");
+    assert!(first.ends_with("ask them to restore it."), "{out}");
+    assert!(!out.contains("Retire one and record it again"), "{out}");
+}
+
+/// A line over the length limit is refused with its own advice, and a
+/// multi-line one is quoted by its first line only.
+#[tokio::test]
+async fn a_too_long_repair_quirk_has_no_retire_advice() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let long = format!("the toast
+{}", "x".repeat(400));
+    let out = repair_save_answer(&dir, &[], &long).await;
+    let first = out.lines().next().unwrap_or("");
+    assert!(first.starts_with("quirk not recorded: \"the toast\" - "), "{out}");
+    assert!(first.contains("at most 300 characters") && first.ends_with('.'), "{out}");
+    assert!(!out.contains("Retire one and record it again"), "{out}");
+}
+
 // ----------------------------------------------------------- the dev gate
 //
 // Every route above runs through `route()`, which reads its own build's
@@ -3430,6 +3594,58 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
     assert_eq!(status, 200, "{out}");
     assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
+}
+
+/// A check given up and replaced by another kind: the record and the report line say what took its
+/// place. One given up with nothing added has no `replaced_by` in its JSON.
+#[tokio::test]
+async fn a_given_up_check_records_what_replaced_it() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let (_changed, client) = client_with_cases(&[(7, "Save a rating", &["", ""])]).await;
+    let swapped = |actions: serde_json::Value, given: &str| {
+        serde_json::json!({
+            "scripts": [{
+                "case_id": 7,
+                "title": "Save a rating",
+                "steps": [
+                    { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+                    { "step_number": 2, "actions": actions }
+                ]
+            }],
+            "edits": [{ "case_id": 7, "steps": [2], "why": "the toast is gone, the panel shows it now",
+                "gives_up": [{ "step": 2, "kind": given, "why": "the toast is gone, the panel shows it now" }] }],
+        })
+        .to_string()
+    };
+    let body = swapped(serde_json::json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_visible", "selector": "#toast" }
+    ]), "expect_contains_text");
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("check given up: step 2 expect_contains_text - the toast is gone, the panel shows it now (replaced by expect_visible)."), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.given_up[0].replaced_by, vec!["expect_visible".to_string()]);
+    assert!(serde_json::to_string(&on_disk.given_up[0]).unwrap().contains("replaced_by"));
+
+    // Nothing added: no replaced_by in the JSON, and the line is the old one.
+    let body = swapped(serde_json::json!([{ "kind": "click", "selector": "#save" }]), "expect_visible");
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("replaced by"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert!(on_disk.given_up.last().unwrap().replaced_by.is_empty());
+    assert!(!serde_json::to_string(on_disk.given_up.last().unwrap()).unwrap().contains("replaced_by"));
 }
 
 /// Marks affect order, not safety: an assistant marking a saved script

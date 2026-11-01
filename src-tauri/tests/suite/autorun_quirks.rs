@@ -620,12 +620,12 @@ fn candidates_rank_unhelpful_then_unconfirmed_then_untested() {
     assert!(text.contains("\"confirmed often\""), "{text}");
 }
 
-/// The cap is 60, and on a full list of confirmed notes the refusal still
+/// The cap is 100, and on a full list of confirmed notes the refusal still
 /// names something to retire: the oldest three, oldest first.
 #[test]
 fn a_full_list_of_confirmed_notes_names_the_oldest_to_retire() {
     use v2_lib::autorun::quirks::oldest_others;
-    assert_eq!(MAX_QUIRKS, 60);
+    assert_eq!(MAX_QUIRKS, 100);
     let list: Vec<Quirk> = (0..MAX_QUIRKS)
         .map(|i| {
             let mut q = quirk(&format!("note {i}"), "assistant", &(1000 - i).to_string());
@@ -637,10 +637,10 @@ fn a_full_list_of_confirmed_notes_names_the_oldest_to_retire() {
     let mut list = list;
     v2_lib::autorun::quirks::ensure_ids(&mut list);
     let oldest: Vec<&str> = oldest_others(&list, &[]).iter().map(|q| q.text.as_str()).collect();
-    assert_eq!(oldest, vec!["note 59", "note 58", "note 57"]);
+    assert_eq!(oldest, vec!["note 99", "note 98", "note 97"]);
     let text = cap_refusal(&list, Some(RETIRE_TOOL));
-    assert!(text.contains("60 active quirks"), "{text}");
-    assert!(text.contains("\"note 59\"") && text.contains(RETIRE_TOOL), "{text}");
+    assert!(text.contains("100 active quirks"), "{text}");
+    assert!(text.contains("\"note 99\"") && text.contains(RETIRE_TOOL), "{text}");
 }
 
 /// One run counts at most once per source case: three passing steps of
@@ -788,4 +788,18 @@ fn an_old_quirks_file_without_a_class_loads_unchanged() {
     assert_eq!(list[0].class, None);
     save_quirks(dir.path(), "Acme", "Web", &list).unwrap();
     assert!(!std::fs::read_to_string(&path).unwrap().contains("class"));
+}
+
+/// `is_cap_refusal` reads the text `cap_refusal` writes, in both the
+/// assistant's and the person's wording, and nothing else.
+#[test]
+fn is_cap_refusal_matches_the_real_cap_refusal_text() {
+    use v2_lib::autorun::quirks::is_cap_refusal;
+    let list = full_list();
+    assert!(is_cap_refusal(&cap_refusal(&list, Some(RETIRE_TOOL))));
+    assert!(is_cap_refusal(&cap_refusal(&list, None)));
+    // As the bridge hands it over: the last full stop trimmed.
+    assert!(is_cap_refusal(cap_refusal(&list, Some(RETIRE_TOOL)).trim_end_matches('.')));
+    assert!(!is_cap_refusal("a person retired this note; ask them to restore it."));
+    assert!(!is_cap_refusal("a quirk is at most 300 characters"));
 }

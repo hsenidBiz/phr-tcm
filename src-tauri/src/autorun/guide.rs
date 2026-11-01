@@ -597,6 +597,13 @@ For anything NOT on that list, guard the click with `when_visible`:
   selector is a guard, so it counts seen matching any number of elements,
   or none (a probe that matched nothing); a `then` click on that same
   locator still needs one seen matching exactly one element.
+- In the clean-up step only, a `then` action on a locator that was never
+  seen (an Activate button that shows only on some days) is not refused:
+  the save notes that it is checked the first time its guard fires, and a
+  run or replay in which the guard fires and the action works files that
+  locator as seen. A locator seen in any way (matching several, say) keeps
+  its refusal, as do the guard's own selector and every locator outside a
+  clean-up guard's `then`.
 
 In a repair, a new guard needs the edit's `quirk` and `quirk_class` ("Repairing a script that failed").
 
@@ -1946,10 +1953,12 @@ You open and drive a browser of your own to find what a script needs:
   replay or discovery; only the person's End discovery button closes it.
 - `reset_autorun_browser` gives a clean page and keeps the sign-in: it closes
   the other tabs, forgets any dialog a replay expected or saw, lifts your save
-  guard, forgets where your last replay stopped, and loads the home page. Use it
+  guard, forgets where your last replay stopped, and loads the page the browser
+  landed on when it signed in while that sign-in stands (otherwise, or when none
+  is known or it will not open, the home page). Use it
   when you only want a clean page. It ends your own discovery if one is going,
-  keeping what it mapped. If the sign-in has gone it says so, and the next
-  replay signs in again. It is refused while a replay is running, and for the
+  keeping what it mapped. If the sign-in has gone it says so and says why, and
+  the next replay signs in again. It is refused while a replay is running, and for the
   person's own browser.
 - `reset_autorun_browser` with `release: true` is only for a broken browser
   (frozen, wrong account, session gone), never between replays: a browser that is signed in and
@@ -2107,7 +2116,10 @@ What a save checks:
   1. Text the script typed itself: a locator whose text or name contains,
      as a whole word or phrase, a value of at least 3 characters that the
      script typed in an earlier step. Typing "AutoTest Leave 7" lets a row
-     "AutoTest Leave 7 Pending" through, but not a "Leave" button.
+     "AutoTest Leave 7 Pending" through, but not a "Leave" button. A
+     list or grid often cuts a long name short, so a locator whose text
+     is the start of such a value counts too, when that start is at
+     least 20 characters (after case and spacing are ignored).
   2. Text from the test case: a check (`wait_for` or an `expect_` action)
      whose text appears as a whole word or phrase in the case's own steps
      or expected results, of at least 3 characters.
@@ -2696,7 +2708,10 @@ the answer says so; start a new one to explore again.
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the
   answer starts with "Carried on from step K" or "Started from the
-  beginning". Already standing before the step, nothing runs.
+  beginning". Already standing before the step, nothing runs. A replay past the
+  last step (the whole case) never carries on, from your last replay or
+  another case's: "Started from the beginning: a replay of the whole case
+  always does."
 - A replay of another case carries on from where your last replay left the
   browser when its first K steps are the same in every action, its account,
   area, preconditions and save mode are the same, it has no setup, the
@@ -2817,7 +2832,7 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 - the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`
 - a repair that leaves out or turns off `"no_save": true` - `this script is marked Must not save, and a repair cannot turn that off`
 
-A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair that removes `not_before_ms`, `started_within_ms` or `same_document` from an `expect_response` that stays gives that check up too: name the field as the `kind` in `gives_up` (`{ "step": 3, "kind": "not_before_ms", "why": "..." }`). A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
+A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. A check swapped for another kind (a visible check for a text check) is given up by its old kind, and the record and the save answer show what took its place (`(replaced by expect_text)`). The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair that removes `not_before_ms`, `started_within_ms` or `same_document` from an `expect_response` that stays gives that check up too: name the field as the `kind` in `gives_up` (`{ "step": 3, "kind": "not_before_ms", "why": "..." }`). A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
 
 A repair may not let the page decide whether a failure counts, either. A check never goes inside a
 guard. A new `when_visible` or `repeat_while_visible`, or a phrase added to `ignore_page_errors`, needs
@@ -2859,7 +2874,7 @@ or supervised once that run is saved - at most once per case per run:
 "confirmed Nx" when those steps passed, "did not help Nx" when they failed
 the same way again.
 
-A project keeps 60 active quirks. Past that, `record_quirk` (and
+A project keeps 100 active quirks. Past that, `record_quirk` (and
 an edit's `quirk`) is refused with up to three of the assistant's own
 notes to retire: ones that did not help more often than they helped
 first, then ones no run has confirmed, then ones never tied to a run,

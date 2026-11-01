@@ -1300,6 +1300,7 @@ async fn run_expanded<D: Driver>(
                             false => None,
                         };
                         lease.note_sign_in(print);
+                        lease.note_landing(signin::landing_page(d, &r.origins()).await);
                         match route {
                             _ if !signed.ok => {
                                 blocked = Some(AFTER_FAILED_SIGN_IN);
@@ -1773,6 +1774,7 @@ async fn after_session_refused<D: Driver>(
         return as_action_outcome(&signed);
     }
     lease.note_sign_in(crate::browser::session::cookie_print(d, &r.origins()).await);
+    lease.note_landing(signin::landing_page(d, &r.origins()).await);
     ActionOutcome::failed(session_refused_mid_case(key))
 }
 

@@ -760,7 +760,7 @@ export const commands = {
 	 */
 	checks?: number,
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
-	given_up?: GivenUp[],
+	given_up?: GivenUp_Serialize[],
 	/**
 	 *  The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
 	 *  kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
@@ -3556,7 +3556,7 @@ export type CaseScript_Deserialize = {
 	 */
 	checks?: number,
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
-	given_up?: GivenUp[],
+	given_up?: GivenUp_Deserialize[],
 	/**
 	 *  The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
 	 *  kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
@@ -3720,7 +3720,7 @@ export type CaseScript_Serialize = {
 	 */
 	checks?: number,
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
-	given_up?: GivenUp[],
+	given_up?: GivenUp_Serialize[],
 	/**
 	 *  The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
 	 *  kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
@@ -4692,11 +4692,38 @@ export type Flow_Serialize = {
  *  A check a repair gave up, with why: shown to the person on the case. The person's own save in
  *  the script editor clears the list (their save is the acceptance).
  */
-export type GivenUp = {
+export type GivenUp = GivenUp_Serialize | GivenUp_Deserialize;
+
+/**
+ *  A check a repair gave up, with why: shown to the person on the case. The person's own save in
+ *  the script editor clears the list (their save is the acceptance).
+ */
+export type GivenUp_Deserialize = {
 	step: number,
 	kind: string,
 	why: string,
 	at: string,
+	/**
+	 *  The kinds of check the repair added on that step, so the person sees what took its place.
+	 *  Empty when it added none.
+	 */
+	replaced_by?: string[],
+};
+
+/**
+ *  A check a repair gave up, with why: shown to the person on the case. The person's own save in
+ *  the script editor clears the list (their save is the acceptance).
+ */
+export type GivenUp_Serialize = {
+	step: number,
+	kind: string,
+	why: string,
+	at: string,
+	/**
+	 *  The kinds of check the repair added on that step, so the person sees what took its place.
+	 *  Empty when it added none.
+	 */
+	replaced_by?: string[],
 };
 
 /**

@@ -4621,6 +4621,25 @@ fn a_cleanup_patch_merges_into_the_saved_cleanup() {
     assert_eq!(out.steps.last().unwrap().unchecked, Some("new words".into()));
 }
 
+/// `"unchecked": []` clears a step's stale list exactly as `null` does, and
+/// the edit gate sees the same change either way.
+#[test]
+fn an_empty_unchecked_patch_clears_the_list_as_null_does() {
+    use v2_lib::autorun::edits::{check_edits, Edit};
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }],
+          "unchecked": [{ "item": "the toast", "why": "it fades" }] }
+    ]));
+    let by_null = patched(&saved, serde_json::json!([{ "step": 1, "unchecked": null, "actions": [{ "kind": "reload" }] }])).unwrap();
+    let by_empty = patched(&saved, serde_json::json!([{ "step": 1, "unchecked": [], "actions": [{ "kind": "reload" }] }])).unwrap();
+    assert!(by_null.steps[0].unchecked.is_none());
+    assert!(by_empty.steps[0].unchecked.is_none());
+    assert_eq!(by_null, by_empty);
+    let edit = |steps: &[i32]| Edit { case_id: 7, steps: steps.to_vec(), why: "drops the list".into(), quirk: None, quirk_class: None, area: false, precondition: None, gives_up: Vec::new() };
+    assert!(check_edits(&saved, &by_empty, Some(&edit(&[]))).unwrap_err().contains("step 1"));
+    check_edits(&saved, &by_empty, Some(&edit(&[1]))).unwrap();
+}
+
 #[test]
 fn two_cleanup_patches_in_one_entry_are_refused() {
     let saved = patch_fixture(serde_json::json!([

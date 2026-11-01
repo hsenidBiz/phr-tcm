@@ -334,6 +334,12 @@ pub struct Held {
     /// person made by hand. Memory only; gone with the lease, and whenever
     /// the browser's signed-in account is cleared (`forget_sign_in`).
     signed_in: Option<crate::browser::session::CookiePrint>,
+    /// The page the browser stood on when that sign-in finished, as an
+    /// address on the app's own origins: where a reset goes back to, since
+    /// the recipe's start page is the login page (on PeoplesHR, one whose
+    /// load can end the session). Memory only, never said; gone with the
+    /// sign-in it belongs to.
+    landing: Option<String>,
     /// The cookies the assistant set for testing in this browser, by name
     /// in lower case (`autorun::overrides`): the sign-in's print leaves them
     /// out (`same_sign_in`), so a test cookie never makes the sign-in look
@@ -344,7 +350,7 @@ pub struct Held {
 
 impl Held {
     pub fn new(holder: Holder, wait: Duration) -> Self {
-        Held { holder, wait, lease: None, signed_in: None, ignored: std::collections::BTreeSet::new() }
+        Held { holder, wait, lease: None, signed_in: None, landing: None, ignored: std::collections::BTreeSet::new() }
     }
 
     /// The main Auto Run browser's, and the person's paths': a held account
@@ -375,19 +381,37 @@ impl Held {
     pub fn let_go(&mut self) {
         self.lease = None;
         self.signed_in = None;
+        self.landing = None;
     }
 
     /// The sign-in the app just made in this browser, as its HttpOnly
     /// cookies are (`session::cookie_print`); `None` when it failed or left
     /// none.
     pub fn note_sign_in(&mut self, print: Option<crate::browser::session::CookiePrint>) {
+        if print.is_none() {
+            self.landing = None;
+        }
         self.signed_in = print;
+    }
+
+    /// The page the browser stands on now that the app's sign-in has just
+    /// finished (`signin::landing_page`), noted right after `note_sign_in`;
+    /// ignored when no sign-in is noted. A print taken again later (the
+    /// app's own page loads re-issue cookies) keeps it.
+    pub fn note_landing(&mut self, page: Option<String>) {
+        self.landing = page.filter(|_| self.signed_in.is_some());
+    }
+
+    /// Where the browser landed after the sign-in that still stands.
+    pub fn landing(&self) -> Option<&str> {
+        self.landing.as_deref().filter(|_| self.signed_in.is_some())
     }
 
     /// The browser no longer holds the app's last sign-in: its account was
     /// cleared (a session ended, a sign-in that failed).
     pub fn forget_sign_in(&mut self) {
         self.signed_in = None;
+        self.landing = None;
     }
 
     /// The app's last sign-in in this browser, if it still stands.
@@ -459,6 +483,7 @@ impl Held {
         }
         self.lease = Some(acquire(&env, key, self.holder.clone(), self.wait).await?);
         self.signed_in = None;
+        self.landing = None;
         let key = key.to_string();
         // Off the async threads: ending a browser process waits for it to go.
         let _ = tauri::async_runtime::spawn_blocking(move || crate::api_templates::held::give_way(&env, &key)).await;

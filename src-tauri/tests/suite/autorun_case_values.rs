@@ -1434,17 +1434,42 @@ fn giving_up_a_check_because_of_the_app_is_refused() {
 
 #[test]
 fn gives_up_naming_more_than_the_repair_removes_is_refused() {
-    // The text check is swapped for a visible one: one kind goes, the count stays.
+    // One of step 2's two visible checks goes and nothing takes its place: naming two is one too many.
     let mut old = three_checks();
-    old.steps[1].actions[0] = act(json!({ "kind": "expect_text", "selector": "#t", "equals": "Saved" }));
-    let r = repair(&old, &three_checks(), &[give(2, "expect_text", "step 4 already proves it")]);
+    old.steps[1].actions.insert(0, act(json!({ "kind": "expect_visible", "selector": "#c" })));
+    let r = repair(&old, &three_checks(), &[give(2, "expect_visible", "step 4 already proves it"), give(2, "expect_visible", "step 4 already proves it")]);
     assert_eq!(
         r,
-        vec!["step 2: gives_up names 1 checks but the repair removes 0 there - name only the checks it removes".to_string()]
+        vec!["step 2: gives_up names 2 checks but the repair removes 1 there - name only the checks it removes".to_string()]
     );
     // Naming a check the repair keeps matches nothing it removes.
     let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
-    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the old step 2 has none")), "{r:?}");
+    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the repair keeps every expect_visible check on step 2")), "{r:?}");
+    assert!(!r.iter().any(|l| l.contains("the old step 2 has none")), "{r:?}");
+    // A kind the old step lacks is a different refusal.
+    let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_text", "step 4 already proves it")]);
+    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_text check, and the old step 2 has none")), "{r:?}");
+}
+
+#[test]
+fn gives_up_naming_checks_replaced_by_another_kind_passes() {
+    // Five visible checks become five text checks: the count stays, five kinds go.
+    let five = |kind: &str| -> Vec<Value> {
+        (0..5)
+            .map(|i| {
+                if kind == "expect_visible" {
+                    json!({ "kind": "expect_visible", "selector": format!("#v{i}") })
+                } else {
+                    json!({ "kind": "expect_text", "selector": format!("#v{i}"), "equals": "Saved" })
+                }
+            })
+            .collect()
+    };
+    let old = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), Value::Array(five("expect_visible")));
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), Value::Array(five("expect_text")));
+    let gives: Vec<GiveUp> = (0..5).map(|_| give(2, "expect_visible", "the text check proves it better")).collect();
+    let r = repair(&old, &new, &gives);
+    assert!(r.is_empty(), "{r:?}");
 }
 
 #[test]
@@ -1632,6 +1657,7 @@ async fn an_unchanged_resave_keeps_its_given_up_and_stays_unchanged() {
         kind: "expect_text".into(),
         why: "step 4 proves it".into(),
         at: "2026-10-21T10:00:00Z".into(),
+        replaced_by: Vec::new(),
     }];
     v2_lib::autorun::store::save_script(dir.path(), &saved).unwrap();
     assert_eq!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checks, 0, "an old script has no stored floor");
@@ -1654,6 +1680,7 @@ fn the_persons_save_stamps_the_checks_and_clears_what_was_given_up() {
         kind: "expect_text".into(),
         why: "step 4 proves it".into(),
         at: "2026-10-21T10:00:00Z".into(),
+        replaced_by: Vec::new(),
     }];
     v2_lib::commands::autorun::save_script_from_editor(dir.path(), "acme", "Web", s).unwrap();
     let after = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
@@ -1860,9 +1887,10 @@ fn a_gives_up_entry_must_match_a_check_actually_removed() {
     // The count is still there: naming it gives up nothing real.
     let r = repair(&old, &new, &[give(2, "expect_count", "step 4 already counts the same rows")]);
     assert!(
-        r.contains(&"step 2: gives_up names a expect_count check, and the old step 2 has none - name the kind of a check the repair removes".to_string()),
+        r.contains(&"step 2: gives_up names a expect_count check, and the repair keeps every expect_count check on step 2 - name only the checks it removes".to_string()),
         "{r:?}"
     );
+    assert!(!r.iter().any(|l| l.contains("the old step 2 has none")), "{r:?}");
     assert!(r.iter().any(|l| l.starts_with("step 2: the repair removes 1 of its checks and gives_up names 0")), "{r:?}");
     // The text is what went.
     let r = repair(&old, &new, &[give(2, "expect_text", "step 4 already proves the text")]);
@@ -2248,7 +2276,7 @@ fn gives_up_cannot_name_a_timing_the_repair_keeps_or_the_old_step_never_had() {
     let old = search_script(json!({ "not_before_ms": 800 }), json!([]));
     let r = search_repair(&old, &old, &[give(3, "not_before_ms", "step 5 times it")]);
     assert!(
-        r.iter().any(|l| l.starts_with("step 3: gives_up names a not_before_ms check, and the old step 3 has none")),
+        r.iter().any(|l| l.starts_with("step 3: gives_up names a not_before_ms check, and the repair keeps every not_before_ms check on step 3")),
         "{r:?}"
     );
     let r = search_repair(&old, &old, &[give(3, "same_document", "step 5 proves it")]);

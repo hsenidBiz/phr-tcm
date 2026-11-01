@@ -1833,9 +1833,23 @@ fn refusal(sc: CaseScript) -> String {
 }
 
 #[test]
-fn an_empty_unchecked_list_is_refused() {
+fn an_empty_unchecked_list_means_none() {
     let sc = unchecked_script(serde_json::json!([{ "kind": "expect_visible", "selector": "#a" }]), serde_json::json!([]));
-    assert_eq!(refusal(sc), "case 7 step 1: an \"unchecked\" list needs at least one { \"item\", \"why\" }");
+    assert!(sc.steps[0].unchecked.is_none());
+    v2_lib::autorun::store::check_scripts(&[sc.clone()]).unwrap();
+    let written = serde_json::to_value(&sc).unwrap();
+    assert!(written["steps"][0].get("unchecked").is_none(), "{written}");
+}
+
+#[test]
+fn an_empty_unchecked_list_on_a_cleanup_is_the_missing_reason() {
+    let sc: CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 2, "cleanup": true, "unchecked": [], "actions": [{ "kind": "reload" }] }] })).unwrap();
+    assert_eq!(
+        refusal(sc),
+        "case 7 step 2: a clean-up step checks nothing, so it needs \"unchecked\" with the reason (what it removes)"
+    );
 }
 
 #[test]

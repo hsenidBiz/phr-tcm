@@ -4105,10 +4105,53 @@ pub fn component_finds(
         .collect()
 }
 
-/// Files `component_finds` of a step that ran `actions` with `outcomes`, at
-/// the page the browser is on now, under `area`: a try's, a discovery's or
-/// a replay's. Nothing is filed for a step that uses no component, and a
-/// map that could not be written is said in the log.
+/// What a `when_visible` that fired and worked found on the page: each
+/// locator of its `then` actions, filed as a worked try files it (matched
+/// one, `matched_targets`). A guard that did not show, or whose `then`
+/// failed at any action, files nothing: its one outcome is not ok then, or
+/// says it was not shown. A legacy string target is left out, as a try
+/// probes it first. `expanded` and `outcomes` pair as in `component_finds`.
+pub fn guard_finds(
+    expanded: &[(crate::browser::actions::Action, Option<String>)],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) -> Vec<(crate::browser::locator::Target, usize, usize)> {
+    use crate::autorun::discovery_map::{plain_target, NOT_ONE};
+    use crate::browser::actions::Action;
+    let unknown = NOT_ONE as usize;
+    expanded
+        .iter()
+        .zip(outcomes)
+        .filter(|((action, _), o)| o.ok && matches!(action, Action::WhenVisible { .. }) && !o.detail.ends_with(crate::browser::actions::NOT_SHOWN))
+        .flat_map(|((action, _), _)| match action {
+            Action::WhenVisible { then, .. } => then
+                .iter()
+                .flat_map(|a| match a {
+                    // It passes on one match or several and does not say
+                    // which: filed as found, its count not known.
+                    Action::WaitFor { selector, .. } => vec![(selector, unknown, unknown)],
+                    _ => matched_targets(a)
+                        .into_iter()
+                        .filter(|(t, _)| !t.is_legacy())
+                        .map(|(t, n)| {
+                            let css = plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
+                            (t, n, if css { unknown } else { n })
+                        })
+                        .collect(),
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        // A locator holding a data placeholder is not what the page showed.
+        .filter(|(t, _, _)| !serde_json::to_string(t).is_ok_and(|j| j.contains("{{")))
+        .map(|(t, n, all)| (t.clone(), n, all))
+        .collect()
+}
+
+/// Files `component_finds` and `guard_finds` of a step that ran `actions`
+/// with `outcomes`, at the page the browser is on now, under `area`: a
+/// try's, a discovery's or a replay's. Nothing is filed for a step that
+/// uses no component and no guard, and a map that could not be written is
+/// said in the log.
 #[allow(clippy::too_many_arguments)]
 pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -4119,12 +4162,47 @@ pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
     actions: &[crate::browser::actions::Action],
     outcomes: &[crate::browser::actions::ActionOutcome],
 ) {
-    let uses = actions.iter().any(|a| matches!(a, crate::browser::actions::Action::UseComponent { .. }));
+    file_step_finds(d, root, organization, project, area, actions, outcomes, true).await;
+}
+
+/// Files only the `guard_finds` of a step a run ran: a guard that fired and
+/// worked has proved its `then` targets were there.
+#[allow(clippy::too_many_arguments)]
+pub async fn file_guard_finds<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    area: Option<String>,
+    actions: &[crate::browser::actions::Action],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) {
+    file_step_finds(d, root, organization, project, area, actions, outcomes, false).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn file_step_finds<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    area: Option<String>,
+    actions: &[crate::browser::actions::Action],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+    components: bool,
+) {
+    use crate::browser::actions::Action;
+    let uses = actions.iter().any(|a| matches!(a, Action::UseComponent { .. } | Action::WhenVisible { .. }));
     if !uses || project.trim().is_empty() {
         return;
     }
     let Ok((expanded, _)) = crate::autorun::components::expand_step(root, organization, project, actions) else { return };
-    let finds = component_finds(&expanded, outcomes);
+    let mut finds = if components { component_finds(&expanded, outcomes) } else { Vec::new() };
+    // A guard's finds are filed under the script's area: with none, they
+    // would count for every area, so nothing is filed.
+    if area.as_deref().is_some_and(|a| !a.trim().is_empty()) {
+        finds.extend(guard_finds(&expanded, outcomes));
+    }
     if finds.is_empty() {
         return;
     }
@@ -13163,9 +13241,20 @@ pub async fn save_autorun_scripts_carrying(
                             kind: g.kind.trim().to_lowercase(),
                             why: g.why.trim().to_string(),
                             at: at.clone(),
+                            // A timing field taken off a check that stays has nothing replacing it.
+                            replaced_by: if crate::autorun::case_values::is_timing_field(&g.kind.trim().to_lowercase()) {
+                                Vec::new()
+                            } else {
+                                crate::autorun::case_values::added_kinds(&old, &script, g.step)
+                            },
+                        };
+                        let replaced = if entry.replaced_by.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" (replaced by {})", entry.replaced_by.join(", "))
                         };
                         given_up_lines.push(format!(
-                            "case {}: check given up: step {} {} - {}. The person sees it on the case; name it in your report.",
+                            "case {}: check given up: step {} {} - {}{replaced}. The person sees it on the case; name it in your report.",
                             script.case_id, entry.step, entry.kind, entry.why
                         ));
                         script.given_up.push(entry);
@@ -13459,8 +13548,15 @@ pub async fn save_autorun_scripts_carrying(
             notes.extend(from_case);
             for (case_id, only) in &seen_scope {
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
-                let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
+                // A clean-up guard's target nobody has seen yet is checked
+                // when the guard first fires: said here, never a refusal.
+                // A case the save does not hold is read as having no text: the
+                // note is still said.
+                let text = cases.iter().find(|c| c.id == *case_id).map(case_step_text).unwrap_or_default();
+                let guarded = crate::autorun::seen_check::guarded_cleanup_notes(&map, &components, script, &text, only.as_deref(), &files);
+                let sentences = guarded
                     .into_iter()
+                    .chain(crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref()))
                     .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
@@ -13652,10 +13748,14 @@ pub async fn save_autorun_scripts_carrying(
     }
     report.extend(blocked_by_divergence_lines(&root, ctx, &prepared));
     // The quirks come last, after the scripts are safely down: a quirk
-    // the list will not take (too long, or the fortieth) is worth saying
-    // so about, but it is not worth losing a good repair over.
+    // the list will not take (too long, or past the cap) is worth saying
+    // so about, but it is not worth losing a good repair over. A refused
+    // one is said first, below, so it is not lost at the end of a long
+    // answer.
     // Each quirk keeps the case and steps of its repair, and the class of
     // the failure that led to it, so later runs can say whether it helped.
+    // Each refused one: its quote, why, and whether it is the cap's refusal.
+    let mut refused: Vec<(String, String, bool)> = Vec::new();
     for edit in &edits {
         let Some(text) = edit.quirk.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
@@ -13684,10 +13784,40 @@ pub async fn save_autorun_scripts_carrying(
             Ok(crate::autorun::quirks::Recorded::Reactivated(id, reason)) => {
                 report.push(format!("quirk {}: {}", reactivated_reply(&id, reason.as_deref()), text.trim()))
             }
-            Err(why) => report.push(format!("quirk not recorded: {why}")),
+            Err(why) => {
+                // Quote the quirk (its first line, spaces collapsed), so
+                // the assistant can say it again; only a full list has a
+                // retire-one-and-record-again answer, the rest keep their
+                // own advice.
+                let quoted: String = text.trim().lines().next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                let why = why.trim_end_matches('.').to_string();
+                let cap = crate::autorun::quirks::is_cap_refusal(&why);
+                refused.push((quoted, why, cap));
+            }
         }
     }
-    answer((200, report.join("\n")))
+    // With several refused at the cap, the retire advice and the list of
+    // what to retire are the same for each: said once, after their lines.
+    let several = refused.iter().filter(|(_, _, cap)| *cap).count() > 1;
+    let mut refused_quirks: Vec<String> = Vec::new();
+    let mut advice: Option<String> = None;
+    for (quoted, why, cap) in &refused {
+        let again = if *cap { " Retire one and record it again with record_quirk." } else { "" };
+        match why.split_once(" - ").filter(|_| *cap && several) {
+            Some((reason, rest)) => {
+                advice.get_or_insert_with(|| {
+                    let mut chars = rest.chars();
+                    let first = chars.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+                    format!("{first}{}.", chars.as_str())
+                });
+                refused_quirks.push(format!("quirk not recorded: \"{quoted}\" - {reason}.{again}"));
+            }
+            None => refused_quirks.push(format!("quirk not recorded: \"{quoted}\" - {why}.{again}")),
+        }
+    }
+    refused_quirks.extend(advice);
+    refused_quirks.extend(report);
+    answer((200, refused_quirks.join("\n")))
 }
 
 /// One line for each saved case that a divergence keeps from running: its

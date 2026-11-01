@@ -165,9 +165,9 @@ impl Quirk {
 /// quirk has no area (most are about the whole application - a header, a
 /// date format, a grid that pages), and every guide serves the whole list,
 /// so a per-area cap would neither bound what is read nor fit the notes.
-/// 60 lines of at most `MAX_QUIRK_CHARS` keep the guide's section under
-/// about 18,000 characters.
-pub const MAX_QUIRKS: usize = 60;
+/// 100 lines of at most `MAX_QUIRK_CHARS` keep the guide's section under
+/// about 30,000 characters.
+pub const MAX_QUIRKS: usize = 100;
 
 /// How many retired quirks the file keeps for a person to restore. The
 /// oldest retirements are dropped first.
@@ -394,6 +394,14 @@ fn candidate_label(q: &Quirk) -> &'static str {
         Some(1) => "never confirmed by a run",
         _ => "untested - not tied to any run",
     }
+}
+
+/// Whether a refusal from recording is the cap one (the list is full), as
+/// opposed to a person's retirement or a bad line. Only the cap has a
+/// retire-one-and-try-again answer; the other two have their own advice.
+pub fn is_cap_refusal(why: &str) -> bool {
+    let lower = why.to_lowercase();
+    lower.starts_with(&format!("this project already has {MAX_QUIRKS} active "))
 }
 
 /// Why one more quirk does not fit, and which to retire. Worded for an

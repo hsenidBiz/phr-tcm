@@ -127,6 +127,16 @@ impl<'de> serde::Deserialize<'de> for Unchecked {
     }
 }
 
+/// A step's `unchecked` as read: an empty list means none, as `null` does,
+/// so a save, a patch and the edit gate all see a step with no list.
+fn unchecked_or_none<'de, D>(deserializer: D) -> Result<Option<Unchecked>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let read: Option<Unchecked> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(read.filter(|u| !matches!(u, Unchecked::Items(items) if items.is_empty())))
+}
+
 impl From<&str> for Unchecked {
     fn from(s: &str) -> Self {
         Unchecked::Step(s.to_string())
@@ -188,7 +198,8 @@ pub struct StepScript {
     /// result its checks leave out. The floor accepts a step with an
     /// expected result and no check only when this says why, and the app
     /// shows it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "unchecked_or_none", skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<Unchecked>)]
     pub unchecked: Option<Unchecked>,
     /// The script's clean-up: no step of the case, but what removes what
     /// the case made. At most one, the script's last, numbered right after
@@ -389,6 +400,10 @@ pub struct GivenUp {
     pub kind: String,
     pub why: String,
     pub at: String,
+    /// The kinds of check the repair added on that step, so the person sees what took its place.
+    /// Empty when it added none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaced_by: Vec<String>,
 }
 
 /// What a script does with the page's own errors.

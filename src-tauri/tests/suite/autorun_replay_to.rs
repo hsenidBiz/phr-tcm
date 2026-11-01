@@ -17,7 +17,7 @@ use v2_lib::autorun::preconditions::{PreconditionDb, NEED_DB, NOT_CHECKED};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay_to::{
     guarding_other_case, opened_event, replay_to, replay_to_checked, signed_in_event, stopped_before_opening, OneReplay,
-    Marks, ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, ReplayState, Reuse, ALREADY_RUNNING,
+    Marks, NotSignedIn, ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, ReplayState, Reuse, ALREADY_RUNNING,
 };
 use v2_lib::ai_bridge::{DiscoveryBrowser, DiscoveryParts};
 use v2_lib::commands::autorun::{
@@ -62,6 +62,15 @@ fn script(steps: Value) -> CaseScript {
     .unwrap()
 }
 
+fn four_steps() -> Value {
+    json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [click("#s2")] },
+        { "step_number": 3, "actions": [click("#s3")] },
+        { "step_number": 4, "actions": [click("#s4")] }
+    ])
+}
+
 fn three_steps() -> Value {
     json!([
         { "step_number": 1, "actions": [click("#s1")] },
@@ -80,7 +89,12 @@ fn project(root: &Path, script: &CaseScript) {
 }
 
 fn app() -> (ScriptedDriver, common::MenuApp) {
-    common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0)
+    app_landing("/hr/home/index")
+}
+
+/// `app()` whose sign-in lands on `landing`.
+fn app_landing(landing: &'static str) -> (ScriptedDriver, common::MenuApp) {
+    common::menu_app(&[("link", "Leave", "/hr/leave")], landing, 0)
 }
 
 fn req(step: i32) -> ReplayRequest {
@@ -1368,7 +1382,7 @@ async fn carry(
 async fn a_replay_carries_on_from_where_the_last_one_stood() {
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
-    let saved = script(three_steps());
+    let saved = script(four_steps());
     project(dir.path(), &saved);
     let (mut d, app) = app();
     let mut held = Held::supervised();
@@ -1395,7 +1409,7 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
 
     let before = log(&app).len();
     let end = carry(&mut d, dir.path(), &req(4), 2, &mut account, &mut held, &mut guarded).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None, cleanup: None });
     let after: Vec<String> = log(&app)[before..].to_vec();
     assert!(after.contains(&"click #s2".to_string()) && after.contains(&"click #s3".to_string()), "{after:?}");
     for not_again in ["click #go", "click Leave", "click #s1"] {
@@ -1403,6 +1417,40 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
     }
     assert_eq!(ReplayFrom::CarriedOn(2).said(ID, 4), "Carried on from step 2.");
     assert_eq!(ReplayFrom::Beginning.said(ID, 4), "Started from the beginning.");
+}
+
+/// A replay past a case's last step (the whole case) never carries on, from
+/// the case's own stand or another case's checkpoints: it proves the case
+/// from its first step. A replay to an earlier step still carries on.
+#[test]
+fn a_whole_case_replay_never_carries_on() {
+    use v2_lib::autorun::replay_to::{may_carry_on, WHOLE_CASE_WHY};
+    let saved = script(three_steps());
+    // The same case's stand: before the last step it carries on; at the
+    // whole case (4 is past the last of three) it starts over, even when
+    // the browser stands exactly there.
+    assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 3), ReplayFrom::CarriedOn(2));
+    assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 4), ReplayFrom::Beginning);
+    assert_eq!(from_here(Some(&stand(&saved, 4)), &saved, 4), ReplayFrom::Beginning, "not already standing");
+    assert_eq!(from_here(Some(&stand(&saved, 3)), &saved, 9), ReplayFrom::Beginning);
+    // The clean-up is not one of the case's steps: past the third is whole.
+    let tidy = script(three_steps_and_a_clean_up());
+    assert!(may_carry_on(&tidy, 3) && !may_carry_on(&tidy, 4));
+    assert_eq!(from_here(Some(&stand(&tidy, 2)), &tidy, 4), ReplayFrom::Beginning);
+
+    // Another case's checkpoints: the same stand carries to step 5 of b (its
+    // differing step 4 is not shared) but not to step 6, the whole case, which
+    // says why.
+    let a = case_with_fourth(77, &["#open"]);
+    let b = case_with_fourth(78, &["#b4"]);
+    let left = left_by(&a);
+    assert_eq!(carry_across_why(Some(&left), &b, 5, &page(HERE), AT + 1), (ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 }, None));
+    assert_eq!(carry_across(Some(&left), &b, 6, &page(HERE), AT + 1), ReplayFrom::Beginning);
+    assert_eq!(
+        carry_across_why(Some(&left), &b, 6, &page(HERE), AT + 1),
+        (ReplayFrom::Beginning, Some(WHOLE_CASE_WHY.to_string()))
+    );
+    assert_eq!(WHOLE_CASE_WHY, "a replay of the whole case always does.");
 }
 
 /// A carry-on arms the case's no-save guard, as every replay does: a
@@ -1442,7 +1490,7 @@ fn a_replay_already_standing_before_the_step_runs_nothing() {
 /// the step, or a script whose earlier steps changed since.
 #[test]
 fn a_replay_starts_over_for_another_case_a_later_stand_or_a_changed_script() {
-    let saved = script(three_steps());
+    let saved = script(four_steps());
     assert_eq!(from_here(None, &saved, 3), ReplayFrom::Beginning);
     let mut other = saved.clone();
     other.case_id = 78;
@@ -1472,7 +1520,7 @@ fn the_fingerprint_ignores_precondition_repairs_but_not_the_preconditions() {
     use v2_lib::autorun::replay_to::run_fingerprint;
     let pre: v2_lib::autorun::Precondition =
         serde_json::from_value(serde_json::json!({ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 })).unwrap();
-    let mut saved = script(three_steps());
+    let mut saved = script(four_steps());
     saved.preconditions = vec![pre.clone()];
     let mut recorded = saved.clone();
     recorded.precondition_repairs = vec![v2_lib::autorun::PreconditionRepair {
@@ -1492,7 +1540,7 @@ fn the_fingerprint_ignores_precondition_repairs_but_not_the_preconditions() {
 /// or page-error choice.
 #[test]
 fn a_script_setting_changed_since_starts_over() {
-    let saved = script(three_steps());
+    let saved = script(four_steps());
     let at_2 = stand(&saved, 2);
     let mut guarded = saved.clone();
     guarded.no_save = true;
@@ -1512,7 +1560,7 @@ fn a_script_setting_changed_since_starts_over() {
 /// replay ran makes the next replay start from the beginning.
 #[test]
 fn a_repair_saved_during_a_replay_makes_the_next_start_over() {
-    let ran = script(three_steps());
+    let ran = script(four_steps());
     let at_3 = stand(&ran, 3);
     let mut repaired = ran.clone();
     repaired.steps[1].actions = vec![serde_json::from_value(click("#fixed")).unwrap()];
@@ -1701,7 +1749,12 @@ const TAB_COOKIE: &str = "my-application-browser-tab";
 /// `app()` with a cookie jar: a sign-in leaves admin's two PeoplesHR
 /// cookies (HttpOnly), and the page's script its tab cookie.
 fn jar_app() -> (ScriptedDriver, common::MenuApp, Jar) {
-    let (d, app) = app();
+    jar_app_landing("/hr/home/index")
+}
+
+/// `jar_app()` whose sign-in lands on `landing`.
+fn jar_app_landing(landing: &'static str) -> (ScriptedDriver, common::MenuApp, Jar) {
+    let (d, app) = app_landing(landing);
     let admin = vec![
         (".ASPXAUTH".to_string(), "auth-admin-1".to_string()),
         ("ehrm85".to_string(), "admin".to_string()),
@@ -2316,7 +2369,12 @@ async fn a_trip_that_fails_after_the_sign_in_too_stops_at_the_area() {
 /// dialog it expected and one it saw, and the guard its call put on for
 /// its no_save case 77.
 async fn left_by_a_replay(root: &Path) -> (Option<Kept>, common::MenuApp, Jar) {
-    let (mut d, app, jar) = jar_app();
+    left_by_a_replay_landing(root, "/hr/home/index").await
+}
+
+/// `left_by_a_replay` where the sign-in landed on `landing`.
+async fn left_by_a_replay_landing(root: &Path, landing: &'static str) -> (Option<Kept>, common::MenuApp, Jar) {
+    let (mut d, app, jar) = jar_app_landing(landing);
     let (mut account, mut held) = (None, Held::supervised());
     signed_in_once(root, &mut d, &app, &mut account, &mut held).await;
     d.call("Page.navigate", json!({ "url": "https://hr.example.internal/hr/leave" })).await.unwrap();
@@ -2467,7 +2525,7 @@ async fn a_reset_of_a_discoverys_browser_keeps_the_sign_in_for_the_next_replay()
 /// next replay signs in again rather than trust it.
 #[tokio::test]
 async fn a_reset_whose_sign_in_has_gone_says_so() {
-    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
@@ -2475,8 +2533,11 @@ async fn a_reset_whose_sign_in_has_gone_says_so() {
     // The application ended the session: its cookies are gone.
     jar.now.lock().unwrap().clear();
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
-    assert_eq!(SIGN_IN_GONE_AT_RESET, "Reset, but the sign-in has gone: the next replay signs in again.");
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::CookiesChanged).as_str()), "{:?}", log(&app));
+    assert_eq!(
+        gone(&NotSignedIn::CookiesChanged),
+        "Reset, but the sign-in has gone (the sign-in's HttpOnly cookies changed): the next replay signs in again."
+    );
     let b = slot.as_ref().expect("the reset closed the browser");
     assert_eq!(b.account, None, "the gone sign-in still names its account");
     assert!(b.lease.sign_in_print().is_none(), "the gone sign-in's print was kept");
@@ -2519,7 +2580,7 @@ fn with_after_sign_in(root: &Path) {
 /// the account and its cookies' print are forgotten.
 #[tokio::test]
 async fn a_reset_whose_home_never_shows_the_marker_says_the_sign_in_has_gone() {
-    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
@@ -2534,12 +2595,17 @@ async fn a_reset_whose_home_never_shows_the_marker_says_the_sign_in_has_gone() {
         _ => None,
     });
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::HomeNeverSignedIn).as_str()), "{:?}", log(&app));
     let b = slot.as_ref().expect("the reset closed the browser");
     assert_eq!(b.account, None, "the gone sign-in still names its account");
     assert!(b.lease.sign_in_print().is_none(), "the gone sign-in's print was kept");
     assert!(b.guard_owner.is_none(), "the assistant's guard was left on");
     assert_eq!(sign_ins(&b.d), 0, "the reset signed in itself");
+}
+
+/// What a reset says when the sign-in has gone for `why`.
+fn gone(why: &NotSignedIn) -> String {
+    v2_lib::commands::autorun::sign_in_gone_sentence(&why.reason())
 }
 
 /// True when the app log's tail holds a line with `needle`.
@@ -2650,7 +2716,7 @@ fn a_call_that_could_swap_the_login_is_not_taken_as_the_same_sign_in() {
 /// the reset says it has gone, and the app log says which condition failed.
 #[tokio::test]
 async fn a_reset_after_the_sign_in_cookie_changed_says_gone_and_logs_why() {
-    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let _log = crate::serial::log_tail();
     let dir = tempfile::tempdir().unwrap();
@@ -2658,7 +2724,7 @@ async fn a_reset_after_the_sign_in_cookie_changed_says_gone_and_logs_why() {
     let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
     jar.set(".ASPXAUTH", "auth-other");
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::CookiesChanged).as_str()), "{:?}", log(&app));
     assert!(applog_has("the sign-in's cookies changed: .ASPXAUTH (changed)"), "the cookie was not named");
     assert!(
         applog_has("found the sign-in gone: the sign-in's HttpOnly cookies changed"),
@@ -2674,7 +2740,7 @@ async fn a_reset_after_the_sign_in_cookie_changed_says_gone_and_logs_why() {
 /// app log.
 #[tokio::test]
 async fn a_reset_logs_each_condition_that_drops_the_sign_in() {
-    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let _log = crate::serial::log_tail();
     let dir = tempfile::tempdir().unwrap();
@@ -2684,7 +2750,7 @@ async fn a_reset_logs_each_condition_that_drops_the_sign_in() {
     let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
     slot.as_mut().unwrap().account = None;
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::NoAccount).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: no account is signed in in this browser"));
     drop(slot);
 
@@ -2692,7 +2758,7 @@ async fn a_reset_logs_each_condition_that_drops_the_sign_in() {
     let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
     slot.as_mut().unwrap().lease.forget_sign_in();
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::NoPrint).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: the app's last sign-in left no print"));
     drop(slot);
 
@@ -2707,7 +2773,7 @@ async fn a_reset_logs_each_condition_that_drops_the_sign_in() {
         _ => None,
     });
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::HomeNeverSignedIn).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: the home page opened but never showed it was signed in"));
 }
 
@@ -2833,7 +2899,7 @@ async fn a_reused_replays_fallback_home_load_takes_the_sign_in_cookies_again() {
 /// The other reasons a reset drops the sign-in, each in the app log.
 #[tokio::test]
 async fn a_reset_logs_the_other_reasons_it_drops_the_sign_in() {
-    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let _log = crate::serial::log_tail();
     let dir = tempfile::tempdir().unwrap();
@@ -2843,7 +2909,7 @@ async fn a_reset_logs_the_other_reasons_it_drops_the_sign_in() {
     let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
     slot.as_mut().unwrap().lease.let_go();
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::LeaseNotHeld).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: this browser does not hold the account's lease in the active environment"));
     drop(slot);
 
@@ -2854,7 +2920,7 @@ async fn a_reset_logs_the_other_reasons_it_drops_the_sign_in() {
             .then(|| Err(CdpError::Transport("cookies unreadable".into())))
     });
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::CookiesUnread).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: the browser did not answer while its cookies were read"));
     drop(slot);
 
@@ -2865,7 +2931,7 @@ async fn a_reset_logs_the_other_reasons_it_drops_the_sign_in() {
             .then(|| Ok(json!({ "result": { "value": "tampered" } })))
     });
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::SessionRefused).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: the page says the application refused the session"));
     drop(slot);
 
@@ -2879,7 +2945,7 @@ async fn a_reset_logs_the_other_reasons_it_drops_the_sign_in() {
         None
     });
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::NoCookiesAfterHome).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: no HttpOnly cookies could be read after the home page loaded"));
     drop(slot);
 
@@ -2900,7 +2966,7 @@ async fn a_reset_logs_the_other_reasons_it_drops_the_sign_in() {
         _ => None,
     });
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
-    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::MarkerNotShown(300)).as_str()), "{:?}", log(&app));
     assert!(applog_has("found the sign-in gone: the signed-in marker did not show within 300 ms"));
 }
 
@@ -3000,7 +3066,7 @@ async fn a_reset_whose_guard_will_not_lift_says_it_is_still_on() {
 /// as a sentence: "The guard is still on", never "The guard still on".
 #[tokio::test]
 async fn a_reset_whose_sign_in_has_gone_and_guard_stays_says_so_as_a_sentence() {
-    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
@@ -3012,11 +3078,202 @@ async fn a_reset_whose_sign_in_has_gone_and_guard_stays_says_so_as_a_sentence() 
     let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
     assert_eq!(
         (status, said.as_str()),
-        (200, format!("{SIGN_IN_GONE_AT_RESET} The guard is still on (it would not lift yet).").as_str()),
+        (200, format!("{} The guard is still on (it would not lift yet).", gone(&NotSignedIn::CookiesChanged)).as_str()),
         "{:?}",
         log(&app)
     );
     assert_eq!(slot.as_ref().unwrap().account, None);
+}
+
+/// #68: on PeoplesHR the recipe's start page is the login page, and loading
+/// it while signed in can end the session. The sign-in landed on /hr/home/landing,
+/// so the reset goes back there, keeps the sign-in, and the next replay does
+/// not sign in again.
+#[tokio::test]
+async fn a_reset_does_not_reload_a_login_page_that_ends_the_session() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    // The login page signs the browser out as it loads.
+    let j = jar.clone();
+    answering_first(slot.as_mut().unwrap(), move |method, params| {
+        if method == "Page.navigate" && params["url"].as_str().is_some_and(|u| u.ends_with("/hr/home/index")) {
+            j.now.lock().unwrap().clear();
+        }
+        None
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(log(&app), vec!["navigate /hr/home/landing".to_string()], "it loaded the login page");
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(sign_ins(&b.d), 0, "the reset signed in again: {:?}", log(&app));
+    assert_eq!(b.lease.landing(), Some("https://hr.example.internal/hr/home/landing"));
+
+    // The next replay reuses that sign-in.
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
+/// With no landing page known, the reset loads the recipe's start page.
+#[tokio::test]
+async fn a_reset_with_no_landing_page_known_loads_the_start_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    slot.as_mut().unwrap().lease.note_landing(None);
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(log(&app), vec!["navigate /hr/home/index".to_string()]);
+}
+
+/// A landing page that will not load is forgotten and the start page loaded
+/// in the same reset; the next reset does not try it again.
+#[tokio::test]
+async fn a_landing_page_that_will_not_load_falls_back_to_the_start_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    let tries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let t = tries.clone();
+    answering_first(slot.as_mut().unwrap(), move |method, params| {
+        if method == "Page.navigate" && params["url"].as_str().is_some_and(|u| u.ends_with("/hr/home/landing")) {
+            t.fetch_add(1, Ordering::SeqCst);
+            return Some(Ok(json!({ "errorText": "net::ERR_CONNECTION_REFUSED" })));
+        }
+        None
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(log(&app), vec!["navigate /hr/home/index".to_string()]);
+    assert_eq!(tries.load(Ordering::SeqCst), 1);
+    assert_eq!(slot.as_ref().unwrap().lease.landing(), None, "the landing page that failed was kept");
+    let (status, _) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{:?}", log(&app));
+    assert_eq!(tries.load(Ordering::SeqCst), 1, "the next reset tried the landing page again");
+}
+
+/// The recipe's `after_sign_in` runs again on the landing page, and the
+/// landing page is kept whole, query string and fragment included: an app
+/// routed by them would otherwise land somewhere else.
+#[tokio::test]
+async fn a_reset_reruns_after_sign_in_on_the_landing_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing?ticket=abc").await;
+    assert_eq!(slot.as_ref().unwrap().lease.landing(), Some("https://hr.example.internal/hr/home/landing?ticket=abc"));
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(log(&app), vec!["navigate /hr/home/landing".to_string(), "click #menu".to_string()]);
+}
+
+/// `answering_first` for a marker that shows on every page but the landing
+/// page (`/hr/home/landing`): the page the sign-in ended on lacks it.
+fn marker_missing_on_landing(b: &mut Kept, everywhere: bool) {
+    let on_landing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    answering_first(b, move |method, params| match method {
+        "Page.navigate" => {
+            on_landing.store(params["url"].as_str().is_some_and(|u| u.contains("/hr/home/landing")), Ordering::SeqCst);
+            None
+        }
+        "Runtime.callFunctionOn" if params["arguments"][0]["value"] == "#marker" && (everywhere || on_landing.load(Ordering::SeqCst)) => {
+            Some(Ok(json!({ "result": { "objectId": "no-marker" } })))
+        }
+        "Runtime.getProperties" if params["objectId"] == "no-marker" => Some(Ok(json!({ "result": [] }))),
+        _ => None,
+    });
+}
+
+/// A landing page whose signed-in marker does not show (the steps after
+/// sign-in moved on to a page without it) is no sign-in gone: the reset
+/// forgets the landing page and loads the start page in the same reset.
+#[tokio::test]
+async fn a_landing_page_without_the_marker_falls_back_to_the_start_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    marker_missing_on_landing(slot.as_mut().unwrap(), false);
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    let navigations: Vec<String> = log(&app).into_iter().filter(|l| l.starts_with("navigate")).collect();
+    assert_eq!(navigations, vec!["navigate /hr/home/landing".to_string(), "navigate /hr/home/index".to_string()]);
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(b.lease.landing(), None, "the landing page without the marker was kept");
+    assert_eq!(b.account.as_deref(), Some("admin"), "the sign-in was reported gone");
+}
+
+/// Only when the start page does not show the marker either is the sign-in
+/// gone.
+#[tokio::test]
+async fn a_sign_in_whose_start_page_also_lacks_the_marker_is_gone() {
+    use v2_lib::commands::autorun::reset_in_for_assistant;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    marker_missing_on_landing(slot.as_mut().unwrap(), true);
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, gone(&NotSignedIn::HomeNeverSignedIn).as_str()), "{:?}", log(&app));
+    let navigations: Vec<String> = log(&app).into_iter().filter(|l| l.starts_with("navigate")).collect();
+    assert_eq!(navigations, vec!["navigate /hr/home/landing".to_string(), "navigate /hr/home/index".to_string()]);
+    assert_eq!(slot.as_ref().unwrap().account, None);
+}
+
+/// A landing page goes with the sign-in it belongs to, and is only noted
+/// for one.
+#[tokio::test]
+async fn a_landing_page_is_forgotten_with_its_sign_in() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, _app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    let b = slot.as_mut().unwrap();
+    assert!(b.lease.landing().is_some(), "the sign-in's landing page was not noted");
+    b.lease.forget_sign_in();
+    assert_eq!(b.lease.landing(), None);
+    b.lease.note_landing(Some("https://hr.example.internal/x".into()));
+    assert_eq!(b.lease.landing(), None, "a landing page was noted with no sign-in");
+}
+
+/// What a reset says about a sign-in that has gone is the log's own words,
+/// and no reason holds an address, a path, a cookie value or a password.
+#[test]
+fn every_reason_a_sign_in_has_gone_is_a_fixed_sentence() {
+    for why in [
+        NotSignedIn::NoAccount,
+        NotSignedIn::OtherAccount,
+        NotSignedIn::LeaseNotHeld,
+        NotSignedIn::NoPrint,
+        NotSignedIn::NoRecipe,
+        NotSignedIn::CookiesChanged,
+        NotSignedIn::CookiesUnread,
+        NotSignedIn::SessionRefused,
+        NotSignedIn::MarkerNotShown(300),
+        NotSignedIn::HomeNeverSignedIn,
+        NotSignedIn::NoCookiesAfterHome,
+    ] {
+        let said = gone(&why);
+        for bad in ["://", "/", "\\", "=", "?", "@", "password"] {
+            assert!(!said.contains(bad), "{why:?} says {bad:?}: {said}");
+        }
+        assert!(said.contains(&why.reason()), "{said}");
+    }
 }
 
 // ---- #46: the clean-up step ---------------------------------------------------
@@ -3164,14 +3421,16 @@ use v2_lib::autorun::replay_to::{
     carry_across, checkpoints_kept, page_state, replay_to_traced, steps_fingerprint, Checkpoint,
 };
 
-/// Case `id`: steps 1 to 3 as `three_steps` has them, then a step 4 that
-/// clicks `fourth`.
+/// Case `id`: steps 1 to 3 as `three_steps` has them, a step 4 that clicks
+/// `fourth`, then a step 5 that no replay here reaches (so a replay to 5 is
+/// not the whole case, and step 4 is the one that differs).
 fn case_with_fourth(id: i32, fourth: &[&str]) -> CaseScript {
     let mut s = script(three_steps());
     s.case_id = id;
     s.title = format!("Case {id}");
     let actions: Vec<Value> = fourth.iter().map(|c| click(c)).collect();
     s.steps.push(serde_json::from_value(json!({ "step_number": 4, "actions": actions })).unwrap());
+    s.steps.push(serde_json::from_value(json!({ "step_number": 5, "actions": [click("#last")] })).unwrap());
     s
 }
 
@@ -3183,7 +3442,7 @@ fn page(path: &str) -> (String, String, u32) {
     (path.to_string(), "main".to_string(), 0)
 }
 
-/// The stand case `a` left after a whole replay: a checkpoint after each of
+/// The stand case `a` left after a partial replay (to its fifth step): a checkpoint after each of
 /// its four steps, all on the Leave page.
 fn left_by(a: &CaseScript) -> ReplayStand {
     ReplayStand::of(a, 5, HERE, AT, (1..=4).map(|k| cp(a, k, HERE, false)).collect())
@@ -3296,8 +3555,8 @@ fn a_new_stand_keeps_the_checkpoints_it_still_stands_after() {
     assert!(v2_lib::autorun::replay_to::wrote_before(None, 3), "no checkpoint to say: it is taken to have saved");
 }
 
-/// A whole replay of `case` in `d`, learning back its checkpoints.
-async fn whole_replay(
+/// A replay of `case` (five steps) to its last step in `d`, learning back its checkpoints.
+async fn replay_to_step_five(
     d: &mut ScriptedDriver,
     root: &Path,
     case: &CaseScript,
@@ -3343,8 +3602,8 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
     let (mut d, app) = app();
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
 
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
-    assert!(matches!(end, ReplayEnd::Ready { whole: Some(4), .. }), "{end:?} {:?}", log(&app));
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { whole: None, .. }), "{end:?} {:?}", log(&app));
     assert_eq!(
         marks.checkpoints.iter().map(|c| (c.k, c.wrote)).collect::<Vec<_>>(),
         vec![(1, false), (2, false), (3, false), (4, false)]
@@ -3367,7 +3626,7 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
         &mut Vec::new(), false, &mut marks_b,
     )
     .await;
-    assert!(matches!(end, ReplayEnd::Ready { case_id: 78, whole: Some(4), .. }), "{end:?}");
+    assert!(matches!(end, ReplayEnd::Ready { case_id: 78, whole: None, .. }), "{end:?}");
     let after: Vec<String> = log(&app)[before..].to_vec();
     assert!(after.contains(&"click #b4".to_string()), "{after:?}");
     for not_again in ["click #s1", "click #s2", "click #s3", "click #go", "click Leave"] {
@@ -3395,7 +3654,7 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     let (mut d, app) = app();
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
 
-    let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (_, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let now = page_state(&mut d).await;
     let stand_a = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints);
     let from = carry_across(Some(&stand_a), &b, 5, &now, AT + 1);
@@ -3503,7 +3762,7 @@ async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across
     d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
 
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     assert_eq!(marks.unclean, Some(Unclean::Saved));
     assert_eq!(marks.checkpoints.iter().map(|c| c.wrote).collect::<Vec<_>>(), vec![false, false, false, true]);
@@ -3527,7 +3786,7 @@ async fn a_look_only_replay_never_reports_a_save_but_is_not_carried_on_from() {
     let mut d = d.with_net_record();
     d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     // Never "saved", but the page sent a write the guard let through: the next
     // case still starts from the beginning, and the sentence says so truthfully.
@@ -3555,7 +3814,7 @@ async fn a_look_only_case_carried_on_after_a_post_never_says_saved() {
     let (d, _app) = app();
     let mut d = d.with_net_record();
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, _) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, _) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     let r = ReplayRequest { case_id: 77, step: 5, db_read_access: false };
     let state = ReplayState::new();
@@ -3580,7 +3839,7 @@ async fn a_replay_with_no_network_record_cannot_rule_a_save_out() {
     let (mut d, _app) = app();
     d.no_record = true;
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(marks.unclean, Some(Unclean::Unrecorded));
 }
@@ -3606,7 +3865,7 @@ async fn a_replay_that_opened_another_tab_even_one_it_closed_is_not_carried_acro
         vec![],
     ));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (end, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     assert_eq!(marks.unclean, Some(Unclean::Tabs));
 }
@@ -3622,7 +3881,7 @@ async fn a_save_once_seen_stays_seen_at_every_later_checkpoint() {
     let mut d = d.with_net_record();
     d.events_when = Some((post_after_clicking(&app, "#s2"), vec![a_post()]));
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
-    let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let (_, marks) = replay_to_step_five(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let wrote: Vec<bool> = marks.checkpoints.iter().map(|c| c.wrote).collect();
     assert_eq!(wrote, vec![false, true, true, true], "{wrote:?}");
 }
@@ -3785,4 +4044,124 @@ fn touches_sign_in_looks_inside_and_at_other_ways_in() {
     assert!(touches_sign_in(&[Action::OpenTab { name: "t".into(), url: recipe.start_url.clone() }], &recipe).is_some());
     assert!(touches_sign_in(&[Action::Navigate { url: "https://hr.example.internal/hr/home/switch?mode=sshr".into() }], &recipe).is_some());
     assert!(touches_sign_in(&[fill("#search", "leave")], &recipe).is_none());
+}
+
+/// A guard that fires in a replay and whose `then` click works has proved
+/// that click's target was there: it is filed as seen matching one, in the
+/// case's area, so the seen gate takes it. A guard that does not fire files
+/// nothing.
+#[tokio::test]
+async fn a_fired_guard_files_its_then_as_seen() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let guard = |then: &str| {
+        json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100,
+                "then": [ click(then) ] })
+    };
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [guard("#activate")] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
+    assert!(clicked(&app, "#activate"), "{:?}", log(&app));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
+    let key = v2_lib::browser::locator::SeenKey::Css("#activate".into());
+    let seen = area.sightings.iter().find(|s| s.key == key).unwrap_or_else(|| panic!("{:?}", area.sightings));
+    assert_eq!(seen.matched, 1);
+    // The guard's own selector is no `then` target: nothing is filed for it.
+    assert!(!area.sightings.iter().any(|s| s.key == v2_lib::browser::locator::SeenKey::Css("#banner".into())));
+}
+
+/// A script with no area files nothing for its guards: it would count for
+/// every area. With an area the same fired guard is filed.
+#[tokio::test]
+async fn a_fired_guard_in_a_script_with_no_area_files_nothing() {
+    use v2_lib::browser::actions::{Action, ActionOutcome};
+    use v2_lib::browser::locator::SeenKey;
+    let guard: Action = serde_json::from_value(json!({
+        "kind": "when_visible", "selector": { "css": "#banner" }, "then": [click("#activate")]
+    }))
+    .unwrap();
+    let filed = |dir: &Path| {
+        let map = v2_lib::autorun::discovery_map::load_map(dir, "acme", "Web").unwrap_or_default();
+        map.areas.iter().flat_map(|a| &a.sightings).any(|s| s.key == SeenKey::Css("#activate".into()))
+    };
+    for (area, expect) in [(None, false), (Some("  ".to_string()), false), (Some("Leave".to_string()), true)] {
+        let dir = tempfile::tempdir().unwrap();
+        project(dir.path(), &script(json!([{ "step_number": 1, "actions": [click("#s1")] }])));
+        let (mut d, _app) = app();
+        let outcomes = [ActionOutcome::passed("#banner showed: ok".to_string())];
+        v2_lib::ai_bridge::file_guard_finds(&mut d, dir.path(), "acme", "Web", area.clone(), std::slice::from_ref(&guard), &outcomes).await;
+        assert_eq!(filed(dir.path()), expect, "area {area:?}");
+    }
+}
+
+/// A fired guard's `wait_for` is filed too (count not known), a `then` that
+/// fails files nothing, and a target holding a data placeholder is skipped.
+#[tokio::test]
+async fn a_fired_guard_files_its_wait_and_a_failed_then_files_nothing() {
+    use v2_lib::browser::locator::SeenKey;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let wait = json!({ "kind": "wait_for", "selector": { "css": "#done" }, "timeout_ms": 100 });
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100, "then": [click("#activate"), wait] }
+            ] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, _app) = app();
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed");
+    for css in ["#activate", "#done"] {
+        assert!(area.sightings.iter().any(|s| s.key == SeenKey::Css(css.into())), "{css}: {:?}", area.sightings);
+    }
+
+    // A second `then` action that fails: the first one worked, but the guard
+    // as a whole failed, so nothing is filed.
+    let dir = tempfile::tempdir().unwrap();
+    let nowhere = json!({ "kind": "click", "selector": { "role": "button", "name": "Nowhere" } });
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100, "then": [click("#first"), nowhere] }
+            ] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
+    assert!(clicked(&app, "#first"), "{:?}", log(&app));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert!(
+        !map.areas.iter().flat_map(|a| &a.sightings).any(|s| s.key == SeenKey::Css("#first".into())),
+        "a failed guard filed its then"
+    );
+}
+
+#[test]
+fn a_guard_find_skips_a_target_holding_a_placeholder() {
+    use v2_lib::browser::actions::{Action, ActionOutcome};
+    let guard: Action = serde_json::from_value(json!({
+        "kind": "when_visible", "selector": { "css": "#banner" },
+        "then": [click("#row-{{setup.id}}"), click("#plain")]
+    }))
+    .unwrap();
+    let finds = v2_lib::ai_bridge::guard_finds(&[(guard, None)], &[ActionOutcome::passed("#banner showed: ok".to_string())]);
+    assert_eq!(finds.len(), 1, "{finds:?}");
+    assert_eq!(finds[0].0.describe(), "#plain");
 }

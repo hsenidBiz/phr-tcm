@@ -928,7 +928,7 @@ pub enum NotSignedIn {
     NoPrint,
     /// The sign-in recipe could not be read.
     NoRecipe,
-    /// The sign-in's HttpOnly cookies changed or went (named on the line before).
+    /// The sign-in's HttpOnly cookies changed or went (named on the line before in the app log).
     CookiesChanged,
     /// The browser did not answer while its cookies were read.
     CookiesUnread,
@@ -952,7 +952,7 @@ impl NotSignedIn {
             }
             NotSignedIn::NoPrint => "the app's last sign-in left no print of its HttpOnly cookies".to_string(),
             NotSignedIn::NoRecipe => "the sign-in recipe could not be read".to_string(),
-            NotSignedIn::CookiesChanged => "the sign-in's HttpOnly cookies changed (named on the line before)".to_string(),
+            NotSignedIn::CookiesChanged => "the sign-in's HttpOnly cookies changed".to_string(),
             NotSignedIn::CookiesUnread => "the browser did not answer while its cookies were read".to_string(),
             NotSignedIn::SessionRefused => "the page says the application refused the session".to_string(),
             NotSignedIn::MarkerNotShown(ms) => format!("the signed-in marker did not show within {ms} ms"),
@@ -1262,6 +1262,17 @@ pub fn signed_in_already_line(area: &str) -> String {
 pub fn whole_case(script: &CaseScript, step: i32) -> Option<i32> {
     let last = script.case_steps().map(|s| s.step_number).max().unwrap_or(0);
     (step > last).then(|| i32::try_from(script.case_steps().count()).unwrap_or(i32::MAX))
+}
+
+/// Why a replay of the whole case starts from the beginning, said after
+/// "Started from the beginning:" when a stand was there to carry on from.
+pub const WHOLE_CASE_WHY: &str = "a replay of the whole case always does.";
+
+/// Whether a replay to `step` of `script` may start from where a browser
+/// already stands, its own case's or another's. A replay of the whole case
+/// (`whole_case`) proves it from its first step, so it never may.
+pub fn may_carry_on(script: &CaseScript, step: i32) -> bool {
+    whole_case(script, step).is_none()
 }
 
 /// The number of the clean-up step, beside a replay to `step` that ran the
@@ -1717,8 +1728,12 @@ impl ReplayFrom {
 /// stand younger than `STAND_FRESH_MS`: before step `step` already,
 /// nothing runs; K earlier, it carries on from K. Anything else - another
 /// case, a K past `step`, a script changed since, a browser on another
-/// page, an old stand - starts from the beginning.
+/// page, an old stand, or a replay of the whole case (`may_carry_on`) -
+/// starts from the beginning.
 pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32, here: &str, now_ms: u64) -> ReplayFrom {
+    if !may_carry_on(script, step) {
+        return ReplayFrom::Beginning;
+    }
     match stand {
         Some(s)
             if s.case_id == script.case_id
@@ -1769,6 +1784,9 @@ pub fn carry_across_why(
     let Some(s) = stand else {
         return (ReplayFrom::Beginning, None);
     };
+    if !may_carry_on(script, step) {
+        return (ReplayFrom::Beginning, Some(WHOLE_CASE_WHY.to_string()));
+    }
     if s.case_id == script.case_id
         || script.setup.is_some()
         || s.settings != settings_fingerprint(script)
