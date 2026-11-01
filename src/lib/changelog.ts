@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.11",
+    date: "2026-11-01",
+    items: [
+      "A project now keeps up to 100 notes about the app's quirks. When the list is full, a repair that wanted to add one says so at the top of its answer, with the note's text and which old notes are best retired.",
+      "A repair that swaps checks for checks of another kind (for example, fixed names for names noted earlier) can say which checks it gave up, and the case keeps a record of what replaced them.",
+      "An empty list of unchecked items in a script now simply means there are none.",
+      "Resetting an assistant's browser goes back to the page it was on after signing in rather than the sign-in page, so the sign-in is kept more often, and when it is lost the answer says why.",
+      "A replay of a whole case always starts from the beginning, so it proves the case from its start.",
+      "A clean-up step that clicks something only if it shows can be saved before that button has ever been seen; it is checked the first time it shows. A row picked by the first part of a long name typed earlier in the case no longer has to be found on the page first.",
+    ],
+  },
+  {
     version: "2.4.3-beta.10",
     date: "2026-11-01",
     items: [
