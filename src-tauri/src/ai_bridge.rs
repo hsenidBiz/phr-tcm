@@ -4105,10 +4105,39 @@ pub fn component_finds(
         .collect()
 }
 
-/// Files `component_finds` of a step that ran `actions` with `outcomes`, at
-/// the page the browser is on now, under `area`: a try's, a discovery's or
-/// a replay's. Nothing is filed for a step that uses no component, and a
-/// map that could not be written is said in the log.
+/// What a `when_visible` that fired and worked found on the page: each
+/// locator of its `then` actions, filed as a worked try files it (matched
+/// one, `matched_targets`). A guard that did not show, or whose `then`
+/// failed at any action, files nothing: its one outcome is not ok then, or
+/// says it was not shown. A legacy string target is left out, as a try
+/// probes it first. `expanded` and `outcomes` pair as in `component_finds`.
+pub fn guard_finds(
+    expanded: &[(crate::browser::actions::Action, Option<String>)],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) -> Vec<(crate::browser::locator::Target, usize, usize)> {
+    use crate::autorun::discovery_map::{plain_target, NOT_ONE};
+    use crate::browser::actions::Action;
+    expanded
+        .iter()
+        .zip(outcomes)
+        .filter(|((action, _), o)| o.ok && matches!(action, Action::WhenVisible { .. }) && !o.detail.ends_with(crate::browser::actions::NOT_SHOWN))
+        .flat_map(|((action, _), _)| match action {
+            Action::WhenVisible { then, .. } => then.iter().flat_map(matched_targets).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .filter(|(t, _)| !t.is_legacy())
+        .map(|(t, n)| {
+            let css = plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
+            (t.clone(), n, if css { NOT_ONE as usize } else { n })
+        })
+        .collect()
+}
+
+/// Files `component_finds` and `guard_finds` of a step that ran `actions`
+/// with `outcomes`, at the page the browser is on now, under `area`: a
+/// try's, a discovery's or a replay's. Nothing is filed for a step that
+/// uses no component and no guard, and a map that could not be written is
+/// said in the log.
 #[allow(clippy::too_many_arguments)]
 pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -4119,12 +4148,43 @@ pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
     actions: &[crate::browser::actions::Action],
     outcomes: &[crate::browser::actions::ActionOutcome],
 ) {
-    let uses = actions.iter().any(|a| matches!(a, crate::browser::actions::Action::UseComponent { .. }));
+    file_step_finds(d, root, organization, project, area, actions, outcomes, true).await;
+}
+
+/// Files only the `guard_finds` of a step a run ran: a guard that fired and
+/// worked has proved its `then` targets were there.
+#[allow(clippy::too_many_arguments)]
+pub async fn file_guard_finds<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    area: Option<String>,
+    actions: &[crate::browser::actions::Action],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) {
+    file_step_finds(d, root, organization, project, area, actions, outcomes, false).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn file_step_finds<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    area: Option<String>,
+    actions: &[crate::browser::actions::Action],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+    components: bool,
+) {
+    use crate::browser::actions::Action;
+    let uses = actions.iter().any(|a| matches!(a, Action::UseComponent { .. } | Action::WhenVisible { .. }));
     if !uses || project.trim().is_empty() {
         return;
     }
     let Ok((expanded, _)) = crate::autorun::components::expand_step(root, organization, project, actions) else { return };
-    let finds = component_finds(&expanded, outcomes);
+    let mut finds = if components { component_finds(&expanded, outcomes) } else { Vec::new() };
+    finds.extend(guard_finds(&expanded, outcomes));
     if finds.is_empty() {
         return;
     }
@@ -13470,8 +13530,25 @@ pub async fn save_autorun_scripts_carrying(
             notes.extend(from_case);
             for (case_id, only) in &seen_scope {
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
-                let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
+                // A clean-up guard's target nobody has seen yet is checked
+                // when the guard first fires: said here, never a refusal.
+                let guarded = cases
+                    .iter()
+                    .find(|c| c.id == *case_id)
+                    .map(|case| {
+                        crate::autorun::seen_check::guarded_cleanup_notes(
+                            &map,
+                            &components,
+                            script,
+                            &case_step_text(case),
+                            only.as_deref(),
+                            &files,
+                        )
+                    })
+                    .unwrap_or_default();
+                let sentences = guarded
                     .into_iter()
+                    .chain(crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref()))
                     .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }

@@ -3702,3 +3702,86 @@ fn a_loop_without_except_needs_no_trial() {
     let review = loop_rows_review(&nothing_seen(), &delete_loop(serde_json::Value::Null), None);
     assert_eq!(review, Default::default());
 }
+
+/// A list or grid cuts a long name short: a locator whose text is the start
+/// (20 or more characters, folded) of a value an earlier step typed is the
+/// script's own data. A shorter start is not, nor is a start of a value
+/// typed later.
+#[test]
+fn a_row_holding_the_start_of_a_typed_name_is_exempt() {
+    let map = map_with("Leave", "/leave", &[role("textbox", "Title")]);
+    let long = format!("AutoTest {}", "Leave request for the annual audit ".repeat(4)).trim().to_string();
+    assert!(long.chars().count() > 100);
+    let row = |has_text: &str| serde_json::json!({ "css": ".row", "has_text": has_text });
+    let typed_then_click = |has_text: &str| {
+        script(
+            Some("Leave"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Title" }, "value": long }] },
+                { "step_number": 2, "actions": [click(row(has_text))] }
+            ]),
+        )
+    };
+    let start = |n: usize| long.chars().take(n).collect::<String>();
+    assert_eq!(check_seen(&map, &none(), &typed_then_click(&start(60)), &[], None), Ok(()));
+    // Folded: case and spacing do not matter.
+    assert_eq!(check_seen(&map, &none(), &typed_then_click(&start(30).to_uppercase().replace(' ', "  ")), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &typed_then_click(&start(20)), &[], None), Ok(()));
+    // 19 characters could be the start of anything.
+    assert!(check_seen(&map, &none(), &typed_then_click(&start(19)), &[], None).is_err());
+    // Only a start: a name that merely continues differently is not exempt.
+    assert!(check_seen(&map, &none(), &typed_then_click(&format!("{}x", start(40))), &[], None).is_err());
+    // Typed in a LATER step, it exempts nothing.
+    let later = script(
+        Some("Leave"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [click(row(&start(60)))] },
+            { "step_number": 2, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Title" }, "value": long }] }
+        ]),
+    );
+    assert!(check_seen(&map, &none(), &later, &[], None).is_err());
+}
+
+/// In the clean-up step only, a target in a `when_visible`'s `then` that was
+/// never seen saves (its guard may not fire today), with a note that it is
+/// checked when the guard fires. The guard's own selector keeps its rule,
+/// and the same `then` in a case step is refused.
+#[test]
+fn a_guarded_clean_up_then_saves_unseen_with_a_note() {
+    use v2_lib::autorun::seen_check::guarded_cleanup_notes;
+    let map = map_with("Cycles", "/cycles", &[css("#banner")]);
+    let guard = |then: serde_json::Value| serde_json::json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "then": [then] });
+    let activate = click(serde_json::json!({ "role": "button", "name": "Activate" }));
+    let with_cleanup = |action: serde_json::Value| {
+        script(
+            Some("Cycles"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [] },
+                { "step_number": 2, "cleanup": true, "actions": [action] }
+            ]),
+        )
+    };
+    let s = with_cleanup(guard(activate.clone()));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
+    let notes = guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("step 2: button \"Activate\""), "{notes:?}");
+    assert!(notes[0].contains("checked the first time its guard fires"), "{notes:?}");
+    assert!(!notes[0].contains("http") && !notes[0].contains('/'), "no address in a note: {notes:?}");
+    // The same then in a case step is still refused, and says nothing.
+    let plain = one_step("Cycles", serde_json::json!([guard(activate.clone())]));
+    assert_eq!(check_seen(&map, &none(), &plain, &[], None), Err(refusal(1, "button \"Activate\"")));
+    assert!(guarded_cleanup_notes(&map, &none(), &plain, &[], None, &[]).is_empty());
+    // An unguarded click in the clean-up keeps its rule.
+    let bare = with_cleanup(activate.clone());
+    assert_eq!(check_seen(&map, &none(), &bare, &[], None), Err(refusal(2, "button \"Activate\"")));
+    // The guard's own selector, never seen, is still refused.
+    let unseen_guard = with_cleanup(serde_json::json!({
+        "kind": "when_visible", "selector": { "css": "#nowhere" }, "then": [activate]
+    }));
+    let refused = check_seen(&map, &none(), &unseen_guard, &[], None).unwrap_err();
+    assert!(refused.contains("#nowhere"), "{refused}");
+    // A target that was seen needs no note.
+    let seen = map_with("Cycles", "/cycles", &[css("#banner"), role("button", "Activate")]);
+    assert!(guarded_cleanup_notes(&seen, &none(), &s, &[], None, &[]).is_empty());
+}

@@ -597,6 +597,12 @@ For anything NOT on that list, guard the click with `when_visible`:
   selector is a guard, so it counts seen matching any number of elements,
   or none (a probe that matched nothing); a `then` click on that same
   locator still needs one seen matching exactly one element.
+- In the clean-up step only, a `then` action on a locator that was never
+  seen (an Activate button that shows only on some days) is not refused:
+  the save notes that it is checked the first time its guard fires, and a
+  run or replay in which the guard fires and the action works files that
+  locator as seen. The guard's own selector and every locator outside a
+  clean-up guard's `then` keep their rules.
 
 In a repair, a new guard needs the edit's `quirk` and `quirk_class` ("Repairing a script that failed").
 
@@ -2109,7 +2115,10 @@ What a save checks:
   1. Text the script typed itself: a locator whose text or name contains,
      as a whole word or phrase, a value of at least 3 characters that the
      script typed in an earlier step. Typing "AutoTest Leave 7" lets a row
-     "AutoTest Leave 7 Pending" through, but not a "Leave" button.
+     "AutoTest Leave 7 Pending" through, but not a "Leave" button. A
+     list or grid often cuts a long name short, so a locator whose text
+     is the start of such a value counts too, when that start is at
+     least 20 characters (after case and spacing are ignored).
   2. Text from the test case: a check (`wait_for` or an `expect_` action)
      whose text appears as a whole word or phrase in the case's own steps
      or expected results, of at least 3 characters.

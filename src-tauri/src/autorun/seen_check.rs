@@ -8,7 +8,11 @@
 //! row "AutoTest Leave 7 Pending", never a "Leave" button. The other is a
 //! name a check looks for that the test case itself says (the expected
 //! result the step is checking for). Both match whole words only, and a
-//! typed value shorter than 3 characters exempts nothing.
+//! typed value shorter than 3 characters exempts nothing. One addition: a
+//! locator whose text or name is the start of a typed value (a list or grid
+//! cuts a long name short) is exempt too, when that start is at least
+//! `MIN_PREFIX_LEN` (20) characters once folded; it counts only for a value
+//! typed in an earlier step, as every typed value does.
 //!
 //! The script's own data is exempt the same way, from the step that brings
 //! it in: the name of one of the project's Test files that the script
@@ -102,7 +106,14 @@
 //! the project, not only the areas the script reads. Its selector is a
 //! guard, skipped when it matches nothing, so it counts seen in any form
 //! and any count, none included (`seen_many`, `takes_none`); a target in
-//! its `then` keeps its own action's rule.
+//! its `then` keeps its own action's rule. One exception, in the script's
+//! clean-up step only: a target inside the `then` of a `when_visible` there
+//! (other than the guard's own locator) that was never seen is not refused.
+//! The save notes that it is checked the first time its guard fires
+//! (`guarded_cleanup_notes`), and a run or replay in which the guard fires
+//! and the `then` action works files that target as seen, matching one, in
+//! the script's area (`ai_bridge::guard_finds`). A target that was seen
+//! keeps its own rule's count, and every other locator keeps its rule.
 //!
 //! A refused save names every locator never seen at once, in step order,
 //! then action order, then link order, each with its own hint, up to
@@ -192,6 +203,12 @@ use std::collections::HashSet;
 /// exempts nothing: two characters are inside far too many names to say
 /// where they came from.
 const MIN_TYPED_LEN: usize = 3;
+
+/// A locator whose text or name is only the start of a value typed earlier
+/// (a list or grid cuts a long name short) is exempt when that start is at
+/// least this many characters once folded: shorter, it could be the start
+/// of any name.
+const MIN_PREFIX_LEN: usize = 20;
 
 /// How close a seen name must be to the refused one to be offered as "did
 /// you mean": at most one edit (a character added, dropped or changed) for
@@ -1369,7 +1386,8 @@ fn exempt(link: &LocatorStep, own: &Own) -> bool {
     let has = |list: &[String]| list.iter().any(|t| own_words.iter().any(|w| has_phrase(w, t)));
     // A value typed earlier (already at least 3 characters) as whole words
     // inside the locator's text or name: the record the script created.
-    let typed_here = has(own.typed);
+    let typed_here = has(own.typed)
+        || own.typed.iter().any(|t| own_words.iter().any(|w| w.chars().count() >= MIN_PREFIX_LEN && t.starts_with(w.as_str())));
     // The locator's whole name, of at least 3 characters, as whole words in
     // what the case says. Never for a link holding a data placeholder: the
     // run checks such a link again once filled in, without the case's text
@@ -2161,6 +2179,30 @@ pub fn absence_review(
 /// The most loose names one case's notes list before saying how many more.
 const MAX_LOOSE_NOTES: usize = 5;
 
+/// What the clean-up's guards leave to be checked when they fire: one note
+/// per target in the `then` of a `when_visible` in the clean-up step that
+/// was never seen on the live app, so the save did not refuse it. A guard
+/// may not fire on the day the case is written, so the first run in which
+/// it does proves the target (and files it as seen). Only the steps in
+/// `only_steps`, when given.
+pub fn guarded_cleanup_notes(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    files: &[TestFile],
+) -> Vec<String> {
+    let mut deferred = Vec::new();
+    scan_deferring(map, components, script, case_text, only_steps, None, files, &mut deferred);
+    deferred
+        .into_iter()
+        .map(|(step, what)| {
+            format!("step {step}: {what} in the clean-up's when_visible was not seen on the live app; it is checked the first time its guard fires.")
+        })
+        .collect()
+}
+
 /// Notes, never refusals: a name in a click or another use that needs one
 /// element which matches loosely (a run matches a name as a part of the
 /// page's, ignoring case), when the live app also showed a longer name that
@@ -2325,6 +2367,10 @@ struct InputLocator {
     /// Whether it must be seen as this whole chain (an `expect_each`
     /// child inside its list), not link by link.
     whole: bool,
+    /// Whether it is a target in the `then` of a `when_visible` in the
+    /// clean-up step (other than the guard's own locator): left unseen, it
+    /// is not refused but checked when the guard first fires.
+    in_cleanup_guard: bool,
 }
 
 /// Is `target`, used by `action` inside the top-level `top`, a
@@ -2364,6 +2410,7 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
                     kind: r.kind(),
                     everywhere: false,
                     whole,
+                    in_cleanup_guard: false,
                 });
             }
             push_typed(&mut typed_before, r);
@@ -2411,6 +2458,23 @@ fn scan(
     only_steps: Option<&[i32]>,
     only_component: Option<&str>,
     files: &[TestFile],
+) -> Vec<Found> {
+    scan_deferring(map, components, script, case_text, only_steps, only_component, files, &mut Vec::new())
+}
+
+/// [`scan`], also giving `deferred`: the step and locator of each target in
+/// a clean-up guard's `then` that was never seen, which the scan does not
+/// refuse (`InputLocator::in_cleanup_guard`).
+#[allow(clippy::too_many_arguments)]
+fn scan_deferring(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    only_component: Option<&str>,
+    files: &[TestFile],
+    deferred: &mut Vec<(i32, String)>,
 ) -> Vec<Found> {
     let only_key = only_component.map(super::nav::module_key);
     let mut unseen: Vec<Found> = Vec::new();
@@ -2476,6 +2540,11 @@ fn scan(
                             kind: action.kind(),
                             everywhere: guards(top, t),
                             whole: false,
+                            in_cleanup_guard: step.cleanup
+                                && matches!(top, Action::WhenVisible { .. })
+                                && !std::ptr::eq(top, action)
+                                && !matches!(action, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. })
+                                && !guards(top, t),
                         })
                     })
                     .collect();
@@ -2490,6 +2559,7 @@ fn scan(
                         kind: action.kind(),
                         everywhere: false,
                         whole: true,
+                        in_cleanup_guard: false,
                     });
                 }
                 if let Action::UseComponent { component, inputs } = action {
@@ -2554,6 +2624,10 @@ fn scan(
                         continue;
                     }
                     if let Some(link) = first_unseen(&n.links, &chain, seen.for_use(n.many, legacy, n.none), &own) {
+                        if n.in_cleanup_guard {
+                            deferred.push((step.step_number, n.target.describe()));
+                            continue;
+                        }
                         let page = area_page(map, here.as_deref());
                         unseen.push(Found {
                             unseen: Unseen { step: step.step_number, locator: n.target.describe(), refused: None },

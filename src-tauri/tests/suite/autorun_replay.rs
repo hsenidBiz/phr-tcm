@@ -3137,3 +3137,30 @@ async fn a_case_a_product_bug_quirk_names_carries_it_on_its_result() {
     let saved = store::load_run(root, "run-x").unwrap().unwrap();
     assert_eq!(saved.cases[0].product_bugs, run.cases[0].product_bugs);
 }
+
+/// A guard that fires in a run and whose `then` click works files that
+/// click's target as seen, matching one, in the case's area (the seen gate
+/// takes it once the run has proved it). A guard whose `then` fails files
+/// nothing.
+#[tokio::test]
+async fn a_run_files_the_then_of_a_guard_that_fired_and_worked() {
+    let _leases = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let guard = |then: &str| {
+        serde_json::json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100,
+                            "then": [{ "kind": "click", "selector": { "css": then } }] })
+    };
+    let mut case: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 5, "title": "t", "area": "Leave",
+        "steps": [{ "step_number": 1, "actions": [guard("#activate")] }]
+    }))
+    .unwrap();
+    case.account = None;
+    let (mut d, app) = common::menu_app(&[], "/hr/home/index", 0);
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert!(app.log.lock().unwrap().contains(&"click #activate".to_string()), "{rec:?}");
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "Acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
+    let key = v2_lib::browser::locator::SeenKey::Css("#activate".into());
+    assert_eq!(area.sightings.iter().find(|s| s.key == key).map(|s| s.matched), Some(1), "{:?}", area.sightings);
+}

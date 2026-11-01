@@ -3971,3 +3971,36 @@ fn touches_sign_in_looks_inside_and_at_other_ways_in() {
     assert!(touches_sign_in(&[Action::Navigate { url: "https://hr.example.internal/hr/home/switch?mode=sshr".into() }], &recipe).is_some());
     assert!(touches_sign_in(&[fill("#search", "leave")], &recipe).is_none());
 }
+
+/// A guard that fires in a replay and whose `then` click works has proved
+/// that click's target was there: it is filed as seen matching one, in the
+/// case's area, so the seen gate takes it. A guard that does not fire files
+/// nothing.
+#[tokio::test]
+async fn a_fired_guard_files_its_then_as_seen() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let guard = |then: &str| {
+        json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100,
+                "then": [ click(then) ] })
+    };
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [guard("#activate")] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
+    assert!(clicked(&app, "#activate"), "{:?}", log(&app));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
+    let key = v2_lib::browser::locator::SeenKey::Css("#activate".into());
+    let seen = area.sightings.iter().find(|s| s.key == key).unwrap_or_else(|| panic!("{:?}", area.sightings));
+    assert_eq!(seen.matched, 1);
+    // The guard's own selector is no `then` target: nothing is filed for it.
+    assert!(!area.sightings.iter().any(|s| s.key == v2_lib::browser::locator::SeenKey::Css("#banner".into())));
+}
