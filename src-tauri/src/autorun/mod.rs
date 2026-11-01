@@ -199,6 +199,7 @@ pub struct StepScript {
     /// expected result and no check only when this says why, and the app
     /// shows it.
     #[serde(default, deserialize_with = "unchecked_or_none", skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<Unchecked>)]
     pub unchecked: Option<Unchecked>,
     /// The script's clean-up: no step of the case, but what removes what
     /// the case made. At most one, the script's last, numbered right after
