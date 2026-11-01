@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 1 November 2026, after 2.4.1; backlog 55 to 62 built for 2.4.3-beta.10. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
+  <p class="sub">Updated 1 November 2026, after 2.4.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -107,6 +107,19 @@
       <li>Owed: retake the How To Use shot of the Auto Run Setup panel (the Environment row now has Import scripts…) and rebuild the guide.</li>
       <li>Open (63): the Playwright export of a delete loop with <code>except</code> does not carry Auto Run's refusal of a loop whose rows cannot be told apart, so an exported spec can delete where Auto Run refuses. Found in the final review of 55-62.</li>
       <li>Open (64): a discovery try that passes without the rows guard ever running (condition false, empty first look) is recorded as a pass and can erase an older save-time refusal; every run still runs the guard. Found in the final review of 55-62.</li>
+    </ul>
+  </div>
+
+  <h2>Auto Run backlog 65 to 70 (2.4.3-beta.11)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Quirk cap, check swaps, resets, whole-case replays, clean-up guards</span><span class="status todo">Built, hand checks owed</span></div>
+    <p>The quirk cap is 100 and a refused quirk opens the save's answer; a swap of check kinds is accepted; an empty <code>unchecked</code> list clears; a replay past the last step always starts from the beginning; a reset goes back to the signed-in page and says why when the sign-in has gone; a clean-up guard's target saves unseen with a note and is filed when the guard fires.</p>
+    <ul>
+      <li>Hand check owed: a reset on PeoplesHR keeps the sign-in, and the next replay does not sign in again. If a reset says the sign-in has gone, note the reason it gives (68 is only partly done; the cause is not confirmed).</li>
+      <li>Hand check owed: a whole-case replay starts from the beginning even when the discovery left the browser mid-case, and says why it did not carry on.</li>
+      <li>Hand check owed: a guarded clean-up's then saves unseen with a note, and is filed as seen the first time its guard fires (135540).</li>
+      <li>Hand check owed: the by-text row of a typed name (135388): if its name came from a placeholder or a noted value, it still needs a sighting (70).</li>
+      <li>Open (71): a guarded clean-up target that has never fired is not shown anywhere after the save. The case card and the auditor cannot see it, and a whole replay can mark the case checked.</li>
     </ul>
   </div>
 

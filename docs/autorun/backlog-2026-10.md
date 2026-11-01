@@ -1146,6 +1146,7 @@ dw-fix-lrg4 (aiden, grace) and dw-fix-rating5 (emma), the first rewriters on bet
     tree draws") is never written down. Either raise the cap, or when it is reached say which quirks
     are oldest or never cited by a failure so the assistant can propose merging them, and never drop
     a quirk silently.
+    - **Done in 2.4.3-beta.11.** The cap is 100 active quirks, and a quirk a save cannot take opens the answer, quoted, with the oldest and least-used notes to retire (said once when several are refused). Left: nothing known.
 
 66. **A `gives_up` that names a check the step no longer has is refused "removes 0 checks".** On
     135388 step 5, dw-fix-comps5 replaced five fixed "Level N - ..." visible checks with
@@ -1154,23 +1155,27 @@ dw-fix-lrg4 (aiden, grace) and dw-fix-rating5 (emma), the first rewriters on bet
     so "removes 0 checks". It saved only without the list. A replacement of fixed values by noted
     values should be accepted (or have its own field, e.g. `replaces`), so the save's record shows
     what each repair traded.
+    - **Done in 2.4.3-beta.11.** A swap of check kinds (fixed values for noted ones) is accepted and recorded as `replaced_by`; a gives_up naming a kind the repair keeps now says so. Left: nothing known.
 
 67. **A repair patch with `"unchecked": []` is refused.** dw-fix-rating5 removed the old menu-path
     notes from step 1 of the six rewritten rating cases by sending `"unchecked": []`; the patch was
     refused, and only `"unchecked": null` cleared the stale list. An empty list should mean "none",
     or the refusal should say "send null to clear".
+    - **Done in 2.4.3-beta.11.** An empty `unchecked` list means none and clears the stale list. Left: nothing known.
 
 68. **A reset between replays drops the sign-in.** The guide says `reset_autorun_browser` (no release)
     gives a clean page with the sign-in kept. On beta.10 dw-fix-rating5 and dw-fix-lrg4 saw the next
     replay sign in again after each reset. With one session per PeoplesHR user (a sign-in can log out
     another assistant on the same account) and a site that is slow to wake, every extra sign-in is a
     risk. Keep the session cookies across a reset, or correct the guide.
+    - **Partly done in 2.4.3-beta.11:** a reset goes back to the signed-in page instead of the start page, falls back to the start page if that fails, and says why when the sign-in has gone. Cause not confirmed - live check owed (replay trips and discovery starts still load the start page).
 
 69. **A first replay can carry on from mid-case and still count as full.** dw-fix-comps5's first full
     replay of 135346 (to its last step + 1) carried on from step 4, where its discovery had left the
     page, instead of starting from the area. The second replay started from scratch. The two were
     counted as "2 full replays", but only one proved the case from its start. A full replay should
     always start from a fresh page (or the result should say it continued from step N and not count it).
+    - **Done in 2.4.3-beta.11.** A replay past the last step (the whole case) always starts from the beginning and says why it did not carry on. Left: nothing known.
 
 70. **A locator for a state that exists only mid-case can be seen only by changing the site first.**
     - The by-text row locators for a row the case makes (e.g. `.phr-dw-comp-item` has_text the
@@ -1183,6 +1188,10 @@ dw-fix-lrg4 (aiden, grace) and dw-fix-rating5 (emma), the first rewriters on bet
     Both change shared state just to satisfy the seen-gate. A locator first seen in a replay of the
     same script (the step that makes the row ran before it) could be accepted, or a guarded clean-up's
     locator could be checked when the guard fires in a replay.
+    - **Done in 2.4.3-beta.11 for the guarded clean-up** (its then saves unseen with a note and is filed as seen when the guard fires). The by-text row: a has_text that is the first 20+ characters of a name typed earlier now counts as typed; not confirmed against 135388 - if its name came from a placeholder or a noted value, it still needs a sighting.
+
+71. **A guarded clean-up target that has never fired is not shown anywhere after the save.** The case
+    card and the auditor cannot see it, and a whole replay can mark the case checked.
 
 ## Smaller
 
