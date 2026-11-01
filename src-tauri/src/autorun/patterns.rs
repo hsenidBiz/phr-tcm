@@ -600,6 +600,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::ExpectTextMoved { selector, .. }
         | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }

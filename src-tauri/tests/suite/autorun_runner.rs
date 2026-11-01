@@ -1111,6 +1111,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_visible", "selector": css }), false),
         (json!({ "kind": "expect_hidden", "selector": css }), false),
         (json!({ "kind": "expect_text", "selector": css, "equals": "v" }), false),
+        (json!({ "kind": "expect_text_moved", "selector": css, "same_as": "n", "by": 1 }), false),
         (json!({ "kind": "expect_contains_text", "selector": css, "value": "v" }), false),
         (json!({ "kind": "expect_count", "selector": css, "equals": 1 }), false),
         (json!({ "kind": "expect_attribute", "selector": css, "name": "n", "equals": "v" }), false),

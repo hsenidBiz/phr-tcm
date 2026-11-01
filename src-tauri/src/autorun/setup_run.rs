@@ -222,6 +222,7 @@ fn check_target(a: &Action) -> Option<&Target> {
     match a {
         Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::ExpectTextMoved { selector, .. }
         | Action::ExpectContainsText { selector, .. } => Some(selector),
         _ => None,
     }

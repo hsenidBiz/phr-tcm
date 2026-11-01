@@ -619,6 +619,27 @@ fn checked_translates_to_to_be_checked() {
     assert!(!got.contains("#agree').first()).not.toHaveAttribute"), "{got}");
 }
 
+/// A wrapper that holds one box (the `inside:` case) is asked about the box
+/// inside it: Playwright rejects `toBeChecked` on a non-checkbox. A role that
+/// is a checked state itself, and a css selector that may be the input, are
+/// asked as written.
+#[test]
+fn checked_on_a_wrapper_asks_about_the_one_box_inside() {
+    let got = one_step(json!([
+        { "kind": "expect_checked", "selector": { "role": "group", "name": "Notify me" } },
+        { "kind": "expect_checked", "selector": { "text": "Email alerts" }, "checked": false, "timeout_ms": 300 },
+        { "kind": "expect_checked", "selector": { "role": "checkbox", "name": "Agree" } },
+        { "kind": "expect_checked", "selector": { "role": "switch", "name": "Dark" } }
+    ]))
+    .run()
+    .unwrap();
+    let inner = ".locator('input[type=checkbox],input[type=radio],[aria-checked]')";
+    assert!(got.contains(&format!("{inner}).toBeChecked({{ timeout: 10000 }});")), "{got}");
+    assert!(got.contains(&format!("{inner}).not.toBeChecked({{ timeout: 300 }});")), "{got}");
+    assert!(got.contains(&format!("{inner}).not.toHaveAttribute('aria-checked', 'mixed', {{ timeout: 300 }});")), "{got}");
+    assert_eq!(got.matches(inner).count(), 3, "only the wrappers go inside: {got}");
+}
+
 /// `expect_no_change` becomes one block: the control waited for and checked
 /// not to be under another element, the pointer put on it, a forced click,
 /// the same wait, and the same comparisons the app makes (the address, the
@@ -1655,13 +1676,13 @@ fn remember_text_exports_a_noted_text_and_a_to_have_text() {
 }
 
 
-/// Backlog 75: `plus` exports as the difference of the first integers
+/// Backlog 75: `expect_text_moved` exports as the difference of the first integers
 /// (`/-?\d+/`, as the app reads them) polled until it equals N.
 #[test]
-fn a_counted_same_as_exports_the_difference_of_the_first_numbers() {
+fn a_moved_count_exports_the_difference_of_the_first_numbers() {
     let got = one_step(json!([
         { "kind": "remember_text", "selector": { "css": "#pills" }, "as": "counts" },
-        { "kind": "expect_text", "selector": { "css": "#pills" }, "same_as": "counts", "plus": -2, "timeout_ms": 4000 }
+        { "kind": "expect_text_moved", "selector": { "css": "#pills" }, "same_as": "counts", "by": -2, "timeout_ms": 4000 }
     ]))
     .run()
     .unwrap();

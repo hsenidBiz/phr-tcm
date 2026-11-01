@@ -114,6 +114,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::ExpectTextMoved { selector, .. }
         | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
@@ -246,6 +247,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         matches!(
             a,
             Action::ExpectText { .. }
+                | Action::ExpectTextMoved { .. }
                 | Action::RememberText { .. }
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectOrder { .. }
@@ -672,6 +674,31 @@ fn wait_opts(t: &Target, timeout: u32) -> String {
 /// fall back to) - never Playwright's shorter 5 s default.
 fn expect_timeout(own: Option<u32>) -> u64 {
     own.map(u64::from).unwrap_or_else(|| Timing::default().expect_ms)
+}
+
+/// The roles that are a checked state themselves.
+const BOX_ROLES: [&str; 5] = ["checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"];
+
+/// What `expect_checked` asks `toBeChecked` about. Auto Run reads the one box
+/// inside a wrapper (a switch drawn as a label or a div around its input), but
+/// Playwright rejects `toBeChecked` on anything that is not a checkbox, a
+/// radio or an `aria-checked` widget. The export cannot see the page, so it
+/// goes inside only when the locator is positively not a box itself: a role
+/// that is not a checked-state role, or text alone. A css or plain-string
+/// selector gives no hint (`#agree` may be the input or its wrapper), so it
+/// is asked as written, as before.
+fn checkable(t: &Target) -> String {
+    let own = one(t);
+    let wrapper = t.links().last().is_some_and(|s| match (&s.role, &s.css, &s.text) {
+        (Some(role), _, _) => !BOX_ROLES.contains(&role.to_lowercase().as_str()),
+        (None, None, Some(_)) => true,
+        _ => false,
+    });
+    if wrapper {
+        format!("{own}.locator('input[type=checkbox],input[type=radio],[aria-checked]')")
+    } else {
+        own
+    }
 }
 
 fn call(name: &str, args: &[String], timeout: Option<u32>) -> String {
@@ -1534,24 +1561,23 @@ impl Em<'_> {
             // The app reads a field's value, a list's chosen label, else the
             // rendered text (READ_TEXT_JS), collapses whitespace on both sides
             // and compares case-sensitively: whole, or as a substring.
-            Action::ExpectText { selector, equals, matches, same_as, plus, timeout_ms } => {
+            Action::ExpectTextMoved { selector, same_as: name, by, timeout_ms } => {
+                // The first whole number on each side, as the app reads it
+                // (`-?\d+`, no thousands separators): polled until the
+                // difference is `by`.
+                self.line(
+                    indent,
+                    &format!(
+                        r"await expect.poll(async () => {{ const num = (t: string) => {{ const m = /-?\d+/.exec(t); return m ? Number(m[0]) : null; }}; const now = num(await {}.evaluate(readText)); const was = num(notedTexts[{}]); return now !== null && was !== null ? now - was : null; }}{}).toBe({by});",
+                        one(selector),
+                        lit(name),
+                        poll_opts(*timeout_ms)
+                    ),
+                );
+            }
+            Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
                 // `validate` holds the three to exactly one.
                 if let Some(name) = same_as {
-                    if let Some(plus) = plus {
-                        // The first whole number on each side, as the app reads
-                        // it (`-?\d+`, no thousands separators): polled until
-                        // the difference is `plus`.
-                        self.line(
-                            indent,
-                            &format!(
-                                r"await expect.poll(async () => {{ const num = (t: string) => {{ const m = /-?\d+/.exec(t); return m ? Number(m[0]) : null; }}; const now = num(await {}.evaluate(readText)); const was = num(notedTexts[{}]); return now !== null && was !== null ? now - was : null; }}{}).toBe({plus});",
-                                one(selector),
-                                lit(name),
-                                poll_opts(*timeout_ms)
-                            ),
-                        );
-                        return Ok(());
-                    }
                     // Read as the app reads it (`readText`), on both sides.
                     self.line(
                         indent,
@@ -1702,15 +1728,15 @@ impl Em<'_> {
             // and an aria widget saying "mixed" fails, as it does in a run.
             Action::ExpectChecked { selector, checked: true, timeout_ms } => self.line(
                 indent,
-                &format!("await expect({}).{};", one(selector), call("toBeChecked", &[], *timeout_ms)),
+                &format!("await expect({}).{};", checkable(selector), call("toBeChecked", &[], *timeout_ms)),
             ),
             Action::ExpectChecked { selector, checked: false, timeout_ms } => {
-                self.line(indent, &format!("await expect({}).not.{};", one(selector), call("toBeChecked", &[], *timeout_ms)));
+                self.line(indent, &format!("await expect({}).not.{};", checkable(selector), call("toBeChecked", &[], *timeout_ms)));
                 self.line(
                     indent,
                     &format!(
                         "await expect({}).not.{};",
-                        one(selector),
+                        checkable(selector),
                         call("toHaveAttribute", &[lit("aria-checked"), lit("mixed")], *timeout_ms)
                     ),
                 );

@@ -45,6 +45,7 @@ const EXAMPLES: &[(&str, &str)] = &[
     ("expect_visible", r##"{"kind":"expect_visible","selector":{"css":"#panel"}}"##),
     ("expect_hidden", r##"{"kind":"expect_hidden","selector":{"css":"#panel"}}"##),
     ("expect_text", r##"{"kind":"expect_text","selector":{"css":"#title"},"equals":"Leave"}"##),
+    ("expect_text_moved", r##"{"kind":"expect_text_moved","selector":{"css":"#count"},"same_as":"before","by":1}"##),
     ("expect_contains_text", r##"{"kind":"expect_contains_text","selector":{"css":"#title"},"value":"Lea"}"##),
     ("expect_count", r##"{"kind":"expect_count","selector":{"css":"li"},"equals":3}"##),
     (

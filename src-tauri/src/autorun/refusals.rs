@@ -358,6 +358,7 @@ pub fn names_a_refusal(a: &crate::browser::actions::Action) -> bool {
         Action::ExpectResponse { status, .. } => (400..=499).contains(status),
         Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::ExpectTextMoved { selector, .. }
         | Action::ExpectContainsText { selector, .. } => is_message_target(selector),
         _ => false,
     }

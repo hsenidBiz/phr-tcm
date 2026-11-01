@@ -42,6 +42,10 @@ describe("a sentence for every action kind", () => {
       'Check the "Status" cell reads "Active"',
     ],
     [
+      { kind: "expect_text_moved", selector: { role: "cell", name: "Status" }, same_as: "n", by: 3 },
+      'Check the "Status" cell shows the number noted as "n" plus 3',
+    ],
+    [
       { kind: "expect_contains_text", selector: { role: "alert" }, value: "saved" },
       'Check the alert contains "saved"',
     ],
@@ -364,10 +368,10 @@ describe("a sentence for every action kind", () => {
 
   test("a count that moved by N reads as a sentence", () => {
     const pill = { role: "status", name: "Open items" };
-    expect(say({ kind: "expect_text", selector: pill, same_as: "open", plus: 1 })).toBe(
+    expect(say({ kind: "expect_text_moved", selector: pill, same_as: "open", by: 1 })).toBe(
       'Check the "Open items" status shows the number noted as "open" plus 1',
     );
-    expect(say({ kind: "expect_text", selector: pill, same_as: "open", plus: -2 })).toBe(
+    expect(say({ kind: "expect_text_moved", selector: pill, same_as: "open", by: -2 })).toBe(
       'Check the "Open items" status shows the number noted as "open" minus 2',
     );
     expect(say({ kind: "expect_text", selector: pill, same_as: "open" })).toBe(
@@ -419,7 +423,7 @@ describe("a sentence for every action kind", () => {
     expect([...kinds].sort()).toEqual(
       [
         "navigate", "click", "hover", "fill", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
-        "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
+        "expect_text", "expect_text_moved", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "expect_no_change", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "when_hidden", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
@@ -605,6 +609,7 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a row with no cells", { kind: "expect_row", table: "#t", cells: {} }],
     ["a text check with both equals and matches", { kind: "expect_text", selector: "#a", equals: "x", matches: "y" }],
     ["a text check with neither", { kind: "expect_text", selector: "#a" }],
+    ["a moved count by nothing", { kind: "expect_text_moved", selector: "#a", same_as: "n", by: 0 }],
     ["a count with no bound", { kind: "expect_count", selector: "#a" }],
     ["an each check with two checks", { kind: "expect_each", selector: { css: "li" }, equals: "a", not_empty: true }],
     ["an each check with none", { kind: "expect_each", selector: { css: "li" } }],

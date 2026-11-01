@@ -400,6 +400,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::WhenHidden { .. }
         | Action::ExpectVisible { .. }
         | Action::ExpectText { .. }
+        | Action::ExpectTextMoved { .. }
         | Action::RememberText { .. }
         | Action::ExpectContainsText { .. }
         | Action::ExpectAttribute { .. }
@@ -896,6 +897,7 @@ fn is_check(action: &Action) -> bool {
             | Action::ExpectVisible { .. }
             | Action::ExpectHidden { .. }
             | Action::ExpectText { .. }
+            | Action::ExpectTextMoved { .. }
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectEach { .. }

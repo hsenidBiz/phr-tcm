@@ -343,6 +343,7 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::ExpectVisible { .. }
             | Action::ExpectHidden { .. }
             | Action::ExpectText { .. }
+            | Action::ExpectTextMoved { .. }
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectAttribute { .. }

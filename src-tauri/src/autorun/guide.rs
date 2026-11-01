@@ -28,6 +28,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_visible",
     "expect_hidden",
     "expect_text",
+    "expect_text_moved",
     "expect_contains_text",
     "expect_count",
     "expect_attribute",
@@ -289,7 +290,8 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
 - `{ "kind": "expect_hidden", "selector": ... }` - gone counts as hidden
-- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) or `"same_as": "counts"` (the text `remember_text` noted as counts) in place of `equals`; exactly one of the three. With `same_as`, `"plus": 1` (or `-1`, any whole number but 0) checks a count that moved: the first whole number in the text now is the first whole number in the noted text plus that (`"plus": 1` passes 3 items -> 4 items, `-1` passes 10 -> 9). A number is an optional minus and its digits, so thousands separators are not read (`1,000` is 1); a text with no number fails, and `plus` needs `same_as`. A noted password field is never counted
+- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) or `"same_as": "counts"` (the text `remember_text` noted as counts) in place of `equals`; exactly one of the three.
+- `{ "kind": "expect_text_moved", "selector": ..., "same_as": "counts", "by": 1 }` - a count that moved: the first whole number in the text now is the first whole number in the text `remember_text` noted as counts, plus `by` (`-1`, or any whole number but 0: `"by": 1` passes 3 items -> 4 items, `-1` passes 10 -> 9). A number is an optional minus and its digits, so thousands separators are not read (`1,000` is 1); a text with no number fails, and it needs `same_as`, an earlier `remember_text` of that name. A noted password field is never counted
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }` - or `at_least` / `at_most` in its place (`at_most` passes only once the count has held still for a moment, so give it a `timeout_ms` of at least 1500)
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute; with `"matches": "^View "` (a pattern) in place of `equals`, the value must match it
@@ -2148,7 +2150,7 @@ What a save checks:
   `expect_count`, `wait_for`) may use a locator seen matching several
   elements, and so may the selector a `when_visible` waits for. Every
   other use needs a locator seen matching exactly one: an action (click,
-  fill, upload, press_key, drag) and the checks that read one element (`expect_visible`, `expect_text`,
+  fill, upload, press_key, drag) and the checks that read one element (`expect_visible`, `expect_text`, `expect_text_moved`,
   `expect_contains_text`, `expect_attribute`, `expect_style`, `expect_enabled`,
   `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching

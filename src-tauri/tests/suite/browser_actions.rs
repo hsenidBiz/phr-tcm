@@ -630,7 +630,8 @@ fn only_checks_and_expectations_are_checks() {
         Action::RememberText { selector: "s".into(), name: "n".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, plus: None, timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None },
+        Action::ExpectTextMoved { selector: "s".into(), same_as: "n".into(), by: 1, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
@@ -684,6 +685,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_visible"
                 | "expect_hidden"
                 | "expect_text"
+                | "expect_text_moved"
                 | "expect_contains_text"
                 | "expect_count"
                 | "expect_attribute"
@@ -1733,7 +1735,6 @@ async fn remember_text_notes_the_text_for_a_later_same_as() {
         equals: None,
         matches: None,
         same_as: Some("counts".into()),
-        plus: None,
         timeout_ms: None,
     };
     let out = execute_with(&mut d, &remember, &quick()).await;
@@ -1747,7 +1748,7 @@ async fn remember_text_notes_the_text_for_a_later_same_as() {
     assert!(out.detail.contains("2 / 4 / 7") && out.detail.contains("3 / 4 / 7"), "{}", out.detail);
     assert!(out.detail.contains("noted as \"counts\""), "{}", out.detail);
     // Nothing noted under the name: no look at the page.
-    let none = Action::ExpectText { selector: "#pills".into(), equals: None, matches: None, same_as: Some("never".into()), plus: None, timeout_ms: None };
+    let none = Action::ExpectText { selector: "#pills".into(), equals: None, matches: None, same_as: Some("never".into()), timeout_ms: None };
     let calls = d.calls.len();
     let out = execute_with(&mut d, &none, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
@@ -1790,7 +1791,7 @@ async fn a_text_noted_from_a_password_field_is_never_said() {
     assert!(execute_with(&mut d, &remember, &quick()).await.ok);
     let mut d2 = FakePage { texts: vec!["other-secret"], password: false, ..FakePage::default() }.driver();
     d2.noted_text = d.noted_text.clone();
-    let same = Action::ExpectText { selector: "#pw".into(), equals: None, matches: None, same_as: Some("p".into()), plus: None, timeout_ms: None };
+    let same = Action::ExpectText { selector: "#pw".into(), equals: None, matches: None, same_as: Some("p".into()), timeout_ms: None };
     let out = execute_with(&mut d2, &same, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
     assert!(!out.detail.contains("hunter2") && !out.detail.contains("other-secret"), "{}", out.detail);
@@ -1838,20 +1839,20 @@ fn a_hover_is_validated_but_is_not_a_check() {
     assert_eq!(ok.targets().len(), 1);
 }
 
-// ---- backlog 75: expect_text same_as + plus -------------------------------
+// ---- backlog 75: expect_text_moved ----------------------------------------
 
-/// Notes `first`, then looks at the page showing `then` with `plus`.
-async fn counted(first: &'static str, then: &'static str, plus: i64) -> v2_lib::browser::actions::ActionOutcome {
+/// Notes `first`, then looks at the page showing `then` with `by`.
+async fn counted(first: &'static str, then: &'static str, by: i64) -> v2_lib::browser::actions::ActionOutcome {
     let mut d = FakePage { texts: vec![first, then], ..FakePage::default() }.driver();
     let remember = Action::RememberText { selector: "#n".into(), name: "count".into() };
     assert!(execute_with(&mut d, &remember, &quick()).await.ok);
-    let moved = serde_json::from_value::<Action>(json!({ "kind": "expect_text", "selector": "#n", "same_as": "count", "plus": plus })).unwrap();
+    let moved = serde_json::from_value::<Action>(json!({ "kind": "expect_text_moved", "selector": "#n", "same_as": "count", "by": by })).unwrap();
     moved.validate().unwrap();
     execute_with(&mut d, &moved, &quick()).await
 }
 
 #[tokio::test]
-async fn plus_checks_the_first_number_moved_by_n() {
+async fn a_moved_count_checks_the_first_number_moved_by_n() {
     let out = counted("3 items", "4 items", 1).await;
     assert!(out.ok, "{}", out.detail);
     let out = counted("3 items", "3 items", 1).await;
@@ -1872,7 +1873,7 @@ async fn plus_checks_the_first_number_moved_by_n() {
 }
 
 #[tokio::test]
-async fn plus_refuses_a_text_without_a_number_and_never_prints_a_secret() {
+async fn a_moved_count_refuses_a_text_without_a_number_and_never_prints_a_secret() {
     let out = counted("no count yet", "4 items", 1).await;
     assert!(!out.ok && !out.harness, "{}", out.detail);
     assert!(out.detail.contains("the noted text has no number to count from"), "{}", out.detail);
@@ -1886,28 +1887,30 @@ async fn plus_refuses_a_text_without_a_number_and_never_prints_a_secret() {
     assert!(execute_with(&mut d, &remember, &quick()).await.ok);
     let mut d2 = FakePage { texts: vec!["code 7732"], password: false, ..FakePage::default() }.driver();
     d2.noted_text = d.noted_text.clone();
-    let moved = serde_json::from_value::<Action>(json!({ "kind": "expect_text", "selector": "#pw", "same_as": "p", "plus": 1 })).unwrap();
+    let moved = serde_json::from_value::<Action>(json!({ "kind": "expect_text_moved", "selector": "#pw", "same_as": "p", "by": 1 })).unwrap();
     let out = execute_with(&mut d2, &moved, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
     for secret in ["7731", "7732", "code"] {
         assert!(!out.detail.contains(secret), "{}", out.detail);
     }
 }
-
 #[test]
-fn plus_is_valid_only_with_same_as_and_never_zero() {
-    use v2_lib::browser::actions::{PLUS_NEEDS_SAME_AS, PLUS_ZERO};
+fn a_moved_count_needs_a_noted_name_and_never_zero() {
+    use v2_lib::browser::actions::BY_ZERO;
     let check = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate();
-    assert!(check(json!({ "kind": "expect_text", "selector": "s", "same_as": "n", "plus": 1 })).is_ok());
-    assert!(check(json!({ "kind": "expect_text", "selector": "s", "same_as": "n", "plus": -3 })).is_ok());
-    assert_eq!(check(json!({ "kind": "expect_text", "selector": "s", "equals": "a", "plus": 1 })).unwrap_err(), PLUS_NEEDS_SAME_AS);
-    assert_eq!(check(json!({ "kind": "expect_text", "selector": "s", "matches": "a", "plus": 1 })).unwrap_err(), PLUS_NEEDS_SAME_AS);
-    assert_eq!(check(json!({ "kind": "expect_text", "selector": "s", "same_as": "n", "plus": 0 })).unwrap_err(), PLUS_ZERO);
-    assert_eq!(PLUS_NEEDS_SAME_AS, "plus needs same_as: the count is compared with a noted one");
-    assert_eq!(PLUS_ZERO, "plus 0 is same_as on its own");
-    // Written back only when given.
-    let plain = serde_json::from_value::<Action>(json!({ "kind": "expect_text", "selector": "s", "same_as": "n" })).unwrap();
+    assert!(check(json!({ "kind": "expect_text_moved", "selector": "s", "same_as": "n", "by": 1 })).is_ok());
+    assert!(check(json!({ "kind": "expect_text_moved", "selector": "s", "same_as": "n", "by": -3 })).is_ok());
+    assert_eq!(check(json!({ "kind": "expect_text_moved", "selector": "s", "same_as": "n", "by": 0 })).unwrap_err(), BY_ZERO);
+    assert_eq!(BY_ZERO, "by 0 is no move - use expect_text same_as");
+    assert!(check(json!({ "kind": "expect_text_moved", "selector": "s", "same_as": "  ", "by": 1 })).is_err());
+    // It is a check of its own kind, and `by` is written back as given.
+    let moved = serde_json::from_value::<Action>(json!({ "kind": "expect_text_moved", "selector": "s", "same_as": "n", "by": 2 })).unwrap();
+    assert!(moved.is_check() && !moved.is_guard());
+    assert_eq!(serde_json::to_value(&moved).unwrap()["by"], 2);
+    assert_eq!(moved.kind(), "expect_text_moved");
+    // `expect_text` no longer carries a count: a build that knows only
+    // `expect_text` would drop the field and check plain equality, so the
+    // count is not a field of it.
+    let plain = serde_json::from_value::<Action>(json!({ "kind": "expect_text", "selector": "s", "same_as": "n", "plus": 2 })).unwrap();
     assert!(serde_json::to_value(&plain).unwrap().get("plus").is_none());
-    let moved = serde_json::from_value::<Action>(json!({ "kind": "expect_text", "selector": "s", "same_as": "n", "plus": 2 })).unwrap();
-    assert_eq!(serde_json::to_value(&moved).unwrap()["plus"], 2);
 }

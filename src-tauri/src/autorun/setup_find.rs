@@ -163,6 +163,7 @@ pub fn check_find(rule: &FindRule) -> Vec<String> {
                 last,
                 Action::ExpectVisible { .. }
                     | Action::ExpectText { .. }
+                    | Action::ExpectTextMoved { .. }
                     | Action::ExpectContainsText { .. }
             );
             if !is_check {

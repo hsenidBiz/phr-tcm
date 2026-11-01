@@ -94,8 +94,8 @@ pub fn action_words(action: &Action) -> String {
         Action::RememberText { selector, name } => {
             format!("note the text of {} as \"{name}\"", selector.describe())
         }
-        Action::ExpectText { selector, same_as: Some(name), plus: Some(n), .. } => {
-            format!("expect {} to read the number noted as \"{name}\" moved by {n}", selector.describe())
+        Action::ExpectTextMoved { selector, same_as, by, .. } => {
+            format!("expect {} to read the number noted as \"{same_as}\" moved by {by}", selector.describe())
         }
         Action::ExpectText { selector, same_as: Some(name), .. } => {
             format!("expect {} to read the text noted as \"{name}\"", selector.describe())

@@ -74,9 +74,10 @@ pub enum Check<'a> {
     /// (`position::holds`).
     Position { relative_to: &'a Target, relation: super::position::Relation },
     /// The one match's text (collapsed) is the one `remember_text` noted as
-    /// `name`; `noted` is that text. With `plus`, the first whole number in
-    /// it is the noted text's first whole number plus `plus`.
-    SameText { name: &'a str, noted: &'a str, plus: Option<i64> },
+    /// `name`; `noted` is that text. With `by` (`expect_text_moved`), the
+    /// first whole number in it is the noted text's first whole number plus
+    /// `by`.
+    SameText { name: &'a str, noted: &'a str, by: Option<i64> },
     /// `remember_text`: read the one match's text (collapsed) and whether it
     /// is a password field into the cell.
     /// Passes once the element is found; the sentence never carries the text.
@@ -483,7 +484,7 @@ async fn look_reading<D: Driver>(
                 }
             }
         },
-        Check::SameText { name, noted, plus } => match only(&handles) {
+        Check::SameText { name, noted, by } => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
@@ -495,13 +496,13 @@ async fn look_reading<D: Driver>(
                     None => (*noted, false),
                 };
                 let password = is_password(d, h).await? || noted_secret;
-                if let Some(plus) = plus {
+                if let Some(by) = by {
                     // A count is read off the text, which a secret would show: a
                     // secret on either side fails the look, naming neither value.
                     if password {
                         Err(format!("{COUNT_OF_A_SECRET} (noted as \"{name}\")"))
                     } else {
-                        count_moved(&got, noted, *plus, name, &what)
+                        count_moved(&got, noted, *by, name, &what)
                     }
                 } else if got == noted {
                     Ok(format!("{what} still says what was noted as \"{name}\""))
@@ -824,11 +825,11 @@ async fn keep_looking<D: Driver>(
     }
 }
 
-/// `expect_text` with `plus` where the text on the page, or the one noted,
-/// came from a password field: followed by the note's name.
-pub const COUNT_OF_A_SECRET: &str = "plus does not count a password field's text";
+/// `expect_text_moved` where the text on the page, or the one noted, came
+/// from a password field: followed by the note's name.
+pub const COUNT_OF_A_SECRET: &str = "expect_text_moved does not count a password field's text";
 
-/// Said when a text `plus` counts from holds no whole number: which one.
+/// Said when a text `expect_text_moved` counts from holds no whole number: which one.
 pub const NO_NUMBER_NOTED: &str = "the noted text has no number to count from";
 /// See [`NO_NUMBER_NOTED`].
 pub const NO_NUMBER_CURRENT: &str = "the current text has no number to count from";
@@ -842,14 +843,14 @@ pub fn first_integer(text: &str) -> Option<i64> {
     re.find(text).and_then(|m| m.as_str().parse().ok())
 }
 
-/// `expect_text` with `same_as` and `plus`: the first number in `got` is the
-/// one in `noted` plus `plus`. Neither text is ever said, only the numbers.
-fn count_moved(got: &str, noted: &str, plus: i64, name: &str, what: &str) -> Result<String, String> {
+/// `expect_text_moved`: the first number in `got` is the one in `noted` plus
+/// `by`. Neither text is ever said, only the numbers.
+fn count_moved(got: &str, noted: &str, by: i64, name: &str, what: &str) -> Result<String, String> {
     let was = first_integer(noted).ok_or_else(|| NO_NUMBER_NOTED.to_string())?;
     let now = first_integer(got).ok_or_else(|| NO_NUMBER_CURRENT.to_string())?;
-    match was.checked_add(plus) {
-        Some(want) if want == now => Ok(format!("{what} counts {now}: {was} noted as \"{name}\", plus {plus}")),
-        Some(want) => Err(format!("expected {want} ({was} noted as \"{name}\", plus {plus}) but saw {now}")),
+    match was.checked_add(by) {
+        Some(want) if want == now => Ok(format!("{what} counts {now}: {was} noted as \"{name}\", plus {by}")),
+        Some(want) => Err(format!("expected {want} ({was} noted as \"{name}\", plus {by}) but saw {now}")),
         None => Err(NO_NUMBER_NOTED.to_string()),
     }
 }

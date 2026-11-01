@@ -4090,7 +4090,7 @@ pub fn component_finds(
         .filter(|((_, from), o)| from.is_some() && o.component.is_some() && o.ok)
         .filter_map(|((action, _), _)| match action {
             Action::WaitFor { selector, .. } => Some((selector.clone(), unknown, unknown)),
-            Action::ExpectText { selector, .. } => {
+            Action::ExpectText { selector, .. } | Action::ExpectTextMoved { selector, .. } => {
                 let css = plain_target(selector) && selector.links().first().is_some_and(|l| l.css.is_some());
                 Some(if selector.is_legacy() {
                     (selector.clone(), unknown, unknown)
@@ -4295,6 +4295,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::Upload { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::ExpectTextMoved { selector, .. }
         | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectAttribute { selector, .. }
@@ -4912,6 +4913,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::ExpectTextMoved { selector, .. }
         | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }

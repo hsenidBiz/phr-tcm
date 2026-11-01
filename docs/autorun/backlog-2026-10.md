@@ -1210,7 +1210,7 @@ scripts (135018-135050) and repaired 135379's clean-up.
       "2 Groups") is not caught, so the site can be left wrong.
     Wanted: `when_hidden` (the `then` runs when the locator matches nothing after the usual wait),
     and a guard allowed inside a guard's `then`, with the same seen rules.
-    - **Done (unreleased, after 2.4.3-beta.11).** `when_hidden` (same wait and `then` rules, skipped with "shown, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both; the guide's baseline example deletes by name. Left: the sign-in recipe still has no `when_hidden` and no nested guard.
+    - **Done (unreleased, after 2.4.3-beta.11).** `when_hidden` (same wait and `then` rules, acts only when nothing matches for the whole wait, an element that is there but hidden skips it with "on the page, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both; the guide's baseline example deletes by name. Left: the sign-in recipe still has no `when_hidden` and no nested guard.
 
 73. **No hover, and no check on a style.** 135050's expected result is a tooltip that shows on
     hover; Auto Run has no hover action, so it is unchecked. Goal Groups cases also expect the
@@ -1232,8 +1232,8 @@ scripts (135018-135050) and repaired 135379's clean-up.
     `expect_text same_as` checks only "unchanged", so the writer fitted absolute counts ("3 Active
     Goal Groups", "2 Active Goal Groups", "1 Active Goal Group") from the baseline, which break the
     day the baseline gains a group. Wanted: `expect_text` against a noted value with a number
-    offset (e.g. `same_as: "groups", plus: 1`), reading the first number in each text.
-    - **Done (unreleased, after 2.4.3-beta.11).** `expect_text` `plus` checks a count moved by N from a noted value, reading the first number in each text. Left: thousands separators are not read.
+    offset (e.g. `expect_text_moved` with `same_as: "groups", by: 1`), reading the first number in each text.
+    - **Done (unreleased, after 2.4.3-beta.11).** `expect_text_moved` (`same_as`, `by`) checks a count moved by N from a noted value, reading the first number in each text; it is its own kind so an older build refuses the script instead of dropping the field. Left: thousands separators are not read.
 
 76. **A delete and re-apply moves the row, and nothing says which scripts rely on the order.**
     135018 and 135036 delete Financial and apply it again from the template; it comes back after

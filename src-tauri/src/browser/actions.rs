@@ -108,11 +108,19 @@ pub enum Action {
         matches: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         same_as: Option<String>,
-        /// With `same_as` only: the first whole number in the text is the
-        /// noted text's first whole number plus this (never 0).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[specta(type = Option<i32>)]
-        plus: Option<i64>,
+        timeout_ms: Option<u32>,
+    },
+    /// The first whole number in the one element's text is the first whole
+    /// number in the text `remember_text` noted as `same_as`, plus `by`
+    /// (never 0: that is `expect_text` `same_as`). Its own kind, not a
+    /// field of `expect_text`, so a build that does not know it refuses the
+    /// script instead of dropping the field and checking plain equality.
+    ExpectTextMoved {
+        selector: Target,
+        same_as: String,
+        #[specta(type = i32)]
+        by: i64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -1453,16 +1461,15 @@ impl Action {
                     _ => Ok(()),
                 }
             }
-            Action::ExpectText { selector, equals, matches, same_as, plus, .. } => {
+            Action::ExpectTextMoved { selector, same_as, by, .. } => {
                 selector.validate()?;
-                if let Some(n) = plus {
-                    if same_as.is_none() {
-                        return Err(PLUS_NEEDS_SAME_AS.to_string());
-                    }
-                    if *n == 0 {
-                        return Err(PLUS_ZERO.to_string());
-                    }
+                if *by == 0 {
+                    return Err(BY_ZERO.to_string());
                 }
+                check_note_name("expect_text_moved same_as", same_as)
+            }
+            Action::ExpectText { selector, equals, matches, same_as, .. } => {
+                selector.validate()?;
                 match (equals, matches, same_as) {
                     (Some(_), None, None) => Ok(()),
                     (None, Some(p), None) => super::pattern::check_pattern("expect_text", p),
@@ -1903,6 +1910,7 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
+            | Action::ExpectTextMoved { selector, .. }
             | Action::RememberText { selector, .. }
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
@@ -1961,6 +1969,7 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
+            | Action::ExpectTextMoved { selector, .. }
             | Action::RememberText { selector, .. }
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
@@ -2037,6 +2046,7 @@ impl Action {
                 | Action::ExpectVisible { .. }
                 | Action::ExpectHidden { .. }
                 | Action::ExpectText { .. }
+                | Action::ExpectTextMoved { .. }
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
                 | Action::ExpectAttribute { .. }
@@ -2112,10 +2122,8 @@ pub const POSITION_SAME: &str =
 pub const POSITION_TIME: &str = "expect_position: needs at least 1500 ms to see both elements at rest";
 /// `expect_text` given both `equals` and `matches`, or neither.
 pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text), \"matches\" (a pattern) or \"same_as\" (a text remember_text noted)";
-/// `expect_text` with `plus` and no `same_as`.
-pub const PLUS_NEEDS_SAME_AS: &str = "plus needs same_as: the count is compared with a noted one";
-/// `expect_text` with `plus: 0`.
-pub const PLUS_ZERO: &str = "plus 0 is same_as on its own";
+/// `expect_text_moved` with `by: 0`.
+pub const BY_ZERO: &str = "by 0 is no move - use expect_text same_as";
 /// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the
 /// count must hold still for `table::SETTLE_MS`, and be seen to, at the
 /// slowest poll.
@@ -2736,7 +2744,15 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             expect::expect(d, selector, Check::Hidden, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::RememberText { selector, name } => remember_text(d, selector, name, timing).await,
-        Action::ExpectText { selector, equals, matches, same_as, plus, timeout_ms } => {
+        Action::ExpectTextMoved { selector, same_as, by, timeout_ms } => {
+            let noted = match d.noted_texts().and_then(|book| book.get(same_as).cloned()) {
+                Some(t) => t,
+                None => return ActionOutcome::failed(no_noted_text(same_as)),
+            };
+            let check = Check::SameText { name: same_as, noted: &noted, by: Some(*by) };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
             // `validate` holds the three to exactly one.
             let re;
             let noted;
@@ -2747,7 +2763,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                         Some(t) => t,
                         None => return ActionOutcome::failed(no_noted_text(name)),
                     };
-                    Check::SameText { name, noted: &noted, plus: *plus }
+                    Check::SameText { name, noted: &noted, by: None }
                 }
                 (_, Some(p), _) => {
                     re = match super::pattern::compiled(p) {
