@@ -115,7 +115,7 @@ pub fn check_repair_absorbs_with(
         },
         None => edit_class,
     };
-    let is_guard = |a: &&Action| matches!(a, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. });
+    let is_guard = |a: &&Action| matches!(a, Action::WhenVisible { .. } | Action::WhenHidden { .. } | Action::RepeatWhileVisible { .. });
     let mut out: Vec<String> = Vec::new();
 
     // 1. A new guard, per step (the clean-up is free).

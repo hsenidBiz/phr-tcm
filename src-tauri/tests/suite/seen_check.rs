@@ -3890,3 +3890,96 @@ fn a_clean_up_guard_target_with_a_placeholder_is_not_deferred() {
     assert!(check_seen(&map, &none(), &s, &[], None).is_err());
     assert!(guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]).is_empty());
 }
+
+// ---- `when_hidden`, and a guard inside a guard (backlog 72) ---------------
+
+fn guard_json(kind: &str, selector: &str, then: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "kind": kind, "selector": { "css": selector }, "then": then })
+}
+
+/// A `when_hidden`'s selector is a guard like a `when_visible`'s: it counts
+/// seen matching none, or several, and is checked against every area.
+#[test]
+fn a_when_hidden_selector_takes_none_many_and_any_area() {
+    let click_it = || click(serde_json::json!({ "css": "#apply" }));
+    let s = one_step("Cycles", serde_json::json!([guard_json("when_hidden", "#financial", serde_json::json!([click_it()]))]));
+    // Probed while it was absent: matched none, and it saves.
+    let absent = joined(sighted_matching("Cycles", css("#financial"), 0), map_with("Cycles", "/cycles", &[css("#apply")]));
+    assert_eq!(check_seen(&absent, &none(), &s, &[], None), Ok(()));
+    // Seen matching several, in another area: it saves too.
+    let several = joined(sighted_matching("Sign in", css("#financial"), 3), map_with("Cycles", "/cycles", &[css("#apply")]));
+    assert_eq!(check_seen(&several, &none(), &s, &[], None), Ok(()));
+    // Never seen anywhere: refused, and said as a guard in any area.
+    let nowhere = map_with("Cycles", "/cycles", &[css("#apply")]);
+    let refused = check_seen(&nowhere, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains("#financial") && refused.contains("this when_hidden needs"), "{refused}");
+    // The same locator as a plain click is held to the script's areas.
+    let plain = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": "#financial" }))]));
+    assert!(check_seen(&absent, &none(), &plain, &[], None).is_err());
+}
+
+/// The selector of a guard inside a guard is a guard's too: seen in another
+/// area, it saves; as a plain click it is held to the script's areas.
+#[test]
+fn a_nested_guards_selector_is_checked_against_every_area() {
+    let map = joined(
+        map_with("Sign in", "/login", &[css("#cookie")]),
+        map_with("Cycles", "/cycles", &[css("#banner"), css("#apply")]),
+    );
+    for inner_kind in ["when_visible", "when_hidden"] {
+        let nested = guard_json(
+            "when_visible",
+            "#banner",
+            serde_json::json!([guard_json(inner_kind, "#cookie", serde_json::json!([click(serde_json::json!({ "css": "#apply" }))]))]),
+        );
+        let s = one_step("Cycles", serde_json::json!([nested]));
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()), "{inner_kind}");
+        // Never seen in any area: refused.
+        let nowhere = map_with("Cycles", "/cycles", &[css("#banner"), css("#apply")]);
+        let refused = check_seen(&nowhere, &none(), &s, &[], None).unwrap_err();
+        assert!(refused.contains("#cookie"), "{refused}");
+    }
+    // The same locator clicked plainly in the same outer guard is not a guard's.
+    let plain = guard_json("when_visible", "#banner", serde_json::json!([click(serde_json::json!({ "css": "#cookie" }))]));
+    let s = one_step("Cycles", serde_json::json!([plain]));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, "#cookie")));
+}
+
+/// In the clean-up step a nested guard's `then` target never seen defers to
+/// its guard like a top-level guard's: saved with a note, refused in a case step.
+#[test]
+fn a_clean_ups_nested_guard_then_defers_like_a_top_level_one() {
+    use v2_lib::autorun::seen_check::guarded_cleanup_notes;
+    let map = map_with("Cycles", "/cycles", &[css("#banner"), css("#gone")]);
+    let activate = click(serde_json::json!({ "role": "button", "name": "Activate" }));
+    let nested = |inner: &str| {
+        guard_json("when_visible", "#banner", serde_json::json!([guard_json(inner, "#gone", serde_json::json!([activate.clone()]))]))
+    };
+    for inner in ["when_visible", "when_hidden"] {
+        let cleanup = script(
+            Some("Cycles"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [] },
+                { "step_number": 2, "cleanup": true, "actions": [nested(inner)] }
+            ]),
+        );
+        assert_eq!(check_seen(&map, &none(), &cleanup, &[], None), Ok(()), "{inner}");
+        let notes = guarded_cleanup_notes(&map, &none(), &cleanup, &[], None, &[]);
+        assert_eq!(notes.len(), 1, "{inner}: {notes:?}");
+        assert!(notes[0].starts_with("step 2: button \"Activate\""), "{notes:?}");
+        // The same nested guard in a case step is refused.
+        let case_step = one_step("Cycles", serde_json::json!([nested(inner)]));
+        assert_eq!(check_seen(&map, &none(), &case_step, &[], None), Err(refusal(1, "button \"Activate\"")), "{inner}");
+        // A nested guard's own selector, never seen, keeps its rule in the clean-up.
+        let bad = script(
+            Some("Cycles"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [] },
+                { "step_number": 2, "cleanup": true, "actions": [
+                    guard_json("when_visible", "#banner", serde_json::json!([guard_json(inner, "#nowhere", serde_json::json!([activate.clone()]))]))
+                ] }
+            ]),
+        );
+        assert!(check_seen(&map, &none(), &bad, &[], None).unwrap_err().contains("#nowhere"), "{inner}");
+    }
+}

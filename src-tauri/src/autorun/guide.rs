@@ -40,6 +40,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_response",
     "api_request",
     "when_visible",
+    "when_hidden",
     "repeat_while_visible",
     "expect_download",
     "expect_tab",
@@ -304,6 +305,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json`, `timeout_ms`, `not_before_ms`, `started_within_ms` and `same_document` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
+- `{ "kind": "when_hidden", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - the other way round: if something is NOT on the page after the wait, do the actions in `then`; if it shows, carry on (see "Dismissing what may not show up")
 - `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "settle_ms": 5000, "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
@@ -573,8 +575,9 @@ For anything NOT on that list, guard the click with `when_visible`:
   run moves on. Shown means visible and inside the visible part of the
   page, after the page is scrolled to it: one left in the page outside
   that part is not shown.
-- `then` holds plain actions only: no `when_visible` inside it, no
-  `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
+- `then` holds plain actions, and one guard (`when_visible` or
+  `when_hidden`) at most inside it (see "A guard inside a guard" below);
+  no `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
   `expect_response`). A guarded click is a tidy-up, not an assertion, so
   nothing inside it counts toward the expected-result floor. Put the
   check after the guard. No `expire_session` or tab action either.
@@ -604,6 +607,43 @@ For anything NOT on that list, guard the click with `when_visible`:
   locator as seen. A locator seen in any way (matching several, say) keeps
   its refusal, as do the guard's own selector and every locator outside a
   clean-up guard's `then`.
+
+**`when_hidden`: act when something is NOT there.** It is `when_visible`
+the other way round, for "if it is missing, put it back". It makes the
+same wait (`within_ms`, default 2000, at most 10000) and holds the same
+kind of `then`. If the target shows up at any point in the wait, the step
+passes with "shown, skipped" and the `then` never runs; only a target that
+never showed lets the `then` run, so it never acts on a first empty look at
+a page that is still drawing. Use it where a case needs the item to exist
+and it may not:
+
+    { "kind": "when_hidden", "selector": { "role": "heading", "name": "Financial" }, "within_ms": 3000,
+      "then": [ { "kind": "click", "selector": { "role": "button", "name": "Apply template" } },
+                { "kind": "click", "selector": { "role": "menuitem", "name": "Financial" } } ] }
+
+That one reads "if there is no Financial goal group, apply it from the
+template". Guard on the thing itself being absent, never on a count or a
+badge that only happens to be right today ("1 Active Goal Group").
+
+**A guard inside a guard.** The `then` of a `when_visible` or `when_hidden`
+may hold one level of guard: one inside it, not one inside that. Rebuilding
+a missing baseline group that a stray extra group may be sitting next to:
+
+    { "kind": "when_hidden", "selector": { "role": "heading", "name": "Core" }, "within_ms": 3000,
+      "then": [ { "kind": "when_visible", "selector": { "role": "button", "name": "Delete group" }, "within_ms": 1000,
+                  "then": [ { "kind": "click", "selector": { "role": "button", "name": "Delete group" } },
+                            { "kind": "click", "selector": { "role": "button", "name": "Yes" } } ] },
+                { "kind": "click", "selector": { "role": "button", "name": "Apply template" } } ] }
+
+The inner guard runs when the outer one's turn reaches it, makes its own
+wait, and is skipped or acts on its own; the step records both. A guard in
+the inner guard's `then` is refused ("one level of nesting"). Neither
+kind may sit in a `repeat_while_visible`'s `then` beyond a plain
+`when_visible`. A save checks the inner guard's selector against every area
+as it does the outer's, and in the clean-up step a `then` target there that
+was never seen is noted and filed when its guard acts, at either depth. A
+`then` target is filed as seen only when the guard around it acted: a
+`when_visible` that showed, a `when_hidden` that did not.
 
 In a repair, a new guard needs the edit's `quirk` and `quirk_class` ("Repairing a script that failed").
 
@@ -2835,7 +2875,7 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. A check swapped for another kind (a visible check for a text check) is given up by its old kind, and the record and the save answer show what took its place (`(replaced by expect_text)`). The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair that removes `not_before_ms`, `started_within_ms` or `same_document` from an `expect_response` that stays gives that check up too: name the field as the `kind` in `gives_up` (`{ "step": 3, "kind": "not_before_ms", "why": "..." }`). A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
 
 A repair may not let the page decide whether a failure counts, either. A check never goes inside a
-guard. A new `when_visible` or `repeat_while_visible`, or a phrase added to `ignore_page_errors`, needs
+guard. A new `when_visible`, `when_hidden` or `repeat_while_visible`, or a phrase added to `ignore_page_errors`, needs
 the case's edit to carry a `quirk` saying what the page does and a `quirk_class` of `app quirk` or
 `environment flake`; for a `product bug` it is refused, because a real bug must surface as a failure.
 A repair never loosens `page_errors` and never turns `fail_on_unexpected_dialog` off: those are a

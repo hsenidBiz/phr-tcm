@@ -12,7 +12,7 @@ that does the same job, your own browser, an editor or a sub-agent included.
   it or another check already proves the same: name each one in the edit's gives_up with why, and the person
   sees it. A check the app fails is a divergence to report, never a check to give up. Changing a check's value
   is a person's edit in the script editor.
-- Never let the page decide whether a failure counts. A check never goes inside a guard. A new when_visible or
+- Never let the page decide whether a failure counts. A check never goes inside a guard. A new when_visible, when_hidden or
   repeat_while_visible, or a phrase added to ignore_page_errors, needs the edit's quirk with a quirk_class of
   app quirk or environment flake, and is refused for a product bug. A repair never loosens page_errors and
   never stops an unexpected dialog failing the case.

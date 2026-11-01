@@ -166,6 +166,10 @@ pub fn action_words(action: &Action) -> String {
             let what: Vec<String> = then.iter().map(action_words).collect();
             format!("if {} shows up, {}", selector.describe(), what.join(", then "))
         }
+        Action::WhenHidden { selector, then, .. } => {
+            let what: Vec<String> = then.iter().map(action_words).collect();
+            format!("if {} is not on the page, {}", selector.describe(), what.join(", then "))
+        }
         Action::RepeatWhileVisible { selector, max, except, then, .. } => {
             let what: Vec<String> = then.iter().map(action_words).collect();
             let keep = if except.is_empty() { String::new() } else { format!(" (keeping {})", except.join(", ")) };

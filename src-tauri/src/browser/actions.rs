@@ -249,10 +249,22 @@ pub enum Action {
     /// active session" prompt): if `selector` becomes visible within
     /// `within_ms` (`WHEN_VISIBLE_MS` when left out), the `then` actions
     /// run; otherwise the step passes with `NOT_SHOWN`. `then` holds plain
-    /// actions only - see `validate`. The sign-in recipe's own `WhenVisible`
+    /// actions and one level of guard - see `validate`. The sign-in recipe's own `WhenVisible`
     /// is the same step; this one is a case script's. Carried out by the
     /// runner, which alone can place an `upload` inside it.
     WhenVisible {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+        then: Vec<Action>,
+    },
+    /// The other way round (`WhenVisible`'s twin): `then` runs when
+    /// `selector` is NOT on the page - it never showed within `within_ms`
+    /// (`WHEN_VISIBLE_MS` when left out, the same wait and the same
+    /// `then` rules). A target that shows at any point in the wait skips
+    /// the guard, `SHOWN_SKIPPED`. For "apply it from the template if it is
+    /// not there already". Carried out by the runner.
+    WhenHidden {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         within_ms: Option<u32>,
@@ -892,27 +904,41 @@ pub const WHEN_VISIBLE_MS: u32 = 2000;
 pub const WHEN_VISIBLE_MAX_MS: u32 = 10_000;
 /// A `when_visible` whose target never appeared, after the target's words.
 pub const NOT_SHOWN: &str = "not shown, skipped";
+/// A `when_hidden` whose target showed, after the target's words.
+pub const SHOWN_SKIPPED: &str = "shown, skipped";
 /// A `when_visible` (recipe or script) told to wait no time at all.
 pub const WITHIN_MS_ZERO: &str = "within_ms must be more than 0";
-/// A `when_visible` inside another one's `then`.
+/// A `when_visible` inside another one's `then`: the sign-in recipe's rule,
+/// whose guard holds plain actions only. A case script may nest one level
+/// (`NESTED_GUARD`).
 pub const NESTED_WHEN_VISIBLE: &str = "when_visible \"then\" cannot hold another when_visible";
+/// A guard inside a guard that is itself inside a guard.
+pub const NESTED_GUARD: &str = "a guard inside a guard's then cannot hold another guard - one level of nesting";
 
-/// What a script's `when_visible` may hold in `then`: plain actions only.
-/// A guarded click is a tidy-up, not an assertion, so no check goes inside
-/// one (nothing there could count toward the expected-result floor), and
-/// neither does a change of who is signed in.
-fn check_guarded(then: &[Action]) -> Result<(), String> {
+/// What a script's `when_visible` or `when_hidden` may hold in `then`: plain
+/// actions, and one level of guard (`nested` is true when this guard is
+/// itself in another's `then`, which then holds no guard). A guarded click
+/// is a tidy-up, not an assertion, so no check goes inside one (nothing
+/// there could count toward the expected-result floor), and neither does a
+/// change of who is signed in.
+fn check_guarded(kind: &str, then: &[Action], nested: bool) -> Result<(), String> {
     if then.is_empty() {
-        return Err("when_visible has nothing in \"then\" - say what to do when it shows up".to_string());
+        let when = if kind == "when_hidden" { "when it is not on the page" } else { "when it shows up" };
+        return Err(format!("{kind} has nothing in \"then\" - say what to do {when}"));
     }
     for (i, a) in then.iter().enumerate() {
-        if matches!(a, Action::WhenVisible { .. }) {
-            return Err(NESTED_WHEN_VISIBLE.to_string());
+        if a.is_guard() {
+            if nested {
+                return Err(NESTED_GUARD.to_string());
+            }
+            // The inner guard is held to the same rules, one level down.
+            a.check_guard(true).map_err(|e| if e == NESTED_GUARD { e } else { format!("{kind} then {}: {e}", i + 1) })?;
+            continue;
         }
         if matches!(a, Action::SignIn { .. }) {
-            return Err(
-                "when_visible \"then\" cannot hold sign_in - change who is signed in as an action of its own".to_string()
-            );
+            return Err(format!(
+                "{kind} \"then\" cannot hold sign_in - change who is signed in as an action of its own"
+            ));
         }
         // Each moves the whole case - out of its session, or to another
         // tab - which is never a tidy-up that may or may not happen. A
@@ -927,17 +953,17 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
                 | Action::RepeatWhileVisible { .. }
         ) {
             return Err(format!(
-                "when_visible \"then\" cannot hold {} - write it as an action of its own",
+                "{kind} \"then\" cannot hold {} - write it as an action of its own",
                 a.kind()
             ));
         }
         if a.is_check() {
             return Err(format!(
-                "when_visible \"then\" cannot hold {} - a guarded step tidies up and checks nothing, so put the check after it",
+                "{kind} \"then\" cannot hold {} - a guarded step tidies up and checks nothing, so put the check after it",
                 a.kind()
             ));
         }
-        a.validate().map_err(|e| format!("when_visible then {}: {e}", i + 1))?;
+        a.validate().map_err(|e| format!("{kind} then {}: {e}", i + 1))?;
     }
     Ok(())
 }
@@ -991,6 +1017,19 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
                     | Action::CloseTab { .. }
             )
         }) {
+            return Err(format!(
+                "repeat_while_visible \"then\" cannot hold {} - write it as an action of its own",
+                bad.kind()
+            ));
+        }
+        // A loop's `then` holds a `when_visible` of plain actions, and no
+        // `when_hidden` or guard inside a guard.
+        let own_guard = matches!(a, Action::WhenHidden { .. }).then_some(a);
+        if let Some(bad) = own_guard.or_else(|| a.each().into_iter().skip(1).find(|x| x.is_guard())) {
+            // The long-standing sentence for a `when_visible` in one.
+            if matches!(bad, Action::WhenVisible { .. }) {
+                return Err(NESTED_WHEN_VISIBLE.to_string());
+            }
             return Err(format!(
                 "repeat_while_visible \"then\" cannot hold {} - write it as an action of its own",
                 bad.kind()
@@ -1160,6 +1199,22 @@ pub struct ActionOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub page_path: Option<String>,
+    /// What a `when_visible` / `when_hidden` did, guard by guard, for whoever
+    /// files what a guard that acted found (`ai_bridge::guard_finds`). In
+    /// memory only, as `page_step`: the sentence in `detail` is for the
+    /// person.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub guard: Option<GuardTrace>,
+}
+
+/// One guard's record: whether its `then` ran (a `when_visible` that showed,
+/// a `when_hidden` that did not), and the record of each guard inside that
+/// `then` that was looked at, in order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GuardTrace {
+    pub acted: bool,
+    pub inner: Vec<GuardTrace>,
 }
 
 impl ActionOutcome {
@@ -1611,17 +1666,7 @@ impl Action {
                 }
                 check_status(expect.status)
             }
-            Action::WhenVisible { selector, within_ms, then } => {
-                match within_ms {
-                    Some(0) => return Err(WITHIN_MS_ZERO.to_string()),
-                    Some(ms) if *ms > WHEN_VISIBLE_MAX_MS => {
-                        return Err(format!("when_visible waits at most {WHEN_VISIBLE_MAX_MS} ms, not {ms}"))
-                    }
-                    _ => {}
-                }
-                selector.validate()?;
-                check_guarded(then)
-            }
+            Action::WhenVisible { .. } | Action::WhenHidden { .. } => self.check_guard(false),
             Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => check_repeat(selector, *max, except, then, *settle_ms),
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key, times } => keys::check(key, *times),
@@ -1745,6 +1790,38 @@ impl Action {
         )
     }
 
+    /// Is this a script's guard, `when_visible` or `when_hidden`?
+    pub fn is_guard(&self) -> bool {
+        matches!(self, Action::WhenVisible { .. } | Action::WhenHidden { .. })
+    }
+
+    /// A guard's parts: what it looks for, how long it waits, and its `then`.
+    pub fn guard_parts(&self) -> Option<(&Target, Option<u32>, &[Action])> {
+        match self {
+            Action::WhenVisible { selector, within_ms, then } | Action::WhenHidden { selector, within_ms, then } => {
+                Some((selector, *within_ms, then))
+            }
+            _ => None,
+        }
+    }
+
+    /// A guard's own rules (`validate` for a `when_visible` or `when_hidden`):
+    /// a wait of at most `WHEN_VISIBLE_MAX_MS`, a locator, and a `then` of
+    /// `check_guarded`. `nested` when it sits in another guard's `then`.
+    fn check_guard(&self, nested: bool) -> Result<(), String> {
+        let kind = self.kind();
+        let Some((selector, within_ms, then)) = self.guard_parts() else { return Ok(()) };
+        match within_ms {
+            Some(0) => return Err(WITHIN_MS_ZERO.to_string()),
+            Some(ms) if ms > WHEN_VISIBLE_MAX_MS => {
+                return Err(format!("{kind} waits at most {WHEN_VISIBLE_MAX_MS} ms, not {ms}"))
+            }
+            _ => {}
+        }
+        selector.validate()?;
+        check_guarded(&kind, then, nested)
+    }
+
     /// The script's own word for this action: `"click"`, `"when_visible"`.
     pub fn kind(&self) -> String {
         serde_json::to_value(self)
@@ -1758,7 +1835,7 @@ impl Action {
     /// has to see an action wherever in a step it is written.
     pub fn each(&self) -> Vec<&Action> {
         match self {
-            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+            Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => {
                 std::iter::once(self).chain(then.iter().flat_map(Action::each)).collect()
             }
             _ => vec![self],
@@ -1773,7 +1850,9 @@ impl Action {
             Action::RepeatWhileVisible { then, .. } => std::iter::once(self)
                 .chain(then.iter().filter(|t| !matches!(t, Action::ExpectHidden { .. })).flat_map(Action::judging))
                 .collect(),
-            Action::WhenVisible { then, .. } => std::iter::once(self).chain(then.iter().flat_map(Action::judging)).collect(),
+            Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } => {
+                std::iter::once(self).chain(then.iter().flat_map(Action::judging)).collect()
+            }
             _ => vec![self],
         }
     }
@@ -1805,7 +1884,9 @@ impl Action {
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
             Action::ExpectNoChange { selector, region, .. } => std::iter::once(selector).chain(region.as_ref()).collect(),
             Action::PageUntil { next, until, until_all, .. } => std::iter::once(next).chain(page_goals(until, until_all)).collect(),
-            Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
+            Action::WhenVisible { selector, then, .. }
+            | Action::WhenHidden { selector, then, .. }
+            | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
             Action::Drag { from, to, .. } => vec![from, to],
@@ -1862,7 +1943,9 @@ impl Action {
             Action::PageUntil { next, until, until_all, .. } => {
                 std::iter::once(next).chain(page_goals_mut(until, until_all)).collect()
             }
-            Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
+            Action::WhenVisible { selector, then, .. }
+            | Action::WhenHidden { selector, then, .. }
+            | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
             Action::Drag { from, to, .. } => vec![from, to],
@@ -2674,6 +2757,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
         // Its `then` may hold an `upload`, which only the runner can place.
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
+        Action::WhenHidden { .. } => ActionOutcome::failed("when_hidden is carried out by the runner"),
         Action::RepeatWhileVisible { .. } => ActionOutcome::failed("repeat_while_visible is carried out by the runner"),
         Action::UseComponent { .. } => ActionOutcome::failed("components are expanded before they run"),
         Action::Reload => reload(d, timing).await,

@@ -24,13 +24,13 @@ import { ClearConfirm, ClearedDefectNote, SuspectedDefectBadge } from "./Suspect
 import { uncheckedExpectations, uncheckedLine, uncheckedWords } from "./unchecked";
 import { bucketTone, type ResultBucket } from "./verdicts";
 
-/** Every action of a script, the ones nested in a `when_visible` too. */
+/** Every action of a script, the ones nested in a `when_visible` or `when_hidden` too. */
 function allActions(script: CaseScript): Action[] {
   const out: Action[] = [];
   const walk = (list: readonly Action[]) => {
     for (const a of list) {
       out.push(a);
-      if (a.kind === "when_visible" || a.kind === "repeat_while_visible") walk(a.then);
+      if (a.kind === "when_visible" || a.kind === "when_hidden" || a.kind === "repeat_while_visible") walk(a.then);
     }
   };
   for (const step of script.steps) walk(step.actions);

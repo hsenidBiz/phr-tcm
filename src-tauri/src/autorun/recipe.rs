@@ -17,6 +17,10 @@ pub fn has_placeholder(s: &str) -> bool {
     s.contains(USERNAME) || s.contains(PASSWORD)
 }
 
+/// A recipe has no `when_hidden`: the guard that runs when something is
+/// absent belongs in a case script.
+pub const RECIPE_NO_WHEN_HIDDEN: &str = "a recipe cannot contain when_hidden - it belongs in a case script";
+
 // `WhenVisible`'s `kind` field: always this one variant, serialized (via
 // `rename_all`) as `"when_visible"`, so the field is self-validating by
 // construction rather than needing a hand-written check.
@@ -84,6 +88,9 @@ impl<'de> serde::Deserialize<'de> for RecipeStep {
             // read, the way it was before scripts had one.
             if raw.then.iter().any(|a| matches!(a, Action::WhenVisible { .. })) {
                 return Err(D::Error::custom(NESTED_WHEN_VISIBLE));
+            }
+            if raw.then.iter().any(|a| matches!(a, Action::WhenHidden { .. })) {
+                return Err(D::Error::custom(RECIPE_NO_WHEN_HIDDEN));
             }
             return Ok(RecipeStep::WhenVisible(WhenVisible {
                 kind: raw.kind,
@@ -422,6 +429,9 @@ fn check(action: &Action) -> Result<(), String> {
     // is read as `RecipeStep::WhenVisible`, never as an action.
     if kind.as_deref() == Some("when_visible") {
         return Err(NESTED_WHEN_VISIBLE.to_string());
+    }
+    if kind.as_deref() == Some("when_hidden") {
+        return Err(RECIPE_NO_WHEN_HIDDEN.to_string());
     }
     if kind.as_deref() == Some("sign_in") {
         return Err("a recipe cannot contain sign_in - it IS the sign-in".to_string());

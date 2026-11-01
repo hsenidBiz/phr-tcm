@@ -232,7 +232,7 @@ fn unreached<'a>(action: Option<&Action>, n: i32, o: &'a ActionOutcome) -> Optio
         Some(Action::Navigate { .. } | Action::OpenTab { .. }) if o.detail == nav::no_address(n) => Some(o.detail.as_str()),
         // The same refusal, met inside a guard: said after what the guard
         // had already done.
-        Some(Action::WhenVisible { .. }) if o.detail.ends_with(&nav::no_address(n)) => Some(o.detail.as_str()),
+        Some(Action::WhenVisible { .. } | Action::WhenHidden { .. }) if o.detail.ends_with(&nav::no_address(n)) => Some(o.detail.as_str()),
         _ => None,
     }
 }

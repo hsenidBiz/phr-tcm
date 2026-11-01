@@ -129,7 +129,9 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
             check_target(from)?;
             check_target(to)
         }
-        Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
+        Action::WhenVisible { selector, then, .. }
+        | Action::WhenHidden { selector, then, .. }
+        | Action::RepeatWhileVisible { selector, then, .. } => {
             check_target(selector)?;
             then.iter().try_for_each(|a| check_action(a, origins))
         }
@@ -373,7 +375,7 @@ fn one_line(s: &str) -> String {
 fn every_action(input: &RawSpecInput) -> Vec<Action> {
     fn walk(a: &Action, out: &mut Vec<Action>) {
         out.push(a.clone());
-        if let Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } = a {
+        if let Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } = a {
             then.iter().for_each(|t| walk(t, out));
         }
     }
@@ -835,7 +837,7 @@ fn is_same_document(a: &Action) -> bool {
 /// Whether any of the actions, the ones inside a `when_visible` or `repeat_while_visible` included, holds `pred`.
 fn any_in(actions: &[Action], pred: &dyn Fn(&Action) -> bool) -> bool {
     actions.iter().any(|a| match a {
-        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => any_in(then, pred),
+        Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => any_in(then, pred),
         _ => pred(a),
     })
 }
@@ -847,7 +849,7 @@ fn responses_in(actions: &[Action]) -> usize {
         .iter()
         .map(|a| match a {
             Action::ExpectResponse { .. } => 1,
-            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => responses_in(then),
+            Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => responses_in(then),
             _ => 0,
         })
         .sum()
@@ -1227,7 +1229,7 @@ impl Em<'_> {
                     self.line(indent, &format!("const dl{sc}_{i} = cur.waitForEvent('download', {{ timeout: {ms} }});"));
                     self.settle(indent, &format!("dl{sc}_{i}"));
                 }
-                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+                Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => {
                     self.arm_each(then, indent, n)
                 }
                 _ => {}
@@ -1754,17 +1756,14 @@ impl Em<'_> {
                     ),
                 )
             }
-            Action::WhenVisible { selector, within_ms, then } => {
+            Action::WhenVisible { selector, within_ms, then } | Action::WhenHidden { selector, within_ms, then } => {
                 // The app's look needs a VISIBLE match whatever the selector's
-                // own visible flag says, and waits at least the floor.
+                // own visible flag says, and waits at least the floor. A
+                // `when_hidden` is the same look, run when it never shows.
                 let w = within_ms.unwrap_or(WHEN_VISIBLE_MS).max(WHEN_VISIBLE_FLOOR_MS);
-                self.line(
-                    indent,
-                    &format!(
-                        "if (await {}.waitFor({{ timeout: {w} }}).then(() => true, () => false)) {{",
-                        one(&visible_only(selector)),
-                    ),
-                );
+                let looked = format!("await {}.waitFor({{ timeout: {w} }}).then(() => true, () => false)", one(&visible_only(selector)));
+                let cond = if matches!(a, Action::WhenHidden { .. }) { format!("!({looked})") } else { looked };
+                self.line(indent, &format!("if ({cond}) {{"));
                 for a in then {
                     self.action(a, indent + 2)?;
                 }

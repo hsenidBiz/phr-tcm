@@ -419,12 +419,17 @@ fn expand_one(
             uses.push(ComponentUse { name: c.name.clone(), version: c.version });
             Ok(actions.into_iter().map(|a| (a, Some(c.name.clone()))).collect())
         }
-        Action::WhenVisible { selector, within_ms, then } if uses_any(then) => {
+        Action::WhenVisible { selector, within_ms, then } | Action::WhenHidden { selector, within_ms, then } if uses_any(then) => {
             let mut inner = Vec::with_capacity(then.len());
             for a in then {
                 inner.extend(expand_one(file, a, uses)?.into_iter().map(|(a, _)| a));
             }
-            Ok(vec![(Action::WhenVisible { selector: selector.clone(), within_ms: *within_ms, then: inner }, None)])
+            let (selector, within_ms) = (selector.clone(), *within_ms);
+            let guard = match action {
+                Action::WhenHidden { .. } => Action::WhenHidden { selector, within_ms, then: inner },
+                _ => Action::WhenVisible { selector, within_ms, then: inner },
+            };
+            Ok(vec![(guard, None)])
         }
         other => Ok(vec![(other.clone(), None)]),
     }

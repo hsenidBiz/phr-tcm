@@ -395,6 +395,7 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                 if matches!(
                     action,
                     crate::browser::actions::Action::WhenVisible { .. }
+                        | crate::browser::actions::Action::WhenHidden { .. }
                         | crate::browser::actions::Action::RepeatWhileVisible { .. }
                 ) {
                     check_response_timings(sc.case_id, step, i, action)?;
@@ -459,6 +460,7 @@ fn check_response_timings(case_id: i32, step: &StepScript, i: usize, action: &cr
     let at = i + 1;
     let (guard, then) = match action {
         Action::WhenVisible { then, .. } => ("when_visible", then),
+        Action::WhenHidden { then, .. } => ("when_hidden", then),
         Action::RepeatWhileVisible { then, .. } => ("repeat_while_visible", then),
         Action::ExpectResponse { .. } => {
             let places: Vec<usize> = (0..step.actions.len()).collect();
@@ -485,7 +487,7 @@ fn check_placement(case_id: i32, n: i32, actions: &[crate::browser::actions::Act
         // The action it is timed from is the nearest one before it that can send the request; a guard
         // that may not run cannot be it.
         let from = actions[..i].iter().rev().find(|a| crate::autorun::api_checks::times_from(a));
-        if from.is_none_or(|a| matches!(a, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. })) {
+        if from.is_none_or(|a| matches!(a, Action::WhenVisible { .. } | Action::WhenHidden { .. } | Action::RepeatWhileVisible { .. })) {
             return Err(format!(
                 "case {case_id} step {n} action {at}: not_before_ms and started_within_ms time the request from the action before it in its step - put the action that sends it (a fill, a click, a press_key) before this expect_response in the same step"
             ));

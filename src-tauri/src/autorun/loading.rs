@@ -72,6 +72,7 @@ pub fn checks_for_loading(action: &Action) -> bool {
             | Action::ExpectOrder { .. }
             | Action::ExpectPosition { .. }
             | Action::WhenVisible { .. }
+            | Action::WhenHidden { .. }
             | Action::RepeatWhileVisible { .. }
     )
 }

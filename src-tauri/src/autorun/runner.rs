@@ -17,8 +17,8 @@ use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
 use crate::browser::dialogs;
 use crate::browser::actions::{
-    execute_in, expectation, in_missing_tab, shows_up_to_click, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
-    WHEN_VISIBLE_MS,
+    execute_in, expectation, in_missing_tab, shows_up_to_click, upload_in, Action, ActionOutcome, GuardTrace, Policy, CANNOT_RUN,
+    NOT_SHOWN, SHOWN_SKIPPED, WHEN_VISIBLE_MS,
 };
 use super::refusals::{self, app_refused_line, refused_with_ids, RefusedRequest};
 use crate::browser::cdp::{Driver, MAIN_TAB};
@@ -1367,7 +1367,7 @@ async fn run_expanded<D: Driver>(
             }
             // A guard's own look waits for the page to load first: under a
             // spinner its target would read as not there.
-            Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. } => {
+            Action::WhenVisible { .. } | Action::WhenHidden { .. } | Action::RepeatWhileVisible { .. } => {
                 match page_loaded(d, &here, action, timing).await {
                     Err((outcome, stop)) => {
                         blocked = stop;
@@ -1375,7 +1375,9 @@ async fn run_expanded<D: Driver>(
                     }
                     Ok(notes) => {
                         let (mut outcome, stop) = match action {
-                            Action::WhenVisible { .. } => when_visible(d, &here, action, &area, areas, account.as_deref(), timing).await,
+                            Action::WhenVisible { .. } | Action::WhenHidden { .. } => {
+                                guard(d, &here, action, &area, areas, account.as_deref(), timing).await
+                            }
                             _ => repeat_while_visible(d, &here, action, &area, areas, account.as_deref(), timing).await,
                         };
                         popups::add_notes(&mut outcome, &notes);
@@ -1801,7 +1803,9 @@ async fn page_loaded<D: Driver>(
 fn holds_expect_response(a: &Action) -> bool {
     match a {
         Action::ExpectResponse { .. } => true,
-        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => then.iter().any(holds_expect_response),
+        Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+            then.iter().any(holds_expect_response)
+        }
         _ => false,
     }
 }
@@ -1837,12 +1841,19 @@ async fn plain<D: Driver>(
     (out, None)
 }
 
-/// A `when_visible`: one look for its target, then its `then` actions in
-/// order if it showed, as the ONE outcome the action stands for - so the
-/// step still has one outcome per action. A target that never appeared
-/// passes with `NOT_SHOWN`. The guard stops at its first failure, and that
-/// failure is the step's, said after what already ran.
-async fn when_visible<D: Driver>(
+/// A `when_visible` or a `when_hidden`: the wait for its target
+/// (`shows_up_to_click`, the least `WHEN_VISIBLE_FLOOR_MS`), then its `then`
+/// actions in order, as the ONE outcome the action stands for - so the step
+/// still has one outcome per action. A `when_visible` runs them when the
+/// target showed within its wait and passes with `NOT_SHOWN` when it never
+/// did; a `when_hidden` is the same look the other way round: it runs them
+/// when the target never showed (it never acts on a first empty look - the
+/// whole wait passes first) and passes with `SHOWN_SKIPPED` when it did. A
+/// guard inside the `then` runs the same way, and its sentence is said among
+/// the others. The guard stops at its first failure, and that failure is
+/// the step's, said after what already ran. `GuardTrace` on the outcome
+/// records, guard by guard, whether each acted.
+async fn guard<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
     action: &Action,
@@ -1854,35 +1865,51 @@ async fn when_visible<D: Driver>(
     if let Err(why) = action.validate() {
         return (ActionOutcome::failed(format!("{CANNOT_RUN}{why}")), None);
     }
-    let Action::WhenVisible { selector, within_ms, then } = action else {
-        return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a when_visible")), None);
+    let Some((selector, within_ms, then)) = action.guard_parts() else {
+        return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a guard")), None);
     };
+    let acts_when_shown = matches!(action, Action::WhenVisible { .. });
     let target = selector.describe();
-    match shows_up_to_click(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
+    let shown = match shows_up_to_click(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
         Err(silent) => return (silent, None),
-        Ok(false) => return (ActionOutcome::passed(format!("{target} {NOT_SHOWN}")), None),
-        Ok(true) => {}
+        Ok(shown) => shown,
+    };
+    if shown != acts_when_shown {
+        let skipped = if acts_when_shown { NOT_SHOWN } else { SHOWN_SKIPPED };
+        let mut out = ActionOutcome::passed(format!("{target} {skipped}"));
+        out.guard = Some(GuardTrace::default());
+        return (out, None);
     }
+    let said_when = if acts_when_shown { "showed" } else { "not shown" };
     let mut said: Vec<String> = Vec::with_capacity(then.len());
+    let mut inner: Vec<GuardTrace> = Vec::new();
     for guarded in then {
         if here.stop_heard() {
             return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
         }
         // A bounce the guard caught (the page went home) is recovered by
         // walking back to the area, as the step's own `return_to_area`
-        // would; not reaching it stops the step the same way.
+        // would; not reaching it stops the step the same way. A guard in
+        // the `then` is boxed: the future is its own.
         let (out, stop) = match guarded {
             Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, account, timing).await,
+            g if g.is_guard() => Box::pin(guarded_in_pass(d, here, g, area, areas, account, timing)).await,
             _ => plain(d, here, guarded, timing).await,
         };
+        if let Some(t) = &out.guard {
+            inner.push(t.clone());
+        }
         said.push(out.detail);
         if !out.ok {
-            let mut failed = ActionOutcome::failed(format!("{target} showed: {}", said.join("; ")));
+            let mut failed = ActionOutcome::failed(format!("{target} {said_when}: {}", said.join("; ")));
             failed.harness = out.harness;
+            failed.guard = Some(GuardTrace { acted: true, inner });
             return (failed, stop);
         }
     }
-    (ActionOutcome::passed(format!("{target} showed: {}", said.join("; "))), None)
+    let mut out = ActionOutcome::passed(format!("{target} {said_when}: {}", said.join("; ")));
+    out.guard = Some(GuardTrace { acted: true, inner });
+    (out, None)
 }
 
 /// A `repeat_while_visible`: pass after pass, one look (no waiting) for its
@@ -2034,8 +2061,8 @@ async fn repeat_while_visible<D: Driver>(
     }
 }
 
-/// A `when_visible` in a loop's `then`, run as a step runs one: the page
-/// loads first, then the one look and its plain actions.
+/// A guard in a loop's `then`, or in another guard's, run as a step runs
+/// one: the page loads first, then the look and its actions.
 async fn guarded_in_pass<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
@@ -2048,7 +2075,7 @@ async fn guarded_in_pass<D: Driver>(
     match page_loaded(d, here, step, timing).await {
         Err(failed) => failed,
         Ok(notes) => {
-            let (mut out, stop) = when_visible(d, here, step, area, areas, account, timing).await;
+            let (mut out, stop) = guard(d, here, step, area, areas, account, timing).await;
             popups::add_notes(&mut out, &notes);
             (out, stop)
         }

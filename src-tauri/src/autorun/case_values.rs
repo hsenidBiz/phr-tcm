@@ -338,7 +338,7 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
         Action::ExpectRow { cells, .. } | Action::ExpectNoRow { cells, .. } => {
             out.extend(cells.0.iter().map(|(_, v)| text(step, v, false, s)));
         }
-        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+        Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => {
             for a in then {
                 values_of_action(step, a, out);
             }
@@ -369,7 +369,7 @@ pub struct Exemptions {
 fn walk<'a>(actions: &'a [Action], f: &mut dyn FnMut(&'a Action)) {
     for a in actions {
         f(a);
-        if let Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } = a {
+        if let Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } = a {
             walk(then, f);
         }
     }

@@ -180,3 +180,16 @@ async fn a_call_gives_up_on_work_that_never_answers() {
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert_eq!(within_budget(5_000, async { 7u8 }).await, Ok(7));
 }
+
+/// A `when_hidden` shows an example of its own kind, and a `wait_for` in a
+/// guard inside it is given the discovery's wait like any other `then`.
+#[test]
+fn a_when_hidden_has_its_example_and_its_nested_waits_are_filled() {
+    let example = example_for("when_hidden").expect("when_hidden has an example");
+    assert!(example.contains(r#""kind":"when_hidden""#), "{example}");
+    let mut nested = json!({ "kind": "when_hidden", "selector": "#b", "then": [
+        { "kind": "when_visible", "selector": "#c", "then": [ { "kind": "wait_for", "selector": "#d" } ] }
+    ] });
+    assert!(fill_wait_defaults(&mut nested, 7_000));
+    assert_eq!(nested["then"][0]["then"][0]["timeout_ms"], 7_000);
+}

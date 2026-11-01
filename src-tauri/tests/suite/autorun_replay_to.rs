@@ -4083,7 +4083,7 @@ async fn a_fired_guard_files_its_then_as_seen() {
 /// every area. With an area the same fired guard is filed.
 #[tokio::test]
 async fn a_fired_guard_in_a_script_with_no_area_files_nothing() {
-    use v2_lib::browser::actions::{Action, ActionOutcome};
+    use v2_lib::browser::actions::Action;
     use v2_lib::browser::locator::SeenKey;
     let guard: Action = serde_json::from_value(json!({
         "kind": "when_visible", "selector": { "css": "#banner" }, "then": [click("#activate")]
@@ -4097,7 +4097,7 @@ async fn a_fired_guard_in_a_script_with_no_area_files_nothing() {
         let dir = tempfile::tempdir().unwrap();
         project(dir.path(), &script(json!([{ "step_number": 1, "actions": [click("#s1")] }])));
         let (mut d, _app) = app();
-        let outcomes = [ActionOutcome::passed("#banner showed: ok".to_string())];
+        let outcomes = [acted("#banner showed: ok")];
         v2_lib::ai_bridge::file_guard_finds(&mut d, dir.path(), "acme", "Web", area.clone(), std::slice::from_ref(&guard), &outcomes).await;
         assert_eq!(filed(dir.path()), expect, "area {area:?}");
     }
@@ -4155,13 +4155,82 @@ async fn a_fired_guard_files_its_wait_and_a_failed_then_files_nothing() {
 
 #[test]
 fn a_guard_find_skips_a_target_holding_a_placeholder() {
-    use v2_lib::browser::actions::{Action, ActionOutcome};
+    use v2_lib::browser::actions::Action;
     let guard: Action = serde_json::from_value(json!({
         "kind": "when_visible", "selector": { "css": "#banner" },
         "then": [click("#row-{{setup.id}}"), click("#plain")]
     }))
     .unwrap();
-    let finds = v2_lib::ai_bridge::guard_finds(&[(guard, None)], &[ActionOutcome::passed("#banner showed: ok".to_string())]);
+    let finds = v2_lib::ai_bridge::guard_finds(&[(guard, None)], &[acted("#banner showed: ok")]);
     assert_eq!(finds.len(), 1, "{finds:?}");
     assert_eq!(finds[0].0.describe(), "#plain");
+}
+
+/// An outcome of a guard that acted and worked, as the runner leaves it.
+fn acted(detail: &str) -> v2_lib::browser::actions::ActionOutcome {
+    use v2_lib::browser::actions::{ActionOutcome, GuardTrace};
+    let mut o = ActionOutcome::passed(detail.to_string());
+    o.guard = Some(GuardTrace { acted: true, inner: vec![] });
+    o
+}
+
+fn nested_guard() -> v2_lib::browser::actions::Action {
+    serde_json::from_value(json!({
+        "kind": "when_visible", "selector": { "css": "#banner" },
+        "then": [
+            click("#outer-click"),
+            { "kind": "when_hidden", "selector": { "css": "#absent" }, "then": [click("#inner-click")] }
+        ]
+    }))
+    .unwrap()
+}
+
+/// A guard inside a guard that did not act files nothing of its own: only
+/// what the outer guard's own plain actions proved.
+#[test]
+fn an_inner_guard_that_did_not_fire_files_nothing() {
+    use v2_lib::browser::actions::{ActionOutcome, GuardTrace};
+    let names = |finds: Vec<(v2_lib::browser::locator::Target, usize, usize)>| -> Vec<String> {
+        finds.iter().map(|f| f.0.describe()).collect()
+    };
+    let guard = nested_guard();
+    let mut skipped = ActionOutcome::passed("#banner showed: clicked; #absent shown, skipped".to_string());
+    skipped.guard = Some(GuardTrace { acted: true, inner: vec![GuardTrace::default()] });
+    assert_eq!(names(v2_lib::ai_bridge::guard_finds(&[(guard.clone(), None)], &[skipped])), ["#outer-click"]);
+
+    // The inner guard acted: its then target is filed too.
+    let mut both = ActionOutcome::passed("#banner showed: clicked; #absent not shown: clicked".to_string());
+    both.guard = Some(GuardTrace { acted: true, inner: vec![GuardTrace { acted: true, inner: vec![] }] });
+    assert_eq!(names(v2_lib::ai_bridge::guard_finds(&[(guard.clone(), None)], &[both])), ["#outer-click", "#inner-click"]);
+
+    // The outer guard did not act: nothing, however the inner trace reads.
+    let mut outer_skipped = ActionOutcome::passed("#banner not shown, skipped".to_string());
+    outer_skipped.guard = Some(GuardTrace::default());
+    assert!(v2_lib::ai_bridge::guard_finds(&[(guard.clone(), None)], &[outer_skipped]).is_empty());
+
+    // An outcome with no trace (a guard that never ran) files nothing.
+    assert!(v2_lib::ai_bridge::guard_finds(&[(guard.clone(), None)], &[ActionOutcome::passed("#banner showed: ok".to_string())]).is_empty());
+
+    // A failed guard files nothing even with a trace.
+    let mut failed = ActionOutcome::failed("#banner showed: clicked".to_string());
+    failed.guard = Some(GuardTrace { acted: true, inner: vec![] });
+    assert!(v2_lib::ai_bridge::guard_finds(&[(guard, None)], &[failed]).is_empty());
+}
+
+/// A `when_hidden` files its `then` only when it did not see its target.
+#[test]
+fn a_when_hidden_that_acted_files_its_then_and_one_that_was_skipped_does_not() {
+    use v2_lib::browser::actions::{ActionOutcome, GuardTrace};
+    let guard: v2_lib::browser::actions::Action = serde_json::from_value(json!({
+        "kind": "when_hidden", "selector": { "css": "#financial" }, "then": [click("#apply")]
+    }))
+    .unwrap();
+    let mut did = ActionOutcome::passed("#financial not shown: clicked".to_string());
+    did.guard = Some(GuardTrace { acted: true, inner: vec![] });
+    let finds = v2_lib::ai_bridge::guard_finds(&[(guard.clone(), None)], &[did]);
+    assert_eq!(finds.len(), 1, "{finds:?}");
+    assert_eq!(finds[0].0.describe(), "#apply");
+    let mut skipped = ActionOutcome::passed("#financial shown, skipped".to_string());
+    skipped.guard = Some(GuardTrace::default());
+    assert!(v2_lib::ai_bridge::guard_finds(&[(guard, None)], &[skipped]).is_empty());
 }

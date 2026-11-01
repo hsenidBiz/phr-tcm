@@ -547,6 +547,8 @@ function describeKnown(a: Action): Sentence {
     }
     case "when_visible":
       return [words("If "), ...describeTarget(a.selector), words(` appears within ${seconds(optNum(a.within_ms) ?? 2000)} s:`)];
+    case "when_hidden":
+      return [words("If "), ...describeTarget(a.selector), words(` is not on the page after ${seconds(optNum(a.within_ms) ?? 2000)} s:`)];
     case "repeat_while_visible": {
       const except = Array.isArray(a.except) ? a.except.map(str) : [];
       const keep = except.length > 0 ? `, except rows reading ${except.map((e) => `"${e}"`).join(", ")}` : "";

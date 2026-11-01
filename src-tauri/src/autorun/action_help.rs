@@ -71,6 +71,10 @@ const EXAMPLES: &[(&str, &str)] = &[
         r##"{"kind":"when_visible","selector":{"css":"#banner"},"within_ms":2000,"then":[{"kind":"click","selector":{"css":"#close"}}]}"##,
     ),
     (
+        "when_hidden",
+        r##"{"kind":"when_hidden","selector":{"css":"#financial"},"within_ms":2000,"then":[{"kind":"click","selector":{"css":"#apply"}}]}"##,
+    ),
+    (
         "repeat_while_visible",
         r##"{"kind":"repeat_while_visible","selector":{"css":".row"},"max":20,"then":[{"kind":"click","selector":{"css":".remove"}}]}"##,
     ),

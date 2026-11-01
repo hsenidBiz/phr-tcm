@@ -1209,6 +1209,7 @@ scripts (135018-135050) and repaired 135379's clean-up.
       "2 Groups") is not caught, so the site can be left wrong.
     Wanted: `when_hidden` (the `then` runs when the locator matches nothing after the usual wait),
     and a guard allowed inside a guard's `then`, with the same seen rules.
+    - **Done on fix/2026-11-backlog**: `when_hidden` (same wait and `then` rules, skipped with "shown, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both.
 
 73. **No hover, and no check on a style.** 135050's expected result is a tooltip that shows on
     hover; Auto Run has no hover action, so it is unchecked. Goal Groups cases also expect the

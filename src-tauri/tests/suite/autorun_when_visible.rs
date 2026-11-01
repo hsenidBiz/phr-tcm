@@ -13,7 +13,7 @@ use v2_lib::autorun::floor::{check_floor, Expected};
 use v2_lib::autorun::nav::{check_no_addresses, no_address, save_nav, NavFile};
 use v2_lib::autorun::runner::run_step;
 use v2_lib::autorun::{CaseScript, StepScript};
-use v2_lib::browser::actions::{execute_with, Action, NOT_SHOWN};
+use v2_lib::browser::actions::{execute_with, Action, NOT_SHOWN, SHOWN_SKIPPED};
 
 fn action(v: serde_json::Value) -> Action {
     serde_json::from_value(v).expect("the test wrote an action that does not parse")
@@ -52,9 +52,11 @@ fn the_cookie_banner_example_is_accepted_and_is_not_a_check() {
 #[test]
 fn then_holds_plain_actions_only() {
     let click = json!({ "kind": "click", "selector": { "css": "#x" } });
+    // One guard may sit inside another (see `a_guard_inside_a_guard_is_one_level_only`),
+    // but it holds plain actions too.
     assert_eq!(
-        refusal(guarded(json!([guarded(json!([click.clone()]))]))),
-        "when_visible \"then\" cannot hold another when_visible"
+        refusal(guarded(json!([guarded(json!([{ "kind": "expect_visible", "selector": { "css": "#x" } }]))]))),
+        "when_visible then 1: when_visible \"then\" cannot hold expect_visible - a guarded step tidies up and checks nothing, so put the check after it"
     );
     assert_eq!(
         refusal(guarded(json!([{ "kind": "sign_in", "account": "hr.admin" }]))),
@@ -555,4 +557,260 @@ async fn the_runners_own_looks_never_ask_the_scrolling_rule() {
         .filter(|p| p["functionDeclaration"] == v2_lib::browser::input::SHOWN_JS)
         .count();
     assert_eq!(asked_shown, 0, "only a script's when_visible guard asks SHOWN_JS");
+}
+
+// ---------------------------------------------------------------------
+// `when_hidden`, and one guard inside a guard (backlog 72)
+// ---------------------------------------------------------------------
+
+fn hidden(selector: &str, then: serde_json::Value) -> serde_json::Value {
+    json!({ "kind": "when_hidden", "selector": { "css": selector }, "within_ms": 100, "then": then })
+}
+
+fn click_json(selector: &str) -> serde_json::Value {
+    json!({ "kind": "click", "selector": { "css": selector } })
+}
+
+#[test]
+fn when_hidden_is_accepted_is_no_check_and_goes_back_out_unchanged() {
+    let w = json!({ "kind": "when_hidden", "selector": { "css": "#financial" }, "within_ms": 3000,
+                    "then": [ click_json("#apply") ] });
+    let a = action(w.clone());
+    assert_eq!(a.kind(), "when_hidden");
+    assert_eq!(a.validate(), Ok(()));
+    assert!(!a.is_check(), "a guard is a tidy-up, not an assertion");
+    assert_eq!(serde_json::to_value(&a).unwrap(), w);
+}
+
+#[test]
+fn when_hidden_has_the_same_limits_and_then_rules() {
+    let with = |ms: u32| json!({ "kind": "when_hidden", "selector": { "css": "#b" }, "within_ms": ms, "then": [ click_json("#b") ] });
+    assert_eq!(action(with(10_000)).validate(), Ok(()));
+    assert_eq!(refusal(with(10_001)), "when_hidden waits at most 10000 ms, not 10001");
+    assert_eq!(refusal(with(0)), "within_ms must be more than 0");
+    let bare = |then: serde_json::Value| json!({ "kind": "when_hidden", "selector": { "css": "#b" }, "then": then });
+    assert_eq!(
+        refusal(bare(json!([]))),
+        "when_hidden has nothing in \"then\" - say what to do when it is not on the page"
+    );
+    assert_eq!(
+        refusal(bare(json!([{ "kind": "expect_visible", "selector": { "css": "#x" } }]))),
+        "when_hidden \"then\" cannot hold expect_visible - a guarded step tidies up and checks nothing, so put the check after it"
+    );
+    assert_eq!(
+        refusal(bare(json!([{ "kind": "sign_in", "account": "hr.admin" }]))),
+        "when_hidden \"then\" cannot hold sign_in - change who is signed in as an action of its own"
+    );
+    assert_eq!(
+        refusal(bare(json!([{ "kind": "click", "selector": { "css": "#x" } }, { "kind": "navigate", "url": "javascript:alert(1)" }]))),
+        "when_hidden then 2: navigate needs an http, https or file address, not \"javascript:alert(1)\""
+    );
+}
+
+const ONE_LEVEL: &str = "a guard inside a guard's then cannot hold another guard - one level of nesting";
+
+#[test]
+fn a_guard_inside_a_guard_is_one_level_only() {
+    let inner_visible = guarded(json!([click_json("#x")]));
+    let inner_hidden = hidden("#gone", json!([click_json("#x")]));
+    // Either kind inside either kind validates.
+    for outer in [
+        guarded(json!([inner_hidden.clone()])),
+        guarded(json!([click_json("#a"), inner_visible.clone()])),
+        hidden("#o", json!([inner_visible.clone()])),
+        hidden("#o", json!([inner_hidden.clone()])),
+    ] {
+        assert_eq!(action(outer.clone()).validate(), Ok(()), "{outer}");
+        assert!(!action(outer).is_check());
+    }
+    // A guard in the inner one's then is the second level.
+    for deep in [
+        guarded(json!([guarded(json!([inner_hidden.clone()]))])),
+        hidden("#o", json!([hidden("#i", json!([inner_visible.clone()]))])),
+        hidden("#o", json!([click_json("#a"), guarded(json!([click_json("#b"), inner_hidden.clone()]))])),
+    ] {
+        assert_eq!(refusal(deep), ONE_LEVEL);
+    }
+    // The inner guard's own then keeps the rules.
+    assert_eq!(
+        refusal(hidden("#o", json!([hidden("#i", json!([{ "kind": "sign_in", "account": "a" }]))]))),
+        "when_hidden then 1: when_hidden \"then\" cannot hold sign_in - change who is signed in as an action of its own"
+    );
+    assert_eq!(
+        refusal(guarded(json!([hidden("#i", json!([]))]))),
+        "when_visible then 1: when_hidden has nothing in \"then\" - say what to do when it is not on the page"
+    );
+}
+
+#[test]
+fn a_loop_still_holds_a_guard_with_plain_actions_only() {
+    let looped = |then: serde_json::Value| json!({ "kind": "repeat_while_visible", "selector": { "css": ".row" }, "max": 3, "then": then });
+    assert_eq!(action(looped(json!([guarded(json!([click_json("#x")]))]))).validate(), Ok(()));
+    let err = refusal(looped(json!([hidden("#i", json!([click_json("#x")]))])));
+    assert!(err.contains("when_hidden"), "{err}");
+    let err = refusal(looped(json!([guarded(json!([hidden("#i", json!([click_json("#x")]))]))])));
+    assert!(err.contains("when_hidden"), "{err}");
+}
+
+#[test]
+fn each_and_targets_reach_the_inner_guard() {
+    let a = action(guarded(json!([hidden("#gone", json!([click_json("#x")]))])));
+    let kinds: Vec<String> = a.each().iter().map(|x| x.kind()).collect();
+    assert_eq!(kinds, ["when_visible", "when_hidden", "click"]);
+    let judged: Vec<String> = a.judging().iter().map(|x| x.kind()).collect();
+    assert_eq!(judged, ["when_visible", "when_hidden", "click"]);
+    let named: Vec<String> = a.targets().iter().map(|t| t.describe()).collect();
+    assert_eq!(named, ["#banner", "#gone", "#x"]);
+}
+
+#[tokio::test]
+async fn when_hidden_runs_its_then_when_the_target_never_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let mut acc: Option<String> = None;
+    // `#other-session` never appears against this fake.
+    let a = action(hidden("#other-session", json!([click_json("#apply")])));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![a]), &quick(), &mut acc).await.unwrap();
+    assert_eq!(out.len(), 1);
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 1);
+    assert!(out[0].detail.starts_with("#other-session not shown: clicked"), "{}", out[0].detail);
+    let trace = out[0].guard.clone().expect("a guard leaves its trace");
+    assert!(trace.acted && trace.inner.is_empty(), "{trace:?}");
+}
+
+#[tokio::test]
+async fn when_hidden_skips_when_the_target_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let mut acc: Option<String> = None;
+    let a = action(hidden("#financial", json!([click_json("#apply")])));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![a]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(SHOWN_SKIPPED, "shown, skipped");
+    assert_eq!(out[0].detail, format!("#financial {SHOWN_SKIPPED}"));
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 0, "the then never ran");
+    assert!(!out[0].guard.clone().expect("a guard leaves its trace").acted);
+}
+
+/// A page where `#late` is on the page only from `after_ms` on, by the
+/// clock. Every other css locator is there from the start and clickable.
+fn appears_after(after_ms: u64) -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let began = std::time::Instant::now();
+    let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = clicked.clone();
+    let mut last_selector = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = last_selector != "#late" || began.elapsed() >= std::time::Duration::from_millis(after_ms);
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(last_selector.clone());
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, clicked)
+}
+
+/// It never acts on a first empty look: the target comes up 400 ms into a
+/// 1000 ms window, so the guard is skipped, and it took that long to say so.
+#[tokio::test]
+async fn when_hidden_waits_the_whole_window_before_acting() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = appears_after(400);
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_hidden", "selector": { "css": "#late" }, "within_ms": 1000,
+                               "then": [ click_json("#apply") ] }));
+    let started = std::time::Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].detail, format!("#late {SHOWN_SKIPPED}"));
+    assert!(clicked.lock().unwrap().is_empty(), "the then ran on a first empty look");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(350), "answered after {:?}", started.elapsed());
+    assert!(started.elapsed() < std::time::Duration::from_millis(900), "waited the window out though it showed: {:?}", started.elapsed());
+
+    // Never shown inside a short window: the then runs.
+    let (mut d, clicked) = appears_after(5000);
+    let guard = action(json!({ "kind": "when_hidden", "selector": { "css": "#late" }, "within_ms": 600,
+                               "then": [ click_json("#apply") ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#apply".to_string()]);
+}
+
+#[tokio::test]
+async fn a_nested_guard_runs_inside_its_outer_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut acc: Option<String> = None;
+    // Outer shows, inner target absent: both clicks happen, in order.
+    let (mut d, state) = stateful_app(false, None);
+    let nested = action(guarded(json!([click_json("#one"), hidden("#other-session", json!([click_json("#two")]))])));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![nested.clone()]), &quick(), &mut acc).await.unwrap();
+    assert_eq!(out.len(), 1, "one outcome for the whole outer guard");
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 2);
+    assert!(out[0].detail.starts_with("#banner showed: "), "{}", out[0].detail);
+    assert!(out[0].detail.contains("#other-session not shown: "), "the outer detail lists the inner one's: {}", out[0].detail);
+    let trace = out[0].guard.clone().unwrap();
+    assert!(trace.acted);
+    assert_eq!(trace.inner.len(), 1, "{trace:?}");
+    assert!(trace.inner[0].acted);
+
+    // Inner target present: the inner is skipped, the outer still acted.
+    let (mut d, state) = stateful_app(false, None);
+    let skipped = action(guarded(json!([click_json("#one"), hidden("#there", json!([click_json("#two")]))])));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![skipped]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 1);
+    assert!(out[0].detail.contains(&format!("#there {SHOWN_SKIPPED}")), "{}", out[0].detail);
+    let trace = out[0].guard.clone().unwrap();
+    assert!(trace.acted && trace.inner.len() == 1 && !trace.inner[0].acted, "{trace:?}");
+
+    // An outer guard that does not show never looks at the inner one.
+    let (mut d, state) = stateful_app(false, None);
+    let off = action(json!({ "kind": "when_visible", "selector": { "css": "#other-session" }, "within_ms": 40,
+                             "then": [ hidden("#other-session", json!([click_json("#two")])) ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![off]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok && out[0].detail.ends_with(NOT_SHOWN), "{:?}", out[0]);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 0);
+    let trace = out[0].guard.clone().unwrap();
+    assert!(!trace.acted && trace.inner.is_empty(), "{trace:?}");
+}
+
+#[tokio::test]
+async fn a_failing_inner_guard_fails_the_outer_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, Some("#broken"));
+    let mut acc: Option<String> = None;
+    let a = action(guarded(json!([hidden("#other-session", json!([click_json("#broken")])), click_json("#after")])));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![a]), &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("#broken"), "{}", out[0].detail);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 0, "the outer stops at the inner's failure");
+}
+
+#[tokio::test]
+async fn the_executor_hands_when_hidden_to_the_runner() {
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let out = execute_with(&mut d, &action(hidden("#x", json!([click_json("#x")]))), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "when_hidden is carried out by the runner");
 }

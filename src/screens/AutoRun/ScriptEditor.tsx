@@ -620,7 +620,7 @@ function readAction(a: unknown): { sentence: Sentence; then: readonly unknown[] 
   try {
     const sentence = describeAction(a as Action);
     const rec = typeof a === "object" && a !== null ? (a as { kind?: unknown; then?: unknown }) : null;
-    const nests = rec?.kind === "when_visible" || rec?.kind === "repeat_while_visible";
+    const nests = rec?.kind === "when_visible" || rec?.kind === "when_hidden" || rec?.kind === "repeat_while_visible";
     const list = rec?.then;
     const then = nests && Array.isArray(list) && list.length > 0 ? list : null;
     return { sentence, then: sentenceText(sentence) === UNREADABLE ? null : then };

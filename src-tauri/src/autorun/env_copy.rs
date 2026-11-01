@@ -662,7 +662,7 @@ fn collect_refs(actions: &[crate::browser::actions::Action], out: &mut Refs) {
         match a {
             Action::UseComponent { component, .. } => out.components.push(component.trim().to_string()),
             Action::SignIn { account } => out.accounts.push(account.trim().to_string()),
-            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => collect_refs(then, out),
+            Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => collect_refs(then, out),
             _ => {}
         }
         if let Some(area) = a.area_named() {

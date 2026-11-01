@@ -1117,3 +1117,37 @@ test("after a pull the editor shows the pulled script", async () => {
   );
   localStorage.clear();
 });
+
+test("the readable script shows a when_hidden and the guard inside it, each under its own line", async () => {
+  const script = {
+    case_id: 7,
+    title: "t",
+    steps: [
+      {
+        step_number: 1,
+        actions: [
+          {
+            kind: "when_hidden",
+            selector: { role: "heading", name: "Financial" },
+            within_ms: 3000,
+            then: [
+              {
+                kind: "when_visible",
+                selector: { role: "button", name: "Delete group" },
+                then: [{ kind: "click", selector: { role: "button", name: "Yes" } }],
+              },
+              { kind: "click", selector: { role: "button", name: "Apply template" } },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  mountWith(script, ACCOUNTS, [], [{ action: "Sign in", expected: "" }]);
+  const view = await screen.findByRole("region", { name: "Action script" });
+  const one = await within(view).findByRole("region", { name: "Step 1" });
+  expect(one).toHaveTextContent('If the "Financial" heading is not on the page after 3 s:');
+  expect(one).toHaveTextContent('If the "Delete group" button appears within 2 s:');
+  expect(one).toHaveTextContent('Click the "Yes" button');
+  expect(one).toHaveTextContent('Click the "Apply template" button');
+});

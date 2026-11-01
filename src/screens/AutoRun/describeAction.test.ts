@@ -124,6 +124,10 @@ describe("a sentence for every action kind", () => {
       { kind: "when_visible", selector: { role: "button", name: "Accept" }, then: [] },
       'If the "Accept" button appears within 2 s:',
     ],
+    [
+      { kind: "when_hidden", selector: { role: "heading", name: "Financial" }, then: [] },
+      'If the "Financial" heading is not on the page after 2 s:',
+    ],
     [{ kind: "reload" }, "Reload the page"],
     [{ kind: "expire_session" }, "End the session"],
     [{ kind: "return_to_area" }, "Return to the case's area"],
@@ -403,7 +407,7 @@ describe("a sentence for every action kind", () => {
         "navigate", "click", "fill", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "expect_no_change", "sign_in", "upload",
-        "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
+        "expect_response", "api_request", "when_visible", "when_hidden", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
         "expect_each", "expect_order", "expect_position", "page_until",
@@ -493,6 +497,29 @@ describe("when_visible", () => {
     };
     expect(say(a)).toBe('If the "Another active session" dialog appears within 5 s:');
     expect(a.kind === "when_visible" && a.then.map(say)).toEqual(['Click the "Continue" button']);
+  });
+});
+
+describe("when_hidden", () => {
+  test("its heading names the absence and the wait, and a guard inside it stays its own", () => {
+    const a: Action = {
+      kind: "when_hidden",
+      selector: { role: "heading", name: "Financial" },
+      within_ms: 3000,
+      then: [
+        {
+          kind: "when_visible",
+          selector: { role: "button", name: "Delete group" },
+          then: [{ kind: "click", selector: { role: "button", name: "Delete group" } }],
+        },
+        { kind: "click", selector: { role: "button", name: "Apply template" } },
+      ],
+    };
+    expect(say(a)).toBe('If the "Financial" heading is not on the page after 3 s:');
+    expect(a.kind === "when_hidden" && a.then.map(say)).toEqual([
+      'If the "Delete group" button appears within 2 s:',
+      'Click the "Apply template" button',
+    ]);
   });
 });
 

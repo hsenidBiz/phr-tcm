@@ -48,6 +48,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, not_before_ms: None, started_within_ms: None, same_document: false, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
+        Action::WhenHidden { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
         Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }], settle_ms: None },
         Action::ExpectDownload {
             name: "a.csv".into(),
@@ -681,6 +682,44 @@ fn the_guide_teaches_when_visible_with_its_two_examples() {
         from += at + example.len();
     }
     assert!(seen >= 2, "the section has {seen} when_visible examples, wants the cookie banner and the session prompt");
+}
+
+/// Backlog 72: `when_hidden` runs its `then` when something is NOT on the
+/// page, and one guard may sit inside another. The guide teaches both with
+/// the two cases that needed them, and every example it gives validates.
+#[test]
+fn the_guide_teaches_when_hidden_and_one_level_of_nesting() {
+    let g = autorun_guide();
+    let section = g.split_once("## Dismissing what may not show up").unwrap().1;
+    let section = section.split("
+## ").next().unwrap();
+    let flat: String = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in [
+        "when_hidden",
+        "shown, skipped",
+        "never acts on a first empty look",
+        "apply it from the template",
+        "Financial",
+        "baseline",
+        "one level",
+        "inside a guard",
+    ] {
+        assert!(flat.contains(term), "the pop-ups section never says {term:?}");
+    }
+    assert!(!flat.contains("no `when_visible` inside it"), "the old nesting ban is still taught: {flat}");
+    let mut from = 0;
+    let mut hidden = 0;
+    let mut nested = 0;
+    while let Some(at) = section[from..].find("{ \"kind\": \"when_hidden\"") {
+        let example = first_balanced(section, from + at, '{', '}');
+        let a: Action = serde_json::from_str(example).unwrap_or_else(|e| panic!("{e}: {example}"));
+        a.validate().unwrap_or_else(|e| panic!("the guide's example is refused: {e}: {example}"));
+        hidden += 1;
+        nested += usize::from(a.each().iter().skip(1).any(|x| x.is_guard()));
+        from += at + example.len();
+    }
+    assert!(hidden >= 2, "the section has {hidden} when_hidden examples, wants the template and the baseline group");
+    assert!(nested >= 1, "no example shows a guard inside a guard");
 }
 
 /// The runner closes the recipe's listed pop-ups itself, so the guide must

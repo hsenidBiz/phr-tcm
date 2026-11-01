@@ -4105,42 +4105,63 @@ pub fn component_finds(
         .collect()
 }
 
-/// What a `when_visible` that fired and worked found on the page: each
-/// locator of its `then` actions, filed as a worked try files it (matched
-/// one, `matched_targets`). A guard that did not show, or whose `then`
-/// failed at any action, files nothing: its one outcome is not ok then, or
-/// says it was not shown. A legacy string target is left out, as a try
-/// probes it first. `expanded` and `outcomes` pair as in `component_finds`.
+/// What a guard (`when_visible`, `when_hidden`) that acted and worked found on
+/// the page: each locator of its `then` actions, filed as a worked try files
+/// it (matched one, `matched_targets`). A guard that did not act (its target
+/// showed up for a `when_hidden`, never did for a `when_visible`) or whose
+/// `then` failed at any action files nothing: its outcome is not ok then, or
+/// its `GuardTrace` says it did not act. A guard inside a guard's `then` is
+/// read one level down, from the trace's `inner` in the order those guards
+/// stand in the `then`: its own `then` is filed only when that inner guard
+/// acted. A legacy string target is left out, as a try probes it first.
+/// `expanded` and `outcomes` pair as in `component_finds`.
 pub fn guard_finds(
     expanded: &[(crate::browser::actions::Action, Option<String>)],
     outcomes: &[crate::browser::actions::ActionOutcome],
 ) -> Vec<(crate::browser::locator::Target, usize, usize)> {
-    use crate::autorun::discovery_map::{plain_target, NOT_ONE};
-    use crate::browser::actions::Action;
+    use crate::autorun::discovery_map::NOT_ONE;
+    use crate::browser::actions::{Action, GuardTrace};
     let unknown = NOT_ONE as usize;
-    expanded
-        .iter()
-        .zip(outcomes)
-        .filter(|((action, _), o)| o.ok && matches!(action, Action::WhenVisible { .. }) && !o.detail.ends_with(crate::browser::actions::NOT_SHOWN))
-        .flat_map(|((action, _), _)| match action {
-            Action::WhenVisible { then, .. } => then
-                .iter()
-                .flat_map(|a| match a {
-                    // It passes on one match or several and does not say
-                    // which: filed as found, its count not known.
-                    Action::WaitFor { selector, .. } => vec![(selector, unknown, unknown)],
-                    _ => matched_targets(a)
-                        .into_iter()
-                        .filter(|(t, _)| !t.is_legacy())
-                        .map(|(t, n)| {
-                            let css = plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
-                            (t, n, if css { unknown } else { n })
-                        })
-                        .collect(),
-                })
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
+    // The targets a guard's `then` proved, when `trace` says it acted.
+    fn proved<'a>(
+        then: &'a [Action],
+        trace: &GuardTrace,
+        unknown: usize,
+        out: &mut Vec<(&'a crate::browser::locator::Target, usize, usize)>,
+    ) {
+        use crate::autorun::discovery_map::plain_target;
+        if !trace.acted {
+            return;
+        }
+        // The traces of the guards in this `then` are kept in order.
+        let mut inner = trace.inner.iter();
+        for a in then {
+            if a.is_guard() {
+                if let (Some(t), Some((_, _, inner_then))) = (inner.next(), a.guard_parts()) {
+                    proved(inner_then, t, unknown, out);
+                }
+                continue;
+            }
+            match a {
+                // It passes on one match or several and does not say
+                // which: filed as found, its count not known.
+                Action::WaitFor { selector, .. } => out.push((selector, unknown, unknown)),
+                _ => out.extend(matched_targets(a).into_iter().filter(|(t, _)| !t.is_legacy()).map(|(t, n)| {
+                    let css = plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
+                    (t, n, if css { unknown } else { n })
+                })),
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for ((action, _), o) in expanded.iter().zip(outcomes) {
+        let (Some((_, _, then)), Some(trace)) = (action.guard_parts(), &o.guard) else { continue };
+        if o.ok {
+            proved(then, trace, unknown, &mut found);
+        }
+    }
+    found
+        .into_iter()
         // A locator holding a data placeholder is not what the page showed.
         .filter(|(t, _, _)| !serde_json::to_string(t).is_ok_and(|j| j.contains("{{")))
         .map(|(t, n, all)| (t.clone(), n, all))
@@ -4192,7 +4213,7 @@ async fn file_step_finds<D: crate::browser::cdp::Driver>(
     components: bool,
 ) {
     use crate::browser::actions::Action;
-    let uses = actions.iter().any(|a| matches!(a, Action::UseComponent { .. } | Action::WhenVisible { .. }));
+    let uses = actions.iter().any(|a| matches!(a, Action::UseComponent { .. } | Action::WhenVisible { .. } | Action::WhenHidden { .. }));
     if !uses || project.trim().is_empty() {
         return;
     }
@@ -4279,6 +4300,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
+        | Action::WhenHidden { .. }
         | Action::RepeatWhileVisible { .. }
         | Action::Navigate { .. }
         | Action::CheckText { .. }
@@ -4873,6 +4895,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectNoChange { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
+        | Action::WhenHidden { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => selector.describe(),
         // The control that pages: what the walk is about.
         Action::PageUntil { next, .. } => next.describe(),

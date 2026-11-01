@@ -614,6 +614,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectNoChange { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
+        | Action::WhenHidden { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => Some(selector.describe()),
         // Each acts on the page as a whole; a key is pressed on whatever
         // has the focus.

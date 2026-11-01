@@ -119,7 +119,10 @@
 //! does not end the wait): one seen matching one or more (several, or only in
 //! checks) keeps its refusal and hint, and so does a `page_until`'s locator
 //! and a target holding a placeholder, which is never filed.
-//! Every other locator keeps its rule.
+//! A `when_hidden` is held the same way (its selector is a guard, and takes none).
+//! One guard may sit in another's `then`: the selector of either is a guard's,
+//! and a clean-up's inner guard's `then` targets wait for their guard like an
+//! outer one's. Every other locator keeps its rule.
 //!
 //! A refused save names every locator never seen at once, in step order,
 //! then action order, then link order, each with its own hint, up to
@@ -393,6 +396,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::Drag { .. }
         | Action::PressKey { .. }
         | Action::WhenVisible { .. }
+        | Action::WhenHidden { .. }
         | Action::ExpectVisible { .. }
         | Action::ExpectText { .. }
         | Action::RememberText { .. }
@@ -444,6 +448,7 @@ pub fn takes_none(action: &Action) -> bool {
         action,
         Action::ExpectHidden { .. }
             | Action::WhenVisible { .. }
+            | Action::WhenHidden { .. }
             | Action::ExpectCount { equals: Some(0), .. }
             | Action::ExpectCount { at_most: Some(0), .. }
     )
@@ -454,7 +459,7 @@ pub fn takes_none(action: &Action) -> bool {
 /// `when_visible`'s own locator, a guard skipped when it does not match
 /// (its `then` actions are held to their own rule)?
 fn seen_many(action: &Action) -> bool {
-    takes_many(action) || matches!(action, Action::WhenVisible { .. })
+    takes_many(action) || action.is_guard()
 }
 
 /// `seen_many` for the target at `index` of `own_targets(action)`. The same
@@ -2061,7 +2066,7 @@ fn named_by_case(link: &LocatorStep, case_text: &[String]) -> bool {
 /// `expect_hidden`, an `expect_count` of 0 (`equals` or `at_most`)? A
 /// `when_visible` guard, skipped when its locator is absent, is not.
 fn is_absence_check(action: &Action) -> bool {
-    takes_none(action) && !matches!(action, Action::WhenVisible { .. })
+    takes_none(action) && !action.is_guard()
 }
 
 /// `link` as a name only: the same control however it is narrowed, so a
@@ -2300,6 +2305,7 @@ pub fn loose_name_notes(
 fn own_targets(action: &Action) -> Vec<&Target> {
     match action {
         Action::WhenVisible { selector, .. }
+        | Action::WhenHidden { selector, .. }
         | Action::RepeatWhileVisible { selector, .. }
         | Action::ExpectEach { selector, .. } => vec![selector],
         _ => action.targets(),
@@ -2385,7 +2391,8 @@ struct InputLocator {
 /// `when_visible`'s locator: its own selector, or that same locator used by
 /// an action in its `then`?
 fn guards(top: &Action, target: &Target) -> bool {
-    matches!(top, Action::WhenVisible { selector, .. } if selector == target)
+    // One guard may hold another: the selector of either is a guard's.
+    top.is_guard() && top.each().into_iter().any(|a| a.is_guard() && a.guard_parts().is_some_and(|(selector, _, _)| selector == target))
 }
 
 /// Every area name `map` holds: what a `when_visible`'s locator is checked
@@ -2549,12 +2556,10 @@ fn scan_deferring(
                             everywhere: guards(top, t),
                             whole: false,
                             in_cleanup_guard: step.cleanup
-                                && matches!(top, Action::WhenVisible { .. })
+                                && top.is_guard()
                                 && !std::ptr::eq(top, action)
-                                && !matches!(
-                                    action,
-                                    Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. } | Action::PageUntil { .. }
-                                ),
+                                && !action.is_guard()
+                                && !matches!(action, Action::RepeatWhileVisible { .. } | Action::PageUntil { .. }),
                         })
                     })
                     .collect();

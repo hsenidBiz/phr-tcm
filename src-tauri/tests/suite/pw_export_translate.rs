@@ -1800,3 +1800,45 @@ fn has_text_becomes_a_filter_before_nth() {
     .unwrap());
     assert!(got.contains(".locator('tr').filter({ hasText: 'AutoTest Grp 7' }).nth(0)"), "{got}");
 }
+
+/// `when_hidden` is the `when_visible` look turned over: the same wait, the
+/// same visible-match floor, and the `then` runs when it never showed.
+#[test]
+fn when_hidden_acts_when_the_wait_found_nothing() {
+    let got = one_step(json!([
+        { "kind": "when_hidden", "selector": "#financial", "then": [{ "kind": "click", "selector": "#apply" }] },
+        { "kind": "when_hidden", "selector": { "css": "#x", "visible": false }, "within_ms": 100,
+          "then": [{ "kind": "click", "selector": "#x" }] }
+    ]))
+    .run()
+    .unwrap();
+    assert!(
+        got.contains(
+            "    if (!(await cur.locator('#financial').first().waitFor({ timeout: 2000 }).then(() => true, () => false))) {\n      await cur.locator('#apply').first().click();\n    }\n"
+        ),
+        "{got}"
+    );
+    // The floor and the visible-only look are the guard's own.
+    assert!(
+        got.contains("if (!(await cur.locator('#x').filter({ visible: true }).first().waitFor({ timeout: 500 })"),
+        "{got}"
+    );
+}
+
+/// A guard inside a guard is two nested `if`s, the inner one indented once more.
+#[test]
+fn a_guard_inside_a_guard_is_a_nested_if() {
+    let got = one_step(json!([
+        { "kind": "when_visible", "selector": "#banner", "then": [
+            { "kind": "when_hidden", "selector": "#gone", "within_ms": 700, "then": [{ "kind": "click", "selector": "#apply" }] }
+        ] }
+    ]))
+    .run()
+    .unwrap();
+    assert!(
+        got.contains(
+            "    if (await cur.locator('#banner').first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {\n      if (!(await cur.locator('#gone').first().waitFor({ timeout: 700 }).then(() => true, () => false))) {\n        await cur.locator('#apply').first().click();\n      }\n    }\n"
+        ),
+        "{got}"
+    );
+}

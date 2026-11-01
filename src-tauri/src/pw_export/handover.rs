@@ -141,7 +141,7 @@ fn each_action(script: &CaseScript) -> Vec<(i32, &Action)> {
         for a in actions {
             out.push((step, a));
             match a {
-                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => walk(step, then, out),
+                Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => walk(step, then, out),
                 _ => {}
             }
         }
@@ -328,7 +328,7 @@ fn picks_by_position(target: &Target) -> bool {
 /// included, is a click that appears to delete (`click_effect`'s rule).
 fn deletes_any(actions: &[Action]) -> bool {
     actions.iter().any(|a| match a {
-        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => deletes_any(then),
+        Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => deletes_any(then),
         _ => matches!(click_effect(a), Some((EffectKind::Delete, _, _))),
     })
 }

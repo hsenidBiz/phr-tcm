@@ -1060,7 +1060,7 @@ pub fn touches_sign_in(
                         return Some(why.to_string());
                     }
                 }
-                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+                Action::WhenVisible { then, .. } | Action::WhenHidden { then, .. } | Action::RepeatWhileVisible { then, .. } => {
                     if let Some(why) = walk(then, start, fields, text) {
                         return Some(why);
                     }

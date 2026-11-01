@@ -2068,11 +2068,20 @@ same_document?: boolean }) & { absent?: never; account?: never; answer?: never; 
  *  active session" prompt): if `selector` becomes visible within
  *  `within_ms` (`WHEN_VISIBLE_MS` when left out), the `then` actions
  *  run; otherwise the step passes with `NOT_SHOWN`. `then` holds plain
- *  actions only - see `validate`. The sign-in recipe's own `WhenVisible`
+ *  actions and one level of guard - see `validate`. The sign-in recipe's own `WhenVisible`
  *  is the same step; this one is a case script's. Carried out by the
  *  runner, which alone can place an `upload` inside it.
  */
 ({ kind: "when_visible"; selector: Target_Deserialize; within_ms?: number | null; then: Action_Deserialize[] }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; attribute?: never; cells?: never; checked?: never; child?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; matches?: never; max?: never; max_pages?: never; method?: never; min?: never; name?: never; next?: never; not_before_ms?: never; not_empty?: never; not_equals?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; property?: never; query?: never; region?: never; relation?: never; relative_to?: never; same_as?: never; same_document?: never; settle_ms?: never; sheet?: never; started_within_ms?: never; status?: never; table?: never; text?: never; texts?: never; timeout_ms?: never; times?: never; to?: never; until?: never; until_all?: never; url?: never; url_contains?: never; value?: never; visible?: never } | 
+/**
+ *  The other way round (`WhenVisible`'s twin): `then` runs when
+ *  `selector` is NOT on the page - it never showed within `within_ms`
+ *  (`WHEN_VISIBLE_MS` when left out, the same wait and the same
+ *  `then` rules). A target that shows at any point in the wait skips
+ *  the guard, `SHOWN_SKIPPED`. For "apply it from the template if it is
+ *  not there already". Carried out by the runner.
+ */
+({ kind: "when_hidden"; selector: Target_Deserialize; within_ms?: number | null; then: Action_Deserialize[] }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; attribute?: never; cells?: never; checked?: never; child?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; matches?: never; max?: never; max_pages?: never; method?: never; min?: never; name?: never; next?: never; not_before_ms?: never; not_empty?: never; not_equals?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; property?: never; query?: never; region?: never; relation?: never; relative_to?: never; same_as?: never; same_document?: never; settle_ms?: never; sheet?: never; started_within_ms?: never; status?: never; table?: never; text?: never; texts?: never; timeout_ms?: never; times?: never; to?: never; until?: never; until_all?: never; url?: never; url_contains?: never; value?: never; visible?: never } | 
 /**
  *  Reset a list to a known state: while `selector` shows a match whose
  *  row (`repeat::ROW_RULE`) reads none of the `except` texts, the first
@@ -2356,11 +2365,20 @@ same_document?: boolean }) & { absent?: never; account?: never; answer?: never; 
  *  active session" prompt): if `selector` becomes visible within
  *  `within_ms` (`WHEN_VISIBLE_MS` when left out), the `then` actions
  *  run; otherwise the step passes with `NOT_SHOWN`. `then` holds plain
- *  actions only - see `validate`. The sign-in recipe's own `WhenVisible`
+ *  actions and one level of guard - see `validate`. The sign-in recipe's own `WhenVisible`
  *  is the same step; this one is a case script's. Carried out by the
  *  runner, which alone can place an `upload` inside it.
  */
 ({ kind: "when_visible"; selector: Target_Serialize; within_ms?: number | null; then: Action_Serialize[] }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; attribute?: never; cells?: never; checked?: never; child?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; matches?: never; max?: never; max_pages?: never; method?: never; min?: never; name?: never; next?: never; not_before_ms?: never; not_empty?: never; not_equals?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; property?: never; query?: never; region?: never; relation?: never; relative_to?: never; same_as?: never; same_document?: never; settle_ms?: never; sheet?: never; started_within_ms?: never; status?: never; table?: never; text?: never; texts?: never; timeout_ms?: never; times?: never; to?: never; until?: never; until_all?: never; url?: never; url_contains?: never; value?: never; visible?: never } | 
+/**
+ *  The other way round (`WhenVisible`'s twin): `then` runs when
+ *  `selector` is NOT on the page - it never showed within `within_ms`
+ *  (`WHEN_VISIBLE_MS` when left out, the same wait and the same
+ *  `then` rules). A target that shows at any point in the wait skips
+ *  the guard, `SHOWN_SKIPPED`. For "apply it from the template if it is
+ *  not there already". Carried out by the runner.
+ */
+({ kind: "when_hidden"; selector: Target_Serialize; within_ms?: number | null; then: Action_Serialize[] }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; attribute?: never; cells?: never; checked?: never; child?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; matches?: never; max?: never; max_pages?: never; method?: never; min?: never; name?: never; next?: never; not_before_ms?: never; not_empty?: never; not_equals?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; property?: never; query?: never; region?: never; relation?: never; relative_to?: never; same_as?: never; same_document?: never; settle_ms?: never; sheet?: never; started_within_ms?: never; status?: never; table?: never; text?: never; texts?: never; timeout_ms?: never; times?: never; to?: never; until?: never; until_all?: never; url?: never; url_contains?: never; value?: never; visible?: never } | 
 /**
  *  Reset a list to a known state: while `selector` shows a match whose
  *  row (`repeat::ROW_RULE`) reads none of the `except` texts, the first
