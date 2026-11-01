@@ -68,6 +68,14 @@ pub enum Action {
         #[serde(rename = "as")]
         name: String,
     },
+    /// Note the one element's text (a field's value for a field), whitespace
+    /// folded, as `name`, for a later `expect_text` `same_as` in the same
+    /// case. Fails like a click when the locator finds nothing or several.
+    RememberText {
+        selector: Target,
+        #[serde(rename = "as")]
+        name: String,
+    },
     ExpectVisible {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,13 +87,16 @@ pub enum Action {
         timeout_ms: Option<u32>,
     },
     /// The one element's text (whitespace collapsed) is `equals`, or
-    /// matches the pattern `matches` (`pattern`) - exactly one of the two.
+    /// matches the pattern `matches` (`pattern`), or is the one
+    /// `remember_text` noted as `same_as` - exactly one of the three.
     ExpectText {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         equals: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         matches: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        same_as: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -255,8 +266,9 @@ pub enum Action {
     /// "[data-autorun-row]" }` (`repeat::ROW_SCOPE`) is resolved inside the
     /// marked row, so a protected row is never the one acted on. Matches
     /// that are all protected end the loop; unprotected ones still there
-    /// after `max` passes fail it. `then` holds plain actions only, as a
-    /// `when_visible`'s does. Carried out by the runner.
+    /// after `max` passes fail it. `then` holds plain actions,
+    /// `when_visible` (plain actions inside) and `expect_hidden`. Carried out
+    /// by the runner.
     RepeatWhileVisible {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,6 +276,10 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         except: Vec<String>,
         then: Vec<Action>,
+        /// How long a pass waits for its row to go once the page's requests
+        /// have finished, 100 to 30000 ms (5000 when left out).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settle_ms: Option<u32>,
     },
     /// Reload the page, as a person pressing F5 would, and wait for it to
     /// load again. Where it lands is the application's business: a page
@@ -932,12 +948,15 @@ pub const REPEAT_MAX: u32 = 200;
 /// A `repeat_while_visible` inside another one's `then`.
 pub const NESTED_REPEAT: &str = "repeat_while_visible \"then\" cannot hold another repeat_while_visible";
 
+/// What a `repeat_while_visible`'s `then` may hold, as its refusals say it.
+pub const LOOP_THEN_ALLOWS: &str = "plain actions, when_visible (plain actions inside) and expect_hidden";
+
 /// Every rule a `repeat_while_visible` is held to, as written: `max` given
 /// and in range, a selector that can list its matches, protected texts that
-/// say something, and a `then` of plain actions that - when rows are
+/// say something, and a `then` of `LOOP_THEN_ALLOWS` that - when rows are
 /// protected - acts inside the row the pass works on and never on the
 /// loop's own selector across the whole page.
-fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[Action]) -> Result<(), String> {
+fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[Action], settle_ms: Option<u32>) -> Result<(), String> {
     use super::repeat::{is_row_scoped, ROW_SCOPE};
     match max {
         None => return Err(format!("repeat_while_visible needs max - the most passes it may make, 1 to {REPEAT_MAX}")),
@@ -950,6 +969,9 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
         return Err("repeat_while_visible needs a locator object for selector, not a selector string".to_string());
     }
     selector.validate()?;
+    if let Some(n) = settle_ms.filter(|n| !(100..=30_000).contains(n)) {
+        return Err(format!("repeat_while_visible settle_ms is 100 to 30000, not {n}"));
+    }
     if let Some(i) = except.iter().position(|e| e.trim().is_empty()) {
         return Err(format!("repeat_while_visible except {} is empty - give the protected text", i + 1));
     }
@@ -957,13 +979,34 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
         return Err("repeat_while_visible has nothing in \"then\" - say what to do on each pass".to_string());
     }
     for (i, a) in then.iter().enumerate() {
-        if matches!(a, Action::RepeatWhileVisible { .. }) {
+        // The loop's kind refusals reach into a nested when_visible too.
+        if let Some(bad) = a.each().into_iter().skip(1).find(|x| {
+            matches!(
+                x,
+                Action::SignIn { .. }
+                    | Action::UseComponent { .. }
+                    | Action::ExpireSession
+                    | Action::OpenTab { .. }
+                    | Action::SwitchTab { .. }
+                    | Action::CloseTab { .. }
+            )
+        }) {
+            return Err(format!(
+                "repeat_while_visible \"then\" cannot hold {} - write it as an action of its own",
+                bad.kind()
+            ));
+        }
+        let repeats_inside = match a {
+            Action::RepeatWhileVisible { .. } => true,
+            Action::WhenVisible { then, .. } => then.iter().any(|t| matches!(t, Action::RepeatWhileVisible { .. })),
+            _ => false,
+        };
+        if repeats_inside {
             return Err(NESTED_REPEAT.to_string());
         }
         if matches!(
             a,
-            Action::WhenVisible { .. }
-                | Action::SignIn { .. }
+            Action::SignIn { .. }
                 | Action::UseComponent { .. }
                 | Action::ExpireSession
                 | Action::OpenTab { .. }
@@ -975,9 +1018,9 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
                 a.kind()
             ));
         }
-        if a.is_check() {
+        if a.is_check() && !matches!(a, Action::ExpectHidden { .. }) {
             return Err(format!(
-                "repeat_while_visible \"then\" cannot hold {} - a pass tidies up and checks nothing, so put the check after the loop",
+                "repeat_while_visible \"then\" cannot hold {} - a pass holds {LOOP_THEN_ALLOWS} and no other check, so put the check after the loop",
                 a.kind()
             ));
         }
@@ -1152,8 +1195,8 @@ pub const PAGE_LACKS: &str = "page does NOT contain ";
 pub const URL_IS: &str = "url is ";
 /// A `check_url` that names two of `contains`, `equals` and `same_as`.
 pub const URL_ONE_OF: &str = "check_url takes one of \"contains\", \"equals\" or \"same_as\", not two";
-/// The rule a noted address's name follows.
-pub const NOTE_NAME_RULE: &str = "a noted address's name is 1 to 30 letters, digits, - or _";
+/// The rule a noted name follows.
+pub const NOTE_NAME_RULE: &str = "a noted name is 1 to 30 letters, digits, - or _";
 /// A `remember_url` on a browser that keeps no notebook.
 pub const NO_NOTEBOOK: &str = "this browser cannot note an address";
 
@@ -1161,6 +1204,15 @@ pub const NO_NOTEBOOK: &str = "this browser cannot note an address";
 pub fn not_noted(name: &str) -> String {
     format!(
         "no address was noted as \"{name}\" in this case: a remember_url with \"as\": \"{name}\" must come before this check"
+    )
+}
+/// A `remember_text` on a browser that keeps no notebook.
+pub const NO_TEXT_NOTEBOOK: &str = "this browser cannot note a text";
+
+/// An `expect_text` `same_as` with nothing noted under `name`.
+pub fn no_noted_text(name: &str) -> String {
+    format!(
+        "no text was noted as \"{name}\" in this case: a remember_text with \"as\": \"{name}\" must come before this check"
     )
 }
 /// What an upload's click opened instead of a file chooser.
@@ -1321,13 +1373,18 @@ impl Action {
                     _ => Ok(()),
                 }
             }
-            Action::ExpectText { selector, equals, matches, .. } => {
+            Action::ExpectText { selector, equals, matches, same_as, .. } => {
                 selector.validate()?;
-                match (equals, matches) {
-                    (Some(_), None) => Ok(()),
-                    (None, Some(p)) => super::pattern::check_pattern("expect_text", p),
+                match (equals, matches, same_as) {
+                    (Some(_), None, None) => Ok(()),
+                    (None, Some(p), None) => super::pattern::check_pattern("expect_text", p),
+                    (None, None, Some(name)) => check_note_name("expect_text same_as", name),
                     _ => Err(TEXT_NEEDS_ONE.to_string()),
                 }
+            }
+            Action::RememberText { selector, name } => {
+                selector.validate()?;
+                check_note_name("remember_text", name)
             }
             Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
                 selector.validate()?;
@@ -1565,7 +1622,7 @@ impl Action {
                 selector.validate()?;
                 check_guarded(then)
             }
-            Action::RepeatWhileVisible { selector, max, except, then } => check_repeat(selector, *max, except, then),
+            Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => check_repeat(selector, *max, except, then, *settle_ms),
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key, times } => keys::check(key, *times),
             Action::ExpectRow { table, cells, exact, .. } | Action::ExpectNoRow { table, cells, exact, .. } => {
@@ -1696,13 +1753,27 @@ impl Action {
             .unwrap_or_default()
     }
 
-    /// This action, then every action a `when_visible` guards - for a rule
-    /// that has to see an action wherever in a step it is written.
+    /// This action, then every action a `when_visible` or loop holds, to any
+    /// depth (a loop's `then` may hold a `when_visible`) - for a rule that
+    /// has to see an action wherever in a step it is written.
     pub fn each(&self) -> Vec<&Action> {
         match self {
             Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
-                std::iter::once(self).chain(then.iter()).collect()
+                std::iter::once(self).chain(then.iter().flat_map(Action::each)).collect()
             }
+            _ => vec![self],
+        }
+    }
+
+    /// Like `each`, but without the `expect_hidden` a loop's `then` holds:
+    /// that is a wait for the row to go, not a check the case makes, so
+    /// every rule that counts or bars checks reads this list.
+    pub fn judging(&self) -> Vec<&Action> {
+        match self {
+            Action::RepeatWhileVisible { then, .. } => std::iter::once(self)
+                .chain(then.iter().filter(|t| !matches!(t, Action::ExpectHidden { .. })).flat_map(Action::judging))
+                .collect(),
+            Action::WhenVisible { then, .. } => std::iter::once(self).chain(then.iter().flat_map(Action::judging)).collect(),
             _ => vec![self],
         }
     }
@@ -1719,6 +1790,7 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
+            | Action::RememberText { selector, .. }
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
@@ -1773,6 +1845,7 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
+            | Action::RememberText { selector, .. }
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
@@ -1920,7 +1993,7 @@ pub const POSITION_SAME: &str =
 /// must hold still for `table::SETTLE_MS`, and be seen to.
 pub const POSITION_TIME: &str = "expect_position: needs at least 1500 ms to see both elements at rest";
 /// `expect_text` given both `equals` and `matches`, or neither.
-pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
+pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text), \"matches\" (a pattern) or \"same_as\" (a text remember_text noted)";
 /// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the
 /// count must hold still for `table::SETTLE_MS`, and be seen to, at the
 /// slowest poll.
@@ -2404,6 +2477,28 @@ async fn remember_url<D: Driver>(d: &mut D, name: &str) -> ActionOutcome {
     }
 }
 
+/// `remember_text`: note the one element's text as `name`.
+async fn remember_text<D: Driver>(d: &mut D, selector: &Target, name: &str, timing: &Timing) -> ActionOutcome {
+    if d.noted_texts().is_none() {
+        return ActionOutcome::failed(NO_TEXT_NOTEBOOK.to_string());
+    }
+    settle(d, timing).await;
+    let cell = std::sync::Mutex::new(None);
+    let out = expect::expect(d, selector, Check::Capture(&cell), timing.action_ms, timing.poll_ms).await;
+    if !out.ok {
+        return out;
+    }
+    let (text, secret) = cell.into_inner().unwrap_or_else(|e| e.into_inner()).unwrap_or_default();
+    let text = if secret { format!("{}{text}", expect::NOTED_SECRET) } else { text };
+    match d.noted_texts() {
+        Some(book) => {
+            book.insert(name.to_string(), text);
+            ActionOutcome::passed(format!("noted the text of {} as \"{name}\"", selector.describe()))
+        }
+        None => ActionOutcome::failed(NO_TEXT_NOTEBOOK.to_string()),
+    }
+}
+
 /// What an action's outcome adds when its locator found the element by the
 /// text as written in the page (CSS draws it in other capitals).
 fn written_note(ready: &input::Ready) -> String {
@@ -2491,12 +2586,21 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ExpectHidden { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Hidden, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectText { selector, equals, matches, timeout_ms } => {
-            // `validate` holds the two to exactly one.
+        Action::RememberText { selector, name } => remember_text(d, selector, name, timing).await,
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+            // `validate` holds the three to exactly one.
             let re;
-            let check = match (equals, matches) {
-                (Some(equals), _) => Check::Text(equals),
-                (_, Some(p)) => {
+            let noted;
+            let check = match (equals, matches, same_as) {
+                (Some(equals), _, _) => Check::Text(equals),
+                (_, _, Some(name)) => {
+                    noted = match d.noted_texts().and_then(|book| book.get(name).cloned()) {
+                        Some(t) => t,
+                        None => return ActionOutcome::failed(no_noted_text(name)),
+                    };
+                    Check::SameText { name, noted: &noted }
+                }
+                (_, Some(p), _) => {
                     re = match super::pattern::compiled(p) {
                         Ok(re) => re,
                         Err(why) => return ActionOutcome::failed(why),

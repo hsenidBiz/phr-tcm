@@ -57,7 +57,7 @@
 //!   locator whose name (or text) is a part of a seen one of the same role
 //!   (a text of a seen text), folded the same way, counts as seen, as a run
 //!   matches a name that contains it (`locator::name_matches`). Only for a
-//!   plain one-link locator (no `nth`, no `"visible": false`, not
+//!   plain one-link locator (no `nth` or `has_text`, no `"visible": false`, not
 //!   `"exact": true`), whose part is at least `MIN_TYPED_LEN` characters
 //!   once folded, and never one holding a data placeholder. Every other use
 //!   needs the whole name, as seen: the map holds only what reads listed,
@@ -90,7 +90,7 @@
 //! (`SEEN_ONLY_MANY`, followed by up to 3 of the seen names it matched on
 //! the pages it was seen on, `named_matches`; with `"exact": true` and only
 //! its own name among them, `NEVER_COUNTED`), never counted (`NEVER_COUNTED`, or
-//! `NEVER_COUNTED_NTH` for a locator with an `nth`, which is counted only
+//! `NEVER_COUNTED_NTH` for a locator with an `nth` or `has_text`, which is counted only
 //! as written), or seen only in saved checks (`SEEN_ONLY_IN_CHECKS`). A
 //! part of a seen name, refused for a use that needs one, says to use the
 //! full name as seen (`use_full_name`).
@@ -149,7 +149,7 @@
 //!
 //! Only exactly the locator that was seen matching one counts as one. A
 //! plain one-link locator (`discovery_map::plain_link`) is compared by its
-//! key, as always; a chain or a narrowed locator (`nth`, `exact`,
+//! key, as always; a chain or a narrowed locator (`nth`, `has_text`, `exact`,
 //! `visible`) that matched one counts as one only as that whole locator,
 //! written the same way (`Sightings::whole`). A data placeholder in such a
 //! locator stands for the value the seen one holds in that place, fitted
@@ -260,9 +260,9 @@ pub const NEVER_COUNTED: &str = "was seen on the live app, but never counted as 
 /// for: that check may match several, so it says nothing of one.
 pub const SEEN_ONLY_IN_CHECKS: &str = "was used only in saved checks that may match several elements, and this use needs one seen matching exactly one: probe it on the page, narrowed to one element if it matches several.";
 
-/// [`NEVER_COUNTED`] for a locator with an `nth`: only that whole locator,
-/// `nth` included, is counted when it is probed.
-pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its nth as written, then save again.";
+/// [`NEVER_COUNTED`] for a locator with an `nth` or `has_text`: only that whole
+/// locator, both included, is counted when it is probed.
+pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its has_text and nth as written, then save again.";
 
 /// [`NEVER_COUNTED`] for a locator holding a data placeholder, which cannot
 /// be probed as written: the same locator probed with a real value in each
@@ -372,6 +372,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::WhenVisible { .. }
         | Action::ExpectVisible { .. }
         | Action::ExpectText { .. }
+        | Action::RememberText { .. }
         | Action::ExpectContainsText { .. }
         | Action::ExpectAttribute { .. }
         | Action::ExpectStyle { .. }
@@ -592,6 +593,7 @@ fn same_link(a: &LocatorStep, b: &LocatorStep) -> bool {
     a.seen_key().is_some()
         && a.seen_key() == b.seen_key()
         && a.nth == b.nth
+        && a.has_text == b.has_text
         && a.exact == b.exact
         && a.visible == b.visible
         && (!a.exact || (a.name == b.name && a.text == b.text))
@@ -835,7 +837,7 @@ impl SeenBoth {
                 // Exact, only one name is its own: the count was of the
                 // names holding it, so it was never counted as written.
                 if link.exact && matched.len() <= 1 {
-                    let nth = links.iter().any(|l| l.nth.is_some());
+                    let nth = links.iter().any(narrowed_by_pick);
                     return Some(if nth { NEVER_COUNTED_NTH } else { NEVER_COUNTED }.to_string());
                 }
                 return Some(format!("{SEEN_ONLY_MANY}{}", named_matches(&matched)));
@@ -843,7 +845,7 @@ impl SeenBoth {
             if links.iter().any(link_holds_placeholder) {
                 return Some(NEVER_COUNTED_FILLED.to_string());
             }
-            if links.iter().any(|l| l.nth.is_some()) {
+            if links.iter().any(narrowed_by_pick) {
                 return Some(NEVER_COUNTED_NTH.to_string());
             }
             return Some(NEVER_COUNTED.to_string());
@@ -883,9 +885,10 @@ fn is_check(action: &Action) -> bool {
     )
 }
 
-/// The link's own words: its text or its accessible name, folded.
+/// The link's own words: its text, its accessible name or the text it must
+/// hold (`has_text`), folded.
 fn words(link: &LocatorStep) -> Vec<String> {
-    [link.text.as_deref(), link.name.as_deref()]
+    [link.text.as_deref(), link.name.as_deref(), link.has_text.as_deref()]
         .into_iter()
         .flatten()
         .map(fold_name)
@@ -893,9 +896,15 @@ fn words(link: &LocatorStep) -> Vec<String> {
         .collect()
 }
 
+/// Does this link pick among its matches (`nth`, or `has_text` before it)?
+/// Such a link is counted only as a whole, as written.
+fn narrowed_by_pick(link: &LocatorStep) -> bool {
+    link.nth.is_some() || link.has_text.is_some()
+}
+
 /// Does any field of `link` hold a data placeholder?
 fn link_holds_placeholder(link: &LocatorStep) -> bool {
-    [&link.role, &link.name, &link.text, &link.css].into_iter().flatten().any(|v| holds_data_placeholder(v))
+    [&link.role, &link.name, &link.text, &link.css, &link.has_text].into_iter().flatten().any(|v| holds_data_placeholder(v))
 }
 
 /// Is `link` in one of `roles`?
@@ -1097,6 +1106,7 @@ impl Sightings {
         let raw = link.name.as_deref().or(link.text.as_deref()).unwrap_or("");
         self.parts_many
             && link.nth.is_none()
+            && link.has_text.is_none()
             && link.visible != Some(false)
             && !link.exact
             && norm_name(raw).chars().count() >= MIN_TYPED_LEN
@@ -2033,7 +2043,7 @@ fn is_absence_check(action: &Action) -> bool {
 /// `link` as a name only: the same control however it is narrowed, so a
 /// click on `{name, exact: true}` shows the same button as `{name}`.
 fn loosened(link: &LocatorStep) -> LocatorStep {
-    LocatorStep { exact: false, nth: None, visible: None, ..link.clone() }
+    LocatorStep { exact: false, nth: None, has_text: None, visible: None, ..link.clone() }
 }
 
 /// Does this action, written at the top of a step, fail when its locator
@@ -2184,7 +2194,7 @@ pub fn loose_name_notes(
                         (None, _, Some(t)) => ("text".to_string(), t.as_str()),
                         _ => continue,
                     };
-                    if link.exact || link.nth.is_some() || link.visible.is_some() || link.input.is_some() || raw.contains("{{") {
+                    if link.exact || link.nth.is_some() || link.has_text.is_some() || link.visible.is_some() || link.input.is_some() || raw.contains("{{") {
                         continue;
                     }
                     let want = norm_name(raw);
@@ -2887,3 +2897,69 @@ pub fn check_resolved_inputs_with(
 
 /// What a person can do about a run-time Blocked of a filled locator.
 const RUN_TIME_FIX: &str = "Explore that screen again with discovery, or check the value the setup or fixture gives.";
+
+// ---- a delete loop whose rows cannot be told apart ----
+//
+// Runs in the assistant's save, beside the absence check (see above): the
+// runtime guard (`browser::repeat::except_guard`) stops such a loop on every
+// path that can delete; this is what the save can tell from what discovery
+// recorded of the same loop (`discovery_map::LoopRows`).
+
+/// Said after `repeat_while_visible`, with the guard's sentence, of a loop
+/// the newest discovery try of which was stopped by the rows guard.
+pub const LOOP_ROWS_REFUSED: &str = "was refused in discovery because its rows cannot be told apart: ";
+
+/// Said, as a note, of a loop with `except` that discovery never tried.
+pub const LOOP_ROWS_UNTRIED: &str = "has except texts but was never tried in discovery, so the save could not check that each row holds its name - try it once before relying on it";
+
+/// What the save made of the loops with `except`: `refusals` ("step {n}:
+/// repeat_while_visible {LOOP_ROWS_REFUSED}{sentence}") and `notes` for the
+/// ones never tried ("step {n}: repeat_while_visible {LOOP_ROWS_UNTRIED}").
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LoopRowsReview {
+    pub refusals: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+/// Every `repeat_while_visible` with `except` in `script`'s checked steps
+/// (`only_steps`, else all), judged by the newest `LoopRows` any area of
+/// `map` holds for the same selector and the same `except` set (order-free,
+/// folded): refused when that verdict is a refusal, a note when there is no
+/// entry, nothing when the newest one went past the guard. A loop without
+/// `except` is not judged.
+pub fn loop_rows_review(map: &DiscoveryMap, script: &CaseScript, only_steps: Option<&[i32]>) -> LoopRowsReview {
+    let mut review = LoopRowsReview::default();
+    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
+        for action in step.actions.iter().flat_map(Action::each) {
+            let Action::RepeatWhileVisible { selector, except, .. } = action else { continue };
+            if except.is_empty() {
+                continue;
+            }
+            let key = super::discovery_map::except_key(except);
+            let newest = map
+                .areas
+                .iter()
+                .flat_map(|a| a.loop_rows.iter())
+                .filter(|r| r.selector == *selector && super::discovery_map::except_key(&r.except) == key)
+                .max_by_key(|r| r.at);
+            let n = step.step_number;
+            let line = match newest {
+                Some(r) => match &r.refused {
+                    Some(why) => {
+                        let line = format!("step {n}: repeat_while_visible {LOOP_ROWS_REFUSED}{why}");
+                        if !review.refusals.contains(&line) {
+                            review.refusals.push(line);
+                        }
+                        continue;
+                    }
+                    None => continue,
+                },
+                None => format!("step {n}: repeat_while_visible {LOOP_ROWS_UNTRIED}"),
+            };
+            if !review.notes.contains(&line) {
+                review.notes.push(line);
+            }
+        }
+    }
+    review
+}

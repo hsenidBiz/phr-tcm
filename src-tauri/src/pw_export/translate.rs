@@ -113,6 +113,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
@@ -232,12 +233,17 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if uses(input, &|a| matches!(a, Action::RememberUrl { .. })) {
         em.line(4, "const notedUrls: Record<string, string> = {};");
     }
+    // The texts a `remember_text` notes, for a later `same_as`.
+    if uses(input, &|a| matches!(a, Action::RememberText { .. })) {
+        em.line(4, "const notedTexts: Record<string, string> = {};");
+    }
     // The app's text reader: `expect_text`, `expect_contains_text`, an
     // `expect_each` that reads text and an `expect_order`.
     if uses(input, &|a| {
         matches!(
             a,
             Action::ExpectText { .. }
+                | Action::RememberText { .. }
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectOrder { .. }
                 | Action::ExpectEach { attribute: None, visible: false, .. }
@@ -1235,7 +1241,7 @@ impl Em<'_> {
     /// marks the first other one's row with `data-autorun-row` and runs the
     /// `then` actions, whose row-scoped locators resolve inside it. It ends
     /// when none is left and throws once `max` passes left some.
-    fn repeat(&mut self, selector: &Target, max: Option<u32>, except: &[String], then: &[Action], indent: usize) -> Res<()> {
+    fn repeat(&mut self, selector: &Target, max: Option<u32>, except: &[String], then: &[Action], settle_ms: Option<u32>, indent: usize) -> Res<()> {
         use crate::browser::repeat::{KEPT_OF_JS, ROW_OF_JS, ROW_SCOPE};
         let Some(max) = max else {
             return no("repeat_while_visible without max cannot be exported");
@@ -1289,7 +1295,7 @@ impl Em<'_> {
             &format!(
                 "await expect({}).toHaveCount(0, {{ timeout: {} }}).catch(() => {{}});",
                 locator("cur", &Target::Legacy(ROW_SCOPE.to_string())),
-                crate::autorun::runner::ROW_GONE_WAIT_MS
+                settle_ms.map_or(crate::autorun::runner::ROW_GONE_WAIT_MS, u64::from)
             ),
         );
         self.line(i, "}");
@@ -1507,6 +1513,14 @@ impl Em<'_> {
                 ),
             ),
             Action::RememberUrl { name } => self.line(indent, &format!("notedUrls[{}] = cur.url();", lit(name))),
+            Action::RememberText { selector, name } => self.line(
+                indent,
+                &format!(
+                    "notedTexts[{}] = await {}.evaluate(readText);",
+                    lit(name),
+                    one(selector)
+                ),
+            ),
             Action::ExpectVisible { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeVisible", &[], *timeout_ms)))
             }
@@ -1516,8 +1530,21 @@ impl Em<'_> {
             // The app reads a field's value, a list's chosen label, else the
             // rendered text (READ_TEXT_JS), collapses whitespace on both sides
             // and compares case-sensitively: whole, or as a substring.
-            Action::ExpectText { selector, equals, matches, timeout_ms } => {
-                // `validate` holds the two to exactly one.
+            Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+                // `validate` holds the three to exactly one.
+                if let Some(name) = same_as {
+                    // Read as the app reads it (`readText`), on both sides.
+                    self.line(
+                        indent,
+                        &format!(
+                            "await expect.poll(() => {}.evaluate(readText){}).toBe(notedTexts[{}]);",
+                            one(selector),
+                            poll_opts(*timeout_ms),
+                            lit(name)
+                        ),
+                    );
+                    return Ok(());
+                }
                 if let Some(equals) = equals {
                     // The drawn text, or the text as written in the page when
                     // only the letter case differs (`asCase`).
@@ -1534,7 +1561,7 @@ impl Em<'_> {
                 }
                 let want = match matches {
                     Some(p) => format!("toMatch(new RegExp({}))", lit(p)),
-                    _ => return no("expect_text takes exactly one of equals or matches"),
+                    _ => return no("expect_text takes exactly one of equals, matches or same_as"),
                 };
                 self.line(
                     indent,
@@ -1743,7 +1770,7 @@ impl Em<'_> {
                 }
                 self.line(indent, "}");
             }
-            Action::RepeatWhileVisible { selector, max, except, then } => self.repeat(selector, *max, except, then, indent)?,
+            Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => self.repeat(selector, *max, except, then, *settle_ms, indent)?,
             Action::ExpectResponse {
                 method, url_contains, status, json, timeout_ms, not_before_ms, started_within_ms, same_document, ..
             } => {

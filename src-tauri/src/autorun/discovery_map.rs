@@ -131,6 +131,11 @@ pub struct AreaMap {
     /// map written before these were kept has none.
     #[serde(default)]
     pub refusals: Vec<RefusalRule>,
+    /// What discovery tried of each `repeat_while_visible` with `except`:
+    /// whether its rows could be told apart (see `LoopRows`). A map written
+    /// before these were kept has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_rows: Vec<LoopRows>,
     /// The links the area's saved scripts use, as written: read in memory
     /// by the seen check (`seen_check::add_saved_scripts`), never saved.
     #[serde(skip)]
@@ -169,6 +174,49 @@ pub struct AreaMap {
     /// on that page, never saved.
     #[serde(skip)]
     pub area_page: String,
+}
+
+/// The verdict of one discovery try of a `repeat_while_visible` with
+/// `except`: `refused` is the guard's sentence when its rows could not be
+/// told apart (`browser::repeat::except_guard`), `None` when the try went
+/// past it. One per (selector, except set); the newest wins.
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct LoopRows {
+    pub selector: Target,
+    pub except: Vec<String>,
+    #[serde(default)]
+    pub refused: Option<String>,
+    /// When it was tried, in milliseconds since the epoch.
+    #[specta(type = f64)]
+    pub at: u64,
+}
+
+/// `except` folded and in order-free form, for comparing two sets.
+pub fn except_key(except: &[String]) -> Vec<String> {
+    let mut k: Vec<String> = except.iter().map(|t| crate::browser::locator::fold_name(t)).collect();
+    k.sort();
+    k.dedup();
+    k
+}
+
+/// Files `rows` on `map`'s area: one entry per (selector, except set),
+/// the newest winning.
+pub fn record_loop_rows(map: &mut AreaMap, rows: LoopRows) {
+    let key = except_key(&rows.except);
+    match map.loop_rows.iter_mut().find(|r| r.selector == rows.selector && except_key(&r.except) == key) {
+        Some(old) => {
+            if rows.at >= old.at {
+                *old = rows;
+            }
+        }
+        None => map.loop_rows.push(rows),
+    }
+}
+
+/// [`record_loop_rows`] on the stored map, in `area`.
+pub fn record_loop_rows_in(root: &Path, org: &str, project: &str, area: Option<&str>, rows: LoopRows) -> Result<(), String> {
+    let area = canonical_area(root, org, project, area.unwrap_or(""));
+    update(root, org, project, |map| record_loop_rows(area_mut(map, &area), rows))
 }
 
 /// One distinct link an area has seen.
@@ -351,7 +399,7 @@ pub fn counted(matched: u32) -> bool {
 /// Is `link` a whole locator on its own that names exactly what its key
 /// names: no `nth`, no `exact` and no `visible` narrowing it?
 pub fn plain_link(link: &LocatorStep) -> bool {
-    link.nth.is_none() && !link.exact && link.visible.is_none()
+    link.nth.is_none() && link.has_text.is_none() && !link.exact && link.visible.is_none()
 }
 
 /// Is `target` one plain link (`plain_link`), so that the number it

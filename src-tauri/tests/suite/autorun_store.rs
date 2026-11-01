@@ -1583,6 +1583,25 @@ fn a_clean_up_may_answer_its_own_deletes_confirm() {
     );
 }
 
+/// A loop's `expect_hidden` is a wait for the row to go, not a check, so a
+/// clean-up may hold a loop that confirms only if shown and waits.
+#[test]
+fn a_clean_up_may_hold_a_loop_that_waits_for_its_row_to_go() {
+    let looped = serde_json::json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 5,
+        "then": [
+            { "kind": "click", "selector": [ { "css": "[data-autorun-row]" }, { "css": ".delete" } ] },
+            { "kind": "when_visible", "selector": { "css": "#confirm" }, "then": [ { "kind": "click", "selector": { "css": "#confirm" } } ] },
+            { "kind": "expect_hidden", "selector": { "css": "[data-autorun-row]" } }
+        ]
+    });
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": [looped], "cleanup": true, "unchecked": "removes what step 1 made" }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+}
+
 #[test]
 fn a_clean_up_step_alone_is_not_a_script() {
     let sc = cleanup_script(serde_json::json!([
@@ -1648,6 +1667,40 @@ fn a_same_as_needs_an_earlier_remember_url() {
         serde_json::json!([
             { "step_number": 2, "actions": [same.clone()] },
             { "step_number": 3, "actions": [remember.clone()], "unchecked": "notes the address" }
+        ]),
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone(), remember.clone()] }]),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "when_visible", "selector": "s", "then": [remember.clone()] }] },
+            { "step_number": 2, "actions": [same.clone()] }
+        ]),
+    ] {
+        let err = v2_lib::autorun::store::check_scripts(&[address_script(steps)]).unwrap_err();
+        assert!(err.ends_with(refused), "{err}");
+    }
+}
+
+#[test]
+fn a_text_same_as_needs_an_earlier_remember_text() {
+    let remember = serde_json::json!({ "kind": "remember_text", "selector": "#pills", "as": "counts" });
+    let same = serde_json::json!({ "kind": "expect_text", "selector": "#pills", "same_as": "counts" });
+    let other = serde_json::json!({ "kind": "check_text", "value": "a" });
+    let refused = "expect_text same_as \"counts\" names no text an earlier remember_text of this case notes";
+
+    let sc = address_script(serde_json::json!([
+        { "step_number": 1, "actions": [remember.clone()], "unchecked": "notes the counts" },
+        { "step_number": 2, "actions": [other.clone()] },
+        { "step_number": 3, "actions": [same.clone()] }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+    let sc = address_script(serde_json::json!([{ "step_number": 1, "actions": [remember.clone(), same.clone()] }]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+
+    // A remember_url of the same name does not count, nor one noted later, nor one inside a guard.
+    for steps in [
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone()] }]),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "remember_url", "as": "counts" }], "unchecked": "notes the address" },
+            { "step_number": 2, "actions": [same.clone()] }
         ]),
         serde_json::json!([{ "step_number": 1, "actions": [same.clone(), remember.clone()] }]),
         serde_json::json!([
@@ -1824,6 +1877,17 @@ fn a_stand_in_must_name_a_check_of_the_step() {
     );
     let sc = unchecked_script(acts(), serde_json::json!([{ "item": "no denied message", "why": "y", "stand_in": "expect_hidden" }]));
     v2_lib::autorun::store::check_scripts(&[sc]).unwrap();
+}
+
+#[test]
+fn a_stand_in_cannot_name_a_loops_wait() {
+    let acts = serde_json::json!([{ "kind": "repeat_while_visible", "selector": "#row", "max": 3,
+        "then": [{ "kind": "click", "selector": "#del" }, { "kind": "expect_hidden", "selector": "#row" }] }]);
+    let sc = unchecked_script(acts, serde_json::json!([{ "item": "the row is gone", "why": "y", "stand_in": "expect_hidden" }]));
+    assert_eq!(
+        refusal(sc),
+        "case 7 step 1: \"stand_in\": \"expect_hidden\" names no check of this step - name the kind of the check that stands in for \"the row is gone\""
+    );
 }
 
 #[test]

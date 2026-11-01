@@ -22,7 +22,7 @@
 use super::api_checks::NET_FAILED;
 use super::components::{ran_actions, ComponentFile};
 use super::replay::SIGN_IN_STEP;
-use super::signin::PAGE_DID_NOT_OPEN;
+use super::signin::{is_site_slow, PAGE_DID_NOT_OPEN};
 use super::{CaseRecord, CaseScript};
 use crate::browser::actions::{Action, ActionOutcome, WOULD_NOT_LOAD};
 
@@ -77,7 +77,7 @@ pub fn is_transient_with(case: &CaseRecord, script: Option<&CaseScript>, compone
     // of the script wrote it, so it is read on its own.
     let transient = first.harness
         || first.detail.starts_with(crate::autorun::refusals::SITE_BUSY)
-        || (n == SIGN_IN_STEP && page_would_not_load(&first.detail))
+        || (n == SIGN_IN_STEP && (page_would_not_load(&first.detail) || is_site_slow(&first.detail)))
         || {
             let ran = script
                 .and_then(|sc| sc.steps.iter().find(|s| s.step_number == n))
@@ -127,7 +127,7 @@ fn network_glitch(action: &Action, out: &ActionOutcome) -> bool {
             // so the first such phrase is the runner's.
             out.detail.find(WOULD_NOT_LOAD).is_some_and(|at| net_error(&out.detail[at + WOULD_NOT_LOAD.len()..]))
         }
-        Action::SignIn { .. } => page_would_not_load(&out.detail),
+        Action::SignIn { .. } => page_would_not_load(&out.detail) || is_site_slow(&out.detail),
         _ => false,
     }
 }

@@ -626,9 +626,10 @@ fn only_checks_and_expectations_are_checks() {
         Action::CheckText { value: "v".into() },
         Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
         Action::RememberUrl { name: "a".into() },
+        Action::RememberText { selector: "s".into(), name: "n".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
@@ -643,7 +644,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         // A guard is a tidy-up, never a check - even holding one.
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
-        Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }] },
+        Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }], settle_ms: None },
         Action::ExpectDownload {
             name: "report.csv".into(),
             within_ms: None,
@@ -1636,7 +1637,7 @@ fn check_url_takes_exactly_one_of_contains_equals_and_same_as() {
     assert!(check(json!({ "kind": "check_url", "equals": "" })).unwrap_err().contains("empty"));
     assert!(check(json!({ "kind": "check_url", "same_as": "has space" }))
         .unwrap_err()
-        .starts_with("check_url same_as: a noted address's name"));
+        .starts_with("check_url same_as: a noted name"));
     assert!(check(json!({ "kind": "remember_url", "as": "" })).unwrap_err().contains(NOTE_NAME_RULE));
     assert!(check(json!({ "kind": "check_url", "equals": "/a" })).is_ok());
     assert!(check(json!({ "kind": "check_url", "same_as": "before" })).is_ok());
@@ -1718,4 +1719,76 @@ async fn check_url_same_as_fails_when_the_address_changed() {
     assert!(!out.ok, "{}", out.detail);
     assert_eq!(out.detail, not_noted("never"));
     assert_eq!(d.calls.len(), calls, "nothing noted is no look at the page");
+}
+
+#[tokio::test]
+async fn remember_text_notes_the_text_for_a_later_same_as() {
+    // Reads, in turn: the note, the check that holds, then the page changed.
+    let mut d = FakePage { texts: vec!["2 / 4 / 7", "2 / 4 / 7", "3 / 4 / 7"], ..FakePage::default() }.driver();
+    let remember = Action::RememberText { selector: "#pills".into(), name: "counts".into() };
+    let same = Action::ExpectText {
+        selector: "#pills".into(),
+        equals: None,
+        matches: None,
+        same_as: Some("counts".into()),
+        timeout_ms: None,
+    };
+    let out = execute_with(&mut d, &remember, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(!out.detail.contains("2 / 4 / 7"), "the note never says the text: {}", out.detail);
+    assert_eq!(d.noted_text.get("counts").map(String::as_str), Some("2 / 4 / 7"));
+    let out = execute_with(&mut d, &same, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    let out = execute_with(&mut d, &same, &quick()).await;
+    assert!(!out.ok && !out.harness, "{}", out.detail);
+    assert!(out.detail.contains("2 / 4 / 7") && out.detail.contains("3 / 4 / 7"), "{}", out.detail);
+    assert!(out.detail.contains("noted as \"counts\""), "{}", out.detail);
+    // Nothing noted under the name: no look at the page.
+    let none = Action::ExpectText { selector: "#pills".into(), equals: None, matches: None, same_as: Some("never".into()), timeout_ms: None };
+    let calls = d.calls.len();
+    let out = execute_with(&mut d, &none, &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, v2_lib::browser::actions::no_noted_text("never"));
+    assert_eq!(d.calls.len(), calls);
+}
+
+#[test]
+fn expect_text_takes_exactly_one_of_equals_matches_same_as() {
+    use v2_lib::browser::actions::TEXT_NEEDS_ONE;
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s", "equals": "a", "same_as": "n" })), TEXT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s", "matches": "a", "same_as": "n" })), TEXT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s" })), TEXT_NEEDS_ONE);
+    assert!(TEXT_NEEDS_ONE.contains("same_as"));
+    let check = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate();
+    assert!(check(json!({ "kind": "expect_text", "selector": "s", "same_as": "n" })).is_ok());
+    assert!(check(json!({ "kind": "expect_text", "selector": "s", "same_as": "" })).is_err());
+    assert!(check(json!({ "kind": "remember_text", "selector": "s", "as": "n" })).is_ok());
+    assert!(check(json!({ "kind": "remember_text", "selector": "s", "as": "" })).unwrap_err().contains(NOTE_NAME_RULE));
+    let back = serde_json::to_value(serde_json::from_value::<Action>(json!({ "kind": "expect_text", "selector": "s", "equals": "v" })).unwrap()).unwrap();
+    assert!(back.get("same_as").is_none());
+}
+
+#[tokio::test]
+async fn remember_text_on_a_driver_without_a_notebook_fails() {
+    let mut d = FakePage::default().driver();
+    d.no_text_notebook = true;
+    let remember = Action::RememberText { selector: "#pills".into(), name: "counts".into() };
+    let out = execute_with(&mut d, &remember, &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, v2_lib::browser::actions::NO_TEXT_NOTEBOOK);
+}
+
+#[tokio::test]
+async fn a_text_noted_from_a_password_field_is_never_said() {
+    // Noted from a password field, then compared on an element that is not one.
+    let mut d = FakePage { texts: vec!["hunter2"], password: true, ..FakePage::default() }.driver();
+    let remember = Action::RememberText { selector: "#pw".into(), name: "p".into() };
+    assert!(execute_with(&mut d, &remember, &quick()).await.ok);
+    let mut d2 = FakePage { texts: vec!["other-secret"], password: false, ..FakePage::default() }.driver();
+    d2.noted_text = d.noted_text.clone();
+    let same = Action::ExpectText { selector: "#pw".into(), equals: None, matches: None, same_as: Some("p".into()), timeout_ms: None };
+    let out = execute_with(&mut d2, &same, &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(!out.detail.contains("hunter2") && !out.detail.contains("other-secret"), "{}", out.detail);
 }

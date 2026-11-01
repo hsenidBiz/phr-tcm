@@ -1638,6 +1638,22 @@ fn the_address_checks_export_with_the_same_rules() {
     assert!(!plain.contains("notedUrls"), "{plain}");
 }
 
+#[test]
+fn remember_text_exports_a_noted_text_and_a_to_have_text() {
+    let got = one_step(json!([
+        { "kind": "remember_text", "selector": { "css": "#pills" }, "as": "counts" },
+        { "kind": "expect_text", "selector": { "css": "#pills" }, "same_as": "counts", "timeout_ms": 4000 }
+    ]))
+    .run()
+    .unwrap();
+    assert_eq!(got.matches("const notedTexts: Record<string, string> = {};").count(), 1, "{got}");
+    assert!(got.contains("notedTexts['counts'] = await cur.locator('#pills').filter({ visible: true }).first().evaluate(readText);"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.locator('#pills').filter({ visible: true }).first().evaluate(readText), { timeout: 4000 }).toBe(notedTexts['counts']);"), "{got}");
+    assert!(got.contains("const readText = "), "{got}");
+    let plain = one_step(json!([{ "kind": "check_url", "contains": "/x" }])).run().unwrap();
+    assert!(!plain.contains("notedTexts"), "{plain}");
+}
+
 /// The export reduces `cur.url()` the way its emitted script does (origin if
 /// the rule names one, path, query, and the fragment if the rule names one)
 /// and compares it with `UrlRule::expected`: that must say what the app's
@@ -1756,4 +1772,31 @@ fn the_todo_lines_are_the_cards_expectations() {
             .collect();
         assert_eq!(got, want, "{}", e.name);
     }
+}
+
+/// A delete loop's row wait in the export is the loop's `settle_ms`, or 5 s.
+#[test]
+fn a_repeat_loop_waits_for_its_row_as_long_as_settle_ms() {
+    let loop_with = |extra: Value| {
+        let mut v = json!({
+            "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3,
+            "then": [{ "kind": "click", "selector": { "css": "#confirm" } }]
+        });
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        one_step(json!([v])).run().unwrap()
+    };
+    assert!(loop_with(json!({ "settle_ms": 12000 })).contains("toHaveCount(0, { timeout: 12000 })"));
+    assert!(loop_with(json!({})).contains("toHaveCount(0, { timeout: 5000 })"));
+}
+
+#[test]
+fn has_text_becomes_a_filter_before_nth() {
+    let got = lf(&one_step(json!([
+        { "kind": "click", "selector": { "css": "tr", "has_text": "AutoTest Grp 7", "nth": 0, "visible": false } }
+    ]))
+    .run()
+    .unwrap());
+    assert!(got.contains(".locator('tr').filter({ hasText: 'AutoTest Grp 7' }).nth(0)"), "{got}");
 }

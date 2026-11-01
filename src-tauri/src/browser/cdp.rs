@@ -729,6 +729,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// (`Driver::noted_addresses`). Emptied with the case's tabs
     /// (`close_other_tabs`), so one case never reads another's.
     noted: std::collections::BTreeMap<String, String>,
+    /// The texts a case's `remember_text` noted, by name
+    /// (`Driver::noted_texts`). Emptied with `noted`.
+    noted_text: std::collections::BTreeMap<String, String>,
     /// When (epoch ms, `timing::wall_ms`) the browser last answered an `Input.*` command that delivers
     /// input, for a request timed from the input that caused it.
     last_input_ms: Option<u64>,
@@ -922,6 +925,7 @@ impl<T: Transport> Cdp<T> {
             capture_pause: None,
             extra_headers: std::collections::BTreeMap::new(),
             noted: std::collections::BTreeMap::new(),
+            noted_text: std::collections::BTreeMap::new(),
             last_input_ms: None,
         }
     }
@@ -2227,6 +2231,7 @@ impl<T: Transport> Cdp<T> {
         self.closed_by_page.clear();
         self.step_marks = (None, None);
         self.noted.clear();
+        self.noted_text.clear();
     }
 
     /// Every download so far, from every tab, in start order.
@@ -3041,6 +3046,11 @@ pub trait Driver {
     fn noted_addresses(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
         None
     }
+    /// The texts this case's `remember_text` noted, by name; emptied with
+    /// the case's tabs. `None` for a driver that cannot note one.
+    fn noted_texts(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
+        None
+    }
     /// See `Cdp::is_guarding_saves`. A driver with no guard of its own
     /// never is.
     fn is_guarding_saves(&self) -> bool {
@@ -3279,6 +3289,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn noted_addresses(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
         Some(&mut self.noted)
+    }
+    fn noted_texts(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
+        Some(&mut self.noted_text)
     }
     fn is_guarding_saves(&self) -> bool {
         Cdp::is_guarding_saves(self)

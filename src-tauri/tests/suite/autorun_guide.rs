@@ -31,9 +31,10 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::CheckText { value: "v".into() },
         Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
         Action::RememberUrl { name: "a".into() },
+        Action::RememberText { selector: "s".into(), name: "a".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
@@ -47,7 +48,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, not_before_ms: None, started_within_ms: None, same_document: false, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
-        Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }] },
+        Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }], settle_ms: None },
         Action::ExpectDownload {
             name: "a.csv".into(),
             within_ms: None,
@@ -2718,7 +2719,29 @@ fn active_environment_section_says_its_scripts_are_its_own() {
     };
     let text = v2_lib::autorun::guide::active_environment_section(&env, None);
     assert!(
-        text.contains("leaves passwords out. Its scripts, areas, components and API templates are its own."),
+        text.contains("It is not marked as a test environment. Its scripts, areas, components and API templates are its own."),
         "{text}"
     );
+}
+
+#[test]
+fn the_live_environment_section_promises_no_password() {
+    for test_environment in [false, true] {
+        let env = v2_lib::environments::Environment {
+            id: "env-0000000a".into(),
+            name: "Scratch".into(),
+            start_url: String::new(),
+            allowed_origins: vec![],
+            db_id: String::new(),
+            test_environment,
+            test_prefix: "AUTOTEST".into(),
+            db_auto_approve: false,
+            password_expiry_query: String::new(),
+            active_session_query: String::new(),
+            reset_expired_passwords: false,
+        };
+        let text = v2_lib::autorun::guide::active_environment_section(&env, None);
+        assert!(!text.to_lowercase().contains("password"), "{text}");
+        assert!(text.contains(if test_environment { "It is marked as a test environment." } else { "It is not marked as a test environment." }), "{text}");
+    }
 }

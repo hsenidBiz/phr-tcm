@@ -5299,3 +5299,93 @@ async fn a_needed_record_whose_setup_is_gone_may_be_dropped_by_a_repair() {
     assert_eq!(status, 200, "{out}");
     assert!(load_script(dir.path(), 7).unwrap().unwrap().needs_records.is_empty());
 }
+
+// ------------------------------------------------ a failed discovery start frees its case
+
+async fn start_as(id: &str, case_id: i32) -> (u16, String) {
+    use v2_lib::autorun::agents::{AgentKey, Caller};
+    let key = AgentKey { id: id.to_string(), name: None };
+    let body = serde_json::json!({ "case_id": case_id, "account": "nobody-saved-this" }).to_string();
+    v2_lib::ai_bridge::route_as(&Caller::Agent(key), &ctx(), None, "POST", "/autorun-discover-start", &body, "1.0.0").await
+}
+
+fn register_agent(id: &str) -> v2_lib::autorun::agents::AgentKey {
+    use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey};
+    let now = v2_lib::autorun::sessions::now_ms();
+    let h = AgentHeaders { id: Some(id.into()), pid: Some(4242), client: Some("claude-code".into()), name: None };
+    agents::note_call(&h.caller(), &h, now);
+    AgentKey { id: id.into(), name: None }
+}
+
+const START_A: &str = "0123456789abcdef0123456789abcdef";
+const START_B: &str = "1123456789abcdef0123456789abcdef";
+
+#[tokio::test]
+async fn a_failed_discovery_start_lets_go_of_the_case_it_claimed() {
+    use v2_lib::autorun::{agents, claims};
+    let _a = crate::serial::agents();
+    let _l = crate::serial::log_tail();
+    let _r = crate::serial::autorun();
+    let dir = TempDir::new();
+    set_root(dir.path().to_path_buf());
+    agents::clear();
+    claims::clear();
+    let a = register_agent(START_A);
+    register_agent(START_B);
+    let (status, out) = start_as(START_A, 135421).await;
+    assert!(status >= 400 && !out.contains("being worked on"), "{status} {out}");
+    assert_eq!(claims::holder(135421, v2_lib::autorun::sessions::now_ms()), None, "A's failed start ended its hold ({a:?})");
+    let lines: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
+    assert!(lines.iter().any(|m| m == "Auto Run: case 135421's hold ended - its discovery did not start"), "{lines:?}");
+    let (_, out) = start_as(START_B, 135421).await;
+    assert!(!out.contains("is being worked on by"), "{out}");
+    agents::clear();
+    claims::clear();
+}
+
+#[tokio::test]
+async fn a_failed_start_keeps_a_hold_made_earlier() {
+    use v2_lib::autorun::{agents, claims};
+    let _a = crate::serial::agents();
+    let _l = crate::serial::log_tail();
+    let _r = crate::serial::autorun();
+    let dir = TempDir::new();
+    set_root(dir.path().to_path_buf());
+    agents::clear();
+    claims::clear();
+    let a = register_agent(START_A);
+    register_agent(START_B);
+    claims::claim(&a, 135421, v2_lib::autorun::sessions::now_ms()).unwrap();
+    let (status, out) = start_as(START_A, 135421).await;
+    assert!(status >= 400 && !out.contains("being worked on"), "{status} {out}");
+    let (status, out) = start_as(START_B, 135421).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("is being worked on by Assistant 1"), "{out}");
+    agents::clear();
+    claims::clear();
+}
+
+#[tokio::test]
+async fn a_start_refused_for_want_of_a_browser_lets_go_of_its_case() {
+    use v2_lib::autorun::{agents, claims, slots::SlotNo};
+    let _a = crate::serial::agents();
+    let _l = crate::serial::log_tail();
+    let _r = crate::serial::autorun();
+    let dir = TempDir::new();
+    set_root(dir.path().to_path_buf());
+    agents::clear();
+    claims::clear();
+    v2_lib::commands::autorun_slots::clear();
+    register_agent(START_A);
+    for (n, id) in [(0, "2123456789abcdef0123456789abcdef"), (1, "3123456789abcdef0123456789abcdef"), (2, "4123456789abcdef0123456789abcdef")] {
+        let other = register_agent(id);
+        v2_lib::commands::autorun_slots::bind(SlotNo(n), &other);
+    }
+    let (status, out) = start_as(START_A, 135421).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("browsers are open already"), "{out}");
+    assert_eq!(claims::holder(135421, v2_lib::autorun::sessions::now_ms()), None);
+    agents::clear();
+    claims::clear();
+    v2_lib::commands::autorun_slots::clear();
+}

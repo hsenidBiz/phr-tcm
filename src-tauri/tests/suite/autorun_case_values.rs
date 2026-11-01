@@ -1385,6 +1385,26 @@ fn a_repair_that_removes_a_check_is_refused() {
     );
 }
 
+/// A loop's own `expect_hidden` is a wait for the row to go, not a check:
+/// swapping a real "row is gone" check for one is giving that check up.
+#[test]
+fn a_loop_wait_does_not_stand_in_for_a_dropped_check() {
+    let click = json!({ "kind": "click", "selector": "#del" });
+    let old = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([click.clone(), { "kind": "expect_hidden", "selector": "#row" }]),
+    );
+    let new = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([{ "kind": "repeat_while_visible", "selector": "#row", "max": 3, "then": [click, { "kind": "expect_hidden", "selector": "#row" }] }]),
+    );
+    let r = repair(&old, &new, &[]);
+    assert!(r.iter().any(|l| l.starts_with("step 2: the repair removes 1 of its checks and gives_up names 0")), "{r:?}");
+    let r = repair(&old, &new, &[give(2, "expect_hidden", "the loop already waits for the row")]);
+    assert!(r.is_empty(), "{r:?}");
+    assert!(v2_lib::autorun::case_values::check_kinds_of_step(&new.steps[1]).is_empty());
+}
+
 #[test]
 fn a_repair_that_names_the_check_it_gives_up_passes() {
     let r = repair(&three_checks(), &without_the_visible_check(), &[give(2, " Expect_Visible ", "step 4 already counts the same rows")]);

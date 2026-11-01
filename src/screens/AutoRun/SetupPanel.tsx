@@ -12,6 +12,7 @@
 // itself is `useAutoRunReadiness`'s, called once, here.
 
 import { useQuery } from "@tanstack/react-query";
+import { open as pickFolder } from "@tauri-apps/plugin-dialog";
 import { TriangleAlert } from "lucide-react";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { commands, type CaseScript, type SavedFixture } from "../../bindings";
@@ -24,6 +25,7 @@ import {
   IconComponents,
   IconDiscoveryMap,
   IconHideDetails,
+  IconImport,
   IconModuleApiTemplates,
   IconModulePaths,
   IconRecipe,
@@ -42,6 +44,7 @@ import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
+import ImportScriptsDialog from "./ImportScriptsDialog";
 import RecipeEditor from "./RecipeEditor";
 import { noProjectHint, useAllProjects } from "../../lib/projectScope";
 import RecordSignInDialog from "./RecordSignInDialog";
@@ -487,6 +490,8 @@ export default function SetupPanel({
   const [componentsOpen, setComponentsOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
+  // The folder of scripts the person picked to import, and the environment it was picked for.
+  const [importing, setImporting] = useState<{ folder: string; envName: string } | null>(null);
   // While the assistant's discovery holds the Auto Run browser, End
   // discovery is the person's way out of one the assistant never ended.
   // Nothing is lost by ending it - the map keeps what was seen - so it asks
@@ -616,8 +621,9 @@ export default function SetupPanel({
         ) : (
           <div className="space-y-3">
             <div className="space-y-3">
-              {/* Read-only here: the environment and its database are
-                  chosen on AI Bridge, which owns them - so no button. */}
+              {/* The environment and its database are chosen on AI Bridge,
+                  which owns them; the one button here brings scripts into
+                  the environment that is active. */}
               <SetupRow
                 label="Environment"
                 status={statusOf("Environment")}
@@ -641,7 +647,27 @@ export default function SetupPanel({
                     <span className="text-muted">None. Environments are chosen on the AI Bridge tab.</span>
                   )
                 }
-              />
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Import scripts into this environment"
+                  disabled={!activeEnv}
+                  title={activeEnv ? `Bring Auto Run scripts from a folder into ${activeEnv.name}` : "No environment is active"}
+                  onClick={async () => {
+                    if (!activeEnv) return;
+                    try {
+                      const picked = await pickFolder({ directory: true });
+                      if (typeof picked === "string" && picked) setImporting({ folder: picked, envName: activeEnv.name });
+                    } catch {
+                      // The folder picker could not open; nothing was chosen.
+                    }
+                  }}
+                >
+                  <IconImport aria-hidden />
+                  Import scripts…
+                </Button>
+              </SetupRow>
 
               <SetupRow
                 label="Site address"
@@ -954,6 +980,7 @@ export default function SetupPanel({
         )}
       </div>
 
+      {importing && <ImportScriptsDialog folder={importing.folder} envName={importing.envName} onClose={() => setImporting(null)} />}
       {accountsOpen && <AccountsDialog org={org} project={project} onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />}
       {recordOpen && <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />}

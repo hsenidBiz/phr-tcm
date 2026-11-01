@@ -220,6 +220,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             env_copy::auto_run_copy_case,
             env_copy::auto_run_copy_case_from_plan,
             env_copy::auto_run_copy_case_from,
+            env_copy::auto_run_import_folder_plan,
+            env_copy::auto_run_import_folder,
             environments::env_set_default_password,
             environments::env_clear_default_password,
             environments::env_set_reset_expired_passwords,
@@ -229,6 +231,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_open_browser,
             autorun::auto_run_close_browser,
             autorun::auto_run_discovery_active,
+            autorun::auto_run_migration_note,
             autorun::auto_run_load_map,
             autorun::auto_run_load_mapping_summary,
             autorun::auto_run_forget_map_area,
@@ -678,6 +681,9 @@ pub fn run() {
                 }
                 if let Some(r) = &started.report {
                     applog::info(autorun::roots::migration_log_line(r));
+                    if r.items > 0 {
+                        autorun::roots::write_migration_note(&shared, &autorun::roots::migration_notice(r));
+                    }
                 }
                 if let Some(why) = &started.failed {
                     // `why` is empty when the reason would have named a path.

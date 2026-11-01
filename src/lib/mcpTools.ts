@@ -220,7 +220,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "get_accounts",
     label: "Read the accounts",
-    summary: "The active environment's account keys and usernames - with passwords only in a test environment - and this project's Test files a case can upload.",
+    summary: "The active environment's account keys, labels and usernames, and whether each has a password (never the password) - and this project's Test files a case can upload.",
   },
   {
     name: "check_autorun_sign_in",

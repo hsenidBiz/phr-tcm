@@ -89,7 +89,7 @@ pub fn checks_changed(old: &StepScript, new: &StepScript) -> bool {
     fn checks(step: &StepScript) -> Vec<serde_json::Value> {
         step.actions
             .iter()
-            .flat_map(|a| a.each())
+            .flat_map(|a| a.judging())
             .filter(|a| a.is_check())
             .filter_map(|a| serde_json::to_value(a).ok())
             .collect()

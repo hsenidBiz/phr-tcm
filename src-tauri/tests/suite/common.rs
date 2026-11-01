@@ -166,6 +166,10 @@ pub struct ScriptedDriver {
     /// The addresses a `remember_url` noted, by name (`noted_addresses`):
     /// emptied with the case's tabs, as `Cdp` empties its own.
     pub noted: std::collections::BTreeMap<String, String>,
+    /// The texts a `remember_text` noted, by name (`noted_texts`); emptied with `noted`.
+    pub noted_text: std::collections::BTreeMap<String, String>,
+    /// A driver that keeps no notebook of texts (`noted_texts` answers `None`).
+    pub no_text_notebook: bool,
     /// When (epoch ms) a command that delivers input was last made, as `Cdp` notes the moment the browser
     /// answered it (`Driver::last_input_ms`).
     pub last_input: Option<u64>,
@@ -273,6 +277,8 @@ impl ScriptedDriver {
             capture_notes: vec![],
             capture: None,
             noted: std::collections::BTreeMap::new(),
+            noted_text: std::collections::BTreeMap::new(),
+            no_text_notebook: false,
             last_input: None,
         }
     }
@@ -338,6 +344,9 @@ impl ScriptedDriver {
 impl Driver for ScriptedDriver {
     fn noted_addresses(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
         Some(&mut self.noted)
+    }
+    fn noted_texts(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
+        if self.no_text_notebook { None } else { Some(&mut self.noted_text) }
     }
     fn capture(&self) -> Option<&v2_lib::browser::net_capture::NetCapture> {
         self.capture.as_ref()
@@ -727,6 +736,7 @@ impl Driver for ScriptedDriver {
     async fn close_other_tabs(&mut self) {
         self.tabs.closed_others += 1;
         self.noted.clear();
+        self.noted_text.clear();
         self.tabs.open.clear();
         self.tabs.closed_by_page.clear();
         self.tabs.unnamed = 0;

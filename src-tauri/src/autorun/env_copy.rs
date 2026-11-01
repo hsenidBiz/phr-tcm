@@ -966,3 +966,173 @@ pub fn copy_case(
     crate::applog::info(format!("Auto Run: copied case {case_id} to another environment"));
     Ok(plan)
 }
+
+// ---- importing scripts from a folder ---------------------------------------
+//
+// A folder the person picked (a copy of another machine's `scripts` folder,
+// or the folder holding it) is read into the active environment. The folder
+// is only read; the scripts are written through the active root's guard
+// like any save. A case that already has a different script here is left
+// unless the person agreed to replace it.
+
+/// Said when the folder holds no Auto Run script files.
+pub const IMPORT_NO_SCRIPTS: &str = "that folder holds no Auto Run scripts (files named case-<number>.json)";
+/// Said when the import stopped part-way.
+pub const IMPORT_FAILED: &str = "the import did not finish - see Settings > Logs";
+
+/// What importing a folder's scripts would do, or did. Case ids only.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct ImportScriptsPlan {
+    /// Cases the environment has no script for: added.
+    pub new: Vec<i32>,
+    /// Cases whose script here is the same as the folder's: nothing to do.
+    pub same: Vec<i32>,
+    /// Cases whose script here differs: left, or replaced when agreed.
+    pub differ: Vec<i32>,
+    /// `case-*.json` files that are not a script for the case they are named
+    /// for (not readable, a link, or a name and case id that disagree).
+    pub unreadable: u32,
+}
+
+struct ImportGather {
+    plan: ImportScriptsPlan,
+    new: Vec<crate::autorun::CaseScript>,
+    /// Each with the version of the script here when it was read, so a
+    /// replace can tell it changed meanwhile.
+    differ: Vec<(crate::autorun::CaseScript, Option<String>)>,
+}
+
+/// A script without the assistant's marks, which never travel, and without
+/// its save time, which every save restamps: so a script imported before
+/// compares as the same, not as different.
+fn without_marks(mut s: crate::autorun::CaseScript) -> crate::autorun::CaseScript {
+    s.suspected_defect = None;
+    s.cleared_defect = None;
+    s.saved_at = None;
+    s
+}
+
+fn gather_import(from: &Path, target: &Path) -> Result<ImportGather, String> {
+    use super::store;
+    let dir = if from.join("scripts").is_dir() { from.join("scripts") } else { from.to_path_buf() };
+    let entries = std::fs::read_dir(&dir).map_err(|e| {
+        crate::applog::warn(format!("Auto Run: a folder of scripts to import could not be read: {e}"));
+        IMPORT_NO_SCRIPTS.to_string()
+    })?;
+    let mut plan = ImportScriptsPlan { new: vec![], same: vec![], differ: vec![], unreadable: 0 };
+    let (mut new, mut differ) = (Vec::new(), Vec::new());
+    let mut seen: Vec<i32> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with("case-") && name.ends_with(".json")) {
+            continue;
+        }
+        let is_file = std::fs::symlink_metadata(entry.path()).map(|m| m.is_file()).unwrap_or(false);
+        let script = if is_file {
+            std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|s| serde_json::from_str::<crate::autorun::CaseScript>(&s).ok())
+                .filter(|s| name == format!("case-{}.json", s.case_id) && !seen.contains(&s.case_id))
+                // The same checks every other way a script arrives goes through.
+                .filter(|s| store::check_scripts(std::slice::from_ref(s)).is_ok())
+        } else {
+            None
+        };
+        let Some(script) = script else {
+            plan.unreadable += 1;
+            continue;
+        };
+        seen.push(script.case_id);
+        let script = without_marks(script);
+        match store::load_script(target, script.case_id) {
+            Ok(None) => {
+                plan.new.push(script.case_id);
+                new.push(script);
+            }
+            Ok(Some(have)) if same(&without_marks(have.clone()), &script) => plan.same.push(script.case_id),
+            // A script here that cannot be read counts as different: a
+            // replace keeps it aside rather than losing it.
+            _ => {
+                let version = store::load_script(target, script.case_id).ok().flatten().as_ref().map(store::script_version);
+                plan.differ.push(script.case_id);
+                differ.push((script, version));
+            }
+        }
+    }
+    plan.new.sort_unstable();
+    plan.same.sort_unstable();
+    plan.differ.sort_unstable();
+    if plan.new.is_empty() && plan.same.is_empty() && plan.differ.is_empty() && plan.unreadable == 0 {
+        return Err(IMPORT_NO_SCRIPTS.to_string());
+    }
+    Ok(ImportGather { plan, new, differ })
+}
+
+/// What importing the scripts in `from` into `target` would add, skip and
+/// leave. Writes nothing.
+pub fn plan_import_scripts(from: &Path, target: &Path) -> Result<ImportScriptsPlan, String> {
+    gather_import(from, target).map(|g| g.plan)
+}
+
+/// Saves every new script from `from` into `target` (the active root); with
+/// `replace`, also every different one, the old one first kept aside like a
+/// deleted script and put back if the new one cannot be written. Refused
+/// before anything is written when a case to replace is being replayed.
+pub fn import_scripts(from: &Path, target: &Path, replace: bool) -> Result<ImportScriptsPlan, String> {
+    import_scripts_with(from, target, replace, &|| {})
+}
+
+/// [`import_scripts`], calling `between` after the folder and the target have
+/// been read and before anything is written: the moment another save can slip
+/// in, which a test makes happen.
+pub fn import_scripts_with(
+    from: &Path,
+    target: &Path,
+    replace: bool,
+    between: &dyn Fn(),
+) -> Result<ImportScriptsPlan, String> {
+    use super::store;
+    let g = gather_import(from, target)?;
+    between();
+    if replace {
+        if let Some(id) = g.plan.differ.iter().find(|id| store::is_replaying(**id)) {
+            return Err(case_copy_replaying(*id));
+        }
+    }
+    let failed = |what: &str, e: String| {
+        crate::applog::warn(format!("Auto Run: importing scripts stopped at {what}: {e}"));
+        IMPORT_FAILED.to_string()
+    };
+    // A case that gained a script since the plan is refused, never overwritten
+    // (`Changed` names the case and no path); the whole new set lands or none.
+    let saved = |what: &str, e: store::SaveScriptsError| match e {
+        store::SaveScriptsError::Changed { .. } => e.to_string(),
+        other => failed(what, other.to_string()),
+    };
+    let fresh: Vec<_> = g.new.iter().map(|s| (s.case_id, None)).collect();
+    store::save_scripts_checked(target, &g.new, &fresh).map_err(|e| saved("the new scripts", e))?;
+    let mut replaced = 0;
+    if replace {
+        for (s, version) in &g.differ {
+            let old = store::load_script(target, s.case_id).ok().flatten();
+            if old.as_ref().map(store::script_version) != *version {
+                return Err(store::SaveScriptsError::Changed { case_id: s.case_id, saved_at: old.and_then(|o| o.saved_at) }.to_string());
+            }
+            store::delete_script(target, s.case_id, super::sessions::now_ms()).map_err(|e| failed("an old script", e))?;
+            let one = std::slice::from_ref(s);
+            if let Err(e) = store::save_scripts_checked(target, one, &[(s.case_id, None)]) {
+                if let (Some(old), store::SaveScriptsError::Io(_) | store::SaveScriptsError::Invalid(_)) = (&old, &e) {
+                    let _ = store::save_scripts_checked(target, std::slice::from_ref(old), &[(s.case_id, None)]);
+                }
+                return Err(saved("a replaced script", e));
+            }
+            replaced += 1;
+        }
+    }
+    crate::applog::info(format!(
+        "Auto Run: imported {} new scripts, replaced {replaced}, {} left as they were",
+        g.new.len(),
+        if replace { 0 } else { g.differ.len() }
+    ));
+    Ok(g.plan)
+}

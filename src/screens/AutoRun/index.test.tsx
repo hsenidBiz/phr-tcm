@@ -2093,3 +2093,22 @@ test("names the environment whose scripts are on screen", async () => {
   await screen.findByText("Login - valid credentials");
   expect(await screen.findByRole("note", { name: "Environment" })).toHaveTextContent("Scripts for QA");
 });
+
+test("shows the per-environment move notice once", async () => {
+  const notes = ["Auto Run moved 3 scripts to Default; other environments start empty.", null];
+  let asked = 0;
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) => {
+    if (cmd === "auto_run_migration_note") return notes[asked++] ?? null;
+    return undefined;
+  });
+  const first = renderScreen();
+  await screen.findByText("Login - valid credentials");
+  await waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/moved 3 scripts to Default/)),
+  );
+  first.unmount();
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  await waitFor(() => expect(asked).toBe(2));
+  expect(toast.info).toHaveBeenCalledTimes(1);
+});

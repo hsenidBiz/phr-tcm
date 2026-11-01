@@ -41,6 +41,7 @@ const EXAMPLES: &[(&str, &str)] = &[
     ("check_text", r#"{"kind":"check_text","value":"Saved"}"#),
     ("check_url", r#"{"kind":"check_url","contains":"/hr/home"}"#),
     ("remember_url", r#"{"kind":"remember_url","as":"before"}"#),
+    ("remember_text", r##"{"kind":"remember_text","selector":{"css":"#pills"},"as":"counts"}"##),
     ("expect_visible", r##"{"kind":"expect_visible","selector":{"css":"#panel"}}"##),
     ("expect_hidden", r##"{"kind":"expect_hidden","selector":{"css":"#panel"}}"##),
     ("expect_text", r##"{"kind":"expect_text","selector":{"css":"#title"},"equals":"Leave"}"##),

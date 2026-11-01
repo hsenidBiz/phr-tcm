@@ -39,6 +39,12 @@ pub struct LocatorStep {
     /// Zero-based pick from this step's matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nth: Option<i32>,
+    /// Keep only this step's matches whose text holds this text (contains,
+    /// case-insensitive, whitespace folded; the element's text only, as the
+    /// Playwright export's `hasText` reads it). Applied before `nth`: the way to reach a row or card by the
+    /// name it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_text: Option<String>,
     /// A component's placeholder: the caller's input of this name supplies
     /// the whole locator step. Stands alone, and is replaced before a
     /// script runs.
@@ -133,6 +139,7 @@ impl LocatorStep {
                 || self.exact
                 || self.visible.is_some()
                 || self.nth.is_some()
+                || self.has_text.is_some()
             {
                 return Err("an input placeholder stands alone".to_string());
             }
@@ -157,6 +164,9 @@ impl LocatorStep {
         if self.name.is_some() && self.role.is_none() {
             return Err("name only goes with role".to_string());
         }
+        if blank(&self.has_text) {
+            return Err("has_text is empty - give the text the element holds".to_string());
+        }
         if self.nth.is_some_and(|n| n < 0) {
             return Err("nth counts from 0 and cannot be negative".to_string());
         }
@@ -164,8 +174,8 @@ impl LocatorStep {
     }
 
     /// What this link is called, for comparison with what the page showed.
-    /// `exact`, `visible` and `nth` do not change which element is meant by
-    /// name, so they are left out. `None` when the link names nothing.
+    /// `exact`, `visible`, `nth` and `has_text` do not change which element is
+    /// meant by name, so they are left out. `None` when the link names nothing.
     pub fn seen_key(&self) -> Option<SeenKey> {
         if let Some(role) = &self.role {
             return Some(SeenKey::Role {
@@ -193,6 +203,9 @@ impl LocatorStep {
         } else {
             self.css.clone().unwrap_or_default()
         };
+        if let Some(t) = &self.has_text {
+            s.push_str(&format!(" holding \"{t}\""));
+        }
         if let Some(n) = self.nth {
             s.push_str(&format!(" #{}", n + 1));
         }
@@ -384,6 +397,14 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
     Ok(n.as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)))
 }
 
+/// `this` is a match; true when its text holds `want` (contains, case-insensitive, whitespace runs folded).
+pub const HAS_TEXT_JS: &str = r#"function(want) {
+  const fold = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
+  const w = fold(want);
+  if (!w) return false;
+  return fold(this.textContent).includes(w);
+}"#;
+
 /// `this` is the element. Could a person see it: drawn with a size, and
 /// not hidden by `display`, `visibility` or `content-visibility`.
 ///
@@ -568,6 +589,17 @@ pub async fn resolve_within<D: Driver>(d: &mut D, root: &Handle, target: &Target
     walk(d, vec![root.clone()], target.steps()).await
 }
 
+/// The handles whose text holds `want` (`HAS_TEXT_JS`).
+async fn keep_holding<D: Driver>(d: &mut D, handles: Vec<Handle>, want: &str) -> Result<Vec<Handle>, CdpError> {
+    let mut kept = Vec::with_capacity(handles.len());
+    for handle in handles {
+        if page::call_value(d, &handle, HAS_TEXT_JS, &[json!(want)]).await?.as_bool() == Some(true) {
+            kept.push(handle);
+        }
+    }
+    Ok(kept)
+}
+
 /// The chain's steps, one after another, from these roots.
 async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -> Result<Resolved, CdpError> {
     let mut unreachable_frame = None;
@@ -582,6 +614,11 @@ async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -
         }
         if roots.len() > 1 {
             next = dedupe_by_backend(d, next).await?;
+        }
+        if let Some(want) = &step.has_text {
+            // Boxed: this future would otherwise sit inside `walk`'s, and
+            // `walk` sits inside every command's.
+            next = Box::pin(keep_holding(d, next, want)).await?;
         }
         if let Some(n) = step.nth {
             next = next.into_iter().nth(n as usize).into_iter().collect();

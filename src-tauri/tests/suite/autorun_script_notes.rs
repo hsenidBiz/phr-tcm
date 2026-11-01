@@ -2,7 +2,7 @@
 //! fail, and picked by position.
 
 use v2_lib::autorun::script_notes::{
-    delete_after_check_notes as after_check, is_delete_click, positional_delete_notes as positional,
+    delete_after_check_notes as after_check, is_delete_click, moved_with_check, KEEP_THE_CASES_DELETE, positional_delete_notes as positional,
     positional_delete_notes_for_actions,
 };
 use v2_lib::autorun::CaseScript;
@@ -200,4 +200,81 @@ fn a_finish_click_counts_as_making_something() {
     ]));
     let notes = after_check(&s, None, None);
     assert_eq!(notes.len(), 1, "{notes:?}");
+}
+
+fn two(step: serde_json::Value, cleanup: serde_json::Value) -> CaseScript {
+    script(serde_json::json!([
+        { "step_number": 6, "actions": step },
+        { "step_number": 7, "cleanup": true, "unchecked": "removes the record", "actions": cleanup }
+    ]))
+}
+
+fn delete_click() -> serde_json::Value {
+    serde_json::json!({ "kind": "click", "selector": { "role": "button", "name": "Delete" } })
+}
+
+fn gone() -> serde_json::Value {
+    serde_json::json!({ "kind": "expect_hidden", "selector": ".row" })
+}
+
+#[test]
+fn moving_a_delete_and_its_check_is_noted() {
+    let old = script(serde_json::json!([
+        { "step_number": 6, "actions": [delete_click(), gone()] }
+    ]));
+    let new = two(serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Open" } }]), serde_json::json!([delete_click()]));
+    let notes = moved_with_check(&old, &new);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("step 6"), "{notes:?}");
+    assert!(notes[0].contains(KEEP_THE_CASES_DELETE), "{notes:?}");
+}
+
+#[test]
+fn a_guarded_fallback_alongside_the_kept_delete_is_not_noted() {
+    let old = script(serde_json::json!([{ "step_number": 6, "actions": [delete_click(), gone()] }]));
+    let guarded = serde_json::json!({ "kind": "when_visible", "selector": ".row", "then": [delete_click()] });
+    let new = two(serde_json::json!([delete_click(), gone()]), serde_json::json!([guarded]));
+    assert!(moved_with_check(&old, &new).is_empty());
+}
+
+#[test]
+fn no_clean_up_step_and_no_lost_check_are_not_noted() {
+    let old = script(serde_json::json!([{ "step_number": 6, "actions": [delete_click()] }]));
+    let new = two(serde_json::json!([gone()]), serde_json::json!([delete_click()]));
+    // No clean-up step in the new script: nothing moved to it.
+    assert!(moved_with_check(&old, &old).is_empty());
+    // No old check lost: the step kept its count.
+    assert!(moved_with_check(&old, &new).is_empty());
+}
+
+#[test]
+fn a_target_less_action_is_noted_without_a_double_space() {
+    let old = script(serde_json::json!([{ "step_number": 6, "actions": [{ "kind": "reload" }, gone()] }]));
+    let new = two(serde_json::json!([]), serde_json::json!([{ "kind": "reload" }]));
+    let notes = moved_with_check(&old, &new);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(!notes[0].contains("  ") && notes[0].contains("reload moved"), "{notes:?}");
+}
+
+#[test]
+fn a_delete_picked_by_has_text_is_not_a_positional_pick() {
+    let s = script(serde_json::json!([
+        { "step_number": 3, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Delete", "has_text": "AUTOTEST Scale", "nth": 0 } }] }
+    ]));
+    assert!(positional(&s, None, None).is_empty());
+    let by_position = script(serde_json::json!([
+        { "step_number": 3, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Delete", "nth": 2 } }] }
+    ]));
+    let notes = positional(&by_position, None, None);
+    assert!(notes[0].contains("has_text"), "{notes:?}");
+}
+
+#[test]
+fn the_delete_after_check_note_allows_a_delete_the_case_asks_for() {
+    let notes = after_check(&delete_after_check_script(), None, None);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("unless the case asks for the delete") && notes[0].contains("add a guarded fallback to the clean-up"),
+        "{notes:?}"
+    );
 }

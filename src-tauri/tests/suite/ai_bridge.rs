@@ -4537,11 +4537,127 @@ fn patch_steps_merge_into_the_saved_script() {
 
     let refused = |item: serde_json::Value| apply_patch_steps(&mut [item], &load).unwrap_err();
     assert!(refused(serde_json::json!({ "case_id": 8, "patch_steps": [{ "step": 1, "actions": [] }] })).contains("no saved script to patch"));
-    assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 9, "actions": [] }] })).contains("step 9 is not in its saved script"));
     assert!(refused(serde_json::json!({ "case_id": 7, "steps": [], "patch_steps": [{ "step": 1, "actions": [] }] })).contains("not both"));
     assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 1, "actions": [] }, { "step": 1, "actions": [] }] })).contains("twice"));
     assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 1 }] })).contains("no \"actions\""));
     assert!(refused(serde_json::json!({ "patch_steps": [{ "step": 1, "actions": [] }] })).contains("needs its \"case_id\""));
+}
+
+fn patch_fixture(steps: serde_json::Value) -> v2_lib::autorun::CaseScript {
+    serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "Saved", "steps": steps })).unwrap()
+}
+
+fn patched(saved: &v2_lib::autorun::CaseScript, patch: serde_json::Value) -> Result<v2_lib::autorun::CaseScript, String> {
+    let load = |_: i32| Ok(Some(saved.clone()));
+    let mut items = vec![serde_json::json!({ "case_id": 7, "patch_steps": patch })];
+    v2_lib::ai_bridge::apply_patch_steps(&mut items, &load)?;
+    Ok(serde_json::from_value(items[0].clone()).unwrap())
+}
+
+#[test]
+fn patch_steps_adds_a_missing_step_in_order() {
+    let long = "x".repeat(5000);
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 2, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Notes" }, "value": long }] },
+        { "step_number": 4, "actions": [{ "kind": "reload" }] }
+    ]));
+    let added = serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Save" } }]);
+    let out = patched(&saved, serde_json::json!([{ "step": 3, "actions": added }])).unwrap();
+    let numbers: Vec<i32> = out.steps.iter().map(|s| s.step_number).collect();
+    assert_eq!(numbers, vec![1, 2, 3, 4]);
+    assert_eq!(serde_json::to_value(&out.steps[2].actions).unwrap(), added);
+    assert_eq!(out.steps[0], saved.steps[0]);
+    assert_eq!(out.steps[1], saved.steps[1]);
+    assert_eq!(out.steps[3], saved.steps[2]);
+}
+
+#[test]
+fn patch_steps_adds_a_cleanup_step() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 2, "actions": [{ "kind": "reload" }] }
+    ]));
+    let out = patched(&saved, serde_json::json!([{ "step": 5, "cleanup": true, "actions": [{ "kind": "reload" }] }])).unwrap();
+    assert_eq!(out.steps.len(), 3);
+    let last = out.steps.last().unwrap();
+    assert!(last.cleanup);
+    assert_eq!(last.step_number, 5);
+    assert_eq!(out.steps.iter().filter(|s| s.cleanup).count(), 1);
+}
+
+#[test]
+fn patch_steps_replaces_the_cleanup_step() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 5, "cleanup": true, "actions": [{ "kind": "reload" }] }
+    ]));
+    let new_actions = serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Close" } }]);
+    let out = patched(&saved, serde_json::json!([{ "step": 6, "cleanup": true, "actions": new_actions }])).unwrap();
+    assert_eq!(out.steps.len(), 2);
+    assert_eq!(out.steps.iter().filter(|s| s.cleanup).count(), 1);
+    let last = out.steps.last().unwrap();
+    assert_eq!(last.step_number, 6);
+    assert_eq!(serde_json::to_value(&last.actions).unwrap(), new_actions);
+}
+
+/// The guide's example sends actions only: the saved clean-up's other
+/// fields (`unchecked`) stay, and the step takes the patch's number.
+#[test]
+fn a_cleanup_patch_merges_into_the_saved_cleanup() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 5, "cleanup": true, "unchecked": "puts the record back", "actions": [{ "kind": "reload" }] }
+    ]));
+    let new_actions = serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Close" } }]);
+    let out = patched(&saved, serde_json::json!([{ "step": 6, "cleanup": true, "actions": new_actions }])).unwrap();
+    let last = out.steps.last().unwrap();
+    assert!(last.cleanup);
+    assert_eq!(last.step_number, 6);
+    assert_eq!(last.unchecked, Some("puts the record back".into()));
+    assert_eq!(serde_json::to_value(&last.actions).unwrap(), new_actions);
+    // The patch's own field wins.
+    let out = patched(&saved, serde_json::json!([{ "step": 5, "cleanup": true, "unchecked": "new words", "actions": [] }])).unwrap();
+    assert_eq!(out.steps.last().unwrap().unchecked, Some("new words".into()));
+}
+
+#[test]
+fn two_cleanup_patches_in_one_entry_are_refused() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 5, "cleanup": true, "unchecked": "x", "actions": [{ "kind": "reload" }] }
+    ]));
+    let why = patched(
+        &saved,
+        serde_json::json!([{ "step": 5, "cleanup": true, "actions": [] }, { "step": 6, "cleanup": true, "actions": [] }]),
+    )
+    .unwrap_err();
+    assert!(why.contains("two clean-up patches"), "{why}");
+}
+
+#[test]
+fn a_cleanup_patch_on_a_case_step_number_is_refused() {
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 2, "actions": [{ "kind": "reload" }] }
+    ]));
+    let why = patched(&saved, serde_json::json!([{ "step": 2, "cleanup": true, "actions": [] }])).unwrap_err();
+    assert_eq!(why, "case 7: a clean-up step comes after the case's last step (2)");
+}
+
+/// An added step goes through the declared-edit gate: `edits` must name it.
+#[test]
+fn an_added_step_must_be_declared_in_edits() {
+    use v2_lib::autorun::edits::{check_edits, Edit};
+    let saved = patch_fixture(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "reload" }] },
+        { "step_number": 4, "actions": [{ "kind": "reload" }] }
+    ]));
+    let out = patched(&saved, serde_json::json!([{ "step": 3, "actions": [{ "kind": "reload" }] }])).unwrap();
+    let edit = |steps: &[i32]| Edit { case_id: 7, steps: steps.to_vec(), why: "adds a step".into(), quirk: None, quirk_class: None, area: false, precondition: None, gives_up: Vec::new() };
+    let err = check_edits(&saved, &out, Some(&edit(&[1]))).unwrap_err();
+    assert!(err.contains("step 3"), "{err}");
+    check_edits(&saved, &out, Some(&edit(&[3]))).unwrap();
 }
 
 /// The Crystal Reports routes: gated by path with the module, answered 200

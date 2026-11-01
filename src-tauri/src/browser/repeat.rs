@@ -20,7 +20,7 @@
 use super::cdp::{CdpError, Driver};
 use super::locator::{resolve, LocatorStep, Target};
 use super::page::{self, Handle};
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// The css a `then` locator starts with to be resolved inside the row the
 /// pass is working on.
@@ -67,15 +67,43 @@ pub const ROW_OF_JS: &str = row_of_js!();
 /// `(row, except) => the except text the row reads | null`.
 pub const KEPT_OF_JS: &str = kept_of_js!();
 
-/// `this` is a match. Argument: the except texts. `{ row, kept }`: whether
-/// it sits in a row, and the protected text that row reads, or null.
+/// `this` is a match. Argument: the except texts. `{ row, kept, desc }`:
+/// whether it sits in a row, the protected text that row reads (or null),
+/// and what the row rule resolved to - tag, then a role, id or the first
+/// `data-*-id` attribute name, then up to 60 characters of its text (never
+/// a field's value, so never a password).
 pub const KEPT_JS: &str = concat!(
     "function(except) {\n  const rowOf = ",
     row_of_js!(),
     ";\n  const keptOf = ",
     kept_of_js!(),
-    ";\n  const row = rowOf(this);\n  if (!row) return { row: false, kept: null };\n  return { row: true, kept: except.length ? keptOf(row, except) : null };\n}"
+    ";\n  const row = rowOf(this);\n  if (!row) return { row: false, kept: null, desc: null };",
+    r#"
+  const tag = row.tagName.toLowerCase();
+  const role = row.getAttribute('role');
+  const dataId = Array.from(row.attributes).find((a) => /^data-(?:[\w-]+-)?id$/i.test(a.name));
+  const mark = role ? '[role=' + role + ']' : row.id ? '#' + row.id : dataId ? '[' + dataId.name + ']' : '';
+  const said = (row.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const desc = tag + mark + (said ? ' "' + said + '"' : '');
+  return { row: true, kept: except.length ? keptOf(row, except) : null, desc };
+}"#
 );
+
+/// `(except) => the except texts the page shows`: each that the page's text
+/// or any field's value holds, normalised as `KEPT_OF_JS` normalises. Run on
+/// the document. A password field's value is never read.
+pub const EXCEPT_ON_PAGE_JS: &str = r#"function(except) {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const doc = this.ownerDocument || this;
+  const text = norm(doc.body ? doc.body.innerText : '');
+  const fields = Array.from(doc.querySelectorAll('input, textarea'))
+    .filter((el) => el.type !== 'password')
+    .map((el) => norm(el.value));
+  return except.filter((t) => {
+    const want = norm(t);
+    return want !== '' && (text.includes(want) || fields.some((f) => f.includes(want)));
+  });
+}"#;
 
 /// `this` is a match: its row is marked, every other mark in its document
 /// cleared. Whether it had a row.
@@ -100,6 +128,8 @@ pub struct Match {
     pub row: bool,
     /// The protected text its row reads, as `except` wrote it.
     pub kept: Option<String>,
+    /// What the row rule resolved to (see `KEPT_JS`), for a sentence.
+    pub row_desc: Option<String>,
 }
 
 /// Every match of `selector` right now, each with its row's verdict. One
@@ -111,7 +141,8 @@ pub async fn look<D: Driver>(d: &mut D, selector: &Target, except: &[String]) ->
         let v = page::call_value(d, &handle, KEPT_JS, &[json!(except)]).await?;
         let row = v["row"].as_bool().unwrap_or(false);
         let kept = v["kept"].as_str().map(str::to_string);
-        out.push(Match { handle, row, kept });
+        let row_desc = v["desc"].as_str().map(str::to_string);
+        out.push(Match { handle, row, kept, row_desc });
     }
     Ok(out)
 }
@@ -162,4 +193,45 @@ pub fn within_row(t: &Target) -> Option<Target> {
             }
         }
     }
+}
+
+/// The `except` texts the page shows right now (`EXCEPT_ON_PAGE_JS`), as
+/// `except` wrote them: those the top document shows, and those shown by
+/// the document each of `found` sits in - a match inside a same-origin
+/// iframe lives in the frame's document, which the top one does not hold.
+pub async fn except_on_page<D: Driver>(d: &mut D, except: &[String], found: &[Match]) -> Result<Vec<String>, CdpError> {
+    let mut shown: Vec<String> = Vec::new();
+    let ask = |v: Value, shown: &mut Vec<String>| {
+        for t in v.as_array().into_iter().flatten().filter_map(|t| t.as_str()) {
+            if !shown.iter().any(|s| s == t) {
+                shown.push(t.to_string());
+            }
+        }
+    };
+    let doc = page::document(d).await?;
+    ask(page::call_value(d, &doc, EXCEPT_ON_PAGE_JS, &[json!(except)]).await?, &mut shown);
+    for m in found {
+        ask(page::call_value(d, &m.handle, EXCEPT_ON_PAGE_JS, &[json!(except)]).await?, &mut shown);
+    }
+    Ok(shown)
+}
+
+/// The fixed part of `except_guard`'s sentence, for telling it in an outcome.
+pub const EXCEPT_GUARD_MARK: &str = "no match's row reads an except text although";
+
+/// Rows that cannot be told apart: matches were found, `except` is given and
+/// one of its texts is on the page, yet no match's row reads one - so a
+/// protected row could be among the matches, unrecognised. The sentence says
+/// what the first match's row resolved to; `None` when the loop may go on.
+pub fn except_guard(found: &[Match], except: &[String], on_page: &[String]) -> Option<String> {
+    let first = on_page.first()?;
+    if except.is_empty() || found.is_empty() || found.iter().any(|m| m.kept.is_some()) {
+        return None;
+    }
+    let n = found.len();
+    let matches = if n == 1 { "match" } else { "matches" };
+    let desc = found[0].row_desc.as_deref().unwrap_or("no row");
+    Some(format!(
+        "{n} {matches} found, but {EXCEPT_GUARD_MARK} \"{first}\" is on the page: the first match's row is {desc} ({ROW_RULE}) - point selector at something inside each row, so each row holds its own name"
+    ))
 }

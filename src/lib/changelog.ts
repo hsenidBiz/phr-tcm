@@ -27,6 +27,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.10",
+    date: "2026-11-01",
+    items: [
+      "The first start after the update that gives each environment its own Auto Run data now puts everything already there in the active environment only, and each past run, with its pictures and report, in the environment it was run in. The app says once what it moved; the old folders are kept as a backup.",
+      "Import scripts on the Auto Run Setup panel brings Auto Run scripts from a folder into the environment you are in. A case that already has a different script is left as it is unless you tick Replace, and a replaced script is kept with the deleted scripts.",
+      "A site that is slow to wake up gets up to two minutes to show its sign-in page, and a run that still cannot open it says the site is slow to start instead of blaming the browser. Stop still ends the wait at once.",
+      "A case an assistant could not start working on is let go straight away, and a case held by another assistant now says how long it has been held.",
+      "Delete loops are safer: a loop told to spare some rows deletes nothing when it cannot tell which rows those are, and each pass waits for its delete to finish before looking again.",
+      "Scripts can pick a row or card by the text it holds, note an element's text and later check it is unchanged, and a repair can add a single step or the clean-up step without resending the whole script.",
+      "Assistants no longer see account passwords when they list the accounts.",
+    ],
+  },
+  {
     version: "2.4.3-beta.9",
     date: "2026-10-31",
     items: [

@@ -3780,7 +3780,7 @@ fn touches_sign_in_looks_inside_and_at_other_ways_in() {
     let fill = |css: &str, value: &str| Action::Fill { selector: serde_json::from_value(json!({ "css": css })).unwrap(), value: value.into() };
     let inside = Action::WhenVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), within_ms: None, then: vec![fill("#txtPwd", "{{password}}")] };
     assert!(touches_sign_in(&[inside], &recipe).is_some());
-    let looped = Action::RepeatWhileVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), max: Some(2), except: vec![], then: vec![fill("#a", "{{username}}")] };
+    let looped = Action::RepeatWhileVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), max: Some(2), except: vec![], then: vec![fill("#a", "{{username}}")], settle_ms: None };
     assert!(touches_sign_in(&[looped], &recipe).is_some());
     assert!(touches_sign_in(&[Action::OpenTab { name: "t".into(), url: recipe.start_url.clone() }], &recipe).is_some());
     assert!(touches_sign_in(&[Action::Navigate { url: "https://hr.example.internal/hr/home/switch?mode=sshr".into() }], &recipe).is_some());

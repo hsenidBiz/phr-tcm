@@ -30,6 +30,9 @@ pub const CLAIM_TIMEOUT_MS: u64 = 20 * 60 * 1000;
 struct Claim {
     case_id: i32,
     holder: AgentKey,
+    /// The first claim of this hold (a take-over starts a new one).
+    since_ms: u64,
+    /// The last renewal.
     at_ms: u64,
 }
 
@@ -39,10 +42,27 @@ fn claims() -> std::sync::MutexGuard<'static, Vec<Claim>> {
     CLAIMS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// How long a hold has lasted, in words: a duration, never a clock time.
+pub fn held_words(held_ms: u64) -> String {
+    let minutes = held_ms / 60_000;
+    match minutes {
+        0 => "less than a minute".to_string(),
+        1 => "1 minute".to_string(),
+        2..=59 => format!("{minutes} minutes"),
+        _ => format!("{} h {} min", minutes / 60, minutes % 60),
+    }
+}
+
 /// What an assistant is told about a case another assistant holds: the label
-/// only, never an id or a pid.
-pub fn case_claimed(case_id: i32, label: &str) -> String {
-    format!("case {case_id} is being worked on by {label} - pick another case, or ask the person to release {label} on the Auto Run screen")
+/// and how long it has been held, never an id or a pid.
+pub fn case_claimed(case_id: i32, label: &str, held_ms: u64) -> String {
+    let held = held_words(held_ms);
+    format!("case {case_id} is being worked on by {label} (held for {held}) - pick another case, or ask the person to release {label} on the Auto Run screen")
+}
+
+/// How long `case_id` has been held at `now_ms`, from the first claim.
+pub fn held_for(case_id: i32, now_ms: u64) -> u64 {
+    claims().iter().find(|c| c.case_id == case_id).map_or(0, |c| now_ms.saturating_sub(c.since_ms))
 }
 
 /// A claim has run out `CLAIM_TIMEOUT_MS` after its holder last claimed the
@@ -64,22 +84,38 @@ fn expired(claim: &Claim, now_ms: u64) -> bool {
 /// `key` works on `case_id` from now: claimed, or renewed when it already
 /// held it. Refused with `case_claimed` when another LIVE agent claimed it
 /// less than `CLAIM_TIMEOUT_MS` before `now_ms`; a holder that has gone, or
-/// whose claim ran out, is taken over.
-pub fn claim(key: &AgentKey, case_id: i32, now_ms: u64) -> Result<(), String> {
+/// whose claim ran out, is taken over. `Ok(true)` when this call made the
+/// hold (new, or taken over), `Ok(false)` when it renewed one the key had.
+pub fn claim(key: &AgentKey, case_id: i32, now_ms: u64) -> Result<bool, String> {
     let mut all = claims();
     all.retain(|c| !expired(c, now_ms));
     match all.iter_mut().find(|c| c.case_id == case_id) {
-        Some(c) if c.holder == *key => c.at_ms = now_ms,
+        Some(c) if c.holder == *key => {
+            c.at_ms = now_ms;
+            Ok(false)
+        }
         Some(c) => match agents::info(&c.holder).filter(|i| i.gone_since_ms.is_none()) {
-            Some(held_by) => return Err(case_claimed(case_id, &held_by.label)),
+            Some(held_by) => Err(case_claimed(case_id, &held_by.label, now_ms.saturating_sub(c.since_ms))),
             None => {
                 c.holder = key.clone();
+                c.since_ms = now_ms;
                 c.at_ms = now_ms;
+                Ok(true)
             }
         },
-        None => all.push(Claim { case_id, holder: key.clone(), at_ms: now_ms }),
+        None => {
+            all.push(Claim { case_id, holder: key.clone(), since_ms: now_ms, at_ms: now_ms });
+            Ok(true)
+        }
     }
-    Ok(())
+}
+
+/// `key`'s hold on `case_id` ends; false when it held none.
+pub fn release_case(key: &AgentKey, case_id: i32) -> bool {
+    let mut all = claims();
+    let before = all.len();
+    all.retain(|c| !(c.case_id == case_id && c.holder == *key));
+    before != all.len()
 }
 
 /// The agent holding `case_id` at `now_ms`, if a claim on it has not run out.

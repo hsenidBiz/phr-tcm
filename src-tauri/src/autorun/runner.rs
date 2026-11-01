@@ -339,6 +339,7 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
             | Action::RememberUrl { .. }
+            | Action::RememberText { .. }
             | Action::ExpectVisible { .. }
             | Action::ExpectHidden { .. }
             | Action::ExpectText { .. }
@@ -1292,7 +1293,7 @@ async fn run_expanded<D: Driver>(
                     // The account is this browser's from here, whichever
                     // way the sign-in goes.
                     Ok(()) => {
-                        let signed = signin::sign_in_in(d, root, &r, &who, timing, &lease.browser_words()).await;
+                        let signed = signin::sign_in_in_stoppable(d, root, &r, &who, timing, &lease.browser_words(), run.cancel).await;
                         *account = signed.ok.then(|| who.key.clone());
                         let print = match signed.ok {
                             true => crate::browser::session::cookie_print(d, &r.origins()).await,
@@ -1902,13 +1903,16 @@ async fn repeat_while_visible<D: Driver>(
     if let Err(why) = action.validate() {
         return (ActionOutcome::failed(format!("{CANNOT_RUN}{why}")), None);
     }
-    let Action::RepeatWhileVisible { selector, max, except, then } = action else {
+    let Action::RepeatWhileVisible { selector, max, except, then, settle_ms } = action else {
         return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a repeat_while_visible")), None);
     };
     let max = max.unwrap_or(1);
     let target = selector.describe();
     let scoped = then.iter().any(|a| a.targets().into_iter().any(repeat::is_row_scoped));
     let mut passes: u32 = 0;
+    let row_wait_ms = settle_ms.map_or(ROW_GONE_WAIT_MS, u64::from);
+    // What passes ended quietly because their row had already gone.
+    let mut notes: Vec<String> = Vec::new();
     loop {
         if passes > 0 && here.stop_heard() {
             return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
@@ -1918,6 +1922,21 @@ async fn repeat_while_visible<D: Driver>(
             Err(e) if e.is_transient() => Vec::new(),
             Err(e) => return (crate::browser::actions::harness(e), None),
         };
+        // Before the FIRST pass only: rows that cannot be told apart
+        // delete nothing (`repeat::except_guard`).
+        if passes == 0 && !except.is_empty() && !found.is_empty() && found.iter().all(|m| m.kept.is_none()) {
+            match repeat::except_on_page(d, except, &found).await {
+                Ok(on_page) => {
+                    if let Some(why) = repeat::except_guard(&found, except, &on_page) {
+                        return (ActionOutcome::failed(format!("{target}: {why}")), None);
+                    }
+                }
+                Err(e) if e.is_transient() => {
+                    return (ActionOutcome::failed(format!("{target}: the page did not answer when the loop checked that its rows can be told apart, so nothing was deleted")), None);
+                }
+                Err(e) => return (crate::browser::actions::harness(e), None),
+            }
+        }
         let mut kept: Vec<String> = Vec::new();
         for k in found.iter().filter_map(|m| m.kept.clone()) {
             if !kept.contains(&k) {
@@ -1928,7 +1947,8 @@ async fn repeat_while_visible<D: Driver>(
         let Some(next) = open.first() else {
             let said = passes_said(passes);
             let kept_said = kept_said(&kept);
-            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}")), None);
+            let noted = if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) };
+            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}{noted}")), None);
         };
         if (!except.is_empty() || scoped) && !next.row {
             let why = format!(
@@ -1940,8 +1960,9 @@ async fn repeat_while_visible<D: Driver>(
             let n = open.len();
             let rows = if n == 1 { "row" } else { "rows" };
             let kept_said = kept_said(&kept);
+            let noted = if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) };
             return (
-                ActionOutcome::failed(format!("{target}: still {n} {rows} after max {max} passes{kept_said}")),
+                ActionOutcome::failed(format!("{target}: still {n} {rows} after max {max} passes{kept_said}{noted}")),
                 None,
             );
         }
@@ -1951,7 +1972,11 @@ async fn repeat_while_visible<D: Driver>(
             Err(e) => return (crate::browser::actions::harness(e), None),
         };
         passes += 1;
+        // Where the page is as the pass begins: a mark that vanished
+        // because the page went elsewhere is not a row that was deleted.
+        let began_at = page_address(d).await;
         let mut said: Vec<String> = Vec::with_capacity(then.len());
+        let mut quiet = false;
         for step in then {
             if here.stop_heard() {
                 repeat::unmark(d).await;
@@ -1959,30 +1984,91 @@ async fn repeat_while_visible<D: Driver>(
             }
             let (out, stop) = match step {
                 Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, account, timing).await,
+                // The same helper a step uses: its target gets the page's load
+                // first, then one look, and a target that never shows passes.
+                // Boxed: the pass's own future stays small enough for a debug
+                // build's stack.
+                Action::WhenVisible { .. } => Box::pin(guarded_in_pass(d, here, step, area, areas, account, timing)).await,
                 _ => plain(d, here, step, timing).await,
             };
-            said.push(out.detail);
+            said.push(out.detail.clone());
             if !out.ok {
+                // A pass whose row has already gone did its work: what it
+                // still had to do was for a row that is no longer there.
+                let gone = marked
+                    && stop.is_none()
+                    && !out.harness
+                    && began_at.is_some()
+                    && page_address(d).await == began_at
+                    && matches!(repeat::row_still_there(d).await, Ok(false));
+                if pass_failure_ends_quietly(gone) {
+                    notes.push(format!("pass {passes}: the row had already gone ({})", out.detail));
+                    quiet = true;
+                    break;
+                }
                 repeat::unmark(d).await;
                 let mut failed = ActionOutcome::failed(format!("{target}, pass {passes}: {}", said.join("; ")));
                 failed.harness = out.harness;
                 return (failed, stop);
             }
         }
-        // The page may take a moment to drop the row the pass worked on:
-        // the next look waits for that, up to the expect wait, so the same
-        // row is not taken twice while it goes.
-        if marked {
-            let until = Instant::now() + Duration::from_millis(timing.expect_ms.min(ROW_GONE_WAIT_MS));
-            while matches!(repeat::row_still_there(d).await, Ok(true)) && Instant::now() < until {
+        // The delete's own request finishes first, then the page may take a
+        // moment to drop the row the pass worked on: the next look waits
+        // for that, up to `settle_ms`, so the same row is not taken twice
+        // while it goes.
+        crate::browser::actions::settle(d, timing).await;
+        if marked && !quiet {
+            let began = Instant::now();
+            // Idle time is counted too, so a driver on a fake clock ends the wait.
+            let mut waited: u64 = 0;
+            while matches!(repeat::row_still_there(d).await, Ok(true))
+                && waited.max(began.elapsed().as_millis() as u64) < row_wait_ms
+            {
                 d.idle(Duration::from_millis(timing.poll_ms)).await;
+                waited += timing.poll_ms;
             }
         }
         repeat::unmark(d).await;
     }
 }
 
-/// The longest a `repeat_while_visible` pass waits for its row to go.
+/// A `when_visible` in a loop's `then`, run as a step runs one: the page
+/// loads first, then the one look and its plain actions.
+async fn guarded_in_pass<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    step: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
+    account: Option<&str>,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    match page_loaded(d, here, step, timing).await {
+        Err(failed) => failed,
+        Ok(notes) => {
+            let (mut out, stop) = when_visible(d, here, step, area, areas, account, timing).await;
+            popups::add_notes(&mut out, &notes);
+            (out, stop)
+        }
+    }
+}
+
+/// The page's address, or None when it will not say.
+async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
+    crate::browser::page::release(d).await;
+    let v = crate::browser::page::eval_value(d, "location.href").await.ok()?;
+    Some(v.as_str().unwrap_or("").to_string())
+}
+
+/// Whether a failed `then` action ends its pass quietly: when the marked
+/// row has already gone, what the pass was still doing was for a row that
+/// is no longer there (a second confirm the page never showed).
+pub fn pass_failure_ends_quietly(row_gone: bool) -> bool {
+    row_gone
+}
+
+/// The longest a `repeat_while_visible` pass waits for its row to go
+/// unless the loop says `settle_ms`.
 pub const ROW_GONE_WAIT_MS: u64 = 5_000;
 
 fn passes_said(n: u32) -> String {

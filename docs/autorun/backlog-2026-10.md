@@ -1044,6 +1044,8 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
       scripts on the two sites.
     - The old flat folders stay after the move; the app should say whether it still reads them.
 
+    - **Done in 2.4.3-beta.10.** The update puts the old data in the active environment only, and each past run goes to the environment it was run in; the app says once what it moved (a "kept but no longer read" notice covers what it leaves). Installs already migrated are untouched. Import scripts… on the Setup panel's Environment row brings a folder of scripts into the environment you are in, listing differing cases and replacing none unless Replace is ticked. Left: nothing known.
+
 56. **A case hold still outlived its agent after 2.4.3-beta.7.** dw-fix-comps3 (new agent) called
     `start_autorun_discovery` with case 135421 and was refused "worked on by Assistant 4". No
     Assistant 4 was running: the previous agents on 135421 (dw-fix-comps, dw-fix-comps2) had ended
@@ -1053,6 +1055,8 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
     then ended with no discovery open, so it ran neither end nor release). A hold should also end
     when its holder's discovery start fails, and the refusal should say since when it is held.
 
+    - **Done in 2.4.3-beta.10.** A hold ends with a failed discovery start, and the refusal says how long the case has been held ("held for"). Left: a live-org check.
+
 57. **The first page of a cold site times out at 30 s.** After an idle night the sign-in page
     (`/hr` -> 302 -> `/hr/security/login`) took over 60 s twice from curl, then 5 s, then 3 s. Every
     Auto Run browser failed "did not answer Page.navigate within 30000ms" or "the sign-in page did
@@ -1060,6 +1064,8 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
     rounds proved nothing. The person's own browser loaded (already signed in). Item 50 retries
     once; a first navigation should wait longer (or retry with backoff up to ~2 min) and say "the
     site is slow to start" rather than blame the browser.
+
+    - **Done in 2.4.3-beta.10.** A cold site gets 2 minutes for its first page (Stop still ends the wait), and a failure says the site is slow to start; a bad saved session is dropped, not kept. Left: a live check on the Philippines dev site.
 
 58. **A delete loop with `except` can protect nothing.** dw-fix-comps wrote
     `repeat_while_visible` on the competency groups' Delete button with `except` naming Core
@@ -1070,12 +1076,16 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
     loop with `except` when, on the seen page, none of the matches' rows contains any `except`
     text while those texts are on the page, and say which element the row resolved to.
 
+    - **Done in 2.4.3-beta.10.** A delete loop with `except` is checked at run and at save: one whose rows cannot be told apart (rows in frames included) deletes nothing and says why. Left: a live check on the Definition Wizard tree.
+
 59. **A by-name delete loop double-sees the row on a slow site.** In 135412/135421 a
     `repeat_while_visible` deleting the made row by name ran a second pass after the first delete:
     the row was still in the DOM when the 5 s wait ended, the next pass clicked Delete again and
     then found no confirm dialog, failing the step. So step 6's delete stayed `nth 2` behind a name
     check. The wait for the row to go should follow the delete's own request (or allow a longer
     `settle_ms`), and a pass whose `then` fails because the row is already gone should end the loop.
+
+    - **Done in 2.4.3-beta.10.** `settle_ms` on the loop makes each pass wait for the delete to finish; a pass ends quietly only when its row went and the page did not move. Left: a live check on 135412/135421.
 
 60. **No locator picks a row by its text, and no action remembers a value.**
     - Selectors have no "has text" filter, so a row or card holding a name is reached only by
@@ -1085,6 +1095,8 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
     - Seven Competencies cases (135388, 135408, 135346, 135285, 135416, 135286, 135287) say "the
       pills keep the counts from step 4". With no `remember_text` (like `remember_url`) the
       before/after check cannot be written; the scripts check the baseline 2/4/7 as assumed values.
+
+    - **Done in 2.4.3-beta.10.** `has_text` picks an element by the text it holds (element text only, not a field's value; Auto Run and the Playwright export agree); `remember_text` with `same_as` checks a value is unchanged. Left: the export does not mirror a quiet loop end.
 
 61. **`repeat_while_visible` and the clean-up step are hard to shape.**
     - Its `then` refuses `when_visible` and `expect_hidden`, so a loop cannot skip a row that is
@@ -1098,10 +1110,28 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
       step with its check; the clean-up holds a guarded fallback. The save could warn when an
       action moved into the clean-up took a check with it.
 
+    - **Done in 2.4.3-beta.10.** `when_visible` and `expect_hidden` are allowed in a loop's `then`; `patch_steps` can add one step, the clean-up included; the clean-up note and writer rule allow a delete the case asks for. Left: nothing known.
+
 62. **`get_accounts` shows the assistant every password.** On a test environment the answer lists
     each login's password in plain text, and a rewriter quoted that in its report. The assistant
     never types a password (Auto Run signs in), so `get_accounts` should show only key, label,
     username, role and whether a password is set; the password stays for `propose_accounts`.
+
+    - **Done in 2.4.3-beta.10.** `get_accounts` shows key, label, username, role and `has_password`, never a password; `propose_accounts` still carries it. Left: a live check on QA Automation.
+
+63. **The Playwright export of a delete loop with `except` does not carry Auto Run's refusal.**
+    Auto Run refuses to delete in a loop whose rows cannot be told apart, but the exported spec
+    has no such guard, so it can delete where Auto Run would stop. Found in the final review of
+    55-62.
+
+    - **Open.** The export should carry the same refusal, or say in its header that it does not.
+
+64. **A discovery try that never ran the rows guard is recorded as a pass.** When the loop's
+    condition is false or the first look is empty, the guard is skipped and the try is saved as a
+    pass, which can erase an older refusal recorded when the script was saved. Every run still
+    runs the guard, so deletes are protected. Found in the final review of 55-62.
+
+    - **Open.** A try that did not run the guard should leave an older refusal in place.
 
 ## Smaller
 

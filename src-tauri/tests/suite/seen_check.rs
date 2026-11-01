@@ -2302,7 +2302,42 @@ fn an_nth_locator_never_counted_is_told_to_probe_it_with_its_nth() {
     let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_text", "selector": { "text": "%", "nth": 0 }, "equals": "30%" }]));
     let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
     assert!(refused.starts_with(&format!("Step 1: text \"%\" #1 {NEVER_COUNTED_NTH}")), "{refused}");
-    assert!(refused.contains("probe it with its nth as written"), "{refused}");
+    assert!(refused.contains("probe it with its has_text and nth as written"), "{refused}");
+}
+
+/// A `has_text` locator narrows as `nth` does: only the whole locator,
+/// as written, is counted.
+#[test]
+fn a_has_text_locator_needs_counting_like_nth() {
+    use v2_lib::autorun::seen_check::NEVER_COUNTED_NTH;
+    let map = sighted_matching("Cycles", text("%"), v2_lib::autorun::discovery_map::NOT_ONE);
+    let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_text", "selector": { "text": "%", "has_text": "30" }, "equals": "30%" }]));
+    let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains(NEVER_COUNTED_NTH), "{refused}");
+    assert!(refused.contains("probe it with its has_text and nth as written"), "{refused}");
+    // Seen counted as written, it is taken; without it, it is not.
+    let first = serde_json::json!({ "css": "tbody tr", "has_text": "Grp 7" });
+    let map = filed(first.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr", "has_text": "Grp 8" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(first), &[], None), Ok(()));
+}
+
+#[test]
+fn a_has_text_naming_a_typed_value_needs_no_sighting_of_it() {
+    let map = map_with("Ratings", "/ratings", &[role("textbox", "Name")]);
+    let script_for = |value: &str| {
+        script(
+            Some("Ratings"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AutoTest Grp 7" }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": { "css": "tr", "has_text": value } }] }
+            ]),
+        )
+    };
+    assert_eq!(check_seen(&map, &none(), &script_for("autotest  grp 7"), &[], None), Ok(()));
+    let refused = check_seen(&map, &none(), &script_for("something else"), &[], None).unwrap_err();
+    assert!(refused.starts_with("Step 2: tr holding \"something else\" was never seen"), "{refused}");
 }
 
 /// Each refusal of a locator never seen says what that use needs.
@@ -3597,4 +3632,73 @@ fn an_absence_action_saved_before_is_never_judged_again() {
         serde_json::json!([{ "step_number": 3, "actions": [{ "kind": "expect_hidden", "selector": { "css": ".other" } }] }]),
     );
     assert_eq!(absence_refusals(&none_only, &changed, Some(&[3]), Some(&old)).len(), 1);
+}
+
+// ---- a delete loop whose rows cannot be told apart ----
+
+use v2_lib::autorun::discovery_map::{record_loop_rows, LoopRows};
+use v2_lib::autorun::seen_check::{loop_rows_review, LOOP_ROWS_REFUSED, LOOP_ROWS_UNTRIED};
+
+fn delete_loop(except: serde_json::Value) -> CaseScript {
+    let mut action = serde_json::json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 5,
+        "then": [ { "kind": "click", "selector": [ { "css": "[data-autorun-row]" }, { "css": ".delete" } ] } ]
+    });
+    if !except.is_null() {
+        action["except"] = except;
+    }
+    script(Some("Goals"), serde_json::json!([{ "step_number": 2, "actions": [action] }]))
+}
+
+fn rows(except: &[&str], refused: Option<&str>, at: u64) -> LoopRows {
+    LoopRows {
+        selector: Target::One(LocatorStep { css: Some(".delete".to_string()), ..LocatorStep::default() }),
+        except: except.iter().map(|s| s.to_string()).collect(),
+        refused: refused.map(String::from),
+        at,
+    }
+}
+
+fn map_tried(list: Vec<LoopRows>) -> DiscoveryMap {
+    let mut map = nothing_seen();
+    for r in list {
+        record_loop_rows(&mut map.areas[0], r);
+    }
+    map
+}
+
+#[test]
+fn a_loop_refused_in_discovery_is_refused_at_save() {
+    let map = map_tried(vec![rows(&["Core Competencies", "Customer Focus"], Some("the first match's row is div"), 5)]);
+    let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["customer  focus", "CORE competencies"])), None);
+    assert_eq!(review.refusals.len(), 1, "{review:?}");
+    assert!(review.refusals[0].starts_with("step 2: repeat_while_visible "), "{:?}", review.refusals);
+    assert!(review.refusals[0].contains(LOOP_ROWS_REFUSED), "{:?}", review.refusals);
+    assert!(review.refusals[0].contains("the first match's row is div"), "{:?}", review.refusals);
+    assert!(review.notes.is_empty());
+}
+
+#[test]
+fn a_loop_tried_since_and_passed_saves() {
+    let map = map_tried(vec![rows(&["A"], Some("refused"), 5), rows(&["A"], None, 9)]);
+    let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
+    assert!(review.refusals.is_empty() && review.notes.is_empty(), "{review:?}");
+    // The older refusal does not come back over a newer pass, nor the other way round.
+    let map = map_tried(vec![rows(&["A"], None, 5), rows(&["A"], Some("refused"), 9)]);
+    assert_eq!(loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None).refusals.len(), 1);
+}
+
+#[test]
+fn an_untried_loop_with_except_saves_with_a_note() {
+    let map = map_tried(vec![rows(&["Other"], Some("refused"), 5)]);
+    let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
+    assert!(review.refusals.is_empty(), "{review:?}");
+    assert_eq!(review.notes.len(), 1);
+    assert!(review.notes[0].contains(LOOP_ROWS_UNTRIED), "{:?}", review.notes);
+}
+
+#[test]
+fn a_loop_without_except_needs_no_trial() {
+    let review = loop_rows_review(&nothing_seen(), &delete_loop(serde_json::Value::Null), None);
+    assert_eq!(review, Default::default());
 }

@@ -470,7 +470,7 @@ async fn run_case_in<D: Driver>(
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
-                    let signed = signin::sign_in_in(d, root, &recipe, &who, timing, &lease.browser_words()).await;
+                    let signed = signin::sign_in_in_stoppable(d, root, &recipe, &who, timing, &lease.browser_words(), Some(cancel)).await;
                     let mut all = signed.steps.clone();
                     all.push(as_action_outcome(&signed));
                     all
@@ -482,6 +482,12 @@ async fn run_case_in<D: Driver>(
             steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new(), duration_ms: Some(sign_in_took) });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
+        if signed_in == Some(false)
+            && steps.last().is_some_and(|s| s.outcomes.iter().any(|o| o.detail.contains(signin::SIGN_IN_STOPPED)))
+        {
+            skip = Some(AFTER_STOP);
+            stopped = true;
+        }
     }
 
     if let (None, Some(r)) = (skip, route) {

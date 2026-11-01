@@ -1067,3 +1067,156 @@ async fn a_pending_password_is_tried_first_and_committed_when_it_signs_in() {
     assert_eq!(account_file_password(dir.path()), "Abc@123");
     assert!(pending_of(dir.path()).is_none());
 }
+
+// ------------------------------------------ a cold site's first page (57)
+
+use v2_lib::autorun::signin::{slow_start_wait, FIRST_PAGE_RETRY, PAGE_DID_NOT_OPEN, SITE_SLOW_TO_START};
+
+const NAV_TIMEOUT: &str = "the browser did not answer Page.navigate within 30000ms";
+
+#[test]
+fn slow_start_wait_follows_the_schedule() {
+    assert_eq!(slow_start_wait(1, 30_000, NAV_TIMEOUT, true, 30_000), Some(5_000));
+    assert_eq!(slow_start_wait(2, 40_000, NAV_TIMEOUT, true, 30_000), Some(15_000));
+    assert_eq!(slow_start_wait(3, 80_000, NAV_TIMEOUT, true, 30_000), None);
+    assert_eq!(slow_start_wait(3, 40_000, NAV_TIMEOUT, true, 30_000), Some(30_000));
+    assert_eq!(slow_start_wait(4, 0, NAV_TIMEOUT, true, 1_000), None);
+    assert_eq!(slow_start_wait(1, 30_000, "https://x/y would not load: net::ERR_ABORTED", true, 30_000), Some(5_000));
+}
+
+#[test]
+fn slow_start_wait_none_when_the_browser_stopped_answering() {
+    assert_eq!(slow_start_wait(1, 30_000, NAV_TIMEOUT, false, 30_000), None);
+}
+
+#[test]
+fn slow_start_wait_none_for_other_failures() {
+    // A cold VPN gives a DNS failure: that does retry.
+    assert_eq!(slow_start_wait(1, 0, "https://x/y would not load: net::ERR_NAME_NOT_RESOLVED", true, 30_000), Some(5_000));
+    assert_eq!(slow_start_wait(1, 0, "refused: session", true, 30_000), None);
+    assert_eq!(slow_start_wait(1, 0, "password expired", true, 30_000), None);
+}
+
+/// `stateful_app` whose first `failing` `Page.navigate` calls time out.
+fn cold_first_page(failing: usize, probe_fails: bool) -> (ScriptedDriver, common::StatefulApp) {
+    let (mut d, state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let navs = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let d = d.answering_first(move |method, params| match method {
+        "Page.navigate" if navs.fetch_add(1, Ordering::SeqCst) < failing => {
+            Some(Err(CdpError::Timeout { what: "Page.navigate".into(), ms: 30_000 }))
+        }
+        "Runtime.evaluate" if probe_fails && params["expression"] == "1" => Some(Err(CdpError::Closed)),
+        _ => None,
+    });
+    (d, state)
+}
+
+#[tokio::test]
+async fn first_page_retry_reaches_the_page() {
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_first_page(2, false);
+    let seen = || v2_lib::applog::recent(6000).iter().filter(|l| l.message.contains(FIRST_PAGE_RETRY)).count();
+    let before = seen();
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate").len(), 3, "{:?}", d.methods());
+    let lines = seen() - before;
+    assert_eq!(lines, 2, "the retries were not logged");
+    assert_eq!(typed_count(&d), 1);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn first_page_retry_never_types() {
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_first_page(usize::MAX, false);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PAGE_DID_NOT_OPEN), "{}", out.detail);
+    assert!(out.detail.contains(SITE_SLOW_TO_START), "{}", out.detail);
+    assert!(!out.harness, "a slow site is not a harness failure");
+    assert!(d.calls_to("Input.insertText").is_empty() && d.calls_to("Input.dispatchKeyEvent").is_empty(), "{:?}", d.methods());
+    assert_eq!(d.calls_to("Page.navigate").len(), 4);
+    assert!(!out.detail.contains("http"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_browser_that_stops_answering_is_still_the_browsers_fault() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_first_page(usize::MAX, true);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.harness, "{}", out.detail);
+    assert!(!out.detail.contains(SITE_SLOW_TO_START), "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1);
+}
+
+#[tokio::test]
+async fn a_stop_during_the_first_page_wait_ends_the_sign_in_at_once() {
+    use v2_lib::autorun::signin::{sign_in_in_stoppable, SIGN_IN_STOPPED};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = cancel.clone();
+    let mut d = d.answering_first(move |method, _| match method {
+        "Page.navigate" => {
+            // The Stop lands while the first load is failing.
+            flag.store(true, Ordering::SeqCst);
+            Some(Err(CdpError::Timeout { what: "Page.navigate".into(), ms: 30_000 }))
+        }
+        _ => None,
+    });
+    let out = sign_in_in_stoppable(&mut d, dir.path(), &recipe_at_login(), &account(), &quick(), "this browser", Some(&cancel)).await;
+    assert!(!out.ok);
+    assert!(!out.harness, "{}", out.detail);
+    assert!(out.detail.contains(SIGN_IN_STOPPED), "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+    assert!(d.calls_to("Input.insertText").is_empty());
+}
+
+#[tokio::test]
+async fn a_restored_session_whose_page_fails_fast_is_dropped_not_kept() {
+    use v2_lib::autorun::signin::SITE_SLOW_TO_START;
+    let dir = tempfile::tempdir().unwrap();
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let mut d = d.answering_first(|method, _| match method {
+        "Page.navigate" => Some(Ok(json!({ "errorText": "net::ERR_TOO_MANY_REDIRECTS" }))),
+        _ => None,
+    });
+    let out = v2_lib::autorun::signin::sign_in_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick(), "this browser").await;
+    assert!(!out.ok);
+    // Not retried on the saved path (one try), then the fresh sign-in's own four.
+    assert_eq!(d.calls_to("Page.navigate").len(), 5, "{:?}", d.methods());
+    assert!(!session_path(dir.path(), "admin").unwrap().exists(), "the session was kept");
+    assert!(out.detail.contains(SITE_SLOW_TO_START), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_stop_during_a_pending_password_sign_ins_wait_ends_it_at_once() {
+    use v2_lib::autorun::signin::{sign_in_in_stoppable, SIGN_IN_STOPPED};
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (mut d, _state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let flag = cancel.clone();
+    let mut d = d.answering_first(move |method, _| match method {
+        "Page.navigate" => {
+            flag.store(true, Ordering::SeqCst);
+            Some(Err(CdpError::Timeout { what: "Page.navigate".into(), ms: 30_000 }))
+        }
+        _ => None,
+    });
+    let out = sign_in_in_stoppable(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick(), "this browser", Some(&cancel)).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains(SIGN_IN_STOPPED), "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+}

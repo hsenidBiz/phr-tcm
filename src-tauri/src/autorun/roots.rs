@@ -18,18 +18,20 @@ pub const SEED_ID: &str = "_seed";
 /// Where a removed environment's folder waits to be purged.
 pub const REMOVED_DIR: &str = "removed-envs";
 
-/// How an update carries a per-environment item into the environments.
+/// How an environment COPY (`env_copy`, `backup_import`) reads a
+/// per-environment item. The one-time update itself puts every item under
+/// the ACTIVE environment only, except the [`BY_RUN`] items, which go
+/// wherever the run that made them names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CopyTo {
-    /// Into every environment.
+    /// What an environment copy carries: what describes the app.
     Every,
-    /// Into the active environment only (history is big and is that
-    /// environment's own).
+    /// History: an environment copy leaves it behind.
     ActiveOnly,
 }
 
-/// The top-level items that belong to one environment, and how the update
-/// copies each.
+/// The top-level items that belong to one environment, and how an
+/// environment copy treats each.
 pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("scripts", CopyTo::Every),
     ("deleted-scripts", CopyTo::Every),
@@ -47,8 +49,13 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("captures", CopyTo::ActiveOnly),
 ];
 
+/// The items the update places by the run that made them: a run, its report,
+/// its downloads and the screenshots it names go to the environment the run
+/// names (see [`place_runs`]).
+pub const BY_RUN: [&str; 4] = ["runs", "reports", "downloads", "shots"];
+
 /// The top-level items every environment shares; they stay in the shared root.
-pub const SHARED_ITEMS: [&str; 9] = [
+pub const SHARED_ITEMS: [&str; 10] = [
     "environments.json",
     "accounts",
     "sessions",
@@ -58,6 +65,7 @@ pub const SHARED_ITEMS: [&str; 9] = [
     "allow-written.json",
     "last-browser.txt",
     "accounts.json",
+    MIGRATION_NOTE_FILE,
 ];
 
 /// `projects/<anything>.pwexport.json`: the Playwright export record, which
@@ -168,15 +176,72 @@ pub fn env_roots(shared: &Path) -> Vec<PathBuf> {
 }
 
 /// What the one-time copy did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MigrationReport {
     pub environments: usize,
     pub items: usize,
+    /// Scripts now under the active environment.
+    pub scripts: usize,
+    /// The name of the environment that took the old data.
+    pub active_name: String,
+    /// Environment name and how many runs it took, most first.
+    pub runs_by_env: Vec<(String, usize)>,
 }
 
-/// The one sentence start-up logs after the copy. Names no path.
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// What the person is told, once, after the copy. Names no path.
+pub fn migration_notice(r: &MigrationReport) -> String {
+    let mut text = format!(
+        "Auto Run moved {} to {}; other environments start empty. ",
+        plural(r.scripts, "script", "scripts"),
+        r.active_name
+    );
+    let runs: Vec<&(String, usize)> = r.runs_by_env.iter().filter(|(_, n)| *n > 0).collect();
+    if !runs.is_empty() {
+        let mut parts: Vec<String> = vec![];
+        for (i, (name, n)) in runs.iter().enumerate() {
+            parts.push(if i == 0 {
+                format!("{} went to {name}", plural(*n, "run", "runs"))
+            } else {
+                format!("{n} to {name}")
+            });
+        }
+        let last = parts.pop().unwrap_or_default();
+        let joined = if parts.is_empty() { last } else { format!("{} and {last}", parts.join(", ")) };
+        text.push_str(&format!("{joined}, as each run names. "));
+    }
+    text.push_str("The old Auto Run folders are kept as a backup and are no longer read.");
+    text
+}
+
+/// The one line start-up logs after the copy. Names no path.
 pub fn migration_log_line(r: &MigrationReport) -> String {
-    format!("Auto Run: per-environment data set up for {} environment(s), {} item(s) copied", r.environments, r.items)
+    format!("Auto Run: {}", migration_notice(r))
+}
+
+/// The small file in the shared root that holds the notice until the
+/// Auto Run screen has shown it.
+pub const MIGRATION_NOTE_FILE: &str = "migration-note.txt";
+
+/// Keeps `text` for the screen to say once. Logs a failure (no path) and
+/// never fails the caller.
+pub fn write_migration_note(shared: &Path, text: &str) {
+    let _ = std::fs::create_dir_all(shared);
+    if let Err(e) = std::fs::write(shared.join(MIGRATION_NOTE_FILE), text) {
+        crate::applog::debug(format!("Auto Run: the update notice could not be kept: {e}"));
+    }
+}
+
+/// The kept notice, removed as it is read, so it is said once.
+pub fn take_migration_note(shared: &Path) -> Option<String> {
+    let path = shared.join(MIGRATION_NOTE_FILE);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 /// Said when an Auto Run item is a link or shortcut: the update will not
@@ -679,61 +744,249 @@ pub(crate) fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &d
     Ok(())
 }
 
-/// Copies the flat root's per-environment items into `envs_dir/<id>/` for
-/// each id, and returns how many top-level items were copied. `Every`
-/// items are real copies into every id; `ActiveOnly` items (history) go to
-/// `active` only (the first id when `active` is `None` or not listed). Of
-/// those only the write-once ones (`LINKED_ITEMS`) are hard-linked, so a
-/// large `shots/` is not written out again. The export record goes to the
-/// active environment only. `flat` is never changed. Anything unreadable,
-/// and any link, fails the copy.
-pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str>) -> Result<usize, String> {
-    if let Some(bad) = ids.iter().find(|i| !valid_folder_id(i)) {
+/// The environment id a run belongs to: its environment's name matched
+/// trimmed and case-insensitively against the listed environments (the first
+/// listed wins), else the active one (a run with no name, a blank one, or
+/// one no environment has).
+pub fn run_target(run_env: Option<&str>, envs: &[(String, String)], active: &str) -> String {
+    let wanted = run_env.map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty());
+    wanted
+        .and_then(|w| envs.iter().find(|(_, name)| name.trim().to_lowercase() == w))
+        .map(|(id, _)| id.clone())
+        .unwrap_or_else(|| active.to_string())
+}
+
+/// Where the runs, and what they name, go.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Placement {
+    /// Run file name (without `.json`) to environment id.
+    pub runs: std::collections::BTreeMap<String, String>,
+    /// Screenshot name to the environments of the runs that name it (one
+    /// each; a shot two runs in different environments name goes to both).
+    pub shots: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// A name as a run records it, with one kind of separator.
+fn shot_key(name: &str) -> String {
+    name.replace('\\', "/")
+}
+
+/// Reads each `runs/*.json` under `flat` and says which environment it, and
+/// the screenshots it names, belong to. A run that cannot be read goes to
+/// the active environment and is logged without its path.
+pub fn place_runs(flat: &Path, envs: &[(String, String)], active: &str) -> Result<Placement, String> {
+    let mut placed = Placement::default();
+    let dir = flat.join("runs");
+    if !exists(&dir)? {
+        return Ok(placed);
+    }
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
+        let run = std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| {
+            serde_json::from_str::<super::LocalRun>(t.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())
+        });
+        let run = match run {
+            Ok(r) => r,
+            Err(_) => {
+                crate::applog::warn("Auto Run: a saved run could not be read for the update and goes to the active environment");
+                placed.runs.insert(stem, active.to_string());
+                continue;
+            }
+        };
+        let target = run_target(run.environment.as_deref(), envs, active);
+        for case in &run.cases {
+            for step in case.steps.iter().chain(case.cleanup.iter()) {
+                // A failure picture lives on the action's outcome, not the step.
+                let named = step
+                    .screenshot
+                    .iter()
+                    .chain(step.outcomes.iter().filter_map(|o| o.screenshot.as_ref()));
+                for shot in named.map(String::as_str).filter(|s| !s.is_empty()) {
+                    let at = placed.shots.entry(shot_key(shot)).or_default();
+                    if !at.contains(&target) {
+                        at.push(target.clone());
+                    }
+                }
+            }
+        }
+        placed.runs.insert(stem, target);
+    }
+    Ok(placed)
+}
+
+/// Every file under `dir` with its path below it (forward slashes). A link
+/// or anything else that is not a plain file or folder fails the copy.
+fn files_below(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let rel = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            files_below(&entry.path(), &format!("{rel}/"), out)?;
+        } else if meta.is_file() {
+            out.push((rel, entry.path()));
+        } else {
+            return Err(ITEM_IS_A_LINK.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Whether any id in an order file has a script in `flat`. The order is
+/// stored as `{"case_ids": [...]}`; a bare list of ids reads the same.
+fn order_has_a_script(flat: &Path, text: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) else {
+        return false;
+    };
+    let ids = value.get("case_ids").unwrap_or(&value);
+    ids.as_array().is_some_and(|a| {
+        a.iter()
+            .filter_map(|v| v.as_i64())
+            .any(|id| flat.join("scripts").join(format!("case-{id}.json")).is_file())
+    })
+}
+
+/// Counts for the report, read from what was built under `built`.
+fn describe(
+    built: &Path,
+    envs: &[(String, String)],
+    active: &str,
+    environments: usize,
+    items: usize,
+) -> MigrationReport {
+    let count = |id: &str, dir: &str, keep: &dyn Fn(&str) -> bool| -> usize {
+        std::fs::read_dir(built.join(id).join(dir))
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                    .filter(|e| keep(&e.file_name().to_string_lossy()))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let scripts = count(active, "scripts", &|n| n.starts_with("case-") && n.ends_with(".json"));
+    let mut runs_by_env: Vec<(String, usize)> = envs
+        .iter()
+        .map(|(id, name)| (name.clone(), count(id, "runs", &|n| n.ends_with(".json"))))
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    runs_by_env.sort_by(|a, b| b.1.cmp(&a.1));
+    let active_name = envs.iter().find(|(id, _)| id == active).map(|(_, n)| n.clone()).unwrap_or_default();
+    MigrationReport { environments, items, scripts, active_name, runs_by_env }
+}
+
+/// Copies the flat root's per-environment items into `envs_dir/<id>/` and
+/// reports what it did. Every item goes under `active` only, except the
+/// [`BY_RUN`] items, which go to the environment the run that made them
+/// names ([`place_runs`]; a screenshot two such runs name goes to each, and
+/// what no run names goes to `active`). An order is carried only when one
+/// of its cases has a script. Only the write-once items (`LINKED_ITEMS`)
+/// are hard-linked, so a large `shots/` is not written out again. The
+/// Playwright export record also reaches the export environment. `flat` is
+/// never changed. Anything unreadable, and any link, fails the copy.
+pub fn fan_out(
+    flat: &Path,
+    envs_dir: &Path,
+    envs: &[(String, String)],
+    active: &str,
+) -> Result<MigrationReport, String> {
+    if let Some((bad, _)) = envs.iter().find(|(i, _)| !valid_folder_id(i)) {
         return Err(format!("\"{bad}\" is not an environment id"));
     }
-    let target = active
-        .filter(|a| ids.iter().any(|i| i == a))
-        .or_else(|| ids.first().map(String::as_str))
-        .map(str::to_string);
+    let active = if envs.iter().any(|(i, _)| i == active) {
+        active.to_string()
+    } else {
+        envs.first().map(|(i, _)| i.clone()).ok_or_else(|| "there is no environment to copy into".to_string())?
+    };
     // The export records go to the environment already named as the export
     // environment (when listed), else to the active one.
     let export_target = crate::environments::export_id_unlocked(flat)
-        .filter(|e| ids.iter().any(|i| i == e))
-        .or_else(|| target.clone());
-    for id in ids {
+        .filter(|e| envs.iter().any(|(i, _)| i == e))
+        .unwrap_or_else(|| active.clone());
+    for (id, _) in envs {
         std::fs::create_dir_all(envs_dir.join(id)).map_err(|e| e.to_string())?;
     }
-    let mut copied = 0;
-    for (name, how) in PER_ENV_ITEMS {
+    let placement = place_runs(flat, envs, &active)?;
+    let into = |id: &str, name: &str| envs_dir.join(id).join(name);
+    let mut items = 0;
+    for (name, _) in PER_ENV_ITEMS {
         let from = flat.join(name);
         if !exists(&from)? {
             continue;
         }
-        match how {
-            CopyTo::Every => {
-                for id in ids {
-                    let keep_export = export_target.as_deref() == Some(id.as_str());
-                    let skip = move |rel: &Path| is_export_record(rel) && (!keep_export || !is_live_record(rel));
-                    copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), false, &skip)?;
-                }
-                copied += 1;
-            }
-            CopyTo::ActiveOnly => {
-                if let Some(id) = &target {
-                    let link = LINKED_ITEMS.contains(&name);
-                    copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), link, &|_| false)?;
-                    copied += 1;
+        items += 1;
+        let link = LINKED_ITEMS.contains(&name);
+        if name == "shots" {
+            let mut files = vec![];
+            files_below(&from, "", &mut files)?;
+            for (rel, path) in files {
+                let at = placement.shots.get(&rel).cloned().unwrap_or_else(|| vec![active.clone()]);
+                for id in at {
+                    let to = into(&id, name).join(&rel);
+                    std::fs::create_dir_all(to.parent().unwrap_or(envs_dir)).map_err(|e| e.to_string())?;
+                    copy_tree(&path, &to, Path::new(name), link, &|_| false)?;
                 }
             }
+        } else if BY_RUN.contains(&name) || name == "orders" {
+            for entry in std::fs::read_dir(&from).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let file = entry.file_name();
+                let target = if name == "orders" {
+                    let json = entry.path().extension().and_then(|e| e.to_str()) == Some("json");
+                    if json {
+                        match std::fs::read_to_string(entry.path()) {
+                            Ok(text) if !order_has_a_script(flat, &text) => continue,
+                            Ok(_) => {}
+                            // Unreadable is not empty: keep it where it can be tried again.
+                            Err(_) => crate::applog::warn("Auto Run: a saved run order could not be read for the update and goes to the active environment"),
+                        }
+                    }
+                    active.clone()
+                } else {
+                    let key = if name == "downloads" {
+                        file.to_string_lossy().to_string()
+                    } else {
+                        Path::new(&file).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+                    };
+                    placement.runs.get(&key).cloned().unwrap_or_else(|| active.clone())
+                };
+                let to = into(&target, name);
+                std::fs::create_dir_all(&to).map_err(|e| e.to_string())?;
+                copy_tree(&entry.path(), &to.join(&file), &Path::new(name).join(&file), link, &|_| false)?;
+            }
+        } else if name == "projects" {
+            let mut targets = vec![active.clone()];
+            if export_target != active {
+                targets.push(export_target.clone());
+            }
+            for id in targets {
+                let is_active = id == active;
+                let keep_export = export_target == id;
+                let skip = move |rel: &Path| {
+                    if is_export_record(rel) {
+                        !keep_export || !is_live_record(rel)
+                    } else {
+                        !is_active
+                    }
+                };
+                copy_tree(&from, &into(&id, name), Path::new(name), false, &skip)?;
+            }
+        } else {
+            copy_tree(&from, &into(&active, name), Path::new(name), link, &|_| false)?;
         }
     }
-    Ok(copied)
+    Ok(describe(envs_dir, envs, &active, envs.len(), items))
 }
 
 /// The file operations `migrate_with` does, passed in so a test can make
 /// one of them fail.
 pub struct MigrationOps<'a> {
-    pub fan_out: &'a dyn Fn(&Path, &Path, &[String], Option<&str>) -> Result<usize, String>,
+    pub fan_out: &'a dyn Fn(&Path, &Path, &[(String, String)], &str) -> Result<MigrationReport, String>,
     pub rename: &'a mut dyn FnMut(&Path, &Path) -> std::io::Result<()>,
     pub sleep: &'a mut dyn FnMut(std::time::Duration),
 }
@@ -774,7 +1027,9 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
             finished = None;
         }
     }
-    if let Some((staging, report)) = finished {
+    if let Some((staging, base)) = finished {
+        let (listed, active) = listed_environments(shared);
+        let report = describe(&staging, &listed, &active, base.environments, base.items);
         crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS)?;
         let _ = std::fs::remove_file(complete_marker(&staging));
         return Ok(Some(report));
@@ -785,16 +1040,16 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
     }
     if !any {
         std::fs::create_dir_all(&envs).map_err(|e| e.to_string())?;
-        return Ok(Some(MigrationReport { environments: 0, items: 0 }));
+        return Ok(Some(MigrationReport::default()));
     }
-    let (ids, active) = match crate::environments::read_ids(shared)? {
+    let (listed, active) = match crate::environments::read_names(shared)? {
         Some(found) => found,
-        None => (vec![SEED_ID.to_string()], SEED_ID.to_string()),
+        None => (vec![(SEED_ID.to_string(), DEFAULT_ENV_NAME.to_string())], SEED_ID.to_string()),
     };
     let staging = shared.join(format!("{STAGING_PREFIX}{}", crate::cache::now_ms()));
-    let built = (ops.fan_out)(shared, &staging, &ids, Some(&active));
-    let items = match built {
-        Ok(items) => items,
+    let built = (ops.fan_out)(shared, &staging, &listed, &active);
+    let report = match built {
+        Ok(report) => report,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
@@ -802,8 +1057,10 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
     };
     // The copy is whole: say so beside it, so a rename that fails (another
     // program holding a file it just scanned) does not cost a second copy.
-    let report = MigrationReport { environments: ids.len(), items };
-    if let Err(e) = std::fs::write(complete_marker(&staging), format!("{} {}", report.environments, report.items)) {
+    // The layout version tells a copy built by an older build from this one.
+    if let Err(e) =
+        std::fs::write(complete_marker(&staging), format!("{} {} {LAYOUT_VERSION}", report.environments, report.items))
+    {
         crate::applog::debug(format!("Auto Run: the finished-copy mark could not be written: {e}"));
     }
     match crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS) {
@@ -816,6 +1073,24 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
             crate::applog::warn("Auto Run: the finished per-environment copy is kept and will be put in place at the next start");
             Err(e)
         }
+    }
+}
+
+/// What a kept staging folder's marker must carry as its third word: the
+/// layout the copy inside it has (old data under the active environment,
+/// runs by the environment they name). A copy without it was built by an
+/// older build, with a copy in every environment, and is rebuilt.
+const LAYOUT_VERSION: &str = "by-run-1";
+
+/// What the first environment is called when no environment file exists yet.
+const DEFAULT_ENV_NAME: &str = "Default";
+
+/// The listed environments (id and name) and the active id; the seed when
+/// the file is missing or unreadable.
+fn listed_environments(shared: &Path) -> (Vec<(String, String)>, String) {
+    match crate::environments::read_names(shared) {
+        Ok(Some(found)) => found,
+        _ => (vec![(SEED_ID.to_string(), DEFAULT_ENV_NAME.to_string())], SEED_ID.to_string()),
     }
 }
 
@@ -875,7 +1150,8 @@ fn sweep_stagings(shared: &Path) -> Option<(PathBuf, MigrationReport)> {
         }
         let report = std::fs::read_to_string(complete_marker(&path)).ok().and_then(|t| {
             let mut it = t.split_whitespace();
-            Some(MigrationReport { environments: it.next()?.parse().ok()?, items: it.next()?.parse().ok()? })
+            let report = MigrationReport { environments: it.next()?.parse().ok()?, items: it.next()?.parse().ok()?, ..Default::default() };
+            (it.next()? == LAYOUT_VERSION).then_some(report)
         });
         match (report, rest.parse::<u64>()) {
             (Some(r), Ok(ms)) => whole.push((ms, path, r)),

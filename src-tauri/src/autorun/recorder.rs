@@ -211,7 +211,7 @@ pub fn stable_id(id: &str) -> bool {
 /// a role and name.
 pub fn narrow(target: Target, h: &ClickHints) -> Result<Target, String> {
     let words = match &target {
-        Target::One(s) if s.exact && s.role.is_none() && s.css.is_none() && s.nth.is_none() => s.text.clone(),
+        Target::One(s) if s.exact && s.role.is_none() && s.css.is_none() && s.nth.is_none() && s.has_text.is_none() => s.text.clone(),
         _ => None,
     };
     let Some(words) = words else { return Ok(target) };

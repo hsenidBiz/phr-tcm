@@ -23,6 +23,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "check_text",
     "check_url",
     "remember_url",
+    "remember_text",
     "expect_visible",
     "expect_hidden",
     "expect_text",
@@ -285,7 +286,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
 - `{ "kind": "expect_hidden", "selector": ... }` - gone counts as hidden
-- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) in place of `equals`
+- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) or `"same_as": "counts"` (the text `remember_text` noted as counts) in place of `equals`; exactly one of the three
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }` - or `at_least` / `at_most` in its place (`at_most` passes only once the count has held still for a moment, so give it a `timeout_ms` of at least 1500)
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute; with `"matches": "^View "` (a pattern) in place of `equals`, the value must match it
@@ -298,11 +299,12 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional). With `"equals": "/hr/cycles/index"` in place of `contains`, the address is exactly that: a value starting with / is compared with the path, query and fragment, anything else with the whole address. With `"same_as": "before"`, the address is the one `remember_url` noted as before.
 - `{ "kind": "remember_url", "as": "before" }` - note the address the page is on now, under a name (1 to 30 letters, digits, - or _), for a later `check_url` with `same_as` in the same case. The save refuses a `same_as` with no earlier `remember_url`.
+- `{ "kind": "remember_text", "selector": {...}, "as": "counts" }` - note what an element reads now (a field's value for a field), under a name, for a later `expect_text` with `"same_as": "counts"` in the same case (a before/after check: "the pills keep the counts from step 4"). The save refuses a `same_as` with no earlier `remember_text`.
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json`, `timeout_ms`, `not_before_ms`, `started_within_ms` and `same_document` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
-- `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
+- `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "settle_ms": 5000, "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
@@ -378,10 +380,12 @@ assume what the case made was removed. Its failure, a failed
 never fails the case. Its locators must have been seen like any step's,
 and every other run rule (Must not save included) applies to it.
 
-Put every delete of what the case made in the clean-up step, never after a
-check in a case step: a failing check stops the step, the delete never
-runs, and the record stays, so the next run fails on it. The save notes a
-delete that comes after a check.
+A delete the case asks for stays in its step with its check; the clean-up
+holds a guarded fallback (when_visible) for the record a failing check
+leaves behind, so the next run does not fail on it. A delete that only
+tidies up what the case made goes in the clean-up step, never after a check
+in a case step. The save notes a delete that comes after a check, and a
+delete moved to the clean-up while its step lost a check.
 
 Every `expect_` action, and `check_url`, looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
@@ -631,15 +635,25 @@ depends on. Never repeat a `when_visible` several times for this.
   `then` action may name the loop's own selector across the whole page:
   both are refused at save. A match that sits in no row then fails the
   action - point `selector` at something inside each row.
+- With `except`, the loop first checks that its rows can be told apart:
+  when the page shows an `except` text but no match's row reads one, it
+  stops before the first pass and says what the row rule found - point
+  `selector` inside each row. The save refuses a loop discovery stopped
+  that way.
 - `max` is required, 1 to 200: the hard cap. Unprotected matches still
   there after `max` passes fail the action, and the step stops:
   "still 3 rows after max 20 passes". Pick a `max` well above the leftovers you
   expect, not 200 by habit.
-- After each pass the run waits (up to 5 seconds) for the row it worked on
-  to go before it looks again, so a slow delete is not clicked twice.
-- `then` holds plain actions only, as a `when_visible`'s does: no checks,
-  no `when_visible` or another loop, no `sign_in`, `use_component`, tab
-  action or `expire_session`. A `then` action that fails fails the step.
+- After each pass the loop waits for the page's requests to finish, then
+  for the row to go, up to `settle_ms` (default 5000, at most 30000) -
+  raise it on a slow site. A pass that fails because its row has already
+  gone ends quietly.
+- `then` holds plain actions, `when_visible` (to confirm a dialog only if
+  it shows; plain actions inside it) and `expect_hidden` (to wait for the
+  row to go). No other check, no other loop, no `sign_in`,
+  `use_component`, tab action or `expire_session`. A `then` action that
+  fails (an `expect_hidden` whose row stays included) fails the step,
+  unless its row has already gone.
 - The step's outcome says how many passes ran and what it kept: "ran 3
   passes, none left; kept 2 protected (Customer Focus, Operational
   Excellence)".
@@ -1101,11 +1115,11 @@ database tools read. This guide names the one that is active
 now (the section called "The active environment"). Accounts belong to an
 environment, so a key that exists in one may not exist in another.
 
-Each environment has its own Auto Run scripts, areas, components, quirks, discovery map, saved setups and API templates, fixtures and flows, because each can run a different version of the app. Everything you read and save belongs to the active environment only: a script you save now is the active environment's, and no other environment sees it. If the environment is switched while you are working, a save you started is refused; read again and carry on in the environment now active. When the active environment lacks a script, an area or a component that another environment has, do not rewrite it from memory: ask the person to copy it in the app (Edit environments, Copy Auto Run data…, for everything; Copy to environment… or Copy from environment… on the case's script, for one case), then read it here and change only what differs. You cannot copy between environments yourself.
+Each environment has its own Auto Run scripts, areas, components, quirks, discovery map, saved setups and API templates, fixtures and flows, because each can run a different version of the app. Everything you read and save belongs to the active environment only: a script you save now is the active environment's, and no other environment sees it. If the environment is switched while you are working, a save you started is refused; read again and carry on in the environment now active. When the active environment lacks a script, an area or a component that another environment has, do not rewrite it from memory: ask the person to copy it in the app (Edit environments, Copy Auto Run data…, for everything; Copy to environment… or Copy from environment… on the case's script, for one case; Import scripts… on the Auto Run Setup panel, for a folder of scripts), then read it here and change only what differs. You cannot copy between environments yourself.
 
-- `get_accounts` lists the active environment's accounts: key, label and
-  username. It includes passwords only when the person has marked the
-  environment as a test environment; otherwise it says so. Never copy a
+- `get_accounts` lists the active environment's accounts: key, label,
+  username and whether a password is set. It never shows a password: Auto
+  Run signs in by itself. Never copy a
   username or a password into a script or a template.
 - When the environment has no account for a case, find test users and
   propose them. Look in the database with the read-only database tools
@@ -1689,6 +1703,11 @@ entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_each`, `expect_order`, `expect_hidden` and `wait_for` are
 happy with many.
 
+`has_text` keeps only the matches that hold this text (`{ "css": "tr", "has_text": "AutoTest Grp 7" }`),
+the way to reach a row or card by the name it holds, instead of `nth`. It reads
+the element's text only (not a field's value), ignores case and runs of spaces, and is applied before `nth`.
+It is refused when empty.
+
 Use full names, and probe `nth` locators exactly as written. A check that
 may match several (`expect_hidden`, `expect_count`, `expect_each`, `expect_order`, `wait_for`) may name
 a part of a seen name in the same role, of at least 3 characters, on a
@@ -1696,7 +1715,7 @@ plain locator (one entry, no `nth`, no `"visible": false`, not `"exact"`):
 "Reviewer:" for the text "Reviewer: 30%", "Evaluators" for the
 progressbar "Step 4 of 9 Evaluators". Every other use needs the full name
 as it was seen, and a refusal names the seen one that holds the part. An
-`nth` locator is seen only once it was probed with its `nth`.
+`nth` or `has_text` locator is seen only once it was probed with it as written.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -2165,7 +2184,8 @@ alone always uses the main one, as before.
 - Split the work so no two assistants share a case or an account. A case
   another assistant works on, or an account another browser holds, is refused
   at once: that is not an error to retry in a loop - take other work, or
-  report it.
+  report it. The refusal says how long the case has been held ("held for 37
+  minutes"); a discovery start that fails lets go of the case it claimed.
 - One mapping run at a time, whoever runs it.
 - The map, the areas, the components and the quirks are shared: read an area
   again just before you repair it.
@@ -2557,7 +2577,7 @@ Before every save:
   Steps you leave out of `edits` must stay exactly as they were; a declared
   step keeps the script's checks unless `gives_up` names each one dropped,
   and never moves a check's value away from the case. A precondition removed
-  or changed without a precondition edit is refused. A repair may send `patch_steps` in place of `steps`.
+  or changed without a precondition edit is refused. A repair may send `patch_steps` in place of `steps`, changing or adding a step.
   "Repairing a script that failed" has the shapes and every refusal.
 
 An absence check (`expect_hidden`, or `expect_count` of 0) whose locator was
@@ -2668,6 +2688,10 @@ the answer says so; start a new one to explore again.
   page: the sign-in address is opened once more, the page is never
   reloaded and the form never sent twice; with the form still showing
   (wrong password, locked account, reset page) nothing is tried again.
+  A site that is slow to wake (the first page does not open) is given
+  about 2 minutes, opened again up to three more times in that time; it then fails
+  as "the site is slow to start", which is the site, not the browser and
+  not the script.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the
@@ -2765,8 +2789,13 @@ A repair need not send the whole script again: a script entry may carry
 that step of the saved script, every other step is kept as saved, and any
 other key of the entry (`title`, `area`) replaces the saved one. It is
 checked exactly as the whole script would be, so `edits` must still
-declare every patched step. A step the saved script does not have is
-refused: send the whole script to add one.
+declare every patched step. A step the saved script lacks is ADDED, in
+step order; with `"cleanup": true` the patch changes the clean-up step
+(numbered after the case's last step) the same way: what it sends replaces
+the saved field and what it leaves out, such as `unchecked`, is kept, e.g.
+`{ "step": 9, "cleanup": true, "actions": [...] }`. A case with no clean-up
+yet gets a new one, which also needs its `"unchecked": "..."`. One clean-up
+patch to an entry.
 
 When a save is refused, every case's refusals of the same kind come back
 in one answer: every undeclared change, every expected result nothing
@@ -2917,7 +2946,7 @@ reason.
 "##;
 
 /// The live half of "Environments": which environment is active right now
-/// and whether `get_accounts` will include its passwords. Appended by the
+/// and whether it is marked as a test environment. Appended by the
 /// routes (`ai_bridge`) after the constant, because it is read from disk
 /// at the moment of the call and the constant cannot go stale on it. Only
 /// the name, the address, the database as a person reads it (its label and
@@ -2949,9 +2978,9 @@ pub fn active_environment_section(
         None => " It has no database set.".to_string(),
     };
     let passwords = if env.test_environment {
-        "It is marked as a test environment, so `get_accounts` includes passwords."
+        "It is marked as a test environment."
     } else {
-        "It is not marked as a test environment, so `get_accounts` leaves passwords out."
+        "It is not marked as a test environment."
     };
     format!(
         "## The active environment\n\nThe active environment is \"{}\".{address}{db} {passwords} Its scripts, areas, components and API templates are its own.\n",

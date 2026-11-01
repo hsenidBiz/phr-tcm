@@ -379,7 +379,9 @@ pub async fn route(
     body: &str,
     version: &str,
 ) -> (u16, String) {
-    route_timed(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version).await
+    // Boxed: the router's future is large, and a caller that holds it inline
+    // (a test on a 2 MB thread) would carry all of it on its own stack.
+    Box::pin(route_timed(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version)).await
 }
 
 /// [`route_as`], leaving the log one line for the call: its route, status
@@ -446,11 +448,12 @@ pub async fn route_as(
     let claimed = match (method, path) {
         ("POST", "/autorun-try" | "/autorun-discover-start" | "/autorun-replay") => claim_named_case(caller, body),
         ("POST", "/autorun-script") => claim_bundle_cases(caller, body),
-        _ => Ok(()),
+        _ => Ok(None),
     };
-    if let Err(refused) = claimed {
-        return refused;
-    }
+    let newly_claimed = match claimed {
+        Ok(case) => case,
+        Err(refused) => return refused,
+    };
     // The browser this call uses, found ONCE: every handler below locks,
     // publishes to and answers for that slot. A route that uses no
     // supervised browser (or one the caller must not be refused for) is
@@ -462,7 +465,10 @@ pub async fn route_as(
     let slot = match need {
         Some(need) => match crate::commands::autorun_slots::slot_for(caller, need) {
             Ok(slot) => slot,
-            Err(refused) => return refused,
+            Err(refused) => {
+                release_failed_start(newly_claimed, caller, path, refused.0);
+                return refused;
+            }
         },
         None => SlotNo::MAIN,
     };
@@ -805,8 +811,8 @@ pub async fn route_as(
         // DevOps (a read) to refuse an id the PBI is not tested by.
         ("POST", "/autorun-order") => autorun_order(ctx, client, body).await,
         // The active environment's accounts: the assistant proposes logins
-        // (never passwords) for a person to add, and reads the ones there -
-        // passwords included only in an environment marked as a test one.
+        // for a person to add, and reads the ones there - key, label,
+        // username and whether a password is set, never the password.
         ("POST", "/accounts-propose") => accounts_propose(ctx, body).await,
         // Check sign-in: each account signed in once, in a browser of its own,
         // and walked as far as an area. Uses no slot: the person's Auto Run
@@ -975,6 +981,7 @@ pub async fn route_as(
     };
     // A lease refusal in the answer of a route that signs in says whose
     // browser holds the account, once, here, whichever arm answered.
+    release_failed_start(newly_claimed, caller, path, answer.0);
     name_the_holder(answer, caller, method, path)
 }
 
@@ -4158,6 +4165,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::Upload { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectStyle { selector, .. }
@@ -4772,6 +4780,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
@@ -10564,6 +10573,31 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
     // even looks at.
     crate::applog::info(describe_try(action, outcome.ok));
+    // A discovery try of a `repeat_while_visible` with `except` files whether
+    // its rows could be told apart, so the save can judge the same loop
+    // (`seen_check::loop_rows_review`). Only a try that went past the guard
+    // (it passed) or was stopped by it says anything.
+    if files_finds && !project.trim().is_empty() {
+        let guard_said = outcome.detail.contains(crate::browser::repeat::EXCEPT_GUARD_MARK);
+        for each in action.each() {
+            let crate::browser::actions::Action::RepeatWhileVisible { selector, except, .. } = each else { continue };
+            if except.is_empty() || !(outcome.ok || guard_said) {
+                continue;
+            }
+            let rows = crate::autorun::discovery_map::LoopRows {
+                selector: selector.clone(),
+                except: except.clone(),
+                refused: guard_said.then(|| outcome.detail.clone()),
+                at: crate::autorun::sessions::now_ms(),
+            };
+            let area = recording_area(root, discovery_area, Some(case_id));
+            if let Err(why) =
+                crate::autorun::discovery_map::record_loop_rows_in(root, organization, project, area.as_deref(), rows)
+            {
+                unrecorded(&why);
+            }
+        }
+    }
     // Only a try that worked: a locator that failed was never seen working.
     // (An explore session files no locator: `files_finds` is false.)
     if outcome.ok && files_finds {
@@ -11717,10 +11751,11 @@ async fn propose_marks(
 /// `get_accounts` tool off.
 pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test Case Manager";
 
-/// `GET /accounts`: the active environment's accounts - key, label and
-/// username, and the password ONLY when the environment is marked as a
-/// test environment. The one place a password leaves the app; it is never
-/// logged, and the log line says only how many were read. Beside them, the
+/// `GET /accounts`: the active environment's accounts - key, label,
+/// username and whether a password is set (`has_password`). Never the
+/// password itself, in any environment: Auto Run signs in by itself, so a
+/// script names an account by its key. The log line says only how many were
+/// read. Beside them, the
 /// project's Test files (`test_files_answer`), or `test_files_note` saying
 /// why there are none to show. An account that is held right now carries
 /// `in_use_by`, who holds it as the caller reads it (`in_use_by_words`); a
@@ -11728,8 +11763,7 @@ pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test
 ///
 /// Refused while the person has switched `get_accounts` off on the AI
 /// Bridge tab. The MCP proxy already hides a switched-off tool; this route
-/// checks again itself, as the database routes do (`stage_db`), because it
-/// is the one that can hand out passwords.
+/// checks again itself, as the database routes do (`stage_db`).
 fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, String) {
     if ctx.disabled_tools.iter().any(|t| t == "get_accounts") {
         return (409, GET_ACCOUNTS_OFF.to_string());
@@ -11768,10 +11802,12 @@ fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, Stri
     let list: Vec<serde_json::Value> = accounts
         .iter()
         .map(|a| {
-            let mut one = serde_json::json!({ "key": a.key, "label": a.label, "username": a.username });
-            if shown {
-                one["password"] = serde_json::Value::String(a.password.clone());
-            }
+            let mut one = serde_json::json!({
+                "key": a.key,
+                "label": a.label,
+                "username": a.username,
+                "has_password": !a.password.trim().is_empty(),
+            });
             if let Some((_, holder)) = held.iter().find(|(key, _)| *key == a.key) {
                 one["in_use_by"] = serde_json::Value::String(in_use_by_words(holder, caller_slot, main_is_persons));
             }
@@ -11787,18 +11823,7 @@ fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, Stri
         Ok(files) => out["test_files"] = serde_json::Value::Array(files),
         Err(why) => out["test_files_note"] = serde_json::Value::String(why),
     }
-    if !shown {
-        out["note"] = serde_json::Value::String(format!(
-            "{} is not marked as a test environment, so no password is shown - scripts and templates name an account by its key",
-            env.name
-        ));
-    }
-    crate::applog::info(format!(
-        "AI bridge: the assistant read the {} account(s) of {}{}",
-        accounts.len(),
-        env.name,
-        if shown { ", passwords included" } else { "" }
-    ));
+    crate::applog::info(format!("AI bridge: the assistant read the {} account(s) of {}", accounts.len(), env.name));
     (200, out.to_string())
 }
 
@@ -11916,17 +11941,27 @@ fn name_the_holder(
 /// tools) never claims, and is refused only by a LIVE assistant's claim, so
 /// with no assistant connected nothing is ever refused. The answer names the
 /// holder by label only.
-pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Result<(), (u16, String)> {
+pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Result<Option<i32>, (u16, String)> {
     use crate::autorun::{agents, claims};
     let now = crate::autorun::sessions::now_ms();
     match caller {
-        agents::Caller::Agent(key) => claims::claim(key, case_id, now).map_err(|why| (409, why)),
+        agents::Caller::Agent(key) => claims::claim(key, case_id, now).map(|made| made.then_some(case_id)).map_err(|why| (409, why)),
         agents::Caller::Default => {
             let live = claims::holder(case_id, now).and_then(|h| agents::info(&h)).filter(|i| i.gone_since_ms.is_none());
             match live {
-                Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label))),
-                None => Ok(()),
+                Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label, claims::held_for(case_id, now)))),
+                None => Ok(None),
             }
+        }
+    }
+}
+
+/// A hold a discovery start made ends with that start when it is answered
+/// with anything but 200: no work began. A hold the agent had before stays.
+fn release_failed_start(newly_claimed: Option<i32>, caller: &crate::autorun::agents::Caller, path: &str, status: u16) {
+    if let (Some(case), crate::autorun::agents::Caller::Agent(key), "/autorun-discover-start") = (newly_claimed, caller, path) {
+        if status != 200 && crate::autorun::claims::release_case(key, case) {
+            crate::applog::info(format!("Auto Run: case {case}'s hold ended - its discovery did not start"));
         }
     }
 }
@@ -11939,17 +11974,17 @@ fn named_case_id(body: &str) -> Option<i32> {
 
 /// `claim_for` the case a try, a discovery start or a replay body names; a
 /// body that names none claims nothing (the call answers its own 400).
-fn claim_named_case(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+fn claim_named_case(caller: &crate::autorun::agents::Caller, body: &str) -> Result<Option<i32>, (u16, String)> {
     match named_case_id(body) {
         Some(case_id) => claim_for(caller, case_id),
-        None => Ok(()),
+        None => Ok(None),
     }
 }
 
 /// `claim_for` every case a save bundle names (a list of scripts, or an
 /// object with `scripts`), in the bundle's order, before any of the save's
 /// gates: the first refusal is the answer.
-fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Result<Option<i32>, (u16, String)> {
     let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
     let scripts = if v.is_array() { Some(&v) } else { v.get("scripts") };
     let mut seen: Vec<i32> = Vec::new();
@@ -11962,7 +11997,7 @@ fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Re
             claim_for(caller, case_id)?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// The refusal for a second mapping run: whose browser it is going in.
@@ -12725,8 +12760,10 @@ fn parse_save_request(
 /// if it had been sent whole, so the repair's `edits` must still declare
 /// every patched step. Refused: an entry with both `steps` and
 /// `patch_steps`, one with no `case_id`, a case with no saved script, a
-/// step the saved script does not have (send the whole script to add one),
-/// and a step patched twice.
+/// clean-up patch not after the case's last step, and a step patched
+/// twice. A step the saved script lacks is ADDED in step order; a patch
+/// with `"cleanup": true` replaces the saved clean-up step (whatever its
+/// number) or adds one after the last case step.
 pub fn apply_patch_steps(
     items: &mut [serde_json::Value],
     load: &dyn Fn(i32) -> Result<Option<crate::autorun::CaseScript>, String>,
@@ -12755,6 +12792,7 @@ pub fn apply_patch_steps(
             return Err(format!("case {case_id}: its saved script has no steps to patch"));
         };
         let mut patched: Vec<i64> = Vec::new();
+        let mut cleanup_patched = false;
         for patch in patches {
             let Some(fields) = patch.as_object() else {
                 return Err(format!("case {case_id}: each of \"patch_steps\" is {{ step, actions }}"));
@@ -12769,13 +12807,58 @@ pub fn apply_patch_steps(
                 return Err(format!("case {case_id}: patch_steps names step {n} twice"));
             }
             patched.push(n);
-            let Some(step) = steps.iter_mut().find(|s| s.get("step_number").and_then(serde_json::Value::as_i64) == Some(n)) else {
-                return Err(format!(
-                    "case {case_id}: patch_steps step {n} is not in its saved script - send the whole script with \"steps\" to add a step"
-                ));
-            };
-            for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "step" | "step_number")) {
-                step[k.as_str()] = v.clone();
+            let is_cleanup = fields.get("cleanup").and_then(serde_json::Value::as_bool) == Some(true);
+            let number_of = |s: &serde_json::Value| s.get("step_number").and_then(serde_json::Value::as_i64);
+            let is_cleanup_step = |s: &serde_json::Value| s.get("cleanup").and_then(serde_json::Value::as_bool) == Some(true);
+            let others = fields.iter().filter(|(k, _)| !matches!(k.as_str(), "step" | "step_number"));
+            if is_cleanup {
+                // The clean-up step: the patch merges into the saved one
+                // (fields it does not send are kept, its number is the
+                // patch's), or is added after the last case step when the
+                // script has none.
+                if cleanup_patched {
+                    return Err(format!("case {case_id}: patch_steps holds two clean-up patches; a case has one clean-up step"));
+                }
+                cleanup_patched = true;
+                let last = steps.iter().filter(|s| !is_cleanup_step(s)).filter_map(number_of).max();
+                if let Some(last) = last.filter(|l| n <= *l) {
+                    return Err(format!("case {case_id}: a clean-up step comes after the case's last step ({last})"));
+                }
+                match steps.iter().position(is_cleanup_step) {
+                    Some(at) => {
+                        steps[at]["step_number"] = serde_json::json!(n);
+                        for (k, v) in others {
+                            steps[at][k.as_str()] = v.clone();
+                        }
+                    }
+                    None => {
+                        let mut step = serde_json::Map::new();
+                        step.insert("step_number".to_string(), serde_json::json!(n));
+                        for (k, v) in others {
+                            step.insert(k.clone(), v.clone());
+                        }
+                        steps.push(serde_json::Value::Object(step));
+                    }
+                }
+                continue;
+            }
+            if let Some(step) = steps.iter_mut().find(|s| number_of(s) == Some(n)) {
+                for (k, v) in others {
+                    step[k.as_str()] = v.clone();
+                }
+            } else {
+                // A step the saved script lacks: added in step order among
+                // the case steps (a clean-up step stays last).
+                let mut step = serde_json::Map::new();
+                step.insert("step_number".to_string(), serde_json::json!(n));
+                for (k, v) in others {
+                    step.insert(k.clone(), v.clone());
+                }
+                let at = steps
+                    .iter()
+                    .position(|s| is_cleanup_step(s) || number_of(s).is_some_and(|m| m > n))
+                    .unwrap_or(steps.len());
+                steps.insert(at, serde_json::Value::Object(step));
             }
         }
         // The entry's own keys win over the saved ones.
@@ -13353,10 +13436,14 @@ pub async fn save_autorun_scripts_carrying(
                             only.as_deref(),
                             saved_scripts.iter().find(|s| s.case_id == *case_id),
                         );
-                        if !review.refusals.is_empty() {
-                            unproven.push((*case_id, review.refusals));
-                        }
                         from_case.extend(review.from_case.into_iter().map(|n| format!("case {case_id}: note: {n}")));
+                        let loops = crate::autorun::seen_check::loop_rows_review(&map, script, only.as_deref());
+                        let mut refused = review.refusals;
+                        refused.extend(loops.refusals);
+                        if !refused.is_empty() {
+                            unproven.push((*case_id, refused));
+                        }
+                        from_case.extend(loops.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
                     }
                     SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
                     SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),
@@ -13385,7 +13472,14 @@ pub async fn save_autorun_scripts_carrying(
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::script_notes::delete_after_check_notes(script, Some(&components), only.as_deref())
                     .into_iter()
-                    .chain(crate::autorun::script_notes::positional_delete_notes(script, Some(&components), only.as_deref()));
+                    .chain(crate::autorun::script_notes::positional_delete_notes(script, Some(&components), only.as_deref()))
+                    .chain(
+                        saved_scripts
+                            .iter()
+                            .find(|s| s.case_id == *case_id)
+                            .map(|old| crate::autorun::script_notes::moved_with_check(old, script))
+                            .unwrap_or_default(),
+                    );
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
             if notes.len() > MAX_SAVE_NOTES {

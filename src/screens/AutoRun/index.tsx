@@ -206,6 +206,20 @@ export default function AutoRun({
   // of the other state before the effect stores it.
   const panelOpen = panelChoice ?? (essentialsSettled ? readiness.essentialMissing : false);
 
+  // The update that gave each environment its own folder leaves one notice,
+  // which is read and removed here, so it is said once. A one-shot read: it
+  // is not data the screen shows, so it is not cached.
+  // The toast is not tied to this mount: a development double-run of the
+  // effect would otherwise read the note and drop it.
+  useEffect(() => {
+    commands
+      .autoRunMigrationNote()
+      .then((note) => {
+        if (note) toast.info(note);
+      })
+      .catch(() => {});
+  }, []);
+
   const tabIds = useId();
   const tabRefs = useRef<Partial<Record<AutoRunTab, HTMLButtonElement | null>>>({});
   /** Set when a closing review sends the person to Past runs: the button
