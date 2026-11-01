@@ -1867,3 +1867,15 @@ async fn an_action_found_by_the_words_as_written_says_so() {
     let out = execute_with(&mut d, &action(json!({ "kind": "click", "selector": target })), &quick()).await;
     assert!(out.ok && !out.detail.contains("as written"), "{}", out.detail);
 }
+
+/// The number a count is read from is the one the exported JS `/-?\d+/`
+/// reads: ASCII digits only, so an Arabic-Indic digit before an ASCII number
+/// is skipped by both.
+#[test]
+fn first_integer_reads_ascii_digits_only() {
+    use v2_lib::browser::expect::first_integer;
+    assert_eq!(first_integer("Showing \u{0663} of 12 rows"), Some(12));
+    assert_eq!(first_integer("\u{0665}\u{0666}"), None);
+    assert_eq!(first_integer("moved -3 places"), Some(-3));
+    assert_eq!(first_integer("1,000"), Some(1));
+}

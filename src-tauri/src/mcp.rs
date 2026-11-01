@@ -2470,7 +2470,10 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             _ => Ok((400, guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked).unwrap_or_default())),
         },
         "get_test_cases" => (|| -> Result<(u16, String), String> {
-            let limit = args["limit"].as_i64().unwrap_or(5);
+            let limit = match int_arg(&args, "limit") {
+                Ok(n) => n.unwrap_or(5),
+                Err(why) => return Ok((400, why)),
+            };
             let offset = match int_arg(&args, "offset") {
                 Ok(n) => n.unwrap_or(0),
                 Err(why) => return Ok((400, why)),
@@ -2526,7 +2529,10 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                 (Ok(p), Ok(s), Ok(o)) => (p.unwrap_or(0), s.unwrap_or(0), o.unwrap_or(0)),
                 (Err(why), _, _) | (_, Err(why), _) | (_, _, Err(why)) => return Ok((400, why)),
             };
-            let limit = args["limit"].as_i64().unwrap_or(5);
+            let limit = match int_arg(&args, "limit") {
+                Ok(n) => n.unwrap_or(5),
+                Err(why) => return Ok((400, why)),
+            };
             let mut target = format!("/suite-cases?plan={plan}&suite={suite}&limit={limit}&offset={offset}");
             if args["titles_only"].as_bool().unwrap_or(false) {
                 target.push_str("&titles_only=true");
@@ -2704,10 +2710,12 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "reset_autorun_browser" => reset_call(args, call),
         // Components: each route reads its own named fields out of the body.
         "save_autorun_component" => component_call(args, call),
-        "get_autorun_failures" => {
+        "get_autorun_failures" => (|| -> Result<(u16, String), String> {
             let mut params: Vec<String> = vec![];
-            if let Some(id) = args["case_id"].as_i64() {
-                params.push(format!("case_id={id}"));
+            match int_arg(&args, "case_id") {
+                Ok(Some(id)) => params.push(format!("case_id={id}")),
+                Ok(None) => {}
+                Err(why) => return Ok((400, why)),
             }
             if let Some(id) = args["run_id"].as_str().filter(|s| !s.trim().is_empty()) {
                 params.push(format!("run_id={}", urlencoding::encode(id.trim())));
@@ -2718,7 +2726,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                 format!("/autorun-failures?{}", params.join("&"))
             };
             call("GET", &target, "")
-        }
+        })(),
         "record_quirk" => quirk_call(&with_inferred_from(args, &off), call),
         "record_validation_rule" => call("POST", "/autorun-validation-rule", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),

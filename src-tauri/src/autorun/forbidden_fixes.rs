@@ -115,22 +115,26 @@ pub fn check_repair_absorbs_with(
         },
         None => edit_class,
     };
-    let is_guard = |a: &&Action| matches!(a, Action::WhenVisible { .. } | Action::WhenHidden { .. } | Action::RepeatWhileVisible { .. });
+    // Every guard kind a step holds, at any depth: a guard inside a guard's
+    // `then` counts, and swapping a when_visible for a when_hidden is a new
+    // when_hidden.
+    let guards = |actions: &[Action]| -> Vec<String> {
+        actions
+            .iter()
+            .flat_map(Action::each)
+            .filter(|a| a.is_guard() || matches!(a, Action::RepeatWhileVisible { .. }))
+            .map(Action::kind)
+            .collect()
+    };
     let mut out: Vec<String> = Vec::new();
 
     // 1. A new guard, per step (the clean-up is free).
     for step in new.steps.iter().filter(|s| !s.cleanup) {
-        let now = step.actions.iter().filter(is_guard).count();
-        let before = old
-            .steps
-            .iter()
-            .find(|s| s.step_number == step.step_number)
-            .map_or(0, |s| s.actions.iter().filter(is_guard).count());
-        if now <= before {
-            continue;
-        }
+        let now = guards(&step.actions);
+        let before = old.steps.iter().find(|s| s.step_number == step.step_number).map(|s| guards(&s.actions)).unwrap_or_default();
+        let count = |kinds: &[String], k: &str| kinds.iter().filter(|x| x.as_str() == k).count();
+        let Some(kind) = now.iter().find(|k| count(&now, k) > count(&before, k)).cloned() else { continue };
         let n = step.step_number;
-        let kind = step.actions.iter().filter(is_guard).nth(before).map(|a| a.kind()).unwrap_or_default();
         if class == Some(QuirkClass::ProductBug) {
             out.push(format!("step {n}: the repair adds a {kind} around a product bug - a real bug must surface as a failure: leave the step failing and mark it with mark_autorun_suspected_defect"));
         } else if !quirk_given || class.is_none() {

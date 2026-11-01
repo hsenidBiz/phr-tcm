@@ -277,8 +277,9 @@ pub enum Action {
     /// The other way round (`WhenVisible`'s twin): `then` runs when
     /// `selector` is NOT on the page - it never showed within `within_ms`
     /// (`WHEN_VISIBLE_MS` when left out, the same wait and the same
-    /// `then` rules). A target that shows at any point in the wait skips
-    /// the guard, `SHOWN_SKIPPED`. For "apply it from the template if it is
+    /// `then` rules). A target that matches any element at any point in the
+    /// wait (hidden or off-window ones included) skips the guard,
+    /// `SHOWN_SKIPPED`. For "apply it from the template if it is
     /// not there already". Carried out by the runner.
     WhenHidden {
         selector: Target,
@@ -920,8 +921,9 @@ pub const WHEN_VISIBLE_MS: u32 = 2000;
 pub const WHEN_VISIBLE_MAX_MS: u32 = 10_000;
 /// A `when_visible` whose target never appeared, after the target's words.
 pub const NOT_SHOWN: &str = "not shown, skipped";
-/// A `when_hidden` whose target showed, after the target's words.
-pub const SHOWN_SKIPPED: &str = "shown, skipped";
+/// A `when_hidden` whose target was on the page (shown or not), after the
+/// target's words.
+pub const SHOWN_SKIPPED: &str = "on the page, skipped";
 /// A `when_visible` (recipe or script) told to wait no time at all.
 pub const WITHIN_MS_ZERO: &str = "within_ms must be more than 0";
 /// A `when_visible` inside another one's `then`: the sign-in recipe's rule,
@@ -3153,6 +3155,19 @@ pub async fn shows_up_to_click<D: Driver>(
     timing: &Timing,
 ) -> Result<bool, ActionOutcome> {
     shows_up_as(d, target, within_ms, timing, Check::ShownToClick).await
+}
+
+/// For a script's `when_hidden`: did ANY element match `target` at some
+/// point in the window (`Check::Present`)? An element that is there but
+/// hidden or off-window still counts as there, so the guard only acts when
+/// the page held nothing of the kind for the whole wait.
+pub async fn is_on_page_within<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    within_ms: u32,
+    timing: &Timing,
+) -> Result<bool, ActionOutcome> {
+    shows_up_as(d, target, within_ms, timing, Check::Present).await
 }
 
 async fn shows_up_as<D: Driver>(

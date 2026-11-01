@@ -1,9 +1,11 @@
 //! Running whole cases with nobody pressing a button per step.
 //!
-//! Pure: it is handed its browsers, its clock is `Instant`, and the only
-//! thing it writes is the run file. It never calls Azure DevOps, and it
-//! never fills in a verdict: what it thinks is `proposed`, and a person
-//! confirms or changes it afterwards.
+//! It is handed its browsers and its clock is `Instant`. What it writes is
+//! the run file, what a run discovers (filed to the discovery map), and the
+//! case scripts themselves when a clean-up guard it ran has fired
+//! (`forget_fired_guards` rewrites the script). It never calls Azure
+//! DevOps, and it never fills in a verdict: what it thinks is `proposed`,
+//! and a person confirms or changes it afterwards.
 //!
 //! In a project with recorded module paths a case goes the way a tester
 //! goes: sign in, click through the menu to the case's module, check it

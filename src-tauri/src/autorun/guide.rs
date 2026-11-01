@@ -307,7 +307,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json`, `timeout_ms`, `not_before_ms`, `started_within_ms` and `same_document` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
-- `{ "kind": "when_hidden", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - the other way round: if something is NOT on the page after the wait, do the actions in `then`; if it shows, carry on (see "Dismissing what may not show up")
+- `{ "kind": "when_hidden", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - the other way round: if something is NOT on the page after the wait, do the actions in `then`; if anything matches it, hidden or not, carry on (see "Dismissing what may not show up")
 - `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "settle_ms": 5000, "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
@@ -613,9 +613,11 @@ For anything NOT on that list, guard the click with `when_visible`:
 **`when_hidden`: act when something is NOT there.** It is `when_visible`
 the other way round, for "if it is missing, put it back". It makes the
 same wait (`within_ms`, default 2000, at most 10000) and holds the same
-kind of `then`. If the target shows up at any point in the wait, the step
-passes with "shown, skipped" and the `then` never runs; only a target that
-never showed lets the `then` run, so it never acts on a first empty look at
+kind of `then`. It acts only when the locator matches nothing on the page
+(an element that is there but hidden still counts as there): if anything
+matches at any point in the wait, the step passes with "on the page,
+skipped" and the `then` never runs; only a locator that matched nothing for
+the whole wait lets the `then` run, so it never acts on a first empty look at
 a page that is still drawing. Use it where a case needs the item to exist
 and it may not:
 

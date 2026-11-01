@@ -4572,7 +4572,11 @@ const RUN_RESULTS_NEEDS_PBI: &str =
 fn call_tool(name: &str, args: &str, calls: &std::cell::RefCell<Vec<String>>) -> serde_json::Value {
     let call = |_m: &str, path: &str, _b: &str| {
         // The app is also asked for its tool policy; only the route counts.
-        if path.starts_with("/run-results") || path.starts_with("/suite-cases") || path.starts_with("/test-cases") {
+        if path.starts_with("/run-results")
+            || path.starts_with("/suite-cases")
+            || path.starts_with("/test-cases")
+            || path.starts_with("/autorun-failures")
+        {
             calls.borrow_mut().push(path.to_string());
         }
         Ok((200, r#"{"ok":true}"#.to_string()))
@@ -4593,6 +4597,37 @@ fn an_id_sent_as_text_reaches_the_bridge_as_the_number() {
     assert_eq!(calls.borrow().last().unwrap(), "/run-results?pbi=77");
     call_tool("get_suite_test_cases", r#"{"plan_id":"9","suite_id":"91","offset":"10"}"#, &calls);
     assert_eq!(calls.borrow().last().unwrap(), "/suite-cases?plan=9&suite=91&limit=5&offset=10");
+}
+
+/// A case id and a limit sent as text are read as the numbers, and a bad one
+/// is refused by name - never dropped (every case's failures) or turned into
+/// the default (50 read as 5).
+#[test]
+fn a_case_id_and_limits_sent_as_text_are_read_and_bad_ones_refused() {
+    let calls = std::cell::RefCell::new(vec![]);
+    call_tool("get_autorun_failures", r#"{"case_id":"7"}"#, &calls);
+    assert_eq!(calls.borrow().last().unwrap(), "/autorun-failures?case_id=7");
+    call_tool("get_autorun_failures", r#"{"case_id":7}"#, &calls);
+    assert_eq!(calls.borrow().last().unwrap(), "/autorun-failures?case_id=7");
+    let before = calls.borrow().len();
+    let v = call_tool("get_autorun_failures", r#"{"case_id":"seven"}"#, &calls);
+    assert_eq!(calls.borrow().len(), before, "the bridge was called");
+    assert!(v.to_string().contains("`case_id` must be a whole number"), "{v}");
+
+    call_tool("get_suite_test_cases", r#"{"plan_id":9,"suite_id":91,"limit":"50"}"#, &calls);
+    assert_eq!(calls.borrow().last().unwrap(), "/suite-cases?plan=9&suite=91&limit=50&offset=0");
+    call_tool("get_test_cases", r#"{"pbi_id":5,"limit":"50"}"#, &calls);
+    assert!(calls.borrow().last().unwrap().contains("limit=50"), "{:?}", calls.borrow().last());
+    let before = calls.borrow().len();
+    let v = call_tool("get_suite_test_cases", r#"{"plan_id":9,"suite_id":91,"limit":"lots"}"#, &calls);
+    assert_eq!(calls.borrow().len(), before);
+    assert!(v.to_string().contains("`limit` must be a whole number"), "{v}");
+    let v = call_tool("get_test_cases", r#"{"pbi_id":5,"limit":"lots"}"#, &calls);
+    assert_eq!(calls.borrow().len(), before);
+    assert!(v.to_string().contains("`limit` must be a whole number"), "{v}");
+    // Left out: today's default.
+    call_tool("get_suite_test_cases", r#"{"plan_id":9,"suite_id":91}"#, &calls);
+    assert!(calls.borrow().last().unwrap().contains("limit=5&"));
 }
 
 #[test]

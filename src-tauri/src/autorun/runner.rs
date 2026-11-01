@@ -17,7 +17,7 @@ use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
 use crate::browser::dialogs;
 use crate::browser::actions::{
-    execute_in, expectation, in_missing_tab, shows_up_to_click, upload_in, Action, ActionOutcome, GuardTrace, Policy, CANNOT_RUN,
+    execute_in, expectation, in_missing_tab, is_on_page_within, shows_up_to_click, upload_in, Action, ActionOutcome, GuardTrace, Policy, CANNOT_RUN,
     NOT_SHOWN, SHOWN_SKIPPED, WHEN_VISIBLE_MS,
 };
 use super::refusals::{self, app_refused_line, refused_with_ids, RefusedRequest};
@@ -1870,7 +1870,17 @@ async fn guard<D: Driver>(
     };
     let acts_when_shown = matches!(action, Action::WhenVisible { .. });
     let target = selector.describe();
-    let shown = match shows_up_to_click(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
+    // A when_visible looks the way its click needs; a when_hidden acts
+    // only when NOTHING matches for the whole window - an element that is
+    // there but collapsed counts as there, or "apply it if it is not there"
+    // could apply it twice.
+    let wait = within_ms.unwrap_or(WHEN_VISIBLE_MS);
+    let looked = if acts_when_shown {
+        shows_up_to_click(d, selector, wait, timing).await
+    } else {
+        is_on_page_within(d, selector, wait, timing).await
+    };
+    let shown = match looked {
         Err(silent) => return (silent, None),
         Ok(shown) => shown,
     };

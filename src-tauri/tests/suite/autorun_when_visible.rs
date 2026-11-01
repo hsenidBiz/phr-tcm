@@ -687,7 +687,7 @@ async fn when_hidden_skips_when_the_target_shows() {
     let a = action(hidden("#financial", json!([click_json("#apply")])));
     let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![a]), &quick(), &mut acc).await.unwrap();
     assert!(out[0].ok, "{:?}", out[0]);
-    assert_eq!(SHOWN_SKIPPED, "shown, skipped");
+    assert_eq!(SHOWN_SKIPPED, "on the page, skipped");
     assert_eq!(out[0].detail, format!("#financial {SHOWN_SKIPPED}"));
     assert_eq!(state.clicks.load(Ordering::SeqCst), 0, "the then never ran");
     assert!(!out[0].guard.clone().expect("a guard leaves its trace").acted);
@@ -750,6 +750,67 @@ async fn when_hidden_waits_the_whole_window_before_acting() {
     // Never shown inside a short window: the then runs.
     let (mut d, clicked) = appears_after(5000);
     let guard = action(json!({ "kind": "when_hidden", "selector": { "css": "#late" }, "within_ms": 600,
+                               "then": [ click_json("#apply") ] }));
+    let started = std::time::Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#apply".to_string()]);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(550), "acted before the window ran out: {:?}", started.elapsed());
+}
+
+/// A page where `#folded` is in the document the whole time but never
+/// shown (display:none, or off the window): visibility and "shown to click"
+/// both read false for it, and every css locator finds it.
+fn folded_away() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = clicked.clone();
+    let mut last_selector = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
+                json!({ "result": { "value": last_selector != "#folded" } })
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = last_selector != "#nothing";
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(last_selector.clone());
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, clicked)
+}
+
+/// A `when_hidden` acts only when nothing matches at all: an element that is
+/// there but collapsed counts as there, so the guard is skipped; nothing
+/// matching for the whole window runs it.
+#[tokio::test]
+async fn when_hidden_skips_an_element_that_is_there_but_not_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut acc: Option<String> = None;
+    let (mut d, clicked) = folded_away();
+    let guard = action(json!({ "kind": "when_hidden", "selector": { "css": "#folded" }, "within_ms": 600,
+                               "then": [ click_json("#apply") ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].detail, format!("#folded {SHOWN_SKIPPED}"));
+    assert!(clicked.lock().unwrap().is_empty(), "the then ran though the element is on the page");
+
+    let (mut d, clicked) = folded_away();
+    let guard = action(json!({ "kind": "when_hidden", "selector": { "css": "#nothing" }, "within_ms": 600,
                                "then": [ click_json("#apply") ] }));
     let started = std::time::Instant::now();
     let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();

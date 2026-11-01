@@ -27,6 +27,10 @@ pub enum Check<'a> {
     /// outside the window after it is scrolled into view is not shown. A
     /// match drawn outside the window is scrolled to, as the click would.
     ShownToClick,
+    /// At least one element matches at all, shown or not (a `display:none`
+    /// one included): what a `when_hidden` asks, so it acts only on a page
+    /// that holds nothing of the kind.
+    Present,
     Hidden,
     Text(&'a str),
     ContainsText(&'a str),
@@ -408,6 +412,13 @@ async fn look_reading<D: Driver>(
                 Err(NOT_ON_PAGE.to_string())
             } else {
                 Err(HIDDEN.to_string())
+            }
+        }
+        Check::Present => {
+            if !handles.is_empty() || !resolve(d, &target.including_hidden()).await?.is_empty() {
+                Ok(format!("{what} is on the page"))
+            } else {
+                Err(NOT_ON_PAGE.to_string())
             }
         }
         Check::Hidden => {
@@ -823,10 +834,11 @@ pub const NO_NUMBER_NOTED: &str = "the noted text has no number to count from";
 pub const NO_NUMBER_CURRENT: &str = "the current text has no number to count from";
 
 /// The first whole number in `text`: an optional minus and its digits. A
-/// thousands separator ends it (`1,000` reads as 1).
+/// thousands separator ends it (`1,000` reads as 1). ASCII digits only, as the
+/// exported JS `/-?\d+/` reads them (a Unicode digit is not one).
 pub fn first_integer(text: &str) -> Option<i64> {
     static NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = NUMBER.get_or_init(|| regex::Regex::new(r"-?\d+").expect("a fixed pattern"));
+    let re = NUMBER.get_or_init(|| regex::Regex::new(r"-?[0-9]+").expect("a fixed pattern"));
     re.find(text).and_then(|m| m.as_str().parse().ok())
 }
 

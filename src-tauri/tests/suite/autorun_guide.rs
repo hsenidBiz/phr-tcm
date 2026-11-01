@@ -697,7 +697,9 @@ fn the_guide_teaches_when_hidden_and_one_level_of_nesting() {
     let flat: String = section.split_whitespace().collect::<Vec<_>>().join(" ");
     for term in [
         "when_hidden",
-        "shown, skipped",
+        "on the page, skipped",
+        "matches nothing on the page",
+        "still counts as there",
         "never acts on a first empty look",
         "apply it from the template",
         "Financial",

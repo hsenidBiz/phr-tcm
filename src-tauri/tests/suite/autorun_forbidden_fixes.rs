@@ -217,6 +217,43 @@ fn a_repeat_while_visible_counts_as_a_guard_and_an_existing_one_is_free() {
     assert!(check_repair_absorbs(&new, &new, None).is_empty());
 }
 
+fn outer(kind: &str, inner: Option<&str>) -> serde_json::Value {
+    let mut then = vec![json!({ "kind": "click", "selector": { "role": "button", "name": "OK" } })];
+    if let Some(k) = inner {
+        then.push(json!({ "kind": k, "selector": { "css": "#x" }, "then": [{ "kind": "click", "selector": { "css": "#x" } }] }));
+    }
+    json!({ "step_number": 2, "actions": [
+        { "kind": kind, "selector": { "role": "dialog", "name": "Session warning" }, "then": then },
+        { "kind": "click", "selector": { "role": "button", "name": "Save" } }
+    ] })
+}
+
+#[test]
+fn a_new_guard_inside_an_existing_guards_then_needs_a_quirk() {
+    let old = script(json!([outer("when_visible", None)]));
+    let new = script(json!([outer("when_visible", Some("when_visible"))]));
+    assert_eq!(check_repair_absorbs(&old, &new, None), vec![NO_QUIRK_GUARD.to_string()]);
+    let e = edit(Some("A second warning may cover the form"), Some(QuirkClass::AppQuirk));
+    assert!(check_repair_absorbs(&old, &new, Some(&e)).is_empty());
+}
+
+#[test]
+fn swapping_a_when_visible_for_a_when_hidden_needs_a_quirk() {
+    let old = script(json!([outer("when_visible", None)]));
+    let new = script(json!([outer("when_hidden", None)]));
+    let got = check_repair_absorbs(&old, &new, None);
+    assert_eq!(got.len(), 1);
+    assert!(got[0].starts_with("step 2: the repair adds a when_hidden - "), "{got:?}");
+    let e = edit(Some("The warning is gone on this build"), Some(QuirkClass::AppQuirk));
+    assert!(check_repair_absorbs(&old, &new, Some(&e)).is_empty());
+}
+
+#[test]
+fn an_unchanged_nested_guard_is_free() {
+    let same = script(json!([outer("when_visible", Some("when_hidden"))]));
+    assert!(check_repair_absorbs(&same, &same, None).is_empty());
+}
+
 #[test]
 fn a_guard_added_to_the_clean_up_is_free() {
     let cleanup = |guard: bool| {
