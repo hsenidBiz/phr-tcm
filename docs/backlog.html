@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 28 October 2026, after 2.4.1. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
+  <p class="sub">Updated 1 November 2026, after 2.4.1; backlog 55 to 62 built for 2.4.3-beta.10. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -87,6 +87,24 @@
       <li>Hand check owed: the Reset expired passwords switch on a test environment (one expired account on QA Automation), including a reset that is not confirmed: the old password stays stored and the message says so.</li>
       <li>Hand check owed: the run window's warning for accounts expired or due within a week.</li>
       <li>Owed: retake the How To Use shots that show the Accounts window and the Edit environments window (the text is written; the shots are not retaken).</li>
+    </ul>
+  </div>
+
+  <h2>Auto Run backlog 55 to 62 (2.4.3-beta.10)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Environment update, import, holds, cold sites, delete loops, locators, passwords</span><span class="status todo">Built, hand checks owed</span></div>
+    <p>The update puts old data in the active environment only and runs where they were made; Import scripts… on the Setup panel; a failed discovery start frees its case; a cold site gets 2 minutes; delete loops with <code>except</code> are guarded and settle; <code>has_text</code>, <code>remember_text</code> with <code>same_as</code>; <code>when_visible</code> and <code>expect_hidden</code> in a loop; <code>patch_steps</code> adds a step; get_accounts shows no passwords.</p>
+    <ul>
+      <li>Hand check owed: a fresh flat install updated with two environments shows the move toast once, QA starts empty, and runs land where they were made.</li>
+      <li>Hand check owed: Import scripts… from the 582-script archive into QA Automation lists the 31 differing cases and leaves them unless Replace is ticked.</li>
+      <li>Hand check owed: a subagent whose discovery start fails frees its case for the next.</li>
+      <li>Hand check owed: the Philippines dev site after an idle night signs in within 2 minutes, or says it is slow to start.</li>
+      <li>Hand check owed: the competency groups loop with <code>except</code> stops before deleting on the Definition Wizard tree.</li>
+      <li>Hand check owed: the 135412 and 135421 by-name delete loops on the slow site run once.</li>
+      <li>Hand check owed: a <code>has_text</code> delete and a <code>remember_text</code> pills check on a Competencies case.</li>
+      <li>Hand check owed: 135342 gets its clean-up step through one patch.</li>
+      <li>Hand check owed: get_accounts on QA Automation lists no password.</li>
+      <li>Owed: retake the How To Use shot of the Auto Run Setup panel (the Environment row now has Import scripts…) and rebuild the guide.</li>
     </ul>
   </div>
 
