@@ -1133,6 +1133,57 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
 
     - **Open.** A try that did not run the guard should leave an older refusal in place.
 
+## The fix round on 2.4.3-beta.10 (agreed 2026-11-01)
+
+Found on PBI 133443 (TCM environment Default) by dw-fix-comps4, dw-fix-comps5 (emma, grace),
+dw-fix-lrg4 (aiden, grace) and dw-fix-rating5 (emma), the first rewriters on beta.10.
+
+65. **Quirks stop at 60 per project.** dw-fix-comps4 repaired five Competencies scripts and tried to
+    record a quirk with each repair (the guide asks for one when the cause is the application). Only
+    the first (q114bfa, on 135412) was kept: the project was at 60 quirks, and the rest were refused
+    while their script edits saved. So a quirk the next writer needs (e.g. "the Edit dialog's Cancel
+    must be pressed before a delete", "the first Save & Continue on Competencies is lost before the
+    tree draws") is never written down. Either raise the cap, or when it is reached say which quirks
+    are oldest or never cited by a failure so the assistant can propose merging them, and never drop
+    a quirk silently.
+
+66. **A `gives_up` that names a check the step no longer has is refused "removes 0 checks".** On
+    135388 step 5, dw-fix-comps5 replaced five fixed "Level N - ..." visible checks with
+    `expect_text same_as` checks against noted names, and listed the old checks in `gives_up` to be
+    honest about the change. The save refused it: the count of checks did not drop (5 replaced by 5),
+    so "removes 0 checks". It saved only without the list. A replacement of fixed values by noted
+    values should be accepted (or have its own field, e.g. `replaces`), so the save's record shows
+    what each repair traded.
+
+67. **A repair patch with `"unchecked": []` is refused.** dw-fix-rating5 removed the old menu-path
+    notes from step 1 of the six rewritten rating cases by sending `"unchecked": []`; the patch was
+    refused, and only `"unchecked": null` cleared the stale list. An empty list should mean "none",
+    or the refusal should say "send null to clear".
+
+68. **A reset between replays drops the sign-in.** The guide says `reset_autorun_browser` (no release)
+    gives a clean page with the sign-in kept. On beta.10 dw-fix-rating5 and dw-fix-lrg4 saw the next
+    replay sign in again after each reset. With one session per PeoplesHR user (a sign-in can log out
+    another assistant on the same account) and a site that is slow to wake, every extra sign-in is a
+    risk. Keep the session cookies across a reset, or correct the guide.
+
+69. **A first replay can carry on from mid-case and still count as full.** dw-fix-comps5's first full
+    replay of 135346 (to its last step + 1) carried on from step 4, where its discovery had left the
+    page, instead of starting from the area. The second replay started from scratch. The two were
+    counted as "2 full replays", but only one proved the case from its start. A full replay should
+    always start from a fresh page (or the result should say it continued from step N and not count it).
+
+70. **A locator for a state that exists only mid-case can be seen only by changing the site first.**
+    - The by-text row locators for a row the case makes (e.g. `.phr-dw-comp-item` has_text the
+      150-character AUTOTEST name) count as seen only once probed while that row is on the page, so the
+      writer must make the row in discovery, probe, and clean it up by hand before saving.
+    - The Performance-based card's by-text "Activate" button shows only while another template is
+      active. dw-fix-lrg4 had to `try_autorun_action` a switch to a custom scale on the shared site,
+      probe, and switch Performance-based back, so the save would accept the guarded fallback in
+      135540's clean-up.
+    Both change shared state just to satisfy the seen-gate. A locator first seen in a replay of the
+    same script (the step that makes the row ran before it) could be accepted, or a guarded clean-up's
+    locator could be checked when the guard fires in a replay.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
