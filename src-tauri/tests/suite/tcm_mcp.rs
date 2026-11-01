@@ -4565,3 +4565,61 @@ fn get_autorun_page_takes_a_query_and_the_page_argument() {
     let replay = serde_json::json!({ "case_id": 7, "step": 3, "page": "full" });
     assert_eq!(reached("replay_autorun_to_step", replay.clone()).2, replay);
 }
+
+const RUN_RESULTS_NEEDS_PBI: &str =
+    "get_run_results needs pbi_id: the PBI's work item id, a whole number above 0 (find one with search_pbis)";
+
+fn call_tool(name: &str, args: &str, calls: &std::cell::RefCell<Vec<String>>) -> serde_json::Value {
+    let call = |_m: &str, path: &str, _b: &str| {
+        // The app is also asked for its tool policy; only the route counts.
+        if path.starts_with("/run-results") || path.starts_with("/suite-cases") || path.starts_with("/test-cases") {
+            calls.borrow_mut().push(path.to_string());
+        }
+        Ok((200, r#"{"ok":true}"#.to_string()))
+    };
+    let msg = format!(
+        r#"{{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{{"name":"{name}","arguments":{args}}}}}"#
+    );
+    let out = handle_message(&msg, "1.10.3", &call).unwrap();
+    serde_json::from_str(&out).unwrap()
+}
+
+#[test]
+fn an_id_sent_as_text_reaches_the_bridge_as_the_number() {
+    let calls = std::cell::RefCell::new(vec![]);
+    call_tool("get_run_results", r#"{"pbi_id":"133443"}"#, &calls);
+    assert_eq!(calls.borrow().last().unwrap(), "/run-results?pbi=133443");
+    call_tool("get_run_results", r#"{"pbi_id":" 77 "}"#, &calls);
+    assert_eq!(calls.borrow().last().unwrap(), "/run-results?pbi=77");
+    call_tool("get_suite_test_cases", r#"{"plan_id":"9","suite_id":"91","offset":"10"}"#, &calls);
+    assert_eq!(calls.borrow().last().unwrap(), "/suite-cases?plan=9&suite=91&limit=5&offset=10");
+}
+
+#[test]
+fn a_missing_text_or_zero_pbi_id_is_refused_without_calling_the_bridge() {
+    for args in [r#"{"pbi_id":"abc"}"#, r#"{"pbi_id":0}"#, r#"{}"#, r#"{"pbi_id":"0"}"#] {
+        let calls = std::cell::RefCell::new(vec![]);
+        let v = call_tool("get_run_results", args, &calls);
+        assert!(calls.borrow().is_empty(), "{args}: the bridge was called");
+        assert!(v.to_string().contains(RUN_RESULTS_NEEDS_PBI), "{args}: {v}");
+    }
+}
+
+#[test]
+fn a_bad_offset_is_refused_and_int_arg_reads_numbers_and_digits() {
+    use v2_lib::mcp::int_arg;
+    let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+    assert_eq!(int_arg(&j(r#"{"a":5}"#), "a"), Ok(Some(5)));
+    assert_eq!(int_arg(&j(r#"{"a":" 133443 "}"#), "a"), Ok(Some(133443)));
+    assert_eq!(int_arg(&j(r#"{}"#), "a"), Ok(None));
+    assert_eq!(int_arg(&j(r#"{"a":null}"#), "a"), Ok(None));
+    assert_eq!(
+        int_arg(&j(r#"{"a":"abc"}"#), "a"),
+        Err("`a` must be a whole number, e.g. 133443".to_string())
+    );
+    assert!(int_arg(&j(r#"{"a":1.5}"#), "a").is_err());
+    let calls = std::cell::RefCell::new(vec![]);
+    let v = call_tool("get_test_cases", r#"{"offset":"x"}"#, &calls);
+    assert!(calls.borrow().is_empty());
+    assert!(v.to_string().contains("`offset` must be a whole number"), "{v}");
+}

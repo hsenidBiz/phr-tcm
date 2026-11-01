@@ -16100,6 +16100,9 @@ async fn run_results(
     let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
         return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
     };
+    if pbi <= 0 {
+        return (400, crate::mcp::RUN_RESULTS_NEEDS_PBI.into());
+    }
     let wanted = match parse_outcomes(q(target, "outcome").as_deref()) {
         Ok(w) => w,
         Err(why) => return (400, why),

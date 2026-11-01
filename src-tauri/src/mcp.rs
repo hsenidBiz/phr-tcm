@@ -2288,6 +2288,30 @@ fn declared_types(property: &serde_json::Value) -> Vec<&str> {
     }
 }
 
+/// The sentence for a `get_run_results` call with no usable `pbi_id`.
+pub const RUN_RESULTS_NEEDS_PBI: &str =
+    "get_run_results needs pbi_id: the PBI's work item id, a whole number above 0 (find one with search_pbis)";
+
+/// A whole-number argument: a JSON integer, or text that is only digits
+/// (a client that sends ids as strings), is the number. Absent or null is
+/// `None`; anything else is refused by name rather than read as 0.
+pub fn int_arg(args: &serde_json::Value, key: &str) -> Result<Option<i64>, String> {
+    let bad = || format!("`{key}` must be a whole number, e.g. 133443");
+    match &args[key] {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => n.as_i64().map(Some).ok_or_else(bad),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
+                t.parse::<i64>().map(Some).map_err(|_| bad())
+            } else {
+                Err(bad())
+            }
+        }
+        _ => Err(bad()),
+    }
+}
+
 /// `args` read against `name`'s current schema, for a client whose tool
 /// list is older than this app: a boolean sent as text is the boolean, and
 /// an object or list sent as JSON text (or a list's items sent as JSON text)
@@ -2445,12 +2469,17 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             // rather than trusted.
             _ => Ok((400, guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked).unwrap_or_default())),
         },
-        "get_test_cases" => {
+        "get_test_cases" => (|| -> Result<(u16, String), String> {
             let limit = args["limit"].as_i64().unwrap_or(5);
-            let offset = args["offset"].as_i64().unwrap_or(0);
+            let offset = match int_arg(&args, "offset") {
+                Ok(n) => n.unwrap_or(0),
+                Err(why) => return Ok((400, why)),
+            };
             let mut params: Vec<String> = vec![];
-            if let Some(pbi) = args["pbi_id"].as_i64() {
-                params.push(format!("pbi={pbi}"));
+            match int_arg(&args, "pbi_id") {
+                Ok(Some(pbi)) => params.push(format!("pbi={pbi}")),
+                Ok(None) => {}
+                Err(why) => return Ok((400, why)),
             }
             // A bare number is taken as a one-id list. Strings pass through
             // as written, so a malformed id reaches the bridge and is refused
@@ -2472,7 +2501,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                 target.push_str("&titles_only=true");
             }
             call("GET", &target, "")
-        }
+        })(),
         "search_test_suites" => {
             let mut params: Vec<String> = vec![];
             if let Some(f) = args["query"].as_str().filter(|f| !f.trim().is_empty()) {
@@ -2488,11 +2517,16 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             };
             call("GET", &target, "")
         }
-        "get_suite_test_cases" => {
-            let plan = args["plan_id"].as_i64().unwrap_or(0);
-            let suite = args["suite_id"].as_i64().unwrap_or(0);
+        "get_suite_test_cases" => (|| -> Result<(u16, String), String> {
+            let (plan, suite, offset) = match (
+                int_arg(&args, "plan_id"),
+                int_arg(&args, "suite_id"),
+                int_arg(&args, "offset"),
+            ) {
+                (Ok(p), Ok(s), Ok(o)) => (p.unwrap_or(0), s.unwrap_or(0), o.unwrap_or(0)),
+                (Err(why), _, _) | (_, Err(why), _) | (_, _, Err(why)) => return Ok((400, why)),
+            };
             let limit = args["limit"].as_i64().unwrap_or(5);
-            let offset = args["offset"].as_i64().unwrap_or(0);
             let mut target = format!("/suite-cases?plan={plan}&suite={suite}&limit={limit}&offset={offset}");
             if args["titles_only"].as_bool().unwrap_or(false) {
                 target.push_str("&titles_only=true");
@@ -2504,9 +2538,12 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                 target.push_str(&format!("&project={}", urlencoding::encode(p)));
             }
             call("GET", &target, "")
-        }
-        "get_run_results" => {
-            let pbi = args["pbi_id"].as_i64().unwrap_or(0);
+        })(),
+        "get_run_results" => (|| -> Result<(u16, String), String> {
+            let pbi = match int_arg(&args, "pbi_id") {
+                Ok(Some(n)) if n > 0 => n,
+                _ => return Ok((400, RUN_RESULTS_NEEDS_PBI.to_string())),
+            };
             // One word, or a list: both reach the bridge as one
             // comma-separated `outcome`, which it parses and validates.
             let outcome = match &args["outcome"] {
@@ -2521,7 +2558,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                 target.push_str(&format!("&outcome={}", urlencoding::encode(&outcome)));
             }
             call("GET", &target, "")
-        }
+        })(),
         "check_spec_coverage" => call("POST", "/check-coverage", &args.to_string()),
         // The bridge takes one body, so forwarding the raw arguments object
         // is structurally unable to drop `paths` or `output_path` - the

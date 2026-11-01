@@ -17,6 +17,31 @@ use crate::ado::{AdoClient, AdoError};
 /// Azure DevOps calls (see ado/throttle.rs).
 pub const POLL_SECS: u64 = 300;
 
+/// How loud a poll's outcome is in the app log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutageLevel {
+    Warn,
+    Info,
+}
+
+/// What a poll's result adds to the log, given whether the poll before it
+/// failed. An outage is said once (a warning, not an error: the network
+/// being down is not a fault in the app) and its end once; the polls in
+/// between say nothing, so a bug report is not buried in repeats.
+pub fn outage_line<T, E: std::fmt::Display>(
+    was_failing: bool,
+    result: &Result<T, E>,
+) -> Option<(OutageLevel, String)> {
+    match (was_failing, result) {
+        (false, Err(e)) => Some((
+            OutageLevel::Warn,
+            format!("assigned-work check failing: {e} (said once until it works again)"),
+        )),
+        (true, Ok(_)) => Some((OutageLevel::Info, "assigned-work check works again".to_string())),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct AssignedItem {
     pub id: i32,

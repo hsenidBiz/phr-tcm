@@ -203,6 +203,8 @@ fn arm_assigned_watch(app: tauri::AppHandle, scope: WatchScope) {
     }
 
     tauri::async_runtime::spawn(async move {
+        // Whether the poll before this one failed: an outage is logged once.
+        let mut failing = false;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(
                 crate::assigned_watch::POLL_SECS,
@@ -225,6 +227,13 @@ fn arm_assigned_watch(app: tauri::AppHandle, scope: WatchScope) {
                     crate::assigned_watch::check_once_all(&client, org, home).await
                 }
             };
+            if let Some((level, line)) = crate::assigned_watch::outage_line(failing, &checked) {
+                match level {
+                    crate::assigned_watch::OutageLevel::Warn => crate::applog::warn(line),
+                    crate::assigned_watch::OutageLevel::Info => crate::applog::info(line),
+                }
+            }
+            failing = checked.is_err();
             match checked {
                 Ok(items) if !items.is_empty() => {
                     crate::applog::info(format!(
@@ -233,8 +242,7 @@ fn arm_assigned_watch(app: tauri::AppHandle, scope: WatchScope) {
                     ));
                     let _ = crate::events::WorkAssigned { items }.emit(&app);
                 }
-                Ok(_) => {}
-                Err(e) => crate::applog::error(format!("assigned-work check failed: {e}")),
+                Ok(_) | Err(_) => {}
             }
         }
     });

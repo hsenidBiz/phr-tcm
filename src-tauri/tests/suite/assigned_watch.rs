@@ -81,3 +81,20 @@ fn the_watch_query_excludes_test_management_artifacts() {
     }
     assert!(wiql.contains("[System.WorkItemType] NOT IN"));
 }
+
+#[test]
+fn an_outage_is_logged_once_and_the_recovery_once() {
+    use v2_lib::assigned_watch::{outage_line, OutageLevel};
+    let bad: Result<(), String> = Err("no route".into());
+    let ok: Result<(), String> = Ok(());
+    let first = outage_line(false, &bad).unwrap();
+    assert_eq!(first.0, OutageLevel::Warn);
+    assert_eq!(first.1, "assigned-work check failing: no route (said once until it works again)");
+    assert!(outage_line(true, &bad).is_none());
+    assert_eq!(
+        outage_line(true, &ok),
+        Some((OutageLevel::Info, "assigned-work check works again".to_string()))
+    );
+    assert!(outage_line(false, &ok).is_none());
+    assert!(outage_line(false, &bad).is_some());
+}

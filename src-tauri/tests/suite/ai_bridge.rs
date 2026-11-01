@@ -5518,3 +5518,18 @@ async fn the_agent_headers_do_not_take_room_from_the_body() {
     assert!(over.starts_with("HTTP/1.1 413"), "a body over the cap was not refused: {over:?}");
     v2_lib::autorun::agents::clear();
 }
+
+#[tokio::test]
+async fn a_zero_or_negative_pbi_is_refused_before_any_azure_devops_request() {
+    let (server, client) = ado_stub().await;
+    for pbi in ["0", "-5"] {
+        let (status, body) =
+            route(&ctx(), Some(&client), "GET", &format!("/run-results?pbi={pbi}"), "", "1.0.0").await;
+        assert_eq!(status, 400, "{pbi}: {body}");
+        assert_eq!(
+            body,
+            "get_run_results needs pbi_id: the PBI's work item id, a whole number above 0 (find one with search_pbis)"
+        );
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
