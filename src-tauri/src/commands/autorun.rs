@@ -1749,9 +1749,15 @@ pub const NO_BROWSER_OPEN: &str = "No browser is open.";
 /// never stops one.
 pub const REPLAY_RUNNING_AT_RESET: &str = "A replay is running: try again when it has finished.";
 
-/// Said by the assistant's reset when the home page no longer holds the
-/// app's sign-in: the account and its cookies' print are forgotten.
-pub const SIGN_IN_GONE_AT_RESET: &str = "Reset, but the sign-in has gone: the next replay signs in again.";
+/// Said by the assistant's reset when the browser no longer holds the
+/// app's sign-in: the account and its cookies' print are forgotten. `why`
+/// is `NotSignedIn::reason`, the words the app log uses; every reason is a
+/// fixed sentence (at most a number of milliseconds), never an address, a
+/// path, a cookie value or a password (`tests/suite/autorun_replay_to.rs`
+/// goes through them all).
+pub fn sign_in_gone_sentence(why: &str) -> String {
+    format!("Reset, but the sign-in has gone ({why}): the next replay signs in again.")
+}
 
 /// Put before the reset's answer when it first ended the assistant's
 /// discovery in that browser.
@@ -1898,7 +1904,17 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
         }
         None => Err(NotSignedIn::NoAccount),
     };
-    let home = crate::autorun::nav::load_home(p.driver, &crate::autorun::nav::Home::of(&recipe), timing).await;
+    // While the sign-in stands, the reset goes back to the page the browser
+    // landed on after signing in: the recipe's start page is the login page,
+    // and loading it can end the session. With no landing page known it
+    // loads the start page, as it always did.
+    let mut to = crate::autorun::nav::Home::of(&recipe);
+    if stands.is_ok() {
+        if let Some(landing) = p.lease.landing() {
+            to.start_url = landing.to_string();
+        }
+    }
+    let home = crate::autorun::nav::load_home(p.driver, &to, timing).await;
     // The home page loaded, but its signed-in marker never showed: the
     // sign-in has gone. Neither the page failing to load nor the browser
     // not answering says that.
@@ -1945,15 +1961,15 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     let said = match (verdict, account) {
         (Ok(()), Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
         (verdict, _) => {
-            if let Err(why) = verdict {
-                crate::applog::info(format!("Auto Run: the assistant's reset found the sign-in gone: {}", why.reason()));
-            }
+            let why = verdict.err().map(|why| why.reason()).unwrap_or_else(|| NotSignedIn::NoAccount.reason());
+            crate::applog::info(format!("Auto Run: the assistant's reset found the sign-in gone: {why}"));
             *p.signed_in = None;
             p.lease.forget_sign_in();
+            let gone = sign_in_gone_sentence(&why);
             if lifted {
-                SIGN_IN_GONE_AT_RESET.to_string()
+                gone
             } else {
-                format!("{SIGN_IN_GONE_AT_RESET} {GUARD_STILL_ON_SENTENCE}")
+                format!("{gone} {GUARD_STILL_ON_SENTENCE}")
             }
         }
     };

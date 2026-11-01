@@ -928,7 +928,7 @@ pub enum NotSignedIn {
     NoPrint,
     /// The sign-in recipe could not be read.
     NoRecipe,
-    /// The sign-in's HttpOnly cookies changed or went (named on the line before).
+    /// The sign-in's HttpOnly cookies changed or went (named on the line before in the app log).
     CookiesChanged,
     /// The browser did not answer while its cookies were read.
     CookiesUnread,
@@ -952,7 +952,7 @@ impl NotSignedIn {
             }
             NotSignedIn::NoPrint => "the app's last sign-in left no print of its HttpOnly cookies".to_string(),
             NotSignedIn::NoRecipe => "the sign-in recipe could not be read".to_string(),
-            NotSignedIn::CookiesChanged => "the sign-in's HttpOnly cookies changed (named on the line before)".to_string(),
+            NotSignedIn::CookiesChanged => "the sign-in's HttpOnly cookies changed".to_string(),
             NotSignedIn::CookiesUnread => "the browser did not answer while its cookies were read".to_string(),
             NotSignedIn::SessionRefused => "the page says the application refused the session".to_string(),
             NotSignedIn::MarkerNotShown(ms) => format!("the signed-in marker did not show within {ms} ms"),

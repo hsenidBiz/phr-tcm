@@ -442,6 +442,16 @@ pub async fn where_it_stands<D: Driver>(d: &mut D) -> Option<String> {
     Some(stopped_at_words(&href, title.as_deref()))
 }
 
+/// The page the browser stands on now when it is one of the app's own
+/// (`origins`): what a sign-in that just finished landed on, kept in memory
+/// for a reset to go back to (`Held::note_landing`). None for any other
+/// origin or a browser that does not say.
+pub async fn landing_page<D: Driver>(d: &mut D, origins: &[String]) -> Option<String> {
+    let href = page_address(d).await?;
+    let origin = super::recipe::origin_of(&href)?;
+    origins.contains(&origin).then_some(href)
+}
+
 /// The address the page is on now, if the browser says.
 async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
     let v = crate::browser::page::eval_value(d, "location.href").await.ok()?;
@@ -897,6 +907,7 @@ pub async fn sign_in_leased<D: Driver>(
         false => None,
     };
     lease.note_sign_in(print);
+    lease.note_landing(landing_page(d, &recipe.origins()).await);
     crate::applog::info(format!("Auto-run sign-in as {}: {}", account.key, if out.ok { "ok" } else { "failed" }));
     Ok(out)
 }
