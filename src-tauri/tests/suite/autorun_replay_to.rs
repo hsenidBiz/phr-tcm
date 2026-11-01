@@ -4021,3 +4021,66 @@ async fn a_fired_guard_files_its_then_as_seen() {
     // The guard's own selector is no `then` target: nothing is filed for it.
     assert!(!area.sightings.iter().any(|s| s.key == v2_lib::browser::locator::SeenKey::Css("#banner".into())));
 }
+
+/// A fired guard's `wait_for` is filed too (count not known), a `then` that
+/// fails files nothing, and a target holding a data placeholder is skipped.
+#[tokio::test]
+async fn a_fired_guard_files_its_wait_and_a_failed_then_files_nothing() {
+    use v2_lib::browser::locator::SeenKey;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let wait = json!({ "kind": "wait_for", "selector": { "css": "#done" }, "timeout_ms": 100 });
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100, "then": [click("#activate"), wait] }
+            ] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, _app) = app();
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed");
+    for css in ["#activate", "#done"] {
+        assert!(area.sightings.iter().any(|s| s.key == SeenKey::Css(css.into())), "{css}: {:?}", area.sightings);
+    }
+
+    // A second `then` action that fails: the first one worked, but the guard
+    // as a whole failed, so nothing is filed.
+    let dir = tempfile::tempdir().unwrap();
+    let nowhere = json!({ "kind": "click", "selector": { "role": "button", "name": "Nowhere" } });
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 100, "then": [click("#first"), nowhere] }
+            ] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
+    assert!(clicked(&app, "#first"), "{:?}", log(&app));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert!(
+        !map.areas.iter().flat_map(|a| &a.sightings).any(|s| s.key == SeenKey::Css("#first".into())),
+        "a failed guard filed its then"
+    );
+}
+
+#[test]
+fn a_guard_find_skips_a_target_holding_a_placeholder() {
+    use v2_lib::browser::actions::{Action, ActionOutcome};
+    let guard: Action = serde_json::from_value(json!({
+        "kind": "when_visible", "selector": { "css": "#banner" },
+        "then": [click("#row-{{setup.id}}"), click("#plain")]
+    }))
+    .unwrap();
+    let finds = v2_lib::ai_bridge::guard_finds(&[(guard, None)], &[ActionOutcome::passed("#banner showed: ok".to_string())]);
+    assert_eq!(finds.len(), 1, "{finds:?}");
+    assert_eq!(finds[0].0.describe(), "#plain");
+}

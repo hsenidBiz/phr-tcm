@@ -112,8 +112,11 @@
 //! The save notes that it is checked the first time its guard fires
 //! (`guarded_cleanup_notes`), and a run or replay in which the guard fires
 //! and the `then` action works files that target as seen, matching one, in
-//! the script's area (`ai_bridge::guard_finds`). A target that was seen
-//! keeps its own rule's count, and every other locator keeps its rule.
+//! the script's area (`ai_bridge::guard_finds`; a `wait_for` is filed with
+//! its count not known). Only a target with no sighting at all waits for
+//! its guard: one seen in any way (matching several, only in checks)
+//! keeps its refusal and hint, and so does a `page_until`'s locator.
+//! Every other locator keeps its rule.
 //!
 //! A refused save names every locator never seen at once, in step order,
 //! then action order, then link order, each with its own hint, up to
@@ -2543,7 +2546,10 @@ fn scan_deferring(
                             in_cleanup_guard: step.cleanup
                                 && matches!(top, Action::WhenVisible { .. })
                                 && !std::ptr::eq(top, action)
-                                && !matches!(action, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. })
+                                && !matches!(
+                                    action,
+                                    Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. } | Action::PageUntil { .. }
+                                )
                                 && !guards(top, t),
                         })
                     })
@@ -2624,7 +2630,9 @@ fn scan_deferring(
                         continue;
                     }
                     if let Some(link) = first_unseen(&n.links, &chain, seen.for_use(n.many, legacy, n.none), &own) {
-                        if n.in_cleanup_guard {
+                        // Only a target with no sighting at all waits for its guard:
+                        // one seen in any other way keeps its refusal and hint.
+                        if n.in_cleanup_guard && !seen.none.has(link, true) && !seen.none_whole(&chain, true) {
                             deferred.push((step.step_number, n.target.describe()));
                             continue;
                         }

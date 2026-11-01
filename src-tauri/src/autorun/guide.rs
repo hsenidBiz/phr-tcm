@@ -601,8 +601,9 @@ For anything NOT on that list, guard the click with `when_visible`:
   seen (an Activate button that shows only on some days) is not refused:
   the save notes that it is checked the first time its guard fires, and a
   run or replay in which the guard fires and the action works files that
-  locator as seen. The guard's own selector and every locator outside a
-  clean-up guard's `then` keep their rules.
+  locator as seen. A locator seen in any way (matching several, say) keeps
+  its refusal, as do the guard's own selector and every locator outside a
+  clean-up guard's `then`.
 
 In a repair, a new guard needs the edit's `quirk` and `quirk_class` ("Repairing a script that failed").
 

@@ -3785,3 +3785,32 @@ fn a_guarded_clean_up_then_saves_unseen_with_a_note() {
     let seen = map_with("Cycles", "/cycles", &[css("#banner"), role("button", "Activate")]);
     assert!(guarded_cleanup_notes(&seen, &none(), &s, &[], None, &[]).is_empty());
 }
+
+/// Only a target with no sighting at all waits for its guard: one seen
+/// matching several keeps its refusal and hint, and a `page_until`'s locator
+/// keeps its rule. A `wait_for` in the `then` waits like a click.
+#[test]
+fn a_guarded_clean_up_then_seen_another_way_is_still_refused() {
+    use v2_lib::autorun::seen_check::{guarded_cleanup_notes, SEEN_ONLY_MANY};
+    let activate = role("button", "Activate");
+    let map = joined(map_with("Cycles", "/cycles", &[css("#banner")]), sighted_matching("Cycles", activate, 3));
+    let cleanup = |then: serde_json::Value| {
+        script(
+            Some("Cycles"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [] },
+                { "step_number": 2, "cleanup": true, "actions": [
+                    { "kind": "when_visible", "selector": { "css": "#banner" }, "then": [then] }
+                ] }
+            ]),
+        )
+    };
+    let s = cleanup(click(serde_json::json!({ "role": "button", "name": "Activate" })));
+    let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains(SEEN_ONLY_MANY), "{refused}");
+    assert!(guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]).is_empty());
+    // A wait_for never seen waits for the guard, with a note.
+    let wait = cleanup(serde_json::json!({ "kind": "wait_for", "selector": { "css": "#done" }, "timeout_ms": 500 }));
+    assert_eq!(check_seen(&map, &none(), &wait, &[], None), Ok(()));
+    assert_eq!(guarded_cleanup_notes(&map, &none(), &wait, &[], None, &[]).len(), 1);
+}

@@ -4117,19 +4117,33 @@ pub fn guard_finds(
 ) -> Vec<(crate::browser::locator::Target, usize, usize)> {
     use crate::autorun::discovery_map::{plain_target, NOT_ONE};
     use crate::browser::actions::Action;
+    let unknown = NOT_ONE as usize;
     expanded
         .iter()
         .zip(outcomes)
         .filter(|((action, _), o)| o.ok && matches!(action, Action::WhenVisible { .. }) && !o.detail.ends_with(crate::browser::actions::NOT_SHOWN))
         .flat_map(|((action, _), _)| match action {
-            Action::WhenVisible { then, .. } => then.iter().flat_map(matched_targets).collect::<Vec<_>>(),
+            Action::WhenVisible { then, .. } => then
+                .iter()
+                .flat_map(|a| match a {
+                    // It passes on one match or several and does not say
+                    // which: filed as found, its count not known.
+                    Action::WaitFor { selector, .. } => vec![(selector, unknown, unknown)],
+                    _ => matched_targets(a)
+                        .into_iter()
+                        .filter(|(t, _)| !t.is_legacy())
+                        .map(|(t, n)| {
+                            let css = plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
+                            (t, n, if css { unknown } else { n })
+                        })
+                        .collect(),
+                })
+                .collect::<Vec<_>>(),
             _ => Vec::new(),
         })
-        .filter(|(t, _)| !t.is_legacy())
-        .map(|(t, n)| {
-            let css = plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
-            (t.clone(), n, if css { NOT_ONE as usize } else { n })
-        })
+        // A locator holding a data placeholder is not what the page showed.
+        .filter(|(t, _, _)| !serde_json::to_string(t).is_ok_and(|j| j.contains("{{")))
+        .map(|(t, n, all)| (t.clone(), n, all))
         .collect()
 }
 
