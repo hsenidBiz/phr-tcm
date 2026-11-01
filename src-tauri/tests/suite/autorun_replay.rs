@@ -3164,3 +3164,43 @@ async fn a_run_files_the_then_of_a_guard_that_fired_and_worked() {
     let key = v2_lib::browser::locator::SeenKey::Css("#activate".into());
     assert_eq!(area.sightings.iter().find(|s| s.key == key).map(|s| s.matched), Some(1), "{:?}", area.sightings);
 }
+
+// ---- a clean-up guard that fires clears its unfired entry --------------------
+
+/// A whole-case run (`run_case`) that fires a clean-up `when_visible` takes
+/// that guard's entry off the saved script's `unfired_guards`, and only that
+/// one; a guard that does not act (a `when_hidden` over a banner that is
+/// shown) leaves every entry.
+#[tokio::test]
+async fn an_unattended_run_removes_only_the_entry_of_a_guard_that_fired() {
+    let _leases = crate::serial::account_leases();
+    for (kind, fires) in [("when_visible", true), ("when_hidden", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target: v2_lib::browser::locator::Target = serde_json::from_value(serde_json::json!({ "css": "#activate" })).unwrap();
+        let entry = format!("step 2: {}", target.describe());
+        let other = "step 1: button \"Elsewhere\"".to_string();
+        let mut case = script(
+            1,
+            None,
+            serde_json::json!([
+                { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#s1" } }] },
+                { "step_number": 2, "cleanup": true, "actions": [
+                    { "kind": kind, "selector": { "css": "#banner" }, "within_ms": 100,
+                      "then": [{ "kind": "click", "selector": { "css": "#activate" } }] }
+                ] }
+            ]),
+        );
+        case.area = Some("Leave".to_string());
+        case.unfired_guards = vec![entry.clone(), other.clone()];
+        store::save_script(root, &case).unwrap();
+        let mut d = deferring_page();
+        run_one(&mut d, root, &case).await;
+        let saved = store::load_script(root, 1).unwrap().unwrap();
+        if fires {
+            assert_eq!(saved.unfired_guards, vec![other], "only the fired guard's entry goes");
+        } else {
+            assert_eq!(saved.unfired_guards, vec![entry, other], "a guard that did not act clears nothing");
+        }
+    }
+}

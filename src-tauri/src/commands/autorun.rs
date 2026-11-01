@@ -3183,7 +3183,7 @@ pub fn save_script_from_editor(
         given_up: _,
         // Kept by the store like the mark.
         cleared_defect: _,
-        // The stored script's, for the steps the editor's script still has.
+        // The stored script's, for the entries a guard of the editor's script still earns.
         unfired_guards,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back.
@@ -3195,7 +3195,7 @@ pub fn save_script_from_editor(
     script.setup = setup;
     script.unfired_guards = unfired_guards
         .into_iter()
-        .filter(|e| script.steps.iter().any(|s| e.starts_with(&format!("step {}:", s.step_number))))
+        .filter(|e| script.steps.iter().any(|s| crate::autorun::seen_check::guard_entries(s).contains(e)))
         .collect();
     script.fail_on_unexpected_dialog = fail_on_unexpected_dialog;
     script.page_errors = page_errors;

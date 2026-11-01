@@ -3812,19 +3812,52 @@ fn a_save_keeps_its_deferred_targets_as_unfired_entries() {
         ]),
     );
     let deferred = guarded_cleanup_deferred(&map, &none(), &s, &[], None, &[]);
-    let list = merged_unfired(&[], None, &deferred);
+    let list = merged_unfired(&[], None, &s, &deferred);
     // Exactly the opening of the note.
     let notes = guarded_cleanup_notes(&map, &none(), &s, &[], None, &[]);
     assert_eq!(list.len(), 1, "{list:?}");
     assert!(notes[0].starts_with(&format!("{}", list[0])), "{list:?} {notes:?}");
     assert_eq!(list[0], "step 2: button \"Activate\"");
     // Saved twice, still once.
-    assert_eq!(merged_unfired(&list, None, &deferred), list);
+    assert_eq!(merged_unfired(&list, None, &s, &deferred), list);
     // A repair that looked only at step 1 keeps step 2's entry.
-    assert_eq!(merged_unfired(&list, Some(&[1]), &[]), list);
+    assert_eq!(merged_unfired(&list, Some(&[1]), &s, &[]), list);
     // A save of step 2 that no longer defers it drops it; a whole save too.
-    assert!(merged_unfired(&list, Some(&[2]), &[]).is_empty());
-    assert!(merged_unfired(&list, None, &[]).is_empty());
+    assert!(merged_unfired(&list, Some(&[2]), &s, &[]).is_empty());
+    assert!(merged_unfired(&list, None, &s, &[]).is_empty());
+    // A repair that deleted step 2 (only step 1 looked at) keeps no entry for it.
+    let gone = script(Some("Cycles"), serde_json::json!([{ "step_number": 1, "actions": [] }]));
+    assert!(merged_unfired(&list, Some(&[1]), &gone, &[]).is_empty());
+}
+
+/// What a firing guard cannot file is not deferred: it keeps the normal
+/// refusal. A legacy string target, and any target in a script with no area.
+#[test]
+fn a_clean_up_guard_target_a_fire_cannot_file_is_refused_not_deferred() {
+    use v2_lib::autorun::seen_check::{guarded_cleanup_deferred, guarded_cleanup_notes};
+    let map = map_with("Cycles", "/cycles", &[css("#banner")]);
+    let steps = |then: serde_json::Value| {
+        serde_json::json!([
+            { "step_number": 1, "actions": [] },
+            { "step_number": 2, "cleanup": true, "actions": [
+                { "kind": "when_visible", "selector": { "css": "#banner" }, "then": [then] }
+            ] }
+        ])
+    };
+    let structured = click(serde_json::json!({ "role": "button", "name": "Activate" }));
+    // Unchanged: structured, no placeholder, an area - deferred.
+    let ok = script(Some("Cycles"), steps(structured.clone()));
+    assert_eq!(check_seen(&map, &none(), &ok, &[], None), Ok(()));
+    assert_eq!(guarded_cleanup_deferred(&map, &none(), &ok, &[], None, &[]).len(), 1);
+    // A legacy plain-string target is refused, not deferred.
+    let legacy = script(Some("Cycles"), steps(click(serde_json::json!("Activate"))));
+    assert!(check_seen(&map, &none(), &legacy, &[], None).is_err());
+    assert!(guarded_cleanup_deferred(&map, &none(), &legacy, &[], None, &[]).is_empty());
+    assert!(guarded_cleanup_notes(&map, &none(), &legacy, &[], None, &[]).is_empty());
+    // No area: nothing is filed or forgotten, so nothing waits.
+    let no_area = script(None, steps(structured));
+    assert!(guarded_cleanup_deferred(&map, &none(), &no_area, &[], None, &[]).is_empty());
+    assert!(check_seen(&map, &none(), &no_area, &[], None).is_err());
 }
 
 /// Only a target with no sighting at all waits for its guard: one seen

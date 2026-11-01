@@ -4163,7 +4163,7 @@ pub fn guard_finds(
     found
         .into_iter()
         // A locator holding a data placeholder is not what the page showed.
-        .filter(|(t, _, _)| !serde_json::to_string(t).is_ok_and(|j| j.contains("{{")))
+        .filter(|(t, _, _)| crate::autorun::seen_check::fire_can_file(t, true))
         .map(|(t, n, all)| (t.clone(), n, all))
         .collect()
 }
@@ -13613,7 +13613,7 @@ pub async fn save_autorun_scripts_carrying(
                 // note is still said.
                 let text = cases.iter().find(|c| c.id == *case_id).map(case_step_text).unwrap_or_default();
                 let deferred = crate::autorun::seen_check::guarded_cleanup_deferred(&map, &components, script, &text, only.as_deref(), &files);
-                unfired.push((*case_id, crate::autorun::seen_check::merged_unfired(&script.unfired_guards, only.as_deref(), &deferred)));
+                unfired.push((*case_id, crate::autorun::seen_check::merged_unfired(&script.unfired_guards, only.as_deref(), script, &deferred)));
                 let guarded = crate::autorun::seen_check::guarded_cleanup_notes(&map, &components, script, &text, only.as_deref(), &files);
                 let sentences = guarded
                     .into_iter()

@@ -4947,9 +4947,12 @@ async fn a_deferred_clean_up_target_is_stored_kept_and_dropped_when_no_longer_de
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
+    // A guard files what it proves under the script's area, so a script
+    // with none defers nothing.
+    record_two_areas(dir.path());
     let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
     let body = |then: serde_json::Value, extra: serde_json::Value| {
-        let mut v = case_7("#toast", "Saved");
+        let mut v = case_7_in(Some("Cycle Setup"), "#toast");
         v[0]["steps"].as_array_mut().unwrap().push(serde_json::json!({ "step_number": 3, "cleanup": true, "unchecked": "removes the banner it opened", "actions": [
             { "kind": "when_visible", "selector": "#banner", "then": [then] }
         ]}));
@@ -4958,7 +4961,7 @@ async fn a_deferred_clean_up_target_is_stored_kept_and_dropped_when_no_longer_de
     };
     let activate = serde_json::json!({ "kind": "click", "selector": { "role": "button", "name": "Activate" } });
     // Seen: everything but the Activate button.
-    let mut seen = case_7("#toast", "Saved");
+    let mut seen = case_7_in(Some("Cycle Setup"), "#toast");
     seen[0]["steps"].as_array_mut().unwrap().push(serde_json::json!({ "step_number": 3, "cleanup": true, "unchecked": "removes the banner it opened", "actions": [
         { "kind": "click", "selector": "#banner" }
     ]}));

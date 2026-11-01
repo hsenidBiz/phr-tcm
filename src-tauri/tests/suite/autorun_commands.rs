@@ -667,3 +667,41 @@ async fn a_new_browser_is_asked_until_it_answers() {
     assert_eq!(until_answers(never, 5, pause).await, Err("refused 5".to_string()));
     assert_eq!(never_asked.load(Ordering::SeqCst), 5);
 }
+
+/// Case 7 with a clean-up step 2 whose `when_visible` clicks `name`.
+fn with_guard(name: &str, guarded: bool) -> CaseScript {
+    let action = if guarded {
+        serde_json::json!({ "kind": "when_visible", "selector": { "css": "#banner" },
+            "then": [{ "kind": "click", "selector": { "role": "button", "name": name } }] })
+    } else {
+        serde_json::json!({ "kind": "click", "selector": { "role": "button", "name": name } })
+    };
+    serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] },
+        { "step_number": 2, "cleanup": true, "unchecked": "tidy", "actions": [action] }
+    ] }))
+    .unwrap()
+}
+
+/// The editor runs no seen check, so a stored `unfired_guards` entry is kept
+/// only while its step still has a guard whose `then` holds a target that
+/// describes to exactly that entry; edit the locator, unguard the click or
+/// delete the step and the entry goes.
+#[test]
+fn an_editor_save_drops_an_unfired_entry_its_step_no_longer_earns() {
+    let entry = "step 2: button \"Activate\"".to_string();
+    let saved_after = |edited: CaseScript| {
+        let dir = TempDir::new();
+        let root = dir.path().join("data");
+        let mut stored = with_guard("Activate", true);
+        stored.unfired_guards = vec![entry.clone()];
+        v2_lib::autorun::store::save_scripts_atomically(&root, &[stored]).unwrap();
+        assert_eq!(load_script(&root, 7).unwrap().unwrap().unfired_guards, vec![entry.clone()]);
+        save_script_from_editor(&root, "acme", "Web", edited).unwrap();
+        load_script(&root, 7).unwrap().unwrap().unfired_guards
+    };
+    assert_eq!(saved_after(with_guard("Activate", true)), vec![entry.clone()], "unchanged: kept");
+    assert!(saved_after(with_guard("Apply", true)).is_empty(), "the locator was edited");
+    assert!(saved_after(with_guard("Activate", false)).is_empty(), "the guard was removed");
+    assert!(saved_after(with_setup(None)).is_empty(), "the step is gone");
+}

@@ -2228,6 +2228,15 @@ pub fn guarded_cleanup_deferred(
     deferred
 }
 
+/// Can a guard that fires file `target` as seen? Not a legacy string target,
+/// not one holding a `{{placeholder}}`, and only in a script with an area (a
+/// find is filed under it). The one rule for what a save defers
+/// (`scan_deferring`) and what a fire files and forgets (`guard_finds`,
+/// `forget_fired_guards`), so a deferred entry can always clear.
+pub fn fire_can_file(target: &crate::browser::locator::Target, has_area: bool) -> bool {
+    has_area && !target.is_legacy() && !serde_json::to_string(target).is_ok_and(|j| j.contains("{{"))
+}
+
 /// The entry `CaseScript::unfired_guards` keeps for one deferred target:
 /// the opening of its note, "step N: <locator>".
 pub fn unfired_entry(step: i32, what: &str) -> String {
@@ -2235,14 +2244,14 @@ pub fn unfired_entry(step: i32, what: &str) -> String {
 }
 
 /// `unfired` as a save leaves it: the entries of `kept` (the script's old
-/// list) for steps the save did not look at (`only_steps`), then one entry
-/// per target the save deferred, once each.
-pub fn merged_unfired(kept: &[String], only_steps: Option<&[i32]>, deferred: &[(i32, String, String)]) -> Vec<String> {
+/// list) for steps the save did not look at (`only_steps`) and that still
+/// exist in `script`, then one entry per target the save deferred, once each.
+pub fn merged_unfired(kept: &[String], only_steps: Option<&[i32]>, script: &CaseScript, deferred: &[(i32, String, String)]) -> Vec<String> {
     let mut out: Vec<String> = match only_steps {
         None => Vec::new(),
         Some(only) => kept
             .iter()
-            .filter(|e| entry_step(e).is_some_and(|n| !only.contains(&n)))
+            .filter(|e| entry_step(e).is_some_and(|n| !only.contains(&n) && script.steps.iter().any(|s| s.step_number == n)))
             .cloned()
             .collect(),
     };
@@ -2250,6 +2259,32 @@ pub fn merged_unfired(kept: &[String], only_steps: Option<&[i32]>, deferred: &[(
         let entry = unfired_entry(*step, what);
         if !out.contains(&entry) {
             out.push(entry);
+        }
+    }
+    out
+}
+
+/// The `unfired_guards` entries `step` could earn: one per target (as
+/// `scan_deferring` words it) in the `then` of a guard of a clean-up step.
+/// The editor's save keeps a stored entry only if it is among these, for it
+/// runs no seen check to recompute them.
+pub fn guard_entries(step: &StepScript) -> Vec<String> {
+    if !step.cleanup {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (top, action) in step.actions.iter().flat_map(|top| top.each().into_iter().map(move |a| (top, a))) {
+        let inside = top.is_guard()
+            && !std::ptr::eq(top, action)
+            && !action.is_guard()
+            && !matches!(action, Action::RepeatWhileVisible { .. } | Action::PageUntil { .. });
+        if !inside {
+            continue;
+        }
+        for t in own_targets(action) {
+            if let Some((checked, _)) = as_checked(top, action, t) {
+                out.push(unfired_entry(step.step_number, &checked.describe()));
+            }
         }
     }
     out
@@ -2702,11 +2737,10 @@ fn scan_deferring(
                         // Only a target no sighting found (a probe that matched
                         // none is consistent with "not shown today") waits for
                         // its guard: one seen matching one or more, or only in
-                        // checks, keeps its refusal and hint. A target holding a
-                        // placeholder is never filed when the guard fires, so it
-                        // keeps the normal rule.
+                        // checks, keeps its refusal and hint. A target a firing
+                        // guard cannot file (`fire_can_file`) keeps the normal rule.
                         if n.in_cleanup_guard
-                            && !n.links.iter().any(link_holds_placeholder)
+                            && fire_can_file(&n.target, script.area_name().is_some())
                             && !seen.any.has(link, true)
                             && !seen.many_wholes.iter().chain(&seen.each_wholes).any(|w| {
                                 w.len() == chain.len() && w.iter().zip(&chain).all(|(a, b)| same_link_filled(a, b))
