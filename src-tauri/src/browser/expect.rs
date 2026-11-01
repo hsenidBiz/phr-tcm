@@ -69,6 +69,12 @@ pub enum Check<'a> {
     /// The one match sits `relation` the one element `relative_to` finds
     /// (`position::holds`).
     Position { relative_to: &'a Target, relation: super::position::Relation },
+    /// The one match's text (collapsed) is the one `remember_text` noted as
+    /// `name`; `noted` is that text.
+    SameText { name: &'a str, noted: &'a str },
+    /// `remember_text`: read the one match's text (collapsed) into the cell.
+    /// Passes once the element is found; the sentence never carries the text.
+    Capture(&'a std::sync::Mutex<Option<String>>),
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -446,6 +452,31 @@ async fn look_reading<D: Driver>(
                         }
                     }
                 }
+            }
+        },
+        Check::SameText { name, noted } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
+                let got = collapse(got.as_str().unwrap_or(""));
+                let password = is_password(d, h).await?;
+                if got == *noted {
+                    Ok(format!("{what} still says what was noted as \"{name}\""))
+                } else {
+                    Err(format!(
+                        "{EXPECTED_TEXT}{} (noted as \"{name}\") but saw {}",
+                        shown_value(noted, password),
+                        shown_value(&got, password)
+                    ))
+                }
+            }
+        },
+        Check::Capture(cell) => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
+                *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(collapse(got.as_str().unwrap_or("")));
+                Ok(format!("read {what}"))
             }
         },
         Check::Text(want) => match only(&handles) {

@@ -90,6 +90,12 @@ pub fn action_words(action: &Action) -> String {
         }
         Action::CheckUrl { contains, .. } => format!("check the address contains \"{contains}\""),
         Action::RememberUrl { name } => format!("note the address as \"{name}\""),
+        Action::RememberText { selector, name } => {
+            format!("note the text of {} as \"{name}\"", selector.describe())
+        }
+        Action::ExpectText { selector, same_as: Some(name), .. } => {
+            format!("expect {} to read the text noted as \"{name}\"", selector.describe())
+        }
         Action::ExpectVisible { selector, .. } => format!("expect {} to be visible", selector.describe()),
         Action::ExpectHidden { selector, .. } => format!("expect {} to be hidden", selector.describe()),
         Action::ExpectText { selector, matches: Some(p), .. } => {

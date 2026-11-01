@@ -339,6 +339,7 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
             | Action::RememberUrl { .. }
+            | Action::RememberText { .. }
             | Action::ExpectVisible { .. }
             | Action::ExpectHidden { .. }
             | Action::ExpectText { .. }

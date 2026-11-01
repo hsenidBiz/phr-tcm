@@ -372,6 +372,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::WhenVisible { .. }
         | Action::ExpectVisible { .. }
         | Action::ExpectText { .. }
+        | Action::RememberText { .. }
         | Action::ExpectContainsText { .. }
         | Action::ExpectAttribute { .. }
         | Action::ExpectStyle { .. }

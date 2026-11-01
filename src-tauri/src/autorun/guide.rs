@@ -23,6 +23,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "check_text",
     "check_url",
     "remember_url",
+    "remember_text",
     "expect_visible",
     "expect_hidden",
     "expect_text",
@@ -285,7 +286,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
 - `{ "kind": "expect_hidden", "selector": ... }` - gone counts as hidden
-- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) in place of `equals`
+- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) or `"same_as": "counts"` (the text `remember_text` noted as counts) in place of `equals`; exactly one of the three
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }` - or `at_least` / `at_most` in its place (`at_most` passes only once the count has held still for a moment, so give it a `timeout_ms` of at least 1500)
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute; with `"matches": "^View "` (a pattern) in place of `equals`, the value must match it
@@ -298,6 +299,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional). With `"equals": "/hr/cycles/index"` in place of `contains`, the address is exactly that: a value starting with / is compared with the path, query and fragment, anything else with the whole address. With `"same_as": "before"`, the address is the one `remember_url` noted as before.
 - `{ "kind": "remember_url", "as": "before" }` - note the address the page is on now, under a name (1 to 30 letters, digits, - or _), for a later `check_url` with `same_as` in the same case. The save refuses a `same_as` with no earlier `remember_url`.
+- `{ "kind": "remember_text", "selector": {...}, "as": "counts" }` - note what an element reads now (a field's value for a field), under a name, for a later `expect_text` with `"same_as": "counts"` in the same case (a before/after check: "the pills keep the counts from step 4"). The save refuses a `same_as` with no earlier `remember_text`.
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json`, `timeout_ms`, `not_before_ms`, `started_within_ms` and `same_document` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional

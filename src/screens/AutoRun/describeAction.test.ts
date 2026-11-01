@@ -25,6 +25,10 @@ describe("a sentence for every action kind", () => {
     [{ kind: "check_url", contains: "/PerformanceCycle" }, 'Check the address contains "/PerformanceCycle"'],
     [{ kind: "remember_url", as: "before" }, 'Note the address as "before"'],
     [
+      { kind: "remember_text", selector: { role: "heading", name: "Leave request" }, as: "title" },
+      'Note the text of the "Leave request" heading as "title"',
+    ],
+    [
       { kind: "expect_visible", selector: { role: "heading", name: "Leave request" } },
       'Check the "Leave request" heading is showing',
     ],
@@ -345,6 +349,13 @@ describe("a sentence for every action kind", () => {
     expect(say({ kind: "check_url", contains: "/home" })).toBe('Check the address contains "/home"');
   });
 
+  test("a noted text reads as a sentence", () => {
+    const heading = { role: "heading", name: "Leave request" };
+    expect(say({ kind: "expect_text", selector: heading, same_as: "title" })).toBe(
+      'Check the "Leave request" heading is still what was noted as "title"',
+    );
+  });
+
   test("page_until reads as a sentence", () => {
     expect(
       say({
@@ -389,7 +400,7 @@ describe("a sentence for every action kind", () => {
     const kinds = new Set(cases.map(([a]) => a.kind));
     expect([...kinds].sort()).toEqual(
       [
-        "navigate", "click", "fill", "wait_for", "check_text", "check_url", "remember_url", "expect_visible", "expect_hidden",
+        "navigate", "click", "fill", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "expect_no_change", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",

@@ -423,6 +423,8 @@ function describeKnown(a: Action): Sentence {
     }
     case "remember_url":
       return [words(`Note the address as "${str(a.as)}"`)];
+    case "remember_text":
+      return [words("Note the text of "), ...describeTarget(a.selector), words(` as "${str(a.as)}"`)];
     case "expect_visible":
       return [words("Check "), ...describeTarget(a.selector), words(` is showing${upTo(a.timeout_ms)}`)];
     case "expect_hidden":
@@ -430,8 +432,14 @@ function describeKnown(a: Action): Sentence {
     case "expect_text": {
       const equals = optStr(a.equals);
       const matches = optStr(a.matches);
-      if ((equals === undefined) === (matches === undefined)) throw new Unreadable();
-      const said = matches !== undefined ? ` matches /${withoutHosts(matches)}/` : ` reads "${withoutHosts(equals as string)}"`;
+      const sameAs = optStr(a.same_as);
+      if ([equals, matches, sameAs].filter((v) => v !== undefined).length !== 1) throw new Unreadable();
+      const said =
+        sameAs !== undefined
+          ? ` is still what was noted as "${sameAs}"`
+          : matches !== undefined
+            ? ` matches /${withoutHosts(matches)}/`
+            : ` reads "${withoutHosts(equals as string)}"`;
       return [words("Check "), ...describeTarget(a.selector), words(`${said}${upTo(a.timeout_ms)}`)];
     }
     case "expect_contains_text":

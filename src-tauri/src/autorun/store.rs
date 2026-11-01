@@ -367,6 +367,8 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
         // order the case runs. One inside a guard or a component does not
         // count: it may never run.
         let mut noted: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        // The same for the texts a top-level `remember_text` has noted.
+        let mut noted_texts: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for step in &sc.steps {
             match &step.unchecked {
                 None => {}
@@ -415,6 +417,19 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                     {
                         return Err(format!(
                             "case {} step {} action {}: check_url same_as \"{name}\" names no address an earlier remember_url of this case notes",
+                            sc.case_id,
+                            step.step_number,
+                            i + 1
+                        ));
+                    }
+                    crate::browser::actions::Action::RememberText { name, .. } => {
+                        noted_texts.insert(name.as_str());
+                    }
+                    crate::browser::actions::Action::ExpectText { same_as: Some(name), .. }
+                        if !noted_texts.contains(name.as_str()) =>
+                    {
+                        return Err(format!(
+                            "case {} step {} action {}: expect_text same_as \"{name}\" names no text an earlier remember_text of this case notes",
                             sc.case_id,
                             step.step_number,
                             i + 1

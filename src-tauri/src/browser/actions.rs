@@ -68,6 +68,14 @@ pub enum Action {
         #[serde(rename = "as")]
         name: String,
     },
+    /// Note the one element's text (a field's value for a field), whitespace
+    /// folded, as `name`, for a later `expect_text` `same_as` in the same
+    /// case. Fails like a click when the locator finds nothing or several.
+    RememberText {
+        selector: Target,
+        #[serde(rename = "as")]
+        name: String,
+    },
     ExpectVisible {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,13 +87,16 @@ pub enum Action {
         timeout_ms: Option<u32>,
     },
     /// The one element's text (whitespace collapsed) is `equals`, or
-    /// matches the pattern `matches` (`pattern`) - exactly one of the two.
+    /// matches the pattern `matches` (`pattern`), or is the one
+    /// `remember_text` noted as `same_as` - exactly one of the three.
     ExpectText {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         equals: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         matches: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        same_as: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -1195,6 +1206,15 @@ pub fn not_noted(name: &str) -> String {
         "no address was noted as \"{name}\" in this case: a remember_url with \"as\": \"{name}\" must come before this check"
     )
 }
+/// A `remember_text` on a browser that keeps no notebook.
+pub const NO_TEXT_NOTEBOOK: &str = "this browser cannot note a text";
+
+/// An `expect_text` `same_as` with nothing noted under `name`.
+pub fn no_noted_text(name: &str) -> String {
+    format!(
+        "no text was noted as \"{name}\" in this case: a remember_text with \"as\": \"{name}\" must come before this check"
+    )
+}
 /// What an upload's click opened instead of a file chooser.
 pub const FILE_CHOOSER: &str = "file chooser";
 /// Appended, in run files from before `dialogs`, when a page raised
@@ -1353,13 +1373,18 @@ impl Action {
                     _ => Ok(()),
                 }
             }
-            Action::ExpectText { selector, equals, matches, .. } => {
+            Action::ExpectText { selector, equals, matches, same_as, .. } => {
                 selector.validate()?;
-                match (equals, matches) {
-                    (Some(_), None) => Ok(()),
-                    (None, Some(p)) => super::pattern::check_pattern("expect_text", p),
+                match (equals, matches, same_as) {
+                    (Some(_), None, None) => Ok(()),
+                    (None, Some(p), None) => super::pattern::check_pattern("expect_text", p),
+                    (None, None, Some(name)) => check_note_name("expect_text same_as", name),
                     _ => Err(TEXT_NEEDS_ONE.to_string()),
                 }
+            }
+            Action::RememberText { selector, name } => {
+                selector.validate()?;
+                check_note_name("remember_text", name)
             }
             Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
                 selector.validate()?;
@@ -1765,6 +1790,7 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
+            | Action::RememberText { selector, .. }
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
@@ -1819,6 +1845,7 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
+            | Action::RememberText { selector, .. }
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
@@ -1966,7 +1993,7 @@ pub const POSITION_SAME: &str =
 /// must hold still for `table::SETTLE_MS`, and be seen to.
 pub const POSITION_TIME: &str = "expect_position: needs at least 1500 ms to see both elements at rest";
 /// `expect_text` given both `equals` and `matches`, or neither.
-pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
+pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text), \"matches\" (a pattern) or \"same_as\" (a text remember_text noted)";
 /// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the
 /// count must hold still for `table::SETTLE_MS`, and be seen to, at the
 /// slowest poll.
@@ -2450,6 +2477,27 @@ async fn remember_url<D: Driver>(d: &mut D, name: &str) -> ActionOutcome {
     }
 }
 
+/// `remember_text`: note the one element's text as `name`.
+async fn remember_text<D: Driver>(d: &mut D, selector: &Target, name: &str, timing: &Timing) -> ActionOutcome {
+    if d.noted_texts().is_none() {
+        return ActionOutcome::failed(NO_TEXT_NOTEBOOK.to_string());
+    }
+    settle(d, timing).await;
+    let cell = std::sync::Mutex::new(None);
+    let out = expect::expect(d, selector, Check::Capture(&cell), timing.action_ms, timing.poll_ms).await;
+    if !out.ok {
+        return out;
+    }
+    let text = cell.into_inner().unwrap_or_else(|e| e.into_inner()).unwrap_or_default();
+    match d.noted_texts() {
+        Some(book) => {
+            book.insert(name.to_string(), text);
+            ActionOutcome::passed(format!("noted the text of {} as \"{name}\"", selector.describe()))
+        }
+        None => ActionOutcome::failed(NO_TEXT_NOTEBOOK.to_string()),
+    }
+}
+
 /// What an action's outcome adds when its locator found the element by the
 /// text as written in the page (CSS draws it in other capitals).
 fn written_note(ready: &input::Ready) -> String {
@@ -2537,12 +2585,21 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ExpectHidden { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Hidden, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectText { selector, equals, matches, timeout_ms } => {
-            // `validate` holds the two to exactly one.
+        Action::RememberText { selector, name } => remember_text(d, selector, name, timing).await,
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+            // `validate` holds the three to exactly one.
             let re;
-            let check = match (equals, matches) {
-                (Some(equals), _) => Check::Text(equals),
-                (_, Some(p)) => {
+            let noted;
+            let check = match (equals, matches, same_as) {
+                (Some(equals), _, _) => Check::Text(equals),
+                (_, _, Some(name)) => {
+                    noted = match d.noted_texts().and_then(|book| book.get(name).cloned()) {
+                        Some(t) => t,
+                        None => return ActionOutcome::failed(no_noted_text(name)),
+                    };
+                    Check::SameText { name, noted: &noted }
+                }
+                (_, Some(p), _) => {
                     re = match super::pattern::compiled(p) {
                         Ok(re) => re,
                         Err(why) => return ActionOutcome::failed(why),

@@ -113,6 +113,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
@@ -231,6 +232,10 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     // The addresses a `remember_url` notes, for a later `same_as`.
     if uses(input, &|a| matches!(a, Action::RememberUrl { .. })) {
         em.line(4, "const notedUrls: Record<string, string> = {};");
+    }
+    // The texts a `remember_text` notes, for a later `same_as`.
+    if uses(input, &|a| matches!(a, Action::RememberText { .. })) {
+        em.line(4, "const notedTexts: Record<string, string> = {};");
     }
     // The app's text reader: `expect_text`, `expect_contains_text`, an
     // `expect_each` that reads text and an `expect_order`.
@@ -1507,6 +1512,14 @@ impl Em<'_> {
                 ),
             ),
             Action::RememberUrl { name } => self.line(indent, &format!("notedUrls[{}] = cur.url();", lit(name))),
+            Action::RememberText { selector, name } => self.line(
+                indent,
+                &format!(
+                    "notedTexts[{}] = (await {}.innerText()).replace(/\\s+/g, ' ').trim();",
+                    lit(name),
+                    one(selector)
+                ),
+            ),
             Action::ExpectVisible { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeVisible", &[], *timeout_ms)))
             }
@@ -1516,8 +1529,19 @@ impl Em<'_> {
             // The app reads a field's value, a list's chosen label, else the
             // rendered text (READ_TEXT_JS), collapses whitespace on both sides
             // and compares case-sensitively: whole, or as a substring.
-            Action::ExpectText { selector, equals, matches, timeout_ms } => {
-                // `validate` holds the two to exactly one.
+            Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+                // `validate` holds the three to exactly one.
+                if let Some(name) = same_as {
+                    self.line(
+                        indent,
+                        &format!(
+                            "await expect({}).{};",
+                            one(selector),
+                            call("toHaveText", &[format!("notedTexts[{}]", lit(name))], *timeout_ms)
+                        ),
+                    );
+                    return Ok(());
+                }
                 if let Some(equals) = equals {
                     // The drawn text, or the text as written in the page when
                     // only the letter case differs (`asCase`).
@@ -1534,7 +1558,7 @@ impl Em<'_> {
                 }
                 let want = match matches {
                     Some(p) => format!("toMatch(new RegExp({}))", lit(p)),
-                    _ => return no("expect_text takes exactly one of equals or matches"),
+                    _ => return no("expect_text takes exactly one of equals, matches or same_as"),
                 };
                 self.line(
                     indent,

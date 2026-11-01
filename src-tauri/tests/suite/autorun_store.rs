@@ -1679,6 +1679,40 @@ fn a_same_as_needs_an_earlier_remember_url() {
     }
 }
 
+#[test]
+fn a_text_same_as_needs_an_earlier_remember_text() {
+    let remember = serde_json::json!({ "kind": "remember_text", "selector": "#pills", "as": "counts" });
+    let same = serde_json::json!({ "kind": "expect_text", "selector": "#pills", "same_as": "counts" });
+    let other = serde_json::json!({ "kind": "check_text", "value": "a" });
+    let refused = "expect_text same_as \"counts\" names no text an earlier remember_text of this case notes";
+
+    let sc = address_script(serde_json::json!([
+        { "step_number": 1, "actions": [remember.clone()], "unchecked": "notes the counts" },
+        { "step_number": 2, "actions": [other.clone()] },
+        { "step_number": 3, "actions": [same.clone()] }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+    let sc = address_script(serde_json::json!([{ "step_number": 1, "actions": [remember.clone(), same.clone()] }]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+
+    // A remember_url of the same name does not count, nor one noted later, nor one inside a guard.
+    for steps in [
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone()] }]),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "remember_url", "as": "counts" }], "unchecked": "notes the address" },
+            { "step_number": 2, "actions": [same.clone()] }
+        ]),
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone(), remember.clone()] }]),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "when_visible", "selector": "s", "then": [remember.clone()] }] },
+            { "step_number": 2, "actions": [same.clone()] }
+        ]),
+    ] {
+        let err = v2_lib::autorun::store::check_scripts(&[address_script(steps)]).unwrap_err();
+        assert!(err.ends_with(refused), "{err}");
+    }
+}
+
 /// A one-case, one-step script with these actions.
 fn timing_script(actions: serde_json::Value) -> CaseScript {
     serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t",

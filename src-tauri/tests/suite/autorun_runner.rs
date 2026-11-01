@@ -1104,6 +1104,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "check_text", "value": "v" }), false),
         (json!({ "kind": "check_url", "contains": "v" }), false),
         (json!({ "kind": "remember_url", "as": "v" }), false),
+        (json!({ "kind": "remember_text", "selector": "s", "as": "v" }), false),
         (json!({ "kind": "expect_visible", "selector": css }), false),
         (json!({ "kind": "expect_hidden", "selector": css }), false),
         (json!({ "kind": "expect_text", "selector": css, "equals": "v" }), false),

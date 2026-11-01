@@ -4165,6 +4165,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::Upload { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectStyle { selector, .. }
@@ -4779,6 +4780,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
         | Action::ExpectText { selector, .. }
+        | Action::RememberText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
