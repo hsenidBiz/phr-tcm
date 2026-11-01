@@ -1041,7 +1041,7 @@ fn old_step(script: &CaseScript, n: i32) -> Option<&StepScript> {
 /// removes one gives it up by name, like a whole check.
 const TIMING_FIELDS: [&str; 3] = ["not_before_ms", "started_within_ms", "same_document"];
 
-fn is_timing_field(kind: &str) -> bool {
+pub fn is_timing_field(kind: &str) -> bool {
     TIMING_FIELDS.contains(&kind)
 }
 
@@ -1239,6 +1239,8 @@ pub fn check_repair_values(
     // An entry must also match a check the repair really removes: each
     // removed check is matched once.
     let mut valid: Vec<&GiveUp> = Vec::new();
+    // Steps of the check entries beyond what the repair removes of their kind; they excuse nothing.
+    let mut excess: Vec<i32> = Vec::new();
     let mut removed: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
     for g in gives_up {
         if let Some(r) = gives_up_refusal(old, declared_steps, g) {
@@ -1253,6 +1255,10 @@ pub fn check_repair_values(
                 left.remove(i);
                 valid.push(g);
             }
+            // The repair removes this kind, but fewer than the entries name: the extra ones go to
+            // the count test below, which says how many go. A kind it removes none of keeps the
+            // refusal below.
+            None if !is_timing_field(&kind) && removed_kinds(old, new, n).contains(&kind) => excess.push(n),
             None => push(
                 &mut out,
                 format!("step {n}: gives_up names a {kind} check, and the old step {n} has none - name the kind of a check the repair removes"),
@@ -1300,6 +1306,9 @@ pub fn check_repair_values(
         let removed_kinds_count = gone.len();
         let lost = check_kinds_of_step(o).len().saturating_sub(after_kinds.len());
         let given = valid.iter().filter(|g| g.step == n && !is_timing_field(&gives_up_kind(g))).count();
+        // Under-naming is judged on the net count: a check kept in another form (a text widened
+        // to a contains) may be named but need not be.
+        let extra = excess.iter().filter(|&&e| e == n).count();
         if given < lost {
             push(
                 &mut out,
@@ -1307,10 +1316,10 @@ pub fn check_repair_values(
                     "step {n}: the repair removes {lost} of its checks and gives_up names {given} - add {{ \"step\": {n}, \"kind\": \"<the check's kind>\", \"why\": \"...\" }} for each one, or keep it"
                 ),
             );
-        } else if given > removed_kinds_count {
+        } else if given + extra > removed_kinds_count {
             push(
                 &mut out,
-                format!("step {n}: gives_up names {given} checks but the repair removes {removed_kinds_count} there - name only the checks it removes"),
+                format!("step {n}: gives_up names {} checks but the repair removes {removed_kinds_count} there - name only the checks it removes", given + extra),
             );
         }
         // A timing field taken off a check that stays is given up by its own name.

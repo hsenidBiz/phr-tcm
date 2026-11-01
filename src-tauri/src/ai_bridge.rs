@@ -13163,7 +13163,12 @@ pub async fn save_autorun_scripts_carrying(
                             kind: g.kind.trim().to_lowercase(),
                             why: g.why.trim().to_string(),
                             at: at.clone(),
-                            replaced_by: crate::autorun::case_values::added_kinds(&old, &script, g.step),
+                            // A timing field taken off a check that stays has nothing replacing it.
+                            replaced_by: if crate::autorun::case_values::is_timing_field(&g.kind.trim().to_lowercase()) {
+                                Vec::new()
+                            } else {
+                                crate::autorun::case_values::added_kinds(&old, &script, g.step)
+                            },
                         };
                         let replaced = if entry.replaced_by.is_empty() {
                             String::new()

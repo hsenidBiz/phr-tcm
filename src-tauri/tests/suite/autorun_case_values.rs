@@ -1440,11 +1440,14 @@ fn gives_up_naming_more_than_the_repair_removes_is_refused() {
     let r = repair(&old, &three_checks(), &[give(2, "expect_visible", "step 4 already proves it"), give(2, "expect_visible", "step 4 already proves it")]);
     assert_eq!(
         r,
-        vec!["step 2: gives_up names a expect_visible check, and the old step 2 has none - name the kind of a check the repair removes".to_string()]
+        vec!["step 2: gives_up names 2 checks but the repair removes 1 there - name only the checks it removes".to_string()]
     );
     // Naming a check the repair keeps matches nothing it removes.
     let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
     assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the old step 2 has none")), "{r:?}");
+    // A kind the old step lacks is a different refusal.
+    let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_text", "step 4 already proves it")]);
+    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_text check, and the old step 2 has none")), "{r:?}");
 }
 
 #[test]
