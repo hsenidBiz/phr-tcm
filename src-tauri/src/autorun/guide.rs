@@ -1947,7 +1947,8 @@ You open and drive a browser of your own to find what a script needs:
 - `reset_autorun_browser` gives a clean page and keeps the sign-in: it closes
   the other tabs, forgets any dialog a replay expected or saw, lifts your save
   guard, forgets where your last replay stopped, and loads the page the browser
-  landed on when it signed in (the home page, when none is known). Use it
+  landed on when it signed in while that sign-in stands (otherwise, or when none
+  is known or it will not open, the home page). Use it
   when you only want a clean page. It ends your own discovery if one is going,
   keeping what it mapped. If the sign-in has gone it says so and says why, and
   the next replay signs in again. It is refused while a replay is running, and for the

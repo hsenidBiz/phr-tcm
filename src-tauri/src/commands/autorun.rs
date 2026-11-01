@@ -1909,12 +1909,23 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     // and loading it can end the session. With no landing page known it
     // loads the start page, as it always did.
     let mut to = crate::autorun::nav::Home::of(&recipe);
+    let mut used_landing = false;
     if stands.is_ok() {
         if let Some(landing) = p.lease.landing() {
             to.start_url = landing.to_string();
+            used_landing = true;
         }
     }
-    let home = crate::autorun::nav::load_home(p.driver, &to, timing).await;
+    let mut home = crate::autorun::nav::load_home(p.driver, &to, timing).await;
+    // A landing page that will not load is forgotten and the start page
+    // loaded in its place, in this same reset: a reset never sticks on an
+    // address that no longer opens.
+    if used_landing && !home.ok && !home.harness && home.detail != crate::autorun::nav::HOME_NEVER_SIGNED_IN
+        && !home.detail.starts_with(crate::autorun::nav::AFTER_SIGN_IN_STOPPED_AT_HOME)
+    {
+        p.lease.note_landing(None);
+        home = crate::autorun::nav::load_home(p.driver, &crate::autorun::nav::Home::of(&recipe), timing).await;
+    }
     // The home page loaded, but its signed-in marker never showed: the
     // sign-in has gone. Neither the page failing to load nor the browser
     // not answering says that.

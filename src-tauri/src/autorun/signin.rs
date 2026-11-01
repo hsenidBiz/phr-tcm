@@ -449,7 +449,10 @@ pub async fn where_it_stands<D: Driver>(d: &mut D) -> Option<String> {
 pub async fn landing_page<D: Driver>(d: &mut D, origins: &[String]) -> Option<String> {
     let href = page_address(d).await?;
     let origin = super::recipe::origin_of(&href)?;
-    origins.contains(&origin).then_some(href)
+    // Without a query or fragment: a post-login redirect can carry a
+    // one-time ticket that a reset must not ask for again.
+    let page = href.split(['?', '#']).next().unwrap_or(&href).to_string();
+    origins.contains(&origin).then_some(page)
 }
 
 /// The address the page is on now, if the browser says.

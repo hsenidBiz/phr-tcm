@@ -3119,6 +3119,50 @@ async fn a_reset_with_no_landing_page_known_loads_the_start_page() {
     assert_eq!(log(&app), vec!["navigate /hr/home/index".to_string()]);
 }
 
+/// A landing page that will not load is forgotten and the start page loaded
+/// in the same reset; the next reset does not try it again.
+#[tokio::test]
+async fn a_landing_page_that_will_not_load_falls_back_to_the_start_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing").await;
+    let tries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let t = tries.clone();
+    answering_first(slot.as_mut().unwrap(), move |method, params| {
+        if method == "Page.navigate" && params["url"].as_str().is_some_and(|u| u.ends_with("/hr/home/landing")) {
+            t.fetch_add(1, Ordering::SeqCst);
+            return Some(Ok(json!({ "errorText": "net::ERR_CONNECTION_REFUSED" })));
+        }
+        None
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(log(&app), vec!["navigate /hr/home/index".to_string()]);
+    assert_eq!(tries.load(Ordering::SeqCst), 1);
+    assert_eq!(slot.as_ref().unwrap().lease.landing(), None, "the landing page that failed was kept");
+    let (status, _) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{:?}", log(&app));
+    assert_eq!(tries.load(Ordering::SeqCst), 1, "the next reset tried the landing page again");
+}
+
+/// The recipe's `after_sign_in` runs again on the landing page, and the
+/// landing page is kept without a query string.
+#[tokio::test]
+async fn a_reset_reruns_after_sign_in_on_the_landing_page() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay_landing(dir.path(), "/hr/home/landing?ticket=abc").await;
+    assert_eq!(slot.as_ref().unwrap().lease.landing(), Some("https://hr.example.internal/hr/home/landing"));
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(log(&app), vec!["navigate /hr/home/landing".to_string(), "click #menu".to_string()]);
+}
+
 /// A landing page goes with the sign-in it belongs to, and is only noted
 /// for one.
 #[tokio::test]
