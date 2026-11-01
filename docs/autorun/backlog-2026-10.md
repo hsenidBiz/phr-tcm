@@ -1192,6 +1192,7 @@ dw-fix-lrg4 (aiden, grace) and dw-fix-rating5 (emma), the first rewriters on bet
 
 71. **A guarded clean-up target that has never fired is not shown anywhere after the save.** The case
     card and the auditor cannot see it, and a whole replay can mark the case checked.
+    - **Done (unreleased, after 2.4.3-beta.11).** A clean-up guard target never seen is listed on the case card ("Clean-up guard never fired", `CaseScript.unfired_guards`) until a replay or an unattended run fires the guard; only a target a fired guard can file (structured locator, no placeholder, script has an area) may wait for its guard, anything else gets the normal unseen refusal. Left: an editor save may bring back an entry a replay removed a moment before (harmless).
 
 ## The Goal Groups round on 2.4.3-beta.10 (agreed 2026-11-01)
 
@@ -1209,13 +1210,14 @@ scripts (135018-135050) and repaired 135379's clean-up.
       "2 Groups") is not caught, so the site can be left wrong.
     Wanted: `when_hidden` (the `then` runs when the locator matches nothing after the usual wait),
     and a guard allowed inside a guard's `then`, with the same seen rules.
-    - **Done on fix/2026-11-backlog**: `when_hidden` (same wait and `then` rules, skipped with "shown, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both.
+    - **Done (unreleased, after 2.4.3-beta.11).** `when_hidden` (same wait and `then` rules, skipped with "shown, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both; the guide's baseline example deletes by name. Left: the sign-in recipe still has no `when_hidden` and no nested guard.
 
 73. **No hover, and no check on a style.** 135050's expected result is a tooltip that shows on
     hover; Auto Run has no hover action, so it is unchecked. Goal Groups cases also expect the
     delete icon to show red; there is no check on a computed style (colour), so that is unchecked
     too. Wanted: a `hover` action (move the pointer onto the element and wait for what it reveals),
     and an `expect_style` check on a named CSS property, matched against the theme's value.
+    - **Done (unreleased, after 2.4.3-beta.11).** `hover` action (move the pointer onto the element and wait for what it reveals). `expect_style` already existed since 2026-10-19, so the style half was already built. Left: matching a style against the theme's value.
 
 74. **A switch's on/off state cannot be checked.** The Goal Groups "Active" switch has no attribute
     the checks read (no `checked`, no `aria-checked` on the element the locator finds), so every
@@ -1223,6 +1225,7 @@ scripts (135018-135050) and repaired 135379's clean-up.
     input's `checked` property (a property, not an attribute). Wanted: `expect_checked` /
     `expect_unchecked` that read the property of the matched input or of the one input inside the
     matched element, and say which they read.
+    - **Done (unreleased, after 2.4.3-beta.11).** `expect_checked` reads the one checkbox/radio (or the one aria-checked element) inside the matched wrapper, and refuses two or more, naming the count. Left: none (a wrapper holding two or more boxes is still refused, naming the count).
 
 75. **A count that moves by one can only be checked as a fixed number.** 135025 expects the badge
     to go up by 1 after an add; 135030 and 135036 expect it down by 1. `remember_text` +
@@ -1230,6 +1233,7 @@ scripts (135018-135050) and repaired 135379's clean-up.
     Goal Groups", "2 Active Goal Groups", "1 Active Goal Group") from the baseline, which break the
     day the baseline gains a group. Wanted: `expect_text` against a noted value with a number
     offset (e.g. `same_as: "groups", plus: 1`), reading the first number in each text.
+    - **Done (unreleased, after 2.4.3-beta.11).** `expect_text` `plus` checks a count moved by N from a noted value, reading the first number in each text. Left: thousands separators are not read.
 
 76. **A delete and re-apply moves the row, and nothing says which scripts rely on the order.**
     135018 and 135036 delete Financial and apply it again from the template; it comes back after
@@ -1239,11 +1243,12 @@ scripts (135018-135050) and repaired 135379's clean-up.
     it does not join the two. Wanted: when a script's `changes` names a list, list the saved
     scripts with a positional (`nth`, first-row) locator into the same area, at save and in the
     auditor; and say in the guide that a re-applied row goes to the end.
+    - **Done (unreleased, after 2.4.3-beta.11).** A save notes, both ways, which scripts in the same area pick a row by position when another script changes state there. Left: the join is by area, not by list (`changes` names no list).
 
 ## Smaller
 
-- `save_autorun_script` through MCP drops `edits`, so repairs had to go through
-  the bridge's `/autorun-script` route.
+- ~~`save_autorun_script` through MCP drops `edits`, so repairs had to go through
+  the bridge's `/autorun-script` route.~~ Fixed: the proxy forwards `edits` (`SAVE_SCRIPT_KEYS` in `src-tauri/src/mcp.rs`).
 - `list_api_templates` returned about 210K characters; it needs a filter or paging.
 - Iframe follow-ups deferred from the review of the iframe locators
   (`docs/superpowers/plans/2026-10-03-autorun-iframe-locators.md`): `frame_step` can

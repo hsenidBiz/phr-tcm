@@ -2815,3 +2815,19 @@ fn the_guide_teaches_plus_and_the_switch_container_rule() {
         assert!(flat.contains(term), "the guide never says {term:?}");
     }
 }
+
+/// Backlog 72: the baseline-group example deletes the stray group by the name
+/// it holds, never a bare "Delete group" button every group has.
+#[test]
+fn the_baseline_example_deletes_the_group_by_name() {
+    let g = autorun_guide();
+    let start = g.find("**A guard inside a guard.**").expect("guard-in-a-guard section");
+    let section = &g[start..];
+    let delete = section.find("Delete group").expect("the example clicks Delete group");
+    let before = &section[..delete];
+    let has_text = before.rfind("has_text").expect("a has_text before Delete group");
+    assert!(
+        before[has_text..].contains("Extra group"),
+        "the delete is not scoped to the named row"
+    );
+}
