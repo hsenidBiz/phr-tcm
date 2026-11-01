@@ -1195,8 +1195,8 @@ pub const PAGE_LACKS: &str = "page does NOT contain ";
 pub const URL_IS: &str = "url is ";
 /// A `check_url` that names two of `contains`, `equals` and `same_as`.
 pub const URL_ONE_OF: &str = "check_url takes one of \"contains\", \"equals\" or \"same_as\", not two";
-/// The rule a noted address's name follows.
-pub const NOTE_NAME_RULE: &str = "a noted address's name is 1 to 30 letters, digits, - or _";
+/// The rule a noted name follows.
+pub const NOTE_NAME_RULE: &str = "a noted name is 1 to 30 letters, digits, - or _";
 /// A `remember_url` on a browser that keeps no notebook.
 pub const NO_NOTEBOOK: &str = "this browser cannot note an address";
 
@@ -2488,7 +2488,8 @@ async fn remember_text<D: Driver>(d: &mut D, selector: &Target, name: &str, timi
     if !out.ok {
         return out;
     }
-    let text = cell.into_inner().unwrap_or_else(|e| e.into_inner()).unwrap_or_default();
+    let (text, secret) = cell.into_inner().unwrap_or_else(|e| e.into_inner()).unwrap_or_default();
+    let text = if secret { format!("{}{text}", expect::NOTED_SECRET) } else { text };
     match d.noted_texts() {
         Some(book) => {
             book.insert(name.to_string(), text);

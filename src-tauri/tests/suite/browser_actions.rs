@@ -1637,7 +1637,7 @@ fn check_url_takes_exactly_one_of_contains_equals_and_same_as() {
     assert!(check(json!({ "kind": "check_url", "equals": "" })).unwrap_err().contains("empty"));
     assert!(check(json!({ "kind": "check_url", "same_as": "has space" }))
         .unwrap_err()
-        .starts_with("check_url same_as: a noted address's name"));
+        .starts_with("check_url same_as: a noted name"));
     assert!(check(json!({ "kind": "remember_url", "as": "" })).unwrap_err().contains(NOTE_NAME_RULE));
     assert!(check(json!({ "kind": "check_url", "equals": "/a" })).is_ok());
     assert!(check(json!({ "kind": "check_url", "same_as": "before" })).is_ok());
@@ -1777,4 +1777,18 @@ async fn remember_text_on_a_driver_without_a_notebook_fails() {
     let out = execute_with(&mut d, &remember, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
     assert_eq!(out.detail, v2_lib::browser::actions::NO_TEXT_NOTEBOOK);
+}
+
+#[tokio::test]
+async fn a_text_noted_from_a_password_field_is_never_said() {
+    // Noted from a password field, then compared on an element that is not one.
+    let mut d = FakePage { texts: vec!["hunter2"], password: true, ..FakePage::default() }.driver();
+    let remember = Action::RememberText { selector: "#pw".into(), name: "p".into() };
+    assert!(execute_with(&mut d, &remember, &quick()).await.ok);
+    let mut d2 = FakePage { texts: vec!["other-secret"], password: false, ..FakePage::default() }.driver();
+    d2.noted_text = d.noted_text.clone();
+    let same = Action::ExpectText { selector: "#pw".into(), equals: None, matches: None, same_as: Some("p".into()), timeout_ms: None };
+    let out = execute_with(&mut d2, &same, &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(!out.detail.contains("hunter2") && !out.detail.contains("other-secret"), "{}", out.detail);
 }

@@ -1647,8 +1647,9 @@ fn remember_text_exports_a_noted_text_and_a_to_have_text() {
     .run()
     .unwrap();
     assert_eq!(got.matches("const notedTexts: Record<string, string> = {};").count(), 1, "{got}");
-    assert!(got.contains(r"notedTexts['counts'] = (await cur.locator('#pills').filter({ visible: true }).first().innerText()).replace(/\s+/g, ' ').trim();"), "{got}");
-    assert!(got.contains("await expect(cur.locator('#pills').filter({ visible: true }).first()).toHaveText(notedTexts['counts'], { timeout: 4000 });"), "{got}");
+    assert!(got.contains("notedTexts['counts'] = await cur.locator('#pills').filter({ visible: true }).first().evaluate(readText);"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.locator('#pills').filter({ visible: true }).first().evaluate(readText), { timeout: 4000 }).toBe(notedTexts['counts']);"), "{got}");
+    assert!(got.contains("const readText = "), "{got}");
     let plain = one_step(json!([{ "kind": "check_url", "contains": "/x" }])).run().unwrap();
     assert!(!plain.contains("notedTexts"), "{plain}");
 }

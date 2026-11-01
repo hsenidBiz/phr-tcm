@@ -72,9 +72,10 @@ pub enum Check<'a> {
     /// The one match's text (collapsed) is the one `remember_text` noted as
     /// `name`; `noted` is that text.
     SameText { name: &'a str, noted: &'a str },
-    /// `remember_text`: read the one match's text (collapsed) into the cell.
+    /// `remember_text`: read the one match's text (collapsed) and whether it
+    /// is a password field into the cell.
     /// Passes once the element is found; the sentence never carries the text.
-    Capture(&'a std::sync::Mutex<Option<String>>),
+    Capture(&'a std::sync::Mutex<Option<(String, bool)>>),
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -253,6 +254,10 @@ pub const CANNOT_BE_PLACED: &str = "cannot be placed: ";
 /// What follows the element in a `cannot be placed` sentence when it has no
 /// size on the page.
 pub const DRAWN_AT_NO_SIZE: &str = " is drawn at no size";
+/// Leads a text `remember_text` noted from a password field, so a later
+/// `same_as` never says it.
+pub const NOTED_SECRET: char = '\x01';
+
 /// `expect_text`: followed by the wanted text and what was seen.
 pub const EXPECTED_TEXT: &str = "expected text ";
 /// `expect_contains_text`: followed by the wanted text and what was seen.
@@ -459,8 +464,14 @@ async fn look_reading<D: Driver>(
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
                 let got = collapse(got.as_str().unwrap_or(""));
-                let password = is_password(d, h).await?;
-                if got == *noted {
+                // A text noted from a password field carries `NOTED_SECRET`:
+                // neither value is ever said when either side is one.
+                let (noted, noted_secret) = match noted.strip_prefix(NOTED_SECRET) {
+                    Some(rest) => (rest, true),
+                    None => (*noted, false),
+                };
+                let password = is_password(d, h).await? || noted_secret;
+                if got == noted {
                     Ok(format!("{what} still says what was noted as \"{name}\""))
                 } else {
                     Err(format!(
@@ -475,7 +486,8 @@ async fn look_reading<D: Driver>(
             Err(why) => Err(why),
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
-                *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(collapse(got.as_str().unwrap_or("")));
+                let password = is_password(d, h).await?;
+                *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some((collapse(got.as_str().unwrap_or("")), password));
                 Ok(format!("read {what}"))
             }
         },

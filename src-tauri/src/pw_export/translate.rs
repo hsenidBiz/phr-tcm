@@ -243,6 +243,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         matches!(
             a,
             Action::ExpectText { .. }
+                | Action::RememberText { .. }
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectOrder { .. }
                 | Action::ExpectEach { attribute: None, visible: false, .. }
@@ -1515,7 +1516,7 @@ impl Em<'_> {
             Action::RememberText { selector, name } => self.line(
                 indent,
                 &format!(
-                    "notedTexts[{}] = (await {}.innerText()).replace(/\\s+/g, ' ').trim();",
+                    "notedTexts[{}] = await {}.evaluate(readText);",
                     lit(name),
                     one(selector)
                 ),
@@ -1532,12 +1533,14 @@ impl Em<'_> {
             Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
                 // `validate` holds the three to exactly one.
                 if let Some(name) = same_as {
+                    // Read as the app reads it (`readText`), on both sides.
                     self.line(
                         indent,
                         &format!(
-                            "await expect({}).{};",
+                            "await expect.poll(() => {}.evaluate(readText){}).toBe(notedTexts[{}]);",
                             one(selector),
-                            call("toHaveText", &[format!("notedTexts[{}]", lit(name))], *timeout_ms)
+                            poll_opts(*timeout_ms),
+                            lit(name)
                         ),
                     );
                     return Ok(());
