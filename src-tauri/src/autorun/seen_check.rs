@@ -2209,8 +2209,8 @@ pub fn guarded_cleanup_notes(
     scan_deferring(map, components, script, case_text, only_steps, None, files, &mut deferred);
     deferred
         .into_iter()
-        .map(|(step, what)| {
-            format!("step {step}: {what} in the clean-up's when_visible was not seen on the live app; it is checked the first time its guard fires.")
+        .map(|(step, what, guard)| {
+            format!("step {step}: {what} in the clean-up's {guard} was not seen on the live app; it is checked the first time its guard fires.")
         })
         .collect()
 }
@@ -2386,6 +2386,18 @@ struct InputLocator {
     /// matching anything, it is not refused but checked when the guard
     /// first fires.
     in_cleanup_guard: bool,
+    /// The kind of the guard whose `then` holds it, when `in_cleanup_guard`.
+    guard_kind: String,
+}
+
+/// The kind of the guard whose `then` directly holds `action`, somewhere
+/// inside `top` (the innermost one, for a guard in a guard).
+fn parent_guard_kind(top: &Action, action: &Action) -> Option<String> {
+    let (_, _, then) = top.guard_parts()?;
+    if then.iter().any(|t| std::ptr::eq(t, action)) {
+        return Some(top.kind());
+    }
+    then.iter().find_map(|t| parent_guard_kind(t, action))
 }
 
 /// Is `target`, used by `action` inside the top-level `top`, a
@@ -2427,6 +2439,7 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
                     everywhere: false,
                     whole,
                     in_cleanup_guard: false,
+                    guard_kind: String::new(),
                 });
             }
             push_typed(&mut typed_before, r);
@@ -2490,7 +2503,7 @@ fn scan_deferring(
     only_steps: Option<&[i32]>,
     only_component: Option<&str>,
     files: &[TestFile],
-    deferred: &mut Vec<(i32, String)>,
+    deferred: &mut Vec<(i32, String, String)>,
 ) -> Vec<Found> {
     let only_key = only_component.map(super::nav::module_key);
     let mut unseen: Vec<Found> = Vec::new();
@@ -2561,6 +2574,7 @@ fn scan_deferring(
                                 && !std::ptr::eq(top, action)
                                 && !action.is_guard()
                                 && !matches!(action, Action::RepeatWhileVisible { .. } | Action::PageUntil { .. }),
+                            guard_kind: parent_guard_kind(top, action).unwrap_or_default(),
                         })
                     })
                     .collect();
@@ -2576,6 +2590,7 @@ fn scan_deferring(
                         everywhere: false,
                         whole: true,
                         in_cleanup_guard: false,
+                        guard_kind: String::new(),
                     });
                 }
                 if let Action::UseComponent { component, inputs } = action {
@@ -2653,7 +2668,7 @@ fn scan_deferring(
                                 w.len() == chain.len() && w.iter().zip(&chain).all(|(a, b)| same_link_filled(a, b))
                             })
                         {
-                            deferred.push((step.step_number, n.target.describe()));
+                            deferred.push((step.step_number, n.target.describe(), n.guard_kind.clone()));
                             continue;
                         }
                         let page = area_page(map, here.as_deref());

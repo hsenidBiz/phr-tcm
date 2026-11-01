@@ -3784,6 +3784,14 @@ fn a_guarded_clean_up_then_saves_unseen_with_a_note() {
     // A target that was seen needs no note.
     let seen = map_with("Cycles", "/cycles", &[css("#banner"), role("button", "Activate")]);
     assert!(guarded_cleanup_notes(&seen, &none(), &s, &[], None, &[]).is_empty());
+    // The note names the guard's own kind.
+    assert!(notes[0].contains("in the clean-up's when_visible was not seen"), "{notes:?}");
+    let hidden = with_cleanup(serde_json::json!({
+        "kind": "when_hidden", "selector": { "css": "#banner" }, "then": [activate.clone()]
+    }));
+    let notes = guarded_cleanup_notes(&map, &none(), &hidden, &[], None, &[]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("in the clean-up's when_hidden was not seen"), "{notes:?}");
 }
 
 /// Only a target with no sighting at all waits for its guard: one seen

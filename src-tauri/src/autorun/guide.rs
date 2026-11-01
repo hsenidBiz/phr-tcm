@@ -632,12 +632,15 @@ may hold one level of guard: one inside it, not one inside that. Rebuilding
 a missing baseline group that a stray extra group may be sitting next to:
 
     { "kind": "when_hidden", "selector": { "role": "heading", "name": "Core" }, "within_ms": 3000,
-      "then": [ { "kind": "when_visible", "selector": { "role": "button", "name": "Delete group" }, "within_ms": 1000,
-                  "then": [ { "kind": "click", "selector": { "role": "button", "name": "Delete group" } },
+      "then": [ { "kind": "when_visible", "selector": { "css": ".goal-group", "has_text": "Extra group" }, "within_ms": 1000,
+                  "then": [ { "kind": "click", "selector": [ { "css": ".goal-group", "has_text": "Extra group" },
+                                                             { "role": "button", "name": "Delete group" } ] },
                             { "kind": "click", "selector": { "role": "button", "name": "Yes" } } ] },
                 { "kind": "click", "selector": { "role": "button", "name": "Apply template" } } ] }
 
-The inner guard runs when the outer one's turn reaches it, makes its own
+The delete finds its row by the name it holds (`has_text`), never a bare
+"Delete group" button that every group has, so a baseline group is never
+the one removed. The inner guard runs when the outer one's turn reaches it, makes its own
 wait, and is skipped or acts on its own; the step records both. A guard in
 the inner guard's `then` is refused ("one level of nesting"). Neither
 kind may sit in a `repeat_while_visible`'s `then` beyond a plain

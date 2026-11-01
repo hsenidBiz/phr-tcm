@@ -518,3 +518,24 @@ fn a_recipe_cannot_expect_a_dialog() {
     let why = guarded.validate().unwrap_err();
     assert!(why.contains(want), "{why}");
 }
+
+/// A sign-in recipe is not a case script: `when_hidden` is refused there,
+/// as a step and inside a `when_visible`'s `then`, with one sentence.
+#[test]
+fn a_recipe_holding_a_when_hidden_is_refused() {
+    use v2_lib::autorun::recipe::RECIPE_NO_WHEN_HIDDEN;
+    let hidden = json!({ "kind": "when_hidden", "selector": { "css": "#late" }, "within_ms": 500,
+                         "then": [ { "kind": "click", "selector": { "css": "#apply" } } ] });
+    let refusal = |v: serde_json::Value| -> String {
+        match serde_json::from_value::<SignInRecipe>(v) {
+            Err(e) => e.to_string(),
+            Ok(r) => r.validate().expect_err("a recipe with a when_hidden was accepted"),
+        }
+    };
+    let mut as_step = sample();
+    as_step["steps"][3] = hidden.clone();
+    assert!(refusal(as_step).contains(RECIPE_NO_WHEN_HIDDEN));
+    let mut in_then = sample();
+    in_then["steps"][3]["then"] = json!([hidden]);
+    assert!(refusal(in_then).contains(RECIPE_NO_WHEN_HIDDEN));
+}

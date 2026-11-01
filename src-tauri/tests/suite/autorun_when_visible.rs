@@ -751,9 +751,11 @@ async fn when_hidden_waits_the_whole_window_before_acting() {
     let (mut d, clicked) = appears_after(5000);
     let guard = action(json!({ "kind": "when_hidden", "selector": { "css": "#late" }, "within_ms": 600,
                                "then": [ click_json("#apply") ] }));
+    let started = std::time::Instant::now();
     let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
     assert!(out[0].ok, "{:?}", out[0]);
     assert_eq!(*clicked.lock().unwrap(), vec!["#apply".to_string()]);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(550), "acted before the window ran out: {:?}", started.elapsed());
 }
 
 #[tokio::test]
