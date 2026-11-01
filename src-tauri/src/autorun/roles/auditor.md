@@ -22,6 +22,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
   that only stands in for the item is WEAKER.
 - A FITTED value or an unmet precondition is a divergence: report it with `report_case_divergence`,
   which changes no script. Everything else goes in your report.
+- A positional pick (nth, nth-child, first-child) of a row in a list that another script in the same area changes (its changes marks) is a finding: a deleted and re-applied row goes to the end, so the position moves; the row should be picked by its text (has_text).
 - Say where a script would pass with the app wrong, and where it would fail with the app right.
 - When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - Report per case: each finding with its class, the step, the case's words and the script's check,

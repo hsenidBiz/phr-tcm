@@ -2,7 +2,7 @@
 //! fail, and picked by position.
 
 use v2_lib::autorun::script_notes::{
-    delete_after_check_notes as after_check, is_delete_click, moved_with_check, KEEP_THE_CASES_DELETE, positional_delete_notes as positional,
+    delete_after_check_notes as after_check, is_delete_click, moved_with_check, order_notes, order_notes_with, KEEP_THE_CASES_DELETE, positional_delete_notes as positional,
     positional_delete_notes_for_actions,
 };
 use v2_lib::autorun::CaseScript;
@@ -277,4 +277,104 @@ fn the_delete_after_check_note_allows_a_delete_the_case_asks_for() {
         notes[0].contains("unless the case asks for the delete") && notes[0].contains("add a guarded fallback to the clean-up"),
         "{notes:?}"
     );
+}
+
+// ---- order notes: a list one script reorders, another picks by position ----
+
+fn in_area(id: i32, area: Option<&str>, changes: &[&str], actions: serde_json::Value) -> CaseScript {
+    let mut s: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": id, "title": "t",
+        "steps": [{ "step_number": 3, "actions": actions }]
+    }))
+    .unwrap();
+    s.area = area.map(str::to_string);
+    s.changes = changes.iter().map(|c| c.to_string()).collect();
+    s
+}
+
+fn pick_nth() -> serde_json::Value {
+    serde_json::json!([{ "kind": "click", "selector": { "role": "row", "nth": 2 } }])
+}
+
+fn pick_text() -> serde_json::Value {
+    serde_json::json!([{ "kind": "click", "selector": { "role": "row", "has_text": "FY2026" } }])
+}
+
+#[test]
+fn a_changer_is_told_who_picks_by_position() {
+    let saving = in_area(1, Some("Scales"), &["scale reapplied"], pick_text());
+    let saved = [in_area(2, Some("Scales"), &[], pick_nth())];
+    let notes = order_notes(&saving, &saved);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("case 1 changes scale reapplied in area Scales; these scripts pick a row there by position"), "{notes:?}");
+    assert!(notes[0].contains("case 2 step 3"), "{notes:?}");
+}
+
+#[test]
+fn a_positional_pick_is_told_who_changes() {
+    let saving = in_area(2, Some("Scales"), &[], pick_nth());
+    let saved = [in_area(1, Some("Scales"), &["scale reapplied"], pick_text())];
+    let notes = order_notes(&saving, &saved);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("case 1"), "{notes:?}");
+    assert!(notes[0].contains("case 2 picks"), "{notes:?}");
+}
+
+#[test]
+fn another_area_is_not_named() {
+    let saving = in_area(1, Some("Scales"), &["scale reapplied"], pick_text());
+    let saved = [in_area(2, Some("Cycles"), &[], pick_nth())];
+    assert!(order_notes(&saving, &saved).is_empty());
+    let saving = in_area(2, Some("Cycles"), &[], pick_nth());
+    let saved = [in_area(1, Some("Scales"), &["scale reapplied"], pick_text())];
+    assert!(order_notes(&saving, &saved).is_empty());
+}
+
+#[test]
+fn a_text_pick_is_not_positional() {
+    let saving = in_area(1, Some("Scales"), &["scale reapplied"], pick_text());
+    let saved = [in_area(2, Some("Scales"), &[], pick_text())];
+    assert!(order_notes(&saving, &saved).is_empty());
+}
+
+#[test]
+fn css_position_words_count() {
+    for css in [":nth-child(2)", ":first-child", ":last-child", ":first-of-type", ":nth-of-type(3)"] {
+        let saving = in_area(1, Some("Scales"), &["x"], pick_text());
+        let pick = serde_json::json!([{ "kind": "click", "selector": format!("tr{css} td") }]);
+        let saved = [in_area(2, Some("Scales"), &[], pick)];
+        assert_eq!(order_notes(&saving, &saved).len(), 1, "{css}");
+    }
+}
+
+#[test]
+fn a_components_positional_locator_counts() {
+    let file: v2_lib::autorun::components::ComponentFile = serde_json::from_value(serde_json::json!({ "components": [{
+        "name": "pick row", "description": "d", "inputs": [],
+        "actions": [{ "kind": "click", "selector": { "role": "row", "nth": 1 } }]
+    }]})).unwrap();
+    let saving = in_area(1, Some("Scales"), &["x"], pick_text());
+    let saved = [in_area(2, Some("Scales"), &[], serde_json::json!([{ "kind": "use_component", "component": "pick row" }]))];
+    assert!(order_notes(&saving, &saved).is_empty());
+    assert_eq!(order_notes_with(&saving, &saved, Some(&file)).len(), 1);
+}
+
+#[test]
+fn a_locator_inside_a_guard_counts() {
+    let saving = in_area(1, Some("Scales"), &["x"], pick_text());
+    let guarded = serde_json::json!([{ "kind": "when_visible", "selector": ".row", "then": [
+        { "kind": "click", "selector": { "role": "row", "nth": 0 } }] }]);
+    let saved = [in_area(2, Some("Scales"), &[], guarded)];
+    assert_eq!(order_notes(&saving, &saved).len(), 1);
+}
+
+#[test]
+fn the_positional_note_is_capped() {
+    let saving = in_area(1, Some("Scales"), &["x"], pick_text());
+    let saved: Vec<CaseScript> = (10..30).map(|i| in_area(i, Some("Scales"), &[], pick_nth())).collect();
+    let notes = order_notes(&saving, &saved);
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0].contains("case 19 step 3"), "{notes:?}");
+    assert!(!notes[0].contains("case 20 step 3"), "{notes:?}");
+    assert!(notes[0].ends_with("and 10 more"), "{notes:?}");
 }

@@ -1781,7 +1781,7 @@ fn area_page<'a>(map: &'a DiscoveryMap, area: Option<&str>) -> Option<&'a str> {
 
 /// Is this script stamped as saved in `org`/`project`, compared as the
 /// project's files are named (`project_slug`)?
-fn same_project(script: &CaseScript, org: &str, project: &str) -> bool {
+pub(crate) fn same_project(script: &CaseScript, org: &str, project: &str) -> bool {
     match (&script.organization, &script.project) {
         (Some(o), Some(p)) => project_slug(o, p) == project_slug(org, project),
         _ => false,

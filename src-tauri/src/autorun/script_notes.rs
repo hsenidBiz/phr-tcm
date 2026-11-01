@@ -218,6 +218,91 @@ pub fn positional_delete_notes_for_actions(actions: &[Action]) -> Vec<String> {
     positional_picks(&flat).map(picks_sentence).into_iter().collect()
 }
 
+/// CSS that picks by place in a list, not by what the row holds.
+const POSITIONAL_CSS: [&str; 5] = [":first-child", ":last-child", ":nth-child(", ":first-of-type", ":nth-of-type("];
+
+/// The steps (by number) with a locator that picks by position: an `nth`
+/// on any link, or CSS naming a place. Guards and components are read as
+/// they run.
+fn positional_steps(script: &CaseScript, components: Option<&ComponentFile>) -> Vec<i32> {
+    script
+        .case_steps()
+        .filter(|s| {
+            flat(s, components).iter().flat_map(|a| a.each()).any(|a| {
+                a.targets().iter().flat_map(|t| t.links()).any(|l| {
+                    l.nth.is_some()
+                        || l.css.as_deref().map(str::to_lowercase).is_some_and(|c| POSITIONAL_CSS.iter().any(|p| c.contains(p)))
+                })
+            })
+        })
+        .map(|s| s.step_number)
+        .collect()
+}
+
+/// How many names an order note lists before "and N more".
+const ORDER_NOTE_NAMES: usize = 10;
+
+fn capped(mut names: Vec<String>) -> String {
+    let more = names.len().saturating_sub(ORDER_NOTE_NAMES);
+    names.truncate(ORDER_NOTE_NAMES);
+    let mut out = names.join(", ");
+    if more > 0 {
+        out.push_str(&format!(", and {more} more"));
+    }
+    out
+}
+
+fn area_of(s: &CaseScript) -> String {
+    s.area_name().unwrap_or("the default area").to_string()
+}
+
+/// Notes when one script changes shared state in an area and another picks
+/// a row of that area by position: a row deleted and re-applied goes to the
+/// end of its list, so the position moves. `saved` holds the other scripts
+/// of the same project; only those in `saving`'s area are read (`changes`
+/// names no list, so the area is the join). Never a refusal.
+pub fn order_notes(saving: &CaseScript, saved: &[CaseScript]) -> Vec<String> {
+    order_notes_with(saving, saved, None)
+}
+
+/// `order_notes`, with the components a script uses expanded.
+pub fn order_notes_with(saving: &CaseScript, saved: &[CaseScript], components: Option<&ComponentFile>) -> Vec<String> {
+    let area = area_of(saving);
+    let area_ref = &area;
+    let others = || {
+        saved.iter().filter(move |o| o.case_id != saving.case_id && area_of(o).eq_ignore_ascii_case(area_ref))
+    };
+    let mut notes = Vec::new();
+    if !saving.changes.is_empty() {
+        let pickers: Vec<String> = others()
+            .flat_map(|o| positional_steps(o, components).into_iter().map(move |st| format!("case {} step {st}", o.case_id)))
+            .collect();
+        if !pickers.is_empty() {
+            notes.push(format!(
+                "case {} changes {} in area {area}; these scripts pick a row there by position and may break when a row is deleted and re-applied (it goes to the end): {}",
+                saving.case_id,
+                saving.changes.join(", "),
+                capped(pickers)
+            ));
+        }
+    }
+    let steps = positional_steps(saving, components);
+    if !steps.is_empty() {
+        let changers: Vec<String> =
+            others().filter(|o| !o.changes.is_empty()).map(|o| format!("case {} ({})", o.case_id, o.changes.join(", "))).collect();
+        if !changers.is_empty() {
+            let at: Vec<String> = steps.iter().map(|s| s.to_string()).collect();
+            notes.push(format!(
+                "case {} picks a row by position in area {area} (step {}); these scripts change state there and a row deleted and re-applied goes to the end, which moves the position: {}",
+                saving.case_id,
+                at.join(", "),
+                capped(changers)
+            ));
+        }
+    }
+    notes
+}
+
 /// What the save says when a delete moves out of a case step: the case asked
 /// for it, so it stays in its step with its check.
 pub const KEEP_THE_CASES_DELETE: &str =

@@ -13589,6 +13589,14 @@ pub async fn save_autorun_scripts_carrying(
             notes.extend(value_notes.iter().cloned());
             // The delete notes are style warnings: after the case-value
             // notes, so the cap drops them first.
+            // The project's other scripts as they will stand after this save.
+            let area_pool: Vec<crate::autorun::CaseScript> = saved_scripts
+                .iter()
+                .filter(|s| !prepared.iter().any(|p| p.case_id == s.case_id))
+                .filter(|s| crate::autorun::seen_check::same_project(s, &ctx.org, &ctx.project))
+                .cloned()
+                .chain(prepared.iter().cloned())
+                .collect();
             for (case_id, only) in &seen_scope {
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::script_notes::delete_after_check_notes(script, Some(&components), only.as_deref())
@@ -13600,7 +13608,8 @@ pub async fn save_autorun_scripts_carrying(
                             .find(|s| s.case_id == *case_id)
                             .map(|old| crate::autorun::script_notes::moved_with_check(old, script))
                             .unwrap_or_default(),
-                    );
+                    )
+                    .chain(crate::autorun::script_notes::order_notes_with(script, &area_pool, Some(&components)));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
             if notes.len() > MAX_SAVE_NOTES {

@@ -1724,6 +1724,12 @@ Before deleting, find the row by its own name, never by `nth` on a list
 others share: another record can sit at that position. The save notes a
 delete that picks by `nth`.
 
+A row that one script deletes and applies again comes back at the END of its
+list, so every script that picks a row of that list by position (`nth`,
+`:nth-child`, `:first-child`) breaks while the app is right. Pick rows by
+their text (`has_text`), never by position. The save notes the scripts in the
+same area that pick by position beside a script that `changes` something there.
+
 `name` and `text` match loosely - contains, ignoring case and extra
 spaces. Add `"exact": true` when a near miss exists ("Save" and "Save as
 new"). Use `exact: true` when a name is part of another, such as
