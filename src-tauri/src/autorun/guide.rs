@@ -1699,9 +1699,9 @@ entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_each`, `expect_order`, `expect_hidden` and `wait_for` are
 happy with many.
 
-`has_text` keeps only the matches that hold this text (`{ "css": "tr", "has_text": "AutoTest Grp 7" }`)
-- the way to reach a row or card by the name it holds, instead of `nth`. It reads
-the element's text or a field's value, ignores case and runs of spaces, and is applied before `nth`.
+`has_text` keeps only the matches that hold this text (`{ "css": "tr", "has_text": "AutoTest Grp 7" }`),
+the way to reach a row or card by the name it holds, instead of `nth`. It reads
+the element's text only (not a field's value), ignores case and runs of spaces, and is applied before `nth`.
 It is refused when empty.
 
 Use full names, and probe `nth` locators exactly as written. A check that

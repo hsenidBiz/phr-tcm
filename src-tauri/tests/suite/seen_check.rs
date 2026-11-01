@@ -2302,7 +2302,7 @@ fn an_nth_locator_never_counted_is_told_to_probe_it_with_its_nth() {
     let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_text", "selector": { "text": "%", "nth": 0 }, "equals": "30%" }]));
     let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
     assert!(refused.starts_with(&format!("Step 1: text \"%\" #1 {NEVER_COUNTED_NTH}")), "{refused}");
-    assert!(refused.contains("probe it with its nth as written"), "{refused}");
+    assert!(refused.contains("probe it with its has_text and nth as written"), "{refused}");
 }
 
 /// A `has_text` locator narrows as `nth` does: only the whole locator,
@@ -2314,6 +2314,7 @@ fn a_has_text_locator_needs_counting_like_nth() {
     let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_text", "selector": { "text": "%", "has_text": "30" }, "equals": "30%" }]));
     let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
     assert!(refused.contains(NEVER_COUNTED_NTH), "{refused}");
+    assert!(refused.contains("probe it with its has_text and nth as written"), "{refused}");
     // Seen counted as written, it is taken; without it, it is not.
     let first = serde_json::json!({ "css": "tbody tr", "has_text": "Grp 7" });
     let map = filed(first.clone(), 1);

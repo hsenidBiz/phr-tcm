@@ -39,9 +39,9 @@ pub struct LocatorStep {
     /// Zero-based pick from this step's matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nth: Option<i32>,
-    /// Keep only this step's matches that hold this text (contains,
-    /// case-insensitive, whitespace folded; an element's text or a field's
-    /// value). Applied before `nth`: the way to reach a row or card by the
+    /// Keep only this step's matches whose text holds this text (contains,
+    /// case-insensitive, whitespace folded; the element's text only, as the
+    /// Playwright export's `hasText` reads it). Applied before `nth`: the way to reach a row or card by the
     /// name it holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_text: Option<String>,
@@ -174,8 +174,8 @@ impl LocatorStep {
     }
 
     /// What this link is called, for comparison with what the page showed.
-    /// `exact`, `visible` and `nth` do not change which element is meant by
-    /// name, so they are left out. `None` when the link names nothing.
+    /// `exact`, `visible`, `nth` and `has_text` do not change which element is
+    /// meant by name, so they are left out. `None` when the link names nothing.
     pub fn seen_key(&self) -> Option<SeenKey> {
         if let Some(role) = &self.role {
             return Some(SeenKey::Role {
@@ -408,18 +408,12 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
 /// person's click on the slider does. A node that is not an element (the
 /// document a `RootWebArea` names, a list marker's pseudo-element) is
 /// never seen: nothing can be done to it.
-/// `this` is a match; true when its text, or a field's value, holds `want`
-/// (contains, case-insensitive, whitespace runs folded).
+/// `this` is a match; true when its text holds `want` (contains, case-insensitive, whitespace runs folded).
 pub const HAS_TEXT_JS: &str = r#"function(want) {
   const fold = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
   const w = fold(want);
   if (!w) return false;
-  if (fold(this.textContent).includes(w)) return true;
-  const tag = this.tagName;
-  if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && fold(this.value).includes(w)) return true;
-  const fields = this.querySelectorAll ? this.querySelectorAll('input, textarea, select') : [];
-  for (const f of fields) { if (fold(f.value).includes(w)) return true; }
-  return false;
+  return fold(this.textContent).includes(w);
 }"#;
 
 pub const VISIBLE_JS: &str = concat!(
@@ -595,7 +589,7 @@ pub async fn resolve_within<D: Driver>(d: &mut D, root: &Handle, target: &Target
     walk(d, vec![root.clone()], target.steps()).await
 }
 
-/// The handles whose text, or a field's value, holds `want` (`HAS_TEXT_JS`).
+/// The handles whose text holds `want` (`HAS_TEXT_JS`).
 async fn keep_holding<D: Driver>(d: &mut D, handles: Vec<Handle>, want: &str) -> Result<Vec<Handle>, CdpError> {
     let mut kept = Vec::with_capacity(handles.len());
     for handle in handles {

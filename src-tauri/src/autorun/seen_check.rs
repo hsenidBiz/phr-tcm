@@ -57,7 +57,7 @@
 //!   locator whose name (or text) is a part of a seen one of the same role
 //!   (a text of a seen text), folded the same way, counts as seen, as a run
 //!   matches a name that contains it (`locator::name_matches`). Only for a
-//!   plain one-link locator (no `nth`, no `"visible": false`, not
+//!   plain one-link locator (no `nth` or `has_text`, no `"visible": false`, not
 //!   `"exact": true`), whose part is at least `MIN_TYPED_LEN` characters
 //!   once folded, and never one holding a data placeholder. Every other use
 //!   needs the whole name, as seen: the map holds only what reads listed,
@@ -90,7 +90,7 @@
 //! (`SEEN_ONLY_MANY`, followed by up to 3 of the seen names it matched on
 //! the pages it was seen on, `named_matches`; with `"exact": true` and only
 //! its own name among them, `NEVER_COUNTED`), never counted (`NEVER_COUNTED`, or
-//! `NEVER_COUNTED_NTH` for a locator with an `nth`, which is counted only
+//! `NEVER_COUNTED_NTH` for a locator with an `nth` or `has_text`, which is counted only
 //! as written), or seen only in saved checks (`SEEN_ONLY_IN_CHECKS`). A
 //! part of a seen name, refused for a use that needs one, says to use the
 //! full name as seen (`use_full_name`).
@@ -149,7 +149,7 @@
 //!
 //! Only exactly the locator that was seen matching one counts as one. A
 //! plain one-link locator (`discovery_map::plain_link`) is compared by its
-//! key, as always; a chain or a narrowed locator (`nth`, `exact`,
+//! key, as always; a chain or a narrowed locator (`nth`, `has_text`, `exact`,
 //! `visible`) that matched one counts as one only as that whole locator,
 //! written the same way (`Sightings::whole`). A data placeholder in such a
 //! locator stands for the value the seen one holds in that place, fitted
@@ -260,9 +260,9 @@ pub const NEVER_COUNTED: &str = "was seen on the live app, but never counted as 
 /// for: that check may match several, so it says nothing of one.
 pub const SEEN_ONLY_IN_CHECKS: &str = "was used only in saved checks that may match several elements, and this use needs one seen matching exactly one: probe it on the page, narrowed to one element if it matches several.";
 
-/// [`NEVER_COUNTED`] for a locator with an `nth`: only that whole locator,
-/// `nth` included, is counted when it is probed.
-pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its nth as written, then save again.";
+/// [`NEVER_COUNTED`] for a locator with an `nth` or `has_text`: only that whole
+/// locator, both included, is counted when it is probed.
+pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its has_text and nth as written, then save again.";
 
 /// [`NEVER_COUNTED`] for a locator holding a data placeholder, which cannot
 /// be probed as written: the same locator probed with a real value in each
@@ -884,7 +884,8 @@ fn is_check(action: &Action) -> bool {
     )
 }
 
-/// The link's own words: its text or its accessible name, folded.
+/// The link's own words: its text, its accessible name or the text it must
+/// hold (`has_text`), folded.
 fn words(link: &LocatorStep) -> Vec<String> {
     [link.text.as_deref(), link.name.as_deref(), link.has_text.as_deref()]
         .into_iter()

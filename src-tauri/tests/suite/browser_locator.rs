@@ -712,13 +712,20 @@ async fn has_text_applies_before_nth() {
     assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["row-2".to_string()]);
 }
 
-/// The page-side function reads a field's value as well as the text.
-#[test]
-fn has_text_reads_a_field_value() {
-    assert!(HAS_TEXT_JS.contains(".value"));
+/// `has_text` reads an element's text only - as the Playwright export's
+/// `hasText` does - so a row whose name sits only in an input's value does
+/// not match. The page-side function never reads `.value`; the fake page
+/// answers from each row's text alone, as that function does.
+#[tokio::test]
+async fn has_text_matches_text_only_never_a_field_value() {
+    assert!(!HAS_TEXT_JS.contains(".value"));
     assert!(HAS_TEXT_JS.contains("textContent"));
     assert!(HAS_TEXT_JS.contains("toLowerCase"));
     assert!(HAS_TEXT_JS.contains(r"/\s+/g"));
+    // Row 1's text is "Edit"; "AutoTest Grp 7" is only the value of an input in it.
+    let mut d = rows_page(&["Alpha", "Edit", "Beta"]);
+    let t: Target = serde_json::from_value(json!({ "css": "tr", "has_text": "AutoTest Grp 7" })).unwrap();
+    assert!(resolve(&mut d, &t).await.unwrap().is_empty());
 }
 
 #[test]
