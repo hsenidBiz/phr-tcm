@@ -45,15 +45,18 @@ pub fn is_delete_click(a: &Action) -> bool {
     selector.links().iter().any(link_is_delete)
 }
 
-/// The name or text of the links that name the record (not the delete
+/// The name, text or has_text of the links that name the record (not the delete
 /// button itself), folded.
 fn record_names(a: &Action) -> Vec<String> {
     let Action::Click { selector } = a else { return Vec::new() };
     selector
         .links()
         .iter()
-        .filter(|l| !link_is_delete(l))
-        .flat_map(|l| [l.name.clone(), l.text.clone()])
+        .flat_map(|l| {
+            // has_text names the row even on the delete button's own link.
+            let own = if link_is_delete(l) { None } else { Some([l.name.clone(), l.text.clone()]) };
+            own.into_iter().flatten().chain([l.has_text.clone()])
+        })
         .flatten()
         .map(|t| t.trim().to_lowercase())
         .filter(|t| !t.is_empty())
@@ -188,7 +191,7 @@ fn picks_sentence(pick: (i32, bool)) -> String {
     let (nth, delete) = pick;
     let what = if delete { "the delete" } else { "the click before the delete's confirm" };
     format!(
-        "{what} picks by position (nth {nth}) - on a shared list another record can sit there; find the row by its own name before deleting"
+        "{what} picks by position (nth {nth}) - on a shared list another record can sit there; find the row by its own name (has_text) before deleting"
     )
 }
 
@@ -213,4 +216,49 @@ pub fn positional_delete_notes(
 pub fn positional_delete_notes_for_actions(actions: &[Action]) -> Vec<String> {
     let flat: Vec<Action> = actions.iter().flat_map(|a| a.each()).cloned().collect();
     positional_picks(&flat).map(picks_sentence).into_iter().collect()
+}
+
+/// What the save says when a delete moves out of a case step: the case asked
+/// for it, so it stays in its step with its check.
+pub const KEEP_THE_CASES_DELETE: &str =
+    "a delete the case asks for stays in its step with its check; the clean-up holds a guarded fallback";
+
+/// An action as the script compares it: its kind and its target.
+fn identity(a: &Action) -> (String, String) {
+    (a.kind(), a.targets().first().map(|t| t.describe()).unwrap_or_default())
+}
+
+fn judged(actions: &[Action]) -> usize {
+    actions.iter().flat_map(|a| a.judging()).filter(|a| a.is_check()).count()
+}
+
+/// One note per case step whose action went to the clean-up step while the
+/// step lost a check in the same save. Never a refusal. Empty when there is
+/// no old script or the new one has no clean-up step.
+pub fn moved_with_check(old: &CaseScript, new: &CaseScript) -> Vec<String> {
+    let Some(cleanup) = new.cleanup_step() else { return Vec::new() };
+    let in_cleanup: Vec<(String, String)> =
+        cleanup.actions.iter().flat_map(|a| a.each()).map(identity).collect();
+    let mut notes = Vec::new();
+    for old_step in old.case_steps() {
+        let Some(new_step) = new.case_steps().find(|s| s.step_number == old_step.step_number) else { continue };
+        if judged(&new_step.actions) >= judged(&old_step.actions) {
+            continue;
+        }
+        let kept: Vec<(String, String)> = new_step.actions.iter().flat_map(|a| a.each()).map(identity).collect();
+        let moved = old_step
+            .actions
+            .iter()
+            .flat_map(|a| a.each())
+            .filter(|a| !a.is_check())
+            .map(|a| identity(a))
+            .find(|id| !kept.contains(id) && in_cleanup.contains(id));
+        if let Some((kind, target)) = moved {
+            notes.push(format!(
+                "step {}: {kind} on {target} moved to the clean-up and the step lost a check - {KEEP_THE_CASES_DELETE}",
+                old_step.step_number
+            ));
+        }
+    }
+    notes
 }

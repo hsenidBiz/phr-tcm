@@ -460,3 +460,10 @@ fn every_role_tells_a_named_subagent_to_pass_its_name() {
         assert!(rules.lines().any(|l| l.trim_start_matches("- ").trim() == line), "{} has it on a line of its own", r.name());
     }
 }
+
+#[test]
+fn writer_and_rewriter_keep_the_cases_delete_in_its_step() {
+    for r in [Role::Writer, Role::CaseRewriter] {
+        assert!(flat(&r.tcm_rules()).contains("stays in its step with its check"), "{}", r.name());
+    }
+}

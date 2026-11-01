@@ -13467,7 +13467,14 @@ pub async fn save_autorun_scripts_carrying(
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::script_notes::delete_after_check_notes(script, Some(&components), only.as_deref())
                     .into_iter()
-                    .chain(crate::autorun::script_notes::positional_delete_notes(script, Some(&components), only.as_deref()));
+                    .chain(crate::autorun::script_notes::positional_delete_notes(script, Some(&components), only.as_deref()))
+                    .chain(
+                        saved_scripts
+                            .iter()
+                            .find(|s| s.case_id == *case_id)
+                            .map(|old| crate::autorun::script_notes::moved_with_check(old, script))
+                            .unwrap_or_default(),
+                    );
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
             if notes.len() > MAX_SAVE_NOTES {

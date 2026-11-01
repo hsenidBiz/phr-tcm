@@ -380,10 +380,12 @@ assume what the case made was removed. Its failure, a failed
 never fails the case. Its locators must have been seen like any step's,
 and every other run rule (Must not save included) applies to it.
 
-Put every delete of what the case made in the clean-up step, never after a
-check in a case step: a failing check stops the step, the delete never
-runs, and the record stays, so the next run fails on it. The save notes a
-delete that comes after a check.
+A delete the case asks for stays in its step with its check; the clean-up
+holds a guarded fallback (when_visible) for the record a failing check
+leaves behind, so the next run does not fail on it. A delete that only
+tidies up what the case made goes in the clean-up step, never after a check
+in a case step. The save notes a delete that comes after a check, and a
+delete moved to the clean-up while its step lost a check.
 
 Every `expect_` action, and `check_url`, looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
