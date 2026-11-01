@@ -642,7 +642,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? } (needs_state maps a setting to its value, e.g. { \"Approval workflow\": \"ON\" }). A repair may send patch_steps in place of steps: get_guide (topic autorun), section \"Saving it\".",
+                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? } (needs_state maps a setting to its value, e.g. { \"Approval workflow\": \"ON\" }). A repair may send patch_steps in place of steps, each { step, actions } - changing a step, or adding one the script lacks (with \"cleanup\": true, the clean-up step): get_guide (topic autorun), section \"Saving it\".",
                     "items": { "type": "object" },
                 },
                 "edits": {

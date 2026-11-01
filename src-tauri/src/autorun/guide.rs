@@ -2575,7 +2575,7 @@ Before every save:
   Steps you leave out of `edits` must stay exactly as they were; a declared
   step keeps the script's checks unless `gives_up` names each one dropped,
   and never moves a check's value away from the case. A precondition removed
-  or changed without a precondition edit is refused. A repair may send `patch_steps` in place of `steps`.
+  or changed without a precondition edit is refused. A repair may send `patch_steps` in place of `steps`, changing or adding a step.
   "Repairing a script that failed" has the shapes and every refusal.
 
 An absence check (`expect_hidden`, or `expect_count` of 0) whose locator was
@@ -2787,8 +2787,10 @@ A repair need not send the whole script again: a script entry may carry
 that step of the saved script, every other step is kept as saved, and any
 other key of the entry (`title`, `area`) replaces the saved one. It is
 checked exactly as the whole script would be, so `edits` must still
-declare every patched step. A step the saved script does not have is
-refused: send the whole script to add one.
+declare every patched step. A step the saved script lacks is ADDED, in
+step order; with `"cleanup": true` the patch adds or replaces the clean-up
+step (numbered after the case's last step), e.g. `{ "step": 9, "cleanup":
+true, "actions": [...] }`.
 
 When a save is refused, every case's refusals of the same kind come back
 in one answer: every undeclared change, every expected result nothing

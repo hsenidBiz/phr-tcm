@@ -12769,8 +12769,10 @@ fn parse_save_request(
 /// if it had been sent whole, so the repair's `edits` must still declare
 /// every patched step. Refused: an entry with both `steps` and
 /// `patch_steps`, one with no `case_id`, a case with no saved script, a
-/// step the saved script does not have (send the whole script to add one),
-/// and a step patched twice.
+/// clean-up patch not after the case's last step, and a step patched
+/// twice. A step the saved script lacks is ADDED in step order; a patch
+/// with `"cleanup": true` replaces the saved clean-up step (whatever its
+/// number) or adds one after the last case step.
 pub fn apply_patch_steps(
     items: &mut [serde_json::Value],
     load: &dyn Fn(i32) -> Result<Option<crate::autorun::CaseScript>, String>,
@@ -12813,13 +12815,45 @@ pub fn apply_patch_steps(
                 return Err(format!("case {case_id}: patch_steps names step {n} twice"));
             }
             patched.push(n);
-            let Some(step) = steps.iter_mut().find(|s| s.get("step_number").and_then(serde_json::Value::as_i64) == Some(n)) else {
-                return Err(format!(
-                    "case {case_id}: patch_steps step {n} is not in its saved script - send the whole script with \"steps\" to add a step"
-                ));
-            };
-            for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "step" | "step_number")) {
-                step[k.as_str()] = v.clone();
+            let is_cleanup = fields.get("cleanup").and_then(serde_json::Value::as_bool) == Some(true);
+            let number_of = |s: &serde_json::Value| s.get("step_number").and_then(serde_json::Value::as_i64);
+            let is_cleanup_step = |s: &serde_json::Value| s.get("cleanup").and_then(serde_json::Value::as_bool) == Some(true);
+            let others = fields.iter().filter(|(k, _)| !matches!(k.as_str(), "step" | "step_number"));
+            if is_cleanup {
+                // The clean-up step: replaced whatever its number, or added
+                // after the last case step when the script has none.
+                let last = steps.iter().filter(|s| !is_cleanup_step(s)).filter_map(number_of).max();
+                if let Some(last) = last.filter(|l| n <= *l) {
+                    return Err(format!("case {case_id}: a clean-up step comes after the case's last step ({last})"));
+                }
+                let mut step = serde_json::Map::new();
+                step.insert("step_number".to_string(), serde_json::json!(n));
+                for (k, v) in others {
+                    step.insert(k.clone(), v.clone());
+                }
+                match steps.iter().position(is_cleanup_step) {
+                    Some(at) => steps[at] = serde_json::Value::Object(step),
+                    None => steps.push(serde_json::Value::Object(step)),
+                }
+                continue;
+            }
+            if let Some(step) = steps.iter_mut().find(|s| number_of(s) == Some(n)) {
+                for (k, v) in others {
+                    step[k.as_str()] = v.clone();
+                }
+            } else {
+                // A step the saved script lacks: added in step order among
+                // the case steps (a clean-up step stays last).
+                let mut step = serde_json::Map::new();
+                step.insert("step_number".to_string(), serde_json::json!(n));
+                for (k, v) in others {
+                    step.insert(k.clone(), v.clone());
+                }
+                let at = steps
+                    .iter()
+                    .position(|s| is_cleanup_step(s) || number_of(s).is_some_and(|m| m > n))
+                    .unwrap_or(steps.len());
+                steps.insert(at, serde_json::Value::Object(step));
             }
         }
         // The entry's own keys win over the saved ones.
