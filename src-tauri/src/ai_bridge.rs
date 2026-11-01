@@ -811,8 +811,8 @@ pub async fn route_as(
         // DevOps (a read) to refuse an id the PBI is not tested by.
         ("POST", "/autorun-order") => autorun_order(ctx, client, body).await,
         // The active environment's accounts: the assistant proposes logins
-        // (never passwords) for a person to add, and reads the ones there -
-        // passwords included only in an environment marked as a test one.
+        // for a person to add, and reads the ones there - key, label,
+        // username and whether a password is set, never the password.
         ("POST", "/accounts-propose") => accounts_propose(ctx, body).await,
         // Check sign-in: each account signed in once, in a browser of its own,
         // and walked as far as an area. Uses no slot: the person's Auto Run
@@ -11751,10 +11751,11 @@ async fn propose_marks(
 /// `get_accounts` tool off.
 pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test Case Manager";
 
-/// `GET /accounts`: the active environment's accounts - key, label and
-/// username, and the password ONLY when the environment is marked as a
-/// test environment. The one place a password leaves the app; it is never
-/// logged, and the log line says only how many were read. Beside them, the
+/// `GET /accounts`: the active environment's accounts - key, label,
+/// username and whether a password is set (`has_password`). Never the
+/// password itself, in any environment: Auto Run signs in by itself, so a
+/// script names an account by its key. The log line says only how many were
+/// read. Beside them, the
 /// project's Test files (`test_files_answer`), or `test_files_note` saying
 /// why there are none to show. An account that is held right now carries
 /// `in_use_by`, who holds it as the caller reads it (`in_use_by_words`); a
@@ -11762,8 +11763,7 @@ pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test
 ///
 /// Refused while the person has switched `get_accounts` off on the AI
 /// Bridge tab. The MCP proxy already hides a switched-off tool; this route
-/// checks again itself, as the database routes do (`stage_db`), because it
-/// is the one that can hand out passwords.
+/// checks again itself, as the database routes do (`stage_db`).
 fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, String) {
     if ctx.disabled_tools.iter().any(|t| t == "get_accounts") {
         return (409, GET_ACCOUNTS_OFF.to_string());
@@ -11802,10 +11802,12 @@ fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, Stri
     let list: Vec<serde_json::Value> = accounts
         .iter()
         .map(|a| {
-            let mut one = serde_json::json!({ "key": a.key, "label": a.label, "username": a.username });
-            if shown {
-                one["password"] = serde_json::Value::String(a.password.clone());
-            }
+            let mut one = serde_json::json!({
+                "key": a.key,
+                "label": a.label,
+                "username": a.username,
+                "has_password": !a.password.trim().is_empty(),
+            });
             if let Some((_, holder)) = held.iter().find(|(key, _)| *key == a.key) {
                 one["in_use_by"] = serde_json::Value::String(in_use_by_words(holder, caller_slot, main_is_persons));
             }
@@ -11821,18 +11823,7 @@ fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, Stri
         Ok(files) => out["test_files"] = serde_json::Value::Array(files),
         Err(why) => out["test_files_note"] = serde_json::Value::String(why),
     }
-    if !shown {
-        out["note"] = serde_json::Value::String(format!(
-            "{} is not marked as a test environment, so no password is shown - scripts and templates name an account by its key",
-            env.name
-        ));
-    }
-    crate::applog::info(format!(
-        "AI bridge: the assistant read the {} account(s) of {}{}",
-        accounts.len(),
-        env.name,
-        if shown { ", passwords included" } else { "" }
-    ));
+    crate::applog::info(format!("AI bridge: the assistant read the {} account(s) of {}", accounts.len(), env.name));
     (200, out.to_string())
 }
 

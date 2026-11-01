@@ -1549,37 +1549,45 @@ mod accounts_for_the_assistant {
     }
 
     #[tokio::test]
-    async fn get_accounts_hides_passwords_outside_test_environments() {
+    async fn get_accounts_never_shows_a_password() {
         let _root = crate::serial::autorun();
         let dir = bridge_root();
         save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
 
-        let (status, out) = call("GET", "/accounts", "").await;
-        assert_eq!(status, 200, "{out}");
-        assert!(!out.contains("pw-Zq9"), "{out}");
-        let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["environment"], "Default");
-        assert_eq!(v["test_environment"], false);
-        assert_eq!(v["accounts"][0]["key"], "hr.sup");
-        assert_eq!(v["accounts"][0]["label"], "hr.sup");
-        assert_eq!(v["accounts"][0]["username"], "sup1");
-        assert!(v["accounts"][0].get("password").is_none(), "{out}");
-        assert!(v["note"].as_str().unwrap().contains("not marked as a test environment"), "{out}");
+        // Not a test environment, then a test environment: the answer is the same.
+        for test_env in [false, true] {
+            if test_env {
+                mark_test_environment(dir.path());
+            }
+            let (status, out) = call("GET", "/accounts", "").await;
+            assert_eq!(status, 200, "{out}");
+            assert!(!out.contains("pw-Zq9"), "{out}");
+            let v: Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(v["environment"], "Default");
+            assert_eq!(v["test_environment"], test_env);
+            assert_eq!(v["accounts"][0]["key"], "hr.sup");
+            assert_eq!(v["accounts"][0]["label"], "hr.sup");
+            assert_eq!(v["accounts"][0]["username"], "sup1");
+            assert!(v["accounts"][0].get("password").is_none(), "{out}");
+            assert_eq!(v["accounts"][0]["has_password"], true, "{out}");
+            assert!(v.get("note").is_none(), "{out}");
+        }
     }
 
     #[tokio::test]
-    async fn get_accounts_shows_them_in_a_test_environment() {
+    async fn get_accounts_says_when_an_account_has_no_password() {
         let _root = crate::serial::autorun();
         let dir = bridge_root();
-        save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
-        mark_test_environment(dir.path());
+        let mut bare = acct("hr.bare", "bare1");
+        bare.password = "  ".into();
+        save_accounts(dir.path(), &[acct("hr.sup", "sup1"), bare]).unwrap();
 
         let (status, out) = call("GET", "/accounts", "").await;
         assert_eq!(status, 200, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["test_environment"], true);
-        assert_eq!(v["accounts"][0]["password"], "pw-Zq9");
-        assert!(v.get("note").is_none(), "{out}");
+        assert_eq!(v["accounts"][0]["has_password"], true, "{out}");
+        assert_eq!(v["accounts"][1]["has_password"], false, "{out}");
+        assert!(v["accounts"][1].get("password").is_none(), "{out}");
     }
 
     #[tokio::test]
@@ -1592,13 +1600,13 @@ mod accounts_for_the_assistant {
 
         let (status, out) = call("GET", "/accounts", "").await;
         assert_eq!(status, 200, "{out}");
-        assert!(out.contains("pw-Zq9"), "the password was returned: {out}");
+        assert!(!out.contains("pw-Zq9"), "no password is returned: {out}");
         let tail = v2_lib::applog::recent(500);
         assert!(tail.iter().any(|l| l.message.contains("read the 1 account")), "the read is on record: {tail:?}");
         assert!(tail.iter().all(|l| !l.message.contains("pw-Zq9")), "{tail:?}");
     }
 
-    /// The one route that can return passwords checks the person's switch
+    /// The accounts route checks the person's switch
     /// for it itself, as the database routes do, rather than trusting that
     /// only the MCP proxy (which hides a switched-off tool) ever calls it.
     #[tokio::test]

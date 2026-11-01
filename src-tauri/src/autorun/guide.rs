@@ -1117,9 +1117,9 @@ environment, so a key that exists in one may not exist in another.
 
 Each environment has its own Auto Run scripts, areas, components, quirks, discovery map, saved setups and API templates, fixtures and flows, because each can run a different version of the app. Everything you read and save belongs to the active environment only: a script you save now is the active environment's, and no other environment sees it. If the environment is switched while you are working, a save you started is refused; read again and carry on in the environment now active. When the active environment lacks a script, an area or a component that another environment has, do not rewrite it from memory: ask the person to copy it in the app (Edit environments, Copy Auto Run data…, for everything; Copy to environment… or Copy from environment… on the case's script, for one case; Import scripts… on the Auto Run Setup panel, for a folder of scripts), then read it here and change only what differs. You cannot copy between environments yourself.
 
-- `get_accounts` lists the active environment's accounts: key, label and
-  username. It includes passwords only when the person has marked the
-  environment as a test environment; otherwise it says so. Never copy a
+- `get_accounts` lists the active environment's accounts: key, label,
+  username and whether a password is set. It never shows a password: Auto
+  Run signs in by itself. Never copy a
   username or a password into a script or a template.
 - When the environment has no account for a case, find test users and
   propose them. Look in the database with the read-only database tools
@@ -2943,7 +2943,7 @@ reason.
 "##;
 
 /// The live half of "Environments": which environment is active right now
-/// and whether `get_accounts` will include its passwords. Appended by the
+/// and whether it is marked as a test environment. Appended by the
 /// routes (`ai_bridge`) after the constant, because it is read from disk
 /// at the moment of the call and the constant cannot go stale on it. Only
 /// the name, the address, the database as a person reads it (its label and
@@ -2975,9 +2975,9 @@ pub fn active_environment_section(
         None => " It has no database set.".to_string(),
     };
     let passwords = if env.test_environment {
-        "It is marked as a test environment, so `get_accounts` includes passwords."
+        "It is marked as a test environment."
     } else {
-        "It is not marked as a test environment, so `get_accounts` leaves passwords out."
+        "It is not marked as a test environment."
     };
     format!(
         "## The active environment\n\nThe active environment is \"{}\".{address}{db} {passwords} Its scripts, areas, components and API templates are its own.\n",

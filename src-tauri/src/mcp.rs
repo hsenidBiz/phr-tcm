@@ -956,7 +956,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "get_accounts",
-            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. An account that is held right now carries `in_use_by`, naming the assistant or browser that holds it; pick one that has none. Never write a username or password into a script or template. Also the project's `test_files` (name and size), the only files a case's upload step can send; one that is missing is for the person to add in Auto Run, Setup, Test files - you cannot.",
+            "description": "The app's active environment and its accounts: key, label, username and whether a password is set (`has_password`) - the keys are what a script's `account` or a template run names. No password is ever shown: Auto Run signs in by itself, so a script or template names an account by its key. An account that is held right now carries `in_use_by`, naming the assistant or browser that holds it; pick one that has none. Never write a username or password into a script or template. Also the project's `test_files` (name and size), the only files a case's upload step can send; one that is missing is for the person to add in Auto Run, Setup, Test files - you cannot.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -1626,7 +1626,7 @@ fn guide_tool(off: &[String]) -> serde_json::Value {
         "topic": { "type": "string", "enum": topics, "description": "Which guide." },
     });
     if topics.contains(&"autorun") {
-        props["quick"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, whether get_accounts gives passwords, this project's areas, areas to explore, components and quirks." });
+        props["quick"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, this project's areas, areas to explore, components and quirks." });
         props["section"] = serde_json::json!({ "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." });
         props["full"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." });
         props["role"] = serde_json::json!({ "type": "string", "enum": ["writer", "healer", "case-rewriter", "auditor", "explorer"], "description": "autorun only. One role's rules, which hold whatever tools you have: writer (choosing what to script and writing it from the live app), healer (diagnosing and repairing a failed case), case-rewriter (changing a saved script or component, a repair or a rewritten case), auditor (checking saved scripts against their cases, reporting only) or explorer (doing a task in the live app with no test case, recording every change). With quick, section or full, the rules come first." });
