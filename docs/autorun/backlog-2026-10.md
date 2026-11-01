@@ -1193,6 +1193,52 @@ dw-fix-lrg4 (aiden, grace) and dw-fix-rating5 (emma), the first rewriters on bet
 71. **A guarded clean-up target that has never fired is not shown anywhere after the save.** The case
     card and the auditor cannot see it, and a whole replay can mark the case checked.
 
+## The Goal Groups round on 2.4.3-beta.10 (agreed 2026-11-01)
+
+Found on PBI 133443 (TCM environment Default) by dw-goals4 (grace), which wrote 12 Goal Groups
+scripts (135018-135050) and repaired 135379's clean-up.
+
+72. **No guard for "this is not on the page", and no guard inside a guard.** `when_visible` is the
+    only guard, and its `then` cannot hold another one. Two shapes could not be written:
+    - 135048, 135019 and 135036 start "if there is no Financial goal group, apply it from the
+      template". With no absent-guard the writer guarded on the badge text "1 Active Goal Group"
+      instead: that works only while Customer is the only other group, and it is listed unchecked.
+    - 135379's clean-up must rebuild the competency tree when Core or Leadership is missing. It now
+      guards on the counts "0 Groups" and "1 Group" (delete the lone group, then the "0 Groups"
+      guard applies both templates). A stray extra group next to a missing baseline group (still
+      "2 Groups") is not caught, so the site can be left wrong.
+    Wanted: `when_hidden` (the `then` runs when the locator matches nothing after the usual wait),
+    and a guard allowed inside a guard's `then`, with the same seen rules.
+
+73. **No hover, and no check on a style.** 135050's expected result is a tooltip that shows on
+    hover; Auto Run has no hover action, so it is unchecked. Goal Groups cases also expect the
+    delete icon to show red; there is no check on a computed style (colour), so that is unchecked
+    too. Wanted: a `hover` action (move the pointer onto the element and wait for what it reveals),
+    and an `expect_style` check on a named CSS property, matched against the theme's value.
+
+74. **A switch's on/off state cannot be checked.** The Goal Groups "Active" switch has no attribute
+    the checks read (no `checked`, no `aria-checked` on the element the locator finds), so every
+    "the switch is on/off" result is unchecked, in all 12 scripts. The state lives in the inner
+    input's `checked` property (a property, not an attribute). Wanted: `expect_checked` /
+    `expect_unchecked` that read the property of the matched input or of the one input inside the
+    matched element, and say which they read.
+
+75. **A count that moves by one can only be checked as a fixed number.** 135025 expects the badge
+    to go up by 1 after an add; 135030 and 135036 expect it down by 1. `remember_text` +
+    `expect_text same_as` checks only "unchanged", so the writer fitted absolute counts ("3 Active
+    Goal Groups", "2 Active Goal Groups", "1 Active Goal Group") from the baseline, which break the
+    day the baseline gains a group. Wanted: `expect_text` against a noted value with a number
+    offset (e.g. `same_as: "groups", plus: 1`), reading the first number in each text.
+
+76. **A delete and re-apply moves the row, and nothing says which scripts rely on the order.**
+    135018 and 135036 delete Financial and apply it again from the template; it comes back after
+    Customer. Every earlier Goal Groups script that picks Financial as "the first row" now fails
+    with the app right. Auto Run knows from the `changes` marks that these two scripts change the
+    goal-group list, and from the locators which scripts pick a row of that list by position, but
+    it does not join the two. Wanted: when a script's `changes` names a list, list the saved
+    scripts with a positional (`nth`, first-row) locator into the same area, at save and in the
+    auditor; and say in the guide that a re-applied row goes to the end.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
