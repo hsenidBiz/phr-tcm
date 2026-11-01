@@ -70,8 +70,9 @@ pub enum Check<'a> {
     /// (`position::holds`).
     Position { relative_to: &'a Target, relation: super::position::Relation },
     /// The one match's text (collapsed) is the one `remember_text` noted as
-    /// `name`; `noted` is that text.
-    SameText { name: &'a str, noted: &'a str },
+    /// `name`; `noted` is that text. With `plus`, the first whole number in
+    /// it is the noted text's first whole number plus `plus`.
+    SameText { name: &'a str, noted: &'a str, plus: Option<i64> },
     /// `remember_text`: read the one match's text (collapsed) and whether it
     /// is a password field into the cell.
     /// Passes once the element is found; the sentence never carries the text.
@@ -123,8 +124,10 @@ pub const FOCUSED_JS: &str = r#"function() {
 /// live `checked` property (and `indeterminate` for `"mixed"`), which
 /// follows every click; the `checked` ATTRIBUTE is only where it started.
 /// Anything else answers by its own `aria-checked`, then a label by the
-/// box it is for. Any other element holding a box is a container, never
-/// read for the first box inside it: `"container"`.
+/// box it is for. Any other element holding exactly one checkbox or radio
+/// input (else exactly one `[aria-checked]` element) is a switch drawn as a
+/// wrapper: it answers `"inside:"` and that one's state. Holding two or more
+/// it is a container, never read for the first one: `"container:N"`.
 pub const CHECKED_JS: &str = r#"function() {
   const box = (e) => e instanceof HTMLInputElement && (e.type === 'checkbox' || e.type === 'radio');
   const said = (e) => e.indeterminate ? 'mixed' : (e.checked ? 'true' : 'false');
@@ -132,8 +135,15 @@ pub const CHECKED_JS: &str = r#"function() {
   const aria = (this.getAttribute('aria-checked') || '').trim().toLowerCase();
   if (aria === 'true' || aria === 'false' || aria === 'mixed') return aria;
   if (this instanceof HTMLLabelElement && this.control && box(this.control)) return said(this.control);
-  const inside = this.querySelector && this.querySelector('input[type=checkbox],input[type=radio],[aria-checked]');
-  return inside ? 'container' : null;
+  if (!this.querySelectorAll) return null;
+  const inputs = this.querySelectorAll('input[type=checkbox],input[type=radio]');
+  if (inputs.length === 1) return 'inside:' + said(inputs[0]);
+  if (inputs.length > 1) return 'container:' + inputs.length;
+  const arias = this.querySelectorAll('[aria-checked]');
+  if (arias.length === 0) return null;
+  if (arias.length > 1) return 'container:' + arias.length;
+  const own = (arias[0].getAttribute('aria-checked') || '').trim().toLowerCase();
+  return (own === 'true' || own === 'false' || own === 'mixed') ? 'inside:' + own : null;
 }"#;
 
 /// `expect_checked` on a box that is ticked when it should not be.
@@ -143,9 +153,12 @@ pub const IS_NOT_CHECKED: &str = "is not checked";
 /// `expect_checked` on a box that is partly ticked (`aria-checked="mixed"`
 /// or an indeterminate checkbox): neither ticked nor clear.
 pub const IS_MIXED: &str = "is partly checked (mixed)";
-/// `expect_checked` on an element holding boxes: it is never read for the
-/// first one.
-pub const MATCHES_A_CONTAINER: &str = "matches a container, point at the checkbox";
+/// `expect_checked` on an element holding two or more boxes: it is never
+/// read for the first one. Followed by the count and `" boxes - point at one"`.
+pub const MATCHES_A_CONTAINER: &str = "matches a container holding";
+/// Follows the target in an `expect_checked` outcome that read the one box
+/// (or `aria-checked` element) inside the matched wrapper.
+pub const READ_THE_SWITCH_INSIDE: &str = "read the switch inside";
 /// `expect_checked` on an element with no checked state at all.
 pub const NOT_CHECKABLE: &str =
     "has no checked state: it is not a checkbox or radio, and has no aria-checked - point it at the box itself";
@@ -459,7 +472,7 @@ async fn look_reading<D: Driver>(
                 }
             }
         },
-        Check::SameText { name, noted } => match only(&handles) {
+        Check::SameText { name, noted, plus } => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
@@ -471,7 +484,15 @@ async fn look_reading<D: Driver>(
                     None => (*noted, false),
                 };
                 let password = is_password(d, h).await? || noted_secret;
-                if got == noted {
+                if let Some(plus) = plus {
+                    // A count is read off the text, which a secret would show: a
+                    // secret on either side fails the look, naming neither value.
+                    if password {
+                        Err(format!("{COUNT_OF_A_SECRET} (noted as \"{name}\")"))
+                    } else {
+                        count_moved(&got, noted, *plus, name, &what)
+                    }
+                } else if got == noted {
                     Ok(format!("{what} still says what was noted as \"{name}\""))
                 } else {
                     Err(format!(
@@ -582,14 +603,24 @@ async fn look_reading<D: Driver>(
             Err(why) => Err(why),
             Ok(h) => {
                 let got = page::call_value(d, h, CHECKED_JS, &[]).await?;
-                match (got.as_str(), *want) {
-                    (Some("true"), true) => Ok(format!("{what} {IS_CHECKED}")),
-                    (Some("false"), false) => Ok(format!("{what} {IS_NOT_CHECKED}")),
-                    (Some("true"), false) => Err(IS_CHECKED.to_string()),
-                    (Some("false"), true) => Err(IS_NOT_CHECKED.to_string()),
-                    (Some("mixed"), _) => Err(IS_MIXED.to_string()),
-                    (Some("container"), _) => Err(MATCHES_A_CONTAINER.to_string()),
-                    _ => Err(NOT_CHECKABLE.to_string()),
+                let got = got.as_str();
+                if let Some(n) = got.and_then(|g| g.strip_prefix("container:")) {
+                    Err(format!("{MATCHES_A_CONTAINER} {n} boxes - point at one"))
+                } else {
+                    // A wrapper with one box inside answers `inside:<state>`: said
+                    // so, so a pass on the wrapper is never taken for the box.
+                    let (state, note) = match got.and_then(|g| g.strip_prefix("inside:")) {
+                        Some(state) => (Some(state), format!(" ({READ_THE_SWITCH_INSIDE} {what})")),
+                        None => (got, String::new()),
+                    };
+                    match (state, *want) {
+                        (Some("true"), true) => Ok(format!("{what} {IS_CHECKED}{note}")),
+                        (Some("false"), false) => Ok(format!("{what} {IS_NOT_CHECKED}{note}")),
+                        (Some("true"), false) => Err(format!("{IS_CHECKED}{note}")),
+                        (Some("false"), true) => Err(format!("{IS_NOT_CHECKED}{note}")),
+                        (Some("mixed"), _) => Err(format!("{IS_MIXED}{note}")),
+                        _ => Err(NOT_CHECKABLE.to_string()),
+                    }
                 }
             }
         },
@@ -779,5 +810,34 @@ async fn keep_looking<D: Driver>(
             poll = poll.max(Duration::from_millis(super::table::SETTLE_POLL_MS)).min(left);
         }
         d.idle(poll).await;
+    }
+}
+
+/// `expect_text` with `plus` where the text on the page, or the one noted,
+/// came from a password field: followed by the note's name.
+pub const COUNT_OF_A_SECRET: &str = "plus does not count a password field's text";
+
+/// Said when a text `plus` counts from holds no whole number: which one.
+pub const NO_NUMBER_NOTED: &str = "the noted text has no number to count from";
+/// See [`NO_NUMBER_NOTED`].
+pub const NO_NUMBER_CURRENT: &str = "the current text has no number to count from";
+
+/// The first whole number in `text`: an optional minus and its digits. A
+/// thousands separator ends it (`1,000` reads as 1).
+pub fn first_integer(text: &str) -> Option<i64> {
+    static NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = NUMBER.get_or_init(|| regex::Regex::new(r"-?\d+").expect("a fixed pattern"));
+    re.find(text).and_then(|m| m.as_str().parse().ok())
+}
+
+/// `expect_text` with `same_as` and `plus`: the first number in `got` is the
+/// one in `noted` plus `plus`. Neither text is ever said, only the numbers.
+fn count_moved(got: &str, noted: &str, plus: i64, name: &str, what: &str) -> Result<String, String> {
+    let was = first_integer(noted).ok_or_else(|| NO_NUMBER_NOTED.to_string())?;
+    let now = first_integer(got).ok_or_else(|| NO_NUMBER_CURRENT.to_string())?;
+    match was.checked_add(plus) {
+        Some(want) if want == now => Ok(format!("{what} counts {now}: {was} noted as \"{name}\", plus {plus}")),
+        Some(want) => Err(format!("expected {want} ({was} noted as \"{name}\", plus {plus}) but saw {now}")),
+        None => Err(NO_NUMBER_NOTED.to_string()),
     }
 }

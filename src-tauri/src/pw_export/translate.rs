@@ -1534,9 +1534,24 @@ impl Em<'_> {
             // The app reads a field's value, a list's chosen label, else the
             // rendered text (READ_TEXT_JS), collapses whitespace on both sides
             // and compares case-sensitively: whole, or as a substring.
-            Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+            Action::ExpectText { selector, equals, matches, same_as, plus, timeout_ms } => {
                 // `validate` holds the three to exactly one.
                 if let Some(name) = same_as {
+                    if let Some(plus) = plus {
+                        // The first whole number on each side, as the app reads
+                        // it (`-?\d+`, no thousands separators): polled until
+                        // the difference is `plus`.
+                        self.line(
+                            indent,
+                            &format!(
+                                r"await expect.poll(async () => {{ const num = (t: string) => {{ const m = /-?\d+/.exec(t); return m ? Number(m[0]) : null; }}; const now = num(await {}.evaluate(readText)); const was = num(notedTexts[{}]); return now !== null && was !== null ? now - was : null; }}{}).toBe({plus});",
+                                one(selector),
+                                lit(name),
+                                poll_opts(*timeout_ms)
+                            ),
+                        );
+                        return Ok(());
+                    }
                     // Read as the app reads it (`readText`), on both sides.
                     self.line(
                         indent,

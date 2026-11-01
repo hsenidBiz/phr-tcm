@@ -361,6 +361,19 @@ describe("a sentence for every action kind", () => {
     );
   });
 
+
+  test("a count that moved by N reads as a sentence", () => {
+    const pill = { role: "status", name: "Open items" };
+    expect(say({ kind: "expect_text", selector: pill, same_as: "open", plus: 1 })).toBe(
+      'Check the "Open items" status shows the number noted as "open" plus 1',
+    );
+    expect(say({ kind: "expect_text", selector: pill, same_as: "open", plus: -2 })).toBe(
+      'Check the "Open items" status shows the number noted as "open" minus 2',
+    );
+    expect(say({ kind: "expect_text", selector: pill, same_as: "open" })).toBe(
+      'Check the "Open items" status is still what was noted as "open"',
+    );
+  });
   test("page_until reads as a sentence", () => {
     expect(
       say({

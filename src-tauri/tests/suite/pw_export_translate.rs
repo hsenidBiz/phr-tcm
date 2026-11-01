@@ -1654,6 +1654,23 @@ fn remember_text_exports_a_noted_text_and_a_to_have_text() {
     assert!(!plain.contains("notedTexts"), "{plain}");
 }
 
+
+/// Backlog 75: `plus` exports as the difference of the first integers
+/// (`/-?\d+/`, as the app reads them) polled until it equals N.
+#[test]
+fn a_counted_same_as_exports_the_difference_of_the_first_numbers() {
+    let got = one_step(json!([
+        { "kind": "remember_text", "selector": { "css": "#pills" }, "as": "counts" },
+        { "kind": "expect_text", "selector": { "css": "#pills" }, "same_as": "counts", "plus": -2, "timeout_ms": 4000 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains(r"/-?\d+/.exec("), "{got}");
+    assert!(got.contains("cur.locator('#pills').filter({ visible: true }).first().evaluate(readText)"), "{got}");
+    assert!(got.contains("notedTexts['counts']"), "{got}");
+    assert!(got.contains("{ timeout: 4000 }).toBe(-2);"), "{got}");
+    assert!(!got.contains(".toBe(notedTexts['counts'])"), "the plain comparison is not used: {got}");
+}
 /// The export reduces `cur.url()` the way its emitted script does (origin if
 /// the rule names one, path, query, and the fragment if the rule names one)
 /// and compares it with `UrlRule::expected`: that must say what the app's

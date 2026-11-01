@@ -435,10 +435,13 @@ function describeKnown(a: Action): Sentence {
       const equals = optStr(a.equals);
       const matches = optStr(a.matches);
       const sameAs = optStr(a.same_as);
+      const plus = optNum(a.plus);
       if ([equals, matches, sameAs].filter((v) => v !== undefined).length !== 1) throw new Unreadable();
       const said =
         sameAs !== undefined
-          ? ` is still what was noted as "${sameAs}"`
+          ? plus !== undefined && plus !== 0
+            ? ` shows the number noted as "${sameAs}" ${plus < 0 ? "minus" : "plus"} ${Math.abs(plus)}`
+            : ` is still what was noted as "${sameAs}"`
           : matches !== undefined
             ? ` matches /${withoutHosts(matches)}/`
             : ` reads "${withoutHosts(equals as string)}"`;

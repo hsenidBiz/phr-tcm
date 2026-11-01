@@ -35,7 +35,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::RememberText { selector: "s".into(), name: "a".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, plus: None, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
@@ -2794,6 +2794,24 @@ fn the_guide_teaches_hover_and_proving_the_reveal() {
     let flat: String = g.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(flat.contains("{ \"kind\": \"hover\""), "no hover line");
     for term in ["moves the pointer", "presses nothing", "later check in the same step"] {
+        assert!(flat.contains(term), "the guide never says {term:?}");
+    }
+}
+
+/// Backlog 74 and 75: the guide teaches `plus`, that a thousands separator
+/// ends the number, and what `expect_checked` does with a container.
+#[test]
+fn the_guide_teaches_plus_and_the_switch_container_rule() {
+    let flat: String = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in [
+        "\"plus\": 1",
+        "first whole number",
+        "thousands separators are not read",
+        "needs `same_as`",
+        "holds exactly one checkbox or radio",
+        "read the switch inside",
+        "holding two or more",
+    ] {
         assert!(flat.contains(term), "the guide never says {term:?}");
     }
 }

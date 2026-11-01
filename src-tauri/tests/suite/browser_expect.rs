@@ -223,7 +223,7 @@ async fn checked_reads_one_boxs_live_state() {
     let mut d = FakePage::default().driver();
     let out = execute_with(&mut d, &ticked, &quick()).await;
     assert!(!out.ok && out.detail.contains(NOT_CHECKABLE), "{}", out.detail);
-    let mut d = FakePage { checked: Some("container"), ..FakePage::default() }.driver();
+    let mut d = FakePage { checked: Some("container:2"), ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &ticked, &quick()).await;
     assert!(!out.ok && out.detail.contains(MATCHES_A_CONTAINER), "{}", out.detail);
     let mut d = FakePage { found: 2, checked: Some("true"), ..FakePage::default() }.driver();
@@ -231,6 +231,43 @@ async fn checked_reads_one_boxs_live_state() {
     assert!(!out.ok && out.detail.contains("matched 2 elements"), "{}", out.detail);
 }
 
+
+/// Backlog 74: a switch drawn as a wrapper holding exactly one box is read
+/// through that box's live state, and the outcome says so. `CHECKED_JS`
+/// answers `inside:<state>` for it.
+#[tokio::test]
+async fn a_container_with_one_box_is_read_through_that_box() {
+    use v2_lib::browser::expect::{IS_CHECKED, IS_NOT_CHECKED};
+    let ticked = action(json!({ "kind": "expect_checked", "selector": { "css": ".switch" } }));
+    let clear = action(json!({ "kind": "expect_checked", "selector": { "css": ".switch" }, "checked": false }));
+    let mut d = FakePage { checked: Some("inside:true"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &ticked, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, format!(".switch {IS_CHECKED} (read the switch inside .switch)"));
+    let out = execute_with(&mut d, &clear, &quick()).await;
+    assert!(!out.ok && out.detail.contains(IS_CHECKED) && out.detail.contains("read the switch inside"), "{}", out.detail);
+    let mut d = FakePage { checked: Some("inside:false"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &clear, &quick()).await;
+    assert!(out.ok && out.detail.contains(IS_NOT_CHECKED) && out.detail.contains("(read the switch inside .switch)"), "{}", out.detail);
+    let mut d = FakePage { checked: Some("inside:mixed"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &ticked, &quick()).await;
+    assert!(!out.ok && out.detail.contains("partly checked"), "{}", out.detail);
+}
+
+/// Two or more boxes inside: still refused, and the refusal says how many.
+#[tokio::test]
+async fn a_container_with_two_boxes_is_still_refused() {
+    use v2_lib::browser::expect::MATCHES_A_CONTAINER;
+    let ticked = action(json!({ "kind": "expect_checked", "selector": { "css": ".switches" } }));
+    for n in [2, 5] {
+        let answer: &'static str = if n == 2 { "container:2" } else { "container:5" };
+        let mut d = FakePage { checked: Some(answer), ..FakePage::default() }.driver();
+        let out = execute_with(&mut d, &ticked, &quick()).await;
+        assert!(!out.ok && !out.harness, "{}", out.detail);
+        assert!(out.detail.contains(MATCHES_A_CONTAINER), "{}", out.detail);
+        assert!(out.detail.contains(&format!("holding {n} boxes - point at one")), "{}", out.detail);
+    }
+}
 #[tokio::test]
 async fn its_own_timeout_wins_over_the_default() {
     let mut d = FakePage { found: 0, ..FakePage::default() }.driver();

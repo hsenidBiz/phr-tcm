@@ -1713,6 +1713,23 @@ fn a_text_same_as_needs_an_earlier_remember_text() {
     }
 }
 
+
+/// Backlog 75: `plus` leaves the same_as gate as it was - a counted text
+/// still needs an earlier remember_text of its name - and `plus` without a
+/// `same_as` is refused at save by the action's own rule.
+#[test]
+fn a_counted_same_as_keeps_the_remember_text_gate() {
+    let remember = serde_json::json!({ "kind": "remember_text", "selector": "#pills", "as": "counts" });
+    let moved = serde_json::json!({ "kind": "expect_text", "selector": "#pills", "same_as": "counts", "plus": 1 });
+    let sc = address_script(serde_json::json!([
+        { "step_number": 1, "actions": [remember.clone()], "unchecked": "notes the counts" },
+        { "step_number": 2, "actions": [moved.clone()] }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+    let sc = address_script(serde_json::json!([{ "step_number": 1, "actions": [moved.clone()] }]));
+    let err = v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err();
+    assert!(err.ends_with("expect_text same_as \"counts\" names no text an earlier remember_text of this case notes"), "{err}");
+}
 /// A one-case, one-step script with these actions.
 fn timing_script(actions: serde_json::Value) -> CaseScript {
     serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t",
