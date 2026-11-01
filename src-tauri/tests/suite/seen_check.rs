@@ -2305,6 +2305,40 @@ fn an_nth_locator_never_counted_is_told_to_probe_it_with_its_nth() {
     assert!(refused.contains("probe it with its nth as written"), "{refused}");
 }
 
+/// A `has_text` locator narrows as `nth` does: only the whole locator,
+/// as written, is counted.
+#[test]
+fn a_has_text_locator_needs_counting_like_nth() {
+    use v2_lib::autorun::seen_check::NEVER_COUNTED_NTH;
+    let map = sighted_matching("Cycles", text("%"), v2_lib::autorun::discovery_map::NOT_ONE);
+    let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_text", "selector": { "text": "%", "has_text": "30" }, "equals": "30%" }]));
+    let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains(NEVER_COUNTED_NTH), "{refused}");
+    // Seen counted as written, it is taken; without it, it is not.
+    let first = serde_json::json!({ "css": "tbody tr", "has_text": "Grp 7" });
+    let map = filed(first.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr", "has_text": "Grp 8" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(first), &[], None), Ok(()));
+}
+
+#[test]
+fn a_has_text_naming_a_typed_value_needs_no_sighting_of_it() {
+    let map = map_with("Ratings", "/ratings", &[role("textbox", "Name")]);
+    let script_for = |value: &str| {
+        script(
+            Some("Ratings"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AutoTest Grp 7" }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": { "css": "tr", "has_text": value } }] }
+            ]),
+        )
+    };
+    assert_eq!(check_seen(&map, &none(), &script_for("autotest  grp 7"), &[], None), Ok(()));
+    let refused = check_seen(&map, &none(), &script_for("something else"), &[], None).unwrap_err();
+    assert!(refused.starts_with("Step 2: tr holding \"something else\" was never seen"), "{refused}");
+}
+
 /// Each refusal of a locator never seen says what that use needs.
 #[test]
 fn a_refusal_says_what_the_use_needs() {

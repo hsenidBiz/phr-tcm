@@ -4968,6 +4968,13 @@ export type LocatorStep_Deserialize = {
 	/**  Zero-based pick from this step's matches. */
 	nth?: number | null,
 	/**
+	 *  Keep only this step's matches that hold this text (contains,
+	 *  case-insensitive, whitespace folded; an element's text or a field's
+	 *  value). Applied before `nth`: the way to reach a row or card by the
+	 *  name it holds.
+	 */
+	has_text?: string | null,
+	/**
 	 *  A component's placeholder: the caller's input of this name supplies
 	 *  the whole locator step. Stands alone, and is replaced before a
 	 *  script runs.
@@ -4995,6 +5002,13 @@ export type LocatorStep_Serialize = {
 	visible?: boolean | null,
 	/**  Zero-based pick from this step's matches. */
 	nth?: number | null,
+	/**
+	 *  Keep only this step's matches that hold this text (contains,
+	 *  case-insensitive, whitespace folded; an element's text or a field's
+	 *  value). Applied before `nth`: the way to reach a row or card by the
+	 *  name it holds.
+	 */
+	has_text?: string | null,
 	/**
 	 *  A component's placeholder: the caller's input of this name supplies
 	 *  the whole locator step. Stands alone, and is replaced before a

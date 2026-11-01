@@ -1699,6 +1699,11 @@ entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_each`, `expect_order`, `expect_hidden` and `wait_for` are
 happy with many.
 
+`has_text` keeps only the matches that hold this text (`{ "css": "tr", "has_text": "AutoTest Grp 7" }`)
+- the way to reach a row or card by the name it holds, instead of `nth`. It reads
+the element's text or a field's value, ignores case and runs of spaces, and is applied before `nth`.
+It is refused when empty.
+
 Use full names, and probe `nth` locators exactly as written. A check that
 may match several (`expect_hidden`, `expect_count`, `expect_each`, `expect_order`, `wait_for`) may name
 a part of a seen name in the same role, of at least 3 characters, on a
@@ -1706,7 +1711,7 @@ plain locator (one entry, no `nth`, no `"visible": false`, not `"exact"`):
 "Reviewer:" for the text "Reviewer: 30%", "Evaluators" for the
 progressbar "Step 4 of 9 Evaluators". Every other use needs the full name
 as it was seen, and a refusal names the seen one that holds the part. An
-`nth` locator is seen only once it was probed with its `nth`.
+`nth` or `has_text` locator is seen only once it was probed with it as written.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.

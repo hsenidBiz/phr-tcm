@@ -39,6 +39,12 @@ pub struct LocatorStep {
     /// Zero-based pick from this step's matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nth: Option<i32>,
+    /// Keep only this step's matches that hold this text (contains,
+    /// case-insensitive, whitespace folded; an element's text or a field's
+    /// value). Applied before `nth`: the way to reach a row or card by the
+    /// name it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_text: Option<String>,
     /// A component's placeholder: the caller's input of this name supplies
     /// the whole locator step. Stands alone, and is replaced before a
     /// script runs.
@@ -133,6 +139,7 @@ impl LocatorStep {
                 || self.exact
                 || self.visible.is_some()
                 || self.nth.is_some()
+                || self.has_text.is_some()
             {
                 return Err("an input placeholder stands alone".to_string());
             }
@@ -156,6 +163,9 @@ impl LocatorStep {
         }
         if self.name.is_some() && self.role.is_none() {
             return Err("name only goes with role".to_string());
+        }
+        if blank(&self.has_text) {
+            return Err("has_text is empty - give the text the element holds".to_string());
         }
         if self.nth.is_some_and(|n| n < 0) {
             return Err("nth counts from 0 and cannot be negative".to_string());
@@ -193,6 +203,9 @@ impl LocatorStep {
         } else {
             self.css.clone().unwrap_or_default()
         };
+        if let Some(t) = &self.has_text {
+            s.push_str(&format!(" holding \"{t}\""));
+        }
         if let Some(n) = self.nth {
             s.push_str(&format!(" #{}", n + 1));
         }
@@ -395,6 +408,20 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
 /// person's click on the slider does. A node that is not an element (the
 /// document a `RootWebArea` names, a list marker's pseudo-element) is
 /// never seen: nothing can be done to it.
+/// `this` is a match; true when its text, or a field's value, holds `want`
+/// (contains, case-insensitive, whitespace runs folded).
+pub const HAS_TEXT_JS: &str = r#"function(want) {
+  const fold = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
+  const w = fold(want);
+  if (!w) return false;
+  if (fold(this.textContent).includes(w)) return true;
+  const tag = this.tagName;
+  if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && fold(this.value).includes(w)) return true;
+  const fields = this.querySelectorAll ? this.querySelectorAll('input, textarea, select') : [];
+  for (const f of fields) { if (fold(f.value).includes(w)) return true; }
+  return false;
+}"#;
+
 pub const VISIBLE_JS: &str = concat!(
     r#"function() {
   if (!(this instanceof Element)) return false;
@@ -568,6 +595,17 @@ pub async fn resolve_within<D: Driver>(d: &mut D, root: &Handle, target: &Target
     walk(d, vec![root.clone()], target.steps()).await
 }
 
+/// The handles whose text, or a field's value, holds `want` (`HAS_TEXT_JS`).
+async fn keep_holding<D: Driver>(d: &mut D, handles: Vec<Handle>, want: &str) -> Result<Vec<Handle>, CdpError> {
+    let mut kept = Vec::with_capacity(handles.len());
+    for handle in handles {
+        if page::call_value(d, &handle, HAS_TEXT_JS, &[json!(want)]).await?.as_bool() == Some(true) {
+            kept.push(handle);
+        }
+    }
+    Ok(kept)
+}
+
 /// The chain's steps, one after another, from these roots.
 async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -> Result<Resolved, CdpError> {
     let mut unreachable_frame = None;
@@ -582,6 +620,11 @@ async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -
         }
         if roots.len() > 1 {
             next = dedupe_by_backend(d, next).await?;
+        }
+        if let Some(want) = &step.has_text {
+            // Boxed: this future would otherwise sit inside `walk`'s, and
+            // `walk` sits inside every command's.
+            next = Box::pin(keep_holding(d, next, want)).await?;
         }
         if let Some(n) = step.nth {
             next = next.into_iter().nth(n as usize).into_iter().collect();

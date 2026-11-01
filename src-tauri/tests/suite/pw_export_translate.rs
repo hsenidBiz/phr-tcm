@@ -1774,3 +1774,13 @@ fn a_repeat_loop_waits_for_its_row_as_long_as_settle_ms() {
     assert!(loop_with(json!({ "settle_ms": 12000 })).contains("toHaveCount(0, { timeout: 12000 })"));
     assert!(loop_with(json!({})).contains("toHaveCount(0, { timeout: 5000 })"));
 }
+
+#[test]
+fn has_text_becomes_a_filter_before_nth() {
+    let got = lf(&one_step(json!([
+        { "kind": "click", "selector": { "css": "tr", "has_text": "AutoTest Grp 7", "nth": 0, "visible": false } }
+    ]))
+    .run()
+    .unwrap());
+    assert!(got.contains(".locator('tr').filter({ hasText: 'AutoTest Grp 7' }).nth(0)"), "{got}");
+}

@@ -399,7 +399,7 @@ pub fn counted(matched: u32) -> bool {
 /// Is `link` a whole locator on its own that names exactly what its key
 /// names: no `nth`, no `exact` and no `visible` narrowing it?
 pub fn plain_link(link: &LocatorStep) -> bool {
-    link.nth.is_none() && !link.exact && link.visible.is_none()
+    link.nth.is_none() && link.has_text.is_none() && !link.exact && link.visible.is_none()
 }
 
 /// Is `target` one plain link (`plain_link`), so that the number it

@@ -379,7 +379,9 @@ pub async fn route(
     body: &str,
     version: &str,
 ) -> (u16, String) {
-    route_timed(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version).await
+    // Boxed: the router's future is large, and a caller that holds it inline
+    // (a test on a 2 MB thread) would carry all of it on its own stack.
+    Box::pin(route_timed(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version)).await
 }
 
 /// [`route_as`], leaving the log one line for the call: its route, status

@@ -189,6 +189,13 @@ function cssName(css: string): { noun: string; name: string } | null {
 function describeStep(raw: unknown): Sentence {
   if (!isRecord(raw)) throw new Unreadable();
   const step = raw as LocatorStep;
+  const holding = optStr(step.has_text);
+  const found = describeFound(step);
+  return holding ? [...found, words(` holding "${holding}"`)] : found;
+}
+
+/** What a step finds by, before the text it must hold. */
+function describeFound(step: LocatorStep): Sentence {
   const nth = optNum(step.nth);
   const pick = nth === undefined ? "" : `${ordinal(nth)} `;
   const role = optStr(step.role);

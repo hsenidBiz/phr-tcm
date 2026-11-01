@@ -85,6 +85,9 @@ fn step_expr(base: &str, s: &LocatorStep) -> String {
     if s.visible != Some(false) {
         e.push_str(".filter({ visible: true })");
     }
+    if let Some(t) = &s.has_text {
+        e.push_str(&format!(".filter({{ hasText: {} }})", lit(t)));
+    }
     if let Some(n) = s.nth {
         e.push_str(&format!(".nth({n})"));
     }

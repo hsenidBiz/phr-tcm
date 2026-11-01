@@ -439,6 +439,11 @@ describe("how elements are named", () => {
     expect(sentenceText(describeTarget('button[aria-label="Activate"]'))).toBe('the "Activate" button');
   });
 
+  test("a locator holding text reads as the element holding it", () => {
+    expect(sentenceText(describeTarget({ role: "row", has_text: "AutoTest Grp 7" }))).toBe('the row holding "AutoTest Grp 7"');
+    expect(sentenceText(describeTarget({ role: "row", has_text: "Grp", nth: 1 }))).toBe('the second row holding "Grp"');
+  });
+
   test("an element known only by CSS is the selector itself, with the full selector as its title", () => {
     const parts = describeTarget({ css: "#btnContinue-button" });
     expect(sentenceText(parts)).toBe("the element #btnContinue-button");

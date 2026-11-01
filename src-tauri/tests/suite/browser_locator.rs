@@ -6,7 +6,7 @@ use common::ScriptedDriver;
 use serde_json::json;
 use v2_lib::browser::expect::{expect, Check};
 use v2_lib::browser::snapshot::{frame_step, probe};
-use v2_lib::browser::locator::{frame_unreachable, name_matches, resolve_explained, FRAME_DOC_JS, FRAME_JS, resolve, LocatorStep, Target, CSS_JS, LEGACY_JS, VISIBLE_JS};
+use v2_lib::browser::locator::{frame_unreachable, name_matches, resolve_explained, FRAME_DOC_JS, FRAME_JS, resolve, LocatorStep, Target, CSS_JS, HAS_TEXT_JS, LEGACY_JS, VISIBLE_JS};
 
 fn step(json: serde_json::Value) -> LocatorStep {
     serde_json::from_value(json).unwrap()
@@ -670,4 +670,71 @@ fn exact_ignores_stray_whitespace_round_a_name() {
         assert!(name_matches("Save", got, true), "{got:?}");
     }
     assert!(!name_matches("Save draft", "Save", true));
+}
+
+// ---- has_text: a row or card picked by the text it holds ----
+
+/// Three rows read "Alpha", "AutoTest Grp 7", "Beta"; the page answers
+/// `HAS_TEXT_JS` the way its text would (folded, contains, any case).
+fn rows_page(texts: &'static [&'static str]) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == VISIBLE_JS => {
+            Ok(json!({ "result": { "value": true } }))
+        }
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == HAS_TEXT_JS => {
+            let want = params["arguments"][0]["value"].as_str().unwrap().split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+            let idx: usize = params["objectId"].as_str().unwrap().trim_start_matches("row-").parse().unwrap();
+            Ok(json!({ "result": { "value": texts[idx].to_lowercase().contains(&want) } }))
+        }
+        "Runtime.callFunctionOn" => {
+            assert_eq!(params["functionDeclaration"], CSS_JS);
+            Ok(json!({ "result": { "objectId": "arr" } }))
+        }
+        "Runtime.getProperties" => Ok(json!({ "result": (0..texts.len())
+            .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("row-{i}") } }))
+            .collect::<Vec<_>>() })),
+        other => panic!("unexpected {other}"),
+    })
+}
+
+#[tokio::test]
+async fn has_text_keeps_the_rows_that_hold_it() {
+    let mut d = rows_page(&["Alpha", "AutoTest Grp 7", "Beta"]);
+    let t: Target = serde_json::from_value(json!({ "css": "tr", "has_text": "autotest  grp 7" })).unwrap();
+    assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["row-1".to_string()]);
+}
+
+#[tokio::test]
+async fn has_text_applies_before_nth() {
+    let mut d = rows_page(&["Grp A", "Other", "Grp B", "Grp C"]);
+    let t: Target = serde_json::from_value(json!({ "css": "tr", "has_text": "grp", "nth": 1 })).unwrap();
+    assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["row-2".to_string()]);
+}
+
+/// The page-side function reads a field's value as well as the text.
+#[test]
+fn has_text_reads_a_field_value() {
+    assert!(HAS_TEXT_JS.contains(".value"));
+    assert!(HAS_TEXT_JS.contains("textContent"));
+    assert!(HAS_TEXT_JS.contains("toLowerCase"));
+    assert!(HAS_TEXT_JS.contains(r"/\s+/g"));
+}
+
+#[test]
+fn an_empty_has_text_is_refused() {
+    let err = serde_json::from_value::<Target>(json!({ "css": "tr", "has_text": "  " })).unwrap().validate().unwrap_err();
+    assert_eq!(err, "has_text is empty - give the text the element holds");
+}
+
+#[test]
+fn has_text_with_input_is_refused() {
+    let err = serde_json::from_value::<Target>(json!({ "input": "row", "has_text": "x" })).unwrap().validate().unwrap_err();
+    assert!(err.contains("stands alone"), "{err}");
+}
+
+#[test]
+fn describe_names_has_text() {
+    let t: Target = serde_json::from_value(json!({ "role": "row", "has_text": "AutoTest Grp 7", "nth": 0 })).unwrap();
+    assert_eq!(t.describe(), r#"row holding "AutoTest Grp 7" #1"#);
 }

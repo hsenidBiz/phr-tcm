@@ -592,6 +592,7 @@ fn same_link(a: &LocatorStep, b: &LocatorStep) -> bool {
     a.seen_key().is_some()
         && a.seen_key() == b.seen_key()
         && a.nth == b.nth
+        && a.has_text == b.has_text
         && a.exact == b.exact
         && a.visible == b.visible
         && (!a.exact || (a.name == b.name && a.text == b.text))
@@ -835,7 +836,7 @@ impl SeenBoth {
                 // Exact, only one name is its own: the count was of the
                 // names holding it, so it was never counted as written.
                 if link.exact && matched.len() <= 1 {
-                    let nth = links.iter().any(|l| l.nth.is_some());
+                    let nth = links.iter().any(narrowed_by_pick);
                     return Some(if nth { NEVER_COUNTED_NTH } else { NEVER_COUNTED }.to_string());
                 }
                 return Some(format!("{SEEN_ONLY_MANY}{}", named_matches(&matched)));
@@ -843,7 +844,7 @@ impl SeenBoth {
             if links.iter().any(link_holds_placeholder) {
                 return Some(NEVER_COUNTED_FILLED.to_string());
             }
-            if links.iter().any(|l| l.nth.is_some()) {
+            if links.iter().any(narrowed_by_pick) {
                 return Some(NEVER_COUNTED_NTH.to_string());
             }
             return Some(NEVER_COUNTED.to_string());
@@ -885,7 +886,7 @@ fn is_check(action: &Action) -> bool {
 
 /// The link's own words: its text or its accessible name, folded.
 fn words(link: &LocatorStep) -> Vec<String> {
-    [link.text.as_deref(), link.name.as_deref()]
+    [link.text.as_deref(), link.name.as_deref(), link.has_text.as_deref()]
         .into_iter()
         .flatten()
         .map(fold_name)
@@ -893,9 +894,15 @@ fn words(link: &LocatorStep) -> Vec<String> {
         .collect()
 }
 
+/// Does this link pick among its matches (`nth`, or `has_text` before it)?
+/// Such a link is counted only as a whole, as written.
+fn narrowed_by_pick(link: &LocatorStep) -> bool {
+    link.nth.is_some() || link.has_text.is_some()
+}
+
 /// Does any field of `link` hold a data placeholder?
 fn link_holds_placeholder(link: &LocatorStep) -> bool {
-    [&link.role, &link.name, &link.text, &link.css].into_iter().flatten().any(|v| holds_data_placeholder(v))
+    [&link.role, &link.name, &link.text, &link.css, &link.has_text].into_iter().flatten().any(|v| holds_data_placeholder(v))
 }
 
 /// Is `link` in one of `roles`?
@@ -1097,6 +1104,7 @@ impl Sightings {
         let raw = link.name.as_deref().or(link.text.as_deref()).unwrap_or("");
         self.parts_many
             && link.nth.is_none()
+            && link.has_text.is_none()
             && link.visible != Some(false)
             && !link.exact
             && norm_name(raw).chars().count() >= MIN_TYPED_LEN
@@ -2033,7 +2041,7 @@ fn is_absence_check(action: &Action) -> bool {
 /// `link` as a name only: the same control however it is narrowed, so a
 /// click on `{name, exact: true}` shows the same button as `{name}`.
 fn loosened(link: &LocatorStep) -> LocatorStep {
-    LocatorStep { exact: false, nth: None, visible: None, ..link.clone() }
+    LocatorStep { exact: false, nth: None, has_text: None, visible: None, ..link.clone() }
 }
 
 /// Does this action, written at the top of a step, fail when its locator
@@ -2184,7 +2192,7 @@ pub fn loose_name_notes(
                         (None, _, Some(t)) => ("text".to_string(), t.as_str()),
                         _ => continue,
                     };
-                    if link.exact || link.nth.is_some() || link.visible.is_some() || link.input.is_some() || raw.contains("{{") {
+                    if link.exact || link.nth.is_some() || link.has_text.is_some() || link.visible.is_some() || link.input.is_some() || raw.contains("{{") {
                         continue;
                     }
                     let want = norm_name(raw);
