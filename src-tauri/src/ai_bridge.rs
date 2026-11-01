@@ -13658,7 +13658,7 @@ pub async fn save_autorun_scripts_carrying(
     }
     report.extend(blocked_by_divergence_lines(&root, ctx, &prepared));
     // The quirks come last, after the scripts are safely down: a quirk
-    // the list will not take (too long, or the fortieth) is worth saying
+    // the list will not take (too long, or past the cap) is worth saying
     // so about, but it is not worth losing a good repair over. A refused
     // one is said first, below, so it is not lost at the end of a long
     // answer.
@@ -13694,14 +13694,18 @@ pub async fn save_autorun_scripts_carrying(
                 report.push(format!("quirk {}: {}", reactivated_reply(&id, reason.as_deref()), text.trim()))
             }
             Err(why) => {
-                // Quote the quirk, so the assistant can record it again
-                // after retiring one, without having kept the text.
-                let again = if why.contains("record_quirk") {
-                    ""
-                } else {
+                // Quote the quirk (its first line, spaces collapsed), so
+                // the assistant can say it again; only a full list has a
+                // retire-one-and-record-again answer, the rest keep their
+                // own advice.
+                let quoted: String = text.trim().lines().next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                let why = why.trim_end_matches('.');
+                let again = if crate::autorun::quirks::is_cap_refusal(why) {
                     " Retire one and record it again with record_quirk."
+                } else {
+                    ""
                 };
-                refused_quirks.push(format!("quirk not recorded: \"{}\" - {why}{again}", text.trim()))
+                refused_quirks.push(format!("quirk not recorded: \"{quoted}\" - {why}.{again}"))
             }
         }
     }

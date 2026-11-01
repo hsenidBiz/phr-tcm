@@ -396,6 +396,14 @@ fn candidate_label(q: &Quirk) -> &'static str {
     }
 }
 
+/// Whether a refusal from recording is the cap one (the list is full), as
+/// opposed to a person's retirement or a bad line. Only the cap has a
+/// retire-one-and-try-again answer; the other two have their own advice.
+pub fn is_cap_refusal(why: &str) -> bool {
+    let lower = why.to_lowercase();
+    lower.starts_with(&format!("this project already has {MAX_QUIRKS} active "))
+}
+
 /// Why one more quirk does not fit, and which to retire. Worded for an
 /// assistant (naming the retire tool it has, `retire_tool`) or, with
 /// `None`, for the person in the app.

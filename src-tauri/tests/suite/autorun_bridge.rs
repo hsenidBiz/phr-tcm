@@ -2874,6 +2874,75 @@ async fn a_repair_quirk_refused_at_the_cap_leads_the_answer() {
     assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), MAX_QUIRKS);
 }
 
+/// A repair save with one `quirk`, on a fresh project (a person's retired
+/// notes given first); the answer to it.
+async fn repair_save_answer(dir: &TempDir, retired_by_person: &[&str], quirk: &str) -> String {
+    use v2_lib::autorun::quirks::{retire_in, save_quirks, Quirk};
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &case_7("#toast", "Saved").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    let mut list: Vec<Quirk> = Vec::new();
+    for (i, t) in retired_by_person.iter().enumerate() {
+        list.push(Quirk::new(t, "assistant", "autorun", 100 + i as u64));
+    }
+    v2_lib::autorun::quirks::ensure_ids(&mut list);
+    let ids: Vec<String> = list.iter().map(|q| q.id.clone()).collect();
+    for id in ids {
+        retire_in(&mut list, &id, Some("wrong"), None, false, 500).unwrap();
+    }
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+    let body = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [{ "case_id": 7, "steps": [2], "why": "the toast has no id, only a class", "quirk": quirk }],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some(), "the repaired script is saved");
+    out
+}
+
+/// A note a person retired is refused with its own advice (ask them), not
+/// the full list's "retire one and record it again".
+#[tokio::test]
+async fn a_repair_quirk_a_person_retired_has_no_retire_advice() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let out = repair_save_answer(&dir, &["the toast is rendered into a portal"], "The toast is rendered into a portal").await;
+    let first = out.lines().next().unwrap_or("");
+    assert!(first.starts_with("quirk not recorded: \"The toast is rendered into a portal\" - a person retired this note"), "{out}");
+    assert!(first.ends_with("ask them to restore it."), "{out}");
+    assert!(!out.contains("Retire one and record it again"), "{out}");
+}
+
+/// A line over the length limit is refused with its own advice, and a
+/// multi-line one is quoted by its first line only.
+#[tokio::test]
+async fn a_too_long_repair_quirk_has_no_retire_advice() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let long = format!("the toast
+{}", "x".repeat(400));
+    let out = repair_save_answer(&dir, &[], &long).await;
+    let first = out.lines().next().unwrap_or("");
+    assert!(first.starts_with("quirk not recorded: \"the toast\" - "), "{out}");
+    assert!(first.contains("at most 300 characters") && first.ends_with('.'), "{out}");
+    assert!(!out.contains("Retire one and record it again"), "{out}");
+}
+
 // ----------------------------------------------------------- the dev gate
 //
 // Every route above runs through `route()`, which reads its own build's
