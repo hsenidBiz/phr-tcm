@@ -877,3 +877,43 @@ async fn the_executor_hands_when_hidden_to_the_runner() {
     assert!(!out.ok);
     assert_eq!(out.detail, "when_hidden is carried out by the runner");
 }
+
+/// A `when_hidden` whose frame cannot be entered did not look: it neither
+/// acts nor skips, it fails the step with the frame's reason. A
+/// `when_visible` on the same target keeps skipping.
+#[tokio::test]
+async fn when_hidden_behind_an_unreachable_frame_fails_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let clicks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = clicks.clone();
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::FRAME_JS => json!({ "result": { "value": "unreachable" } }),
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => json!({ "result": [json!({ "name": "0", "value": { "objectId": "el" } })] }),
+            "Runtime.callFunctionOn" => json!({ "result": { "value": true } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                seen.fetch_add(1, Ordering::SeqCst);
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    let mut acc: Option<String> = None;
+    let sel = json!([{ "css": "iframe" }, { "css": "#x" }]);
+    let hidden_guard = action(json!({ "kind": "when_hidden", "selector": sel, "within_ms": 100, "then": [click_json("#apply")] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![hidden_guard]), &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains(v2_lib::browser::locator::FRAME_UNREACHABLE), "{}", out[0].detail);
+    assert_eq!(clicks.load(Ordering::SeqCst), 0, "it did not act");
+
+    let visible_guard = action(json!({ "kind": "when_visible", "selector": sel, "within_ms": 100, "then": [click_json("#apply")] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![visible_guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(clicks.load(Ordering::SeqCst), 0, "when_visible still skips");
+}

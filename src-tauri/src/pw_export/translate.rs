@@ -684,14 +684,14 @@ const BOX_ROLES: [&str; 5] = ["checkbox", "radio", "switch", "menuitemcheckbox",
 /// Playwright rejects `toBeChecked` on anything that is not a checkbox, a
 /// radio or an `aria-checked` widget. The export cannot see the page, so it
 /// goes inside only when the locator is positively not a box itself: a role
-/// that is not a checked-state role, or text alone. A css or plain-string
-/// selector gives no hint (`#agree` may be the input or its wrapper), so it
-/// is asked as written, as before.
+/// that is not a checked-state role. Text (a `<label for>` is read through
+/// its control by the app, and `toBeChecked` retargets it the same way), a
+/// css and a plain-string selector give no hint (`#agree` may be the input or
+/// its wrapper), so they are asked as written, as before.
 fn checkable(t: &Target) -> String {
     let own = one(t);
     let wrapper = t.links().last().is_some_and(|s| match (&s.role, &s.css, &s.text) {
         (Some(role), _, _) => !BOX_ROLES.contains(&role.to_lowercase().as_str()),
-        (None, None, Some(_)) => true,
         _ => false,
     });
     if wrapper {
@@ -1800,12 +1800,19 @@ impl Em<'_> {
                 )
             }
             Action::WhenVisible { selector, within_ms, then } | Action::WhenHidden { selector, within_ms, then } => {
-                // The app's look needs a VISIBLE match whatever the selector's
-                // own visible flag says, and waits at least the floor. A
-                // `when_hidden` is the same look, run when it never shows.
                 let w = within_ms.unwrap_or(WHEN_VISIBLE_MS).max(WHEN_VISIBLE_FLOOR_MS);
-                let looked = format!("await {}.waitFor({{ timeout: {w} }}).then(() => true, () => false)", one(&visible_only(selector)));
-                let cond = if matches!(a, Action::WhenHidden { .. }) { format!("!({looked})") } else { looked };
+                // A `when_visible` needs a VISIBLE match whatever the
+                // selector's own visible flag says, and waits at least the
+                // floor. A `when_hidden` acts only when NOTHING matches for
+                // the whole window - an element that is there but hidden
+                // counts as there (`Check::Present`) - so it waits for the
+                // selector as written, attached, and runs the `then` only
+                // if that wait fails.
+                let cond = if matches!(a, Action::WhenHidden { .. }) {
+                    format!("!(await {}.waitFor({{ state: 'attached', timeout: {w} }}).then(() => true, () => false))", one(selector))
+                } else {
+                    format!("await {}.waitFor({{ timeout: {w} }}).then(() => true, () => false)", one(&visible_only(selector)))
+                };
                 self.line(indent, &format!("if ({cond}) {{"));
                 for a in then {
                     self.action(a, indent + 2)?;

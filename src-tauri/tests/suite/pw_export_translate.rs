@@ -627,7 +627,7 @@ fn checked_translates_to_to_be_checked() {
 fn checked_on_a_wrapper_asks_about_the_one_box_inside() {
     let got = one_step(json!([
         { "kind": "expect_checked", "selector": { "role": "group", "name": "Notify me" } },
-        { "kind": "expect_checked", "selector": { "text": "Email alerts" }, "checked": false, "timeout_ms": 300 },
+        { "kind": "expect_checked", "selector": { "role": "region", "name": "Email alerts" }, "checked": false, "timeout_ms": 300 },
         { "kind": "expect_checked", "selector": { "role": "checkbox", "name": "Agree" } },
         { "kind": "expect_checked", "selector": { "role": "switch", "name": "Dark" } }
     ]))
@@ -638,6 +638,15 @@ fn checked_on_a_wrapper_asks_about_the_one_box_inside() {
     assert!(got.contains(&format!("{inner}).not.toBeChecked({{ timeout: 300 }});")), "{got}");
     assert!(got.contains(&format!("{inner}).not.toHaveAttribute('aria-checked', 'mixed', {{ timeout: 300 }});")), "{got}");
     assert_eq!(got.matches(inner).count(), 3, "only the wrappers go inside: {got}");
+}
+
+/// A text target may be a `<label for>`, which the app reads through its
+/// control and `toBeChecked` retargets itself: it is asked as written.
+#[test]
+fn checked_on_a_text_target_is_asked_as_written() {
+    let got = one_step(json!([{ "kind": "expect_checked", "selector": { "text": "Email alerts" } }])).run().unwrap();
+    assert!(got.contains(").toBeChecked({ timeout: 10000 });"), "{got}");
+    assert!(!got.contains("input[type=checkbox]"), "{got}");
 }
 
 /// `expect_no_change` becomes one block: the control waited for and checked
@@ -1852,13 +1861,32 @@ fn when_hidden_acts_when_the_wait_found_nothing() {
     .unwrap();
     assert!(
         got.contains(
-            "    if (!(await cur.locator('#financial').first().waitFor({ timeout: 2000 }).then(() => true, () => false))) {\n      await cur.locator('#apply').first().click();\n    }\n"
+            "    if (!(await cur.locator('#financial').first().waitFor({ state: 'attached', timeout: 2000 }).then(() => true, () => false))) {\n      await cur.locator('#apply').first().click();\n    }\n"
         ),
         "{got}"
     );
-    // The floor and the visible-only look are the guard's own.
+    // The floor is the guard's own; the look is not narrowed to visible matches.
+    assert!(got.contains("if (!(await cur.locator('#x').first().waitFor({ state: 'attached', timeout: 500 })"), "{got}");
+}
+
+/// `when_hidden` waits for the selector as written, attached, with no visible
+/// filter (a hidden element counts as there); `when_visible` is unchanged.
+#[test]
+fn when_hidden_waits_attached_and_when_visible_waits_visible() {
+    let got = one_step(json!([
+        { "kind": "when_hidden", "selector": { "css": "#x", "visible": false }, "within_ms": 100,
+          "then": [{ "kind": "click", "selector": "#a" }] },
+        { "kind": "when_visible", "selector": "#v", "then": [{ "kind": "click", "selector": "#a" }] }
+    ]))
+    .run()
+    .unwrap();
     assert!(
-        got.contains("if (!(await cur.locator('#x').filter({ visible: true }).first().waitFor({ timeout: 500 })"),
+        got.contains("if (!(await cur.locator('#x').first().waitFor({ state: 'attached', timeout: 500 }).then(() => true, () => false))) {"),
+        "{got}"
+    );
+    assert!(!got.contains("#x').filter({ visible: true })"), "{got}");
+    assert!(
+        got.contains("if (await cur.locator('#v').first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {"),
         "{got}"
     );
 }
@@ -1875,7 +1903,7 @@ fn a_guard_inside_a_guard_is_a_nested_if() {
     .unwrap();
     assert!(
         got.contains(
-            "    if (await cur.locator('#banner').first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {\n      if (!(await cur.locator('#gone').first().waitFor({ timeout: 700 }).then(() => true, () => false))) {\n        await cur.locator('#apply').first().click();\n      }\n    }\n"
+            "    if (await cur.locator('#banner').first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {\n      if (!(await cur.locator('#gone').first().waitFor({ state: 'attached', timeout: 700 }).then(() => true, () => false))) {\n        await cur.locator('#apply').first().click();\n      }\n    }\n"
         ),
         "{got}"
     );

@@ -1210,7 +1210,7 @@ scripts (135018-135050) and repaired 135379's clean-up.
       "2 Groups") is not caught, so the site can be left wrong.
     Wanted: `when_hidden` (the `then` runs when the locator matches nothing after the usual wait),
     and a guard allowed inside a guard's `then`, with the same seen rules.
-    - **Done (unreleased, after 2.4.3-beta.11).** `when_hidden` (same wait and `then` rules, acts only when nothing matches for the whole wait, an element that is there but hidden skips it with "on the page, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both; the guide's baseline example deletes by name. Left: the sign-in recipe still has no `when_hidden` and no nested guard.
+    - **Done (unreleased, after 2.4.3-beta.11).** `when_hidden` (same wait and `then` rules, acts only when nothing matches for the whole wait, an element that is there but hidden skips it with "on the page, skipped") and one level of guard inside a guard; the seen gate, filing (per-guard `GuardTrace`), the Playwright export, the guide and the editor read both; the guide's baseline example deletes by name. A `when_hidden` whose frame cannot be entered now fails the step with the frame's reason (Auto Run could not look, which is not "absent"); the export waits `state: 'attached'` on the selector as written, as the app does. Left: the sign-in recipe still has no `when_hidden` and no nested guard.
 
 73. **No hover, and no check on a style.** 135050's expected result is a tooltip that shows on
     hover; Auto Run has no hover action, so it is unchecked. Goal Groups cases also expect the
@@ -1247,6 +1247,7 @@ scripts (135018-135050) and repaired 135379's clean-up.
 
 ## Smaller
 
+- `expect_text_moved`'s `by` is not among the values a repair is held to (case_values.rs): a repair that turns `by: 1` into `by: -1` reverses the check unnoticed.
 - ~~`save_autorun_script` through MCP drops `edits`, so repairs had to go through
   the bridge's `/autorun-script` route.~~ Fixed: the proxy forwards `edits` (`SAVE_SCRIPT_KEYS` in `src-tauri/src/mcp.rs`).
 - `list_api_templates` returned about 210K characters; it needs a filter or paging.

@@ -283,9 +283,9 @@ pub enum Action {
         then: Vec<Action>,
     },
     /// The other way round (`WhenVisible`'s twin): `then` runs when
-    /// `selector` is NOT on the page - it never showed within `within_ms`
-    /// (`WHEN_VISIBLE_MS` when left out, the same wait and the same
-    /// `then` rules). A target that matches any element at any point in the
+    /// `selector` is NOT on the page - nothing matched it at any point in
+    /// `within_ms` (`WHEN_VISIBLE_MS` when left out, the same wait and the
+    /// same `then` rules). A target that matches any element at any point in the
     /// wait (hidden or off-window ones included) skips the guard,
     /// `SHOWN_SKIPPED`. For "apply it from the template if it is
     /// not there already". Carried out by the runner.
@@ -3176,14 +3176,21 @@ pub async fn shows_up_to_click<D: Driver>(
 /// For a script's `when_hidden`: did ANY element match `target` at some
 /// point in the window (`Check::Present`)? An element that is there but
 /// hidden or off-window still counts as there, so the guard only acts when
-/// the page held nothing of the kind for the whole wait.
+/// the page held nothing of the kind for the whole wait. A frame the chain
+/// could not enter is not "absent": Auto Run could not look, so that fails
+/// the step (`Err`) rather than acting or skipping.
 pub async fn is_on_page_within<D: Driver>(
     d: &mut D,
     target: &Target,
     within_ms: u32,
     timing: &Timing,
 ) -> Result<bool, ActionOutcome> {
-    shows_up_as(d, target, within_ms, timing, Check::Present).await
+    let wait = u64::from(within_ms.max(WHEN_VISIBLE_FLOOR_MS));
+    let seen = expect::expect(d, target, Check::Present, wait, timing.poll_ms).await;
+    if seen.harness || (!seen.ok && seen.detail.contains(super::locator::FRAME_UNREACHABLE)) {
+        return Err(seen);
+    }
+    Ok(seen.ok)
 }
 
 async fn shows_up_as<D: Driver>(

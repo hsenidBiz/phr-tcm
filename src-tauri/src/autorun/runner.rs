@@ -1842,18 +1842,20 @@ async fn plain<D: Driver>(
     (out, None)
 }
 
-/// A `when_visible` or a `when_hidden`: the wait for its target
-/// (`shows_up_to_click`, the least `WHEN_VISIBLE_FLOOR_MS`), then its `then`
-/// actions in order, as the ONE outcome the action stands for - so the step
-/// still has one outcome per action. A `when_visible` runs them when the
-/// target showed within its wait and passes with `NOT_SHOWN` when it never
-/// did; a `when_hidden` is the same look the other way round: it runs them
-/// when the target never showed (it never acts on a first empty look - the
-/// whole wait passes first) and passes with `SHOWN_SKIPPED` when it did. A
-/// guard inside the `then` runs the same way, and its sentence is said among
-/// the others. The guard stops at its first failure, and that failure is
-/// the step's, said after what already ran. `GuardTrace` on the outcome
-/// records, guard by guard, whether each acted.
+/// A `when_visible` or a `when_hidden`: the wait for its target, then its
+/// `then` actions in order, as the ONE outcome the action stands for - so the
+/// step still has one outcome per action. A `when_visible` waits for the
+/// target to be shown the way its click needs (`shows_up_to_click`, the least
+/// `WHEN_VISIBLE_FLOOR_MS`), runs the `then` when it was and passes with
+/// `NOT_SHOWN` when it never was. A `when_hidden` waits the whole window for
+/// ANY element to match (`is_on_page_within`; hidden and off-window ones
+/// count as there), runs the `then` only when nothing matched at all, and
+/// passes with `SHOWN_SKIPPED` otherwise; a locator whose frame cannot be
+/// entered fails the step, since Auto Run could not look. A guard inside the
+/// `then` runs the same way, and its sentence is said among the others. The
+/// guard stops at its first failure, and that failure is the step's, said
+/// after what already ran. `GuardTrace` on the outcome records, guard by
+/// guard, whether each acted.
 async fn guard<D: Driver>(
     d: &mut D,
     here: &Here<'_>,

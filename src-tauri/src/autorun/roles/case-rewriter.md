@@ -13,7 +13,7 @@ that does the same job, your own browser, an editor or a sub-agent included.
   sees it. A check the app fails is a divergence to report, never a check to give up. Changing a check's value
   is a person's edit in the script editor.
 - Never let the page decide whether a failure counts. A check never goes inside a guard. A new when_visible, when_hidden or
-  repeat_while_visible, or a phrase added to ignore_page_errors, needs the edit's quirk with a quirk_class of
+  repeat_while_visible (counted at any depth, and a guard whose kind changed counts as new), or a phrase added to ignore_page_errors, needs the edit's quirk with a quirk_class of
   app quirk or environment flake, and is refused for a product bug. A repair never loosens page_errors and
   never stops an unexpected dialog failing the case.
 - A delete the case asks for stays in its step with its check; the clean-up holds a guarded fallback (when_visible). Any delete finds its row by the name it holds (has_text), never by nth.
