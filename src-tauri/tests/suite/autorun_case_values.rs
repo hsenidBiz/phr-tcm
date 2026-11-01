@@ -1434,17 +1434,38 @@ fn giving_up_a_check_because_of_the_app_is_refused() {
 
 #[test]
 fn gives_up_naming_more_than_the_repair_removes_is_refused() {
-    // The text check is swapped for a visible one: one kind goes, the count stays.
+    // One of step 2's two visible checks goes and nothing takes its place: naming two is one too many.
     let mut old = three_checks();
-    old.steps[1].actions[0] = act(json!({ "kind": "expect_text", "selector": "#t", "equals": "Saved" }));
-    let r = repair(&old, &three_checks(), &[give(2, "expect_text", "step 4 already proves it")]);
+    old.steps[1].actions.insert(0, act(json!({ "kind": "expect_visible", "selector": "#c" })));
+    let r = repair(&old, &three_checks(), &[give(2, "expect_visible", "step 4 already proves it"), give(2, "expect_visible", "step 4 already proves it")]);
     assert_eq!(
         r,
-        vec!["step 2: gives_up names 1 checks but the repair removes 0 there - name only the checks it removes".to_string()]
+        vec!["step 2: gives_up names a expect_visible check, and the old step 2 has none - name the kind of a check the repair removes".to_string()]
     );
     // Naming a check the repair keeps matches nothing it removes.
     let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
     assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the old step 2 has none")), "{r:?}");
+}
+
+#[test]
+fn gives_up_naming_checks_replaced_by_another_kind_passes() {
+    // Five visible checks become five text checks: the count stays, five kinds go.
+    let five = |kind: &str| -> Vec<Value> {
+        (0..5)
+            .map(|i| {
+                if kind == "expect_visible" {
+                    json!({ "kind": "expect_visible", "selector": format!("#v{i}") })
+                } else {
+                    json!({ "kind": "expect_text", "selector": format!("#v{i}"), "equals": "Saved" })
+                }
+            })
+            .collect()
+    };
+    let old = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), Value::Array(five("expect_visible")));
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), Value::Array(five("expect_text")));
+    let gives: Vec<GiveUp> = (0..5).map(|_| give(2, "expect_visible", "the text check proves it better")).collect();
+    let r = repair(&old, &new, &gives);
+    assert!(r.is_empty(), "{r:?}");
 }
 
 #[test]
@@ -1632,6 +1653,7 @@ async fn an_unchanged_resave_keeps_its_given_up_and_stays_unchanged() {
         kind: "expect_text".into(),
         why: "step 4 proves it".into(),
         at: "2026-10-21T10:00:00Z".into(),
+        replaced_by: Vec::new(),
     }];
     v2_lib::autorun::store::save_script(dir.path(), &saved).unwrap();
     assert_eq!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checks, 0, "an old script has no stored floor");
@@ -1654,6 +1676,7 @@ fn the_persons_save_stamps_the_checks_and_clears_what_was_given_up() {
         kind: "expect_text".into(),
         why: "step 4 proves it".into(),
         at: "2026-10-21T10:00:00Z".into(),
+        replaced_by: Vec::new(),
     }];
     v2_lib::commands::autorun::save_script_from_editor(dir.path(), "acme", "Web", s).unwrap();
     let after = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();

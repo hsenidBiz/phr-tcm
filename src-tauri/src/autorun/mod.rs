@@ -389,6 +389,10 @@ pub struct GivenUp {
     pub kind: String,
     pub why: String,
     pub at: String,
+    /// The kinds of check the repair added on that step, so the person sees what took its place.
+    /// Empty when it added none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaced_by: Vec<String>,
 }
 
 /// What a script does with the page's own errors.

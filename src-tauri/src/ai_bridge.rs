@@ -13163,9 +13163,15 @@ pub async fn save_autorun_scripts_carrying(
                             kind: g.kind.trim().to_lowercase(),
                             why: g.why.trim().to_string(),
                             at: at.clone(),
+                            replaced_by: crate::autorun::case_values::added_kinds(&old, &script, g.step),
+                        };
+                        let replaced = if entry.replaced_by.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" (replaced by {})", entry.replaced_by.join(", "))
                         };
                         given_up_lines.push(format!(
-                            "case {}: check given up: step {} {} - {}. The person sees it on the case; name it in your report.",
+                            "case {}: check given up: step {} {} - {}{replaced}. The person sees it on the case; name it in your report.",
                             script.case_id, entry.step, entry.kind, entry.why
                         ));
                         script.given_up.push(entry);

@@ -3480,6 +3480,58 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
 }
 
+/// A check given up and replaced by another kind: the record and the report line say what took its
+/// place. One given up with nothing added has no `replaced_by` in its JSON.
+#[tokio::test]
+async fn a_given_up_check_records_what_replaced_it() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let (_changed, client) = client_with_cases(&[(7, "Save a rating", &["", ""])]).await;
+    let swapped = |actions: serde_json::Value, given: &str| {
+        serde_json::json!({
+            "scripts": [{
+                "case_id": 7,
+                "title": "Save a rating",
+                "steps": [
+                    { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+                    { "step_number": 2, "actions": actions }
+                ]
+            }],
+            "edits": [{ "case_id": 7, "steps": [2], "why": "the toast is gone, the panel shows it now",
+                "gives_up": [{ "step": 2, "kind": given, "why": "the toast is gone, the panel shows it now" }] }],
+        })
+        .to_string()
+    };
+    let body = swapped(serde_json::json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_visible", "selector": "#toast" }
+    ]), "expect_contains_text");
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("check given up: step 2 expect_contains_text - the toast is gone, the panel shows it now (replaced by expect_visible)."), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.given_up[0].replaced_by, vec!["expect_visible".to_string()]);
+    assert!(serde_json::to_string(&on_disk.given_up[0]).unwrap().contains("replaced_by"));
+
+    // Nothing added: no replaced_by in the JSON, and the line is the old one.
+    let body = swapped(serde_json::json!([{ "kind": "click", "selector": "#save" }]), "expect_visible");
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("replaced by"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert!(on_disk.given_up.last().unwrap().replaced_by.is_empty());
+    assert!(!serde_json::to_string(on_disk.given_up.last().unwrap()).unwrap().contains("replaced_by"));
+}
+
 /// Marks affect order, not safety: an assistant marking a saved script
 /// needs no "edits", does not add to the repair count, and the save says the
 /// marks changed. A re-send with the same marks is unchanged again, and

@@ -1163,6 +1163,18 @@ fn removed_kinds(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<String> {
     removed
 }
 
+/// The kinds of checks step `n` gains: the new step's kinds minus the old step's, each old one
+/// cancelling one new one of its kind. What a repair puts in the place of a check it gives up.
+pub fn added_kinds(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<String> {
+    let mut added = new.steps.iter().find(|s| s.step_number == n).map(check_kinds_of_step).unwrap_or_default();
+    for k in old_step(old, n).map(check_kinds_of_step).unwrap_or_default() {
+        if let Some(i) = added.iter().position(|a| *a == k) {
+            added.remove(i);
+        }
+    }
+    added
+}
+
 fn gives_up_kind(g: &GiveUp) -> String {
     g.kind.trim().to_lowercase()
 }
@@ -1274,9 +1286,19 @@ pub fn check_repair_values(
     every.dedup();
     for &n in &every {
         let Some(o) = old_step(old, n) else { continue };
-        let before = check_kinds_of_step(o).len();
-        let after = new.steps.iter().find(|s| s.step_number == n).map_or(0, |s| check_kinds_of_step(s).len());
-        let lost = before.saturating_sub(after);
+        // Naming is allowed up to the kinds that go, not the net change in number: five visible
+        // checks swapped for five text checks lose five kinds, though the step still has five.
+        // Leaving one unnamed is refused only when the step's count falls, so a check kept in a
+        // different form (a text widened to a contains) needs no entry.
+        let mut gone = check_kinds_of_step(o);
+        let after_kinds = new.steps.iter().find(|s| s.step_number == n).map(check_kinds_of_step).unwrap_or_default();
+        for k in &after_kinds {
+            if let Some(i) = gone.iter().position(|g| g == k) {
+                gone.remove(i);
+            }
+        }
+        let removed_kinds_count = gone.len();
+        let lost = check_kinds_of_step(o).len().saturating_sub(after_kinds.len());
         let given = valid.iter().filter(|g| g.step == n && !is_timing_field(&gives_up_kind(g))).count();
         if given < lost {
             push(
@@ -1285,10 +1307,10 @@ pub fn check_repair_values(
                     "step {n}: the repair removes {lost} of its checks and gives_up names {given} - add {{ \"step\": {n}, \"kind\": \"<the check's kind>\", \"why\": \"...\" }} for each one, or keep it"
                 ),
             );
-        } else if given > lost {
+        } else if given > removed_kinds_count {
             push(
                 &mut out,
-                format!("step {n}: gives_up names {given} checks but the repair removes {lost} there - name only the checks it removes"),
+                format!("step {n}: gives_up names {given} checks but the repair removes {removed_kinds_count} there - name only the checks it removes"),
             );
         }
         // A timing field taken off a check that stays is given up by its own name.
