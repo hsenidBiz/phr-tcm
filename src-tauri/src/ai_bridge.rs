@@ -13653,9 +13653,12 @@ pub async fn save_autorun_scripts_carrying(
     report.extend(blocked_by_divergence_lines(&root, ctx, &prepared));
     // The quirks come last, after the scripts are safely down: a quirk
     // the list will not take (too long, or the fortieth) is worth saying
-    // so about, but it is not worth losing a good repair over.
+    // so about, but it is not worth losing a good repair over. A refused
+    // one is said first, below, so it is not lost at the end of a long
+    // answer.
     // Each quirk keeps the case and steps of its repair, and the class of
     // the failure that led to it, so later runs can say whether it helped.
+    let mut refused_quirks: Vec<String> = Vec::new();
     for edit in &edits {
         let Some(text) = edit.quirk.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
@@ -13684,10 +13687,20 @@ pub async fn save_autorun_scripts_carrying(
             Ok(crate::autorun::quirks::Recorded::Reactivated(id, reason)) => {
                 report.push(format!("quirk {}: {}", reactivated_reply(&id, reason.as_deref()), text.trim()))
             }
-            Err(why) => report.push(format!("quirk not recorded: {why}")),
+            Err(why) => {
+                // Quote the quirk, so the assistant can record it again
+                // after retiring one, without having kept the text.
+                let again = if why.contains("record_quirk") {
+                    ""
+                } else {
+                    " Retire one and record it again with record_quirk."
+                };
+                refused_quirks.push(format!("quirk not recorded: \"{}\" - {why}{again}", text.trim()))
+            }
         }
     }
-    answer((200, report.join("\n")))
+    refused_quirks.extend(report);
+    answer((200, refused_quirks.join("\n")))
 }
 
 /// One line for each saved case that a divergence keeps from running: its

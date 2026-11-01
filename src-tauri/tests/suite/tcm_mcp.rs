@@ -1455,7 +1455,7 @@ fn the_quirk_tool_records_and_retires_through_their_routes() {
     assert_eq!(schema["required"], serde_json::json!([]));
     let desc = quirk["description"].as_str().unwrap();
     assert!(desc.contains("person"), "says a person's note is refused: {desc}");
-    assert!(desc.contains("60 active quirks"), "{desc}");
+    assert!(desc.contains("100 active quirks"), "{desc}");
     for old in ["record_autorun_quirk", "retire_autorun_quirk", "record_app_quirk", "retire_app_quirk"] {
         assert!(tools.iter().all(|t| t["name"] != old), "{old} is gone");
     }

@@ -2859,7 +2859,7 @@ or supervised once that run is saved - at most once per case per run:
 "confirmed Nx" when those steps passed, "did not help Nx" when they failed
 the same way again.
 
-A project keeps 60 active quirks. Past that, `record_quirk` (and
+A project keeps 100 active quirks. Past that, `record_quirk` (and
 an edit's `quirk`) is refused with up to three of the assistant's own
 notes to retire: ones that did not help more often than they helped
 first, then ones no run has confirmed, then ones never tied to a run,

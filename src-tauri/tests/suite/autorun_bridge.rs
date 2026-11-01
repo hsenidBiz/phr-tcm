@@ -2826,6 +2826,54 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
     assert!(others.contains("\"note 3\""), "the next oldest is named after the candidates: {out}");
 }
 
+/// A repair's quirk the full list cannot take no longer hides at the end
+/// of the answer: the answer opens with it, quotes it, and names the tool
+/// to retire one and record it again. The repaired scripts are saved.
+#[tokio::test]
+async fn a_repair_quirk_refused_at_the_cap_leads_the_answer() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, MAX_QUIRKS};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &case_7("#toast", "Saved").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    let list: Vec<Quirk> =
+        (0..MAX_QUIRKS).map(|i| Quirk::new(&format!("note {i}"), "assistant", "autorun", 100 + i as u64)).collect();
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+
+    let body = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [{
+            "case_id": 7,
+            "steps": [2],
+            "why": "the toast has no id, only a class",
+            "quirk": "the toast is rendered into a portal at the end of the body",
+        }],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let first = out.lines().next().unwrap_or("");
+    assert!(first.starts_with("quirk not recorded"), "{out}");
+    assert!(first.contains("the toast is rendered into a portal at the end of the body"), "{out}");
+    assert!(first.contains("record_quirk"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some(), "the repaired script is saved");
+    assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), MAX_QUIRKS);
+}
+
 // ----------------------------------------------------------- the dev gate
 //
 // Every route above runs through `route()`, which reads its own build's
