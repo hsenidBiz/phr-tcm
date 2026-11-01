@@ -27,6 +27,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.12",
+    date: "2026-11-02",
+    items: [
+      "Run Tests' History column now fills for every case: it reads all of each run's results and goes back through older runs until each case has its last five outcomes.",
+      "If an outcome you record in the runner does not show in Run Tests straight away, Settings → Logs now says whether it was sent and received.",
+      "An assistant asking for a PBI's run results with the id written as text now gets them, and a missing id is refused with a clear sentence instead of a failed lookup.",
+      "When Azure DevOps cannot be reached, the log says so once and again when it is back, instead of on every check.",
+      "Auto Run scripts can act only when something is NOT on the page (when_hidden), and a guard can hold one more guard inside it.",
+      "Auto Run scripts can hover over an element to show what it reveals, such as a tooltip.",
+      "A check that a switch is on or off now reads the switch inside a wrapper, and a count can be checked as having gone up or down by a number from a value noted earlier (expect_text_moved).",
+      "Saving a script that changes a list now names the scripts in the same area that pick a row of it by position, since a row deleted and added again moves to the end.",
+      "A case whose clean-up has a step that only runs when something shows, and has never run, says so on its card until it does.",
+      "A repair that adds a guard inside another, or turns one round, now has to say why, like any other new guard.",
+    ],
+  },
+  {
     version: "2.4.3-beta.11",
     date: "2026-11-01",
     items: [
