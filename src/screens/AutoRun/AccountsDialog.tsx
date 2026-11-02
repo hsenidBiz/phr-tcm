@@ -551,60 +551,87 @@ export default function AccountsDialog({
               </p>
             )}
             {savedAccounts.length === 0 && <p className="text-xs text-muted">No saved accounts to check yet.</p>}
-            <h3 className="text-xs font-semibold text-text">Check sign-in</h3>
-            <p className="text-xs text-muted">
-              Signs each ticked account in once, in a browser of its own, one after another, and walks it to
-              the area if you pick one. It says which accounts reach it, or where each stopped.
-            </p>
-            <label className="flex items-center gap-2 text-xs text-muted">
-              Walk to
-              <Select
-                aria-label="Walk to"
-                className="w-64"
-                value={checkArea}
-                disabled={!projectReady || checking}
-                onChange={(e) => setCheckArea(e.target.value)}
-              >
-                <option value="">Sign-in only</option>
-                {areaNames.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <ul className="space-y-1" role="status" aria-live="polite">
+            <p className="text-xs text-muted">Signs each ticked account in, one after another, and reports where each one got to.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-xs text-muted">
+                Walk to
+                <Select
+                  aria-label="Walk to"
+                  className="w-64"
+                  triggerClassName="py-1.5 text-xs"
+                  value={checkArea}
+                  disabled={!projectReady || checking}
+                  onChange={(e) => setCheckArea(e.target.value)}
+                >
+                  <option value="">Sign-in only</option>
+                  {areaNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <div className="flex items-center gap-3 text-xs text-muted">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={savedAccounts.length > 0 && checkCount === savedAccounts.length}
+                    indeterminate={checkCount > 0}
+                    disabled={checking || savedAccounts.length === 0}
+                    ariaLabel="Select all accounts to check"
+                    onCheckedChange={(on) =>
+                      setCheckPicked(on ? new Set(savedAccounts.map((a) => a.key)) : new Set())
+                    }
+                  />
+                  Select all
+                </label>
+                <span>
+                  {checkCount} of {savedAccounts.length} ticked
+                </span>
+              </div>
+            </div>
+            <ul className="divide-y divide-border rounded-md border border-border" role="status" aria-live="polite">
               {savedAccounts.map((a) => {
                 const line = checkLines[a.key];
                 const mark = lastChecks.data?.[a.key];
+                const name = a.label.trim() || a.key;
+                const markOk = mark
+                  ? mark.area ? mark.reached : mark.signed_in === true
+                  : false;
                 return (
-                  <li key={a.key} className="text-xs">
-                    <label className="flex items-center gap-2 text-text">
-                      <Checkbox
-                        checked={checkPicked.has(a.key)}
-                        onCheckedChange={(on) =>
-                          setCheckPicked((cur) => {
-                            const next = new Set(cur);
-                            if (on) next.add(a.key);
-                            else next.delete(a.key);
-                            return next;
-                          })
-                        }
-                        ariaLabel={`Check ${a.key}`}
-                        disabled={checking}
-                      />
-                      {a.label.trim() ? `${a.label} (${a.key})` : a.key}
-                    </label>
+                  <li key={a.key} className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,2fr)] items-center gap-3 px-3 py-2 text-xs">
+                    <Checkbox
+                      checked={checkPicked.has(a.key)}
+                      onCheckedChange={(on) =>
+                        setCheckPicked((cur) => {
+                          const next = new Set(cur);
+                          if (on) next.add(a.key);
+                          else next.delete(a.key);
+                          return next;
+                        })
+                      }
+                      ariaLabel={`Check ${a.key}`}
+                      disabled={checking}
+                    />
+                    <span className="truncate text-text" title={name}>{name}</span>
+                    <span className="id-mono text-[11px] text-muted">{a.key}</span>
                     {line ? (
-                      <p className={`ml-6 ${line.failed ? "text-danger" : line.busy ? "text-muted" : "text-success"}`}>
+                      <span
+                        className={cn("truncate text-right", line.failed ? "text-danger" : line.busy ? "text-muted" : "text-success")}
+                        title={line.text}
+                      >
                         {line.text}
-                      </p>
+                      </span>
                     ) : mark ? (
-                      <p className="ml-6 text-muted">
-                        Last checked {new Date(mark.checked_ms ?? 0).toLocaleString()}
-                        {Date.now() - (mark.checked_ms ?? 0) > STALE_MS ? " (stale)" : ""}: {mark.outcome}
-                      </p>
-                    ) : null}
+                      <span
+                        className={cn("truncate text-right", markOk ? "text-success" : "text-muted")}
+                        title={mark.outcome}
+                      >
+                        {mark.outcome} · {new Date(mark.checked_ms ?? 0).toLocaleDateString()}
+                        {Date.now() - (mark.checked_ms ?? 0) > STALE_MS ? " (stale)" : ""}
+                      </span>
+                    ) : (
+                      <span className="text-right text-muted">Not checked yet</span>
+                    )}
                   </li>
                 );
               })}
@@ -810,14 +837,16 @@ export default function AccountsDialog({
             Add account
           </Button>
         )}
-        {/* On every tab: it also masks the passwords typed for proposed logins. */}
-        <label className="flex items-center gap-2 text-xs text-muted">
-          <Checkbox checked={show} onCheckedChange={setShow} ariaLabel="Show passwords" />
-          Show passwords
-        </label>
+        {/* Only where a password field is: Accounts, and the proposed logins. */}
+        {view !== "check" && (
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <Checkbox checked={show} onCheckedChange={setShow} ariaLabel="Show passwords" />
+            Show passwords
+          </label>
+        )}
       </div>
       {problem && <p className="text-xs text-danger">{problem}</p>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 border-t border-border pt-3">
         <Button size="sm" variant="ghost" onClick={onClose}>
           <IconCancel aria-hidden />
           Cancel

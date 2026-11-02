@@ -674,7 +674,41 @@ test("the last check of an account is shown until it is checked again", async ()
     admin: { checked_ms: 1761900000000, reached: true, area: "Leave", outcome: "signed in, landed on /hr/home/index; reaches Leave" },
   });
   await openTab("Check sign-in");
-  expect(await screen.findByText(/Last checked .*reaches Leave/)).toBeInTheDocument();
+  expect(await screen.findByText(/reaches Leave/)).toBeInTheDocument();
+});
+
+test("the Check sign-in tab has no heading of its own", async () => {
+  mountForCheck(() => checked("admin", "signed in"));
+  await openTab("Check sign-in");
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  expect(screen.queryByRole("heading", { name: "Check sign-in" })).toBeNull();
+});
+
+test("Select all ticks and unticks every account and counts them", async () => {
+  mountForCheck(() => checked("admin", "signed in"));
+  await openTab("Check sign-in");
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  expect(screen.getByText("0 of 2 ticked")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all accounts to check" }));
+  expect(screen.getByText("2 of 2 ticked")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check sign-in (2)" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all accounts to check" }));
+  expect(screen.getByText("0 of 2 ticked")).toBeInTheDocument();
+});
+
+test("an account never checked says so", async () => {
+  mountForCheck(() => checked("admin", "signed in"));
+  await openTab("Check sign-in");
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  expect(screen.getAllByText("Not checked yet")).toHaveLength(2);
+});
+
+test("Show passwords is on Accounts but not on Check sign-in", async () => {
+  mountForCheck(() => checked("admin", "signed in"));
+  expect(await screen.findByRole("checkbox", { name: "Show passwords" })).toBeInTheDocument();
+  await openTab("Check sign-in");
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  expect(screen.queryByRole("checkbox", { name: "Show passwords" })).toBeNull();
 });
 
 test("Check sign-in is disabled while a run is going", async () => {
