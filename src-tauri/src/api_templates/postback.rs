@@ -545,6 +545,7 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     const size = (s) => new Blob([s]).size;
     const parse = (html) => new DOMParser().parseFromString(html, 'text/html');
     const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+    const TOKEN = /^_{0,2}requestverificationtoken$/i;
     const typeOf = (e) => (e.getAttribute('type') || '').toLowerCase();
 
     // Hidden: it or an ancestor has `hidden`, an inline display:none or visibility:hidden, or is
@@ -587,10 +588,15 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
       if (!g.ok) return { refused: 'load_failed', status: g.status };
       const html = await g.text();
       if (size(html) > carryLimit) return { refused: 'too_large' };
-      source = { html: html, url: g.url, carried: false };
+      source = { html: html, url: g.url, carried: false, redirected: g.redirected };
     }
     const doc = parse(source.html);
-    if (doc.querySelector('input[type="password"]')) return { refused: 'signed_out' };
+    const sourceKey = keyOf(source.url);
+    const sourceHadPassword = !!doc.querySelector('input[type="password"]');
+    // A load that was sent to another page with a password field is the sign-in page; a page of
+    // the application that has a password field of its own (change password) is not. A held page
+    // is never the sign-in page: an answer that was is not kept.
+    if (!source.carried && source.redirected && sourceKey !== req.key && sourceHadPassword) return { refused: 'signed_out' };
     const vs = doc.querySelector('input[name="__VIEWSTATE"]');
     const form = vs && (vs.form || vs.closest('form'));
     if (!form) return { refused: 'not_webforms' };
@@ -598,7 +604,10 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     // The control clicked: by name (equal, or ending in "$<button>"), or a
     // __doPostBack('<target>' in its href or onclick.
     const full = (n) => n === req.button || n.endsWith('$' + req.button);
-    const posting = /__doPostBack\(\s*\\?['"]([^'"\\]*)/;
+    // A LinkButton on a page with validators renders WebForm_DoPostBackWithOptions(new
+    // WebForm_PostBackOptions("<target>", ...)) instead; posting directly skips the client-side
+    // validators, and the server validates again.
+    const posting = /(?:__doPostBack\(|WebForm_PostBackOptions\()\s*\\?['"]([^'"\\]*)/;
     const found = [];
     for (const e of doc.querySelectorAll('input, button, select, textarea, a')) {
       if (e.tagName === 'INPUT' && typeOf(e) === 'hidden') continue;
@@ -628,9 +637,10 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
         if ((t === 'checkbox' || t === 'radio') && !e.checked) continue;
         sent.push([name, e.value]);
       } else if (e.tagName === 'SELECT') {
-        for (const o of e.selectedOptions) sent.push([name, o.value]);
+        for (const o of e.selectedOptions) if (!o.disabled) sent.push([name, o.value]);
       } else {
-        sent.push([name, e.value]);
+        // A browser sends a textarea's line breaks as CRLF.
+        sent.push([name, e.value.replace(/\r?\n/g, '\r\n')]);
       }
     }
     const drop = (name) => { for (let i = sent.length - 1; i >= 0; i--) if (sent[i][0] === name) sent.splice(i, 1); };
@@ -686,7 +696,12 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     // its `hiddenField|__VIEWSTATE|...` entries are page state, so no excerpt is made of it.
     if (/^\d+\|/.test(text)) { out.partial = true; return out; }
     const ans = parse(text);
-    if (ans.querySelector('input[type="password"]')) { out.signedOut = true; return out; }
+    // Signed out: the answer has a password field and the page posted from had none, or the post
+    // was sent to a different page.
+    if (ans.querySelector('input[type="password"]') && (!sourceHadPassword || (r.redirected && finalKey !== sourceKey))) {
+      out.signedOut = true;
+      return out;
+    }
     pages[finalKey] = { html: text, url: r.url };
 
     // The application's own error page, and its refusal of a value the page did not offer.
@@ -729,8 +744,10 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
       const c = { count: els.length, value: null, state: false, badSelector: false };
       if (els.length === 1) {
         const e = els[0];
-        const held = ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.tagName) &&
-          ((e.getAttribute('name') || '').startsWith('__') || (e.getAttribute('id') || '').startsWith('__'));
+        const nm = e.getAttribute('name') || '';
+        const idv = e.getAttribute('id') || '';
+        const held = TOKEN.test(nm) || TOKEN.test(idv) ||
+          (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.tagName) && (nm.startsWith('__') || idv.startsWith('__')));
         if (held) c.state = true;
         else if (cap.attr === null || cap.attr === undefined) c.value = (e.textContent || '').trim();
         else if (cap.attr === 'value' && e.tagName === 'SELECT') { const o = e.selectedOptions[0]; c.value = o ? o.value : null; }
@@ -740,11 +757,13 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     }
 
     // The excerpt: the answer with every state field's value taken out.
+    // The anti-forgery token is an input's value or a meta tag's content, whatever its tag.
     for (const e of ans.querySelectorAll('[name], [id]')) {
-      if (!e.hasAttribute('value')) continue;
-      for (const n of [e.getAttribute('name') || '', e.getAttribute('id') || '']) {
-        if (/^__requestverificationtoken$/i.test(n)) e.setAttribute('value', '(token)');
-        else if (n.startsWith('__') && !/^__(eventtarget|eventargument)$/i.test(n)) e.setAttribute('value', '(page state)');
+      const names = [e.getAttribute('name') || '', e.getAttribute('id') || ''];
+      if (names.some((n) => TOKEN.test(n))) {
+        for (const a of ['value', 'content']) if (e.hasAttribute(a)) e.setAttribute(a, '(token)');
+      } else if (e.hasAttribute('value') && names.some((n) => n.startsWith('__') && !/^__(eventtarget|eventargument)$/i.test(n))) {
+        e.setAttribute('value', '(page state)');
       }
     }
     const html = ans.documentElement ? ans.documentElement.outerHTML : '';

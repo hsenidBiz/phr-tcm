@@ -342,6 +342,18 @@ fn simple_page(action: &str, padding: usize) -> String {
     )
 }
 
+/// A change-password screen: a WebForms page with a password field that
+/// posts back to itself (and shows an error once it is posted).
+fn change_pwd_page(posted: bool) -> String {
+    let error = if posted { r#"<span id="err">Passwords do not match</span>"# } else { "" };
+    format!(
+        r#"<!doctype html><html><head><title>Change password</title></head><body><form method="post" action="/ChangePwd.aspx">
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="VSTATE-P-SECRET" />
+<input type="password" name="pwdNew" /><input type="submit" name="CmdChange" value="Change" />{error}
+</form></body></html>"#
+    )
+}
+
 /// The evaluation page: every kind of control a WebForms page has, and a
 /// view state that is new on each render.
 fn eval_page(st: &mut State, query: &str) -> String {
@@ -372,13 +384,14 @@ fn eval_page(st: &mut State, query: &str) -> String {
         .collect();
     let saved_id = &st.saved_id;
     format!(
-        r#"<!doctype html><html><head><title>Evaluation</title></head><body>
+        r#"<!doctype html><html><head><title>Evaluation</title><meta name="RequestVerificationToken" content="TOKEN-META-SECRET" /></head><body>
 <form method="post" action="/Perf/Eval.aspx{q}" id="form1">
 <input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
 <input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
 <input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="VSTATE-{n}-SECRET" />
 <input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="GEN-SECRET" />
 <input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="EVAL-{n}-SECRET" />
+<input type="hidden" name="__RequestVerificationToken" id="tok" value="TOKEN-INPUT-SECRET" />
 <span id="msg">{message}</span>{summary}
 <input type="hidden" name="hdnEvalId" id="hdnEvalId" value="{id}" data-saved="{saved_id}" />
 <input type="hidden" name="hdnEmpty" id="hdnEmpty" value="" />
@@ -396,6 +409,7 @@ fn eval_page(st: &mut State, query: &str) -> String {
 <input type="submit" name="ctl00$Main$CmdSaveItem" value="Save Item" />
 <input type="submit" name="ctl00$Main$CmdForbidden" value="Forbidden" />
 <input type="submit" name="ctl00$Left$Dup" value="Dup" /><input type="submit" name="ctl00$Right$Dup" value="Dup" />
+<a id="lnkVal" href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;ctl00$Main$lnkVal&quot;, &quot;&quot;, true, &quot;&quot;, &quot;&quot;, false, true))">Validate</a>
 <a id="lnkCreate" href="javascript:__doPostBack('ctl00$Main$lnkCreate','')">Create</a>
 <table id="gvItems"><tr><th>Name</th><th>Edit</th></tr>{rows}</table>
 </form></body></html>"#
@@ -426,6 +440,7 @@ fn eval_post(st: &mut State, query: &str) -> Out {
             st.saved_id = "7".to_string();
             redirect("/Perf/Eval.aspx?id=7")
         }
+        "ctl00$Main$lnkVal" => ok(eval_page(st, query)),
         "ctl00$Main$lnkCreate" => {
             st.rows.push(None);
             ok(eval_page(st, query))
@@ -467,6 +482,9 @@ fn route(state: &Shared, rq: &Request) -> Out {
         "/login.aspx" => ok(r#"<html><body><form><input type="password" name="pwd" /></form></body></html>"#.to_string()),
         "/perf/eval.aspx" if post => eval_post(&mut st, query),
         "/perf/eval.aspx" => ok(eval_page(&mut st, query)),
+        "/protected.aspx" => redirect("/Login.aspx?ReturnUrl=%2fProtected.aspx"),
+        "/changepwd.aspx" if post && st.sign_out => redirect("/Login.aspx"),
+        "/changepwd.aspx" => ok(change_pwd_page(post)),
         "/big.aspx" => ok(simple_page("/Big.aspx", 5000)),
         "/grow.aspx" if post => ok(simple_page("/Grow.aspx", 6000)),
         "/grow.aspx" => ok(simple_page("/Grow.aspx", 0)),
@@ -823,8 +841,8 @@ async fn the_sign_in_page_is_signed_out() {
 
     // A page that is the sign-in page on the first load is refused before anything is sent.
     let posts = post_count(&state);
-    let (why, _, _) = refused(send(&mut live, &req("/Login.aspx", "x"), "run-o", CarryMode::Fresh).await);
-    assert_eq!(why, Refusal::SignedOut);
+    let (why, _, _) = refused(send(&mut live, &req("/Protected.aspx", "x"), "run-o", CarryMode::Fresh).await);
+    assert_eq!(why, Refusal::SignedOut, "the load was redirected to the sign-in page");
     assert_eq!(post_count(&state), posts);
 }
 
@@ -906,4 +924,53 @@ async fn a_page_that_was_just_loaded_is_the_one_posted_from() {
     assert_eq!(a.status, 200);
     assert!(!a.carried);
     assert_eq!(state.lock().unwrap().gets.iter().filter(|g| *g == "/perf/eval.aspx").count(), 4);
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_change_password_page_is_not_the_sign_in_page() {
+    let (port, state) = serve();
+    let mut live = open(port).await;
+    let mut r = req("/ChangePwd.aspx", "CmdChange");
+    r.shows = vec!["#err".into()];
+    let a = answered(send(&mut live, &r, "run-p", CarryMode::Fresh).await);
+    assert!(!a.signed_out, "a page with a password field, loaded and answered in place, is no sign-in page");
+    assert!(a.checks[0].ok);
+    assert_eq!(last_post(&state).get("CmdChange"), Some("Change"));
+    // Carried on, it still works.
+    let b = answered(send(&mut live, &req("/ChangePwd.aspx", "CmdChange"), "run-p", CarryMode::Must).await);
+    assert!(b.carried && !b.signed_out);
+
+    // The session ending while on it: the post is redirected to the sign-in page.
+    state.lock().unwrap().sign_out = true;
+    let c = answered(send(&mut live, &req("/ChangePwd.aspx", "CmdChange"), "run-p", CarryMode::Must).await);
+    assert!(c.signed_out);
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn the_anti_forgery_token_never_leaves_the_page() {
+    let (port, _state) = serve();
+    let mut live = open(port).await;
+    let mut r = req(EVAL, "CmdSave");
+    r.captures.insert("meta".into(), capture("meta[name=RequestVerificationToken]", Some("content")));
+    r.captures.insert("input".into(), capture("#tok", Some("value")));
+    // `send` fails on any `SECRET`, which the token's value carries.
+    let a = answered(send(&mut live, &r, "run-t", CarryMode::Fresh).await);
+    for name in ["meta", "input"] {
+        assert!(a.captures[name].state, "{name} is the token");
+        assert_eq!(a.captures[name].value, None);
+    }
+    assert!(a.excerpt.contains(r#"content="(token)""#), "{}", a.excerpt);
+    assert!(a.excerpt.contains(r#"value="(token)""#));
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_validator_link_button_is_found_by_its_post_back_options() {
+    let (port, state) = serve();
+    let mut live = open(port).await;
+    let a = answered(send(&mut live, &req(EVAL, "lnkVal"), "run-w", CarryMode::Fresh).await);
+    assert_eq!(a.status, 200);
+    assert_eq!(last_post(&state).get("__EVENTTARGET"), Some("ctl00$Main$lnkVal"));
 }
