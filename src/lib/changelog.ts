@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.13",
+    date: "2026-11-02",
+    items: [
+      "API templates can now save through older pages that post the whole form back to themselves. A template step names the page, the button and the fields that matter, and the app carries the page's own state from one step to the next, so a save that takes several round trips (for example Save, then Create, then Save Item) runs as one template.",
+      "A step on those pages can check the page that comes back (text that should or should not show, or a row in a table) and read a value from it for later steps.",
+      "Assistants can try such a save one request at a time before saving it as a template, and a save that may already have gone through is never sent twice.",
+    ],
+  },
+  {
     version: "2.4.3-beta.12",
     date: "2026-11-02",
     items: [
