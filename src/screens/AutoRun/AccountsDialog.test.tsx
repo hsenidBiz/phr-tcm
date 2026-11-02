@@ -711,6 +711,29 @@ test("Show passwords is on Accounts but not on Check sign-in", async () => {
   expect(screen.queryByRole("checkbox", { name: "Show passwords" })).toBeNull();
 });
 
+test("a fresh good result is green and its title has the full date-time", async () => {
+  const ms = Date.now() - 3600 * 1000;
+  mountForCheck(() => checked("admin", "signed in"), {
+    admin: { checked_ms: ms, reached: true, area: "Leave", outcome: "reaches Leave" },
+  });
+  await openTab("Check sign-in");
+  const el = (await screen.findByText(/reaches Leave/)) as HTMLElement;
+  expect(el.className).toContain("text-success");
+  expect(el.title).toContain(new Date(ms).toLocaleString());
+});
+
+test("a stale good result is muted and its title says stale", async () => {
+  const ms = Date.now() - 30 * 24 * 3600 * 1000;
+  mountForCheck(() => checked("admin", "signed in"), {
+    admin: { checked_ms: ms, reached: true, area: "Leave", outcome: "reaches Leave" },
+  });
+  await openTab("Check sign-in");
+  const el = (await screen.findByText(/reaches Leave/)) as HTMLElement;
+  expect(el.className).toContain("text-muted");
+  expect(el.className).not.toContain("text-success");
+  expect(el.title).toContain("(stale)");
+});
+
 test("Check sign-in is disabled while a run is going", async () => {
   checkFixture.taken = true;
   try {

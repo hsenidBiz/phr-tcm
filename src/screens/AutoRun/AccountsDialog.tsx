@@ -550,8 +550,8 @@ export default function AccountsDialog({
                 Save your changes on the Accounts tab first - Check sign-in uses the saved accounts.
               </p>
             )}
-            {savedAccounts.length === 0 && <p className="text-xs text-muted">No saved accounts to check yet.</p>}
             <p className="text-xs text-muted">Signs each ticked account in, one after another, and reports where each one got to.</p>
+            {savedAccounts.length === 0 && <p className="text-xs text-muted">No saved accounts to check yet.</p>}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="flex items-center gap-2 text-xs text-muted">
                 Walk to
@@ -594,7 +594,9 @@ export default function AccountsDialog({
                 const line = checkLines[a.key];
                 const mark = lastChecks.data?.[a.key];
                 const name = a.label.trim() || a.key;
-                const markOk = mark
+                const markStale = mark ? Date.now() - (mark.checked_ms ?? 0) > STALE_MS : false;
+                // A stale result no longer ranks, so it is never green.
+                const markOk = mark && !markStale
                   ? mark.area ? mark.reached : mark.signed_in === true
                   : false;
                 return (
@@ -613,7 +615,7 @@ export default function AccountsDialog({
                       disabled={checking}
                     />
                     <span className="truncate text-text" title={name}>{name}</span>
-                    <span className="id-mono text-[11px] text-muted">{a.key}</span>
+                    <span className="id-mono max-w-[10rem] truncate text-[11px] text-muted" title={a.key}>{a.key}</span>
                     {line ? (
                       <span
                         className={cn("truncate text-right", line.failed ? "text-danger" : line.busy ? "text-muted" : "text-success")}
@@ -624,10 +626,10 @@ export default function AccountsDialog({
                     ) : mark ? (
                       <span
                         className={cn("truncate text-right", markOk ? "text-success" : "text-muted")}
-                        title={mark.outcome}
+                        title={`${mark.outcome} · ${new Date(mark.checked_ms ?? 0).toLocaleString()}${markStale ? " (stale)" : ""}`}
                       >
                         {mark.outcome} · {new Date(mark.checked_ms ?? 0).toLocaleDateString()}
-                        {Date.now() - (mark.checked_ms ?? 0) > STALE_MS ? " (stale)" : ""}
+                        {markStale ? " (stale)" : ""}
                       </span>
                     ) : (
                       <span className="text-right text-muted">Not checked yet</span>
