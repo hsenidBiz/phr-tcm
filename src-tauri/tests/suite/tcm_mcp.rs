@@ -3627,6 +3627,9 @@ fn the_explore_tools_are_listed_and_reach_their_routes() {
     assert_eq!(send["inputSchema"]["required"], serde_json::json!(["step"]));
     assert_eq!(send["inputSchema"]["properties"]["effect"]["enum"], serde_json::json!(["read", "create", "edit", "delete"]));
     assert_eq!(send["inputSchema"]["properties"]["person_said_yes"]["type"], "boolean");
+    let send_says = send["description"].as_str().unwrap();
+    assert!(send_says.contains("WebForms postback") && send_says.contains("never saved"), "{send_says}");
+    assert!(send["inputSchema"]["properties"]["step"]["description"].as_str().unwrap().contains("postback"));
     let undo = tool("undo_explore_creates");
     assert_eq!(undo["inputSchema"]["required"], serde_json::json!(["session", "ids"]));
     assert_eq!(undo["inputSchema"]["properties"]["ids"]["type"], "array");

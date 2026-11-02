@@ -27,7 +27,13 @@ pub const POST_NEEDS_EXPLORE: &str = "a POST from send_api_request needs an expl
 /// Said when the session's browser no longer holds the session's account.
 pub const SESSION_NOT_SIGNED_IN: &str = "your explore session's browser no longer holds its account - end the session and start it again";
 
-const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"? }";
+/// Said in an answer for a postback that went on from the page the previous
+/// postback left in this browser.
+pub const CARRIED_ON: &str = "carried on from your previous postback to this page";
+/// Said in an answer for a postback that loaded its page before posting.
+pub const LOADED_FRESH: &str = "loaded the page fresh";
+
+const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"? }";
 
 /// A `created.id` that names no capture of the step.
 pub fn not_a_capture(name: &str) -> String {
@@ -111,6 +117,10 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         Ok(s) => s,
         Err(e) => return bad(format!("that is not a step: {e}. Expected {SHAPE}.")),
     };
+    // A postback is always a POST; any other step must say which.
+    if step.postback.is_none() && step.method.is_none() {
+        return bad(format!("the step needs a method: GET or POST. Expected {SHAPE}."));
+    }
 
     let said = match obj.get("effect") {
         None | Some(Value::Null) => None,
@@ -120,7 +130,7 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         },
         Some(_) => return bad("effect is read, create, edit or delete"),
     };
-    let effect = match (step.method, said) {
+    let effect = match (step.method(), said) {
         (Method::Get, None) => Effect::Read,
         (Method::Get, Some(Effect::Read)) => Effect::Read,
         (Method::Get, Some(_)) => return bad(GET_ONLY_READS),
@@ -175,9 +185,13 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET
     // cannot be sent as a delete, so only a POST is judged.)
-    if one.step.method == Method::Post && one.effect != Effect::Delete {
+    if one.step.method() == Method::Post && one.effect != Effect::Delete {
         let address = request_path(&one).to_ascii_lowercase();
-        if address.contains("delete") || address.contains("remove") {
+        let button = one.step.postback.as_ref().map(|p| p.button.to_ascii_lowercase()).unwrap_or_default();
+        // The grid's own delete command is `__doPostBack('grid','Delete$0')`.
+        let argument = one.step.postback.as_ref().map(|p| super::exec::substitute_str(&p.argument, &sent_vars(&one)).trim().to_ascii_lowercase()).unwrap_or_default();
+        let says = |s: &str| s.contains("delete") || s.contains("remove");
+        if says(&address) || says(&button) || argument.starts_with("delete") || argument.starts_with("remove") {
             return bad(LOOKS_LIKE_A_DELETE);
         }
     }
@@ -210,7 +224,7 @@ pub fn as_template(o: &OneOff, id: &str, token_page: &str) -> ApiTemplate {
 pub fn filled_path(o: &OneOff) -> String {
     let t = as_template(o, ONE_OFF_ID, "/");
     let vars: BTreeMap<String, Value> = super::with_defaults(&t, &o.values).into_iter().collect();
-    super::exec::substitute_str(&o.step.path, &vars)
+    super::exec::substitute_str(&o.step.address(), &vars)
 }
 
 /// The values the call sends: its own, and its params' defaults.
@@ -233,7 +247,7 @@ pub fn request_path(o: &OneOff) -> String {
 /// The call as the change list names a request: `POST /hr/x`, with the
 /// `handler` when the call names one (`POST /hr/x?handler=Save`).
 pub fn request_of(o: &OneOff) -> String {
-    let method = match o.step.method {
+    let method = match o.step.method() {
         Method::Get => "GET",
         Method::Post => "POST",
     };
@@ -247,7 +261,8 @@ pub fn sends_id(o: &OneOff, id: &str) -> bool {
     use crate::autorun::explore::{id_in_json, id_in_text};
     let vars = sent_vars(o);
     let fill = |s: &str| super::exec::substitute_str(s, &vars);
-    id_in_text(&fill(&o.step.path), id)
+    id_in_text(&fill(&o.step.address()), id)
+        || o.step.postback.as_ref().is_some_and(|p| id_in_text(&fill(&p.argument), id))
         || o.step.query.values().any(|v| id_in_text(&fill(v), id))
         || o.step.form.iter().flat_map(|f| f.values()).any(|v| id_in_text(&fill(v), id))
         || o.step.json.as_ref().is_some_and(|j| id_in_json(j, id))
@@ -342,10 +357,12 @@ fn handler_of(step: &Step) -> Option<&str> {
 /// `body_field_names`.
 pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
     let [one] = saved.steps.as_slice() else { return false };
-    if saved.effect == Effect::Delete || one.method != step.method {
+    // A postback may carry on from the call before it, so it never stands
+    // for a saved template, nor does a saved postback template stand for it.
+    if saved.effect == Effect::Delete || one.is_postback() || step.is_postback() || one.method() != step.method() {
         return false;
     }
-    let (a, b): (Vec<&str>, Vec<&str>) = (one.path.split('/').collect(), step.path.split('/').collect());
+    let (a, b): (Vec<&str>, Vec<&str>) = (one.address().split('/').collect(), step.address().split('/').collect());
     if a.len() != b.len()
         || !a.iter().zip(&b).all(|(x, y)| x.eq_ignore_ascii_case(y) || is_placeholder(x) || is_placeholder(y))
     {
@@ -433,11 +450,11 @@ fn slug(s: &str) -> String {
 /// "<method>-<path slug>[-<handler slug>]", lowercase, [a-z0-9-] only, at
 /// most 90 chars before a "-2", "-3"... that `taken` refuses.
 pub fn derived_id(step: &Step, taken: &dyn Fn(&str) -> bool) -> String {
-    let method = match step.method {
+    let method = match step.method() {
         Method::Get => "get",
         Method::Post => "post",
     };
-    let path = step.path.split('?').next().unwrap_or("");
+    let path = step.address().split('?').next().unwrap_or("");
     let parts = [method.to_string(), slug(path), handler_of(step).map(slug).unwrap_or_default()];
     let base = parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("-");
     unique_id(&base, taken)
@@ -459,13 +476,13 @@ pub fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
 
 /// "POST /hr/pmsv10/PerformanceCycle (Save)"; no "(..)" without a handler.
 pub fn derived_title(step: &Step) -> String {
-    let method = match step.method {
+    let method = match step.method() {
         Method::Get => "GET",
         Method::Post => "POST",
     };
     match handler_of(step).map(str::trim).filter(|h| !h.is_empty()) {
-        Some(h) => format!("{method} {} ({h})", step.path),
-        None => format!("{method} {}", step.path),
+        Some(h) => format!("{method} {} ({h})", step.address()),
+        None => format!("{method} {}", step.address()),
     }
 }
 

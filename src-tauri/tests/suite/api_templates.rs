@@ -311,7 +311,8 @@ fn capture_path_parsing_produces_segments() {
 fn plain_step(path: &str) -> Step {
     Step {
         name: "Step".to_string(),
-        method: Method::Get,
+        method: Some(Method::Get),
+        postback: None,
         path: path.to_string(),
         query: BTreeMap::new(),
         json: None,
@@ -371,34 +372,34 @@ fn capture_all_over_an_empty_array_is_none() {
 
 #[test]
 fn expect_is_a_partial_match() {
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     assert!(check_expect(&e, 200, r#"{"success":true,"cycleId":1}"#).is_ok());
 }
 
 #[test]
 fn an_html_answer_fails_a_json_expectation_cleanly() {
     // Review Focus 2
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     assert_eq!(check_expect(&e, 200, "<!DOCTYPE html><html>").unwrap_err(), "the response was not JSON");
 }
 
 #[test]
 fn a_body_that_is_json_but_not_the_expected_shape_fails() {
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     let err = check_expect(&e, 200, r#"{"success":false}"#).unwrap_err();
     assert_eq!(err, "expected success = true, got false");
 }
 
 #[test]
 fn a_status_mismatch_is_reported_before_the_body_is_even_parsed() {
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     let err = check_expect(&e, 400, "not json at all").unwrap_err();
     assert_eq!(err, "expected status 200, got 400");
 }
 
 #[test]
 fn no_json_expectation_still_returns_a_parsed_body_when_there_is_one() {
-    let e = Expect { status: 200, json: None };
+    let e = Expect { status: 200, json: None, html: None };
     assert_eq!(check_expect(&e, 200, r#"{"a":1}"#).unwrap(), Some(json!({"a":1})));
     assert_eq!(check_expect(&e, 200, "plain text").unwrap(), None);
 }
@@ -749,6 +750,68 @@ fn the_guide_says_paths_keep_the_applications_letter_case() {
     assert!(text.contains("letter case"), "{text}");
     assert!(text.contains("case-sensitive"), "{text}");
     assert!(text.contains("/hr/pmsv10"), "{text}");
+}
+
+/// The guide teaches WebForms postback steps: how to spot a page, the shape,
+/// the carry, the checks, the limits and the one-off differences.
+#[test]
+fn the_guide_teaches_webforms_postbacks() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for part in [
+        "## WebForms pages (postbacks)",
+        "__VIEWSTATE",
+        "get_autorun_page",
+        "\"fresh\": true",
+        "expect.html",
+        "html:[id$=hdnEvalId]@value",
+        "never sent again",
+        "UpdatePanel",
+        "Save Item",
+        "may already have saved",
+        "WebForm_PostBackOptions",
+        "Delete",
+        "antiforgery_page",
+        "carried on from your previous postback to this page",
+        "loaded the page fresh",
+        "[id$=ValidationSummary1]",
+        "[id$=hdnEvalId]",
+        "ctl00$MainContent$txtEvalName",
+        "a fresh load of the page, `get_autorun_page` and `probe_autorun_locator` do not show them",
+        "Read them from a one-off Create",
+        "fails the step before anything is sent, and the failure names those fields",
+        "matches the end of an ASP.NET id",
+    ] {
+        assert!(flat.contains(part), "the guide never mentions {part}");
+    }
+    let section = &flat[flat.find("## WebForms pages (postbacks)").unwrap()..flat.find("## How to build one").unwrap()];
+    assert!(!section.contains("http"), "the postback section names a host");
+    // The delete rule is about one-off requests; the template section does not state it.
+    assert!(!section.contains("Delete or Remove"), "the template section states the one-off delete rule");
+    assert!(flat.contains("Only for a one-off request"), "the one-off delete rule is not marked as one-off only");
+}
+
+/// The guide's worked three-step template is a real one: it parses and
+/// passes `check`, and its steps are the three the spec names.
+#[test]
+fn the_guides_worked_postback_template_passes_check() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let from = text.find("    {
+      \"id\": \"pms-create-evaluation\"").expect("no worked template");
+    let rest = &text[from..];
+    let end = rest.find("
+    }
+").expect("the worked template never ends") + "
+    }".len();
+    let json: String = rest[..end].lines().map(|l| l.strip_prefix("    ").unwrap_or(l)).collect::<Vec<_>>().join("
+");
+    let value: Value = serde_json::from_str(&json).unwrap_or_else(|e| panic!("not JSON: {e}
+{json}"));
+    let t = parse_draft(&value).expect("the worked template does not parse");
+    assert!(check(&t).is_empty(), "{:?}", check(&t));
+    let names: Vec<&str> = t.steps.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, vec!["Save", "Create", "Save Item"]);
+    assert!(t.steps.iter().all(|s| s.postback.is_some()));
 }
 
 /// The guide teaches flows: the two tools, the order of work (map the

@@ -7,7 +7,7 @@
 //! Only keys ever reach this module: `text` takes the keys, not the
 //! accounts, so a username or a password has no way into the guide.
 
-const BASE: &str = r#"# API templates
+const BASE: &str = r##"# API templates
 
 An API template writes test data through the application's OWN endpoints -
 the same requests its pages send - from inside a browser that signed in the
@@ -147,6 +147,86 @@ checked, not halfway through a run.
 `capture` maps a name to a path in the step's JSON response: `$.a.b`,
 `$.list[0]`, or `$.list[*].id` for an array of every element's `id`. A
 capture that finds nothing fails the step.
+
+## WebForms pages (postbacks)
+
+An older screen is an ASP.NET WebForms page when its form posts back to the page itself and carries
+hidden `__VIEWSTATE`, `__VIEWSTATEGENERATOR` and `__EVENTVALIDATION` fields. A plain step cannot save
+it: the post needs the state of a fresh load. Make that step a postback instead. Read the real control
+names off the live page first (`get_autorun_page`, `probe_autorun_locator`): use each control's `name`
+attribute, with its `$`s, never its id. On a master page the name is long
+(`ctl00$MainContent$txtEvalName`) and the id is `ctl00_MainContent_txtEvalName`, so write `form` keys
+in full, and write selectors to match the END of an id (`[id$=ValidationSummary1]`), never a bare `#id`.
+
+    {
+      "name": "save the evaluation",
+      "postback": { "page": "/Perf/CompanyEvaluation.aspx", "button": "CmdSave", "argument": "" },
+      "form": { "ctl00$MainContent$txtEvalName": "{{name}}", "ctl00$MainContent$chkGoal$0": "on" },
+      "expect": { "status": 200, "html": { "shows": ["Saved"], "hides": ["[id$=ValidationSummary1]"] } },
+      "capture": { "evalId": "html:[id$=hdnEvalId]@value" }
+    }
+
+- A postback step has no `method`, `path`, `query` or `json`; it is always a POST of the form.
+  `button` matches a control by its full name or by its `$<name>` suffix. A submit button posts its own
+  name and value; a link button or grid command (including a `WebForm_PostBackOptions` link) posts the
+  target as the event target, with `argument` as its argument. No match, or more than one, fails the
+  step before anything is sent. A `form` key may not start with `__`: the app carries the page state.
+- One postback is one round trip. Controls you do not name send the page's own values, as a browser
+  would; a value of `""` unchecks a box. A disabled control is not sent. Unlike `button`, a `form` key
+  has no suffix match: it must be the control's full name. A key that is not a control on the page
+  fails the step before anything is sent, and the failure names those fields.
+- The same page (the query is ignored) carries the answer to the previous postback, so Create's rows
+  are still there for Save Item. A different page loads fresh, `"fresh": true` in `postback` forces a
+  load, and a run carries nothing from another run. Fixtures and flows hand ids on through outputs.
+- `expect.html` checks the HTML answer: `shows` and `hides` (a string starting `#`, `.` or `[`, or
+  holding `>`, is a selector; anything else is visible text; hidden means `hidden` or inline
+  `display:none`/`visibility:hidden`) and `rows` (`{ "table": "<selector>", "has": "<text>" }`). A
+  postback step takes no `expect.json` and no `$` capture. Write a selector so it matches the end of an
+  ASP.NET id (`[id$=hdnEvalId]`): a bare `#hdnEvalId` matches nothing where a master page prefixes the id,
+  and a `hides` selector that matches nothing always passes. `html:<selector>` captures an element's
+  text, `html:<selector>@<attribute>` an attribute (`@value` for an input); exactly one element must
+  match. Page state can never be captured.
+- A postback is never sent again by itself, on a timeout or an empty 400 either: one that timed out
+  "may already have saved". Check the page before proving again.
+- Full postbacks only. An UpdatePanel (AJAX partial) answer is reported as such and not checked or
+  carried; a page that only saves that way cannot be templated.
+- Signing in and the token page: the template's `antiforgery.page` is the first postback page. A
+  postback sends no token, so a template of postbacks and GETs runs where that page has none.
+- Three steps, one page, as a whole template that passes `check`: Save (creates the evaluation, captures
+  `evalId`), Create (button `CmdCreate` adds an item row), Save Item (fills the row's field and presses
+  `CmdSaveItem`; `rows` finds the saved row). Steps two and three need no `fresh`: they carry on from
+  the answer before them.
+
+    {
+      "id": "pms-create-evaluation",
+      "title": "Create an evaluation with one scored item",
+      "module": "PMS / Evaluation",
+      "effect": "create",
+      "description": "Saves an evaluation, adds an item row and scores it.",
+      "sources": [],
+      "antiforgery": { "page": "/Perf/CompanyEvaluation.aspx" },
+      "params": [ { "name": "name", "type": "string", "required": true, "description": "The evaluation's name" } ],
+      "steps": [
+        { "name": "Save",
+          "postback": { "page": "/Perf/CompanyEvaluation.aspx", "button": "CmdSave" },
+          "form": { "ctl00$MainContent$txtEvalName": "{{name}}" },
+          "expect": { "status": 200, "html": { "shows": ["Saved"], "hides": ["[id$=ValidationSummary1]"] } },
+          "capture": { "evalId": "html:[id$=hdnEvalId]@value" } },
+        { "name": "Create",
+          "postback": { "page": "/Perf/CompanyEvaluation.aspx", "button": "CmdCreate" },
+          "expect": { "status": 200 } },
+        { "name": "Save Item",
+          "postback": { "page": "/Perf/CompanyEvaluation.aspx", "button": "CmdSaveItem" },
+          "form": { "ctl00$MainContent$gvItems$ctl02$txtScore": "5" },
+          "expect": { "status": 200, "html": { "rows": { "table": "[id$=gvItems]", "has": "{{name}}" } } } }
+      ],
+      "outputs": ["evalId"]
+    }
+
+- Save Item's row control names (`ctl00$MainContent$gvItems$ctl02$txtScore`) exist only in Create's
+  answer: a fresh load of the page, `get_autorun_page` and `probe_autorun_locator` do not show them. Read
+  them from a one-off Create (`send_api_request` with the postback) and its `response.body`, then write
+  them into Save Item's `form` in full.
 
 ## How to build one
 
@@ -448,6 +528,13 @@ and the token is read there, in the same tab. The answer is redacted and cut at 
 - `effect: delete` needs `person_said_yes` true, and only after you told the person what will be
   deleted and they said yes in the chat. Without it the call is refused and nothing is sent. A
   delete call is never saved as a template.
+- `postback` works here too (`{ "postback": { "page", "button", "argument"?, "fresh"? }, "form"? }`). It
+  carries on from your previous one-off postback while the page you are on has not navigated; the
+  answer says "carried on from your previous postback to this page" or "loaded the page fresh", and `"fresh": true` forces a load. Naming
+  `antiforgery_page` on a postback costs the carry (the page loads fresh), and a postback needs no
+  token, so leave it out. A postback is never sent again, and a timed-out one may already have saved.
+  Only for a one-off request (a saved template is not checked for this yet): a postback whose
+  `argument` starts with Delete or Remove is a delete, so it needs `effect: delete` and the person's yes. A postback is never saved as a template from here; prove the whole template.
 - A call that worked in an explore session is saved as a template proven by that run, or matched
   to a proven template already saved with the same method, path and body fields, which is reused
   instead of saved again. A path segment that is all digits or a GUID becomes a `{{id}}` param, so
@@ -467,9 +554,9 @@ created, which step failed with its handler, and the start of the
 response. A failed prove saves nothing; fix the draft and prove again,
 remembering that whatever it created is still there.
 
-Limits: 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each
+Limits: a carried WebForms page up to 8 MB, 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each
 response.
-"#;
+"##;
 
 /// The live line that goes with "Environments": which environment the
 /// templates run against right now. Appended by the route after `text`.

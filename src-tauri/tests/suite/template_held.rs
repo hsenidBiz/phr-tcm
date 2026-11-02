@@ -758,3 +758,58 @@ fn a_run_that_ends_after_the_app_began_exiting_keeps_nothing() {
         assert!(held_pages().is_empty(), "nothing is left in the store for no one to close");
     });
 }
+
+fn pb_template() -> ApiTemplate {
+    crate::api_postback_runner::template(vec![crate::api_postback_runner::step(
+        "Save",
+        "/Perf/List.aspx",
+        json!({}),
+    )])
+}
+
+#[tokio::test]
+async fn a_postback_that_went_out_is_not_sent_again_in_a_fresh_browser() {
+    use crate::api_templates_runner::page_reply;
+    use v2_lib::api_templates::postback::MAY_HAVE_SAVED;
+    use v2_lib::api_templates::runner::SENT_ELSEWHERE;
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(vec![], None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    r.script.lock().unwrap().postbacks = VecDeque::from([page_reply(200, json!({}))]);
+    let mut first = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut first, pb_template()).await.ok);
+
+    // The reused browser's first request is a postback the application answered with a sign-in page.
+    r.script.lock().unwrap().postbacks =
+        VecDeque::from([page_reply(200, json!({ "signedOut": true })), page_reply(200, json!({}))]);
+    let (page, _) = fresh_page(&r);
+    let mut second = Keeping::new(vec![page], &kept_closed);
+    let report = run(&r, &mut second, pb_template()).await;
+    assert!(!report.ok, "{report:?}");
+    assert_eq!(report.steps.last().unwrap().detail, format!("{SENT_ELSEWHERE}{MAY_HAVE_SAVED}"));
+    assert_eq!(second.opened, 0, "the run started again in a fresh browser");
+    assert_eq!(r.script.lock().unwrap().posted.len(), 2, "the postback was sent again");
+}
+
+#[tokio::test]
+async fn a_postback_that_was_not_sent_may_start_again_in_a_fresh_browser() {
+    use crate::api_templates_runner::page_reply;
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(vec![], None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    r.script.lock().unwrap().postbacks = VecDeque::from([page_reply(200, json!({}))]);
+    let mut first = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut first, pb_template()).await.ok);
+
+    // The page it loads first is the sign-in page: nothing was posted.
+    r.script.lock().unwrap().postbacks =
+        VecDeque::from([serde_json::json!({ "refused": "signed_out" }), page_reply(200, json!({}))]);
+    let (page, clicks) = fresh_page(&r);
+    let mut second = Keeping::new(vec![page], &kept_closed);
+    let report = run(&r, &mut second, pb_template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!((second.opened, second.closed), (1, 1));
+    assert_eq!(clicks.load(Ordering::SeqCst), 1);
+}

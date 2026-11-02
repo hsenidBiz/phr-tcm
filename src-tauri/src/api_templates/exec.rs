@@ -140,7 +140,7 @@ fn whole_placeholder(s: &str) -> Option<&str> {
 /// Text form of a var's value for insertion into a larger string: a JSON
 /// string is inserted as-is (no surrounding quotes), anything else as its
 /// JSON text (`273`, `true`, `[1,2]`, ...).
-fn var_text(v: &Value) -> String {
+pub(crate) fn var_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         other => other.to_string(),
@@ -267,7 +267,7 @@ pub struct BuiltRequest {
 /// encoding, naming the step and the placeholder. Text outside `{{...}}`
 /// (and an unknown or empty placeholder) passes through unchanged, from
 /// the raw `step.path` text - never a decoded form.
-fn substitute_path(path: &str, step_name: &str, vars: &BTreeMap<String, Value>) -> Result<String, String> {
+pub(crate) fn substitute_path(path: &str, step_name: &str, vars: &BTreeMap<String, Value>) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = path;
     while let Some(start) = rest.find("{{") {
@@ -329,25 +329,34 @@ pub fn build_request(
     } else if let Some(form) = &step.form {
         let fields =
             form.iter().map(|(k, v)| (substitute_str(k, vars), substitute_str(v, vars))).collect();
-        let mut attached = Vec::with_capacity(step.files.len());
-        for (field, name) in &step.files {
-            let Some(bytes) = files.get(name) else {
-                return Err(crate::test_files::missing(name, &format!("the step \"{}\"", step.name)));
-            };
-            attached.push(FormFile {
-                field: field.clone(),
-                name: name.clone(),
-                content_type: crate::test_files::content_type(name).to_string(),
-                size: bytes.len() as u64,
-                base64: base64::engine::general_purpose::STANDARD.encode(bytes),
-            });
-        }
+        let attached = attach_files(step, files)?;
         Body::Form { fields, files: attached }
     } else {
         Body::None
     };
 
-    Ok(BuiltRequest { method: step.method, url, body })
+    Ok(BuiltRequest { method: step.method(), url, body })
+}
+
+/// The files a step sends, read from the bytes the runner holds (by name)
+/// and ready for the page: a name it does not hold is refused with
+/// `test_files::missing`'s sentence. Shared by a plain form step and a
+/// postback step so the two cannot disagree.
+pub(crate) fn attach_files(step: &Step, files: &BTreeMap<String, Vec<u8>>) -> Result<Vec<FormFile>, String> {
+    let mut attached = Vec::with_capacity(step.files.len());
+    for (field, name) in &step.files {
+        let Some(bytes) = files.get(name) else {
+            return Err(crate::test_files::missing(name, &format!("the step \"{}\"", step.name)));
+        };
+        attached.push(FormFile {
+            field: field.clone(),
+            name: name.clone(),
+            content_type: crate::test_files::content_type(name).to_string(),
+            size: bytes.len() as u64,
+            base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        });
+    }
+    Ok(attached)
 }
 
 /// A query map as a query string: each key and value percent-encoded as a
@@ -502,6 +511,61 @@ pub fn scrub_tokens(text: &str, known: Option<&str>) -> String {
         .into_owned();
     out = TOKEN_MEMBER.replace_all(&out, format!("${{1}}\"{TOKEN_SHOWN}\"")).into_owned();
     TOKEN_PAIR.replace_all(&out, format!("${{1}}{TOKEN_SHOWN}")).into_owned()
+}
+
+/// An opening tag's `name=` or `id=`, with any quoting.
+static NAME_OR_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\b(?:name|id)\s*=\s*["']?([^\s"'>]*)"#).unwrap());
+/// The `value=` a tag carries (not `content=`), with any quoting.
+static ONLY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(\bvalue\s*=\s*)(?:"[^"]*"?|'[^']*'?|[^\s"'>]+)"#).unwrap()
+});
+
+/// An UpdatePanel (ASP.NET AJAX) answer carries a hidden field as
+/// `hiddenField|<name>|<value>|`; the value runs to the next `|`, or to the
+/// end of a body that was cut inside it.
+static DELTA_FIELD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(hiddenField\|)(__[^|]*)\|[^|]*").unwrap());
+
+/// Whether a `__` name holds page state. `__EVENTTARGET` and
+/// `__EVENTARGUMENT` say which control posted, not what the page holds, and
+/// the anti-forgery token has its own scrub (`scrub_tokens`, shown as
+/// `(token)`).
+fn is_page_state_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("__")
+        && !matches!(name.as_str(), "__eventtarget" | "__eventargument" | "__requestverificationtoken")
+}
+
+/// `text` - a page, or an UpdatePanel answer - with the value of every `__`
+/// hidden field taken out (`__VIEWSTATE`, `__EVENTVALIDATION`,
+/// `__VIEWSTATEGENERATOR`, ...): in each opening tag named or identified
+/// `__...`, the `value=` becomes `(page state)`, and so does the value in a
+/// `hiddenField|__...|<value>|` entry. Runs BEFORE `excerpt`, like
+/// `scrub_tokens`, so a cap never cuts a value in half.
+pub fn scrub_page_state(text: &str) -> String {
+    let text = DELTA_FIELD.replace_all(text, |c: &regex::Captures| {
+        if is_page_state_name(&c[2]) {
+            format!("{}{}|{}", &c[1], &c[2], super::postback::PAGE_STATE_SHOWN)
+        } else if c[2].eq_ignore_ascii_case("__RequestVerificationToken") {
+            // `scrub_tokens` reads tags and `name=value` text, not pipes.
+            format!("{}{}|{}", &c[1], &c[2], TOKEN_SHOWN)
+        } else {
+            c[0].to_string()
+        }
+    });
+    TAG.replace_all(&text, |c: &regex::Captures| {
+        let tag = &c[0];
+        let is_state = NAME_OR_ID.captures_iter(tag).any(|n| is_page_state_name(&n[1]));
+        if is_state {
+            ONLY_VALUE
+                .replace_all(tag, format!("${{1}}\"{}\"", super::postback::PAGE_STATE_SHOWN))
+                .into_owned()
+        } else {
+            tag.to_string()
+        }
+    })
+    .into_owned()
 }
 
 /// A captured JSON value with its tokens taken out, for what a report

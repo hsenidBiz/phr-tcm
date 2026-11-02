@@ -286,3 +286,87 @@ fn the_request_line_keeps_the_handler_and_the_call_knows_the_ids_it_sends() {
     assert!(!sends_id(&one, "27"), "a longer number is not the id");
     assert!(!sends_id(&one, "99"));
 }
+
+#[test]
+fn a_step_with_no_method_and_no_postback_is_refused_at_once() {
+    use v2_lib::api_templates::one_off::parse;
+    for body in [
+        json!({ "step": { "path": "/hr/x" } }),
+        json!({ "step": { "path": "/hr/x" }, "effect": "create" }),
+    ] {
+        let (code, said) = parse(&body.to_string()).unwrap_err();
+        assert_eq!(code, 400);
+        assert!(said.starts_with("the step needs a method: GET or POST"), "{said}");
+    }
+}
+
+#[test]
+fn a_postback_one_off_parses_needs_an_effect_and_a_delete_button_is_a_delete() {
+    use v2_lib::api_templates::one_off::{parse, request_of, request_path, EFFECT_NEEDED, LOOKS_LIKE_A_DELETE};
+    let pb = |button: &str| json!({ "step": { "postback": { "page": "/Perf/{{pid}}.aspx?x=1", "button": button } } });
+
+    let (code, said) = parse(&pb("btnSave").to_string()).unwrap_err();
+    assert_eq!((code, said.as_str()), (400, EFFECT_NEEDED));
+
+    let mut edit = pb("CmdDeleteItem");
+    edit["effect"] = json!("edit");
+    let (code, said) = parse(&edit.to_string()).unwrap_err();
+    assert_eq!((code, said.as_str()), (400, LOOKS_LIKE_A_DELETE));
+    let mut edit = pb("lnkRemove");
+    edit["effect"] = json!("edit");
+    assert_eq!(parse(&edit.to_string()).unwrap_err().1, LOOKS_LIKE_A_DELETE);
+
+    // As a delete, with the person's yes, it is accepted.
+    let mut del = pb("CmdDeleteItem");
+    del["effect"] = json!("delete");
+    del["person_said_yes"] = json!(true);
+    assert!(parse(&del.to_string()).is_ok());
+
+    let mut ok = pb("btnSave");
+    ok["effect"] = json!("edit");
+    ok["values"] = json!({ "pid": "Eval" });
+    ok["params"] = json!([{ "name": "pid", "type": "string", "required": true }]);
+    let one = parse(&ok.to_string()).unwrap();
+    assert_eq!(request_path(&one), "/Perf/Eval.aspx?x=1");
+    assert_eq!(request_of(&one), "POST /Perf/Eval.aspx");
+}
+
+#[test]
+fn a_postback_is_never_the_same_call_and_sends_its_ids() {
+    use v2_lib::api_templates::one_off::{parse, sends_id};
+    let t = saved("edit", json!({ "name": "r", "postback": { "page": "/Perf/Eval.aspx", "button": "btnSave" } }));
+    let s = step(json!({ "postback": { "page": "/Perf/Eval.aspx", "button": "btnSave" } }));
+    assert!(!same_call(&t, &s));
+    let plain = saved("edit", json!({ "name": "r", "method": "POST", "path": "/Perf/Eval.aspx" }));
+    assert!(!same_call(&plain, &s));
+
+    let one = parse(
+        &json!({ "step": { "postback": { "page": "/Perf/Eval.aspx?id=274", "button": "btnSave", "argument": "55" } },
+                 "effect": "edit" })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(sends_id(&one, "274"), "the id in the page");
+    assert!(sends_id(&one, "55"), "the id in the argument");
+    assert!(!sends_id(&one, "27"));
+}
+
+#[test]
+fn a_delete_argument_makes_a_postback_a_delete() {
+    use v2_lib::api_templates::one_off::{parse, LOOKS_LIKE_A_DELETE};
+    // __doPostBack('gvItems','Delete$0'): the grid's own delete command.
+    for argument in ["Delete$0", "delete$12", "DeleteRow", "Remove$3"] {
+        let body = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": argument } },
+                           "effect": "edit" });
+        assert_eq!(parse(&body.to_string()).unwrap_err().1, LOOKS_LIKE_A_DELETE, "{argument}");
+    }
+    let mut ok = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": "Delete$0" } },
+                         "effect": "delete" });
+    assert!(parse(&ok.to_string()).is_err(), "a delete needs the person's yes");
+    ok["person_said_yes"] = json!(true);
+    assert!(parse(&ok.to_string()).is_ok());
+    // Other arguments are not deletes.
+    let sort = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": "Sort$Name" } },
+                       "effect": "edit" });
+    assert!(parse(&sort.to_string()).is_ok());
+}

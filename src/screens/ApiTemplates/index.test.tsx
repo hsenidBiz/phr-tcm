@@ -1182,3 +1182,58 @@ test("names the environment whose templates are on screen", async () => {
   renderScreen();
   expect(await screen.findByRole("note", { name: "Environment" })).toHaveTextContent("Templates for Staging");
 });
+
+test("a postback step shows its page, button, fields and HTML checks", async () => {
+  const postback = {
+    name: "save evaluation",
+    postback: { page: "/Perf/CompanyEvaluation.aspx", button: "CmdSave" },
+    form: { txtEvalName: "{{evalName}}", dtStartDate: "{{start}}", chkGoal$0: "on" },
+    expect: {
+      status: 200,
+      html: { shows: ["Saved"], hides: ["#ValidationSummary1"], rows: { table: "#grdGoals", has: "Quality" } },
+    },
+    capture: { evalId: "html:#hdnEvalId@value" },
+  };
+  const withPostback = {
+    ...OVERVIEW,
+    templates: OVERVIEW.templates.map((s, i) =>
+      i === 0 ? { ...s, template: { ...s.template, steps: [postback] } } : s,
+    ),
+  };
+  mockOverview(withPostback);
+  renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const step = within(within(row).getByTestId("template-details")).getByRole("list", { name: "Steps" }).querySelector("li")!;
+  const text = step.textContent ?? "";
+  expect(text).toContain("Postback to /Perf/CompanyEvaluation.aspx - CmdSave");
+  expect(text).toContain("txtEvalName, dtStartDate, chkGoal$0");
+  expect(text).toContain("status 200");
+  expect(text).toContain("shows Saved");
+  expect(text).toContain("hides #ValidationSummary1");
+  expect(text).toContain("row of #grdGoals has Quality");
+  expect(text).toContain("evalId ← html:#hdnEvalId@value");
+  expect(text).not.toContain("undefined");
+  expect(text).not.toContain("null");
+});
+
+test("a postback step shows its argument and says when it loads the page fresh", async () => {
+  const postback = {
+    name: "delete the row",
+    postback: { page: "/Perf/CompanyEvaluation.aspx", button: "gvItems", argument: "Edit$2", fresh: true },
+  };
+  const withPostback = {
+    ...OVERVIEW,
+    templates: OVERVIEW.templates.map((s, i) =>
+      i === 0 ? { ...s, template: { ...s.template, steps: [postback] } } : s,
+    ),
+  };
+  mockOverview(withPostback);
+  renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const step = within(within(row).getByTestId("template-details")).getByRole("list", { name: "Steps" }).querySelector("li")!;
+  const text = step.textContent ?? "";
+  expect(text).toContain("Postback to /Perf/CompanyEvaluation.aspx - gvItems (Edit$2)");
+  expect(text).toContain("loads fresh");
+});

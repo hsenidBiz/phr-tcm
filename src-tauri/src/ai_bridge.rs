@@ -1983,10 +1983,10 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
     let (org, project) = (req.org.as_str(), req.project.as_str());
     let vars: std::collections::BTreeMap<String, serde_json::Value> =
         crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
-    let posts = req.template.steps.iter().any(|s| s.method == Method::Post);
+    let posts = req.template.steps.iter().any(|s| s.method() == Method::Post);
     if posts && discovery_must_not_save(root, state) {
-        let first = req.template.steps.iter().find(|s| s.method == Method::Post)?;
-        let path = crate::api_templates::exec::substitute_str(&first.path, &vars);
+        let first = req.template.steps.iter().find(|s| s.method() == Method::Post)?;
+        let path = crate::api_templates::exec::substitute_str(&first.address(), &vars);
         return Some((409, crate::browser::save_guard::blocked("POST", &path)));
     }
     let Some(_claim) = claim() else {
@@ -2024,10 +2024,15 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
         .template
         .steps
         .iter()
-        .filter(|s| s.method == Method::Post)
-        .filter(|s| report.steps.iter().any(|r| r.name == s.name && r.status.is_some()))
+        .filter(|s| s.method() == Method::Post)
+        // A postback that timed out after the post went out has no status but may have saved.
+        .filter(|s| {
+            report.steps.iter().any(|r| {
+                r.name == s.name && (r.status.is_some() || r.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED))
+            })
+        })
         .map(|s| {
-            let path = crate::api_templates::exec::substitute_str(&s.path, &with_captures);
+            let path = crate::api_templates::exec::substitute_str(&s.address(), &with_captures);
             // The `handler` says which save the page's address is.
             let path = match s.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")) {
                 Some((_, handler)) => format!(
@@ -7561,7 +7566,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
         Ok(one) => one,
         Err(refused) => return refused,
     };
-    let posts = one.step.method == Method::Post;
+    let posts = one.step.method() == Method::Post;
     if posts && !ctx.api_writes {
         return (400, API_WRITES_OFF.to_string());
     }
@@ -7616,7 +7621,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
 
     let report = &out.report;
     let request = oo::request_of(&one);
-    let sent = report.steps.iter().any(|s| s.status.is_some());
+    // A postback that timed out, or whose browser stopped answering, after the
+    // post went out has no status but may have saved: it counts as sent.
+    let sent = report.steps.iter().any(|s| s.status.is_some() || s.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED));
     // Every POST that was sent is a save, whatever the call said it does: a
     // "read" that wrote must not leave the session's saves looking clean.
     if posts && sent {
@@ -7638,6 +7645,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
             "body": crate::autorun::capture_redact::redact_body(a.content_type.as_deref(), &a.body),
             "cut": a.cut,
         });
+    }
+    if let Some(carried) = out.postback_carried {
+        v["postback"] = serde_json::json!(if carried { oo::CARRIED_ON } else { oo::LOADED_FRESH });
     }
     if !report.ok {
         v["failed"] = serde_json::json!(report.failed);
@@ -7682,6 +7692,11 @@ pub async fn send_in<B: DiscoveryBrowser>(
     }
     if report.ok {
         match &session {
+            // A postback may have carried on from the call before it, so it
+            // cannot stand alone as a template.
+            _ if one.step.is_postback() => {
+                v["template"] = serde_json::json!({ "not_saved": crate::api_templates::postback::POSTBACK_NOT_SAVED });
+            }
             Some(session) => {
                 let status = out.answer.as_ref().map(|a| a.status);
                 let token = (out.token_page.as_deref(), out.token_found);
@@ -7945,7 +7960,7 @@ fn save_or_match_one_off(
     // A POST that said it only reads is saved as a read only when the change
     // list shows it changed nothing: one the session has recorded a change
     // for (or whose list cannot be read) is saved as an edit.
-    if one.step.method == crate::api_templates::Method::Post && one.effect == Effect::Read {
+    if one.step.method() == crate::api_templates::Method::Post && one.effect == Effect::Read {
         let changed = crate::autorun::explore::load(root, session)
             .map_or(true, |s| crate::autorun::explore::names_request(&s, &oo::request_of(&one)));
         if changed {
