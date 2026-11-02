@@ -404,6 +404,14 @@ export default function AccountsDialog({
   ];
   // The Proposed tab goes with its last proposal: fall back to Accounts.
   const view: TabId = tab === "proposed" && proposals.length === 0 ? "accounts" : tab;
+  // Stored too, so a proposal that arrives later does not pull the view
+  // back; focus goes to the Accounts tab when it was in the vanished panel.
+  useEffect(() => {
+    if (tab !== "proposed" || proposed.data === undefined || proposals.length > 0) return;
+    setTab("accounts");
+    const at = document.activeElement;
+    if (!at || at === document.body) tabRefs.current.accounts?.focus();
+  }, [tab, proposed.data, proposals.length]);
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const last = tabs.length - 1;
@@ -445,7 +453,7 @@ export default function AccountsDialog({
               type="button"
               role="tab"
               aria-selected={isOn}
-              aria-controls={`${tabIds}-${id}-panel`}
+              aria-controls={isOn ? `${tabIds}-${id}-panel` : undefined}
               tabIndex={isOn ? 0 : -1}
               className={cn(
                 "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",

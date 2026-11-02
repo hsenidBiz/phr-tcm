@@ -150,12 +150,13 @@ function mountWithProposals(opts: {
     return null;
   });
   const onClose = vi.fn();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qc}>
       <AccountsDialog onClose={onClose} />
     </QueryClientProvider>,
   );
-  return { onClose, adds, log, state, ...utils };
+  return { onClose, adds, log, state, qc, ...utils };
 }
 
 test("the proposals are listed under their heading, each saying where its password comes from", async () => {
@@ -856,4 +857,40 @@ test("the Name column is wider than the others", async () => {
   expect(header.className).toContain("grid-cols-[1fr_1.6fr_1fr_1fr_2.5rem]");
   const row = screen.getByLabelText("Name for account 1").closest("div")!;
   expect(row.className).toContain("lg:grid-cols-[1fr_1.6fr_1fr_1fr_2.5rem]");
+});
+
+test("only the selected tab names its panel with aria-controls", async () => {
+  mountWithProposals({});
+  await screen.findByRole("tab", { name: "Proposed 2" });
+  const controls = screen.getAllByRole("tab").filter((t) => t.hasAttribute("aria-controls"));
+  expect(controls.map((t) => t.textContent)).toEqual(["Accounts"]);
+});
+
+test("a running check survives a tab switch", async () => {
+  let release: (v: unknown) => void = () => {};
+  const gate = new Promise((r) => (release = r));
+  mountForCheck((key) => (key === "admin" ? gate.then(() => checked("admin", "signed in fine")) : checked(key, "signed in")));
+  await openTab("Check sign-in");
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  await screen.findByText("Checking...");
+  await openTab("Accounts");
+  await openTab("Check sign-in");
+  expect(screen.getByText("Checking...")).toBeInTheDocument();
+  release(null);
+  expect(await screen.findByText("signed in fine")).toBeInTheDocument();
+});
+
+test("dismissing the last proposal falls back to Accounts, focuses its tab, and a later proposal does not jump the view", async () => {
+  const m = mountWithProposals({});
+  await openTab("Proposed");
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(screen.queryByRole("tab", { name: /^Proposed/ })).not.toBeInTheDocument());
+  expect(screen.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Accounts" })).toHaveFocus());
+  // The assistant proposes again: the tab returns, the view stays on Accounts.
+  m.state.proposals = PROPOSED;
+  await m.qc.invalidateQueries({ queryKey: ["env-proposals"] });
+  expect(await screen.findByRole("tab", { name: "Proposed 2" })).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
 });
