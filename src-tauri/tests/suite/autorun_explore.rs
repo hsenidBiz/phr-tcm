@@ -70,6 +70,8 @@ fn browser_that_saves(session: &str) -> Option<FakeBrowser> {
 
 #[tokio::test]
 async fn an_explore_start_signs_in_files_nothing_and_opens_a_change_list() {
+    // Signs in, so holds a browser lease: an environment switch test must not see it.
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = slot(signin_app(true), explore_opened());
 
@@ -98,6 +100,8 @@ async fn an_explore_start_signs_in_files_nothing_and_opens_a_change_list() {
 
 #[tokio::test]
 async fn an_explore_start_whose_change_list_cannot_be_made_does_not_start() {
+    // Signs in, so holds a browser lease: an environment switch test must not see it.
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     // A file where the folder belongs: the change list cannot be made.
     std::fs::write(dir.path().join("explore"), "x").unwrap();

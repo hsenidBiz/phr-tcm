@@ -188,6 +188,8 @@ async fn a_sign_in_with_no_recipe_saved_fails_and_stops_the_rest_of_the_step() {
 
 #[tokio::test]
 async fn a_successful_sign_in_sets_the_account_and_the_actions_after_it_run() {
+    // Signs in, so holds a browser lease: an environment switch test must not see it.
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     save_recipe(dir.path(), "Acme", "Web", &recipe()).unwrap();
     save_accounts(dir.path(), &[account()]).unwrap();
@@ -349,6 +351,8 @@ async fn a_failed_page_action_gets_a_screenshot_and_a_harness_failure_gets_none(
 /// is not there any more.
 #[tokio::test]
 async fn a_sign_in_whose_clear_fails_gets_no_screenshot() {
+    // Signs in, so holds a browser lease: an environment switch test must not see it.
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     save_recipe(dir.path(), "Acme", "Web", &recipe()).unwrap();
     save_accounts(dir.path(), &[account()]).unwrap();
@@ -2041,6 +2045,8 @@ async fn a_busy_or_expired_answer_is_not_a_refusal() {
 
 #[tokio::test]
 async fn a_stop_during_a_mid_script_sign_ins_wait_ends_it_at_once() {
+    // Signs in, so holds a browser lease: an environment switch test must not see it.
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun};
     use v2_lib::autorun::signin::SIGN_IN_STOPPED;
     let dir = tempfile::tempdir().unwrap();
