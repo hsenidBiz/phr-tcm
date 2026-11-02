@@ -75,6 +75,19 @@
     </ul>
   </div>
 
+  <div class="item">
+    <div class="head"><span class="title">WebForms postback steps in API templates</span><span class="status todo">Built on feat/webforms-postbacks, not released</span></div>
+    <p>A template step (and a one-off in an explore session) can be a full WebForms postback: the page state is carried in the page itself, chained across steps of a run, with HTML checks and captures. Full postbacks only.</p>
+    <ul>
+      <li>Hand check owed on a live PeoplesHR WebForms page: <code>CompanyEvaluation.aspx</code>, Save, then Create, then Save Item, proven and saved as a template.</li>
+      <li>Hand check owed: a one-off try of each of those three postbacks, one call at a time (the answer says carried on or loaded fresh).</li>
+      <li>Hand check owed: a run whose session was taken over part-way (signed out) fails with the signed-out sentence and sends nothing more.</li>
+      <li>Open follow-up: record-and-replay of postbacks (turning a person's clicks on a WebForms page into a template; approach 3 of the design). Parked; out of scope for this build.</li>
+      <li>Open follow-up: a cross-origin SSO redirect on a postback is read as signed out. Parked.</li>
+      <li>Open follow-up: a saved template (a plain POST or a postback) is not checked for a step that deletes, such as a Delete argument or a delete endpoint, against its declared effect. Only one-off requests check this today.</li>
+    </ul>
+  </div>
+
   <h2>Expired passwords, kept data and Check sign-in (2.4.3-beta.9)</h2>
   <div class="item">
     <div class="head"><span class="title">Kept records, password expiry and Check sign-in</span><span class="status todo">Built, hand checks owed</span></div>

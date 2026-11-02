@@ -752,6 +752,35 @@ fn the_guide_says_paths_keep_the_applications_letter_case() {
     assert!(text.contains("/hr/pmsv10"), "{text}");
 }
 
+/// The guide teaches WebForms postback steps: how to spot a page, the shape,
+/// the carry, the checks, the limits and the one-off differences.
+#[test]
+fn the_guide_teaches_webforms_postbacks() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for part in [
+        "## WebForms pages (postbacks)",
+        "__VIEWSTATE",
+        "get_autorun_page",
+        "\"fresh\": true",
+        "expect.html",
+        "html:#",
+        "never sent again",
+        "UpdatePanel",
+        "Save Item",
+        "may already have saved",
+        "WebForm_PostBackOptions",
+        "Delete",
+        "antiforgery_page",
+        "carried on",
+        "loaded fresh",
+    ] {
+        assert!(flat.contains(part), "the guide never mentions {part}");
+    }
+    let section = &flat[flat.find("## WebForms pages (postbacks)").unwrap()..flat.find("## How to build one").unwrap()];
+    assert!(!section.contains("http"), "the postback section names a host");
+}
+
 /// The guide teaches flows: the two tools, the order of work (map the
 /// wizard before any template), and that a stage may be optional.
 #[test]
