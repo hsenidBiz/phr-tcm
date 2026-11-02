@@ -515,3 +515,245 @@ pub fn sent_body(req: &PostbackRequest, a: Option<&Answered>) -> String {
     }
     Value::Object(body).to_string()
 }
+
+/// Sends one postback step from the page itself (`PostbackRequest`,
+/// serialized) and answers with what happened, never with the page: field
+/// NAMES, check results, capture values and a scrubbed excerpt are all that
+/// come back (`Reply`). `run` names the run; the page keeps the last answer
+/// of each page of the run in `window.__tcmPostback.pages` (key -> `{ html,
+/// url }`), and a different `run` starts that map empty, so a browser still
+/// on the page from an earlier run carries nothing from it. `carry` is a
+/// `CarryMode`: `must` carries on from the held answer or refuses (`lost`),
+/// `if_there` does when it is held and loads otherwise, `fresh` loads. The
+/// post is what a browser would send: every `__` hidden input, every other
+/// enabled control's value (unchecked boxes left out), then the template's
+/// fields, then the control clicked - a submit as `name=value` with an empty
+/// target, anything else as the full target and `req.argument`. The whole
+/// call is aborted after `limitMs`. A postback is never retried by anyone: a
+/// timeout comes back as `{ error: "timeout" }`.
+pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carryLimit, answerLimit) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), limitMs || 30000);
+  try {
+    if (!window.__tcmPostback || window.__tcmPostback.run !== run) window.__tcmPostback = { run: run, pages: {} };
+    const pages = window.__tcmPostback.pages;
+    // Rust's `page_key`: the path alone, ASCII lower case, no trailing "/", "/" when nothing is left.
+    const keyOf = (u) => {
+      const p = new URL(u, location.href).pathname.replace(/[A-Z]/g, (c) => c.toLowerCase()).replace(/\/+$/, '');
+      return p === '' ? '/' : p;
+    };
+    const size = (s) => new Blob([s]).size;
+    const parse = (html) => new DOMParser().parseFromString(html, 'text/html');
+    const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+    const typeOf = (e) => (e.getAttribute('type') || '').toLowerCase();
+
+    // Hidden: it or an ancestor has `hidden`, an inline display:none or visibility:hidden, or is
+    // input[type=hidden], script, style, noscript or template. DOMParser applies no stylesheet.
+    const NEVER = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'];
+    const selfHidden = (e) => {
+      const s = e.getAttribute('style') || '';
+      return e.hasAttribute('hidden') || NEVER.includes(e.tagName) ||
+        (e.tagName === 'INPUT' && typeOf(e) === 'hidden') ||
+        /(^|;)\s*display\s*:\s*none\b/i.test(s) || /(^|;)\s*visibility\s*:\s*hidden\b/i.test(s);
+    };
+    const hidden = (e) => { for (let x = e; x && x.nodeType === 1; x = x.parentElement) if (selfHidden(x)) return true; return false; };
+    const textOf = (root) => {
+      const out = [];
+      const walk = (n) => {
+        if (n.nodeType === 3) out.push(n.nodeValue);
+        else if (n.nodeType === 1 && !selfHidden(n)) for (const c of n.childNodes) walk(c);
+      };
+      walk(root);
+      return norm(out.join(' '));
+    };
+    // Mirrors Rust's `is_selector`; an entry that is not a valid selector is read as text.
+    const isSel = (s) => s.startsWith('#') || s.startsWith('.') || s.startsWith('[') || s.includes('>');
+    const shown = (doc, what) => {
+      if (isSel(what)) {
+        try { return Array.from(doc.querySelectorAll(what)).some((e) => !hidden(e)); } catch (e) { /* text */ }
+      }
+      return textOf(doc.body || doc.documentElement).includes(norm(what));
+    };
+
+    // The page to post from: the held answer, or a fresh load.
+    let source = null;
+    if (carry === 'must' || carry === 'if_there') {
+      const held = pages[req.key];
+      if (held) source = { html: held.html, url: held.url, carried: true };
+      else if (carry === 'must') return { refused: 'lost' };
+    }
+    if (!source) {
+      const g = await fetch(req.url, { credentials: 'same-origin', signal: ctrl.signal });
+      if (!g.ok) return { refused: 'load_failed', status: g.status };
+      const html = await g.text();
+      if (size(html) > carryLimit) return { refused: 'too_large' };
+      source = { html: html, url: g.url, carried: false };
+    }
+    const doc = parse(source.html);
+    if (doc.querySelector('input[type="password"]')) return { refused: 'signed_out' };
+    const vs = doc.querySelector('input[name="__VIEWSTATE"]');
+    const form = vs && (vs.form || vs.closest('form'));
+    if (!form) return { refused: 'not_webforms' };
+
+    // The control clicked: by name (equal, or ending in "$<button>"), or a
+    // __doPostBack('<target>' in its href or onclick.
+    const full = (n) => n === req.button || n.endsWith('$' + req.button);
+    const posting = /__doPostBack\(\s*\\?['"]([^'"\\]*)/;
+    const found = [];
+    for (const e of doc.querySelectorAll('input, button, select, textarea, a')) {
+      if (e.tagName === 'INPUT' && typeOf(e) === 'hidden') continue;
+      const name = e.getAttribute('name');
+      if (name && full(name)) { found.push({ e: e, target: name, byName: true }); continue; }
+      const m = posting.exec((e.getAttribute('href') || '') + ' ' + (e.getAttribute('onclick') || ''));
+      if (m && full(m[1])) found.push({ e: e, target: m[1], byName: false });
+    }
+    if (found.length === 0) return { refused: 'no_button' };
+    if (found.length > 1) return { refused: 'many_buttons', count: found.length };
+    const hit = found[0];
+    const hitType = typeOf(hit.e);
+    const submit = hit.byName && ((hit.e.tagName === 'INPUT' && (hitType === 'submit' || hitType === 'image')) ||
+      (hit.e.tagName === 'BUTTON' && (hitType === '' || hitType === 'submit')));
+
+    // What a browser would send for the form as the page has it.
+    const sent = [];
+    const known = new Set();
+    const named = Array.from(form.elements).filter((e) => e.getAttribute('name'));
+    for (const e of named) {
+      const name = e.getAttribute('name');
+      known.add(name);
+      if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(e.tagName) || e.matches(':disabled')) continue;
+      if (e.tagName === 'INPUT') {
+        const t = typeOf(e);
+        if (['submit', 'image', 'button', 'reset', 'file'].includes(t)) continue;
+        if ((t === 'checkbox' || t === 'radio') && !e.checked) continue;
+        sent.push([name, e.value]);
+      } else if (e.tagName === 'SELECT') {
+        for (const o of e.selectedOptions) sent.push([name, o.value]);
+      } else {
+        sent.push([name, e.value]);
+      }
+    }
+    const drop = (name) => { for (let i = sent.length - 1; i >= 0; i--) if (sent[i][0] === name) sent.splice(i, 1); };
+    const unknown = [];
+    for (const [k, v] of Object.entries(req.fields)) {
+      if (!known.has(k)) unknown.push(k);
+      const ticks = named.some((e) => e.getAttribute('name') === k && ['checkbox', 'radio'].includes(typeOf(e)));
+      drop(k);
+      if (!(ticks && v === '')) sent.push([k, v]);
+    }
+    drop('__EVENTTARGET');
+    drop('__EVENTARGUMENT');
+    if (submit) {
+      sent.push(['__EVENTTARGET', ''], ['__EVENTARGUMENT', '']);
+      if (hit.e.tagName === 'INPUT' && hitType === 'image') sent.push([hit.target + '.x', '0'], [hit.target + '.y', '0']);
+      else sent.push([hit.target, hit.e.getAttribute('value') || '']);
+    } else {
+      sent.push(['__EVENTTARGET', hit.target], ['__EVENTARGUMENT', req.argument]);
+    }
+    const stateNames = [];
+    const pageNames = [];
+    for (const [n] of sent) {
+      const list = n.startsWith('__') ? stateNames : pageNames;
+      if (!list.includes(n)) list.push(n);
+    }
+
+    let body;
+    if (req.files && req.files.length) {
+      body = new FormData();
+      for (const [k, v] of sent) body.append(k, v);
+      for (const f of req.files) {
+        body.append(f.field, new Blob([Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0))], { type: f.contentType }), f.name);
+      }
+    } else {
+      body = new URLSearchParams();
+      for (const [k, v] of sent) body.append(k, v);
+    }
+    // The form's own action, as the browser reads it from the page it is on.
+    let action = new URL(form.getAttribute('action') || source.url, source.url);
+    if (action.origin !== location.origin) action = new URL(req.url, location.href);
+    const r = await fetch(action.href, { method: 'POST', credentials: 'same-origin', headers: { 'Accept': 'text/html,application/xhtml+xml' }, body: body, signal: ctrl.signal });
+    const text = await r.text();
+
+    const finalKey = keyOf(r.url);
+    const out = {
+      sent: true, status: r.status, contentType: r.headers.get('content-type'), finalUrl: r.url, redirected: r.redirected,
+      finalKey: finalKey, carried: source.carried, signedOut: false, tooLarge: false, partial: false,
+      stateNames: stateNames, pageNames: pageNames, unknownFields: unknown, aspError: null, invalidPostback: false,
+      invalidField: null, checks: [], captures: {}, excerpt: '', cut: false,
+    };
+    if (size(text) > carryLimit) { out.tooLarge = true; return out; }
+    // An UpdatePanel answer is `length|type|id|content|...`; it is no page to read or keep, and
+    // its `hiddenField|__VIEWSTATE|...` entries are page state, so no excerpt is made of it.
+    if (/^\d+\|/.test(text)) { out.partial = true; return out; }
+    const ans = parse(text);
+    if (ans.querySelector('input[type="password"]')) { out.signedOut = true; return out; }
+    pages[finalKey] = { html: text, url: r.url };
+
+    // The application's own error page, and its refusal of a value the page did not offer.
+    const title = norm(ans.title || '');
+    let asp = null;
+    if (title.includes('Runtime Error')) asp = title;
+    else {
+      for (const h of ans.querySelectorAll('h1, span')) {
+        if ((h.textContent || '').trim().startsWith('Server Error in')) { asp = title || norm(h.textContent); break; }
+      }
+    }
+    if (asp !== null) out.aspError = asp.slice(0, 200);
+    if (text.includes('Invalid postback or callback argument') && (asp !== null || r.status >= 400)) {
+      out.invalidPostback = true;
+      const word = /[A-Za-z0-9_$]/;
+      for (const n of pageNames) {
+        for (let i = text.indexOf(n); i >= 0; i = text.indexOf(n, i + 1)) {
+          if (!word.test(text[i - 1] || ' ') && !word.test(text[i + n.length] || ' ')) { out.invalidField = n; break; }
+        }
+        if (out.invalidField) break;
+      }
+    }
+
+    const check = (kind, what, ok, count) => out.checks.push({ kind: kind, what: what, ok: ok, count: count || 0 });
+    for (const w of req.shows) check('shows', w, shown(ans, w));
+    for (const w of req.hides) check('hides', w, !shown(ans, w));
+    if (req.rows) {
+      let tables = [];
+      try { tables = Array.from(ans.querySelectorAll(req.rows.table)); } catch (e) { /* none */ }
+      if (tables.length !== 1) check('table', req.rows.table, false, tables.length);
+      else {
+        const has = norm(req.rows.has);
+        check('rows', req.rows.has, Array.from(tables[0].querySelectorAll('tr')).some((tr) => !hidden(tr) && textOf(tr).includes(has)), 1);
+      }
+    }
+    for (const [name, cap] of Object.entries(req.captures)) {
+      let els;
+      try { els = Array.from(ans.querySelectorAll(cap.selector)); }
+      catch (e) { out.captures[name] = { count: 0, value: null, state: false, badSelector: true }; continue; }
+      const c = { count: els.length, value: null, state: false, badSelector: false };
+      if (els.length === 1) {
+        const e = els[0];
+        const held = ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.tagName) &&
+          ((e.getAttribute('name') || '').startsWith('__') || (e.getAttribute('id') || '').startsWith('__'));
+        if (held) c.state = true;
+        else if (cap.attr === null || cap.attr === undefined) c.value = (e.textContent || '').trim();
+        else if (cap.attr === 'value' && e.tagName === 'SELECT') { const o = e.selectedOptions[0]; c.value = o ? o.value : null; }
+        else c.value = e.getAttribute(cap.attr);
+      }
+      out.captures[name] = c;
+    }
+
+    // The excerpt: the answer with every state field's value taken out.
+    for (const e of ans.querySelectorAll('[name], [id]')) {
+      if (!e.hasAttribute('value')) continue;
+      for (const n of [e.getAttribute('name') || '', e.getAttribute('id') || '']) {
+        if (/^__requestverificationtoken$/i.test(n)) e.setAttribute('value', '(token)');
+        else if (n.startsWith('__') && !/^__(eventtarget|eventargument)$/i.test(n)) e.setAttribute('value', '(page state)');
+      }
+    }
+    const html = ans.documentElement ? ans.documentElement.outerHTML : '';
+    out.cut = html.length >= answerLimit;
+    out.excerpt = html.slice(0, answerLimit);
+    return out;
+  } catch (e) {
+    return { error: e && e.name === 'AbortError' ? 'timeout' : String(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}"##;
