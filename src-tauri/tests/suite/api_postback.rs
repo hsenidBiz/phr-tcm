@@ -72,24 +72,33 @@ fn has(p: &[String], sentence: &str) -> bool {
 
 #[test]
 fn a_template_saved_before_postbacks_writes_back_unchanged() {
-    let mut with_files = old();
-    with_files["steps"][0]["files"] = json!({ "Attachment": "sample.pdf" });
-    // `description`, `lookup` and `json` have always been written as null
-    // when absent; what must not appear is anything this change added.
-    fn without_nulls(v: &mut Value) {
-        match v {
-            Value::Object(m) => {
-                m.retain(|_, x| !x.is_null());
-                m.values_mut().for_each(without_nulls);
-            }
-            Value::Array(a) => a.iter_mut().for_each(without_nulls),
-            _ => {}
+    // Exactly what the app has always written: `description`, `lookup` and
+    // `json` as null when absent, keys in struct order - and nothing new
+    // (no `postback: null`, no `html: null`).
+    let written = |files: bool| {
+        let mut step = json!({
+            "name": "Cycle setup", "method": "POST",
+            "path": "/hr/pmsv10/performancecycle", "query": { "handler": "SaveProgress" },
+            "json": null,
+            "form": { "CycleName": "{{cycleName}}" }
+        });
+        if files {
+            step["files"] = json!({ "Attachment": "sample.pdf" });
         }
-    }
-    for v in [old(), with_files] {
-        let mut back = serde_json::to_value(parsed(&v)).unwrap();
-        without_nulls(&mut back);
-        assert_eq!(back, v);
+        step["expect"] = json!({ "status": 200, "json": { "success": true } });
+        step["capture"] = json!({ "cycleId": "$.cycleId" });
+        let mut v = old();
+        v["params"] = json!([{
+            "name": "cycleName", "type": "string", "required": true, "description": null, "lookup": null
+        }]);
+        v["steps"] = json!([step]);
+        v
+    };
+    for files in [false, true] {
+        let v = written(files);
+        let back = serde_json::to_string_pretty(&parsed(&v)).unwrap();
+        assert_eq!(back, serde_json::to_string_pretty(&v).unwrap());
+        assert!(!back.contains("postback") && !back.contains("\"html\""), "{back}");
     }
 }
 

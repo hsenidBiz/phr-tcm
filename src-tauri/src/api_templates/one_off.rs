@@ -111,6 +111,10 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         Ok(s) => s,
         Err(e) => return bad(format!("that is not a step: {e}. Expected {SHAPE}.")),
     };
+    // A postback is always a POST; any other step must say which.
+    if step.postback.is_none() && step.method.is_none() {
+        return bad(format!("the step needs a method: GET or POST. Expected {SHAPE}."));
+    }
 
     let said = match obj.get("effect") {
         None | Some(Value::Null) => None,

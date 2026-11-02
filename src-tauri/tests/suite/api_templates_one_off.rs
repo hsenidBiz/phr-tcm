@@ -286,3 +286,16 @@ fn the_request_line_keeps_the_handler_and_the_call_knows_the_ids_it_sends() {
     assert!(!sends_id(&one, "27"), "a longer number is not the id");
     assert!(!sends_id(&one, "99"));
 }
+
+#[test]
+fn a_step_with_no_method_and_no_postback_is_refused_at_once() {
+    use v2_lib::api_templates::one_off::parse;
+    for body in [
+        json!({ "step": { "path": "/hr/x" } }),
+        json!({ "step": { "path": "/hr/x" }, "effect": "create" }),
+    ] {
+        let (code, said) = parse(&body.to_string()).unwrap_err();
+        assert_eq!(code, 400);
+        assert!(said.starts_with("the step needs a method: GET or POST"), "{said}");
+    }
+}
