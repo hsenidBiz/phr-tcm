@@ -23,7 +23,7 @@
 //! a proven template and appends run history from the `RunReport`.
 
 use super::exec::{
-    self, build_request, capture, check_expect, excerpt, parse_capture_path, scrub_tokens, scrub_value, Body,
+    self, build_request, capture, check_expect, excerpt, parse_capture_path, scrub_page_state, scrub_tokens, scrub_value, Body,
 };
 use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_adapting};
 use super::flow::{check_stage_ref, Flow};
@@ -1424,6 +1424,10 @@ type StepResult = Result<(u16, String), StepFailure>;
 pub const RETRY_PAUSES: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(3), Duration::from_secs(5)];
 
 /// The sentence for a step refused unread, as the person reads it.
+/// Why a step whose answer came from another page fails: a sign-in page
+/// where the step's own page should be.
+pub const SENT_ELSEWHERE: &str = "was sent to another page - the session may have ended";
+
 const REFUSED_UNREAD: &str = "the application refused this request without reading it (an empty 400) - \
      usually a busy moment on the server, or this account being signed in somewhere else";
 
@@ -1523,7 +1527,7 @@ async fn run_step<D: Driver>(
         ));
         return Err(StepFailure {
             status: Some(status),
-            detail: "was sent to another page - the session may have ended".to_string(),
+            detail: SENT_ELSEWHERE.to_string(),
             unread: false,
             session_ended: true,
         });
@@ -1587,7 +1591,7 @@ async fn run_step<D: Driver>(
 /// anti-forgery token taken out (`scrub_tokens`) BEFORE the 500-character
 /// excerpt, so the cap can never leave half a token showing.
 fn shown(body: &str, token: &str) -> String {
-    excerpt(&scrub_tokens(body, Some(token)))
+    excerpt(&scrub_tokens(&scrub_page_state(body), Some(token)))
 }
 
 /// What came of one request, for its activity record.
