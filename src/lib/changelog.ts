@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.14",
+    date: "2026-11-02",
+    items: [
+      "The Auto Run Accounts window has three tabs: Accounts for editing your test accounts, Check sign-in, and Proposed (shown with a count when the assistant has proposed logins). Save and Cancel stay at the bottom of every tab, Check sign-in reminds you to save your changes first, and longer account names now fit.",
+    ],
+  },
+  {
     version: "2.4.3-beta.13",
     date: "2026-11-02",
     items: [
