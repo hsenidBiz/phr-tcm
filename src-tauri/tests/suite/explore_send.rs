@@ -959,6 +959,7 @@ async fn fresh_true_loads_the_page_again() {
     assert_eq!(status, 200, "{v}");
     assert_eq!(v["postback"], json!(LOADED_FRESH), "{v}");
     assert_eq!(posted(&r)[0][3], json!("fresh"));
+    assert_eq!(r.navigated(), "", "a fresh load is an in-page fetch, not a navigation");
 }
 
 #[tokio::test]
@@ -999,4 +1000,31 @@ async fn a_failed_postback_one_off_is_not_retried_and_not_saved() {
     assert_eq!(status, 502, "{v}");
     assert_eq!(posted(&r).len(), 1, "a postback one-off was sent again");
     assert!(v["template"].is_null(), "{v}");
+}
+
+#[tokio::test]
+async fn a_postback_one_off_that_may_have_saved_is_noted_and_reminds_to_record() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![json!({ "error": "timeout", "posted": true })]);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(posted(&r).len(), 1, "a postback one-off was sent again");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "a postback that may have saved was not noted: {:?}", s.writes);
+    assert_eq!((s.writes[0].method.as_str(), s.writes[0].path.as_str()), ("POST", EVAL_PAGE));
+    assert!(v["record_change"].is_string(), "no reminder to record the change: {v}");
+}
+
+#[tokio::test]
+async fn a_postback_one_off_that_never_went_out_is_not_noted() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![json!({ "error": "timeout" })]);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
+    assert!(v["record_change"].is_null(), "{v}");
 }

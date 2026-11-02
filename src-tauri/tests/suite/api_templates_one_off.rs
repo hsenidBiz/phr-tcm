@@ -350,3 +350,23 @@ fn a_postback_is_never_the_same_call_and_sends_its_ids() {
     assert!(sends_id(&one, "55"), "the id in the argument");
     assert!(!sends_id(&one, "27"));
 }
+
+#[test]
+fn a_delete_argument_makes_a_postback_a_delete() {
+    use v2_lib::api_templates::one_off::{parse, LOOKS_LIKE_A_DELETE};
+    // __doPostBack('gvItems','Delete$0'): the grid's own delete command.
+    for argument in ["Delete$0", "delete$12", "DeleteRow", "Remove$3"] {
+        let body = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": argument } },
+                           "effect": "edit" });
+        assert_eq!(parse(&body.to_string()).unwrap_err().1, LOOKS_LIKE_A_DELETE, "{argument}");
+    }
+    let mut ok = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": "Delete$0" } },
+                         "effect": "delete" });
+    assert!(parse(&ok.to_string()).is_err(), "a delete needs the person's yes");
+    ok["person_said_yes"] = json!(true);
+    assert!(parse(&ok.to_string()).is_ok());
+    // Other arguments are not deletes.
+    let sort = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": "Sort$Name" } },
+                       "effect": "edit" });
+    assert!(parse(&sort.to_string()).is_ok());
+}

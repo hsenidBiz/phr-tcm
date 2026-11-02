@@ -188,7 +188,10 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
     if one.step.method() == Method::Post && one.effect != Effect::Delete {
         let address = request_path(&one).to_ascii_lowercase();
         let button = one.step.postback.as_ref().map(|p| p.button.to_ascii_lowercase()).unwrap_or_default();
-        if [&address, &button].iter().any(|s| s.contains("delete") || s.contains("remove")) {
+        // The grid's own delete command is `__doPostBack('grid','Delete$0')`.
+        let argument = one.step.postback.as_ref().map(|p| super::exec::substitute_str(&p.argument, &sent_vars(&one)).trim().to_ascii_lowercase()).unwrap_or_default();
+        let says = |s: &str| s.contains("delete") || s.contains("remove");
+        if says(&address) || says(&button) || argument.starts_with("delete") || argument.starts_with("remove") {
             return bad(LOOKS_LIKE_A_DELETE);
         }
     }

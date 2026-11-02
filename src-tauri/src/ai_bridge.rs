@@ -7616,7 +7616,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
 
     let report = &out.report;
     let request = oo::request_of(&one);
-    let sent = report.steps.iter().any(|s| s.status.is_some());
+    // A postback that timed out, or whose browser stopped answering, after the
+    // post went out has no status but may have saved: it counts as sent.
+    let sent = report.steps.iter().any(|s| s.status.is_some() || s.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED));
     // Every POST that was sent is a save, whatever the call said it does: a
     // "read" that wrote must not leave the session's saves looking clean.
     if posts && sent {
