@@ -84,6 +84,12 @@ function expectText(step: ApiTemplateStep): string | null {
   if (json && typeof json === "object" && !Array.isArray(json)) {
     parts.push(...outputPairs(json));
   }
+  const html = step.expect?.html;
+  if (html) {
+    if (html.shows?.length) parts.push(`shows ${html.shows.join(", ")}`);
+    if (html.hides?.length) parts.push(`hides ${html.hides.join(", ")}`);
+    if (html.rows) parts.push(`row of ${html.rows.table} has ${html.rows.has}`);
+  }
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
@@ -308,8 +314,18 @@ export default function TemplateRow({
                 <li key={`${i}-${s.name}`} className="space-y-0.5 rounded border border-border px-2 py-1.5">
                   <div className="flex items-baseline gap-2">
                     <span className="text-faint">{i + 1}.</span>
-                    <span className="font-semibold text-text">{s.method}</span>
-                    <span className="id-mono min-w-0 break-all text-text">{fullPath(s)}</span>
+                    {s.postback ? (
+                      <>
+                        <span className="font-semibold text-text">Postback to</span>{" "}
+                        <span className="id-mono min-w-0 break-all text-text">{fullPath(s)}</span>
+                        <span className="text-text"> - {s.postback.button}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-text">{s.method}</span>
+                        <span className="id-mono min-w-0 break-all text-text">{fullPath(s)}</span>
+                      </>
+                    )}
                     <span className="text-faint">{s.name}</span>
                   </div>
                   <Detail label="Body" value={bodyFields(s)} />
