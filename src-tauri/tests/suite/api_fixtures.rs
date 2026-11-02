@@ -270,7 +270,7 @@ fn a_creates_entry_must_come_from_a_step() {
 fn reads_only(id: &str) -> ApiTemplate {
     let mut t = template(id, "create", true);
     t.effect = v2_lib::api_templates::Effect::Edit;
-    t.steps[0].method = v2_lib::api_templates::Method::Get;
+    t.steps[0].method = Some(v2_lib::api_templates::Method::Get);
     t.steps[0].form = None;
     t
 }
@@ -295,7 +295,7 @@ fn a_read_step_is_allowed_in_a_fixture_and_creates_nothing() {
     let lookup_read = |id: &str| match id {
         "look-up-cycle" => {
             let mut t = template(id, "read", true);
-            t.steps[0].method = v2_lib::api_templates::Method::Get;
+            t.steps[0].method = Some(v2_lib::api_templates::Method::Get);
             t.steps[0].form = None;
             Some(t)
         }

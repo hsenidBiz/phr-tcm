@@ -41,6 +41,7 @@ mod all_projects_pbis;
 mod all_projects_prs;
 mod allow_rules;
 mod api_fixtures;
+mod api_postback;
 mod api_template_flows;
 mod api_templates;
 mod api_templates_one_off;

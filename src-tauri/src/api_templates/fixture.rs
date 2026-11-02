@@ -483,7 +483,7 @@ fn from_one_creating_step(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTem
     let name_step = step_of(&c.name).or_else(|| id_step.and_then(|m| sent_ref(f, &c.name, Some(m))).map(|(m, _)| m));
     match (id_step, name_step) {
         (Some(a), Some(b)) if a == b => templates(&f.steps[a - 1].template).is_some_and(|t| {
-            t.effect == Effect::Create && t.steps.iter().any(|s| s.method == super::Method::Post)
+            t.effect == Effect::Create && t.steps.iter().any(|s| s.method() == super::Method::Post)
         }),
         _ => false,
     }

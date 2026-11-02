@@ -1983,10 +1983,10 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
     let (org, project) = (req.org.as_str(), req.project.as_str());
     let vars: std::collections::BTreeMap<String, serde_json::Value> =
         crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
-    let posts = req.template.steps.iter().any(|s| s.method == Method::Post);
+    let posts = req.template.steps.iter().any(|s| s.method() == Method::Post);
     if posts && discovery_must_not_save(root, state) {
-        let first = req.template.steps.iter().find(|s| s.method == Method::Post)?;
-        let path = crate::api_templates::exec::substitute_str(&first.path, &vars);
+        let first = req.template.steps.iter().find(|s| s.method() == Method::Post)?;
+        let path = crate::api_templates::exec::substitute_str(&first.address(), &vars);
         return Some((409, crate::browser::save_guard::blocked("POST", &path)));
     }
     let Some(_claim) = claim() else {
@@ -2024,10 +2024,10 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
         .template
         .steps
         .iter()
-        .filter(|s| s.method == Method::Post)
+        .filter(|s| s.method() == Method::Post)
         .filter(|s| report.steps.iter().any(|r| r.name == s.name && r.status.is_some()))
         .map(|s| {
-            let path = crate::api_templates::exec::substitute_str(&s.path, &with_captures);
+            let path = crate::api_templates::exec::substitute_str(&s.address(), &with_captures);
             // The `handler` says which save the page's address is.
             let path = match s.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")) {
                 Some((_, handler)) => format!(
@@ -7561,7 +7561,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
         Ok(one) => one,
         Err(refused) => return refused,
     };
-    let posts = one.step.method == Method::Post;
+    let posts = one.step.method() == Method::Post;
     if posts && !ctx.api_writes {
         return (400, API_WRITES_OFF.to_string());
     }
@@ -7945,7 +7945,7 @@ fn save_or_match_one_off(
     // A POST that said it only reads is saved as a read only when the change
     // list shows it changed nothing: one the session has recorded a change
     // for (or whose list cannot be read) is saved as an edit.
-    if one.step.method == crate::api_templates::Method::Post && one.effect == Effect::Read {
+    if one.step.method() == crate::api_templates::Method::Post && one.effect == Effect::Read {
         let changed = crate::autorun::explore::load(root, session)
             .map_or(true, |s| crate::autorun::explore::names_request(&s, &oo::request_of(&one)));
         if changed {

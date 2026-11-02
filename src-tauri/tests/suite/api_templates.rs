@@ -311,7 +311,8 @@ fn capture_path_parsing_produces_segments() {
 fn plain_step(path: &str) -> Step {
     Step {
         name: "Step".to_string(),
-        method: Method::Get,
+        method: Some(Method::Get),
+        postback: None,
         path: path.to_string(),
         query: BTreeMap::new(),
         json: None,
@@ -371,34 +372,34 @@ fn capture_all_over_an_empty_array_is_none() {
 
 #[test]
 fn expect_is_a_partial_match() {
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     assert!(check_expect(&e, 200, r#"{"success":true,"cycleId":1}"#).is_ok());
 }
 
 #[test]
 fn an_html_answer_fails_a_json_expectation_cleanly() {
     // Review Focus 2
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     assert_eq!(check_expect(&e, 200, "<!DOCTYPE html><html>").unwrap_err(), "the response was not JSON");
 }
 
 #[test]
 fn a_body_that_is_json_but_not_the_expected_shape_fails() {
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     let err = check_expect(&e, 200, r#"{"success":false}"#).unwrap_err();
     assert_eq!(err, "expected success = true, got false");
 }
 
 #[test]
 fn a_status_mismatch_is_reported_before_the_body_is_even_parsed() {
-    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let e = Expect { status: 200, json: Some(json!({"success": true})), html: None };
     let err = check_expect(&e, 400, "not json at all").unwrap_err();
     assert_eq!(err, "expected status 200, got 400");
 }
 
 #[test]
 fn no_json_expectation_still_returns_a_parsed_body_when_there_is_one() {
-    let e = Expect { status: 200, json: None };
+    let e = Expect { status: 200, json: None, html: None };
     assert_eq!(check_expect(&e, 200, r#"{"a":1}"#).unwrap(), Some(json!({"a":1})));
     assert_eq!(check_expect(&e, 200, "plain text").unwrap(), None);
 }

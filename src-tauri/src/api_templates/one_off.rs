@@ -120,7 +120,7 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         },
         Some(_) => return bad("effect is read, create, edit or delete"),
     };
-    let effect = match (step.method, said) {
+    let effect = match (step.method(), said) {
         (Method::Get, None) => Effect::Read,
         (Method::Get, Some(Effect::Read)) => Effect::Read,
         (Method::Get, Some(_)) => return bad(GET_ONLY_READS),
@@ -175,7 +175,7 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET
     // cannot be sent as a delete, so only a POST is judged.)
-    if one.step.method == Method::Post && one.effect != Effect::Delete {
+    if one.step.method() == Method::Post && one.effect != Effect::Delete {
         let address = request_path(&one).to_ascii_lowercase();
         if address.contains("delete") || address.contains("remove") {
             return bad(LOOKS_LIKE_A_DELETE);
@@ -210,7 +210,7 @@ pub fn as_template(o: &OneOff, id: &str, token_page: &str) -> ApiTemplate {
 pub fn filled_path(o: &OneOff) -> String {
     let t = as_template(o, ONE_OFF_ID, "/");
     let vars: BTreeMap<String, Value> = super::with_defaults(&t, &o.values).into_iter().collect();
-    super::exec::substitute_str(&o.step.path, &vars)
+    super::exec::substitute_str(&o.step.address(), &vars)
 }
 
 /// The values the call sends: its own, and its params' defaults.
@@ -233,7 +233,7 @@ pub fn request_path(o: &OneOff) -> String {
 /// The call as the change list names a request: `POST /hr/x`, with the
 /// `handler` when the call names one (`POST /hr/x?handler=Save`).
 pub fn request_of(o: &OneOff) -> String {
-    let method = match o.step.method {
+    let method = match o.step.method() {
         Method::Get => "GET",
         Method::Post => "POST",
     };
@@ -247,7 +247,7 @@ pub fn sends_id(o: &OneOff, id: &str) -> bool {
     use crate::autorun::explore::{id_in_json, id_in_text};
     let vars = sent_vars(o);
     let fill = |s: &str| super::exec::substitute_str(s, &vars);
-    id_in_text(&fill(&o.step.path), id)
+    id_in_text(&fill(&o.step.address()), id)
         || o.step.query.values().any(|v| id_in_text(&fill(v), id))
         || o.step.form.iter().flat_map(|f| f.values()).any(|v| id_in_text(&fill(v), id))
         || o.step.json.as_ref().is_some_and(|j| id_in_json(j, id))
@@ -342,10 +342,10 @@ fn handler_of(step: &Step) -> Option<&str> {
 /// `body_field_names`.
 pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
     let [one] = saved.steps.as_slice() else { return false };
-    if saved.effect == Effect::Delete || one.method != step.method {
+    if saved.effect == Effect::Delete || one.method() != step.method() {
         return false;
     }
-    let (a, b): (Vec<&str>, Vec<&str>) = (one.path.split('/').collect(), step.path.split('/').collect());
+    let (a, b): (Vec<&str>, Vec<&str>) = (one.address().split('/').collect(), step.address().split('/').collect());
     if a.len() != b.len()
         || !a.iter().zip(&b).all(|(x, y)| x.eq_ignore_ascii_case(y) || is_placeholder(x) || is_placeholder(y))
     {
@@ -433,11 +433,11 @@ fn slug(s: &str) -> String {
 /// "<method>-<path slug>[-<handler slug>]", lowercase, [a-z0-9-] only, at
 /// most 90 chars before a "-2", "-3"... that `taken` refuses.
 pub fn derived_id(step: &Step, taken: &dyn Fn(&str) -> bool) -> String {
-    let method = match step.method {
+    let method = match step.method() {
         Method::Get => "get",
         Method::Post => "post",
     };
-    let path = step.path.split('?').next().unwrap_or("");
+    let path = step.address().split('?').next().unwrap_or("");
     let parts = [method.to_string(), slug(path), handler_of(step).map(slug).unwrap_or_default()];
     let base = parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("-");
     unique_id(&base, taken)
@@ -459,13 +459,13 @@ pub fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
 
 /// "POST /hr/pmsv10/PerformanceCycle (Save)"; no "(..)" without a handler.
 pub fn derived_title(step: &Step) -> String {
-    let method = match step.method {
+    let method = match step.method() {
         Method::Get => "GET",
         Method::Post => "POST",
     };
     match handler_of(step).map(str::trim).filter(|h| !h.is_empty()) {
-        Some(h) => format!("{method} {} ({h})", step.path),
-        None => format!("{method} {}", step.path),
+        Some(h) => format!("{method} {} ({h})", step.address()),
+        None => format!("{method} {}", step.address()),
     }
 }
 

@@ -347,7 +347,7 @@ pub fn build_request(
         Body::None
     };
 
-    Ok(BuiltRequest { method: step.method, url, body })
+    Ok(BuiltRequest { method: step.method(), url, body })
 }
 
 /// A query map as a query string: each key and value percent-encoded as a

@@ -2674,8 +2674,17 @@ export type ApiTemplateStep = ApiTemplateStep_Serialize | ApiTemplateStep_Deseri
 
 export type ApiTemplateStep_Deserialize = {
 	name: string,
-	method: Method,
-	path: string,
+	/**
+	 *  Absent on a postback step (it is always a POST); read it through
+	 *  `method()`. A step that is not a postback must have one.
+	 */
+	method?: Method | null,
+	/**
+	 *  Empty on a postback step (its page is `postback.page`); read the
+	 *  address through `address()`.
+	 */
+	path?: string,
+	postback?: Postback_Deserialize | null,
 	query?: { [key in string]: string },
 	json?: unknown | null,
 	form?: { [key in string]: string } | null,
@@ -2687,14 +2696,23 @@ export type ApiTemplateStep_Deserialize = {
 	 *  writes back exactly as it was.
 	 */
 	files?: { [key in string]: string },
-	expect?: Expect,
+	expect?: Expect_Deserialize,
 	capture?: { [key in string]: string },
 };
 
 export type ApiTemplateStep_Serialize = {
 	name: string,
-	method: Method,
-	path: string,
+	/**
+	 *  Absent on a postback step (it is always a POST); read it through
+	 *  `method()`. A step that is not a postback must have one.
+	 */
+	method?: Method | null,
+	/**
+	 *  Empty on a postback step (its page is `postback.page`); read the
+	 *  address through `address()`.
+	 */
+	path?: string,
+	postback?: Postback_Serialize | null,
 	query: { [key in string]: string },
 	json: unknown | null,
 	form: { [key in string]: string } | null,
@@ -2706,7 +2724,7 @@ export type ApiTemplateStep_Serialize = {
 	 *  writes back exactly as it was.
 	 */
 	files?: { [key in string]: string },
-	expect: Expect,
+	expect: Expect_Serialize,
 	capture: { [key in string]: string },
 };
 
@@ -4538,9 +4556,28 @@ export type EnvView = {
 	reset_expired_passwords: boolean,
 };
 
-export type Expect = {
+export type Expect = Expect_Serialize | Expect_Deserialize;
+
+export type Expect_Deserialize = {
 	status?: number,
 	json?: unknown | null,
+	/**
+	 *  What an HTML answer must show: only a postback step has one (its
+	 *  answer is a page). Left out when absent, so a template written
+	 *  before postbacks reads and writes back exactly as it was.
+	 */
+	html?: HtmlExpect_Deserialize | null,
+};
+
+export type Expect_Serialize = {
+	status: number,
+	json: unknown | null,
+	/**
+	 *  What an HTML answer must show: only a postback step has one (its
+	 *  answer is a page). Left out when absent, so a template written
+	 *  before postbacks reads and writes back exactly as it was.
+	 */
+	html?: HtmlExpect_Serialize | null,
 };
 
 /**
@@ -4864,6 +4901,35 @@ export type HealthIssue =
 "NoNode" | 
 /**  No `qa-options.json` at the clone's root: the runner uses its defaults. */
 "NoQaOptions";
+
+/**
+ *  Checks on the HTML a postback answers with. Each entry is text on the
+ *  page or - when it starts `#`, `.` or `[`, or holds a `>` - a selector;
+ *  an element a browser would not draw does not count as shown.
+ */
+export type HtmlExpect = HtmlExpect_Serialize | HtmlExpect_Deserialize;
+
+/**
+ *  Checks on the HTML a postback answers with. Each entry is text on the
+ *  page or - when it starts `#`, `.` or `[`, or holds a `>` - a selector;
+ *  an element a browser would not draw does not count as shown.
+ */
+export type HtmlExpect_Deserialize = {
+	shows?: string[],
+	hides?: string[],
+	rows?: RowCheck | null,
+};
+
+/**
+ *  Checks on the HTML a postback answers with. Each entry is text on the
+ *  page or - when it starts `#`, `.` or `[`, or holds a `>` - a selector;
+ *  an element a browser would not draw does not count as shown.
+ */
+export type HtmlExpect_Serialize = {
+	shows?: string[],
+	hides?: string[],
+	rows?: RowCheck | null,
+};
 
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
 
@@ -5747,6 +5813,37 @@ export type PointOutcome = {
 export type PointResult = {
 	point_id: number,
 	result_id: number,
+};
+
+/**
+ *  A step that posts a WebForms page back: TCM reads the page's state
+ *  itself, so the template names only the page, the control it clicks and
+ *  the fields that matter.
+ */
+export type Postback = Postback_Serialize | Postback_Deserialize;
+
+/**
+ *  A step that posts a WebForms page back: TCM reads the page's state
+ *  itself, so the template names only the page, the control it clicks and
+ *  the fields that matter.
+ */
+export type Postback_Deserialize = {
+	page: string,
+	button: string,
+	argument?: string,
+	fresh?: boolean,
+};
+
+/**
+ *  A step that posts a WebForms page back: TCM reads the page's state
+ *  itself, so the template names only the page, the control it clicks and
+ *  the fields that matter.
+ */
+export type Postback_Serialize = {
+	page: string,
+	button: string,
+	argument?: string,
+	fresh?: boolean,
 };
 
 /**  A build run tied to a pull request, with its stages and deployments. */
@@ -6955,6 +7052,12 @@ export type ResultDetail = {
 export type ResultFailureDetail = {
 	comment: string,
 	bug_ids: number[],
+};
+
+/**  A row check: the table (a selector) has a row containing `has`. */
+export type RowCheck = {
+	table: string,
+	has: string,
 };
 
 /**

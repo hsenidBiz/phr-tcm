@@ -57,10 +57,11 @@ export function outputPairs(v: unknown): string[] {
 
 /** The path as the application sees it, handler and all. */
 function fullPath(step: ApiTemplateStep): string {
+  const path = step.postback?.page ?? step.path ?? "";
   const q = Object.entries(step.query ?? {});
-  if (q.length === 0) return step.path;
-  const sep = step.path.includes("?") ? "&" : "?";
-  return `${step.path}${sep}${q.map(([k, v]) => `${k}=${v}`).join("&")}`;
+  if (q.length === 0) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}${q.map(([k, v]) => `${k}=${v}`).join("&")}`;
 }
 
 /** The body's field names - the shape, not the values, which are mostly

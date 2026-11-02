@@ -551,16 +551,7 @@ impl Progress {
 /// Same page, as far as a stale session goes: the paths match ignoring
 /// case, query, fragment and a trailing `/`.
 fn same_path(a: &str, b: &str) -> bool {
-    fn norm(u: &str) -> String {
-        let p = path_of(u).to_ascii_lowercase();
-        let trimmed = p.trim_end_matches('/');
-        if trimmed.is_empty() {
-            "/".to_string()
-        } else {
-            trimmed.to_string()
-        }
-    }
-    norm(a) == norm(b)
+    super::postback::page_key(a) == super::postback::page_key(b)
 }
 
 fn method_name(m: Method) -> &'static str {
@@ -1372,7 +1363,7 @@ async fn token_in_page<D: Driver>(
     progress.token_found = found.is_some();
     match found {
         Some(t) => Some((doc, t)),
-        None if ctx.req.template.steps.iter().all(|s| s.method == Method::Get) => Some((doc, String::new())),
+        None if ctx.req.template.steps.iter().all(|s| s.method() == Method::Get) => Some((doc, String::new())),
         None => {
             progress.fail(None, NO_TOKEN_HERE);
             None

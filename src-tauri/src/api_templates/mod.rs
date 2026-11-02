@@ -20,6 +20,7 @@ pub mod gate;
 pub mod guide;
 pub mod held;
 pub mod one_off;
+pub mod postback;
 pub mod runner;
 pub mod share;
 pub mod store;
@@ -102,12 +103,53 @@ pub struct Expect {
     // JSON.
     #[specta(type = Option<specta_typescript::Unknown>)]
     pub json: Option<Value>,
+    /// What an HTML answer must show: only a postback step has one (its
+    /// answer is a page). Left out when absent, so a template written
+    /// before postbacks reads and writes back exactly as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<HtmlExpect>,
 }
 
 impl Default for Expect {
     fn default() -> Self {
-        Expect { status: 200, json: None }
+        Expect { status: 200, json: None, html: None }
     }
+}
+
+/// Checks on the HTML a postback answers with. Each entry is text on the
+/// page or - when it starts `#`, `.` or `[`, or holds a `>` - a selector;
+/// an element a browser would not draw does not count as shown.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct HtmlExpect {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shows: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hides: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<RowCheck>,
+}
+
+/// A row check: the table (a selector) has a row containing `has`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct RowCheck {
+    pub table: String,
+    pub has: String,
+}
+
+/// A step that posts a WebForms page back: TCM reads the page's state
+/// itself, so the template names only the page, the control it clicks and
+/// the fields that matter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct Postback {
+    pub page: String,
+    pub button: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub argument: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh: bool,
 }
 
 /// One step of a template. Everything in this crate calls it `Step`.
@@ -125,8 +167,16 @@ pub type Step = ApiTemplateStep;
 #[serde(deny_unknown_fields)]
 pub struct ApiTemplateStep {
     pub name: String,
-    pub method: Method,
+    /// Absent on a postback step (it is always a POST); read it through
+    /// `method()`. A step that is not a postback must have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<Method>,
+    /// Empty on a postback step (its page is `postback.page`); read the
+    /// address through `address()`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postback: Option<Postback>,
     #[serde(default)]
     pub query: BTreeMap<String, String>,
     #[serde(default)]
@@ -148,6 +198,30 @@ pub struct ApiTemplateStep {
     pub expect: Expect,
     #[serde(default)]
     pub capture: BTreeMap<String, String>,
+}
+
+impl ApiTemplateStep {
+    /// Post for a postback step, otherwise the step's own method (Get when
+    /// it has none - `check` refuses that, so only a draft gets here).
+    pub fn method(&self) -> Method {
+        if self.postback.is_some() {
+            Method::Post
+        } else {
+            self.method.unwrap_or(Method::Get)
+        }
+    }
+
+    /// The page or path this step goes to.
+    pub fn address(&self) -> &str {
+        match &self.postback {
+            Some(p) => &p.page,
+            None => &self.path,
+        }
+    }
+
+    pub fn is_postback(&self) -> bool {
+        self.postback.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -329,10 +403,24 @@ fn json_placeholder_names(v: &Value, out: &mut Vec<String>) {
 
 /// Every placeholder name this step's request could use: path, query keys
 /// and values, json (keys and leaf strings, recursively), form keys and
-/// values.
+/// values; for a postback also its page and argument, and the text in its
+/// `expect.html` checks.
 fn step_placeholder_names(step: &Step) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(exec::placeholders(&step.path));
+    if let Some(pb) = &step.postback {
+        out.extend(exec::placeholders(&pb.page));
+        out.extend(exec::placeholders(&pb.argument));
+    }
+    if let Some(h) = &step.expect.html {
+        for t in h.shows.iter().chain(&h.hides) {
+            out.extend(exec::placeholders(t));
+        }
+        if let Some(r) = &h.rows {
+            out.extend(exec::placeholders(&r.table));
+            out.extend(exec::placeholders(&r.has));
+        }
+    }
     // Keys as well as values: `build_request` fills in both.
     for (k, v) in &step.query {
         out.extend(exec::placeholders(k));
@@ -458,8 +546,69 @@ pub fn delete_shape_ok(t: &ApiTemplate) -> bool {
     let only_id = names.iter().flatten().all(|n| n == "id");
     let uses_id = names.iter().any(|n| n.iter().any(|n| n == "id"));
     let posts_use_id =
-        t.steps.iter().zip(&names).filter(|(s, _)| s.method == Method::Post).all(|(_, n)| n.iter().any(|n| n == "id"));
+        t.steps.iter().zip(&names).filter(|(s, _)| s.method() == Method::Post).all(|(_, n)| n.iter().any(|n| n == "id"));
     one_id && only_id && uses_id && posts_use_id
+}
+
+/// Every problem with a postback step's own shape: what it may not carry,
+/// its page and button, the page state a template never sets or captures,
+/// and the JSON-versus-HTML split of its checks and captures.
+fn postback_problems(step: &Step, pb: &Postback) -> Vec<String> {
+    let mut problems = Vec::new();
+    let name = &step.name;
+    if step.method.is_some() || !step.path.is_empty() || !step.query.is_empty() || step.json.is_some() {
+        problems.push(format!(
+            "step '{name}' is a postback - leave out method, path, query and json (the page goes in postback.page)"
+        ));
+    }
+
+    // The page may end in a query (`?id={{evalId}}`); only the address part
+    // is held to the safe-path rule, and no fragment is allowed anywhere.
+    let address = pb.page.split('?').next().unwrap_or("");
+    if !is_safe_relative_path(address) || pb.page.contains('#') || fully_decode(&pb.page).contains('#') {
+        problems.push(format!(
+            "step '{name}' has a postback page that is not a safe relative path on this origin: '{}'",
+            pb.page
+        ));
+    }
+    if pb.button.trim().is_empty() || pb.button.contains("{{") {
+        problems.push(format!(
+            "step '{name}' needs postback.button: the name of the control it clicks, written out (no placeholder)"
+        ));
+    }
+
+    if let Some(form) = &step.form {
+        for key in form.keys().filter(|k| k.starts_with("__")) {
+            problems.push(format!("step '{name}' sets {key}, which is page state - the runner carries it"));
+        }
+    }
+
+    if step.expect.json.is_some() {
+        problems.push(format!(
+            "step '{name}' is a postback, which answers with HTML - check it with expect.html, not expect.json"
+        ));
+    }
+    if let Some(h) = &step.expect.html {
+        let empty = h.shows.iter().chain(&h.hides).any(|t| t.trim().is_empty())
+            || h.rows.as_ref().is_some_and(|r| r.table.trim().is_empty() || r.has.trim().is_empty());
+        if empty {
+            problems.push(format!("step '{name}' has an empty expect.html entry"));
+        }
+    }
+
+    for (key, path) in &step.capture {
+        match postback::parse_html_capture(path) {
+            Some(Ok(c)) if c.selector.contains("__") => problems.push(format!(
+                "step '{name}' capture '{key}' reads page state - the runner carries page state, a template never captures it"
+            )),
+            Some(_) => {}
+            None if path.starts_with('$') => problems.push(format!(
+                "step '{name}' capture '{key}' reads JSON, but a postback answers with HTML - use html:<selector>"
+            )),
+            None => {}
+        }
+    }
+    problems
 }
 
 /// Every problem with this template, in template order (top-level `id`
@@ -507,19 +656,32 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
     let mut known: HashSet<&str> = t.params.iter().map(|p| p.name.as_str()).collect();
 
     for step in &t.steps {
-        if !is_safe_relative_path(&step.path) {
-            problems.push(format!(
-                "step '{}' has a path that is not a safe relative path on this origin: '{}'",
-                step.name, step.path
-            ));
-        }
-        // `build_request` adds `query` after a `?` of its own, so a path
-        // with one (or a fragment) would send a second - raw or encoded.
-        if step.path.contains(['?', '#']) || fully_decode(&step.path).contains(['?', '#']) {
-            problems.push(format!(
-                "step '{}' has a '?' or '#' in its path '{}' - the path is only the address; query parameters go in query",
-                step.name, step.path
-            ));
+        if let Some(pb) = &step.postback {
+            problems.extend(postback_problems(step, pb));
+        } else {
+            if step.method.is_none() {
+                problems.push(format!("step '{}' needs a method: GET or POST", step.name));
+            }
+            if !is_safe_relative_path(&step.path) {
+                problems.push(format!(
+                    "step '{}' has a path that is not a safe relative path on this origin: '{}'",
+                    step.name, step.path
+                ));
+            }
+            // `build_request` adds `query` after a `?` of its own, so a path
+            // with one (or a fragment) would send a second - raw or encoded.
+            if step.path.contains(['?', '#']) || fully_decode(&step.path).contains(['?', '#']) {
+                problems.push(format!(
+                    "step '{}' has a '?' or '#' in its path '{}' - the path is only the address; query parameters go in query",
+                    step.name, step.path
+                ));
+            }
+            if step.expect.html.is_some() || step.capture.values().any(|p| p.starts_with("html:")) {
+                problems.push(format!(
+                    "step '{}' uses expect.html or an html: capture, which only a postback step has",
+                    step.name
+                ));
+            }
         }
 
         if step.json.is_some() && step.form.is_some() {
@@ -542,7 +704,11 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
         }
 
         for (key, path) in &step.capture {
-            if let Err(e) = exec::parse_capture_path(path) {
+            let parsed = match postback::parse_html_capture(path) {
+                Some(r) => r.map(|_| ()),
+                None => exec::parse_capture_path(path).map(|_| ()),
+            };
+            if let Err(e) = parsed {
                 problems.push(format!("step '{}' capture '{}' is not a valid capture path: {}", step.name, key, e));
             }
         }
