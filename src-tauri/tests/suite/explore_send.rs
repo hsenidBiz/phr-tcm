@@ -625,6 +625,42 @@ async fn another_account_or_a_flow_template_is_left_to_the_usual_run() {
     assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
 }
 
+/// A saved template run inside an explore session notes a postback that may
+/// have saved (it timed out after the post went out), the same as a one-off.
+#[tokio::test]
+async fn a_saved_template_postback_that_may_have_saved_is_noted() {
+    use v2_lib::api_templates::runner::Mode;
+    use v2_lib::api_templates::Proven;
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![json!({ "error": "timeout", "posted": true })]);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let mut t = crate::api_postback_runner::template(vec![crate::api_postback_runner::step(
+        "Save",
+        EVAL_PAGE,
+        json!({}),
+    )]);
+    t.proven = Some(Proven {
+        at: "2026-09-01 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "admin".into(),
+        outputs: std::collections::BTreeMap::new(),
+        environment: None,
+        via: None,
+    });
+    store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+    let mut req = crate::api_templates_runner::request(t, Mode::Run);
+    req.values.clear();
+
+    let (_, text) = run_saved(&mut browser, &r, &req).await.expect("the session ran it");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(posted(&r).len(), 1, "a postback was sent again: {v}");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "a postback that may have saved was not noted: {:?} {v}", s.writes);
+    assert_eq!(s.writes[0].method, "POST");
+    assert!(v["record_change"].is_string(), "{v}");
+}
+
 #[tokio::test]
 async fn a_post_template_in_a_no_save_session_is_refused() {
     let _locks = locks();

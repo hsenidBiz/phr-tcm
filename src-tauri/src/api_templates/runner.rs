@@ -1742,10 +1742,10 @@ async fn run_postback<D: Driver>(
             note(&sent, None, "");
             return Err((None, format!("the request did not complete - see Settings, Logs{after_post}")).into());
         }
-        Some(Reply::Refused { why, status, count }) => {
+        Some(Reply::Refused { why, status, count, names }) => {
             return Err(StepFailure {
                 status: None,
-                detail: refusal_sentence(why, &req.url, &button, status, count),
+                detail: refusal_sentence(why, &req.url, &button, status, count, &names),
                 unread: false,
                 session_ended: why == Refusal::SignedOut,
                 posted: false,

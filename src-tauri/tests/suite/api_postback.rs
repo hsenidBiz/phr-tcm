@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use v2_lib::api_templates::exec::scrub_page_state;
 use v2_lib::api_templates::postback::{
     build_postback, invalid_postback, is_selector, judge, page_key, parse_html_capture, read_reply, sent_body,
-    Answered, Carry, CarryMode, HtmlCapture, Refusal, Reply, Verdict, PARTIAL_UPDATE,
+    refusal_sentence, Answered, Carry, CarryMode, HtmlCapture, Refusal, Reply, Verdict, PARTIAL_UPDATE,
 };
 use v2_lib::api_templates::{check, delete_shape_ok, parse_draft, ApiTemplate, Method};
 
@@ -402,14 +402,26 @@ fn replies_are_read_by_shape() {
         ("too_large", Refusal::TooLarge),
         ("signed_out", Refusal::SignedOut),
         ("load_failed", Refusal::LoadFailed),
+        ("unknown_fields", Refusal::UnknownFields),
     ] {
         match read_reply(&json!({ "refused": word, "status": 404, "count": 3 })) {
-            Some(Reply::Refused { why: w, status, count }) => {
+            Some(Reply::Refused { why: w, status, count, .. }) => {
                 assert_eq!((w, status, count), (why, Some(404), Some(3)));
             }
             _ => panic!("{word} was not read as a refusal"),
         }
     }
+    match read_reply(&json!({ "refused": "unknown_fields", "names": ["txtName", "txtCode"] })) {
+        Some(Reply::Refused { why, names, .. }) => {
+            assert_eq!(why, Refusal::UnknownFields);
+            assert_eq!(names, vec!["txtName", "txtCode"]);
+        }
+        _ => panic!("unknown fields were not read as a refusal"),
+    }
+    assert_eq!(
+        refusal_sentence(Refusal::UnknownFields, "/p.aspx", "CmdSave", None, None, &["txtName".into(), "txtCode".into()]),
+        "these fields are not on the page: txtName, txtCode - use the controls' full names as the page renders them"
+    );
     assert!(matches!(
         read_reply(&json!({ "refused": "lost" })),
         Some(Reply::Refused { status: None, count: None, .. })
@@ -495,9 +507,9 @@ fn judging_runs_in_order() {
     assert_eq!(cap(json!({ "count": 0 })), "capture evalId: #hdnEvalId matches 0 elements, not one");
     assert_eq!(cap(json!({ "count": 2, "value": "1" })), "capture evalId: #hdnEvalId matches 2 elements, not one");
 
-    match judge(step, &req, &answer(|a| a["unknownFields"] = json!(["txtX"])), None) {
+    match judge(step, &req, &answer(|_| {}), None) {
         Verdict::Pass { detail, captured } => {
-            assert_eq!(detail, "status 200, carried on, captured evalId, not on the page: txtX");
+            assert_eq!(detail, "status 200, carried on, captured evalId");
             assert_eq!(captured["evalId"], "42");
         }
         _ => panic!("expected a pass"),

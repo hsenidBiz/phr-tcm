@@ -105,6 +105,15 @@ pub fn many_buttons(button: &str, n: usize) -> String {
     format!("{n} controls on the page match {button} - name it in full - nothing was sent")
 }
 
+/// A `form` field the page has no control for: the names only, as written
+/// in the template.
+pub fn fields_not_on_page(names: &[String]) -> String {
+    format!(
+        "these fields are not on the page: {} - use the controls' full names as the page renders them",
+        names.join(", ")
+    )
+}
+
 pub fn page_did_not_open(page: &str, status: u16) -> String {
     format!("the page {page} did not open (status {status}) - nothing was sent")
 }
@@ -299,6 +308,8 @@ pub enum Refusal {
     TooLarge,
     SignedOut,
     LoadFailed,
+    /// A `form` field names no control on the page; nothing was sent.
+    UnknownFields,
 }
 
 /// What the in-page function handed back.
@@ -306,7 +317,7 @@ pub enum Refusal {
 pub enum Reply {
     Error(String),
     Timeout,
-    Refused { why: Refusal, status: Option<u16>, count: Option<usize> },
+    Refused { why: Refusal, status: Option<u16>, count: Option<usize>, names: Vec<String> },
     Answered(Answered),
 }
 
@@ -330,7 +341,6 @@ pub struct Answered {
     pub empty: bool,
     pub state_names: Vec<String>,
     pub page_names: Vec<String>,
-    pub unknown_fields: Vec<String>,
     pub asp_error: Option<String>,
     pub invalid_postback: bool,
     pub invalid_field: Option<String>,
@@ -381,11 +391,17 @@ pub fn read_reply(v: &Value) -> Option<Reply> {
             "too_large" => Refusal::TooLarge,
             "signed_out" => Refusal::SignedOut,
             "load_failed" => Refusal::LoadFailed,
+            "unknown_fields" => Refusal::UnknownFields,
             _ => return None,
         };
         let status = v.get("status").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok());
         let count = v.get("count").and_then(Value::as_u64).map(|n| n as usize);
-        return Some(Reply::Refused { why, status, count });
+        let names = v
+            .get("names")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        return Some(Reply::Refused { why, status, count, names });
     }
     if v.get("sent").and_then(Value::as_bool) == Some(true) {
         return serde_json::from_value(v.clone()).ok().map(Reply::Answered);
@@ -407,6 +423,7 @@ pub fn refusal_sentence(
     button: &str,
     status: Option<u16>,
     count: Option<usize>,
+    names: &[String],
 ) -> String {
     match why {
         Refusal::Lost => PAGE_LOST.to_string(),
@@ -416,6 +433,7 @@ pub fn refusal_sentence(
         Refusal::TooLarge => TOO_LARGE.to_string(),
         Refusal::SignedOut => SENT_ELSEWHERE.to_string(),
         Refusal::LoadFailed => page_did_not_open(page, status.unwrap_or(0)),
+        Refusal::UnknownFields => fields_not_on_page(names),
     }
 }
 
@@ -496,9 +514,6 @@ pub fn judge(step: &Step, req: &PostbackRequest, a: &Answered, sent_files: Optio
     }
     if !captured.is_empty() {
         detail.push_str(&format!(", captured {}", captured.keys().cloned().collect::<Vec<_>>().join(", ")));
-    }
-    if !a.unknown_fields.is_empty() {
-        detail.push_str(&format!(", not on the page: {}", a.unknown_fields.join(", ")));
     }
     Verdict::Pass { detail, captured }
 }
@@ -656,9 +671,11 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
       }
     }
     const drop = (name) => { for (let i = sent.length - 1; i >= 0; i--) if (sent[i][0] === name) sent.splice(i, 1); };
-    const unknown = [];
+    // A field that is no control on the page is not sent: the template used a short name, and the
+    // page's own control would go empty. Nothing has been posted yet.
+    const unknown = Object.keys(req.fields).filter((k) => !known.has(k));
+    if (unknown.length) return { refused: 'unknown_fields', names: unknown };
     for (const [k, v] of Object.entries(req.fields)) {
-      if (!known.has(k)) unknown.push(k);
       const ticks = named.some((e) => e.getAttribute('name') === k && ['checkbox', 'radio'].includes(typeOf(e)));
       drop(k);
       if (!(ticks && v === '')) sent.push([k, v]);
@@ -701,7 +718,7 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     const out = {
       sent: true, status: r.status, contentType: r.headers.get('content-type'), finalUrl: r.url, redirected: r.redirected,
       finalKey: finalKey, carried: source.carried, signedOut: false, tooLarge: false, partial: false, empty: text.trim() === '',
-      stateNames: stateNames, pageNames: pageNames, unknownFields: unknown, aspError: null, invalidPostback: false,
+      stateNames: stateNames, pageNames: pageNames, aspError: null, invalidPostback: false,
       invalidField: null, checks: [], captures: {}, excerpt: '', cut: false,
     };
     if (size(text) > carryLimit) { out.tooLarge = true; return out; }

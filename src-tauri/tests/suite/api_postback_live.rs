@@ -168,7 +168,7 @@ fn answered(r: Reply) -> Answered {
 
 fn refused(r: Reply) -> (Refusal, Option<u16>, Option<usize>) {
     match r {
-        Reply::Refused { why, status, count } => (why, status, count),
+        Reply::Refused { why, status, count, .. } => (why, status, count),
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
@@ -396,6 +396,7 @@ fn eval_page(st: &mut State, query: &str) -> String {
 <input type="hidden" name="hdnEvalId" id="hdnEvalId" value="{id}" data-saved="{saved_id}" />
 <input type="hidden" name="hdnEmpty" id="hdnEmpty" value="" />
 <input type="text" name="txtName" id="txtName" value="old" />
+<input type="text" name="ctl00$MainContent$txtCode" id="ctl00_MainContent_txtCode" value="" />
 <input type="text" name="txtLocked" value="locked" disabled="disabled" />
 <input type="checkbox" name="chkGoal$0" checked="checked" />
 <input type="checkbox" name="chkOld$0" checked="checked" />
@@ -549,7 +550,7 @@ async fn a_postback_sends_what_the_browser_would_and_carries_the_answer() {
     let mut live = open(port).await;
     let mut r = with_fields(
         req(EVAL, "CmdSave"),
-        &[("txtName", "Quarterly"), ("chkOld$0", ""), ("chkOff$0", "on"), ("txtGhost", "boo")],
+        &[("txtName", "Quarterly"), ("chkOld$0", ""), ("chkOff$0", "on")],
     );
     r.captures.insert("evalId".into(), capture("#hdnEvalId", Some("value")));
     let a = answered(send(&mut live, &r, "run-1", CarryMode::Fresh).await);
@@ -575,13 +576,11 @@ async fn a_postback_sends_what_the_browser_would_and_carries_the_answer() {
     assert_eq!(p.all("lstMulti"), vec!["b", "c"], "a multiple select sends each selected option");
     assert_eq!(p.get("txtNotes"), Some("note text"));
     assert_eq!(p.get("hdnEmpty"), Some(""), "an empty hidden input is sent empty");
-    assert_eq!(p.get("txtGhost"), Some("boo"), "a field the page lacks is still sent");
 
     assert_eq!(a.status, 200);
     assert!(!a.carried, "the first postback loads its page");
     assert!(a.redirected);
     assert_eq!(a.final_key, "/perf/eval.aspx");
-    assert_eq!(a.unknown_fields, vec!["txtGhost".to_string()]);
     assert_eq!(a.captures["evalId"].value.as_deref(), Some("7"), "read from the page the redirect landed on");
     assert!(a.state_names.contains(&"__VIEWSTATE".to_string()));
     assert!(a.state_names.contains(&"__EVENTVALIDATION".to_string()));
@@ -786,6 +785,27 @@ async fn a_page_that_is_not_webforms_sends_nothing() {
     let (why, status, _) = refused(send(&mut live, &req("/Missing.aspx", "x"), "run-n", CarryMode::Fresh).await);
     assert_eq!((why, status), (Refusal::LoadFailed, Some(404)));
     assert_eq!(post_count(&state), 0, "nothing was posted");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_short_field_name_is_refused_before_anything_is_posted() {
+    let (port, state) = serve();
+    let mut live = open(port).await;
+    // The page renders ctl00$MainContent$txtCode; the short name is not a control on it.
+    let r = with_fields(req(EVAL, "CmdSave"), &[("txtCode", "X1"), ("txtNope", "y"), ("txtName", "ok")]);
+    match send(&mut live, &r, "run-f", CarryMode::Fresh).await {
+        Reply::Refused { why, names, .. } => {
+            assert_eq!(why, Refusal::UnknownFields);
+            assert_eq!(names, vec!["txtCode".to_string(), "txtNope".to_string()]);
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(post_count(&state), 0, "nothing was posted");
+    // The full name is a control on the page and goes through.
+    let r = with_fields(req(EVAL, "CmdSave"), &[("ctl00$MainContent$txtCode", "X1")]);
+    answered(send(&mut live, &r, "run-f", CarryMode::Fresh).await);
+    assert_eq!(last_post(&state).get("ctl00$MainContent$txtCode"), Some("X1"));
 }
 
 #[tokio::test]

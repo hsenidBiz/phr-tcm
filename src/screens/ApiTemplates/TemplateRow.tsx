@@ -316,9 +316,14 @@ export default function TemplateRow({
                     <span className="text-faint">{i + 1}.</span>
                     {s.postback ? (
                       <>
-                        <span className="font-semibold text-text">Postback to</span>{" "}
+                        <span className="font-semibold text-text">Postback to </span>
                         <span className="id-mono min-w-0 break-all text-text">{fullPath(s)}</span>
-                        <span className="text-text"> - {s.postback.button}</span>
+                        <span className="text-text">
+                          {" "}
+                          - {s.postback.button}
+                          {s.postback.argument ? ` (${s.postback.argument})` : ""}
+                        </span>
+                        {s.postback.fresh ? <span className="text-faint">loads fresh</span> : null}
                       </>
                     ) : (
                       <>

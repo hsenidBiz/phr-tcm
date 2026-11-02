@@ -2025,7 +2025,12 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
         .steps
         .iter()
         .filter(|s| s.method() == Method::Post)
-        .filter(|s| report.steps.iter().any(|r| r.name == s.name && r.status.is_some()))
+        // A postback that timed out after the post went out has no status but may have saved.
+        .filter(|s| {
+            report.steps.iter().any(|r| {
+                r.name == s.name && (r.status.is_some() || r.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED))
+            })
+        })
         .map(|s| {
             let path = crate::api_templates::exec::substitute_str(&s.address(), &with_captures);
             // The `handler` says which save the page's address is.

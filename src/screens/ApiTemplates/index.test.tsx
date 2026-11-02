@@ -1216,3 +1216,24 @@ test("a postback step shows its page, button, fields and HTML checks", async () 
   expect(text).not.toContain("undefined");
   expect(text).not.toContain("null");
 });
+
+test("a postback step shows its argument and says when it loads the page fresh", async () => {
+  const postback = {
+    name: "delete the row",
+    postback: { page: "/Perf/CompanyEvaluation.aspx", button: "gvItems", argument: "Edit$2", fresh: true },
+  };
+  const withPostback = {
+    ...OVERVIEW,
+    templates: OVERVIEW.templates.map((s, i) =>
+      i === 0 ? { ...s, template: { ...s.template, steps: [postback] } } : s,
+    ),
+  };
+  mockOverview(withPostback);
+  renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const step = within(within(row).getByTestId("template-details")).getByRole("list", { name: "Steps" }).querySelector("li")!;
+  const text = step.textContent ?? "";
+  expect(text).toContain("Postback to /Perf/CompanyEvaluation.aspx - gvItems (Edit$2)");
+  expect(text).toContain("loads fresh");
+});
