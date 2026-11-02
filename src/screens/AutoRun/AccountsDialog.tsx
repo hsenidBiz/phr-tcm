@@ -15,8 +15,9 @@
 // dialog opens.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
+import { cn } from "../../lib/cn";
 import { commands, type Account, type AccountInput, type ProposedAccount } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -80,6 +81,8 @@ export function reseedRows(cur: Account[], baseline: Account[], fresh: Account[]
 /** A last check older than this is shown as stale and does not rank. */
 const STALE_MS = 7 * 24 * 3600 * 1000;
 
+type TabId = "accounts" | "check" | "proposed";
+
 /** What Check sign-in says for one account while and after it is checked. */
 type CheckLine = { text: string; failed: boolean; busy: boolean };
 
@@ -93,6 +96,10 @@ export default function AccountsDialog({
   project?: string;
 }) {
   const qc = useQueryClient();
+  const tabIds = useId();
+  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
+  // The dialog opens on Accounts.
+  const [tab, setTab] = useState<TabId>("accounts");
   // What the accounts file looked like when the list was read: sent back
   // with the save, which is refused when something else changed the file
   // since. Asked before the list, so a change in between is never missed.
@@ -249,7 +256,10 @@ export default function AccountsDialog({
       setPicked((cur) => new Set([...cur].filter((k) => !added.includes(k))));
       setTyped((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => !added.includes(k))));
       if (confirm.length > 0) {
+        // The Replace / Keep questions are on this tab: stay for them.
         setAsking({ picks: picks.filter((p) => confirm.includes(p.key)), keys: confirm, answers: {} });
+      } else if (added.length > 0) {
+        setTab("accounts");
       }
     } catch (e) {
       // Nothing was written: the ticks and the typed passwords stay for
@@ -285,6 +295,7 @@ export default function AccountsDialog({
       );
       await takeAdded(yes);
       setPicked((cur) => new Set([...cur].filter((k) => !yes.includes(k))));
+      setTab("accounts");
     } catch (e) {
       setProposalProblem(e instanceof Error ? e.message : String(e));
     } finally {
@@ -386,6 +397,29 @@ export default function AccountsDialog({
     baseline !== null &&
     (rows.length !== baseline.length || rows.some((r, i) => !sameAccount(r, baseline[i])));
 
+  const tabs: { id: TabId; label: string; count?: number }[] = [
+    { id: "accounts", label: "Accounts" },
+    { id: "check", label: "Check sign-in" },
+    ...(proposals.length > 0 ? [{ id: "proposed" as const, label: "Proposed", count: proposals.length }] : []),
+  ];
+  // The Proposed tab goes with its last proposal: fall back to Accounts.
+  const view: TabId = tab === "proposed" && proposals.length === 0 ? "accounts" : tab;
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const last = tabs.length - 1;
+    const next =
+      e.key === "ArrowRight" ? (i === last ? 0 : i + 1)
+      : e.key === "ArrowLeft" ? (i === 0 ? last : i - 1)
+      : e.key === "Home" ? 0
+      : e.key === "End" ? last
+      : null;
+    if (next === null) return;
+    e.preventDefault();
+    const id = tabs[next].id;
+    setTab(id);
+    tabRefs.current[id]?.focus();
+  };
+
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
       <div>
@@ -396,14 +430,56 @@ export default function AccountsDialog({
         </p>
       </div>
       {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
-      <div className="min-h-0 flex-1 space-y-2 overflow-auto">
-        {rows?.length === 0 && <p className="text-xs text-muted">No accounts yet.</p>}
+      {/* The tab pattern of the Auto Run screen: only the chosen tab is in
+          the Tab order, and the arrow keys move along. */}
+      <div role="tablist" aria-label="Accounts sections" className="flex shrink-0 gap-1 border-b border-border">
+        {tabs.map(({ id, label, count }, i) => {
+          const isOn = view === id;
+          return (
+            <button
+              key={id}
+              ref={(el) => {
+                tabRefs.current[id] = el;
+              }}
+              id={`${tabIds}-${id}-tab`}
+              type="button"
+              role="tab"
+              aria-selected={isOn}
+              aria-controls={`${tabIds}-${id}-panel`}
+              tabIndex={isOn ? 0 : -1}
+              className={cn(
+                "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
+                isOn ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
+              )}
+              onClick={() => setTab(id)}
+              onKeyDown={(e) => onTabKey(e, i)}
+            >
+              <span className="label-trim">
+                {label}
+                {count != null && (
+                  <>
+                    {" "}
+                    <span className="text-xs text-faint">{count}</span>
+                  </>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div
+        role="tabpanel"
+        id={`${tabIds}-${view}-panel`}
+        aria-labelledby={`${tabIds}-${view}-tab`}
+        className="min-h-0 flex-1 space-y-2 overflow-auto"
+      >
+        {view === "accounts" && rows?.length === 0 && <p className="text-xs text-muted">No accounts yet.</p>}
         {/* Column names for the one-line layout. Hidden from assistive
             tech: every field already carries its own name. */}
-        {(rows?.length ?? 0) > 0 && (
+        {view === "accounts" && (rows?.length ?? 0) > 0 && (
           <div
             aria-hidden
-            className="hidden grid-cols-[1fr_1fr_1fr_1fr_2.5rem] gap-2 text-xs font-medium text-muted lg:grid"
+            className="hidden grid-cols-[1fr_1.6fr_1fr_1fr_2.5rem] gap-2 text-xs font-medium text-muted lg:grid"
           >
             <span>Key</span>
             <span>Name</span>
@@ -412,7 +488,7 @@ export default function AccountsDialog({
             <span />
           </div>
         )}
-        {(rows ?? []).map((a, i) => {
+        {view === "accounts" && (rows ?? []).map((a, i) => {
           // Row fields are named by POSITION ("Key for account 1"), not by
           // the account's own key: naming them after the key would change
           // the field's accessible name out from under a screen reader
@@ -424,7 +500,7 @@ export default function AccountsDialog({
             // four fixed columns squashed every field to a sliver.
             <div
               key={i}
-              className="grid grid-cols-1 items-center gap-2 border-b border-border/60 pb-2 last:border-b-0 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_2.5rem] lg:border-b-0 lg:pb-0"
+              className="grid grid-cols-1 items-center gap-2 border-b border-border/60 pb-2 last:border-b-0 sm:grid-cols-2 lg:grid-cols-[1fr_1.6fr_1fr_1fr_2.5rem] lg:border-b-0 lg:pb-0"
             >
               {/* A visible word over each field while the row is stacked
                   (below lg), where a placeholder alone vanishes the moment
@@ -459,8 +535,14 @@ export default function AccountsDialog({
             </div>
           );
         })}
-        {savedAccounts.length > 0 && (
-          <section aria-label="Check sign-in" className="space-y-2 border-t border-border pt-3">
+        {view === "check" && (
+          <section aria-label="Check sign-in" className="space-y-2">
+            {changed && (
+              <p className="text-xs text-warning">
+                Save your changes on the Accounts tab first - Check sign-in uses the saved accounts.
+              </p>
+            )}
+            {savedAccounts.length === 0 && <p className="text-xs text-muted">No saved accounts to check yet.</p>}
             <h3 className="text-xs font-semibold text-text">Check sign-in</h3>
             <p className="text-xs text-muted">
               Signs each ticked account in once, in a browser of its own, one after another, and walks it to
@@ -545,8 +627,8 @@ export default function AccountsDialog({
             </div>
           </section>
         )}
-        {proposals.length > 0 && (
-          <section className="space-y-2 border-t border-border pt-3">
+        {view === "proposed" && (
+          <section className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-semibold text-text">Proposed by the assistant ({proposals.length})</h3>
               <SearchInput
@@ -713,11 +795,14 @@ export default function AccountsDialog({
         )}
       </div>
       <div className="flex items-center gap-3">
-        <Button size="sm" variant="outline" disabled={blocked}
-          onClick={() => setRows((r) => [...(r ?? []), { key: "", label: "", username: "", password: "" }])}>
-          <IconAdd aria-hidden />
-          Add account
-        </Button>
+        {view === "accounts" && (
+          <Button size="sm" variant="outline" disabled={blocked}
+            onClick={() => setRows((r) => [...(r ?? []), { key: "", label: "", username: "", password: "" }])}>
+            <IconAdd aria-hidden />
+            Add account
+          </Button>
+        )}
+        {/* On every tab: it also masks the passwords typed for proposed logins. */}
         <label className="flex items-center gap-2 text-xs text-muted">
           <Checkbox checked={show} onCheckedChange={setShow} ariaLabel="Show passwords" />
           Show passwords

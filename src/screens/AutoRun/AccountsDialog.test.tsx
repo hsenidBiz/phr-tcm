@@ -15,6 +15,11 @@ vi.mock("../../lib/backgroundRun", async (original) => ({
 }));
 afterEach(() => { clearMocks(); vi.clearAllMocks(); });
 
+/** Opens a tab of the dialog (the Proposed tab carries its count). */
+async function openTab(name: string) {
+  fireEvent.click(await screen.findByRole("tab", { name: new RegExp(`^${name}`) }));
+}
+
 function mount(existing: unknown[], onSave: (accounts: unknown[]) => unknown = () => []) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_list_accounts") return existing;
@@ -155,6 +160,7 @@ function mountWithProposals(opts: {
 
 test("the proposals are listed under their heading, each saying where its password comes from", async () => {
   mountWithProposals({ hasDefault: true });
+  await openTab("Proposed");
   expect(await screen.findByRole("heading", { name: "Proposed by the assistant (2)" })).toBeInTheDocument();
   expect(screen.getByText("hr.admin")).toBeInTheDocument();
   expect(screen.getByText("Supervisor")).toBeInTheDocument();
@@ -166,6 +172,7 @@ test("the proposals are listed under their heading, each saying where its passwo
 
 test("with no default password each proposal needs one, and shows its field open from the start", async () => {
   mountWithProposals({ hasDefault: false });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   expect(screen.getAllByText("Needs a password")).toHaveLength(2);
   expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveValue("");
@@ -197,16 +204,19 @@ test("the proposals are read afresh each time the dialog opens", async () => {
       </QueryClientProvider>,
     );
   const first = open();
+  await openTab("Proposed");
   expect(await screen.findByRole("heading", { name: "Proposed by the assistant (1)" })).toBeInTheDocument();
   first.unmount();
   // The assistant proposed one more while the dialog was shut.
   state.proposals = PROPOSED;
   open();
+  await openTab("Proposed");
   expect(await screen.findByRole("heading", { name: "Proposed by the assistant (2)" })).toBeInTheDocument();
 });
 
 test("Add selected sends the picks with typed passwords (empty means the default) and brings them in as accounts", async () => {
   const m = mountWithProposals({});
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   const add = screen.getByRole("button", { name: "Add selected (0)" });
   expect(add).toBeDisabled();
@@ -246,6 +256,7 @@ test("a key that is already an account asks Replace per key, and only a confirme
     // First call: both keys exist and nothing is written; ask about both.
     addProposals: ({ replace }) => (replace.length === 0 ? ["hr.admin", "hr.sup"] : []),
   });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.sup" }));
@@ -272,6 +283,7 @@ test("keeping every key asks for nothing more and replaces nothing", async () =>
     proposals: [PROPOSED[0]],
     addProposals: () => ["hr.admin"],
   });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (1)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
@@ -281,6 +293,7 @@ test("keeping every key asks for nothing more and replaces nothing", async () =>
   expect(m.adds).toHaveLength(1);
   // The proposal stays proposed, and the existing account is untouched.
   expect(screen.getByRole("heading", { name: "Proposed by the assistant (1)" })).toBeInTheDocument();
+  await openTab("Accounts");
   expect(screen.getByLabelText("Username for account 1")).toHaveValue("old");
 });
 
@@ -291,6 +304,7 @@ test("a refused add shows the sentence inline and keeps what was picked and type
       throw new Error('"hr.sup": no default password set - type one');
     },
   });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.sup" }));
@@ -308,6 +322,7 @@ test("a refused add shows the sentence inline and keeps what was picked and type
 
 test("Dismiss asks the app to drop the whole proposal", async () => {
   const m = mountWithProposals({});
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   await waitFor(() => expect(m.log).toContain("env_dismiss_proposals"));
@@ -316,6 +331,7 @@ test("Dismiss asks the app to drop the whole proposal", async () => {
 
 test("a typed proposal password is masked, and shown only with Show passwords", async () => {
   mountWithProposals({});
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
   const pw = screen.getByLabelText("Password for proposed hr.admin") as HTMLInputElement;
@@ -333,6 +349,7 @@ const FROM_DB: Proposal[] = [
 
 test("a proposal with a database password says so, and its field can still override it", async () => {
   mountWithProposals({ proposals: FROM_DB, hasDefault: true });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   expect(screen.getAllByText("From database")).toHaveLength(1);
   // The one without falls back on the environment's default.
@@ -346,6 +363,7 @@ test("a proposal with a database password says so, and its field can still overr
 
 test("Add selected with the field blank sends no password, and the account comes in", async () => {
   const m = mountWithProposals({ proposals: FROM_DB, hasDefault: false });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   m.state.accounts = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "set-in-rust" }];
@@ -363,6 +381,7 @@ test("Add selected with the field blank sends no password, and the account comes
 
 test("a password typed over a database one is the one sent", async () => {
   const m = mountWithProposals({ proposals: FROM_DB });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
@@ -374,6 +393,7 @@ test("a password typed over a database one is the one sent", async () => {
 
 test("Set password then Use database password clears what was typed and closes the field", async () => {
   const m = mountWithProposals({ proposals: FROM_DB, hasDefault: true });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
   fireEvent.change(screen.getByLabelText("Password for proposed hr.admin"), { target: { value: "typed" } });
@@ -398,6 +418,7 @@ test("the reason the assistant gave for having no password shows beside the acco
     ],
     hasDefault: false,
   });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   const row = screen.getByText("hr.sup").closest("li")!;
   expect(within(row).getByText("No password from the assistant: the database holds only a hash")).toBeInTheDocument();
@@ -414,6 +435,7 @@ test("the reason the assistant gave for having no password shows beside the acco
 
 test("a login without a database password goes back to the default with Use default password", async () => {
   mountWithProposals({ proposals: FROM_DB, hasDefault: true });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("button", { name: "Set password for hr.sup" }));
   fireEvent.change(screen.getByLabelText("Password for proposed hr.sup"), { target: { value: "typed" } });
@@ -424,6 +446,7 @@ test("a login without a database password goes back to the default with Use defa
 
 test("a login that needs a password shows its field open while the others wait for Set password", async () => {
   mountWithProposals({ proposals: FROM_DB, hasDefault: false });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   expect(screen.getByText("From database")).toBeInTheDocument();
   expect(screen.getByText("Needs a password")).toBeInTheDocument();
@@ -446,6 +469,7 @@ const search = (text: string) =>
 
 test("the search box filters by name, key, role and username, and says when nothing matches", async () => {
   mountWithProposals({ proposals: MANY });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
   expect(screen.getByRole("textbox", { name: "Search proposed logins" })).toHaveAttribute("placeholder", "Search logins");
 
@@ -474,6 +498,7 @@ test("the search box filters by name, key, role and username, and says when noth
 
 test("Select all shown ticks only the shown logins, and the picks stay across a search change", async () => {
   const m = mountWithProposals({ proposals: MANY });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
   search("hr.");
   fireEvent.click(screen.getByRole("checkbox", { name: "Select all shown" }));
@@ -503,6 +528,7 @@ test("Select all shown ticks only the shown logins, and the picks stay across a 
 
 test("Add selected counts the picks", async () => {
   mountWithProposals({ proposals: MANY });
+  await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
   expect(screen.getByRole("button", { name: "Add selected (0)" })).toBeDisabled();
   expect(screen.getByText("0 selected")).toBeInTheDocument();
@@ -579,6 +605,7 @@ test("Check sign-in shows the summary under the account", async () => {
       ? checked("admin", "signed in, landed on /hr/home/index; reaches Definition Wizard")
       : checked("sup", "signed in, landed on /hr/home/index; stopped on the way to Definition Wizard: click 2", true, true),
   );
+  await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
@@ -589,6 +616,7 @@ test("Check sign-in shows the summary under the account", async () => {
 
 test("the area picker sends the area, and none sends the sign-in alone", async () => {
   const seen = mountForCheck((key) => checked(key, "signed in"));
+  await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
@@ -618,6 +646,7 @@ test("accounts are checked one after another, never together", async () => {
     running -= 1;
     return checked(key, "signed in");
   });
+  await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
@@ -632,6 +661,7 @@ test("a refused check is said under its account", async () => {
   mountForCheck(() => {
     throw new Error("an unattended run, a replay or a discovery is using the Auto Run browser - wait for it, or stop it first");
   });
+  await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
@@ -642,6 +672,7 @@ test("the last check of an account is shown until it is checked again", async ()
   mountForCheck(() => checked("admin", "signed in"), {
     admin: { checked_ms: 1761900000000, reached: true, area: "Leave", outcome: "signed in, landed on /hr/home/index; reaches Leave" },
   });
+  await openTab("Check sign-in");
   expect(await screen.findByText(/Last checked .*reaches Leave/)).toBeInTheDocument();
 });
 
@@ -649,6 +680,7 @@ test("Check sign-in is disabled while a run is going", async () => {
   checkFixture.taken = true;
   try {
     mountForCheck((key) => checked(key, "signed in"));
+  await openTab("Check sign-in");
     await screen.findByRole("checkbox", { name: "Check admin" });
     fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
     expect(screen.getByRole("button", { name: "Check sign-in (1)" })).toBeDisabled();
@@ -661,6 +693,7 @@ test("the first refusal ends the loop: the accounts after it are not asked", asy
   const seen = mountForCheck(() => {
     throw new Error("a sign-in check is running (sup) - wait for it or cancel it");
   });
+  await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
@@ -674,6 +707,7 @@ test("Cancel check stops the loop after the account going and tells the app", as
   let release: (v: unknown) => void = () => {};
   const gate = new Promise((r) => (release = r));
   const seen = mountForCheck((key) => (key === "admin" ? gate.then(() => checked("admin", "signed in")) : checked(key, "signed in")));
+  await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
@@ -689,6 +723,7 @@ test("Cancel check stops the loop after the account going and tells the app", as
 
 test("the results are announced politely", async () => {
   mountForCheck((key) => checked(key, "signed in"));
+  await openTab("Check sign-in");
   const box = await screen.findByRole("checkbox", { name: "Check admin" });
   expect(box.closest("ul")).toHaveAttribute("aria-live", "polite");
 });
@@ -697,6 +732,7 @@ test("a last check over a week old is shown as stale", async () => {
   mountForCheck(() => checked("admin", "signed in"), {
     admin: { checked_ms: Date.now() - 10 * 24 * 3600 * 1000, signed_in: true, reached: true, area: "Leave", outcome: "reaches Leave" },
   });
+  await openTab("Check sign-in");
   expect(await screen.findByText(/\(stale\)/)).toBeInTheDocument();
 });
 
@@ -747,4 +783,77 @@ test("a list that changed under the dialog takes the saved password into untouch
   expect(reseedRows([base[1]], base, fresh).map((r) => r.key)).toEqual(["b"]);
   const added = { key: "c", label: "", username: "", password: "" };
   expect(reseedRows([...base, added], base, fresh).map((r) => r.key)).toEqual(["a", "b", "c"]);
+});
+
+// ---- Tabs ----------------------------------------------------------------
+
+test("three tabs, Proposed only while there are proposals and with its count; opens on Accounts", async () => {
+  mountWithProposals({ accounts: [{ key: "admin", label: "A", username: "kim", password: "p" }] });
+  await screen.findByRole("tab", { name: "Proposed 2" });
+  const tabs = screen.getAllByRole("tab");
+  expect(tabs.map((t) => t.textContent)).toEqual(["Accounts", "Check sign-in", "Proposed 2"]);
+  expect(screen.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
+  // Only the Accounts tab's content is on screen.
+  expect(await screen.findByLabelText("Key for account 1")).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Check admin" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /Proposed by the assistant/ })).not.toBeInTheDocument();
+});
+
+test("no Proposed tab when the assistant proposed nothing", async () => {
+  mountWithProposals({ proposals: [] });
+  await screen.findByText("No accounts yet.");
+  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Accounts", "Check sign-in"]);
+});
+
+test("the arrow keys move along the tabs", async () => {
+  mountWithProposals({});
+  const accounts = await screen.findByRole("tab", { name: "Accounts" });
+  fireEvent.keyDown(accounts, { key: "ArrowRight" });
+  expect(screen.getByRole("tab", { name: "Check sign-in" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(screen.getByRole("tab", { name: "Check sign-in" }), { key: "End" });
+  expect(screen.getByRole("tab", { name: /^Proposed/ })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Cancel and Save accounts are on screen on every tab", async () => {
+  mountWithProposals({});
+  for (const name of ["Accounts", "Check sign-in", "Proposed"]) {
+    await openTab(name);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save accounts" })).toBeInTheDocument();
+  }
+});
+
+test("Check sign-in says to save first while the Accounts tab has unsaved edits", async () => {
+  mountWithProposals({ accounts: [{ key: "admin", label: "A", username: "kim", password: "p" }] });
+  const note = "Save your changes on the Accounts tab first - Check sign-in uses the saved accounts.";
+  await openTab("Check sign-in");
+  expect(screen.queryByText(note)).not.toBeInTheDocument();
+  await openTab("Accounts");
+  fireEvent.change(await screen.findByLabelText("Name for account 1"), { target: { value: "Changed" } });
+  await openTab("Check sign-in");
+  expect(screen.getByText(note)).toBeInTheDocument();
+  // The check stays usable on the saved accounts.
+  expect(screen.getByRole("checkbox", { name: "Check admin" })).toBeInTheDocument();
+});
+
+test("Add selected switches to the Accounts tab so the person sees the new rows", async () => {
+  const m = mountWithProposals({});
+  await openTab("Proposed");
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Add hr.admin" }));
+  m.state.accounts = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "x" }];
+  m.state.proposals = [PROPOSED[1]];
+  fireEvent.click(screen.getByRole("button", { name: "Add selected (1)" }));
+  expect(await screen.findByLabelText("Key for account 1")).toHaveValue("hr.admin");
+  expect(screen.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
+  // The rest of the proposals are still a tab away.
+  expect(await screen.findByRole("tab", { name: "Proposed 1" })).toBeInTheDocument();
+});
+
+test("the Name column is wider than the others", async () => {
+  mount([{ key: "admin", label: "Payroll Automation (000002)", username: "kim", password: "p" }]);
+  await screen.findByDisplayValue("kim");
+  const header = screen.getAllByText("Name")[0].parentElement!;
+  expect(header.className).toContain("grid-cols-[1fr_1.6fr_1fr_1fr_2.5rem]");
+  const row = screen.getByLabelText("Name for account 1").closest("div")!;
+  expect(row.className).toContain("lg:grid-cols-[1fr_1.6fr_1fr_1fr_2.5rem]");
 });
