@@ -764,7 +764,7 @@ fn the_guide_teaches_webforms_postbacks() {
         "get_autorun_page",
         "\"fresh\": true",
         "expect.html",
-        "html:#",
+        "html:[id$=hdnEvalId]@value",
         "never sent again",
         "UpdatePanel",
         "Save Item",
@@ -772,13 +772,46 @@ fn the_guide_teaches_webforms_postbacks() {
         "WebForm_PostBackOptions",
         "Delete",
         "antiforgery_page",
-        "carried on",
-        "loaded fresh",
+        "carried on from your previous postback to this page",
+        "loaded the page fresh",
+        "[id$=ValidationSummary1]",
+        "[id$=hdnEvalId]",
+        "ctl00$MainContent$txtEvalName",
+        "a fresh load of the page, `get_autorun_page` and `probe_autorun_locator` do not show them",
+        "Read them from a one-off Create",
+        "fails the step before anything is sent, and the failure names those fields",
+        "matches the end of an ASP.NET id",
     ] {
         assert!(flat.contains(part), "the guide never mentions {part}");
     }
     let section = &flat[flat.find("## WebForms pages (postbacks)").unwrap()..flat.find("## How to build one").unwrap()];
     assert!(!section.contains("http"), "the postback section names a host");
+    // The delete rule is about one-off requests; the template section does not state it.
+    assert!(!section.contains("Delete or Remove"), "the template section states the one-off delete rule");
+    assert!(flat.contains("Only for a one-off request"), "the one-off delete rule is not marked as one-off only");
+}
+
+/// The guide's worked three-step template is a real one: it parses and
+/// passes `check`, and its steps are the three the spec names.
+#[test]
+fn the_guides_worked_postback_template_passes_check() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let from = text.find("    {
+      \"id\": \"pms-create-evaluation\"").expect("no worked template");
+    let rest = &text[from..];
+    let end = rest.find("
+    }
+").expect("the worked template never ends") + "
+    }".len();
+    let json: String = rest[..end].lines().map(|l| l.strip_prefix("    ").unwrap_or(l)).collect::<Vec<_>>().join("
+");
+    let value: Value = serde_json::from_str(&json).unwrap_or_else(|e| panic!("not JSON: {e}
+{json}"));
+    let t = parse_draft(&value).expect("the worked template does not parse");
+    assert!(check(&t).is_empty(), "{:?}", check(&t));
+    let names: Vec<&str> = t.steps.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, vec!["Save", "Create", "Save Item"]);
+    assert!(t.steps.iter().all(|s| s.postback.is_some()));
 }
 
 /// The guide teaches flows: the two tools, the order of work (map the
