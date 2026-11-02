@@ -333,8 +333,14 @@ fn answer(edit: impl FnOnce(&mut Value)) -> Answered {
     answered(v)
 }
 
+/// The request `save_step` builds, for `judge` to read its filled-in checks from.
+fn save_request(step: &v2_lib::api_templates::Step) -> v2_lib::api_templates::postback::PostbackRequest {
+    build_postback(step, &vars(&[("name", json!("Zed")), ("start", json!("2026-01-01"))]), &BTreeMap::new()).unwrap()
+}
+
 fn verdict_fail(a: &Answered) -> String {
-    match judge(&with_step(save_step()).steps[0], a, None) {
+    let t = with_step(save_step());
+    match judge(&t.steps[0], &save_request(&t.steps[0]), a, None) {
         Verdict::Fail(s) => s,
         Verdict::Pass { detail, .. } => panic!("expected a failure, passed: {detail}"),
         Verdict::SignedOut => panic!("expected a failure, got signed out"),
@@ -424,13 +430,14 @@ fn replies_are_read_by_shape() {
 #[test]
 fn judging_runs_in_order() {
     let step = &with_step(save_step()).steps[0];
+    let req = save_request(step);
 
     // Signed out beats everything below it.
     let a = answer(|a| {
         a["signedOut"] = json!(true);
         a["checks"][0]["ok"] = json!(false);
     });
-    assert!(matches!(judge(step, &a, None), Verdict::SignedOut));
+    assert!(matches!(judge(step, &req, &a, None), Verdict::SignedOut));
 
     assert_eq!(verdict_fail(&answer(|a| a["tooLarge"] = json!(true))), "the page is too large to carry");
     assert_eq!(verdict_fail(&answer(|a| a["partial"] = json!(true))), PARTIAL_UPDATE);
@@ -463,6 +470,14 @@ fn judging_runs_in_order() {
     );
 
     assert_eq!(verdict_fail(&answer(|a| a["status"] = json!(500))), "expected status 200, got 500");
+    // An event-validation refusal stands on its own, with or without an error title.
+    assert_eq!(
+        verdict_fail(&answer(|a| {
+            a["status"] = json!(500);
+            a["invalidPostback"] = json!(true);
+        })),
+        "the application refused a field or button value the page did not offer"
+    );
 
     let check = |kind: &str, what: &str, count: usize| {
         verdict_fail(&answer(|a| a["checks"] = json!([{ "kind": kind, "what": what, "ok": false, "count": count }])))
@@ -470,7 +485,6 @@ fn judging_runs_in_order() {
     assert_eq!(check("shows", "Saved", 0), "the answer does not show Saved");
     assert_eq!(check("hides", "#V", 1), "the answer shows #V");
     assert_eq!(check("table", "#grid", 2), "#grid matches 2 elements, not one");
-    assert_eq!(check("rows", "#grid holds Zed", 0), "no row of #grid holds Zed");
 
     let cap = |c: Value| verdict_fail(&answer(|a| a["captures"] = json!({ "evalId": c })));
     assert_eq!(cap(json!({ "count": 0, "badSelector": true })), "capture evalId: #hdnEvalId is not a CSS selector");
@@ -481,14 +495,14 @@ fn judging_runs_in_order() {
     assert_eq!(cap(json!({ "count": 0 })), "capture evalId: #hdnEvalId matches 0 elements, not one");
     assert_eq!(cap(json!({ "count": 2, "value": "1" })), "capture evalId: #hdnEvalId matches 2 elements, not one");
 
-    match judge(step, &answer(|a| a["unknownFields"] = json!(["txtX"])), None) {
+    match judge(step, &req, &answer(|a| a["unknownFields"] = json!(["txtX"])), None) {
         Verdict::Pass { detail, captured } => {
             assert_eq!(detail, "status 200, carried on, captured evalId, not on the page: txtX");
             assert_eq!(captured["evalId"], "42");
         }
         _ => panic!("expected a pass"),
     }
-    match judge(step, &answer(|a| a["carried"] = json!(false)), Some("<file a.pdf, 3 bytes>".into())) {
+    match judge(step, &req, &answer(|a| a["carried"] = json!(false)), Some("<file a.pdf, 3 bytes>".into())) {
         Verdict::Pass { detail, .. } => {
             assert_eq!(detail, "status 200, loaded fresh, <file a.pdf, 3 bytes>, captured evalId");
         }
@@ -526,4 +540,90 @@ fn page_state_values_are_scrubbed_from_any_html() {
     }
     let keep = r#"<input type="hidden" name="__EVENTTARGET" value="abc"><input name="txtName" value="abc">"#;
     assert_eq!(scrub_page_state(keep), keep);
+}
+
+#[test]
+fn page_state_is_scrubbed_from_an_updatepanel_delta() {
+    let delta = "1|#||4|12|updatePanel|up|<p>hi</p>|0|hiddenField|__VIEWSTATE|abcSECRET|0|hiddenField|__EVENTVALIDATION|defSECRET|\
+                 0|hiddenField|__EVENTTARGET|keepme|0|hiddenField|txtName|plain|";
+    let out = scrub_page_state(delta);
+    assert!(!out.contains("SECRET"), "{out}");
+    assert!(out.contains("hiddenField|__VIEWSTATE|(page state)|"), "{out}");
+    assert!(out.contains("hiddenField|__EVENTTARGET|keepme|"), "{out}");
+    assert!(out.contains("hiddenField|txtName|plain|"), "{out}");
+    // Cut off in the middle of a value.
+    let cut = scrub_page_state("0|hiddenField|__VIEWSTATE|abcSECRET");
+    assert!(!cut.contains("SECRET"), "{cut}");
+    assert!(cut.contains("(page state)"), "{cut}");
+    // Value before the name, upper case, a newline inside the tag.
+    for html in [
+        r#"<input value="SECRET" type="hidden" name="__VIEWSTATE">"#,
+        "<INPUT TYPE=\"hidden\"\n NAME=\"__VIEWSTATE\"\n VALUE=\"SECRET\">",
+    ] {
+        assert!(!scrub_page_state(html).contains("SECRET"), "{html}");
+    }
+}
+
+#[test]
+fn the_anti_forgery_token_input_is_left_to_the_token_scrub() {
+    let html = r#"<input name="__RequestVerificationToken" type="hidden" value="tok">"#;
+    assert_eq!(scrub_page_state(html), html);
+}
+
+#[test]
+fn judging_walks_the_captures_the_step_declares() {
+    let step = &with_step(save_step()).steps[0];
+    let req = save_request(step);
+    let fail = |a: &Answered| match judge(step, &req, a, None) {
+        Verdict::Fail(s) => s,
+        _ => panic!("expected a failure"),
+    };
+    // The page reported nothing for a declared capture.
+    assert_eq!(
+        fail(&answer(|a| a["captures"] = json!({}))),
+        "capture evalId: #hdnEvalId was not reported by the page"
+    );
+    // One element matched but the attribute is absent.
+    assert_eq!(
+        fail(&answer(|a| a["captures"] = json!({ "evalId": { "count": 1, "value": null } }))),
+        "capture evalId: #hdnEvalId has no value"
+    );
+    // Present but empty is captured as empty.
+    match judge(step, &req, &answer(|a| a["captures"] = json!({ "evalId": { "count": 1, "value": "" } })), None) {
+        Verdict::Pass { captured, .. } => assert_eq!(captured["evalId"], ""),
+        _ => panic!("expected a pass"),
+    }
+    // A text capture with no value names the text.
+    let t = with_step(json!({
+        "name": "s", "postback": { "page": "/P.aspx", "button": "b" }, "capture": { "t": "html:#lbl" }
+    }));
+    let r = build_postback(&t.steps[0], &BTreeMap::new(), &BTreeMap::new()).unwrap();
+    let a = answered(json!({ "status": 200, "captures": { "t": { "count": 1, "value": null } } }));
+    assert!(matches!(judge(&t.steps[0], &r, &a, None), Verdict::Fail(s) if s == "capture t: #lbl has no text"));
+}
+
+#[test]
+fn the_rows_sentence_is_built_from_the_step_not_the_page() {
+    let t = with_step(json!({
+        "name": "s", "postback": { "page": "/P.aspx", "button": "b" },
+        "expect": { "html": { "rows": { "table": "#grid", "has": "{{name}}" } } }
+    }));
+    let r = build_postback(&t.steps[0], &vars(&[("name", json!("Zed"))]), &BTreeMap::new()).unwrap();
+    let a = |kind: &str| {
+        answered(json!({ "status": 200, "checks": [{ "kind": kind, "what": "whatever the page says", "ok": false, "count": 0 }] }))
+    };
+    assert!(matches!(judge(&t.steps[0], &r, &a("rows"), None), Verdict::Fail(s) if s == "no row of #grid holds Zed"));
+    assert!(matches!(
+        judge(&t.steps[0], &r, &a("sideways"), None),
+        Verdict::Fail(s) if s == "the page reported a check of a kind this version does not know: sideways"
+    ));
+}
+
+#[test]
+fn a_form_key_may_not_become_page_state_at_run_time() {
+    let t = with_step(json!({
+        "name": "s", "postback": { "page": "/P.aspx", "button": "b" }, "form": { "{{k}}": "x" }
+    }));
+    let err = build_postback(&t.steps[0], &vars(&[("k", json!("__VIEWSTATE"))]), &BTreeMap::new()).unwrap_err();
+    assert_eq!(err, "step 's' form field '__VIEWSTATE' is page state, which a template never sets");
 }

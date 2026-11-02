@@ -521,19 +521,39 @@ static ONLY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)(\bvalue\s*=\s*)(?:"[^"]*"?|'[^']*'?|[^\s"'>]+)"#).unwrap()
 });
 
-/// `text` - a page - with the value of every `__` hidden input taken out
-/// (`__VIEWSTATE`, `__EVENTVALIDATION`, `__VIEWSTATEGENERATOR`, ...): in
-/// each opening tag named or identified `__...`, the `value=` becomes
-/// `(page state)`. `__EVENTTARGET` and `__EVENTARGUMENT` stay as they are:
-/// they say which control posted, not what the page holds. Runs BEFORE
-/// `excerpt`, like `scrub_tokens`, so a cap never cuts a value in half.
+/// An UpdatePanel (ASP.NET AJAX) answer carries a hidden field as
+/// `hiddenField|<name>|<value>|`; the value runs to the next `|`, or to the
+/// end of a body that was cut inside it.
+static DELTA_FIELD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(hiddenField\|)(__[^|]*)\|[^|]*").unwrap());
+
+/// Whether a `__` name holds page state. `__EVENTTARGET` and
+/// `__EVENTARGUMENT` say which control posted, not what the page holds, and
+/// the anti-forgery token has its own scrub (`scrub_tokens`, shown as
+/// `(token)`).
+fn is_page_state_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("__")
+        && !matches!(name.as_str(), "__eventtarget" | "__eventargument" | "__requestverificationtoken")
+}
+
+/// `text` - a page, or an UpdatePanel answer - with the value of every `__`
+/// hidden field taken out (`__VIEWSTATE`, `__EVENTVALIDATION`,
+/// `__VIEWSTATEGENERATOR`, ...): in each opening tag named or identified
+/// `__...`, the `value=` becomes `(page state)`, and so does the value in a
+/// `hiddenField|__...|<value>|` entry. Runs BEFORE `excerpt`, like
+/// `scrub_tokens`, so a cap never cuts a value in half.
 pub fn scrub_page_state(text: &str) -> String {
-    TAG.replace_all(text, |c: &regex::Captures| {
+    let text = DELTA_FIELD.replace_all(text, |c: &regex::Captures| {
+        if is_page_state_name(&c[2]) {
+            format!("{}{}|{}", &c[1], &c[2], super::postback::PAGE_STATE_SHOWN)
+        } else {
+            c[0].to_string()
+        }
+    });
+    TAG.replace_all(&text, |c: &regex::Captures| {
         let tag = &c[0];
-        let is_state = NAME_OR_ID.captures_iter(tag).any(|n| {
-            let name = n[1].to_ascii_lowercase();
-            name.starts_with("__") && name != "__eventtarget" && name != "__eventargument"
-        });
+        let is_state = NAME_OR_ID.captures_iter(tag).any(|n| is_page_state_name(&n[1]));
         if is_state {
             ONLY_VALUE
                 .replace_all(tag, format!("${{1}}\"{}\"", super::postback::PAGE_STATE_SHOWN))

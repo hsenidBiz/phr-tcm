@@ -188,12 +188,19 @@ pub fn build_postback(
         None => path,
     };
 
-    let fields = step
-        .form
-        .iter()
-        .flatten()
-        .map(|(k, v)| (substitute_str(k, vars), substitute_str(v, vars)))
-        .collect();
+    // `check` refuses a `__` key as written; a placeholder must not get one
+    // past it at run time.
+    let mut fields = BTreeMap::new();
+    for (k, v) in step.form.iter().flatten() {
+        let key = substitute_str(k, vars);
+        if key.starts_with("__") {
+            return Err(format!(
+                "step '{}' form field '{key}' is page state, which a template never sets",
+                step.name
+            ));
+        }
+        fields.insert(key, substitute_str(v, vars));
+    }
     let html = step.expect.html.as_ref();
     let fill = |list: Option<&Vec<String>>| -> Vec<String> {
         list.map(|l| l.iter().map(|s| substitute_str(s, vars)).collect()).unwrap_or_default()
@@ -332,8 +339,9 @@ pub struct Answered {
 
 /// One `expect.html` check as the page judged it. `kind` is `shows`,
 /// `hides`, `rows` or `table` (the selector of a row check matched other
-/// than once); `what` is the entry as written, and for `rows` the table and
-/// the text together (`#grid holds Zed`).
+/// than once); `what` is the entry as written. A `rows` failure is worded
+/// from the step's own row check, not from `what`, and any other `kind` is
+/// a contract error.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CheckResult {
@@ -343,6 +351,9 @@ pub struct CheckResult {
     pub count: usize,
 }
 
+/// One `html:` capture as the page read it. `value` is `Some("")` when the
+/// element has the attribute (or text) but it is empty, and `None` when the
+/// attribute is absent - the page sends `null` for that.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CaptureResult {
@@ -408,9 +419,10 @@ pub enum Verdict {
 
 /// Judges the page's account of a step against the step, in a fixed order:
 /// signed out, too large, a partial update, the application's own error
-/// page, the status, each check, each capture. `sent_files` is how the
-/// files that went are named for the detail.
-pub fn judge(step: &Step, a: &Answered, sent_files: Option<String>) -> Verdict {
+/// page, the status, each check, each capture. `req` is the request that
+/// was sent (its row check carries the filled-in text); `sent_files` is how
+/// the files that went are named for the detail.
+pub fn judge(step: &Step, req: &PostbackRequest, a: &Answered, sent_files: Option<String>) -> Verdict {
     if a.signed_out {
         return Verdict::SignedOut;
     }
@@ -420,12 +432,13 @@ pub fn judge(step: &Step, a: &Answered, sent_files: Option<String>) -> Verdict {
     if a.partial {
         return Verdict::Fail(PARTIAL_UPDATE.to_string());
     }
+    // The application refusing a field stands on its own: its answer need
+    // not carry an error page's title.
+    if a.invalid_postback {
+        return Verdict::Fail(invalid_postback(a.invalid_field.as_deref()));
+    }
     if let Some(title) = &a.asp_error {
-        return Verdict::Fail(if a.invalid_postback {
-            invalid_postback(a.invalid_field.as_deref())
-        } else {
-            error_page(title)
-        });
+        return Verdict::Fail(error_page(title));
     }
     if a.status != step.expect.status {
         return Verdict::Fail(format!("expected status {}, got {}", step.expect.status, a.status));
@@ -435,18 +448,20 @@ pub fn judge(step: &Step, a: &Answered, sent_files: Option<String>) -> Verdict {
             "shows" => format!("the answer does not show {}", c.what),
             "hides" => format!("the answer shows {}", c.what),
             "table" => format!("{} matches {} elements, not one", c.what, c.count),
-            _ => format!("no row of {}", c.what),
+            "rows" => match &req.rows {
+                Some(r) => format!("no row of {} holds {}", r.table, r.has),
+                None => format!("the page reported a row check this step does not have: {}", c.what),
+            },
+            other => format!("the page reported a check of a kind this version does not know: {other}"),
         });
     }
     let mut captured = BTreeMap::new();
-    for (name, r) in &a.captures {
-        let selector = step
-            .capture
-            .get(name)
-            .and_then(|p| parse_html_capture(p))
-            .and_then(Result::ok)
-            .map(|c| c.selector)
-            .unwrap_or_default();
+    for (name, path) in &step.capture {
+        let Some(Ok(declared)) = parse_html_capture(path) else { continue };
+        let selector = &declared.selector;
+        let Some(r) = a.captures.get(name) else {
+            return Verdict::Fail(format!("capture {name}: {selector} was not reported by the page"));
+        };
         if r.bad_selector {
             return Verdict::Fail(format!("capture {name}: {selector} is not a CSS selector"));
         }
@@ -458,7 +473,11 @@ pub fn judge(step: &Step, a: &Answered, sent_files: Option<String>) -> Verdict {
         if r.count != 1 {
             return Verdict::Fail(format!("capture {name}: {selector} matches {} elements, not one", r.count));
         }
-        captured.insert(name.clone(), r.value.clone().unwrap_or_default());
+        let Some(value) = &r.value else {
+            let what = declared.attr.as_deref().unwrap_or("text");
+            return Verdict::Fail(format!("capture {name}: {selector} has no {what}"));
+        };
+        captured.insert(name.clone(), value.clone());
     }
 
     let mut detail = format!("status {}, {}", a.status, if a.carried { "carried on" } else { "loaded fresh" });

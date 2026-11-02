@@ -1423,11 +1423,11 @@ type StepResult = Result<(u16, String), StepFailure>;
 /// sign-in makes no difference), so what helps is more tries, spaced out.
 pub const RETRY_PAUSES: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(3), Duration::from_secs(5)];
 
-/// The sentence for a step refused unread, as the person reads it.
 /// Why a step whose answer came from another page fails: a sign-in page
 /// where the step's own page should be.
 pub const SENT_ELSEWHERE: &str = "was sent to another page - the session may have ended";
 
+/// The sentence for a step refused unread, as the person reads it.
 const REFUSED_UNREAD: &str = "the application refused this request without reading it (an empty 400) - \
      usually a busy moment on the server, or this account being signed in somewhere else";
 
