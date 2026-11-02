@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.15",
+    date: "2026-11-02",
+    items: [
+      "The Check sign-in tab in the Auto Run Accounts window is tidier: Walk to and a Select all box share one row, each account sits in a list with its key and its last result (or \"Not checked yet\"), and the Check sign-in button sits right under the list. Hover a result to see exactly when it was checked.",
+    ],
+  },
+  {
     version: "2.4.3-beta.14",
     date: "2026-11-02",
     items: [
