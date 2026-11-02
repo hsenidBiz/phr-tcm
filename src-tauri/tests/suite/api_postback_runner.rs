@@ -15,7 +15,7 @@ use v2_lib::api_templates::runner::{
 };
 use v2_lib::api_templates::ApiTemplate;
 
-fn step(name: &str, page: &str, extra: Value) -> Value {
+pub(crate) fn step(name: &str, page: &str, extra: Value) -> Value {
     let mut s = json!({ "name": name, "postback": { "page": page, "button": "btnSave" } });
     for (k, v) in extra.as_object().expect("an object") {
         s[k] = v.clone();
@@ -23,7 +23,7 @@ fn step(name: &str, page: &str, extra: Value) -> Value {
     s
 }
 
-fn template(steps: Vec<Value>) -> ApiTemplate {
+pub(crate) fn template(steps: Vec<Value>) -> ApiTemplate {
     serde_json::from_value(json!({
         "id": "pb-eval",
         "title": "Create an evaluation",
@@ -201,12 +201,17 @@ async fn a_stuck_page_is_not_sent_to_again() {
 #[tokio::test]
 async fn a_postback_that_lands_on_sign_in_ends_the_session() {
     let _act = crate::serial::activity_log();
-    for reply in [page_reply(200, json!({ "signedOut": true })), json!({ "refused": "signed_out" })] {
+    // Answered by the sign-in page: the post went out, so it says so. Refused before it was sent: it did not.
+    let cases = [
+        (page_reply(200, json!({ "signedOut": true })), format!("{SENT_ELSEWHERE}{MAY_HAVE_SAVED}")),
+        (json!({ "refused": "signed_out" }), SENT_ELSEWHERE.to_string()),
+    ];
+    for (reply, expected) in cases {
         let mut r = rig(vec![], None);
         replies(&r, vec![reply]);
         let report = run(&mut r, one_step()).await;
         assert!(!report.ok);
-        assert_eq!(last_detail(&report), SENT_ELSEWHERE);
+        assert_eq!(last_detail(&report), expected);
         assert_eq!(r.browsers.closed, 1, "the browser was kept");
     }
 }

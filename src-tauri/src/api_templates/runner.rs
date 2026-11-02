@@ -1133,7 +1133,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
         // starts again, signed in afresh. A 400 with a body is the
         // template's own answer, and a template that expects a 400 is never
         // refused unread.
-        if ctx.reused && i == 0 && matches!(&result, Err(f) if f.unread || f.session_ended) {
+        if ctx.reused && i == 0 && matches!(&result, Err(f) if f.unread || (f.session_ended && !f.posted)) {
             applog::info(format!(
                 "api template {}: the first request in a kept browser was refused unread or sent to another page",
                 ctx.id()
@@ -1254,7 +1254,9 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress, fir
                 Ok((doc, Value::String(t))) if !t.is_empty() => return Some((doc, t)),
                 // WebForms pages carry their own validation: a template of
                 // postbacks alone needs no token, and no second sign-in.
-                Ok((doc, _)) if ctx.req.template.steps.iter().all(Step::is_postback) => {
+                Ok((doc, _))
+                    if ctx.req.template.steps.iter().all(|s| s.is_postback() || s.method() == Method::Get) =>
+                {
                     return Some((doc, String::new()));
                 }
                 Ok(_) if signed_in_again => {
@@ -1429,17 +1431,21 @@ fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
 /// and when the account's session was taken over) - so nothing was saved,
 /// and sending it again with a fresh token cannot save anything twice.
 /// `session_ended` marks a request sent to another page instead: the
-/// session most likely ended, and the browser is not kept.
+/// session most likely ended, and the browser is not kept. `posted` marks a
+/// postback that went out before it failed: the first-request rule of a
+/// kept browser never starts such a run again, because that would post it
+/// a second time.
 struct StepFailure {
     status: Option<u16>,
     detail: String,
     unread: bool,
     session_ended: bool,
+    posted: bool,
 }
 
 impl From<(Option<u16>, String)> for StepFailure {
     fn from((status, detail): (Option<u16>, String)) -> Self {
-        StepFailure { status, detail, unread: false, session_ended: false }
+        StepFailure { status, detail, unread: false, session_ended: false, posted: false }
     }
 }
 
@@ -1563,11 +1569,18 @@ async fn run_step<D: Driver>(
             detail: SENT_ELSEWHERE.to_string(),
             unread: false,
             session_ended: true,
+            posted: false,
         });
     }
 
     if status == 400 && text.trim().is_empty() && step.expect.status != 400 {
-        return Err(StepFailure { status: Some(400), detail: REFUSED_UNREAD.to_string(), unread: true, session_ended: false });
+        return Err(StepFailure {
+            status: Some(400),
+            detail: REFUSED_UNREAD.to_string(),
+            unread: true,
+            session_ended: false,
+            posted: false,
+        });
     }
 
     // A one-off that says nothing about what it expects passes on any 2xx:
@@ -1699,7 +1712,12 @@ async fn run_postback<D: Driver>(
             return Err((None, format!("{what}{MAY_HAVE_SAVED}")).into());
         }
     };
-    let after_post = if reply_posted(&raw) { MAY_HAVE_SAVED } else { "" };
+    // A `sent` reply is one the post went out for, whatever else is wrong with it.
+    let after_post = if reply_posted(&raw) || raw.get("sent").and_then(Value::as_bool) == Some(true) {
+        MAY_HAVE_SAVED
+    } else {
+        ""
+    };
     let a = match read_reply(&raw) {
         None => {
             // Only the answer's shape: whatever it carries may be page state.
@@ -1708,7 +1726,7 @@ async fn run_postback<D: Driver>(
                 None => "something that is not an object".to_string(),
             };
             applog::warn(format!("api template {}: step {}: the page answered {keys}", ctx.id(), step.name));
-            return Err((None, "the page gave no answer for this request - see Settings, Logs".to_string()).into());
+            return Err((None, format!("the page gave no answer for this request - see Settings, Logs{after_post}")).into());
         }
         Some(Reply::Timeout) => {
             note(&sent, None, "");
@@ -1730,6 +1748,7 @@ async fn run_postback<D: Driver>(
                 detail: refusal_sentence(why, &req.url, &button, status, count),
                 unread: false,
                 session_ended: why == Refusal::SignedOut,
+                posted: false,
             });
         }
         Some(Reply::Answered(a)) => a,
@@ -1754,23 +1773,30 @@ async fn run_postback<D: Driver>(
             detail: format!("{REFUSED_UNREAD}{MAY_HAVE_SAVED}"),
             unread: false,
             session_ended: false,
+            posted: true,
         });
     }
     match judge(step, &req, &a, sent_files) {
         Verdict::SignedOut => {
             applog::warn(format!("api template {}: step {} was answered by the sign-in page", ctx.id(), step.name));
+            // The post went out: the session is over, but the run is not
+            // started again in a fresh browser (that would post it twice).
             Err(StepFailure {
                 status: Some(a.status),
-                detail: SENT_ELSEWHERE.to_string(),
+                detail: format!("{SENT_ELSEWHERE}{MAY_HAVE_SAVED}"),
                 unread: false,
                 session_ended: true,
+                posted: true,
             })
         }
         Verdict::Fail(why) => {
-            // The sentence can quote the template's own text, and the
-            // excerpt is the answer's: both lose tokens and page state; a
-            // one-off's excerpt is redacted like its other answers.
-            let why = scrub_tokens(&scrub_page_state(&why), Some(token));
+            // The sentence can quote the template's own text, the answer's
+            // error title (a request-validation title echoes the posted
+            // value) and an address: all lose tokens, page state and hosts;
+            // a one-off's is redacted like its other answers. The excerpt is
+            // the answer's, and is redacted the same way.
+            let why = without_hosts(&scrub_tokens(&scrub_page_state(&why), Some(token)));
+            let why = if matches!(ctx.req.mode, Mode::Explore) { redact_body(None, &why) } else { why };
             let began = if matches!(ctx.req.mode, Mode::Explore) {
                 shown(&redact_body(a.content_type.as_deref(), &kept), token)
             } else {
