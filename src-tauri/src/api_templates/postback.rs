@@ -325,6 +325,9 @@ pub struct Answered {
     pub signed_out: bool,
     pub too_large: bool,
     pub partial: bool,
+    /// The answer had no body at all (an empty 400 is the application
+    /// refusing the request unread).
+    pub empty: bool,
     pub state_names: Vec<String>,
     pub page_names: Vec<String>,
     pub unknown_fields: Vec<String>,
@@ -388,6 +391,13 @@ pub fn read_reply(v: &Value) -> Option<Reply> {
         return serde_json::from_value(v.clone()).ok().map(Reply::Answered);
     }
     None
+}
+
+/// Whether a failed call (`Reply::Error` or `Reply::Timeout`) got as far as
+/// making the post: the page says so from the moment before it. Anything
+/// before that - loading the page, a refusal - saved nothing.
+pub fn reply_posted(v: &Value) -> bool {
+    v.get("posted").and_then(Value::as_bool) == Some(true)
 }
 
 /// The sentence for a refusal.
@@ -534,6 +544,8 @@ pub fn sent_body(req: &PostbackRequest, a: Option<&Answered>) -> String {
 pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carryLimit, answerLimit) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), limitMs || 30000);
+  // Set the moment before the post is made: an error after it may have saved.
+  let posted = false;
   try {
     if (!window.__tcmPostback || window.__tcmPostback.run !== run) window.__tcmPostback = { run: run, pages: {} };
     const pages = window.__tcmPostback.pages;
@@ -681,13 +693,14 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     // The form's own action, as the browser reads it from the page it is on.
     let action = new URL(form.getAttribute('action') || source.url, source.url);
     if (action.origin !== location.origin) action = new URL(req.url, location.href);
+    posted = true;
     const r = await fetch(action.href, { method: 'POST', credentials: 'same-origin', headers: { 'Accept': 'text/html,application/xhtml+xml' }, body: body, signal: ctrl.signal });
     const text = await r.text();
 
     const finalKey = keyOf(r.url);
     const out = {
       sent: true, status: r.status, contentType: r.headers.get('content-type'), finalUrl: r.url, redirected: r.redirected,
-      finalKey: finalKey, carried: source.carried, signedOut: false, tooLarge: false, partial: false,
+      finalKey: finalKey, carried: source.carried, signedOut: false, tooLarge: false, partial: false, empty: text.trim() === '',
       stateNames: stateNames, pageNames: pageNames, unknownFields: unknown, aspError: null, invalidPostback: false,
       invalidField: null, checks: [], captures: {}, excerpt: '', cut: false,
     };
@@ -771,7 +784,7 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     out.excerpt = html.slice(0, answerLimit);
     return out;
   } catch (e) {
-    return { error: e && e.name === 'AbortError' ? 'timeout' : String(e) };
+    return { error: e && e.name === 'AbortError' ? 'timeout' : String(e), posted: posted };
   } finally {
     clearTimeout(timer);
   }

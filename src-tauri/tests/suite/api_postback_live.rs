@@ -974,3 +974,76 @@ async fn a_validator_link_button_is_found_by_its_post_back_options() {
     assert_eq!(a.status, 200);
     assert_eq!(last_post(&state).get("__EVENTTARGET"), Some("ctl00$Main$lnkVal"));
 }
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_three_step_template_runs_end_to_end_in_a_real_page() {
+    let _act = crate::serial::activity_log();
+    let (port, state) = serve();
+    let mut live = open(port).await;
+
+    // The runner reads its origin from the sign-in recipe and its account
+    // from the saved accounts, as `api_templates_runner::rig` sets them.
+    let root = tempfile::tempdir().unwrap();
+    let recipe: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(json!({
+        "start_url": format!("http://127.0.0.1:{port}/start"),
+        "steps": [ { "kind": "click", "selector": { "css": "body" } } ],
+        "signed_in": { "css": "body" }
+    }))
+    .unwrap();
+    v2_lib::autorun::recipe::save_recipe(root.path(), "acme", "PMS", &recipe).unwrap();
+    v2_lib::autorun::accounts::save_accounts(root.path(), &[crate::common::account()]).unwrap();
+
+    let template: v2_lib::api_templates::ApiTemplate = serde_json::from_value(json!({
+        "id": "wf-evaluation",
+        "title": "Create an evaluation",
+        "module": "PMS / Evaluation",
+        "effect": "create",
+        "description": "Save, add an item, save the item.",
+        "sources": [],
+        "antiforgery": { "page": "/start" },
+        "params": [],
+        "steps": [
+            { "name": "Save", "postback": { "page": EVAL, "button": "CmdSave" },
+              "form": { "txtName": "Quarterly" },
+              "expect": { "html": { "shows": ["Saved"], "hides": ["#ValidationSummary1"] } },
+              "capture": { "evalId": "html:#hdnEvalId@value" } },
+            { "name": "Create", "postback": { "page": "/Perf/Eval.aspx?id={{evalId}}", "button": "lnkCreate" },
+              "expect": { "html": { "shows": ["Item 1"] } } },
+            { "name": "Save Item", "postback": { "page": "/Perf/Eval.aspx?id={{evalId}}", "button": "CmdSaveItem" },
+              "form": { "txtItem$0": "Widget" },
+              "expect": { "html": { "rows": { "table": "#gvItems", "has": "Item 1: Widget" } } } }
+        ],
+        "outputs": ["evalId"]
+    }))
+    .unwrap();
+    let req = v2_lib::api_templates::runner::RunRequest {
+        org: "acme".into(),
+        project: "PMS".into(),
+        account: "admin".into(),
+        values: serde_json::Map::new(),
+        mode: v2_lib::api_templates::runner::Mode::Run,
+        template,
+    };
+    let out = v2_lib::api_templates::runner::run_in_page(
+        &mut live.cdp,
+        root.path(),
+        &req,
+        &timing(),
+        v2_lib::api_templates::runner::TokenPage::Here,
+        v2_lib::api_templates::runner::RUN_LIMIT,
+        &[],
+    )
+    .await;
+    assert!(out.report.ok, "{:?}", out.report);
+    assert_eq!(out.report.outputs["evalId"], json!("7"));
+    assert_eq!(out.report.steps.len(), 3, "{:?}", out.report.steps);
+    assert_eq!(out.postback_carried, Some(true), "the last step carried on from the one before");
+    let p = last_post(&state);
+    assert_eq!(p.get("txtItem$0"), Some("Widget"));
+    assert_eq!(p.get("__EVENTTARGET"), Some(""));
+    assert_eq!(p.get("ctl00$Main$CmdSaveItem"), Some("Save Item"));
+    assert_eq!(post_count(&state), 3);
+    let shown = format!("{:?}{}", out.report, out.answer.map(|a| a.body).unwrap_or_default());
+    assert!(!shown.contains("SECRET"), "page state reached the report: {shown}");
+}

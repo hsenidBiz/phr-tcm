@@ -29,6 +29,10 @@ use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_ad
 use super::flow::{check_stage_ref, Flow};
 use super::flow_store;
 use super::held::{self, HeldBrowser, HeldEntry, Keeps, Taken};
+use super::postback::{
+    build_postback, judge, read_reply, refusal_sentence, reply_posted, sent_body, Answered, Carry, PostbackRequest,
+    Refusal, Reply, Verdict, CARRY_LIMIT_BYTES, MAY_HAVE_SAVED, POSTBACK_FN,
+};
 use super::{
     check, check_values, is_safe_relative_path, ApiTemplate, Effect, Expect, Method, Step, DELETES_KIND_NEEDED,
     DELETE_SHAPE,
@@ -193,6 +197,10 @@ pub struct InPage {
     pub token_page: Option<String>,
     /// Whether a non-empty token was read there.
     pub token_found: bool,
+    /// Whether the last postback the page answered carried on from the
+    /// answer before it (`true`) or loaded its page fresh (`false`); `None`
+    /// when no postback was answered.
+    pub postback_carried: Option<bool>,
 }
 
 /// How much of an answer's body `FETCH_FN` reads back.
@@ -484,6 +492,8 @@ struct Progress {
     /// Where such a run read the token, and whether it found one.
     token_page: Option<String>,
     token_found: bool,
+    /// See `InPage::postback_carried`.
+    postback_carried: Option<bool>,
 }
 
 impl Progress {
@@ -502,6 +512,7 @@ impl Progress {
             answer: None,
             token_page: None,
             token_found: false,
+            postback_carried: None,
         }
     }
 
@@ -1019,7 +1030,8 @@ pub async fn run_in_page<D: Driver>(
         }
     }
     let (answer, token_page, token_found) = (progress.answer.take(), progress.token_page.take(), progress.token_found);
-    InPage { report: finish(req, progress), answer, token_page, token_found }
+    let postback_carried = progress.postback_carried;
+    InPage { report: finish(req, progress), answer, token_page, token_found, postback_carried }
 }
 
 /// `run_in_session`'s run, before its report: what it did, and whether it
@@ -1100,12 +1112,20 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
 
     // What a run left out of an optional param, its default stands in for.
     let mut vars: BTreeMap<String, Value> = crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
+    // Which pages this template run has carried (names only; the pages stay
+    // in the browser under this run's key). New for every run, so each
+    // template of a fixture or flow starts with nothing carried.
+    let mut carry = if matches!(req.mode, Mode::Explore) { Carry::one_off() } else { Carry::for_run(ctx.id()) };
     for (i, step) in req.template.steps.iter().enumerate() {
-        let handler = step.query.get("handler").map(|h| exec::substitute_str(h, &vars));
+        let handler = match &step.postback {
+            Some(pb) => Some(pb.button.clone()),
+            None => step.query.get("handler").map(|h| exec::substitute_str(h, &vars)),
+        };
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
         d.set_deadline(Some(Instant::now() + step_limit(step)));
-        let mut result = run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
+        let mut result =
+            run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, &mut carry, 1).await;
         d.set_deadline(None);
         // A kept browser whose very first request is refused unread, or
         // sent to another page: its session most likely ended while it was
@@ -1144,7 +1164,9 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
             d.set_deadline(Some(Instant::now() + step_limit(step)));
-            result = run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, attempt).await;
+            result =
+                run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, &mut carry, attempt)
+                    .await;
             d.set_deadline(None);
         }
         if attempt > 1 {
@@ -1230,6 +1252,11 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress, fir
             record_token_page(ctx, &href, found, cookies, &progress.sign_ins);
             match read {
                 Ok((doc, Value::String(t))) if !t.is_empty() => return Some((doc, t)),
+                // WebForms pages carry their own validation: a template of
+                // postbacks alone needs no token, and no second sign-in.
+                Ok((doc, _)) if ctx.req.template.steps.iter().all(Step::is_postback) => {
+                    return Some((doc, String::new()));
+                }
                 Ok(_) if signed_in_again => {
                     progress.fail(None, format!("no anti-forgery token on {page}"));
                     return None;
@@ -1363,7 +1390,9 @@ async fn token_in_page<D: Driver>(
     progress.token_found = found.is_some();
     match found {
         Some(t) => Some((doc, t)),
-        None if ctx.req.template.steps.iter().all(|s| s.method() == Method::Get) => Some((doc, String::new())),
+        None if ctx.req.template.steps.iter().all(|s| s.is_postback() || s.method() == Method::Get) => {
+            Some((doc, String::new()))
+        }
         None => {
             progress.fail(None, NO_TOKEN_HERE);
             None
@@ -1444,8 +1473,12 @@ async fn run_step<D: Driver>(
     handler: Option<&str>,
     vars: &mut BTreeMap<String, Value>,
     progress: &mut Progress,
+    carry: &mut Carry,
     attempt: u8,
 ) -> StepResult {
+    if step.is_postback() {
+        return run_postback(d, ctx, doc, token, step, vars, progress, carry, attempt).await;
+    }
     let files = step_files(ctx, step).map_err(|e| (None, e))?;
     let mut built = build_request(step, vars, &files).map_err(|e| (None, e))?;
     drop(files);
@@ -1585,6 +1618,222 @@ async fn run_step<D: Driver>(
         detail.push_str(&format!(", captured {}", got.join(", ")));
     }
     Ok((status, detail))
+}
+
+/// One postback step: the page sends it (`POSTBACK_FN`) from the page it
+/// carries or loads, and answers with names, check results, capture values
+/// and a scrubbed excerpt - never the page. It is never sent twice: a
+/// failure after the post may have saved, so the step fails and says so.
+#[allow(clippy::too_many_arguments)]
+async fn run_postback<D: Driver>(
+    d: &mut D,
+    ctx: &Ctx<'_>,
+    doc: &Handle,
+    token: &str,
+    step: &Step,
+    vars: &mut BTreeMap<String, Value>,
+    progress: &mut Progress,
+    carry: &mut Carry,
+    attempt: u8,
+) -> StepResult {
+    let files = step_files(ctx, step).map_err(|e| (None, e))?;
+    let mut req = build_postback(step, vars, &files).map_err(|e| (None, e))?;
+    drop(files);
+    let fresh = step.postback.as_ref().is_some_and(|p| p.fresh);
+    let mode = carry.mode(&req.key, fresh);
+    let mode_name = serde_json::to_value(mode).ok().and_then(|m| m.as_str().map(str::to_string)).unwrap_or_default();
+    // The address goes in the letter case of the application's cookie, as any step's does.
+    let mut stand_in = exec::BuiltRequest {
+        method: Method::Post,
+        url: req.url.clone(),
+        body: Body::Form { fields: BTreeMap::new(), files: req.files.clone() },
+    };
+    let adapted = adapt_path_case(d, ctx, step, &mut stand_in).await;
+    req.key = super::postback::page_key(&stand_in.url);
+    req.url = stand_in.url.clone();
+    let wire = serde_json::to_value(&req).map_err(|e| (None, format!("the request could not be built: {e}")))?;
+    let cookies_sent = cookies_for(d, ctx, &format!("{}{}", ctx.origin, req.url))
+        .await
+        .map(|all| all.iter().map(|c| c["name"].clone()).collect::<Vec<_>>());
+    let sent_files = sent_files(&stand_in.body);
+    let button = step.postback.as_ref().map(|p| p.button.clone()).unwrap_or_default();
+
+    let started = Instant::now();
+    let limit = step_limit(step);
+    let args = [
+        wire,
+        Value::from(limit.as_millis() as u64),
+        Value::String(carry.run_key().to_string()),
+        Value::String(mode_name.clone()),
+        Value::from(CARRY_LIMIT_BYTES),
+        Value::from(ANSWER_LIMIT_CHARS as u64),
+    ];
+    let raw = call_value_within(d, doc, POSTBACK_FN, &args, limit + FETCH_GRACE).await;
+    let sent = Sent {
+        status: None,
+        duration_ms: started.elapsed().as_millis() as u64,
+        response: "",
+        content_type: None,
+        cookies: cookies_sent.as_deref(),
+        path_case_adapted: adapted.as_ref(),
+        attempt,
+    };
+    let note = |sent: &Sent<'_>, answered: Option<&Answered>, excerpt_text: &str| {
+        record_postback(ctx, step, &req, &button, &mode_name, sent, answered, excerpt_text, token);
+    };
+    // What an error says goes to the log with no address, token or page
+    // state in it.
+    let logged = |what: &str| excerpt(&scrub_tokens(&scrub_page_state(&without_hosts(what)), Some(token)));
+
+    let raw = match raw {
+        Ok(v) => v,
+        Err(e) => {
+            // The page may have made the post before the browser stopped
+            // answering: never say nothing was saved.
+            applog::warn(format!("api template {}: step {}: {}", ctx.id(), step.name, logged(&e.to_string())));
+            note(&sent, None, "");
+            let what = match e {
+                CdpError::Timeout { .. } => step_too_long(limit),
+                _ => "the browser did not answer while sending this step - see Settings, Logs".to_string(),
+            };
+            return Err((None, format!("{what}{MAY_HAVE_SAVED}")).into());
+        }
+    };
+    let after_post = if reply_posted(&raw) { MAY_HAVE_SAVED } else { "" };
+    let a = match read_reply(&raw) {
+        None => {
+            // Only the answer's shape: whatever it carries may be page state.
+            let keys = match raw.as_object() {
+                Some(map) => format!("an object with keys: {}", map.keys().cloned().collect::<Vec<_>>().join(", ")),
+                None => "something that is not an object".to_string(),
+            };
+            applog::warn(format!("api template {}: step {}: the page answered {keys}", ctx.id(), step.name));
+            return Err((None, "the page gave no answer for this request - see Settings, Logs".to_string()).into());
+        }
+        Some(Reply::Timeout) => {
+            note(&sent, None, "");
+            return Err((None, format!("{}{after_post}", step_too_long(limit))).into());
+        }
+        Some(Reply::Error(e)) => {
+            applog::warn(format!(
+                "api template {}: step {}: the request did not complete: {}",
+                ctx.id(),
+                step.name,
+                logged(&e)
+            ));
+            note(&sent, None, "");
+            return Err((None, format!("the request did not complete - see Settings, Logs{after_post}")).into());
+        }
+        Some(Reply::Refused { why, status, count }) => {
+            return Err(StepFailure {
+                status: None,
+                detail: refusal_sentence(why, &req.url, &button, status, count),
+                unread: false,
+                session_ended: why == Refusal::SignedOut,
+            });
+        }
+        Some(Reply::Answered(a)) => a,
+    };
+
+    // The page scrubbed the excerpt already; this is the second layer.
+    let kept = scrub_tokens(&scrub_page_state(&a.excerpt), Some(token));
+    progress.postback_carried = Some(a.carried);
+    if ctx.in_page.is_some() {
+        progress.answer = Some(PageAnswer {
+            status: a.status,
+            content_type: a.content_type.clone().filter(|c| !c.is_empty()),
+            body: kept.clone(),
+            cut: a.cut,
+        });
+    }
+    note(&Sent { status: Some(a.status), content_type: a.content_type.as_deref(), ..sent }, Some(&a), &kept);
+
+    if a.status == 400 && a.empty && step.expect.status != 400 {
+        return Err(StepFailure {
+            status: Some(400),
+            detail: format!("{REFUSED_UNREAD}{MAY_HAVE_SAVED}"),
+            unread: false,
+            session_ended: false,
+        });
+    }
+    match judge(step, &req, &a, sent_files) {
+        Verdict::SignedOut => {
+            applog::warn(format!("api template {}: step {} was answered by the sign-in page", ctx.id(), step.name));
+            Err(StepFailure {
+                status: Some(a.status),
+                detail: SENT_ELSEWHERE.to_string(),
+                unread: false,
+                session_ended: true,
+            })
+        }
+        Verdict::Fail(why) => {
+            // The sentence can quote the template's own text, and the
+            // excerpt is the answer's: both lose tokens and page state; a
+            // one-off's excerpt is redacted like its other answers.
+            let why = scrub_tokens(&scrub_page_state(&why), Some(token));
+            let began = if matches!(ctx.req.mode, Mode::Explore) {
+                shown(&redact_body(a.content_type.as_deref(), &kept), token)
+            } else {
+                shown(&kept, token)
+            };
+            let detail = if began.is_empty() { why } else { format!("{why} - the response began: {began}") };
+            Err((Some(a.status), detail).into())
+        }
+        Verdict::Pass { detail, captured } => {
+            carry.carried_to(&a.final_key);
+            for (name, value) in captured {
+                progress.created.insert(name.clone(), scrub_value(&Value::String(value.clone()), Some(token)));
+                vars.insert(name, Value::String(value));
+            }
+            Ok((a.status, detail))
+        }
+    }
+}
+
+/// The activity record of a postback the page sent: as `record`, with the
+/// field names it sent (page state as `(page state)`), the answer's excerpt
+/// and what it carried. Both bodies are `shown`, so no token and no page
+/// state is ever in one.
+#[allow(clippy::too_many_arguments)]
+fn record_postback(
+    ctx: &Ctx<'_>,
+    step: &Step,
+    req: &PostbackRequest,
+    button: &str,
+    carry_mode: &str,
+    sent: &Sent<'_>,
+    answered: Option<&Answered>,
+    excerpt_text: &str,
+    token: &str,
+) {
+    let explore = matches!(ctx.req.mode, Mode::Explore);
+    let body = sent_body(req, answered);
+    let (request, response) = if explore {
+        (redact_body(None, &body), redact_body(sent.content_type, excerpt_text))
+    } else {
+        (body, excerpt_text.to_string())
+    };
+    activity_log::record(
+        Kind::Api,
+        json!({
+            "template": ctx.id(),
+            "mode": ctx.req.mode.label(),
+            "account": ctx.req.account,
+            "origin": ctx.origin,
+            "step": step.name,
+            "method": "POST",
+            "url": if explore { redact_body(None, &req.url) } else { req.url.clone() },
+            "handler": button,
+            "status": sent.status,
+            "duration_ms": sent.duration_ms,
+            "request": shown(&request, token),
+            "response": shown(&response, token),
+            "cookies_sent": sent.cookies,
+            "path_case_adapted": sent.path_case_adapted,
+            "attempt": sent.attempt,
+            "postback": { "button": button, "carried": answered.map(|a| a.carried), "carry": carry_mode },
+        }),
+    );
 }
 
 /// A request or response body as a record or a sentence shows it: every

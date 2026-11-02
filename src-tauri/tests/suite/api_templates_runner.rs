@@ -17,6 +17,7 @@ use v2_lib::api_templates::runner::{
     TokenPage, FETCH_FN, NO_TOKEN_HERE, OFF_THE_APP, RETRY_PAUSES, RUN_LIMIT, SESSION_ENDED_IN_PAGE, TOKEN_FN,
 };
 use v2_lib::api_templates::held::{Keeps, NotKept};
+use v2_lib::api_templates::postback::POSTBACK_FN;
 use v2_lib::api_templates::{ApiTemplate, Effect, Proven};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
@@ -41,7 +42,11 @@ pub(crate) struct Script {
     pub(crate) token: Option<String>,
     /// Answers to `FETCH_FN`, in turn.
     pub(crate) responses: VecDeque<Value>,
-    /// `FETCH_FN` never answers - the page is stuck.
+    /// Answers to `POSTBACK_FN`, in turn.
+    pub(crate) postbacks: VecDeque<Value>,
+    /// The arguments of every `POSTBACK_FN` call, in order.
+    pub(crate) posted: Vec<Vec<Value>>,
+    /// `FETCH_FN` (and `POSTBACK_FN`) never answers - the page is stuck.
     pub(crate) hang_fetch: bool,
     /// `FETCH_FN` answers this many requests, then never answers again.
     pub(crate) hang_after: Option<usize>,
@@ -107,6 +112,19 @@ impl Driver for App {
                 std::future::pending::<()>().await;
             }
             return Ok(json!({ "result": { "value": reply.expect("a request nobody scripted an answer for") } }));
+        }
+        if method == "Runtime.callFunctionOn" && f == POSTBACK_FN {
+            let args: Vec<Value> =
+                params["arguments"].as_array().unwrap().iter().map(|a| a["value"].clone()).collect();
+            let (hang, reply) = {
+                let mut s = self.script.lock().unwrap();
+                s.posted.push(args);
+                (s.hang_fetch, s.postbacks.pop_front())
+            };
+            if hang {
+                std::future::pending::<()>().await;
+            }
+            return Ok(json!({ "result": { "value": reply.expect("a postback nobody scripted an answer for") } }));
         }
         if method == "Network.getAllCookies" {
             let s = self.script.lock().unwrap();
@@ -316,6 +334,23 @@ pub(crate) fn answer(status: u16, body: Value) -> Value {
         "redirected": false,
         "text": body.to_string(),
     })
+}
+
+/// What the page's `POSTBACK_FN` hands back for a postback it sent: a
+/// plain 200 page, carried on, with `over`'s members laid over it.
+pub(crate) fn page_reply(status: u16, over: Value) -> Value {
+    let mut reply = json!({
+        "sent": true, "status": status, "contentType": "text/html; charset=utf-8",
+        "finalUrl": "https://hr.example.internal/perf/list.aspx", "redirected": false,
+        "finalKey": "/perf/list.aspx", "carried": true, "signedOut": false, "tooLarge": false,
+        "partial": false, "empty": false, "stateNames": ["__VIEWSTATE"], "pageNames": ["txtName"],
+        "unknownFields": [], "aspError": null, "invalidPostback": false, "invalidField": null,
+        "checks": [], "captures": {}, "excerpt": "<html><body>Saved</body></html>", "cut": false,
+    });
+    for (k, v) in over.as_object().expect("an object") {
+        reply[k] = v.clone();
+    }
+    reply
 }
 
 /// A 400 with no body: the application refused the request before any
