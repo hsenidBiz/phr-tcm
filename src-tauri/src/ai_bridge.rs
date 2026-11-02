@@ -7639,6 +7639,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
             "cut": a.cut,
         });
     }
+    if let Some(carried) = out.postback_carried {
+        v["postback"] = serde_json::json!(if carried { oo::CARRIED_ON } else { oo::LOADED_FRESH });
+    }
     if !report.ok {
         v["failed"] = serde_json::json!(report.failed);
         v["detail"] = serde_json::json!(report.message());
@@ -7682,6 +7685,11 @@ pub async fn send_in<B: DiscoveryBrowser>(
     }
     if report.ok {
         match &session {
+            // A postback may have carried on from the call before it, so it
+            // cannot stand alone as a template.
+            _ if one.step.is_postback() => {
+                v["template"] = serde_json::json!({ "not_saved": crate::api_templates::postback::POSTBACK_NOT_SAVED });
+            }
             Some(session) => {
                 let status = out.answer.as_ref().map(|a| a.status);
                 let token = (out.token_page.as_deref(), out.token_found);

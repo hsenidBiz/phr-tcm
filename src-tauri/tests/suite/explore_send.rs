@@ -3,7 +3,7 @@
 //! `App` (the sign-in fake that also answers a token read and a request),
 //! held by a `DiscoveryBrowser` of this file's own.
 
-use crate::api_templates_runner::{answer, rig, App, Rig, ORG, PAGE, PROJECT, QUICK_PAUSES};
+use crate::api_templates_runner::{answer, page_reply, rig, App, Rig, ORG, PAGE, PROJECT, QUICK_PAUSES};
 use crate::autorun_discovery::exploring;
 use crate::common::quick;
 use serde_json::{json, Value};
@@ -891,4 +891,112 @@ fn the_guide_says_what_created_needs() {
     assert!(!flat.contains("unless the answer carries the id"), "{flat}");
     // The code's own refusal says the same thing.
     assert!(CREATED_NEEDED.contains("with id the name of one of the step's captures"), "{CREATED_NEEDED}");
+}
+
+const EVAL_PAGE: &str = "/Perf/Eval.aspx";
+
+fn postback_call(extra: Value) -> Value {
+    let mut pb = json!({ "page": EVAL_PAGE, "button": "btnSave" });
+    for (k, v) in extra.as_object().expect("an object") {
+        pb[k] = v.clone();
+    }
+    json!({ "step": { "postback": pb }, "effect": "edit" })
+}
+
+fn posted(r: &Rig) -> Vec<Vec<Value>> {
+    r.script.lock().unwrap().posted.clone()
+}
+
+#[tokio::test]
+async fn a_postback_one_off_carries_on_from_the_last_one_and_is_not_saved() {
+    use v2_lib::api_templates::one_off::{CARRIED_ON, LOADED_FRESH};
+    use v2_lib::api_templates::postback::POSTBACK_NOT_SAVED;
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![
+        page_reply(200, json!({ "carried": false })),
+        page_reply(200, json!({ "carried": true })),
+    ]);
+    let (mut browser, _session) = exploring_session(&mut r).await;
+
+    let (status, first) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["postback"], json!(LOADED_FRESH), "{first}");
+    assert_eq!(first["request"], format!("POST {EVAL_PAGE}"), "{first}");
+    assert_eq!(first["template"], json!({ "not_saved": POSTBACK_NOT_SAVED }), "{first}");
+
+    on_the_app(&r);
+    let (status, second) = send(&mut browser, &r, true, postback_call(json!({ "argument": "7" }))).await;
+    assert_eq!(status, 200, "{second}");
+    assert_eq!(second["postback"], json!(CARRIED_ON), "{second}");
+    assert_eq!(second["template"], json!({ "not_saved": POSTBACK_NOT_SAVED }), "{second}");
+
+    let sent = posted(&r);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[0][3], json!("if_there"));
+    assert_eq!(sent[1][3], json!("if_there"));
+    assert_eq!(sent[0][2], json!("one-off"));
+    assert_eq!(sent[1][2], json!("one-off"));
+    assert!(saved_ids(&r).is_empty(), "a postback one-off was saved");
+    assert_eq!(r.navigated(), "", "the page was navigated");
+
+    // Neither answer names a host or carries page state.
+    for v in [&first, &second] {
+        let text = v.to_string();
+        assert!(!text.contains("example.internal"), "{text}");
+        assert!(!text.contains("__VIEWSTATE"), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn fresh_true_loads_the_page_again() {
+    use v2_lib::api_templates::one_off::LOADED_FRESH;
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(200, json!({ "carried": false }))]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({ "fresh": true }))).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["postback"], json!(LOADED_FRESH), "{v}");
+    assert_eq!(posted(&r)[0][3], json!("fresh"));
+}
+
+#[tokio::test]
+async fn a_postback_one_off_runs_on_a_page_with_no_token() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().token = None;
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(200, json!({}))]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(r.navigated(), "", "a one-off postback navigated");
+    assert_eq!(browser.as_ref().unwrap().d.inner.calls_to("Page.navigate").len(), 0);
+}
+
+#[tokio::test]
+async fn a_postback_one_off_is_noted_as_a_save() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(200, json!({}))]);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 200, "{v}");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "{:?}", s.writes);
+    assert_eq!((s.writes[0].method.as_str(), s.writes[0].path.as_str()), ("POST", EVAL_PAGE));
+}
+
+#[tokio::test]
+async fn a_failed_postback_one_off_is_not_retried_and_not_saved() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks =
+        VecDeque::from(vec![page_reply(400, json!({ "empty": true, "excerpt": "" })), page_reply(200, json!({}))]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(posted(&r).len(), 1, "a postback one-off was sent again");
+    assert!(v["template"].is_null(), "{v}");
 }

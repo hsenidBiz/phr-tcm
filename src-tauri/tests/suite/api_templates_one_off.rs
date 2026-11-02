@@ -299,3 +299,54 @@ fn a_step_with_no_method_and_no_postback_is_refused_at_once() {
         assert!(said.starts_with("the step needs a method: GET or POST"), "{said}");
     }
 }
+
+#[test]
+fn a_postback_one_off_parses_needs_an_effect_and_a_delete_button_is_a_delete() {
+    use v2_lib::api_templates::one_off::{parse, request_of, request_path, EFFECT_NEEDED, LOOKS_LIKE_A_DELETE};
+    let pb = |button: &str| json!({ "step": { "postback": { "page": "/Perf/{{pid}}.aspx?x=1", "button": button } } });
+
+    let (code, said) = parse(&pb("btnSave").to_string()).unwrap_err();
+    assert_eq!((code, said.as_str()), (400, EFFECT_NEEDED));
+
+    let mut edit = pb("CmdDeleteItem");
+    edit["effect"] = json!("edit");
+    let (code, said) = parse(&edit.to_string()).unwrap_err();
+    assert_eq!((code, said.as_str()), (400, LOOKS_LIKE_A_DELETE));
+    let mut edit = pb("lnkRemove");
+    edit["effect"] = json!("edit");
+    assert_eq!(parse(&edit.to_string()).unwrap_err().1, LOOKS_LIKE_A_DELETE);
+
+    // As a delete, with the person's yes, it is accepted.
+    let mut del = pb("CmdDeleteItem");
+    del["effect"] = json!("delete");
+    del["person_said_yes"] = json!(true);
+    assert!(parse(&del.to_string()).is_ok());
+
+    let mut ok = pb("btnSave");
+    ok["effect"] = json!("edit");
+    ok["values"] = json!({ "pid": "Eval" });
+    ok["params"] = json!([{ "name": "pid", "type": "string", "required": true }]);
+    let one = parse(&ok.to_string()).unwrap();
+    assert_eq!(request_path(&one), "/Perf/Eval.aspx?x=1");
+    assert_eq!(request_of(&one), "POST /Perf/Eval.aspx");
+}
+
+#[test]
+fn a_postback_is_never_the_same_call_and_sends_its_ids() {
+    use v2_lib::api_templates::one_off::{parse, sends_id};
+    let t = saved("edit", json!({ "name": "r", "postback": { "page": "/Perf/Eval.aspx", "button": "btnSave" } }));
+    let s = step(json!({ "postback": { "page": "/Perf/Eval.aspx", "button": "btnSave" } }));
+    assert!(!same_call(&t, &s));
+    let plain = saved("edit", json!({ "name": "r", "method": "POST", "path": "/Perf/Eval.aspx" }));
+    assert!(!same_call(&plain, &s));
+
+    let one = parse(
+        &json!({ "step": { "postback": { "page": "/Perf/Eval.aspx?id=274", "button": "btnSave", "argument": "55" } },
+                 "effect": "edit" })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(sends_id(&one, "274"), "the id in the page");
+    assert!(sends_id(&one, "55"), "the id in the argument");
+    assert!(!sends_id(&one, "27"));
+}

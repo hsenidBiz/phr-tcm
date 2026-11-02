@@ -27,7 +27,13 @@ pub const POST_NEEDS_EXPLORE: &str = "a POST from send_api_request needs an expl
 /// Said when the session's browser no longer holds the session's account.
 pub const SESSION_NOT_SIGNED_IN: &str = "your explore session's browser no longer holds its account - end the session and start it again";
 
-const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"? }";
+/// Said in an answer for a postback that went on from the page the previous
+/// postback left in this browser.
+pub const CARRIED_ON: &str = "carried on from your previous postback to this page";
+/// Said in an answer for a postback that loaded its page before posting.
+pub const LOADED_FRESH: &str = "loaded the page fresh";
+
+const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"? }";
 
 /// A `created.id` that names no capture of the step.
 pub fn not_a_capture(name: &str) -> String {
@@ -181,7 +187,8 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
     // cannot be sent as a delete, so only a POST is judged.)
     if one.step.method() == Method::Post && one.effect != Effect::Delete {
         let address = request_path(&one).to_ascii_lowercase();
-        if address.contains("delete") || address.contains("remove") {
+        let button = one.step.postback.as_ref().map(|p| p.button.to_ascii_lowercase()).unwrap_or_default();
+        if [&address, &button].iter().any(|s| s.contains("delete") || s.contains("remove")) {
             return bad(LOOKS_LIKE_A_DELETE);
         }
     }
@@ -252,6 +259,7 @@ pub fn sends_id(o: &OneOff, id: &str) -> bool {
     let vars = sent_vars(o);
     let fill = |s: &str| super::exec::substitute_str(s, &vars);
     id_in_text(&fill(&o.step.address()), id)
+        || o.step.postback.as_ref().is_some_and(|p| id_in_text(&fill(&p.argument), id))
         || o.step.query.values().any(|v| id_in_text(&fill(v), id))
         || o.step.form.iter().flat_map(|f| f.values()).any(|v| id_in_text(&fill(v), id))
         || o.step.json.as_ref().is_some_and(|j| id_in_json(j, id))
@@ -346,7 +354,9 @@ fn handler_of(step: &Step) -> Option<&str> {
 /// `body_field_names`.
 pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
     let [one] = saved.steps.as_slice() else { return false };
-    if saved.effect == Effect::Delete || one.method() != step.method() {
+    // A postback may carry on from the call before it, so it never stands
+    // for a saved template, nor does a saved postback template stand for it.
+    if saved.effect == Effect::Delete || one.is_postback() || step.is_postback() || one.method() != step.method() {
         return false;
     }
     let (a, b): (Vec<&str>, Vec<&str>) = (one.address().split('/').collect(), step.address().split('/').collect());
