@@ -547,6 +547,9 @@ pub fn scrub_page_state(text: &str) -> String {
     let text = DELTA_FIELD.replace_all(text, |c: &regex::Captures| {
         if is_page_state_name(&c[2]) {
             format!("{}{}|{}", &c[1], &c[2], super::postback::PAGE_STATE_SHOWN)
+        } else if c[2].eq_ignore_ascii_case("__RequestVerificationToken") {
+            // `scrub_tokens` reads tags and `name=value` text, not pipes.
+            format!("{}{}|{}", &c[1], &c[2], TOKEN_SHOWN)
         } else {
             c[0].to_string()
         }

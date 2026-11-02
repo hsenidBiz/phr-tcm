@@ -627,3 +627,12 @@ fn a_form_key_may_not_become_page_state_at_run_time() {
     let err = build_postback(&t.steps[0], &vars(&[("k", json!("__VIEWSTATE"))]), &BTreeMap::new()).unwrap_err();
     assert_eq!(err, "step 's' form field '__VIEWSTATE' is page state, which a template never sets");
 }
+
+#[test]
+fn the_anti_forgery_token_in_an_updatepanel_delta_reads_as_a_token() {
+    let out = scrub_page_state("0|hiddenField|__RequestVerificationToken|SECRET|0|hiddenField|txtName|plain|");
+    assert!(!out.contains("SECRET"), "{out}");
+    assert!(out.contains("hiddenField|__RequestVerificationToken|(token)|"), "{out}");
+    let cut = scrub_page_state("0|hiddenField|__RequestVerificationToken|SECRET");
+    assert!(!cut.contains("SECRET"), "{cut}");
+}
