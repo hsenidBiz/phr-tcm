@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 1 November 2026, after 2.4.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
+  <p class="sub">Updated 3 November 2026, after 2.4.1; backlog 77 to 89 built for 2.4.4-beta.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -100,6 +100,26 @@
       <li>Hand check owed: the Reset expired passwords switch on a test environment (one expired account on QA Automation), including a reset that is not confirmed: the old password stays stored and the message says so.</li>
       <li>Hand check owed: the run window's warning for accounts expired or due within a week.</li>
       <li>Owed: retake the How To Use shots that show the Accounts window and the Edit environments window (the text is written; the shots are not retaken).</li>
+    </ul>
+  </div>
+
+  <h2>Auto Run backlog 77 to 89 and comma search (2.4.4-beta.1)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Nine Box seed round: one-off sends, kept values, sign-out, screenshot, select_option, release, db_query</span><span class="status todo">Built, hand checks owed</span></div>
+    <p>Built for 2.4.4-beta.1 (a stable 2.4.3 comes from another branch). <code>save: false</code> and <code>timeout_s</code> on <code>send_api_request</code>; <code>covers</code> and <code>route_kind</code> on the change list; capture filters (with <code>[N]</code> after a filter) and <code>$base64</code> / <code>$json</code> body wrappers; <code>keep</code> and <code>{{var.name}}</code>; a token page found for a POST; signed-out detection; <code>screenshot</code> and <code>select_option</code> actions; <code>end_autorun_discovery</code> releasing the browser; a read-it-in-pieces note on <code>db_query</code>. A comma in any search bar searches for several things at once.</p>
+    <ul>
+      <li>Hand check owed: a full-page screenshot (<code>full_page</code>) of a long PeoplesHR page comes back whole.</li>
+      <li>Hand check owed: <code>select_option</code> on a Knockout list picks the option by its text, and the page shows the choice.</li>
+      <li>Hand check owed: a long call (<code>timeout_s</code> 60 or more) that times out answers <code>timed_out</code>, and the same for a postback; the save is noted and nothing is sent twice.</li>
+      <li>Hand check owed: signed-out detection on PeoplesHR: a session ended mid-run answers <code>signed_out</code> for a plain call and for a postback, later sends are refused, and the next discovery signs in afresh.</li>
+      <li>Hand check owed: a kept value (<code>keep</code>) never shows in an answer, in the capture tools, in an export or in the log, including after the discovery ends.</li>
+      <li>Hand check owed: <code>end_autorun_discovery</code> frees the account at once (also after a replay), and a second assistant can take it; the person's own browser is left open.</li>
+      <li>Left open (79): writes caught by what changed rather than by verb are not built, and a marked writing GET is not noted for the GET steps of a template run or a prove. Route marks are kept per environment.</li>
+      <li>Left open (84): a sign-in page served in place at the same URL is not caught; only a move to another path, or landing on the start page.</li>
+      <li>Left open (87): <code>fill</code> on a Knockout list is unchanged (use <code>select_option</code>); <code>press_key</code> still takes named keys only.</li>
+      <li>Left open (81): no template-string transform; base64 and JSON only.</li>
+      <li>Left open (89): sqlcmd still cuts long text at about 256 characters. The answer says how to read a value in pieces and caps a value at 64 KB; lifting the cut needs measuring against the real database.</li>
+      <li>Left open (77): a later working call replaces the latest same-route auto-save, whether or not the earlier one failed, and keeps the old run history.</li>
     </ul>
   </div>
 
