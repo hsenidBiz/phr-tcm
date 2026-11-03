@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.4-beta.2",
+    date: "2026-11-03",
+    items: [
+      "Test case steps can carry attachments, as in stable 2.4.3: add files to a step in the step editor (or ask the assistant to attach one), see them listed with the step, and remove one; files are uploaded with the case, up to 25 MB each, and stay with their step when steps are moved.",
+    ],
+  },
+  {
     version: "2.4.4-beta.1",
     date: "2026-11-03",
     items: [
