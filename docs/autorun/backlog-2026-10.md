@@ -1245,6 +1245,97 @@ scripts (135018-135050) and repaired 135379's clean-up.
     auditor; and say in the guide that a re-applied row goes to the end.
     - **Done (unreleased, after 2.4.3-beta.11).** A save notes, both ways, which scripts in the same area pick a row by position when another script changes state there. Left: the join is by area, not by list (`changes` names no list).
 
+## The Nine Box seed round (agreed 2026-11-03)
+
+Found on PBI 155952 (PH QA, account automation) while about ten explore agents (legacy-b to legacy-l)
+seeded Legacy perf data. They used the screens, uploads and direct `send_api_request` calls.
+
+77. **`send_api_request` saves a template after every call that works, and it cannot be switched off.**
+    The agents were told not to save templates. The run still left about fifteen, for example
+    `post-hr-perfv8-goalplanning-savegoal-2`, which holds a body the server answers with `-1`, and
+    `-savegoal-3`, which holds the working body. A failing shape saved as a template is worse than none.
+    Wanted: an argument (or a bridge setting) to send without saving. When a later call to the same
+    route works, it should replace the failing one rather than add a `-N` copy.
+
+78. **A failed `prove_api_template` still changes the site, and nothing records it.** A prove whose
+    last step (`GoalPlanning/Submit`) failed saved no template. Its four `SaveGoal` steps had already
+    created NB001's goals on eval 73. Nothing on the change list said so, so the next agent found
+    them by a database check. Wanted: a prove that fails after a write step records what it wrote
+    on the explore change list, or at least names the write steps that ran.
+
+79. **The end-of-discovery list of "saves not on the change list" is wrong both ways.**
+    - It lists POSTs that only read (`AssessmentPartipantSummary`, `LoadEvaluationDetails`,
+      `ValidateComeptency`, `GetUserPreferences`).
+    - It lists writes already covered by a batch `record_explore_change` entry.
+    - It misses writes sent as GET. On this app `api/GoalPlanning/Submit`, `api/Feedback/GetFeedbackData`
+      and the `CompetencyEvaluation` page GET all change data, and none of them is listed.
+
+    Every agent had to explain the list by hand. Wanted: a change entry that can name the
+    calls it covers, a way to mark a route read-only once, and writes caught by what changed rather than by
+    verb.
+
+80. **`send_api_request` has a fixed 30-second limit.** `Feedback/GetFeedbackData` timed out at
+    30 s twice, and the agent could not tell a slow call from a hung one; it turned out to be an app
+    deadlock. Wanted: a `timeout` argument (bounded), and a timeout result that says whether the
+    request reached the server.
+
+81. **Captures cannot filter, and a template cannot transform a value.**
+    - `capture` takes `[i]` indexes only, not a JSONPath filter such as `[?(@.EMP_NAME=='NB001 - …')]`.
+      To find one employee, the agent captured the whole page and matched the names outside TCM.
+    - There is no base64 step or any transform. The goal-rating save
+      (`SubmitGoalGroupEvaluationsBaseString`) needs a base64 JSON body, so every call was built
+      with a Python helper and pasted in.
+
+    Wanted: JSONPath filters in captures, and a small set of transforms (base64, JSON stringify,
+    a template string) usable in a body. These are the api-templates README extensions B and G.
+
+82. **Repeated long tokens burn the assistant's context.** The app's per-session employee tokens are
+    about 480 characters, so one goal save was about 1.3 KB. An agent could do only 9 to 12 employees
+    before its context ran out, and agents kept the tokens in scratchpad files themselves. Wanted:
+    named session variables. A capture would be stored under a name for the explore session, and
+    later `send_api_request` calls would refer to it as `{{var.name}}`, without the value passing
+    through the assistant.
+
+83. **A POST from a page with no anti-forgery token is not sent, and the reason is unclear.**
+    PerfV8 pages carry no token, so the agents learned by trial to navigate to `/hr/home/index`
+    before every POST. Wanted: when no token is found, send the request after loading the
+    configured `antiforgery.page` by itself, or refuse it with a message naming that page.
+
+84. **A response that is the sign-in page is not flagged.** The app signed the automation account
+    out twice mid-run: after about 45 calls, and once on the first call. Each time the four calls
+    queued behind it came back as the login page. They looked like answers, and the agent found
+    out from the database. Wanted: `send_api_request` recognises the configured sign-in page (as
+    `check_autorun_sign_in` does) and returns "signed out" instead of the body. It should stop the
+    rest of a batch at that point.
+
+85. **The "API templates switched off" switch also blocks one-off requests.** With the switch off,
+    every POST from `send_api_request` was refused, including reads. The assistant could not tell the
+    person that plain requests depend on a switch named after templates. Wanted: a separate switch,
+    or a message that says it covers `send_api_request` too.
+
+86. **There is no screenshot action.** Agents took pictures by adding a failing `expect_visible` on
+    the text "__screenshot__" and opening the picture from the failure. Wanted: a `screenshot`
+    action in discovery that returns the picture path, without a failure.
+
+87. **Native selects need one action per key press.**
+    - `fill` on a native `<select>` does not stick on Knockout pages.
+    - The `repeat` field on `press_key` is ignored.
+    - `press_key` takes named keys only.
+
+    Picking option 12 cost 15 actions, out of a limit of 20 per `discover_autorun_actions` call.
+    Wanted: a `select_option` action by visible text or value that also fires the change events,
+    and a `repeat` that is honoured.
+
+88. **An agent that stops without releasing its browser holds the account.** Several times the next agent
+    got a 409 "account in use" until the old agent's browser was released by name. After
+    `end_autorun_discovery` the account can stay held for up to the 30-minute idle release. Wanted:
+    `end_autorun_discovery` releases that agent's browser unless asked to keep it. A 409 should name
+    the holder and when it was last used.
+
+89. **`db_query` cuts long text values.** `OBJECT_DEFINITION` of a view came back cut off after about
+    250 characters, so the view had to be read in 240-character `SUBSTRING` slices. Wanted: no width
+    limit on text columns, or a clear "(truncated at N)" marker and a way to read the full value.
+
 ## Smaller
 
 - `expect_text_moved`'s `by` is not among the values a repair is held to (case_values.rs): a repair that turns `by: 1` into `by: -1` reverses the check unnoticed.
