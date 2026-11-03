@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use v2_lib::db::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_file_args, sqlcmd_path, Connection,
+    cap_cell, find_sqlcmd, parse_connection, rows_of, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_file_args, sqlcmd_path, Connection,
     Output, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV, ROW_CAP,
     SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };
@@ -537,23 +537,89 @@ async fn the_password_travels_in_the_environment_not_the_arguments() {
     assert_eq!(calls[0].3, vec![(PASSWORD_ENV.to_string(), c.password.clone())]);
 }
 
+/// A text value of `len` characters made of `lines` lines (so `lines - 1`
+/// line breaks), the way a view's definition comes back.
+fn multi_line(len: usize, lines: usize) -> String {
+    let per = (len - (lines - 1)) / lines;
+    let mut parts: Vec<String> = (0..lines).map(|_| "a".repeat(per)).collect();
+    let used: usize = parts.iter().map(|p| p.len()).sum::<usize>() + (lines - 1);
+    parts[lines - 1].push_str(&"a".repeat(len - used));
+    parts.join("\n")
+}
+
+/// A view definition with line breaks, longer than 256 characters, must
+/// come back whole and in ONE cell - not split into a row per line.
+#[tokio::test]
+async fn a_multi_line_value_longer_than_256_comes_back_whole() {
+    let def = multi_line(900, 13);
+    assert_eq!(def.chars().count(), 900);
+    assert_eq!(def.matches('\n').count(), 12);
+    let out = format!("id\tdefinition\n--\t----------\n7\t{def}\n\n(1 rows affected)\n");
+    let rows = rows_of(&out, 2);
+    assert_eq!(rows[0], vec!["id", "definition"]);
+    assert_eq!(rows[2].len(), 2, "{rows:?}");
+    assert_eq!(rows[2][0], "7");
+    assert_eq!(rows[2][1].chars().count(), 900);
+    assert_eq!(rows[2][1], def);
+
+    // and through run_sql the whole value is in the answer.
+    let fake = FakeRunner::answering(&out);
+    let (text, capped) =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, definition FROM v").await.unwrap();
+    assert!(text.contains(&def), "{text}");
+    assert!(!capped);
+}
+
+/// A value with line breaks in a column that is not the last one stays in
+/// its cell too: the row is not finished until it has all its tabs.
+#[test]
+fn a_multi_line_value_in_a_middle_column_stays_one_cell() {
+    let out = "a\tb\tc\n-\t-\t-\nx\tfirst\nsecond\tz\ny\tq\tw\n";
+    let rows = rows_of(out, 3);
+    assert_eq!(rows[2], vec!["x", "first\nsecond", "z"]);
+    assert_eq!(rows[3], vec!["y", "q", "w"]);
+}
+
+/// A cell over 65536 characters is cut there and says so.
+#[test]
+fn a_cell_over_64k_is_truncated_with_the_marker() {
+    let big = "z".repeat(70_000);
+    let cut = cap_cell(&big);
+    assert_eq!(cut, format!("{} (truncated at 65536 characters)", "z".repeat(65_536)));
+    let exact = "z".repeat(65_536);
+    assert_eq!(cap_cell(&exact), exact);
+}
+
+/// No design-A flavour is measured on this machine (only go-sqlcmd is
+/// installed, and `-W` with `-y`/`-Y` is refused by the ODBC sqlcmd 15),
+/// so the flags stay the ones that work everywhere: `-W` on, no `-y`/`-Y`.
+#[test]
+fn the_flags_are_the_measured_ones() {
+    let args = sqlcmd_args(&read_only_preset(), "SELECT 1");
+    assert!(args.iter().any(|a| a == "-W"), "{args:?}");
+    assert!(!args.iter().any(|a| a == "-y" || a == "-Y" || a == "-h"), "{args:?}");
+    let i = args.iter().position(|a| a == "-s").unwrap();
+    assert_eq!(args[i + 1], "\t");
+}
+
 /// With -W, sqlcmd cuts a variable-length value at 256 characters, and -W
 /// cannot be combined with the -y that would widen it. A value exactly that
-/// long may have been cut, so the answer says so instead of passing a
-/// truncated value off as the whole thing.
+/// long may have been cut, so the cell itself says so, names its column
+/// and how to read on - and a shorter value carries nothing.
 #[tokio::test]
-async fn a_value_at_the_cut_length_is_said_out_loud() {
+async fn a_cell_at_256_names_its_column_and_how_to_read_on() {
     let at_cut = "x".repeat(CUT_AT);
-    let fake = FakeRunner::answering(&format!("wide\n----\n{at_cut}\n\n(1 rows affected)\n"));
+    let fake = FakeRunner::answering(&format!("note\twide\n----\t----\nk\t{at_cut}\n\n(1 rows affected)\n"));
     let (text, _) =
-        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT wide FROM t").await.unwrap();
-    assert!(text.contains(&at_cut), "{text}");
-    assert!(text.lines().any(|l| l.starts_with("... ") && l.contains("256 characters")), "{text}");
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT note, wide FROM t").await.unwrap();
+    let want = format!("{at_cut} (may be cut at 256 characters - read on with SUBSTRING(wide, 257, 65536))");
+    assert!(text.contains(&want), "{text}");
+    assert!(!text.lines().any(|l| l.starts_with("... ") && l.contains("256 characters")), "{text}");
 
     let shorter = "x".repeat(CUT_AT - 1);
-    let fake = FakeRunner::answering(&format!("wide\n----\n{shorter}\n\n(1 rows affected)\n"));
+    let fake = FakeRunner::answering(&format!("note\twide\n----\t----\nk\t{shorter}\n\n(1 rows affected)\n"));
     let (text, _) =
-        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT wide FROM t").await.unwrap();
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT note, wide FROM t").await.unwrap();
     assert!(!text.contains("256 characters"), "{text}");
 }
 

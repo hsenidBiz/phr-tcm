@@ -29,7 +29,8 @@ pub use schema::{
     describe_sql, detail_sql, lookup_sql, parse_ranked, render_describe, render_lookup, Picked,
 };
 pub use sqlcmd::{
+    cap_cell, rows_of,
     find_sqlcmd, parse_connection, run_batch, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_file_args, sqlcmd_path,
-    BatchRun, Connection, Output, RealRunner, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV,
+    BatchRun, Connection, Output, RealRunner, Runner, CELL_CAP, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV,
     ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };
