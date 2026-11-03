@@ -3,7 +3,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Step } from "../bindings";
@@ -178,4 +178,84 @@ test("a step keeps the Markdown typed, line breaks included, and Preview shows i
 
   fireEvent.click(toggle);
   expect((screen.getByLabelText("Step 1 action") as HTMLTextAreaElement).value).toBe(typed);
+});
+
+
+// --- step attachments ---------------------------------------------------
+
+const { openDialog, toastMock } = vi.hoisted(() => ({
+  openDialog: vi.fn(),
+  toastMock: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
+vi.mock("../lib/toast", () => ({ toast: toastMock }));
+
+function latest() {
+  const out: { steps: Step[] } = { steps: [] };
+  const Probe = ({ initial }: { initial: Step[] }) => {
+    const [steps, setSteps] = useState(initial);
+    out.steps = steps;
+    return <StepsEditor steps={steps} onChange={setSteps} />;
+  };
+  return { out, Probe };
+}
+
+test("Attach adds a checked file to that step as a name and size, not a path in the UI", async () => {
+  openDialog.mockResolvedValue(["C:\shots\a.png"]);
+  mockIPC((cmd) => {
+    if (cmd === "describe_step_files")
+      return [{ path: "C:\shots\a.png", name: "a.png", size: 2048, refused: null }];
+  });
+  const { out, Probe } = latest();
+  render(<Probe initial={three} />);
+  fireEvent.click(screen.getByRole("button", { name: "Attach a file to step 2" }));
+  expect(await screen.findByText("a.png")).toBeTruthy();
+  expect(out.steps[1].attachments).toEqual([{ path: "C:\shots\a.png", name: "a.png", size: 2048 }]);
+  expect(out.steps[0].attachments ?? []).toEqual([]);
+  expect(document.body.textContent).not.toContain("shots");
+});
+
+test("a refused file shows its sentence and adds nothing", async () => {
+  openDialog.mockResolvedValue(["C:\big.bin"]);
+  mockIPC((cmd) => {
+    if (cmd === "describe_step_files")
+      return [{ path: "C:\big.bin", name: "big.bin", size: null, refused: "big.bin is over 25 MB." }];
+  });
+  const { out, Probe } = latest();
+  render(<Probe initial={three} />);
+  fireEvent.click(screen.getByRole("button", { name: "Attach a file to step 1" }));
+  await vi.waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("big.bin is over 25 MB."));
+  expect(out.steps[0].attachments ?? []).toEqual([]);
+});
+
+test("cancelling the picker changes nothing", async () => {
+  openDialog.mockResolvedValue(null);
+  mockIPC(() => []);
+  const { out, Probe } = latest();
+  render(<Probe initial={three} />);
+  fireEvent.click(screen.getByRole("button", { name: "Attach a file to step 1" }));
+  await vi.waitFor(() => expect(openDialog).toHaveBeenCalled());
+  expect(out.steps[0].attachments ?? []).toEqual([]);
+});
+
+test("each attachment is listed with its size and removed by its own button", () => {
+  mockIPC(() => []);
+  const { out, Probe } = latest();
+  const steps: Step[] = [
+    three[0],
+    { ...three[1], attachments: [{ id: "g1", name: "a.png", size: 2048 }] },
+  ];
+  render(<Probe initial={steps} />);
+  expect(screen.getByText("a.png")).toBeTruthy();
+  expect(screen.getByText("2 KB")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove a.png from step 2" }));
+  expect(out.steps[1].attachments).toEqual([]);
+  expect(screen.queryByText("a.png")).toBeNull();
+});
+
+test("a shared step row has no Attach button", () => {
+  mockIPC(() => []);
+  render(<Harness initial={[three[0], { action: "", expected: "", shared: 812 }]} />);
+  expect(screen.getByRole("button", { name: "Attach a file to step 1" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Attach a file to step 2" })).toBeNull();
 });

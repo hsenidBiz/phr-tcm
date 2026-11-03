@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
-import type { Step } from "../bindings";
+import { open } from "@tauri-apps/plugin-dialog";
+import { commands, type Step, type StepAttachment } from "../bindings";
 import { Button } from "./ui/button";
-import { IconAdd } from "../lib/actionIcons";
+import { IconAdd, IconAttach, IconRemove } from "../lib/actionIcons";
+import { formatBytes } from "../lib/bytes";
+import { toast } from "../lib/toast";
 import { cn } from "../lib/cn";
 import { CaseTextField, PreviewToggle } from "./CaseText";
 import SharedStepLabel from "./SharedStepLabel";
@@ -53,6 +56,30 @@ export default function StepsEditor({
     onChange(next);
   };
 
+  /** Pick files for step `i`. Rust checks them (name, size, the rules for
+   * a plain local file under the cap); a refused one is told to the person
+   * and adds nothing. Only names and sizes are shown - never the path. */
+  const attach = async (i: number) => {
+    const picked = await open({ multiple: true });
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    if (paths.length === 0) return;
+    const checks = await commands.describeStepFiles(paths);
+    const added: StepAttachment[] = [];
+    for (const c of checks) {
+      if (c.refused) toast.error(c.refused);
+      else added.push({ path: c.path, name: c.name, size: c.size });
+    }
+    if (added.length === 0) return;
+    onChange(
+      stepsRef.current.map((s, j) =>
+        j === i ? { ...s, attachments: [...(s.attachments ?? []), ...added] } : s,
+      ),
+    );
+  };
+  // The picker is async: attach to the steps as they are when it closes.
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
+
   // Index being dragged, and the row currently under it. Component state,
   // not dataTransfer: jsdom and some WebViews give dataTransfer trouble,
   // and the indices never need to leave this component anyway.
@@ -70,7 +97,7 @@ export default function StepsEditor({
         <div
           key={i}
           className={cn(
-            "flex items-start gap-1 rounded-md border border-transparent",
+            "rounded-md border border-transparent",
             // The row under the drag shows where the step will land; the
             // dragged row dims so the eye tracks the gap, not the ghost.
             over === i && dragging !== null && dragging !== i && "border-accent bg-accent-soft",
@@ -88,6 +115,7 @@ export default function StepsEditor({
             setOver(null);
           }}
         >
+          <div className="flex items-start gap-1">
           <span
             role="button"
             tabIndex={0}
@@ -155,6 +183,47 @@ export default function StepsEditor({
           >
             ✕
           </button>
+          </div>
+          {s.shared == null && (
+            <div className="flex flex-wrap items-center gap-1 pb-1 pl-9">
+              {(s.attachments ?? []).map((a, k) => (
+                <span
+                  key={`${a.id ?? a.path ?? a.name}-${k}`}
+                  title={a.name}
+                  className="inline-flex max-w-xs items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 text-xs text-muted"
+                >
+                  <IconAttach className="size-3" aria-hidden />
+                  <span className="truncate">{a.name}</span>
+                  {a.size != null && <span className="text-faint">{formatBytes(a.size)}</span>}
+                  <button
+                    aria-label={`Remove ${a.name} from step ${i + 1}`}
+                    title={`Remove ${a.name}`}
+                    className="text-faint hover:text-danger"
+                    onClick={() =>
+                      onChange(
+                        steps.map((st, j) =>
+                          j === i
+                            ? { ...st, attachments: (st.attachments ?? []).filter((_, m) => m !== k) }
+                            : st,
+                        ),
+                      )
+                    }
+                  >
+                    <IconRemove className="size-3" aria-hidden />
+                  </button>
+                </span>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Attach a file to step ${i + 1}`}
+                onClick={() => void attach(i)}
+              >
+                <IconAttach aria-hidden />
+                Attach
+              </Button>
+            </div>
+          )}
         </div>
       ))}
       <div className="flex items-center gap-1">

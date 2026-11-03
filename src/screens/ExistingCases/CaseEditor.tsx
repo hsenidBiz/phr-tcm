@@ -2,7 +2,7 @@
 // preconditions) - saves via update_test_case with blank-skip semantics.
 
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type TestCase, type TestCaseFull } from "../../bindings";
 import { CaseTextField, PreviewToggle } from "../../components/CaseText";
@@ -15,6 +15,7 @@ import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import { toTestCase } from "../../lib/testCaseConvert";
 import { validateCase } from "../../lib/validate";
+import { withSteps } from "../../lib/stepAttachments";
 import { IconConfirm, IconUndo } from "../../lib/actionIcons";
 
 export default function CaseEditor({
@@ -48,6 +49,18 @@ export default function CaseEditor({
   // spreads, so their keys stay in the same order and a string compare is
   // a sound deep compare - steps included, which a shallow one would miss.
   const dirty = JSON.stringify(tc) !== JSON.stringify(baseline);
+
+  // A save that moved attachments leaves the draft holding paths and removal
+  // ids that Azure DevOps has now acted on; saving it again would repeat
+  // them. The list refreshes the case after a save, so when it hands back a
+  // new `original` the draft is re-seeded from it - only in that case.
+  const reseed = useRef(false);
+  useEffect(() => {
+    if (!reseed.current) return;
+    reseed.current = false;
+    setTc(toTestCase(original));
+    setBaseline(toTestCase(original));
+  }, [original]);
 
   const discard = () => {
     const before = tc;
@@ -88,10 +101,18 @@ export default function CaseEditor({
         original.preconditions_stored ?? null,
       );
       if (r.status === "error") throw new Error(r.error);
-      return sent;
+      return { sent, notes: r.data ?? [] };
     },
-    onSuccess: (sent) => {
+    onSuccess: ({ sent, notes }) => {
       toast.success(`Updated #${original.id}: ${sent.title}`);
+      // What the save had to say about attachments (a file that was already
+      // gone, a step that moved) - each is a sentence for the person.
+      for (const note of notes) toast.warning(note);
+      if (
+        (sent.removed_attachments ?? []).length > 0 ||
+        sent.steps.some((s) => (s.attachments ?? []).length > 0)
+      )
+        reseed.current = true;
       setBaseline(sent); // what is now in Azure DevOps is the thing to revert to
       onSaved();
     },
@@ -162,7 +183,12 @@ export default function CaseEditor({
         </div>
       )}
 
-      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
+      {original.attachments_read === false && (
+        <p className="text-xs text-warning">
+          Attachments could not be read, so the files on these steps are not shown.
+        </p>
+      )}
+      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => withSteps(t, steps))} />
 
       <div className="flex items-center gap-3">
         <Button

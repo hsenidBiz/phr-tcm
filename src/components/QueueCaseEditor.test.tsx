@@ -25,7 +25,7 @@ const original: TestCase = {
   tester_order: null,
 };
 
-function mount() {
+function mount(start: TestCase = original) {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "list_project_tags") return [];
@@ -35,7 +35,7 @@ function mount() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <QueueCaseEditor original={original} org="acme" project="Web" onSave={onSave} onCancel={() => {}} />
+      <QueueCaseEditor original={start} org="acme" project="Web" onSave={onSave} onCancel={() => {}} />
     </QueryClientProvider>,
   );
   return onSave;
@@ -67,4 +67,18 @@ test("a step with only an expected result still stops the save and is named", ()
   fireEvent.change(screen.getByLabelText("Step 2 expected"), { target: { value: "Something" } });
   expect(screen.getByText("Step 2 action is empty.")).toBeInTheDocument();
   expect(save()).toBeDisabled();
+});
+
+test("deleting a step that holds an existing attachment saves it as removed", () => {
+  const withFile: TestCase = {
+    ...original,
+    steps: [
+      original.steps[0],
+      { action: "Upload", expected: "Done", attachments: [{ id: "g1", name: "old.png" }] },
+    ],
+  };
+  const onSave = mount(withFile);
+  fireEvent.click(screen.getByRole("button", { name: "Remove step 2" }));
+  fireEvent.click(save());
+  expect(onSave.mock.calls[0][0]).toMatchObject({ steps: [original.steps[0]], removed_attachments: ["g1"] });
 });

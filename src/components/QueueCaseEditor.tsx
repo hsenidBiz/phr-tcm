@@ -6,6 +6,7 @@
 import { useState } from "react";
 import type { TestCase } from "../bindings";
 import { keptSteps } from "../lib/keptSteps";
+import { withSteps } from "../lib/stepAttachments";
 import { validateCase } from "../lib/validate";
 import { CaseTextField, PreviewToggle } from "./CaseText";
 import ModuleField from "./ModuleField";
@@ -35,7 +36,7 @@ export default function QueueCaseEditor({
   // A step left completely blank is not part of the case: it is dropped on
   // save (as in Manual Entry), so it neither blocks the save nor counts as
   // a change.
-  const cleaned: TestCase = { ...tc, steps: keptSteps(tc.steps) };
+  const cleaned: TestCase = withSteps(tc, keptSteps(tc.steps));
   const problem = validateCase(cleaned);
   // Same-shape objects edited only by spreads: string compare works.
   const dirty = JSON.stringify(cleaned) !== JSON.stringify(original);
@@ -107,7 +108,7 @@ export default function QueueCaseEditor({
         onChange={(e) => setTc((t) => ({ ...t, comment: e.target.value }))}
       />
 
-      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
+      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => withSteps(t, steps))} />
 
       <div className="flex items-center gap-3">
         <Button
