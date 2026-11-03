@@ -269,3 +269,12 @@ test("a picker or check that fails says so instead of vanishing", async () => {
   await vi.waitFor(() => expect(toastMock.error).toHaveBeenCalled());
   expect(out.steps[0].attachments ?? []).toEqual([]);
 });
+
+test("Attach is a quiet icon in the step's row: no label, and no file row until a step has a file", () => {
+  mockIPC(() => []);
+  render(<Harness initial={three} />);
+  const attach = screen.getByRole("button", { name: "Attach a file to step 1" });
+  expect(attach.textContent).toBe("");
+  expect(attach.getAttribute("title")).toBe("Attach a file");
+  expect(screen.queryByText("Attach")).toBeNull();
+});

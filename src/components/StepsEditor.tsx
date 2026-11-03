@@ -30,11 +30,16 @@ export default function StepsEditor({
   steps,
   onChange,
   org,
+  preview: shared,
 }: {
   steps: Step[];
   onChange: (steps: Step[]) => void;
   /** For the titles of Shared Steps rows; without it only the reference shows. */
   org?: string;
+  /** The form's one Preview toggle, when the form has other case text
+   * (the preconditions) that it previews too. Without it the steps have
+   * their own. */
+  preview?: { on: boolean; onToggle: () => void; what: string };
 }) {
   const setStep = (i: number, key: "action" | "expected", value: string) =>
     onChange(steps.map((s, j) => (j === i ? { ...s, [key]: value } : s)));
@@ -91,8 +96,10 @@ export default function StepsEditor({
   // and the indices never need to leave this component anyway.
   const [dragging, setDragging] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
-  // Step text is Markdown; Preview shows every step formatted at once.
-  const [preview, setPreview] = useState(false);
+  // Step text is Markdown; Preview shows every step formatted at once -
+  // and, when the form passes its toggle in, the preconditions with them.
+  const [ownPreview, setOwnPreview] = useState(false);
+  const preview = shared ? shared.on : ownPreview;
 
   return (
     <div className="space-y-1">
@@ -181,6 +188,20 @@ export default function StepsEditor({
               />
             </>
           )}
+          {s.shared == null ? (
+            // Quiet on purpose: most steps never get a file, so the paperclip
+            // is a faint icon beside Remove rather than a labelled button.
+            <button
+              aria-label={`Attach a file to step ${i + 1}`}
+              title="Attach a file"
+              className="flex w-5 justify-center pt-2 text-faint hover:text-text"
+              onClick={() => void attach(i)}
+            >
+              <IconAttach className="size-3.5" aria-hidden />
+            </button>
+          ) : (
+            <span aria-hidden className="w-5" />
+          )}
           <button
             aria-label={`Remove step ${i + 1}`}
             className="px-1 pt-2 text-xs text-faint hover:text-danger"
@@ -190,7 +211,7 @@ export default function StepsEditor({
             ✕
           </button>
           </div>
-          {s.shared == null && (
+          {s.shared == null && (s.attachments ?? []).length > 0 && (
             <div className="flex flex-wrap items-center gap-1 pb-1 pl-9">
               {(s.attachments ?? []).map((a, k) => (
                 <span
@@ -219,15 +240,6 @@ export default function StepsEditor({
                   </button>
                 </span>
               ))}
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Attach a file to step ${i + 1}`}
-                onClick={() => void attach(i)}
-              >
-                <IconAttach aria-hidden />
-                Attach
-              </Button>
             </div>
           )}
         </div>
@@ -241,8 +253,12 @@ export default function StepsEditor({
           <IconAdd aria-hidden />
           Add Step
         </Button>
-        {steps.length > 0 && (
-          <PreviewToggle what="steps" on={preview} onToggle={() => setPreview((p) => !p)} />
+        {shared ? (
+          <PreviewToggle what={shared.what} on={shared.on} onToggle={shared.onToggle} />
+        ) : (
+          steps.length > 0 && (
+            <PreviewToggle what="steps" on={ownPreview} onToggle={() => setOwnPreview((p) => !p)} />
+          )
         )}
       </div>
     </div>

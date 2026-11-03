@@ -5,7 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type TestCase, type TestCaseFull } from "../../bindings";
-import { CaseTextField, PreviewToggle } from "../../components/CaseText";
+import { CaseTextField } from "../../components/CaseText";
 import ModuleField from "../../components/ModuleField";
 import PrioritySelect from "../../components/PrioritySelect";
 import StepsEditor from "../../components/StepsEditor";
@@ -166,7 +166,6 @@ export default function CaseEditor({
             value={tc.preconditions}
             onChange={(v) => setTc((t) => ({ ...t, preconditions: v }))}
           />
-          <PreviewToggle what="preconditions" on={previewPre} onToggle={() => setPreviewPre((p) => !p)} />
         </div>
       )}
 
@@ -175,7 +174,16 @@ export default function CaseEditor({
           Attachments could not be read, so the files on these steps are not shown.
         </p>
       )}
-      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => withSteps(t, steps))} />
+      <StepsEditor
+        steps={tc.steps}
+        org={org}
+        onChange={(steps) => setTc((t) => withSteps(t, steps))}
+        preview={{
+          on: previewPre,
+          onToggle: () => setPreviewPre((p) => !p),
+          what: preconditionsRef ? "preconditions and steps" : "steps",
+        }}
+      />
 
       <div className="flex items-center gap-3">
         <Button

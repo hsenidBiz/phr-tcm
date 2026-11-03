@@ -54,14 +54,14 @@ function typeAndPreview() {
   fireEvent.change(pre, { target: { value: PREREQ } });
   fireEvent.change(screen.getByLabelText("Step 1 action"), { target: { value: ACTION } });
 
-  fireEvent.click(screen.getByRole("button", { name: "Preview preconditions" }));
+  // One Preview for the whole form: the preconditions and every step at once.
+  expect(screen.getAllByRole("button", { name: /^Preview/ })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Preview preconditions and steps" }));
   expect(screen.getByText("HR admin").tagName).toBe("STRONG");
   expect(screen.getByText("Leave module on").tagName).toBe("LI");
-  fireEvent.click(screen.getByRole("button", { name: "Preview steps" }));
   expect(document.querySelector(".md-preview pre code")?.textContent).toContain("SELECT COUNT(*)");
 
-  fireEvent.click(screen.getByRole("button", { name: "Preview preconditions" }));
-  fireEvent.click(screen.getByRole("button", { name: "Preview steps" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview preconditions and steps" }));
   expect((screen.getByLabelText("Preconditions") as HTMLTextAreaElement).value).toBe(PREREQ);
   expect((screen.getByLabelText("Step 1 action") as HTMLTextAreaElement).value).toBe(ACTION);
 }
