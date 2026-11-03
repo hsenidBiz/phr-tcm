@@ -1051,6 +1051,7 @@ async fn a_postback_one_off_that_may_have_saved_is_noted_and_reminds_to_record()
     assert_eq!(s.writes.len(), 1, "a postback that may have saved was not noted: {:?}", s.writes);
     assert_eq!((s.writes[0].method.as_str(), s.writes[0].path.as_str()), ("POST", EVAL_PAGE));
     assert!(v["record_change"].is_string(), "no reminder to record the change: {v}");
+    assert_eq!(v["timed_out"], json!(true), "a timed-out postback does not say so: {v}");
 }
 
 #[tokio::test]
@@ -1063,6 +1064,7 @@ async fn a_postback_one_off_that_never_went_out_is_not_noted() {
     assert_eq!(status, 502, "{v}");
     assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
     assert!(v["record_change"].is_null(), "{v}");
+    assert!(v["timed_out"].is_null(), "a postback that never went out did not time out as sent: {v}");
 }
 
 fn post_form(path: &str, form: Value) -> Value {
@@ -1553,9 +1555,18 @@ async fn a_postback_the_runner_judges_signed_out_ends_the_discovery_for_later_se
     let mut r = rig(vec![answer(200, json!({}))], None);
     r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(200, json!({ "signedOut": true }))]);
     let (mut browser, _) = exploring_session(&mut r).await;
+    let saved = v2_lib::browser::session::SavedSession { saved_at_ms: v2_lib::autorun::sessions::now_ms(), cookies: vec![], local_storage: vec![] };
+    v2_lib::autorun::sessions::save_session(r.root.path(), "admin", &saved).unwrap();
     let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
     assert_eq!(status, 502, "{v}");
     assert!(browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out, "{v}");
+    assert_eq!(v["signed_out"], json!(true), "the answer does not say the account is signed out: {v}");
+    assert!(browser.as_mut().unwrap().account.is_none(), "still signed in");
+    let now = v2_lib::autorun::sessions::now_ms();
+    assert!(
+        v2_lib::autorun::sessions::load_fresh_session(r.root.path(), "admin", 60, now).is_none(),
+        "the saved session was kept"
+    );
     let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
     let (status, text) =
         send_in(&mut browser, &ctx(true), r.root.path(), &get.to_string(), &quick(), RUN_LIMIT, &QUICK_PAUSES).await;

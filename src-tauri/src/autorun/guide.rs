@@ -184,7 +184,7 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   for a picture. Set `"no_save": true` on any script that works on a shared
   draft and must not change it. A repair can turn `no_save` on, never off.
 - Your replays, discovery and resets share your browser and its sign-in. Other assistants may be working at the same
-  time, each in a browser of its own. `end_autorun_discovery` frees it (`keep_browser: true` keeps it); a replay to a failing step ends your own
+  time, each in a browser of its own. `end_autorun_discovery` frees it; `keep_browser: true` keeps it for your next replay or discovery; a replay to a failing step ends your own
   discovery first, keeping what it mapped. When the sign-in fails, the session expires or you reach a cap, stop and
   report to the person; never try again in a loop. Name the `case_id` on every discovery call for a `no_save` case.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use its
@@ -2052,7 +2052,7 @@ Your replays, discovery and resets share your browser and its sign-in. Other
 assistants may be working at the same time, each in a browser of its own. A
 replay in a browser already signed in as its case's account goes straight to
 the area and says "Signed in already: went to <area>."; `end_autorun_discovery`
-frees it (`keep_browser: true` keeps it) for your next replay or discovery.
+frees it; `keep_browser: true` keeps it for your next replay or discovery.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
@@ -2313,7 +2313,9 @@ recorded leave two, unless the entry lists `covers`: request lines like "POST /p
 for however many times they were sent, for a batch. A POST that only reads (a search) or a GET that
 changes data is told once, with `route_kind` (route and kind) on `record_explore_change`: reads are
 never listed, and a writing GET is noted as a save. A prove that failed after its writes went out
-has them on the list already, as entries made by that prove. Name each in your summary, or record
+has them on the list already, as entries made by that prove. A one-off whose path uses a kept
+value is noted with the unfilled `{{var.name}}` in it, so a `request` or `covers` line must use
+that same placeholder form. Name each in your summary, or record
 it first. For a one-off API call from
 the session's page, see `send_api_request` in the API template guide (`get_guide` with topic
 `api_templates`).

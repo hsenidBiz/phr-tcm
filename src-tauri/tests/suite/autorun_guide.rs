@@ -1761,7 +1761,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("Set `\"no_save\": true` on any script that works on a shared draft and must not change it", "Scripts that must not save"),
         ("A repair can turn `no_save` on, never off", "Scripts that must not save"),
         ("Your replays, discovery and resets share your browser and its sign-in", "Discovering the app"),
-        ("`end_autorun_discovery` frees it (`keep_browser: true` keeps it)", "Discovering the app"),
+        ("`end_autorun_discovery` frees it; `keep_browser: true` keeps it for your next replay or discovery", "Discovering the app"),
         ("`reset_autorun_browser` gives a clean page", "Discovering the app"),
         ("only for a broken browser (frozen, wrong account, session gone), never between replays", "Discovering the app"),
         ("Name the `case_id` on every discovery call for a `no_save` case", "Scripts that must not save"),

@@ -648,6 +648,41 @@ async fn the_assistants_end_releases_unless_it_keeps_the_browser() {
     assert!(route.contains("end_discovery(") && route.contains("keep_browser"), "{route}");
 }
 
+/// After a replay (which ends the discovery and keeps the browser) the
+/// assistant's end finds no discovery but still frees the browser it opened
+/// and its account, so the next assistant can take the account. The
+/// person's browser is never closed, and `keep_browser` keeps it.
+#[tokio::test]
+async fn an_end_after_a_replay_frees_the_browser_and_its_account() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_RELEASED};
+    use v2_lib::autorun::lease::{self, Holder};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let env = v2_lib::environments::active_id(dir.path()).unwrap();
+
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    slot.as_mut().unwrap().lease.hold(dir.path(), "admin").await.unwrap();
+    assert!(lease::try_acquire(&env, "admin", Holder::Browser { slot: 2 }).is_err(), "the account was not held");
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, DISCOVERY_ENDED_RELEASED));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the end kept the replay's browser");
+    let second = lease::try_acquire(&env, "admin", Holder::Browser { slot: 2 });
+    assert!(second.is_ok(), "a second assistant could not take the account: {second:?}");
+    drop(second);
+
+    // keep_browser keeps it.
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::AssistantKeeping).await;
+    assert_eq!((status, said.as_str()), (200, "no discovery is going"));
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
+
+    // A person's browser is never closed by an assistant's end.
+    let (mut slot, closed) = held(true, None);
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, "no discovery is going"));
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
+}
+
 /// A browser the person opened is never closed by an assistant's end: the
 /// end says so and keeps it.
 #[tokio::test]

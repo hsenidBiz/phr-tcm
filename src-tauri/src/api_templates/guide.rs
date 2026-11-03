@@ -147,8 +147,11 @@ checked, not halfway through a run.
 `capture` maps a name to a path in the step's JSON response: `$.a.b`,
 `$.list[0]`, or `$.list[*].id` for an array of every element's `id`. A
 filter keeps the rows that match one condition: `$.rows[?(@.EMP_NAME=='NB001 - A')].EMP_ID`
-gives a list of that employee's ids (`!=` keeps the others; the value is
-'text', "text", a number or true/false; FIELD may be dotted, `@.who.code`).
+gives a list of that employee's ids. `[0]` right after the filter takes ONE
+matching row instead: `$.rows[?(@.EMP_NAME=='NB001 - A')][0].EMP_ID` is the
+single value `7`, which is what a body or a path wants. (`!=` keeps the others;
+the value is 'text', "text", a number or true/false; FIELD may be dotted,
+`@.who.code`.)
 One condition only, and no `..`. A capture that finds nothing fails the step.
 
 A JSON body can hold a value the server wants encoded: `{"$base64": X}` is
@@ -585,7 +588,8 @@ created, which step failed with its handler, and the start of the
 response. A failed prove saves nothing; fix the draft and prove again,
 remembering that whatever it created is still there. When write steps had
 gone out, the answer lists them as `writes_that_ran` (step, request, status)
-and says so in `note`; in your explore session each is also put on the change
+and says so in `note` - also when the prove saved nothing because its stage
+check refused it after its writes; in your explore session each is also put on the change
 list, so it is not left as a save nobody named.
 
 Limits: a carried WebForms page up to 8 MB, 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each

@@ -132,8 +132,25 @@ pub fn hide_text(text: &str, hide: &[(String, String)]) -> String {
     for (name, value) in hide {
         let mut forms = vec![value.clone()];
         if let Ok(escaped) = serde_json::to_string(value) {
-            forms.push(escaped[1..escaped.len() - 1].to_string());
+            let escaped = escaped[1..escaped.len() - 1].to_string();
+            // Other serializers also escape a slash, and an ampersand or a
+            // bracket, in JSON text.
+            let slash = escaped.replace('/', "\\/");
+            let angle = |t: &str| t.replace('&', "\\u0026").replace('<', "\\u003c").replace('>', "\\u003e");
+            forms.push(angle(&slash));
+            forms.push(angle(&escaped));
+            forms.push(slash);
+            forms.push(escaped);
         }
+        // As a page echoes it: HTML text.
+        forms.push(
+            value
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+                .replace('\'', "&#39;"),
+        );
         forms.push(percent_encode_segment(value));
         let encoded = urlencoding::encode(value).into_owned();
         // A form: a space is +, any other character percent encoded.
@@ -213,6 +230,9 @@ pub fn parse_capture_path(p: &str) -> Result<Vec<Seg>, String> {
                     inner.push(c2);
                     chars.next();
                 }
+                if quote.is_some() {
+                    return Err(format!("capture path '{p}' has an unterminated quote"));
+                }
                 if chars.next() != Some(']') {
                     return Err(format!("capture path '{p}' has an unclosed ["));
                 }
@@ -264,11 +284,12 @@ pub fn capture(body: &Value, path: &[Seg]) -> Option<Value> {
         }
         Some((Seg::Filter { field, equals, value }, rest)) => {
             let items = body.as_array()?;
-            let out: Vec<Value> = items
-                .iter()
-                .filter(|item| filter_keeps(item, field, *equals, value))
-                .filter_map(|item| capture(item, rest))
-                .collect();
+            let mut kept = items.iter().filter(|item| filter_keeps(item, field, *equals, value));
+            // `[N]` straight after a filter indexes the matching rows: one row, not a list.
+            if let Some((Seg::Index(i), after)) = rest.split_first() {
+                return kept.nth(*i).and_then(|item| capture(item, after));
+            }
+            let out: Vec<Value> = kept.filter_map(|item| capture(item, rest)).collect();
             if out.is_empty() {
                 None
             } else {

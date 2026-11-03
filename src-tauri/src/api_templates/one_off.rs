@@ -123,6 +123,10 @@ pub fn token_pages(saved: &[super::store::SavedTemplate]) -> Vec<String> {
     pages.into_iter().map(|(page, _)| page).collect()
 }
 
+/// Said to a POST from a page with no anti-forgery token that named none,
+/// when the project's saved templates could not be read to look for a page.
+pub const NO_TOKEN_UNREADABLE: &str = "this page has no anti-forgery token and the saved templates could not be read to find a page that has one - name the page with antiforgery_page, and see Settings, Logs";
+
 /// Said to a POST from a page with no anti-forgery token that named none:
 /// up to three pages the project's templates use.
 pub fn no_token_here(pages: &[String]) -> String {

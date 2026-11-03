@@ -326,8 +326,8 @@ pub fn sqlcmd_file_args(c: &Connection, path: &Path) -> Vec<String> {
 /// no database to run against, so `-y 0 -s "	"` without `-W` could not be
 /// tried for header, dashes and padding. Without that measurement the flags
 /// stay the ones known to work on both flavours (`-W`, no `-y`/`-Y`), so
-/// sqlcmd still cuts a variable-length value at `CUT_AT` and the answer marks
-/// every value of exactly that length (`mark_cuts`) instead.
+/// sqlcmd still cuts a variable-length value at `CUT_AT`, and the answer adds
+/// a read-it-in-pieces note (`LONG_TEXT_NOTE`) when the output looks cut.
 fn connection_args(c: &Connection) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-S".into(),
@@ -533,7 +533,9 @@ pub const LONG_TEXT_NOTE: &str = "sqlcmd can cut long text at about 256 characte
 /// data lines than the "(N rows affected)" sqlcmd printed (a value with line
 /// breaks, one row spread over several lines).
 fn looks_cut(stdout: &str) -> bool {
-    if stdout.lines().any(|l| l.chars().count() >= LONG_LINE) {
+    // The header and dashes lines of a wide `SELECT *` are long without any
+    // value being cut, so only the lines after them count.
+    if stdout.lines().skip(2).any(|l| l.chars().count() >= LONG_LINE) {
         return true;
     }
     let mut lines = stdout.lines();

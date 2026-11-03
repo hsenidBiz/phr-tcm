@@ -1232,9 +1232,42 @@ fn a_number_and_a_boolean_literal() {
 }
 
 #[test]
+fn escaped_echoes_of_a_hidden_value_are_hidden_too() {
+    use v2_lib::api_templates::exec::hide_text;
+    let hide = vec![("{{var.v}}".to_string(), "Smith & Sons/North <b>".to_string())];
+    let b = '\x5c';
+    for echo in [
+        "Smith &amp; Sons/North &lt;b&gt;".to_string(),
+        format!("Smith & Sons{b}/North <b>"),
+        format!("Smith {b}u0026 Sons/North {b}u003cb{b}u003e"),
+        "Smith & Sons/North <b>".to_string(),
+    ] {
+        let out = hide_text(&format!("x {echo} y"), &hide);
+        assert_eq!(out, "x {{var.v}} y", "{echo}");
+    }
+}
+
+#[test]
 fn a_filter_matching_nothing_is_none() {
     assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='nobody')].EMP_ID"), None);
     assert_eq!(cap(&json!({"rows": []}), "$.rows[?(@.a=='x')].a"), None);
+}
+
+#[test]
+fn an_index_after_a_filter_picks_one_matching_row() {
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='NB001 - A')][0].EMP_ID"), Some(json!(7)));
+    assert_eq!(cap(&rows(), "$.rows[?(@.who.code=='x')][1].EMP_ID"), Some(json!(9)));
+    assert_eq!(cap(&rows(), "$.rows[?(@.who.code=='x')][2].EMP_ID"), None);
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='nobody')][0].EMP_ID"), None);
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='NB002 - B')][0].who"), Some(json!({"code": "y"})));
+}
+
+#[test]
+fn an_unterminated_quote_in_a_filter_says_so() {
+    let p = "$.rows[?(@.a=='x)].id";
+    assert_eq!(parse_capture_path(p).unwrap_err(), format!("capture path '{p}' has an unterminated quote"));
+    let p = "$.rows[0";
+    assert_eq!(parse_capture_path(p).unwrap_err(), format!("capture path '{p}' has an unclosed ["));
 }
 
 #[test]

@@ -2106,6 +2106,18 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
     assert!(setup.contains("/tcm:discover"), "{setup}");
 }
 
+/// Heal ends a discovery and then replays: every end it names keeps the
+/// browser (an unkept end now closes it and frees the account, and a replay
+/// after that has nothing to run in).
+#[test]
+fn every_end_in_heal_keeps_the_browser_for_the_replay() {
+    let heal = COMMANDS.iter().find(|c| c.stem == "heal").unwrap().body.join(" ");
+    let heal = heal.split_whitespace().collect::<Vec<_>>().join(" ");
+    let ends = heal.matches("call `end_autorun_discovery`").count();
+    let keeping = heal.matches("`end_autorun_discovery` with `keep_browser: true`").count();
+    assert!(ends > 0 && ends == keeping, "{ends} ends, {keeping} keeping: {heal}");
+}
+
 /// Final review, finding 1: a discovery that names no area files
 /// everything in the bucket for no area. `/tcm:discover` and `/tcm:heal`
 /// both say to pass `area` to `start_autorun_discovery`, how to reach a

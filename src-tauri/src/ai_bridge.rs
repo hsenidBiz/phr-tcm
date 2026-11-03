@@ -7351,6 +7351,13 @@ pub async fn end_discovery_releasing<B: DiscoveryBrowser>(slot: &mut Option<B>) 
     }
     match close_discovery(slot) {
         Some((summary, explore)) => ended_answer(DISCOVERY_ENDED_RELEASED, summary, explore),
+        // No discovery, but a replay left the assistant's own browser: this
+        // end frees it (and its account) the same way. A person's stays.
+        None if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) => {
+            close_browser_in(slot);
+            crate::applog::info("Auto Run: the assistant's end closed the browser its replay left open");
+            (200, DISCOVERY_ENDED_RELEASED.to_string())
+        }
         None => (200, "no discovery is going".to_string()),
     }
 }
@@ -7963,10 +7970,14 @@ pub async fn send_in<B: DiscoveryBrowser>(
         && out.report.failed.as_deref() == Some("Anti-forgery token")
         && out.report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::NO_TOKEN_HERE));
     if no_token_stop {
-        let pages = crate::api_templates::store::list(root, &ctx.org, &ctx.project)
-            .map(|saved| oo::token_pages(&saved))
-            .unwrap_or_default();
-        if let [page] = pages.as_slice() {
+        let listed = crate::api_templates::store::list(root, &ctx.org, &ctx.project);
+        if let Err(why) = &listed {
+            crate::applog::warn(format!("Auto Run explore session: the saved templates could not be read for a token page: {why}"));
+        }
+        let pages = listed.as_ref().map(|saved| oo::token_pages(saved)).unwrap_or_default();
+        if listed.is_err() {
+            no_token_detail = Some(oo::NO_TOKEN_UNREADABLE.to_string());
+        } else if let [page] = pages.as_slice() {
             token_page_used = Some(format!("{page} (the page this project's templates use)"));
             out = run_in_page(parts.driver, root, &req, timing, TokenPage::Open(page.clone()), limit, retry_pauses).await;
         } else {
@@ -7983,6 +7994,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
     let timed_out = report.steps.iter().any(|s| {
         s.detail.contains(crate::api_templates::runner::SENT_NO_ANSWER)
             || s.detail.contains(crate::api_templates::runner::MAYBE_SENT_NO_ANSWER)
+            // A postback that ran out of time after it may have gone out.
+            || (s.detail.contains(crate::api_templates::runner::STEP_TOO_LONG)
+                && s.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED))
     });
     let sent = timed_out
         || report.steps.iter().any(|s| s.status.is_some() || s.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED));
@@ -8016,12 +8030,15 @@ pub async fn send_in<B: DiscoveryBrowser>(
     // A postback is judged by the postback rule (`postback.rs`); when that
     // rule refused it as signed out, later sends on this discovery are
     // refused too.
-    if one.step.is_postback()
-        && report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::SENT_ELSEWHERE))
-    {
+    let postback_signed_out = one.step.is_postback()
+        && report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::SENT_ELSEWHERE));
+    if postback_signed_out {
         if let Some(d) = parts.discovery.as_mut() {
             d.signed_out = true;
         }
+        parts.signed_in.take();
+        crate::autorun::sessions::forget_session(root, &req.account);
+        crate::applog::warn("Auto Run explore session: a postback was answered with the sign-in page, so its account is signed out");
     }
     let signed_out = !one.step.is_postback()
         && out.answer.as_ref().is_some_and(|a| {
@@ -8106,6 +8123,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
     }
     if let Some(carried) = out.postback_carried {
         v["postback"] = serde_json::json!(if carried { oo::CARRIED_ON } else { oo::LOADED_FRESH });
+    }
+    if postback_signed_out {
+        v["signed_out"] = serde_json::json!(true);
     }
     if !report.ok {
         v["failed"] = serde_json::json!(report.failed);

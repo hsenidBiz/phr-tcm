@@ -720,10 +720,11 @@ pub(crate) async fn open_for_discovery(
 
 /// End the discovery under way in slot `n`'s browser as `by` ends it
 /// (`ai_bridge::end_discovery_as`):
-/// the assistant's `end_autorun_discovery` keeps its browser signed in for
-/// its next replay or discovery, its guard lifted; the person's End
-/// discovery closes it so Auto Run can run again. With no discovery going
-/// this does nothing.
+/// the assistant's `end_autorun_discovery` closes its browser and frees the
+/// account, unless it keeps it (`keep_browser`) signed in for its next
+/// replay or discovery, its guard lifted; with no discovery going it still
+/// closes the browser its replay left open. The person's End discovery
+/// closes it so Auto Run can run again.
 pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (u16, String) {
     // A batch of actions holding the browser gives way before its next
     // action, so this is not kept waiting behind it.

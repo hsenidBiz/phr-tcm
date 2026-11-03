@@ -95,9 +95,12 @@ pub const SENT_NO_ANSWER: &str =
 pub const MAYBE_SENT_NO_ANSWER: &str =
     "the browser did not answer in time and did not say whether the request went out, so the app may have processed it - check before sending it again";
 
+/// The start of the sentence for a step that ran out of its limit.
+pub const STEP_TOO_LONG: &str = "the step took longer than ";
+
 /// The sentence for a step that ran out of `limit`.
 fn step_too_long(limit: Duration) -> String {
-    format!("the step took longer than {} seconds", limit.as_secs())
+    format!("{STEP_TOO_LONG}{} seconds", limit.as_secs())
 }
 /// How long a whole run may take once its browser is open.
 pub const RUN_LIMIT: Duration = Duration::from_secs(180);

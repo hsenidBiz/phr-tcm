@@ -410,6 +410,13 @@ fn body_text(body: Option<&Body>, mime: Option<&str>) -> Option<String> {
     }
 }
 
+/// `body_text` with the set's kept values hidden as well. Hiding comes
+/// before a body is cut into pages, so a value on a page's edge never shows
+/// in halves.
+fn body_text_hidden(body: Option<&Body>, mime: Option<&str>, hide: &[(String, String)]) -> Option<String> {
+    body_text(body, mime).map(|t| crate::api_templates::exec::hide_text(&t, hide))
+}
+
 /// The request's own content type, the mime its body is redacted as.
 fn request_mime(c: &Captured) -> Option<&str> {
     c.req_headers.iter().find(|(n, _)| n == "content-type").map(|(_, v)| v.as_str())
@@ -532,7 +539,7 @@ pub fn request(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     let Some(c) = set.get(id) else { return set.no_such(id) };
-    let body = match body_text(c.req_body.as_ref(), request_mime(c)) {
+    let body = match body_text_hidden(c.req_body.as_ref(), request_mime(c), &set.hide) {
         Some(t) => match body_page(&t, offset) {
             Ok(p) => p,
             Err(e) => return e,
@@ -565,7 +572,7 @@ pub fn response(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     let Some(c) = set.get(id) else { return set.no_such(id) };
-    let body = match body_text(c.resp_body.as_ref(), c.mime.as_deref()) {
+    let body = match body_text_hidden(c.resp_body.as_ref(), c.mime.as_deref(), &set.hide) {
         Some(t) => json!({ "kept": true, "chars": t.chars().count() }),
         None => json!({ "kept": false, "why": missing_body(c.resp_body.as_ref(), true, c) }),
     };
@@ -602,7 +609,7 @@ pub fn response_body(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     let Some(c) = set.get(id) else { return set.no_such(id) };
-    let Some(t) = body_text(c.resp_body.as_ref(), c.mime.as_deref()) else {
+    let Some(t) = body_text_hidden(c.resp_body.as_ref(), c.mime.as_deref(), &set.hide) else {
         return (404, missing_body(c.resp_body.as_ref(), true, c).unwrap_or_default());
     };
     match body_page(&t, offset) {

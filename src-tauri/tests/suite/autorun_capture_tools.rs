@@ -999,6 +999,33 @@ fn a_kept_value_is_masked_in_the_capture_tools_and_the_export() {
     assert_masked(&mut slot, &dir, "kept");
 }
 
+/// A kept value that sits on the edge of a body page is hidden before the
+/// body is cut into pages, so neither page shows half of it.
+#[test]
+fn a_kept_value_on_a_body_page_edge_is_masked_before_paging() {
+    let value = "emp 1234 north";
+    let mut f = Feeder::confirmed();
+    let body = format!("{}{value} and then {}", "ab ".repeat(6665), "cd ".repeat(50));
+    assert!(body.find(value).unwrap() < 20_000 && body.find(value).unwrap() + value.len() > 20_000);
+    f.request("k1", "XHR", "GET", "/hr/page", json!({}), None, 200, "text/plain", json!({}), Some(&body));
+    let mut cap = f.cap;
+    let all: serde_json::Map<String, Value> = [("var.emp".to_string(), json!(value))].into_iter().collect();
+    cap.mask(&v2_lib::api_templates::exec::hidden_values(&all));
+    let mut slot = browser_with(cap);
+    let (status, first) = live(&mut slot, CaptureTool::ResponseBody, json!({ "id": 1 }));
+    assert_eq!(status, 200, "{first}");
+    let next = first["next_offset"].as_u64().expect("a second page");
+    let (_, second) = live(&mut slot, CaptureTool::ResponseBody, json!({ "id": 1, "offset": next }));
+    for page in [&first, &second] {
+        let text = page["text"].as_str().unwrap();
+        for part in ["emp 1", "1234", "north", "emp 12", "4 north"] {
+            assert!(!text.contains(part), "{part:?} shows in a page: {page}");
+        }
+    }
+    let both = format!("{}{}", first["text"].as_str().unwrap(), second["text"].as_str().unwrap());
+    assert!(both.contains("{{var.emp}} and then"), "the placeholder is not where the value was");
+}
+
 /// The masking belongs to the browser: the discovery ending (the browser
 /// kept) or a new discovery starting in it does not lift it.
 #[test]
