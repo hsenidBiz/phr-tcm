@@ -116,7 +116,7 @@ async fn old_queue_update_sends_no_relation_ops() {
     let queue = vec![case("Old update", Some(77), vec![step("one")]), case("New", None, vec![step("one")])];
     let client = client(&server);
     let read = read_queue_relations(&client, "o", &queue).await;
-    assert!(read.found.is_empty() && !read.failed);
+    assert!(read.found.is_empty());
     let mut held = Held::none();
     held.relations = read.found;
     let plan = plan_chunk(&client, &held.ctx(), &queue, 0..2).await;
@@ -174,7 +174,7 @@ async fn relations_read_failure_notes_row() {
     let queue = vec![tc];
     let client = client(&server);
     let read = read_queue_relations(&client, "o", &queue).await;
-    assert!(read.failed && read.found.is_empty());
+    assert!(read.found.is_empty());
     let mut held = Held::none();
     held.relations = read.found;
     let plan = plan_chunk(&client, &held.ctx(), &queue, 0..1).await;
@@ -240,4 +240,126 @@ fn result_always_carries_the_attached_list() {
         attached: vec![],
     };
     assert_eq!(serde_json::to_value(&r).unwrap()["attached"], json!([]));
+}
+
+// ---- the whole $batch call failed ----
+
+const SINCE: &str = "2026-09-18T10:00:00Z";
+
+/// Answers the reconcile lookup (links 901) and any relations read with one
+/// work item list, so both the title lookup and the attachment check see it.
+async fn mount_server_state(server: &MockServer, items: serde_json::Value, links: &[i64]) {
+    let mut rels = vec![json!({"rel": null, "source": null, "target": {"id": 42}})];
+    for id in links {
+        rels.push(json!({"rel": "Microsoft.VSTS.Common.TestedBy-Forward", "source": {"id": 42}, "target": {"id": id}}));
+    }
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/wiql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"queryType": "oneHop", "workItemRelations": rels})))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(items))
+        .mount(server)
+        .await;
+}
+
+fn attached_relation(server: &MockServer, guid: &str, name: &str, comment: &str) -> serde_json::Value {
+    json!({"rel": "AttachedFile", "url": format!("{}/o/_apis/wit/attachments/{guid}", server.uri()),
+           "attributes": {"name": name, "comment": comment}})
+}
+
+#[tokio::test]
+async fn a_found_create_after_a_failed_batch_reports_its_attached_files() {
+    use v2_lib::commands::queue::resolve_failed_chunk;
+    let server = MockServer::start().await;
+    mount_upload(&server, "guid-9").await;
+    let f = temp_file("failedcreate", "login.png", b"png");
+    let mut tc = case("Has a file", None, vec![step("one")]);
+    tc.steps[0].attachments.push(attach_path(&f));
+    let queue = vec![tc];
+    mount_server_state(
+        &server,
+        json!({"value": [{"id": 901, "rev": 1, "fields": {"System.Title": "Has a file"},
+                          "relations": [attached_relation(&server, "guid-9", "login.png", "[TestStep=2]:")]}]}),
+        &[901],
+    )
+    .await;
+    let held = Held::none();
+    let client = client(&server);
+    let plan = plan_chunk(&client, &held.ctx(), &queue, 0..1).await;
+    let err = v2_lib::ado::AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_chunk(&client, "o", "p", 42, SINCE, &queue, &plan, &err, &[]).await;
+    assert_eq!((r[0].action.as_str(), r[0].id), ("created", Some(901)));
+    assert_eq!(r[0].attached.len(), 1, "the files are stored attachments now");
+    assert_eq!(r[0].attached[0].id, "guid-9");
+}
+
+#[tokio::test]
+async fn a_create_whose_files_never_landed_reports_none_attached() {
+    use v2_lib::commands::queue::resolve_failed_chunk;
+    let server = MockServer::start().await;
+    mount_upload(&server, "guid-9").await;
+    let f = temp_file("failedcreate2", "login.png", b"png");
+    let mut tc = case("Has a file", None, vec![step("one")]);
+    tc.steps[0].attachments.push(attach_path(&f));
+    let queue = vec![tc];
+    mount_server_state(&server, json!({"value": [{"id": 901, "rev": 1, "fields": {"System.Title": "Has a file"}}]}), &[901]).await;
+    let held = Held::none();
+    let client = client(&server);
+    let plan = plan_chunk(&client, &held.ctx(), &queue, 0..1).await;
+    let err = v2_lib::ado::AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_chunk(&client, "o", "p", 42, SINCE, &queue, &plan, &err, &[]).await;
+    assert_eq!(r[0].action, "created");
+    assert!(r[0].attached.is_empty(), "nothing is claimed that Azure DevOps does not hold");
+}
+
+#[tokio::test]
+async fn an_update_that_landed_despite_a_failed_batch_is_reported_updated() {
+    use v2_lib::commands::queue::resolve_failed_chunk;
+    use v2_lib::step_attachments::CaseRelations;
+    let server = MockServer::start().await;
+    mount_upload(&server, "guid-7").await;
+    let f = temp_file("failedupdate", "new.png", b"png");
+    let mut tc = case("Update", Some(77), vec![step("one")]);
+    tc.steps[0].attachments.push(attach_path(&f));
+    let queue = vec![tc];
+    let mut held = Held::none();
+    held.relations.insert(77, CaseRelations { rev: 3, attachments: vec![] });
+    mount_server_state(
+        &server,
+        json!({"value": [{"id": 77, "rev": 4, "fields": {},
+                          "relations": [attached_relation(&server, "guid-7", "new.png", "[TestStep=2]:")]}]}),
+        &[],
+    )
+    .await;
+    let client = client(&server);
+    let plan = plan_chunk(&client, &held.ctx(), &queue, 0..1).await;
+    let err = v2_lib::ado::AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_chunk(&client, "o", "p", 42, SINCE, &queue, &plan, &err, &[]).await;
+    assert_eq!((r[0].action.as_str(), r[0].id), ("updated", Some(77)));
+    assert!(r[0].error.is_none());
+    assert_eq!(r[0].attached[0].id, "guid-7");
+}
+
+#[tokio::test]
+async fn an_update_that_did_not_land_stays_failed_with_paths() {
+    use v2_lib::commands::queue::resolve_failed_chunk;
+    use v2_lib::step_attachments::CaseRelations;
+    let server = MockServer::start().await;
+    mount_upload(&server, "guid-7").await;
+    let f = temp_file("failedupdate2", "new.png", b"png");
+    let mut tc = case("Update", Some(77), vec![step("one")]);
+    tc.steps[0].attachments.push(attach_path(&f));
+    let queue = vec![tc];
+    let mut held = Held::none();
+    held.relations.insert(77, CaseRelations { rev: 3, attachments: vec![] });
+    mount_server_state(&server, json!({"value": [{"id": 77, "rev": 3, "fields": {}}]}), &[]).await;
+    let client = client(&server);
+    let plan = plan_chunk(&client, &held.ctx(), &queue, 0..1).await;
+    let err = v2_lib::ado::AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_chunk(&client, "o", "p", 42, SINCE, &queue, &plan, &err, &[]).await;
+    assert_eq!(r[0].action, "failed");
+    assert!(r[0].attached.is_empty());
 }

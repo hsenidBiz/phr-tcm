@@ -995,14 +995,14 @@ pub async fn submit_queue(
                                 .chain(chunk.iter().flatten())
                                 .filter_map(|r| r.id)
                                 .collect();
-                            for r in resolve_failed_batch(
+                            for r in resolve_failed_chunk(
                                 &client,
                                 &organization,
                                 &project,
                                 pbi_id,
                                 &upload_since,
                                 &queue,
-                                sent_idx,
+                                &plan,
                                 &e,
                                 &already_claimed,
                             )
@@ -1303,9 +1303,9 @@ pub struct QueueContext<'a> {
 /// The relations of the update rows that have attachment work.
 #[derive(Default)]
 pub struct RelationsRead {
+    /// Empty when nothing was wanted or the read failed (logged); a wanted
+    /// row with no entry goes without attachment changes and says so.
     pub found: std::collections::HashMap<i32, crate::step_attachments::CaseRelations>,
-    /// The read was tried and failed (logged); every wanted row lacks an entry.
-    pub failed: bool,
 }
 
 /// One read for the whole queue: the relations of each update row that has
@@ -1326,10 +1326,10 @@ pub async fn read_queue_relations(
         return RelationsRead::default();
     }
     match client.case_relations(organization, &ids).await {
-        Ok(found) => RelationsRead { found, failed: false },
+        Ok(found) => RelationsRead { found },
         Err(e) => {
             crate::applog::warn(format!("could not read the attachments of {} update(s) ({e})", ids.len()));
-            RelationsRead { found: Default::default(), failed: true }
+            RelationsRead::default()
         }
     }
 }
@@ -1484,12 +1484,17 @@ fn attached_files(
             ops.iter().any(|o| o["path"] == "/relations/-" && o["value"]["url"].as_str() == Some(url))
         })
     };
-    let mut done = uploaded.iter();
+    // The k-th use of a path takes the k-th upload of that path - the same
+    // pairing `relation_ops` makes.
+    let mut used: std::collections::HashMap<&str, usize> = Default::default();
     let mut out = Vec::new();
     for (j, step) in tc.steps.iter().enumerate() {
         for att in &step.attachments {
             let Some(path) = att.path.as_deref() else { continue };
-            let Some(u) = done.next() else { return out };
+            let k = used.entry(path).or_insert(0);
+            let u = uploaded.iter().filter(|u| u.path == path).nth(*k);
+            *k += 1;
+            let Some(u) = u else { continue };
             if linked(&u.url) {
                 out.push(AttachedFile {
                     step: j as u32,
@@ -1864,4 +1869,73 @@ fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemR
         error: Some(error),
         attached: vec![],
     }
+}
+
+/// `resolve_failed_batch` for a chunk that carried step files. The call
+/// failed as a whole, but Azure DevOps may have run it: a create is atomic
+/// with its attachment links, and an update is one PATCH. So the case's
+/// relations are read, and a file counts as attached only when its blob
+/// (unique to this upload) is on the case. A found create keeps `created`
+/// with those files stamped; an update whose files are there did land, and
+/// is reported `updated` instead of `failed` (retrying it would add each
+/// file a second time). A failed read claims nothing.
+#[allow(clippy::too_many_arguments)]
+pub async fn resolve_failed_chunk(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    pbi_id: i32,
+    since: &str,
+    queue: &[model::TestCase],
+    plan: &ChunkPlan,
+    err: &ado::AdoError,
+    already_claimed: &[i32],
+) -> Vec<SubmitItemResult> {
+    let mut results =
+        resolve_failed_batch(client, organization, project, pbi_id, since, queue, &plan.sent_idx, err, already_claimed)
+            .await;
+    // The work item each candidate row would be, by queue index.
+    let candidate = |r: &SubmitItemResult| -> Option<i32> {
+        let i = r.index as usize;
+        plan.attached.get(&i)?;
+        match r.action.as_str() {
+            "created" => r.id,
+            "failed" => queue.get(i)?.update_id,
+            _ => None,
+        }
+    };
+    let mut ids: Vec<i32> = results.iter().filter_map(candidate).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return results;
+    }
+    let held = match client.case_relations(organization, &ids).await {
+        Ok(m) => m,
+        Err(e) => {
+            crate::applog::warn(format!("could not check which step files landed after the failed batch ({e})"));
+            return results;
+        }
+    };
+    for r in results.iter_mut() {
+        let Some(id) = candidate(r) else { continue };
+        let i = r.index as usize;
+        let on_case = |a: &AttachedFile| {
+            held.get(&id).is_some_and(|c| c.attachments.iter().any(|x| x.guid == a.id))
+        };
+        let landed: Vec<AttachedFile> = plan.attached[&i].iter().filter(|a| on_case(a)).cloned().collect();
+        if landed.is_empty() {
+            continue;
+        }
+        if r.action == "failed" {
+            r.action = "updated".into();
+            r.id = Some(id);
+            r.error = None;
+        }
+        r.attached = landed;
+        if let Some(notes) = plan.notes.get(&i) {
+            r.error = Some(notes.join(" "));
+        }
+    }
+    results
 }

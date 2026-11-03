@@ -161,9 +161,21 @@ pub fn step_file_name(path: &str) -> String {
 /// name and its bytes.
 pub fn read_step_file(path: &str) -> Result<(String, Vec<u8>), String> {
     let (name, _) = check_step_file(path)?;
-    let bytes = std::fs::read(path).map_err(|e| {
+    // Capped again at read time: a file that grew since the check is
+    // refused, not read whole.
+    let bytes = read_capped(path).map_err(|e| {
         crate::applog::warn(&format!("could not read step file \"{name}\": {e}"));
         format!("\"{name}\" could not be read, so it was not attached.")
     })?;
     Ok((name, bytes))
+}
+
+fn read_capped(path: &str) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    std::fs::File::open(path)?.take(STEP_ATTACHMENT_MAX_BYTES + 1).read_to_end(&mut buf)?;
+    if buf.len() as u64 > STEP_ATTACHMENT_MAX_BYTES {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "file grew past the cap"));
+    }
+    Ok(buf)
 }
