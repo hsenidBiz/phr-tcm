@@ -27,6 +27,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
         Action::Fill { selector: "s".into(), value: "v".into() },
+        serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
@@ -2834,4 +2835,20 @@ fn the_baseline_example_deletes_the_group_by_name() {
         before[has_text..].contains("Extra group"),
         "the delete is not scoped to the named row"
     );
+}
+
+/// Backlog 86 and 87: the guide teaches `select_option` (over `fill` on a native
+/// list), the discovery-only `screenshot`, and `repeat` as `times`.
+#[test]
+fn the_guide_teaches_select_option_screenshot_and_repeat() {
+    let g = autorun_guide();
+    assert!(ACTION_KINDS.contains(&"select_option"));
+    assert!(g.contains("\"kind\": \"select_option\""), "the guide never describes select_option");
+    assert!(g.contains("native list") && g.contains("`label`") && g.contains("`value`"), "select_option is half described");
+    assert!(g.contains("\"kind\": \"screenshot\""), "the guide never describes screenshot");
+    assert!(g.contains("full_page"), "screenshot's one option is not named");
+    assert!(g.contains("takes its pictures when a step fails") || g.contains("never saved"), "screenshot is not marked discovery-only");
+    assert!(g.contains("`repeat`") && g.contains("`times`"), "repeat is not read as times in the guide");
+    assert!(g.contains("does not take"), "the unknown-key refusal is not mentioned");
+    assert!(!g.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }

@@ -393,6 +393,7 @@ pub fn takes_many(action: &Action) -> bool {
         Action::Click { .. }
         | Action::Hover { .. }
         | Action::Fill { .. }
+        | Action::SelectOption { .. }
         | Action::Upload { .. }
         | Action::Drag { .. }
         | Action::PressKey { .. }

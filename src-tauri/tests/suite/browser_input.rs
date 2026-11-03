@@ -654,3 +654,141 @@ async fn clickable_now_refuses_two_matches_even_for_a_legacy_target() {
     let (mut d, _) = page(2, vec![probe(json!({}))]);
     assert!(wait_ready(&mut d, &legacy, false, &quick()).await.is_ok());
 }
+
+// ---- select_option (backlog 87) ---------------------------------------------
+
+use v2_lib::browser::input::{select_option, SELECT_OPTION_JS};
+
+fn ready() -> Ready {
+    Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }
+}
+
+/// A page whose list answers `reply` to the choosing function.
+fn list_answering(reply: Value) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, _| match method {
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": reply.clone() } })),
+        _ => Ok(json!({})),
+    })
+}
+
+#[tokio::test]
+async fn select_option_by_label_fires_change() {
+    let mut d = list_answering(json!({ "state": "ok", "label": "Numeric" }));
+    let chosen = select_option(&mut d, &ready(), Some("Numeric"), None).await.ok().unwrap();
+    assert_eq!(chosen, "Numeric");
+    let call = &d.calls_to("Runtime.callFunctionOn")[0];
+    assert_eq!(call["functionDeclaration"], SELECT_OPTION_JS);
+    assert_eq!(call["objectId"], "el");
+    assert_eq!(call["arguments"][0]["value"], "Numeric");
+    assert_eq!(call["arguments"][1]["value"], Value::Null);
+    assert!(d.calls_to("Input.insertText").is_empty(), "a list is chosen, never typed into");
+    // What the page must see: the focus, a bubbling input and change, the blur,
+    // and a look again after 150 ms at what the list holds.
+    for needle in [
+        "selectedIndex", "this.focus()", "new Event('input', { bubbles: true })", "new Event('change', { bubbles: true })",
+        "this.blur()", "150", "o.label.trim() === want",
+    ] {
+        assert!(SELECT_OPTION_JS.contains(needle), "the choosing function never does {needle}");
+    }
+}
+
+#[tokio::test]
+async fn select_option_by_value() {
+    let mut d = list_answering(json!({ "state": "ok", "label": "Archived items" }));
+    let chosen = select_option(&mut d, &ready(), None, Some("arch")).await.ok().unwrap();
+    assert_eq!(chosen, "Archived items");
+    let call = &d.calls_to("Runtime.callFunctionOn")[0];
+    assert_eq!(call["arguments"][0]["value"], Value::Null);
+    assert_eq!(call["arguments"][1]["value"], "arch");
+    assert!(SELECT_OPTION_JS.contains("o.value === byValue"));
+}
+
+#[tokio::test]
+async fn select_option_missing_lists_up_to_ten_labels() {
+    let labels: Vec<String> = (1..=12).map(|i| format!("Option {i}")).collect();
+    let mut d = list_answering(json!({ "state": "missing", "labels": labels }));
+    match select_option(&mut d, &ready(), Some("Nope"), None).await {
+        Err(Blocked::Page(msg)) => {
+            assert!(msg.starts_with("the list has no option \"Nope\" - it has: Option 1, Option 2"), "{msg}");
+            assert!(msg.contains("Option 10") && !msg.contains("Option 11"), "{msg}");
+            assert!(msg.ends_with(", and 2 more"), "{msg}");
+        }
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+    // A short list is named whole.
+    let mut d = list_answering(json!({ "state": "missing", "labels": ["a", "b", "c"] }));
+    match select_option(&mut d, &ready(), None, Some("z")).await {
+        Err(Blocked::Page(msg)) => assert_eq!(msg, "the list has no option \"z\" - it has: a, b, c"),
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn select_option_disabled_says_the_existing_sentence() {
+    let mut d = list_answering(json!({ "state": "disabled", "label": "Archived" }));
+    match select_option(&mut d, &ready(), Some("Archived"), None).await {
+        Err(Blocked::Page(msg)) => assert_eq!(msg, "the option \"Archived\" is disabled"),
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn select_option_reset_by_the_page_fails() {
+    let mut d = list_answering(json!({ "state": "reset", "now": "Other" }));
+    match select_option(&mut d, &ready(), Some("Numeric"), None).await {
+        Err(Blocked::Page(msg)) => assert_eq!(
+            msg,
+            "the list went back to \"Other\" after the choice - the page's own script reset it"
+        ),
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn select_option_on_an_input_is_refused() {
+    let mut d = list_answering(json!({ "state": "not-select", "tag": "input" }));
+    match select_option(&mut d, &ready(), Some("x"), None).await {
+        Err(Blocked::Page(msg)) => assert_eq!(msg, "select_option works on a native list (<select>); this is a <input>"),
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+}
+
+/// As an action: it waits for the element as a fill does, names the label
+/// it chose, and is told apart from a check.
+#[tokio::test]
+async fn the_select_option_action_names_the_label_it_chose() {
+    use common::FakePage;
+    use v2_lib::browser::actions::{execute_with, Action};
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if method == "Runtime.callFunctionOn" && params["functionDeclaration"] == SELECT_OPTION_JS {
+            return Ok(json!({ "result": { "value": { "state": "ok", "label": "Numeric" } } }));
+        }
+        page.answer(method, params)
+    });
+    let a: Action = serde_json::from_value(json!({ "kind": "select_option", "selector": "#type", "value": "num" })).unwrap();
+    assert!(a.validate().is_ok());
+    assert!(!a.is_check());
+    assert_eq!(a.kind(), "select_option");
+    let out = execute_with(&mut d, &a, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("\"Numeric\""), "{}", out.detail);
+    assert!(d.calls_to("Input.insertText").is_empty());
+}
+
+#[test]
+fn select_option_takes_exactly_one_of_label_and_value() {
+    use v2_lib::browser::actions::Action;
+    let check = |v: Value| serde_json::from_value::<Action>(v).unwrap().validate();
+    assert!(check(json!({ "kind": "select_option", "selector": "#a", "label": "x" })).is_ok());
+    assert!(check(json!({ "kind": "select_option", "selector": "#a", "value": "x" })).is_ok());
+    let both = "select_option picks by label or by value, one of them";
+    assert_eq!(check(json!({ "kind": "select_option", "selector": "#a" })).unwrap_err(), both);
+    assert_eq!(
+        check(json!({ "kind": "select_option", "selector": "#a", "label": "x", "value": "y" })).unwrap_err(),
+        both
+    );
+    // The round trip keeps only what was written.
+    let a: Action = serde_json::from_value(json!({ "kind": "select_option", "selector": "#a", "label": "x" })).unwrap();
+    assert_eq!(serde_json::to_value(&a).unwrap(), json!({ "kind": "select_option", "selector": "#a", "label": "x" }));
+}

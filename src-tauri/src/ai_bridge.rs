@@ -4480,6 +4480,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         Action::Click { selector }
         | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
+        | Action::SelectOption { selector, .. }
         | Action::Upload { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
@@ -5051,6 +5052,12 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
 /// string. What the log and the discovery map keep of an action.
 pub fn describe_action(action: &crate::browser::actions::Action) -> String {
     use crate::browser::actions::Action;
+    // A discovery's screenshot travels as a marked action (`action_help`).
+    match crate::autorun::action_help::screenshot_ask(action) {
+        Some(true) => return "screenshot full_page".to_string(),
+        Some(false) => return "screenshot".to_string(),
+        None => {}
+    }
     let kind = serde_json::to_value(action)
         .ok()
         .and_then(|v| v["kind"].as_str().map(str::to_string))
@@ -5097,6 +5104,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         Action::Click { selector }
         | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
+        | Action::SelectOption { selector, .. }
         | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
@@ -5163,11 +5171,19 @@ fn tried_addresses(action: &crate::browser::actions::Action) -> Vec<&str> {
 /// One action of a try or a discovery, read from the assistant's JSON. A
 /// `wait_for` with no `timeout_ms` gets the discovery's own wait, and a wait
 /// above the ceiling is lowered (`action_help`); `notes` say which. What is
-/// not an action is refused with the field it expected and an example. A
-/// saved script is read elsewhere and never gets either.
+/// not an action is refused with the field it expected and an example, and
+/// so is a key its kind does not have; `repeat` on a `press_key` is read as
+/// `times`. A saved script is read elsewhere and never gets any of it (a
+/// save refuses unknown keys on what it is sent, `refuse_raw_saved_action`).
 fn tried_action_from(mut raw: serde_json::Value) -> Result<(crate::browser::actions::Action, Vec<String>), String> {
+    // A discovery's own picture, read before any action is (never a script's).
+    if let Some(shot) = crate::autorun::action_help::screenshot_from(&raw) {
+        return shot.map(|action| (action, Vec::new()));
+    }
     let default_ms = u32::try_from(crate::browser::timing::Timing::supervised().expect_ms).unwrap_or(u32::MAX);
-    let notes = crate::autorun::action_help::prepare_waits(&mut raw, default_ms);
+    let mut notes = crate::autorun::action_help::prepare_repeat(&mut raw)?;
+    crate::autorun::action_help::refuse_unknown_keys(&raw)?;
+    notes.extend(crate::autorun::action_help::prepare_waits(&mut raw, default_ms));
     match serde_json::from_value::<crate::browser::actions::Action>(raw.clone()) {
         Ok(action) => Ok((action, notes)),
         Err(e) => Err(crate::autorun::action_help::refusal_for(&raw, &e.to_string())),
@@ -6558,7 +6574,11 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     // An explore session keeps an action that worked for the assistant that
     // ran it (`autorun::kept`), unless a setup is driving it, a save it sent
     // was stopped, or it typed a login. A keep never fails the action.
-    if let (Some(session), true) = (explore_session.as_deref(), outcome.ok && !setup_running && !mapping && blocked.unwrap_or(0) == 0) {
+    // (A picture changes nothing, so there is nothing to keep of it.)
+    let kept_kind = crate::autorun::action_help::screenshot_ask(action).is_none();
+    if let (Some(session), true) =
+        (explore_session.as_deref(), outcome.ok && kept_kind && !setup_running && !mapping && blocked.unwrap_or(0) == 0)
+    {
         let steps: Option<Vec<crate::browser::actions::Action>> = component.as_ref().map(|(_, actions)| actions.clone());
         let credential = match crate::autorun::accounts::load_accounts(root) {
             Ok(accounts) => crate::autorun::kept::types_a_credential(action, steps.as_deref(), &accounts),
@@ -10974,6 +10994,40 @@ struct Tried {
     answered: Vec<(String, crate::browser::actions::ActionOutcome)>,
 }
 
+/// What the picture a discovery's `screenshot` asks for did: taken and
+/// saved (the answer carries its name as the action's `screenshot`), or
+/// failed in words with no protocol text in them. Never a failure of the
+/// page: a picture changes nothing.
+async fn take_picture<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    full_page: bool,
+) -> crate::browser::actions::ActionOutcome {
+    use crate::browser::actions::ActionOutcome;
+    let wanted = if full_page { "the whole page" } else { "the page" };
+    let bytes = match crate::browser::page::screenshot_of(d, full_page).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            crate::applog::warn(format!("Auto Run: a screenshot could not be taken: {e}"));
+            return ActionOutcome::failed(NO_PICTURE.to_string());
+        }
+    };
+    match crate::autorun::store::save_shot(root, &bytes) {
+        Ok(name) => {
+            let mut outcome = ActionOutcome::passed(format!("took a picture of {wanted}"));
+            outcome.screenshot = Some(name);
+            outcome
+        }
+        Err(why) => {
+            crate::applog::warn(format!("Auto Run: a screenshot could not be saved: {why}"));
+            ActionOutcome::failed(NO_PICTURE.to_string())
+        }
+    }
+}
+
+/// Said when a discovery's `screenshot` could not be taken or kept.
+pub const NO_PICTURE: &str = "the picture could not be taken - see Settings, Logs";
+
 /// What a try teaches of the application's rules, kept as a discovery's
 /// (`discovery_map::rules_from`) under the area its sightings go to
 /// (`recording_area`): every request the application refused its actions
@@ -11032,6 +11086,12 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     noted: Option<&mut crate::autorun::runner::Noted>,
 ) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    // A discovery's `screenshot` takes a picture and acts on nothing.
+    if let Some(full_page) = crate::autorun::action_help::screenshot_ask(action) {
+        let outcome = take_picture(d, root, full_page).await;
+        let answered = vec![(describe_action(action), outcome.clone())];
+        return Ok(Tried { outcome, dialog: None, steps: Vec::new(), answered });
+    }
     // A check that times a request from the action before it, or compares the page with the one its step began
     // on, has nothing to measure from when tried alone: it says so, and where to try it.
     if crate::autorun::api_checks::needs_its_step(action) {
@@ -13323,6 +13383,29 @@ fn parse_save_request(
                     Some(id) => format!("case {id}: {r}"),
                     None => r,
                 });
+            }
+        }
+    }
+    // What arrives is held to the action vocabulary before it is read as a
+    // script: serde drops a key an action does not have (`repeat` on a
+    // `press_key`) without a word, and has no `screenshot`. Not applied to a
+    // script read from disk.
+    if let serde_json::Value::Array(items) = &scripts_value {
+        for script in items {
+            let actions = script
+                .get("steps")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|step| step.get("actions").and_then(serde_json::Value::as_array))
+                .flatten();
+            for action in actions {
+                if let Err(why) = crate::autorun::action_help::refuse_raw_saved_action(action) {
+                    return Err(match script.get("case_id") {
+                        Some(id) => format!("case {id}: {why}"),
+                        None => why,
+                    });
+                }
             }
         }
     }

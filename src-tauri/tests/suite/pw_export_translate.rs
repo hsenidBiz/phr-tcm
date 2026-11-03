@@ -1922,3 +1922,17 @@ fn a_hover_is_a_locator_hover() {
     let check = got.find("#tip").expect("check");
     assert!(hover < check, "{got}");
 }
+
+/// Backlog 87: `select_option` is Playwright's `selectOption`, by the option's
+/// label or by its value.
+#[test]
+fn a_select_option_is_a_locator_select_option() {
+    let got = one_step(json!([
+        { "kind": "select_option", "selector": "#type", "label": "Numeric" },
+        { "kind": "select_option", "selector": "#kind", "value": "it's" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await cur.locator('#type').first().selectOption({ label: 'Numeric' });"), "{got}");
+    assert!(got.contains("await cur.locator('#kind').first().selectOption({ value: 'it\\'s' });"), "{got}");
+}

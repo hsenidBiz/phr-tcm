@@ -336,6 +336,40 @@ pub const FOCUS_JS: &str = r#"function(value) {
   return 'text';
 }"#;
 
+/// `this` is the element. Arguments: the option's label, or `null`, and its
+/// value, or `null` (exactly one is given, `Action::SelectOption`). Chooses the
+/// way a person's choice sets a native list: the focus, the new selection, a
+/// bubbling `input` and `change`, the blur. After 150 ms the list is read
+/// again, since a page whose own script puts the old choice back (a binding
+/// that re-renders its list) leaves a choice that looked made and was not.
+/// Answers `{ state }`: `ok` (with the `label` chosen), `not-select` (with the
+/// `tag`), `missing` (with every option's `labels`), `disabled` (the `label`)
+/// or `reset` (what the list `now` shows).
+pub const SELECT_OPTION_JS: &str = r#"async function(byLabel, byValue) {
+  if (!(this instanceof HTMLSelectElement)) {
+    return { state: 'not-select', tag: this.tagName ? this.tagName.toLowerCase() : 'node' };
+  }
+  const want = byLabel === null ? null : String(byLabel).trim();
+  const all = Array.from(this.options);
+  const opt = want !== null ? all.find((o) => o.label.trim() === want) : all.find((o) => o.value === byValue);
+  if (!opt) return { state: 'missing', labels: all.map((o) => o.label.trim()) };
+  const label = opt.label.trim();
+  if (opt.disabled || (opt.parentElement instanceof HTMLOptGroupElement && opt.parentElement.disabled)) {
+    return { state: 'disabled', label };
+  }
+  this.focus();
+  this.selectedIndex = opt.index;
+  this.dispatchEvent(new Event('input', { bubbles: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  this.blur();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  if (this.selectedIndex !== opt.index) {
+    const now = this.options[this.selectedIndex];
+    return { state: 'reset', now: now ? now.label.trim() : '' };
+  }
+  return { state: 'ok', label };
+}"#;
+
 /// `this` is the element. `FOCUS_JS` focuses it in one round trip, and
 /// the text is sent in a SEPARATE one that goes wherever focus is by
 /// then - so a page that moves focus in between (an autofocusing dialog,
@@ -397,6 +431,8 @@ pub const LOST_FOCUS: &str = "lost focus before it could be typed into";
 pub const NO_OPTION: &str = "the list has no option ";
 /// A select whose option is disabled (followed by the option, quoted).
 pub const OPTION: &str = "the option ";
+/// The most option labels a refused `select_option` lists.
+pub const SELECT_LABELS_SHOWN: usize = 10;
 /// The page itself refused a protocol call (followed by its message).
 pub const PAGE_REFUSED: &str = "the page refused: ";
 
@@ -710,4 +746,48 @@ pub async fn fill<D: Driver>(d: &mut D, ready: &Ready, value: &str) -> Result<()
     }
     d.call("Input.insertText", json!({ "text": value })).await.map_err(blame)?;
     Ok(())
+}
+
+/// Choose an option of a native list by `label` or by `value` (exactly one;
+/// `Action::SelectOption`). Answers the label of the option now chosen. A
+/// target that is not a `<select>`, an option that is not there (the list's
+/// own options are named, up to `SELECT_LABELS_SHOWN`), a disabled option and
+/// a page that puts the old choice back are each said in words.
+pub async fn select_option<D: Driver>(
+    d: &mut D,
+    ready: &Ready,
+    label: Option<&str>,
+    value: Option<&str>,
+) -> Result<String, Blocked> {
+    let said = page::call_value(d, &ready.handle, SELECT_OPTION_JS, &[json!(label), json!(value)])
+        .await
+        .map_err(blame)?;
+    let text = |k: &str| said[k].as_str().unwrap_or("").to_string();
+    match said["state"].as_str() {
+        Some("ok") => Ok(text("label")),
+        Some("not-select") => {
+            Err(Blocked::Page(format!("select_option works on a native list (<select>); this is a <{}>", text("tag"))))
+        }
+        Some("missing") => {
+            let asked = label.or(value).unwrap_or("");
+            let labels: Vec<String> =
+                said["labels"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect();
+            let has = if labels.is_empty() {
+                "it has no options".to_string()
+            } else {
+                let shown = labels.iter().take(SELECT_LABELS_SHOWN).cloned().collect::<Vec<_>>().join(", ");
+                match labels.len().checked_sub(SELECT_LABELS_SHOWN).filter(|n| *n > 0) {
+                    Some(more) => format!("it has: {shown}, and {more} more"),
+                    None => format!("it has: {shown}"),
+                }
+            };
+            Err(Blocked::Page(format!("{NO_OPTION}\"{asked}\" - {has}")))
+        }
+        Some("disabled") => Err(Blocked::Page(format!("{OPTION}\"{}\" {DISABLED}", text("label")))),
+        Some("reset") => Err(Blocked::Page(format!(
+            "the list went back to \"{}\" after the choice - the page's own script reset it",
+            text("now")
+        ))),
+        _ => Err(Blocked::Page("the list could not be read after the choice".to_string())),
+    }
 }

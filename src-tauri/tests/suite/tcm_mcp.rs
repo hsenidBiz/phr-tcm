@@ -4721,3 +4721,22 @@ fn the_explore_tools_take_covers_and_route_kind_and_prove_names_its_writes() {
         assert!(!text.contains("http"), "{name} names a URL");
     }
 }
+
+/// Backlog 86 and 87: the discovery tools name the `screenshot` action and
+/// the try tool says it too; none of it carries an em dash.
+#[test]
+fn the_discovery_tools_name_the_screenshot_action() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let all = |name: &str| -> String {
+        let t = tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}"));
+        t.to_string()
+    };
+    for name in ["discover_autorun_actions", "try_autorun_action"] {
+        let said = all(name);
+        assert!(said.contains("screenshot"), "{name} never names the screenshot action");
+        assert!(said.contains("full_page"), "{name} never names full_page");
+        assert!(!said.contains('\u{2014}'), "{name} has an em dash");
+    }
+}

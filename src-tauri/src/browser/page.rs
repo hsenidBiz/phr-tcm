@@ -220,6 +220,16 @@ pub fn screenshot_params() -> Value {
     json!({ "format": "jpeg", "quality": 60 })
 }
 
+/// `screenshot_params`, asking beyond the window too when `full_page` is set
+/// (`captureBeyondViewport`): a discovery's `screenshot` action.
+pub fn screenshot_params_full(full_page: bool) -> Value {
+    let mut params = screenshot_params();
+    if full_page {
+        params["captureBeyondViewport"] = json!(true);
+    }
+    params
+}
+
 /// The JPEG bytes in a `SCREENSHOT` answer.
 pub fn image_of(reply: &Value) -> Result<Vec<u8>, CdpError> {
     let data = reply["data"].as_str().ok_or_else(|| CdpError::Protocol {
@@ -235,5 +245,11 @@ pub fn image_of(reply: &Value) -> Result<Vec<u8>, CdpError> {
 /// What the person would see right now, as JPEG bytes.
 pub async fn screenshot<D: Driver>(d: &mut D) -> Result<Vec<u8>, CdpError> {
     let r = d.call(SCREENSHOT, screenshot_params()).await?;
+    image_of(&r)
+}
+
+/// `screenshot`, of the whole page rather than the window when `full_page`.
+pub async fn screenshot_of<D: Driver>(d: &mut D, full_page: bool) -> Result<Vec<u8>, CdpError> {
+    let r = d.call(SCREENSHOT, screenshot_params_full(full_page)).await?;
     image_of(&r)
 }

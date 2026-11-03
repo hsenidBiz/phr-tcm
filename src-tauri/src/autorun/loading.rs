@@ -46,6 +46,7 @@ pub fn checks_for_loading(action: &Action) -> bool {
         Action::Click { .. }
             | Action::Hover { .. }
             | Action::Fill { .. }
+            | Action::SelectOption { .. }
             | Action::Drag { .. }
             | Action::Upload { .. }
             | Action::PressKey { .. }

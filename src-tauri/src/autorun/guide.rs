@@ -19,6 +19,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "navigate",
     "click",
     "fill",
+    "select_option",
     "hover",
     "wait_for",
     "check_text",
@@ -286,6 +287,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "fill", "selector": ..., "value": "..." }` - also picks an
   option in a native list by its label, and sets a date, time, colour or
   range field directly
+- `{ "kind": "select_option", "selector": ..., "label": "Numeric" }` - chooses an option in a native list (`<select>`), by its visible text (`label`) or by its `value`, one of them. Prefer it to `fill` on a native list: it reads the list again a moment after the choice and fails if the page's own script put the old one back, and a refusal names the options the list has. Not for a custom dropdown (click it, then click its option)
 - `{ "kind": "hover", "selector": ... }` - moves the pointer onto the element (waited for and scrolled into view as a click is) and gives what it reveals 300 ms to show; presses nothing, and `within_ms` is how long the element is waited for. It is not a check: a later check in the same step proves the reveal (`expect_visible` of the tooltip or menu)
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
@@ -502,6 +504,11 @@ A key can be pressed with modifiers held, joined with `+`: `Ctrl`,
 `times` presses the same combination again, up to 50 times:
 
     { "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 }
+
+`repeat` is not a field: a discovery or a try reads it as `times`, and a
+saved script is refused for it. An action with a key its kind does not
+have is refused the same way (`click does not take force - it takes:
+selector`), not run with the key dropped.
 
 **Dragging to reorder.** `drag` picks `from` up and drops it on `to`, as a
 mouse would. Both are ordinary locators, frame chains included, and both
@@ -1967,6 +1974,11 @@ You open and drive a browser of your own to find what a script needs:
   It stops at the first action that fails unless `stop_on_failure` is
   false, and ending the discovery stops it before its next action. Use it
   for steps you already know, such as a menu path or filling a form.
+- `{ "kind": "screenshot" }`, or with `"full_page": true`, takes a picture of
+  the page in `discover_autorun_actions` and `try_autorun_action` and answers
+  its file path. It counts as one of the 20, changes nothing and never
+  fails the page. It is never saved: a script holding one is refused, since a
+  saved script takes its pictures when a step fails.
 - `save_autorun_area` saves a screen you reached through the menus as an
   area: its name, its test case Module, and the clicks from the home page.
   The app replays the clicks from the home page and saves the area only

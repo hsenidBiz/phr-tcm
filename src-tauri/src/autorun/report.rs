@@ -81,6 +81,7 @@ pub fn action_words(action: &Action) -> String {
         Action::Click { selector } => format!("click {}", selector.describe()),
         Action::Hover { selector, .. } => format!("hover over {}", selector.describe()),
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
+        Action::SelectOption { selector, .. } => format!("choose an option in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
         Action::CheckText { value } => format!("check the page says \"{value}\""),
         Action::CheckUrl { equals: Some(want), .. } => {

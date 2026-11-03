@@ -19,6 +19,14 @@ describe("a sentence for every action kind", () => {
     ],
     [{ kind: "fill", selector: { role: "textbox", name: "Reason" }, value: "" }, 'Clear the "Reason" field'],
     [
+      { kind: "select_option", selector: { role: "combobox", name: "Type" }, label: "Numeric" },
+      'Choose "Numeric" in the "Type" dropdown',
+    ],
+    [
+      { kind: "select_option", selector: { role: "combobox", name: "Type" }, value: "num" },
+      'Choose the option with the value "num" in the "Type" dropdown',
+    ],
+    [
       { kind: "wait_for", selector: SAVE, timeout_ms: 10000 },
       'Wait for the "Save & Continue" button to appear (up to 10 s)',
     ],
@@ -422,7 +430,7 @@ describe("a sentence for every action kind", () => {
     const kinds = new Set(cases.map(([a]) => a.kind));
     expect([...kinds].sort()).toEqual(
       [
-        "navigate", "click", "hover", "fill", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
+        "navigate", "click", "hover", "fill", "select_option", "wait_for", "check_text", "check_url", "remember_url", "remember_text", "expect_visible", "expect_hidden",
         "expect_text", "expect_text_moved", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "expect_no_change", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "when_hidden", "reload", "expire_session", "return_to_area",

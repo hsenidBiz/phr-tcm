@@ -5659,3 +5659,47 @@ async fn a_start_refused_for_want_of_a_browser_lets_go_of_its_case() {
     claims::clear();
     v2_lib::commands::autorun_slots::clear();
 }
+
+/// Backlog 86 and 87: a saved script is read as it was sent. A key an action
+/// does not have (`repeat` on a `press_key`, a typo) is refused with the keys
+/// it takes, a `screenshot` is refused as a discovery action, and nothing is
+/// written for either.
+#[tokio::test]
+async fn a_save_refuses_unknown_action_keys_and_a_screenshot() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let scripts = case_7("#toast", "Saved");
+    see_scripts(dir.path(), &scripts.to_string());
+
+    let mut stray = scripts.clone();
+    stray[0]["steps"][1]["actions"][1] = serde_json::json!({ "kind": "press_key", "key": "Tab", "repeat": 12 });
+    let body = tool_body(serde_json::json!({ "scripts": stray }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "case 7: press_key does not take repeat - it takes: key, times"));
+
+    let mut nested = scripts.clone();
+    nested[0]["steps"][1]["actions"][1] = serde_json::json!({
+        "kind": "when_visible", "selector": "#b",
+        "then": [{ "kind": "click", "selector": "#c", "forced": true }]
+    });
+    let body = tool_body(serde_json::json!({ "scripts": nested }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "case 7: click does not take forced - it takes: selector"));
+
+    let mut shot = scripts.clone();
+    shot[0]["steps"][1]["actions"][1] = serde_json::json!({ "kind": "screenshot" });
+    let body = tool_body(serde_json::json!({ "scripts": shot }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(
+        (status, out.as_str()),
+        (400, "case 7: screenshot is a discovery action: a saved script takes its pictures when a step fails")
+    );
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a refused script was saved");
+
+    // The same script without the stray key saves.
+    let body = tool_body(serde_json::json!({ "scripts": scripts }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+}

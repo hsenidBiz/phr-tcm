@@ -596,6 +596,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         Action::Click { selector }
         | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
+        | Action::SelectOption { selector, .. }
         | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }

@@ -78,6 +78,30 @@ fn times_is_one_to_fifty() {
     assert!(serde_json::from_value::<Action>(json!({ "kind": "press_key", "key": "Tab", "times": 300 })).is_err());
 }
 
+/// `repeat` is what an assistant writes for `times` (backlog 87): a discovery
+/// or a try reads it as `times`, and the press then runs that many times.
+#[test]
+fn repeat_is_times() {
+    let mut raw = json!({ "kind": "press_key", "key": "Tab", "repeat": 12 });
+    v2_lib::autorun::action_help::prepare_repeat(&mut raw).expect("accepted");
+    let read = action(raw);
+    assert!(matches!(&read, Action::PressKey { times: Some(12), .. }), "{read:?}");
+    assert!(read.validate().is_ok());
+    // The times rule still holds for it.
+    let mut too_many = json!({ "kind": "press_key", "key": "Tab", "repeat": 51 });
+    v2_lib::autorun::action_help::prepare_repeat(&mut too_many).expect("moved");
+    assert_eq!(action(too_many).validate().unwrap_err(), TIMES_RULE);
+}
+
+#[test]
+fn repeat_and_times_together_are_refused() {
+    let mut raw = json!({ "kind": "press_key", "key": "Tab", "times": 2, "repeat": 3 });
+    assert_eq!(
+        v2_lib::autorun::action_help::prepare_repeat(&mut raw).unwrap_err(),
+        "press_key takes times or repeat, not both"
+    );
+}
+
 /// A script saved before combinations existed is written back byte for
 /// byte, and the new keys appear only when set.
 #[test]
