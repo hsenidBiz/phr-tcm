@@ -694,7 +694,7 @@ fn supported_ops_is_the_parsers_whole_vocabulary() {
             "prepend_step" | "append_step" => r#","action":"Do it","expected":"Done""#,
             "split_step" => r#","find":"a","into":[{"action":"x","expected":"y"}]"#,
             "remove_cases" => r#","where":{"title_contains":"x"}"#,
-            "attach_file" => r#","path":"C:/shots/a.png","step":1"#,
+            "attach_file" => r#","path":"C:/shots/a.png","step":1,"where":{"at_index":0}"#,
             "remove_attachment" => r#","name":"a.png""#,
             "insert_cases" => r#","cases":[{"title":"T","steps":[{"action":"a","expected":"b"}]}]"#,
             "sort_by" | "group_by" => r#","value":"title""#,
@@ -1011,7 +1011,7 @@ fn attach_file_adds_to_step_and_remove_attachment_moves_existing_to_removed() {
         vec![with_attachments("One", vec![existing("g1", "old.png")]), step("Two")],
     )];
     let ops = parse_ops(&serde_json::json!([
-        { "op": "attach_file", "path": "C:/shots/new.png", "step": 2 },
+        { "op": "attach_file", "path": "C:/shots/new.png", "step": 2, "where": { "at_index": 0 } },
         { "op": "remove_attachment", "name": "OLD.png" },
     ]))
     .unwrap();
@@ -1034,8 +1034,8 @@ fn attach_file_declines_in_words() {
     let shared = Step { shared: Some(9), ..Default::default() };
     let cases = vec![case("C", vec![step("One"), shared])];
     let ops = parse_ops(&serde_json::json!([
-        { "op": "attach_file", "path": "C:/a.png", "step": 5 },
-        { "op": "attach_file", "path": "C:/a.png", "step": 2 },
+        { "op": "attach_file", "path": "C:/a.png", "step": 5, "where": { "at_index": 0 } },
+        { "op": "attach_file", "path": "C:/a.png", "step": 2, "where": { "at_index": 0 } },
         { "op": "remove_attachment", "name": "nothing.png" },
     ]))
     .unwrap();
@@ -1047,9 +1047,9 @@ fn attach_file_declines_in_words() {
     assert!(w.contains("Shared Steps"), "{w}");
     assert!(w.contains("nothing.png"), "{w}");
     // Bad input is refused at parse time.
-    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png" }])).is_err());
-    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "", "step": 1 }])).is_err());
-    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "//srv/share/a.png", "step": 1 }])).is_err());
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "where": { "at_index": 0 } }])).is_err());
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "", "step": 1, "where": { "at_index": 0 } }])).is_err());
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "//srv/share/a.png", "step": 1, "where": { "at_index": 0 } }])).is_err());
     assert!(parse_ops(&serde_json::json!([{ "op": "remove_attachment" }])).is_err());
 }
 
@@ -1103,4 +1103,13 @@ fn insert_cases_carries_step_attachments() {
     let new = out.iter().find(|c| c.title == "New").unwrap();
     assert_eq!(new.steps[0].attachments[0].name, "a.png");
     assert_eq!(new.removed_attachments, vec!["g9".to_string()]);
+}
+
+#[test]
+fn attach_file_requires_a_where_filter() {
+    let err = parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "step": 1 }])).unwrap_err();
+    assert!(err.contains("where"), "{err}");
+    let err = parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "step": 1, "where": { "title_contains": " " } }])).unwrap_err();
+    assert!(err.contains("where"), "{err}");
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "step": 1, "where": { "at_index": 0 } }])).is_ok());
 }

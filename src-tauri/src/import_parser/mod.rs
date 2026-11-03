@@ -324,6 +324,11 @@ fn read_attachments(rs: &serde_json::Value, n: usize) -> (Vec<crate::step_attach
             serde_json::Value::Object(_) => (text(a, "id"), text(a, "path")),
             _ => (None, None),
         };
+        if let (Some(_), Some(_)) = (&id, &path) {
+            warnings.push(format!(
+                "step {n}: attachment {k} has both an 'id' and a 'path' - the 'path' is ignored."
+            ));
+        }
         if let Some(id) = id {
             let name = text(a, "name").unwrap_or_else(|| id.clone());
             out.push(StepAttachment {

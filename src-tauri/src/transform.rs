@@ -131,8 +131,8 @@ pub fn ops_reference() -> String {
         - prepend_step and append_step take `{{action, expected}}`; remove_step_matching takes \
         `{{value|find|action}}` (a substring of a step's action); split_step takes \
         `{{find, into: [{{action, expected}}, ...]}}` and replaces each matching step with that sequence.\n\
-        - attach_file takes `{{path, step}}` (a full local path, step counted from 1) and adds that \
-        file to the step; remove_attachment takes `{{name, step?}}` (the file name; every step when `step` \
+        - attach_file takes `{{path, step}}` plus a REQUIRED `where` naming the case (a full local path, step counted from 1) and adds that \
+        file to the step - it is refused without `where`, so one file never lands on every case; remove_attachment takes `{{name, step?}}` (the file name; every step when `step` \
         is left out) and takes it off. Neither reaches Azure DevOps until the case is uploaded.\n\
         - remove_cases takes only a required `where`; insert_cases takes `{{cases}}` and optionally ONE \
         of at_index (zero-based), before or after (a title fragment) - without one it appends; dedupe \
@@ -547,6 +547,26 @@ pub fn parse_ops_full(
                 if !crate::test_files::is_plain_local_path(&path) {
                     return Err(format!(
                         "{label}: attach_file \"path\" must be a full path on a local drive, like C:/shots/login.png."
+                    ));
+                }
+                // Without a filter every case would get the file - one
+                // screenshot, a separate blob on every work item.
+                let f = &v["where"];
+                if f["title_contains"].as_str().is_some_and(|t| t.trim().is_empty()) {
+                    return Err(format!(
+                        "{label}: attach_file got an empty \"where.title_contains\" - it matches every title. \
+                         Name part of a title, or use at_index."
+                    ));
+                }
+                let has_filter = f["title_contains"].as_str().is_some()
+                    || f["has_tag"].as_str().is_some()
+                    || f["module_is"].as_str().is_some()
+                    || f["area_is"].as_str().is_some()
+                    || f["at_index"].as_u64().is_some();
+                if !has_filter {
+                    return Err(format!(
+                        "{label}: attach_file requires a \"where\" filter naming the case(s) to attach to - \
+                         without one it would attach the file to every case."
                     ));
                 }
                 let step = v["step"].as_u64().filter(|n| *n >= 1).ok_or(format!(

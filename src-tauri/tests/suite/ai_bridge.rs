@@ -5377,3 +5377,53 @@ async fn the_writing_guide_documents_step_attachments() {
         assert!(body.contains(needle), "the writing guide should say {needle:?}");
     }
 }
+
+/// An id in remove_attachments that a step still lists stays (carried wins);
+/// an existing attachment on a case with no id cannot be copied.
+#[tokio::test]
+async fn validate_explains_removal_and_copy_mistakes() {
+    let draft = serde_json::json!({ "test_cases": [
+        { "id": 5, "title": "Update", "automation_status": "Not Automated",
+          "steps": [{ "action": "A.", "expected": "B.", "attachments": [{ "id": "g1", "name": "a.png" }] }],
+          "remove_attachments": ["g1"] },
+        { "title": "Copy", "automation_status": "Not Automated",
+          "steps": [{ "action": "A.", "expected": "B.", "attachments": [{ "id": "g2", "name": "b.png" }] }],
+          "remove_attachments": ["g3"] },
+        { "title": "Both", "automation_status": "Not Automated",
+          "steps": [{ "action": "A.", "expected": "B.", "attachments": [{ "id": "g4", "path": "C:/zz-none.png", "name": "c.png" }] }] },
+    ]})
+    .to_string();
+    let (_, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.18.6").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let all: Vec<String> = v["warnings"].as_array().unwrap().iter().map(|w| w.as_str().unwrap().to_string()).collect();
+    let has = |n: &[&str]| all.iter().filter(|w| n.iter().all(|x| w.contains(x))).count();
+    assert_eq!(has(&["Update", "g1", "step 1", "stays"]), 1, "{all:?}");
+    assert_eq!(has(&["Copy", "not copied"]), 1, "{all:?}");
+    assert_eq!(has(&["Both", "both an 'id' and a 'path'"]), 1, "{all:?}");
+    assert_eq!(has(&["Copy", "remove_attachments"]), 1, "{all:?}");
+}
+
+/// Validate's file sentences speak of what will happen, not of a failed upload.
+#[tokio::test]
+async fn validate_file_warning_reads_as_a_prediction() {
+    let draft = serde_json::json!({ "test_cases": [{ "title": "F", "automation_status": "Not Automated",
+        "steps": [{ "action": "A.", "expected": "B.", "attachments": [{ "path": "C:/definitely/not/here.png" }] }] }]})
+    .to_string();
+    let (_, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.18.6").await;
+    assert!(body.contains("will not be attached"), "{body}");
+}
+
+/// A failed relations read is said, not silent.
+#[tokio::test]
+async fn get_test_cases_says_when_attachments_could_not_be_read() {
+    use wiremock::matchers::query_param;
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET")).and(wm_path("/acme/_apis/wit/workitems")).and(query_param("$expand", "relations"))
+        .respond_with(ResponseTemplate::new(500)).mount(&server).await;
+    Mock::given(wm_method("GET")).and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [case_json(201, "Login")] })))
+        .mount(&server).await;
+    let (_, body) = route(&ctx(), Some(&client), "GET", "/test-cases?ids=201", "", "1.10.3").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v["attachments_note"].as_str().unwrap_or("").contains("could not be read"), "{body}");
+}
