@@ -1051,6 +1051,7 @@ async fn a_postback_one_off_that_may_have_saved_is_noted_and_reminds_to_record()
     assert_eq!(s.writes.len(), 1, "a postback that may have saved was not noted: {:?}", s.writes);
     assert_eq!((s.writes[0].method.as_str(), s.writes[0].path.as_str()), ("POST", EVAL_PAGE));
     assert!(v["record_change"].is_string(), "no reminder to record the change: {v}");
+    assert_eq!(v["timed_out"], json!(true), "a timed-out postback does not say so: {v}");
 }
 
 #[tokio::test]
@@ -1063,4 +1064,723 @@ async fn a_postback_one_off_that_never_went_out_is_not_noted() {
     assert_eq!(status, 502, "{v}");
     assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
     assert!(v["record_change"].is_null(), "{v}");
+    assert!(v["timed_out"].is_null(), "a postback that never went out did not time out as sent: {v}");
+}
+
+fn post_form(path: &str, form: Value) -> Value {
+    json!({ "step": { "method": "POST", "path": path, "form": form }, "effect": "edit" })
+}
+
+#[tokio::test]
+async fn save_false_sends_but_saves_and_matches_nothing() {
+    use v2_lib::api_templates::one_off::NOT_SAVED_ASKED;
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let mut asked = post_form("/hr/x", json!({ "x": "1" }));
+    asked["save"] = json!(false);
+    let (status, v) = send(&mut browser, &r, true, asked).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "not_saved": NOT_SAVED_ASKED }), "{v}");
+    assert_eq!(r.fetched().len(), 1, "the call was sent");
+    assert!(saved_ids(&r).is_empty());
+
+    // The same call without save: false is saved as a new template, not matched to anything.
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    assert_eq!(saved_ids(&r).len(), 1);
+}
+
+#[tokio::test]
+async fn a_later_working_call_replaces_the_failing_auto_save() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "id": -1 })), answer(200, json!({ "id": 5 }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let id = "post-hr-x";
+
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"], json!({ "id": id, "saved": true }), "{v}");
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "y": "2", "z": "3" }))).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "id": id, "replaced": true }), "{v}");
+    assert_eq!(saved_ids(&r), vec![id.to_string()], "no -2 copy");
+    let t = store::load(r.root.path(), ORG, PROJECT, id).unwrap().unwrap();
+    let form = t.steps[0].form.as_ref().expect("a form");
+    assert!(form.contains_key("y") && !form.contains_key("x"), "{form:?}");
+    assert!(t.proven.is_some());
+}
+
+#[tokio::test]
+async fn a_template_from_another_session_or_in_use_is_never_replaced() {
+    let _locks = locks();
+    let mut r = rig(
+        vec![answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true }))],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"]["id"], json!("post-hr-x"), "{v}");
+
+    // A later session: nothing was auto-saved by it yet.
+    browser.as_mut().unwrap().discovery.as_mut().unwrap().explore.as_mut().unwrap().auto_saved.clear();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "y": "2" }))).await;
+    assert_eq!(v["template"], json!({ "id": "post-hr-x-2", "saved": true }), "{v}");
+
+    // This session saved post-hr-x-2, but a saved fixture names it now.
+    let dir = v2_lib::api_templates::fixture_store::fixtures_dir(r.root.path(), ORG, PROJECT);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("uses-it.json"),
+        json!({ "id": "uses-it", "name": "Uses it", "account": "admin", "steps": [ { "template": "post-hr-x-2" } ] }).to_string(),
+    )
+    .unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "w": "3" }))).await;
+    assert_eq!(v["template"], json!({ "id": "post-hr-x-3", "saved": true }), "{v}");
+    assert_eq!(saved_ids(&r).len(), 3);
+}
+
+#[tokio::test]
+async fn a_timed_out_post_is_noted_and_may_have_been_processed() {
+    use v2_lib::api_templates::runner::SENT_NO_ANSWER;
+    let _locks = locks();
+    let mut r = rig(vec![json!({ "error": "timeout" })], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    let mut edit = post_form("/hr/x", json!({ "x": "1" }));
+    edit["timeout_s"] = json!(60);
+    let (status, v) = send(&mut browser, &r, true, edit).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().contains(SENT_NO_ANSWER), "{v}");
+    assert!(v["detail"].as_str().unwrap().contains("60 seconds"), "{v}");
+    assert_eq!(v["timed_out"], json!(true), "{v}");
+    assert_eq!(r.fetched()[0][2], json!(60_000), "the page was told 60 seconds");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "{:?}", s.writes);
+    assert_eq!(s.writes[0].path, "/hr/x");
+    assert_eq!(v["record_change"], json!(edit_reminder("POST /hr/x")), "{v}");
+}
+
+#[tokio::test]
+async fn a_devtools_timeout_says_it_may_not_know() {
+    use v2_lib::api_templates::runner::MAYBE_SENT_NO_ANSWER;
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().fetch_gives_up = true;
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    // The browser stops answering for the longest the wait allows.
+    let mut edit = post_form("/hr/x", json!({ "x": "1" }));
+    edit["timeout_s"] = json!(5);
+    let (status, v) = send(&mut browser, &r, true, edit).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().contains(MAYBE_SENT_NO_ANSWER), "{v}");
+    assert_eq!(v["timed_out"], json!(true), "{v}");
+    assert_eq!(load(r.root.path(), &session).unwrap().writes.len(), 1);
+}
+
+#[tokio::test]
+async fn a_template_proven_another_way_or_named_by_a_flow_is_never_replaced() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })); 3], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"]["id"], json!("post-hr-x"), "{v}");
+
+    // A prove of the same template afterwards: no longer proven by an explore call.
+    let mut t = store::load(r.root.path(), ORG, PROJECT, "post-hr-x").unwrap().unwrap();
+    t.proven.as_mut().unwrap().via = None;
+    store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "y": "2" }))).await;
+    assert_eq!(v["template"], json!({ "id": "post-hr-x-2", "saved": true }), "{v}");
+
+    // A flow that names the newer template keeps it too.
+    let dir = v2_lib::api_templates::flow_store::flows_dir(r.root.path(), ORG, PROJECT);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("f.json"),
+        json!({ "id": "f", "title": "F", "module": "M", "subject": { "name": "cycleId", "type": "number" }, "stages": [ { "id": "post-hr-x-2", "title": "S", "check": "x" } ] }).to_string(),
+    )
+    .unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "w": "3" }))).await;
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    assert_eq!(saved_ids(&r).len(), 3);
+}
+
+// ---------------------------------------------------------------------------
+// Kept session values: `keep` and `{{var.name}}` (item 82)
+// ---------------------------------------------------------------------------
+
+/// A 480-character value, as long as a real session token.
+fn long_value() -> String {
+    format!("kv-{}", "x9Q".repeat(159))
+}
+
+fn keep_token_call() -> Value {
+    json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": { "token": "$.Ref" } })
+}
+
+fn post_with_var(json_body: Value) -> Value {
+    json!({ "step": { "method": "POST", "path": "/hr/y", "json": json_body }, "effect": "edit" })
+}
+
+#[tokio::test]
+async fn keep_stores_a_value_and_answers_only_its_length() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let (status, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["kept"], json!(["token (480 characters)"]), "{v}");
+    assert!(!v.to_string().contains(&value), "the value came back: {v}");
+    assert!(v["response"]["body"].as_str().unwrap().contains("{{var.token}}"), "{v}");
+    let held = &browser.as_ref().unwrap().discovery.as_ref().unwrap().kept;
+    assert_eq!(held.get("token"), Some(&json!(value)), "it is held for the discovery");
+}
+
+#[tokio::test]
+async fn a_later_call_sends_the_kept_value() {
+    use v2_lib::api_templates::one_off::VAR_NOT_SAVED;
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "echo": value }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.token}}" }))).await;
+    assert_eq!(status, 200, "{v}");
+    let sent = &r.fetched()[1][0]["body"];
+    assert_eq!(sent["value"], json!({ "t": value }), "the page received the real value: {sent}");
+    assert_eq!(v["template"], json!({ "not_saved": VAR_NOT_SAVED }), "{v}");
+    assert!(!v.to_string().contains(&value), "the echo came back: {v}");
+    assert!(v["response"]["body"].as_str().unwrap().contains("{{var.token}}"), "{v}");
+}
+
+#[tokio::test]
+async fn a_kept_value_in_values_still_saves_the_template() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+
+    on_the_app(&r);
+    let mut call = post_with_var(json!({ "t": "{{p}}" }));
+    call["params"] = json!([{ "name": "p", "type": "string", "required": true }]);
+    call["values"] = json!({ "p": "{{var.token}}" });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(r.fetched()[1][0]["body"]["value"], json!({ "t": value }));
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    let id = v["template"]["id"].as_str().unwrap();
+    let t = store::load(r.root.path(), ORG, PROJECT, id).unwrap().unwrap();
+    let text = serde_json::to_string(&t).unwrap();
+    assert!(!text.contains(&value), "a saved template never holds a kept value: {text}");
+    assert!(text.contains("{{p}}"), "{text}");
+}
+
+#[tokio::test]
+async fn a_var_not_kept_is_refused_naming_it() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.x}}" }))).await;
+    assert_eq!(status, 400, "{v}");
+    assert_eq!(
+        v,
+        json!("{{var.x}} is not kept in this discovery - keep it first with keep on send_api_request")
+    );
+    assert!(r.fetched().is_empty(), "nothing was sent");
+
+    let mut call = post_with_var(json!({ "t": "{{p}}" }));
+    call["params"] = json!([{ "name": "p", "type": "string", "required": true }]);
+    call["values"] = json!({ "p": "{{var.y}}" });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 400, "{v}");
+    assert!(v.as_str().unwrap().starts_with("{{var.y}} is not kept"), "{v}");
+}
+
+#[tokio::test]
+async fn a_keep_that_finds_nothing_says_so_and_keeps_the_rest() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut call = keep_token_call();
+    call["keep"] = json!({ "token": "$.Ref", "gone": "$.Nope" });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["kept"], json!(["token (480 characters)"]), "{v}");
+    assert_eq!(v["keep_failed"], json!(["gone: found nothing at $.Nope"]), "{v}");
+}
+
+#[tokio::test]
+async fn kept_values_end_with_the_discovery() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, id) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+    assert!(!browser.as_ref().unwrap().discovery.as_ref().unwrap().kept.is_empty());
+
+    let fresh = exploring("Leave").map(|s| DiscoveryState {
+        explore: Some(ExploreRun { session: Some(id), ..ExploreRun::default() }),
+        ..s
+    });
+    assert!(fresh.as_ref().unwrap().kept.is_empty());
+    browser.as_mut().unwrap().discovery = fresh;
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.token}}" }))).await;
+    assert_eq!(status, 400, "{v}");
+    assert!(v.as_str().unwrap().contains("{{var.token}} is not kept"), "{v}");
+}
+
+#[tokio::test]
+async fn a_kept_value_is_never_in_the_answer_or_the_log() {
+    let _log = crate::serial::log_tail();
+    let _locks = locks();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    let value = long_value();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "Ref": value })),
+            answer(200, json!({ "Ref": value, "other": "fine" })),
+            answer(500, json!({ "error": format!("bad token {value}") })),
+            answer(200, json!({ "Ref": value })),
+        ],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut texts = vec![];
+
+    let (_, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    texts.push(v.to_string());
+
+    on_the_app(&r);
+    let call = json!({ "step": { "method": "GET", "path": "/hr/x", "capture": { "again": "$.Ref" } }, "save": false });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["captured"]["again"], json!("{{var.token}}"), "{v}");
+    texts.push(v.to_string());
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.token}}" }))).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().contains("{{var.token}}"), "{v}");
+    texts.push(v.to_string());
+
+    on_the_app(&r);
+    let mut call = keep_token_call();
+    call["step"]["expect"] = json!({ "status": 201 });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 502, "{v}");
+    texts.push(v.to_string());
+
+    for text in &texts {
+        assert!(!text.contains(&value), "the value is in an answer: {text}");
+    }
+    let log: String = v2_lib::applog::recent(500).iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    assert!(!log.contains(&value), "the value is in the log");
+    let records = crate::common::activity_records(activity.path(), "api");
+    assert!(!records.is_empty());
+    assert!(!records.iter().any(|r| r.to_string().contains(&value)), "the value is in an activity record");
+    assert!(records.iter().any(|r| r.to_string().contains("{{var.token}}")), "the record shows the name");
+}
+
+/// A saved template whose token page is `page`.
+fn saved_on(r: &Rig, id: &str, page: &str) {
+    let mut t = crate::api_templates_runner::template();
+    t.id = id.to_string();
+    t.antiforgery.page = page.to_string();
+    store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+}
+
+fn at(path: &str) -> String {
+    format!("https://hr.example.internal{path}")
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_uses_the_projects_one_token_page() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    saved_on(&r, "has-a-token-page", "/hr/pmsv10/updatehub");
+    let (mut browser, _) = exploring_session(&mut r).await;
+    {
+        let mut s = r.script.lock().unwrap();
+        s.hrefs = VecDeque::from(vec![at(PAGE), at(PAGE), at("/hr/pmsv10/updatehub"), at("/hr/pmsv10/updatehub")]);
+        s.tokens = VecDeque::from(vec![None]);
+    }
+    let (status, v) = send(&mut browser, &r, true, post_to(PATH, "edit")).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["token_page"], "/hr/pmsv10/updatehub (the page this project's templates use)", "{v}");
+    assert_eq!(r.fetched().len(), 1, "sent once");
+    assert!(r.navigated().ends_with("/hr/pmsv10/updatehub"), "{}", r.navigated());
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_and_two_pages_is_refused_naming_them() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    saved_on(&r, "page-one", "/hr/pmsv10/updatehub");
+    saved_on(&r, "page-two", "/hr/pmsv10/performancecycle?mode=create");
+    let (mut browser, _) = exploring_session(&mut r).await;
+    r.script.lock().unwrap().token = None;
+    let (status, v) = send(&mut browser, &r, true, post_to(PATH, "edit")).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["failed"], "Anti-forgery token", "{v}");
+    let detail = v["detail"].as_str().unwrap();
+    assert!(detail.starts_with("this page has no anti-forgery token, so the POST was not sent - name a page with one in antiforgery_page; this project's templates use: "), "{detail}");
+    assert!(detail.contains("/hr/pmsv10/performancecycle?mode=create") && detail.contains("/hr/pmsv10/updatehub"), "{detail}");
+    assert!(!detail.contains("example.internal"), "{detail}");
+    assert!(r.fetched().is_empty(), "something was sent");
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_and_no_saved_page_says_so() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    r.script.lock().unwrap().token = None;
+    let (status, v) = send(&mut browser, &r, true, post_to(PATH, "edit")).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().ends_with("; no saved template names one yet"), "{v}");
+    assert!(r.fetched().is_empty());
+}
+
+fn login_page(final_path: &str, redirected: bool) -> Value {
+    json!({
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "finalUrl": at(final_path),
+        "redirected": redirected,
+        "text": "<html><form><input name=\"user\"><input type=\"password\" name=\"pass\"></form></html>",
+    })
+}
+
+#[tokio::test]
+async fn a_login_page_the_call_was_sent_to_another_page_for_is_signed_out_and_the_next_call_is_not_sent() {
+    let _locks = locks();
+    let mut r = rig(vec![login_page("/account/in", true), answer(200, json!({ "late": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+
+    let (status, v) = send(&mut browser, &r, false, get.clone()).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["signed_out"], true, "{v}");
+    assert_eq!(v["detail"], v2_lib::api_templates::one_off::SIGNED_OUT, "{v}");
+    assert!(v.get("response").is_none(), "a signed-out answer carries no body: {v}");
+    assert!(v.get("template").is_none(), "{v}");
+    assert!(!v.to_string().contains("password"), "{v}");
+    {
+        let b = browser.as_mut().unwrap();
+        assert!(b.account.is_none(), "still signed in");
+        assert!(b.discovery.as_ref().unwrap().signed_out);
+    }
+
+    let (status, text) =
+        send_in(&mut browser, &ctx(false), r.root.path(), &get.to_string(), &quick(), RUN_LIMIT, &QUICK_PAUSES).await;
+    assert_eq!((status, text.as_str()), (409, v2_lib::api_templates::one_off::SIGNED_OUT_BEFORE));
+    assert_eq!(r.fetched().len(), 1, "the second call was sent");
+}
+
+#[tokio::test]
+async fn a_page_with_a_password_field_that_answers_in_place_is_an_answer() {
+    let _locks = locks();
+    let mut r = rig(vec![login_page("/hr/x", false)], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_redirect_home_with_no_password_field_is_not_signed_out() {
+    let _locks = locks();
+    let mut home = login_page("/", true);
+    home["text"] = json!("<html>dashboard</html>");
+    let mut r = rig(vec![home], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (_, v) = send(&mut browser, &r, false, get).await;
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_sign_in_page_asked_for_on_purpose_is_an_answer_not_a_sign_out() {
+    let _locks = locks();
+    let mut r = rig(vec![login_page("/", false)], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/" } });
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_postback_on_a_page_with_a_password_field_is_not_signed_out() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(
+        200,
+        json!({ "excerpt": "<html><input type=\"password\" name=\"p\"></html>" }),
+    )]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_postback_the_runner_judges_signed_out_ends_the_discovery_for_later_sends() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({}))], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(200, json!({ "signedOut": true }))]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let saved = v2_lib::browser::session::SavedSession { saved_at_ms: v2_lib::autorun::sessions::now_ms(), cookies: vec![], local_storage: vec![] };
+    v2_lib::autorun::sessions::save_session(r.root.path(), "admin", &saved).unwrap();
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out, "{v}");
+    assert_eq!(v["signed_out"], json!(true), "the answer does not say the account is signed out: {v}");
+    assert!(browser.as_mut().unwrap().account.is_none(), "still signed in");
+    let now = v2_lib::autorun::sessions::now_ms();
+    assert!(
+        v2_lib::autorun::sessions::load_fresh_session(r.root.path(), "admin", 60, now).is_none(),
+        "the saved session was kept"
+    );
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (status, text) =
+        send_in(&mut browser, &ctx(true), r.root.path(), &get.to_string(), &quick(), RUN_LIMIT, &QUICK_PAUSES).await;
+    assert_eq!((status, text.as_str()), (409, v2_lib::api_templates::one_off::SIGNED_OUT_BEFORE));
+}
+
+#[tokio::test]
+async fn a_kept_value_in_the_path_or_query_is_never_in_the_record_or_the_log() {
+    let _log = crate::serial::log_tail();
+    let _locks = locks();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    // Not token-shaped (spaces), so only the kept-value hiding can mask it.
+    let value = "emp 1234 north";
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    assert_eq!(v["kept"], json!(["token (14 characters)"]), "{v}");
+
+    on_the_app(&r);
+    let call = json!({
+        "step": { "method": "GET", "path": "/hr/emp/{{var.token}}", "query": { "q": "{{var.token}}" } },
+        "save": false
+    });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+
+    let records = crate::common::activity_records(activity.path(), "api");
+    let sent = records.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+    let log: String = v2_lib::applog::recent(500).iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    for text in [v.to_string(), sent.clone(), log] {
+        for form in [value, "emp%201234%20north", "emp+1234+north"] {
+            assert!(!text.contains(form), "{form} shows in: {text}");
+        }
+    }
+    assert!(sent.contains("{{var.token}}"), "the record shows the name: {sent}");
+}
+
+#[tokio::test]
+async fn kept_lists_and_numbers_are_hidden_too() {
+    let _locks = locks();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "Ids": ["first value here", "second value", "x"], "Num": 123456789012u64 })),
+            answer(200, json!({ "echo": "first value here and second value", "n": 123456789012u64 })),
+        ],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut call = json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": { "ids": "$.Ids", "num": "$.Num" } });
+    call["save"] = json!(false);
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    let text = v.to_string();
+    for shown in ["first value here", "second value", "123456789012"] {
+        assert!(!text.contains(shown), "{shown} shows in: {text}");
+    }
+    assert!(text.contains("{{var.ids}}") && text.contains("{{var.num}}"), "{text}");
+
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, json!({ "step": { "method": "GET", "path": "/hr/y" }, "save": false })).await;
+    let text = v.to_string();
+    for shown in ["first value here", "second value", "123456789012"] {
+        assert!(!text.contains(shown), "{shown} shows in a later answer: {text}");
+    }
+}
+
+#[tokio::test]
+async fn a_kept_value_stays_masked_in_the_browsers_capture_after_the_discovery() {
+    let _locks = locks();
+    let value = "emp 1234 north";
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, id) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+    let masked = |b: &mut Option<PageBrowser>| {
+        use v2_lib::browser::cdp::Driver;
+        let cap = Driver::capture(&b.as_ref().unwrap().d).expect("a capture");
+        cap.masked().to_vec()
+    };
+    assert_eq!(masked(&mut browser), vec![("{{var.token}}".to_string(), value.to_string())]);
+
+    // The discovery ends and the browser stays: still masked.
+    browser.as_mut().unwrap().discovery = None;
+    assert_eq!(masked(&mut browser).len(), 1);
+    // A new discovery in it: still masked, though nothing is kept in it.
+    browser.as_mut().unwrap().discovery = exploring("Leave").map(|s| DiscoveryState {
+        explore: Some(ExploreRun { session: Some(id), ..ExploreRun::default() }),
+        ..s
+    });
+    assert!(browser.as_ref().unwrap().discovery.as_ref().unwrap().kept.is_empty());
+    assert_eq!(masked(&mut browser).len(), 1);
+}
+
+// ---- 78: a failed prove from an explore session ----
+
+/// The report of a prove of the sample template that sent its first write
+/// and was refused at its second.
+fn prove_failed_at_the_second_write() -> v2_lib::api_templates::runner::RunReport {
+    serde_json::from_value(json!({
+        "ok": false,
+        "template": "pms-create-draft-cycle",
+        "outputs": {},
+        "created": { "cycleId": 274 },
+        "steps": [
+            { "name": "Cycle setup", "handler": "SaveProgress", "status": 200, "ok": true, "detail": "" },
+            { "name": "Evaluation rules", "handler": "SaveEvalRulesProgress", "status": 400, "ok": false,
+              "detail": "expected status 200, got 400" }
+        ],
+        "failed": "Evaluation rules"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_failed_prove_from_an_explore_session_goes_on_its_change_list() {
+    use v2_lib::ai_bridge::{failed_prove_answer, PROVE_WROTE};
+    use v2_lib::autorun::explore::unaccounted;
+    let r = rig(vec![], None);
+    let session = begin(r.root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let values = json!({ "cycleName": "FY27" }).as_object().unwrap().clone();
+
+    let text = failed_prove_answer(
+        r.root.path(),
+        Some(&session),
+        &crate::api_templates_runner::template(),
+        &values,
+        &prove_failed_at_the_second_write(),
+        None,
+    );
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["note"], PROVE_WROTE, "{v}");
+    assert_eq!(v["on_change_list"], true, "{v}");
+    assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(2), "{v}");
+
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 2, "{:?}", s.writes);
+    assert_eq!(s.changes.len(), 2, "{:?}", s.changes);
+    for entry in &s.changes {
+        assert_eq!(
+            entry.change,
+            Change::Sent { by: "made by a failed prove of pms-create-draft-cycle".to_string() },
+            "{entry:?}"
+        );
+        assert!(!entry.undone);
+    }
+    assert_eq!(s.changes[0].request.as_deref(), Some(format!("POST {PATH}?handler=SaveProgress").as_str()));
+    assert_eq!(s.changes[1].request.as_deref(), Some(format!("POST {PATH}?handler=SaveEvalRulesProgress").as_str()));
+    assert!(unaccounted(&s).is_empty(), "{:?}", unaccounted(&s));
+    let file = serde_json::to_string(&s).unwrap();
+    assert!(file.contains("\"change\":\"sent\""), "{file}");
+    assert!(!file.contains("example.internal"), "{file}");
+
+    // An asker with no explore session gets the names and no list.
+    let text = failed_prove_answer(
+        r.root.path(),
+        None,
+        &crate::api_templates_runner::template(),
+        &values,
+        &prove_failed_at_the_second_write(),
+        None,
+    );
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(2), "{v}");
+    assert!(v.get("on_change_list").is_none(), "{v}");
+    assert_eq!(load(r.root.path(), &session).unwrap().changes.len(), 2);
+}
+
+#[test]
+fn a_sent_change_is_never_undone_or_taken_for_a_create() {
+    use v2_lib::autorun::explore::{mark_undone, verified_creates};
+    let r = rig(vec![], None);
+    let session = begin(r.root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let values = json!({ "cycleName": "FY27" }).as_object().unwrap().clone();
+    failed_prove(&r, &session, &values);
+    let s = load(r.root.path(), &session).unwrap();
+    assert!(verified_creates(&s).is_empty());
+    assert!(test_made::list(r.root.path()).is_empty());
+    // Set back by hand like any other entry, and listed as it was.
+    mark_undone(r.root.path(), &session, &[1]).unwrap();
+    assert!(load(r.root.path(), &session).unwrap().changes[0].undone);
+}
+
+fn failed_prove(r: &Rig, session: &str, values: &serde_json::Map<String, Value>) {
+    v2_lib::ai_bridge::failed_prove_answer(
+        r.root.path(),
+        Some(session),
+        &crate::api_templates_runner::template(),
+        values,
+        &prove_failed_at_the_second_write(),
+        None,
+    );
+}
+
+/// 79: a GET to a route the project marked as one that changes data is a save.
+#[tokio::test]
+async fn a_get_to_a_writes_route_is_noted_as_a_save() {
+    use v2_lib::autorun::explore::{set_route_kind, unaccounted, RouteKind};
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })); 2], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/leave/approve", "query": { "id": "5" } } });
+
+    let (status, v) = send(&mut browser, &r, false, get.clone()).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(load(r.root.path(), &session).unwrap().writes.is_empty(), "a plain GET was noted");
+    assert!(v.get("record_change").is_none(), "{v}");
+
+    set_route_kind(r.root.path(), "GET /hr/leave/approve", RouteKind::Writes).unwrap();
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v["record_change"].is_string(), "{v}");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "{:?}", s.writes);
+    assert_eq!((s.writes[0].method.as_str(), s.writes[0].path.as_str()), ("GET", "/hr/leave/approve"));
+    assert_eq!(unaccounted(&s), vec!["GET /hr/leave/approve".to_string()]);
 }

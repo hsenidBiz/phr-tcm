@@ -226,6 +226,8 @@ fn step_request(
         values: step_values(n, t, params, vars, clock)?,
         mode: Mode::Run,
         template: t.clone(),
+        step_limit: None,
+        keep: Default::default(),
     })
 }
 

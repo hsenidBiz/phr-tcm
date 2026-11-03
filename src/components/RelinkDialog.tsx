@@ -4,12 +4,13 @@
 // but the confirmation still lists every case by id and title, because
 // "move 12 test cases" is not something anyone can check.
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "../lib/toast";
 import { commands, type PbiHit, type RelinkOutcome } from "../bindings";
 import { cn } from "../lib/cn";
 import { describeAdoError, unwrap } from "../lib/ipc";
+import { usePbiSearch } from "../lib/usePbiSearch";
 import { Button } from "./ui/button";
 import { SearchInput } from "./ui/search-input";
 import { Modal } from "./ui/modal";
@@ -50,12 +51,9 @@ export default function RelinkDialog({
     return () => clearTimeout(h);
   }, [text]);
 
-  const hits = useQuery({
-    queryKey: ["pbi-search", org, project, query],
-    queryFn: () => unwrap(commands.searchPbis(org, project, query)),
-    enabled: query.length > 0,
-    retry: false,
-  });
+  const hits = usePbiSearch(["pbi-search", org, project], query, query.length > 0, (alt) =>
+    unwrap(commands.searchPbis(org, project, alt)),
+  );
 
   const move = useMutation({
     mutationFn: () =>
@@ -150,6 +148,9 @@ export default function RelinkDialog({
           />
           <div className="min-h-0 flex-1 space-y-2 overflow-auto">
             {hits.isLoading && query && <p className="text-xs text-faint">Searching…</p>}
+            {hits.partial && (
+              <p className="text-xs text-warning">Part of the search failed, so some PBIs may be missing.</p>
+            )}
             {(hits.data ?? [])
               .filter((h) => h.id !== fromPbi)
               .map((h) => (

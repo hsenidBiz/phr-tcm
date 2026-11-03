@@ -27,6 +27,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
         Action::Fill { selector: "s".into(), value: "v".into() },
+        serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
@@ -1484,8 +1485,9 @@ fn the_guide_says_release_only_when_broken() {
     for broken in ["frozen, wrong account, session gone", "\"the browser did not answer\"", "never between replays"] {
         assert!(discovering.contains(broken), "Discovering the app never says {broken:?}: {discovering}");
     }
-    assert!(discovering.contains("`end_autorun_discovery` ends your discovery and keeps the browser"), "{discovering}");
-    assert!(discovering.contains("only the person's End discovery button closes it"), "{discovering}");
+    assert!(discovering.contains("`end_autorun_discovery` ends your discovery"), "{discovering}");
+    assert!(discovering.contains("the browser is closed and its account freed. `keep_browser: true` keeps it open"), "{discovering}");
+    assert!(discovering.contains("A browser the person opened is never closed by it"), "{discovering}");
     assert!(discovering.contains("takes over a browser your replay left open"), "{discovering}");
     assert!(!discovering.contains("`end_autorun_discovery` closes the browser"), "{discovering}");
     assert!(!discovering.contains("closes a browser your replay left open and says"), "{discovering}");
@@ -1759,7 +1761,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("Set `\"no_save\": true` on any script that works on a shared draft and must not change it", "Scripts that must not save"),
         ("A repair can turn `no_save` on, never off", "Scripts that must not save"),
         ("Your replays, discovery and resets share your browser and its sign-in", "Discovering the app"),
-        ("`end_autorun_discovery` keeps it", "Discovering the app"),
+        ("`end_autorun_discovery` frees it; `keep_browser: true` keeps it for your next replay or discovery", "Discovering the app"),
         ("`reset_autorun_browser` gives a clean page", "Discovering the app"),
         ("only for a broken browser (frozen, wrong account, session gone), never between replays", "Discovering the app"),
         ("Name the `case_id` on every discovery call for a `no_save` case", "Scripts that must not save"),
@@ -2834,4 +2836,20 @@ fn the_baseline_example_deletes_the_group_by_name() {
         before[has_text..].contains("Extra group"),
         "the delete is not scoped to the named row"
     );
+}
+
+/// Backlog 86 and 87: the guide teaches `select_option` (over `fill` on a native
+/// list), the discovery-only `screenshot`, and `repeat` as `times`.
+#[test]
+fn the_guide_teaches_select_option_screenshot_and_repeat() {
+    let g = autorun_guide();
+    assert!(ACTION_KINDS.contains(&"select_option"));
+    assert!(g.contains("\"kind\": \"select_option\""), "the guide never describes select_option");
+    assert!(g.contains("native list") && g.contains("`label`") && g.contains("`value`"), "select_option is half described");
+    assert!(g.contains("\"kind\": \"screenshot\""), "the guide never describes screenshot");
+    assert!(g.contains("full_page"), "screenshot's one option is not named");
+    assert!(g.contains("takes its pictures when a step fails") || g.contains("never saved"), "screenshot is not marked discovery-only");
+    assert!(g.contains("`repeat`") && g.contains("`times`"), "repeat is not read as times in the guide");
+    assert!(g.contains("does not take"), "the unknown-key refusal is not mentioned");
+    assert!(!g.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }

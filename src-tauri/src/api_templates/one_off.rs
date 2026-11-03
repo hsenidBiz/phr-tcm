@@ -33,7 +33,181 @@ pub const CARRIED_ON: &str = "carried on from your previous postback to this pag
 /// Said in an answer for a postback that loaded its page before posting.
 pub const LOADED_FRESH: &str = "loaded the page fresh";
 
-const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"? }";
+const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"?, \"save\"?: false, \"timeout_s\"?: 5-180 }";
+
+/// Whether `name` may name a kept value: a letter, then letters, digits or
+/// `_`, 40 characters at most.
+pub fn valid_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && name.len() <= 40
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Said for a step that uses a kept value: a saved template cannot reach it.
+pub const VAR_NOT_SAVED: &str = "not saved as a template: it uses a kept value ({{var.<name>}}), which a saved template cannot reach - use a param and pass the kept value in values";
+
+/// Said for a `{{var.name}}` that is not kept.
+pub fn var_not_kept(name: &str) -> String {
+    format!("{{{{{name}}}}} is not kept in this discovery - keep it first with keep on send_api_request")
+}
+
+/// Every `var.*` name a call uses: in its step, or in its `values` strings.
+pub fn vars_used(o: &OneOff) -> std::collections::BTreeSet<String> {
+    fn walk(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) => out.extend(super::exec::placeholders(s)),
+            Value::Array(a) => a.iter().for_each(|i| walk(i, out)),
+            Value::Object(m) => m.values().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut names = super::step_placeholder_names(&o.step);
+    for v in o.values.values() {
+        walk(v, &mut names);
+    }
+    names.into_iter().filter(|n| n.starts_with(super::exec::VAR_PREFIX)).collect()
+}
+
+/// Whether the call's STEP (not only its `values`) uses a kept value.
+pub fn step_uses_var(o: &OneOff) -> bool {
+    super::step_placeholder_names(&o.step).iter().any(|n| n.starts_with(super::exec::VAR_PREFIX))
+}
+
+/// Said, with the pages the project's templates use, to a POST from a page
+/// with no anti-forgery token that named none.
+pub const NO_TOKEN_NAMED: &str = super::runner::NO_TOKEN_HERE;
+/// Said when a call's answer was the app's sign-in page.
+pub const SIGNED_OUT: &str = "the app answered with its sign-in page: this account was signed out, so the answer is not shown - end the discovery and start it again to sign in afresh";
+/// Said to a call on a discovery whose account an earlier call found signed out.
+pub const SIGNED_OUT_BEFORE: &str = "not sent: this discovery's account was signed out by an earlier call - end the discovery and start it again to sign in afresh";
+
+/// An address as a page: the path and query, never a scheme or host.
+fn page_of(address: &str) -> String {
+    let no_fragment = address.split('#').next().unwrap_or("");
+    let rest = match no_fragment.find("://") {
+        Some(i) => {
+            let after = &no_fragment[i + 3..];
+            after.find('/').map_or("/", |j| &after[j..])
+        }
+        None => no_fragment,
+    };
+    rest.to_string()
+}
+
+/// A path as two addresses of one page are compared: no scheme, host, query
+/// or fragment, lower case, no trailing `/`.
+fn compared_path(address: &str) -> String {
+    let page = page_of(address);
+    let path = page.split('?').next().unwrap_or("").to_ascii_lowercase();
+    match path.trim_end_matches('/') {
+        "" => "/".to_string(),
+        p => p.to_string(),
+    }
+}
+
+/// The token pages (`antiforgery.page`) of the project's saved templates,
+/// distinct, the one most templates name first and ties alphabetical. A page
+/// is a path and query; a value with a scheme and host is reduced to that.
+pub fn token_pages(saved: &[super::store::SavedTemplate]) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for t in saved {
+        let page = page_of(t.template.antiforgery.page.trim());
+        if !page.is_empty() {
+            *counts.entry(page).or_default() += 1;
+        }
+    }
+    let mut pages: Vec<(String, usize)> = counts.into_iter().collect();
+    // `counts` is alphabetical and the sort is stable.
+    pages.sort_by(|a, b| b.1.cmp(&a.1));
+    pages.into_iter().map(|(page, _)| page).collect()
+}
+
+/// Said to a POST from a page with no anti-forgery token that named none,
+/// when the project's saved templates could not be read to look for a page.
+pub const NO_TOKEN_UNREADABLE: &str = "this page has no anti-forgery token and the saved templates could not be read to find a page that has one - name the page with antiforgery_page, and see Settings, Logs";
+
+/// Said to a POST from a page with no anti-forgery token that named none:
+/// up to three pages the project's templates use.
+pub fn no_token_here(pages: &[String]) -> String {
+    if pages.is_empty() {
+        return format!("{NO_TOKEN_NAMED}; no saved template names one yet");
+    }
+    let shown: Vec<&str> = pages.iter().take(3).map(String::as_str).collect();
+    format!("{NO_TOKEN_NAMED}; this project's templates use: {}", shown.join(", "))
+}
+
+/// Whether the body has an `<input>` whose `type` is `password`.
+fn has_password_input(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("<input") {
+        let start = from + i;
+        let end = lower[start..].find('>').map_or(lower.len(), |j| start + j);
+        let tag = &lower[start..end];
+        let mut at = 0;
+        while let Some(k) = tag[at..].find("type") {
+            let before = tag[..at + k].chars().last();
+            if !before.is_some_and(char::is_whitespace) {
+                at += k + 4;
+                continue;
+            }
+            let rest = tag[at + k + 4..].trim_start();
+            if let Some(value) = rest.strip_prefix('=') {
+                let value = value.trim_start();
+                if value.strip_prefix('"').or_else(|| value.strip_prefix('\'')).is_some_and(|v| v.trim_start().starts_with("password")) {
+                    return true;
+                }
+            }
+            at += k + 4;
+        }
+        from = end.max(start + 6);
+    }
+    false
+}
+
+/// Whether an answer is the app's sign-in page served in place of the page
+/// asked for. Either it ended on the sign-in recipe's start path (unless that
+/// is the site root, which a save may redirect to for other reasons), or the
+/// call was moved to a different page and that page has a password input.
+/// A page with a password field that answers in place (change password) is
+/// an answer, and so is the sign-in page asked for on purpose. A postback is
+/// judged by `api_templates::postback`, not here.
+pub fn is_sign_in_answer(
+    final_path: Option<&str>,
+    content_type: Option<&str>,
+    body: &str,
+    request_path: &str,
+    start_path: Option<&str>,
+) -> bool {
+    let asked = compared_path(request_path);
+    let start = start_path.map(compared_path);
+    if start.as_deref() == Some(asked.as_str()) {
+        return false;
+    }
+    let Some(ended) = final_path.map(compared_path) else {
+        return false;
+    };
+    if start.as_deref().is_some_and(|s| s != "/" && s == ended) {
+        return true;
+    }
+    ended != asked
+        && content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"))
+        && has_password_input(body)
+}
+
+/// The path of the sign-in recipe's start address, for `is_sign_in_answer`.
+pub fn sign_in_path(start_url: &str) -> String {
+    compared_path(start_url)
+}
+
+/// The seconds a call's `timeout_s` may ask for a step.
+pub const TIMEOUT_MIN_S: u64 = 5;
+pub const TIMEOUT_MAX_S: u64 = 180;
+/// Said to a `timeout_s` that is not a whole number in that range.
+pub const TIMEOUT_RANGE: &str = "timeout_s is a whole number of seconds from 5 to 180";
+/// Said under `template` for a call that asked not to be saved.
+pub const NOT_SAVED_ASKED: &str = "not saved: the call said save: false";
 
 /// A `created.id` that names no capture of the step.
 pub fn not_a_capture(name: &str) -> String {
@@ -78,6 +252,13 @@ pub struct OneOff {
     pub name: Option<String>,
     pub description: Option<String>,
     pub module: Option<String>,
+    /// `false` sends the call and saves no template; absent is `true`.
+    pub save: bool,
+    /// Seconds one step may take, 5 to 180; none keeps the runner's own limit.
+    pub timeout_s: Option<u16>,
+    /// Values to keep for the discovery: name -> capture path read from the
+    /// answer. Never saved, never answered.
+    pub keep: BTreeMap<String, String>,
 }
 
 fn bad<T>(why: impl Into<String>) -> Result<T, (u16, String)> {
@@ -169,6 +350,41 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         Some(_) => return bad(format!("values is an object of param names to values. Expected {SHAPE}.")),
     };
 
+    let save = match obj.get("save") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return bad("save is true or false"),
+    };
+    let timeout_s = match obj.get("timeout_s") {
+        None | Some(Value::Null) => None,
+        Some(Value::Number(n)) => match n.as_u64().filter(|s| (TIMEOUT_MIN_S..=TIMEOUT_MAX_S).contains(s)) {
+            Some(s) => Some(s as u16),
+            None => return bad(TIMEOUT_RANGE),
+        },
+        Some(_) => return bad(TIMEOUT_RANGE),
+    };
+
+    let keep = match obj.get("keep") {
+        None | Some(Value::Null) => BTreeMap::new(),
+        Some(Value::Object(m)) => {
+            let mut keep = BTreeMap::new();
+            for (name, path) in m {
+                if !valid_var_name(name) {
+                    return bad(format!("keep name \"{name}\" must start with a letter and use only letters, digits and _ (40 characters at most)"));
+                }
+                let Some(path) = path.as_str() else {
+                    return bad(format!("keep \"{name}\" needs a capture path such as $.Token"));
+                };
+                if let Err(e) = super::exec::parse_capture_path(path) {
+                    return bad(format!("keep \"{name}\" is not a valid capture path: {e}"));
+                }
+                keep.insert(name.clone(), path.to_string());
+            }
+            keep
+        }
+        Some(_) => return bad("keep is an object of names to capture paths"),
+    };
+
     let one = OneOff {
         step,
         effect,
@@ -181,6 +397,9 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         name: text(obj, "name"),
         description: text(obj, "description"),
         module: text(obj, "module"),
+        save,
+        timeout_s,
+        keep,
     };
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET
@@ -350,12 +569,12 @@ fn handler_of(step: &Step) -> Option<&str> {
     step.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")).map(|(_, v)| v.as_str())
 }
 
-/// The same call: one step, not a delete template, the same method, the same
-/// path segment by segment (ASCII case ignored; a segment that is wholly a
-/// {{placeholder}} on either side matches any), the same query keys with the
-/// same `handler` value (case ignored), json vs form alike, and equal
-/// `body_field_names`.
-pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
+/// The same route: one step, not a delete template, the same method, the
+/// same path segment by segment (ASCII case ignored; a segment that is
+/// wholly a {{placeholder}} on either side matches any), and the same query
+/// keys with the same `handler` value (case ignored). The body is not looked
+/// at.
+pub fn same_route(saved: &ApiTemplate, step: &Step) -> bool {
     let [one] = saved.steps.as_slice() else { return false };
     // A postback may carry on from the call before it, so it never stands
     // for a saved template, nor does a saved postback template stand for it.
@@ -372,12 +591,37 @@ pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
     if keys(one) != keys(step) {
         return false;
     }
-    let same_handler = match (handler_of(one), handler_of(step)) {
+    match (handler_of(one), handler_of(step)) {
         (Some(x), Some(y)) => x.eq_ignore_ascii_case(y),
         (None, None) => true,
         _ => false,
-    };
-    same_handler && body_of(one) == body_of(step) && body_field_names(one) == body_field_names(step)
+    }
+}
+
+/// The same call: `same_route`, json vs form alike, and equal
+/// `body_field_names`.
+pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
+    let [one] = saved.steps.as_slice() else { return false };
+    same_route(saved, step) && body_of(one) == body_of(step) && body_field_names(one) == body_field_names(step)
+}
+
+/// Whether a saved fixture, flow or setup of the project names the template
+/// `id`. A fixture names it as a step's `template`; a flow or a setup is
+/// read as text for `"id"` as a whole JSON string, which errs on the side of
+/// "in use". A store that cannot be read is an `Err`: the caller must then
+/// leave the template alone.
+pub fn is_referenced(root: &std::path::Path, org: &str, project: &str, id: &str) -> Result<bool, String> {
+    let quoted = serde_json::to_string(id).map_err(|e| e.to_string())?;
+    let fixtures = super::fixture_store::list(root, org, project)?;
+    if fixtures.iter().any(|f| f.fixture.steps.iter().any(|s| s.template == id)) {
+        return Ok(true);
+    }
+    let flows = super::flow_store::list(root, org, project)?;
+    if serde_json::to_string(&flows).map_err(|e| e.to_string())?.contains(&quoted) {
+        return Ok(true);
+    }
+    let setups = crate::autorun::setups::load_setups(root, org, project)?;
+    Ok(serde_json::to_string(&setups).map_err(|e| e.to_string())?.contains(&quoted))
 }
 
 /// The saved template that is the same call as `step`, if there is one. Only

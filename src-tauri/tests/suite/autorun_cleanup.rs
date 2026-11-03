@@ -293,6 +293,8 @@ fn refused_everywhere(t: ApiTemplate) {
         values,
         mode: Mode::Cleanup,
         template: proven_t.clone(),
+        step_limit: None,
+        keep: Default::default(),
     };
     let problems = preflight(dir.path(), &req, None).unwrap_err();
     assert!(problems.contains(&DELETE_SHAPE.to_string()), "preflight: {problems:?}");
@@ -431,6 +433,8 @@ async fn a_saved_delete_template_with_another_value_is_refused_at_cleanup() {
         values,
         mode: Mode::Cleanup,
         template: wide,
+        step_limit: None,
+        keep: Default::default(),
     };
     let problems = preflight(r.root.path(), &req, None).unwrap_err();
     assert!(problems.contains(&DELETE_SHAPE.to_string()), "{problems:?}");

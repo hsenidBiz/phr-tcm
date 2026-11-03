@@ -405,7 +405,7 @@ fn json_placeholder_names(v: &Value, out: &mut Vec<String>) {
 /// and values, json (keys and leaf strings, recursively), form keys and
 /// values; for a postback also its page and argument, and the text in its
 /// `expect.html` checks.
-fn step_placeholder_names(step: &Step) -> Vec<String> {
+pub(crate) fn step_placeholder_names(step: &Step) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(exec::placeholders(&step.path));
     if let Some(pb) = &step.postback {
@@ -693,6 +693,10 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
 
         problems.extend(file_problems(step));
 
+        if let Some(Err(e)) = step.json.as_ref().map(exec::apply_transforms) {
+            problems.push(format!("step '{}': {e}", step.name));
+        }
+
         let mut reported = HashSet::new();
         for name in step_placeholder_names(step) {
             if !known.contains(name.as_str()) && reported.insert(name.clone()) {
@@ -797,7 +801,9 @@ pub fn check_values(t: &ApiTemplate, values: &serde_json::Map<String, Value>) ->
 
     let declared: HashSet<&str> = t.params.iter().map(|p| p.name.as_str()).collect();
     for key in values.keys() {
-        if !declared.contains(key.as_str()) {
+        // A kept session value (`var.<name>`) rides along for the run to hide
+        // it; it is never a param.
+        if !declared.contains(key.as_str()) && !key.starts_with(exec::VAR_PREFIX) {
             problems.push(format!("param '{key}' is not declared by this template"));
         }
     }

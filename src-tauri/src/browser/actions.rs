@@ -56,6 +56,23 @@ pub enum Action {
         within_ms: Option<u32>,
     },
     Fill { selector: Target, value: String },
+    /// Choose an option in a native list (`<select>`), by the option's
+    /// visible text (`label`, trimmed, exact) or by its `value`, exactly
+    /// one of them. Waited for as a `fill` waits (`within_ms` is how long,
+    /// the action wait when left out). The list is set the way a person's
+    /// choice sets it - focus, `input`, `change`, blur - and read again
+    /// shortly after: a page whose own script puts the old choice back
+    /// fails the action. Not a check, and not for a custom dropdown (click
+    /// it and click its option).
+    SelectOption {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
     WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
     /// The address holds `contains`, or is exactly `equals` (a value
@@ -934,6 +951,9 @@ pub const NOT_SHOWN: &str = "not shown, skipped";
 pub const SHOWN_SKIPPED: &str = "on the page, skipped";
 /// A `when_visible` (recipe or script) told to wait no time at all.
 pub const WITHIN_MS_ZERO: &str = "within_ms must be more than 0";
+
+/// A `select_option` that names both an option's label and its value, or neither.
+pub const SELECT_ONE_OF: &str = "select_option picks by label or by value, one of them";
 /// A `when_visible` inside another one's `then`: the sign-in recipe's rule,
 /// whose guard holds plain actions only. A case script may nest one level
 /// (`NESTED_GUARD`).
@@ -1441,6 +1461,16 @@ impl Action {
                     _ => Ok(()),
                 }
             }
+            Action::SelectOption { selector, label, value, within_ms } => {
+                selector.validate()?;
+                if label.is_some() == value.is_some() {
+                    return Err(SELECT_ONE_OF.to_string());
+                }
+                match within_ms {
+                    Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+                    _ => Ok(()),
+                }
+            }
             Action::Click { selector }
             | Action::Fill { selector, .. }
             | Action::WaitFor { selector, .. }
@@ -1906,6 +1936,7 @@ impl Action {
             Action::Click { selector }
             | Action::Hover { selector, .. }
             | Action::Fill { selector, .. }
+            | Action::SelectOption { selector, .. }
             | Action::WaitFor { selector, .. }
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
@@ -1965,6 +1996,7 @@ impl Action {
             Action::Click { selector }
             | Action::Hover { selector, .. }
             | Action::Fill { selector, .. }
+            | Action::SelectOption { selector, .. }
             | Action::WaitFor { selector, .. }
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
@@ -2703,6 +2735,28 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             }
             match input::fill(d, &ready, value).await {
                 Ok(()) => ActionOutcome::passed(format!("filled {}{}", selector.describe(), written_note(&ready))),
+                Err(b) => blocked(b),
+            }
+        }
+        Action::SelectOption { selector, label, value, within_ms } => {
+            settle(d, timing).await;
+            let mut own = timing.clone();
+            if let Some(ms) = within_ms {
+                own.action_ms = u64::from(*ms);
+            }
+            let ready = match input::wait_ready(d, selector, false, &own).await {
+                Ok(r) => r,
+                Err(b) => return blocked(b),
+            };
+            if let Err(e) = point_and_pause(d, &ready, timing).await {
+                return failed_by(e);
+            }
+            match input::select_option(d, &ready, label.as_deref(), value.as_deref()).await {
+                Ok(chosen) => ActionOutcome::passed(format!(
+                    "chose \"{chosen}\" in {}{}",
+                    selector.describe(),
+                    written_note(&ready)
+                )),
                 Err(b) => blocked(b),
             }
         }

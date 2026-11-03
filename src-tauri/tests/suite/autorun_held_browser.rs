@@ -117,6 +117,8 @@ fn discovering() -> Option<DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
+        signed_out: false,
     })
 }
 
@@ -594,10 +596,11 @@ async fn a_discovery_naming_the_other_browser_closes_the_replays() {
 
 /// The person's End discovery closes the assistant's discovery browser so
 /// Auto Run can run again (the mapping run's summary kept); the
-/// assistant's end_autorun_discovery keeps it, signed in.
+/// assistant's end_autorun_discovery releases it too, unless it asks to keep
+/// the browser (`keep_browser`), signed in, for its next replay.
 #[tokio::test]
-async fn the_persons_end_closes_the_discovery_browser_and_the_assistants_keeps_it() {
-    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_KEPT};
+async fn the_assistants_end_releases_unless_it_keeps_the_browser() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_KEPT, DISCOVERY_ENDED_RELEASED};
     use v2_lib::commands::autorun::MappingRun;
     let mapping = discovering().map(|s| DiscoveryState { mapping: Some(MappingRun::new(&["Leave".to_string()])), ..s });
     let (mut slot, closed) = left_open_by_assistant(true, mapping);
@@ -608,19 +611,89 @@ async fn the_persons_end_closes_the_discovery_browser_and_the_assistants_keeps_i
     assert!(v["summary"].is_object(), "{said}");
     assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the person's End discovery kept the browser");
 
+    // Default: released, the mapping run's summary still answered.
+    let mapping = discovering().map(|s| DiscoveryState { mapping: Some(MappingRun::new(&["Leave".to_string()])), ..s });
+    let (mut slot, closed) = left_open_by_assistant(true, mapping);
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!(status, 200, "{said}");
+    let v: serde_json::Value = serde_json::from_str(&said).expect("no summary");
+    assert_eq!(v["detail"], DISCOVERY_ENDED_RELEASED);
+    assert_eq!(DISCOVERY_ENDED_RELEASED, "the discovery is over, its browser is closed and its account is free");
+    assert!(v["summary"].is_object(), "{said}");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the assistant's end kept the browser");
+
     let (mut slot, closed) = left_open_by_assistant(true, discovering());
     let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, DISCOVERY_ENDED_RELEASED));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+
+    // keep_browser: today's keep path.
+    let (mut slot, closed) = left_open_by_assistant(true, discovering());
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::AssistantKeeping).await;
     assert_eq!((status, said.as_str()), (200, DISCOVERY_ENDED_KEPT));
     assert!(slot.as_ref().is_some_and(|b| b.discovery.is_none()) && !closed.load(Ordering::SeqCst));
 
+    // Nothing to end is still an answer.
+    let mut none: Option<HeldOne> = None;
+    assert_eq!(end_discovery_as(&mut none, EndedBy::Assistant).await, (200, "no discovery is going".to_string()));
+
     // In the app: the Setup card's button is the person's, the bridge's
-    // end_autorun_discovery the assistant's.
+    // end_autorun_discovery the assistant's, and `keep_browser` picks the keep.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
     let button = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
     assert!(button[..button.find("\n}\n").unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person, SlotNo::MAIN)"));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
     let route = &bridge[bridge.find("(\"POST\", \"/autorun-discover-end\")").unwrap()..];
-    assert!(route[..route.find("},").unwrap()].contains("end_discovery(EndedBy::Assistant, slot)"));
+    let route = &route[..route.find("},").unwrap()];
+    assert!(route.contains("end_discovery(") && route.contains("keep_browser"), "{route}");
+}
+
+/// After a replay (which ends the discovery and keeps the browser) the
+/// assistant's end finds no discovery but still frees the browser it opened
+/// and its account, so the next assistant can take the account. The
+/// person's browser is never closed, and `keep_browser` keeps it.
+#[tokio::test]
+async fn an_end_after_a_replay_frees_the_browser_and_its_account() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_RELEASED};
+    use v2_lib::autorun::lease::{self, Holder};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let env = v2_lib::environments::active_id(dir.path()).unwrap();
+
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    slot.as_mut().unwrap().lease.hold(dir.path(), "admin").await.unwrap();
+    assert!(lease::try_acquire(&env, "admin", Holder::Browser { slot: 2 }).is_err(), "the account was not held");
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, DISCOVERY_ENDED_RELEASED));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the end kept the replay's browser");
+    let second = lease::try_acquire(&env, "admin", Holder::Browser { slot: 2 });
+    assert!(second.is_ok(), "a second assistant could not take the account: {second:?}");
+    drop(second);
+
+    // keep_browser keeps it.
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::AssistantKeeping).await;
+    assert_eq!((status, said.as_str()), (200, "no discovery is going"));
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
+
+    // A person's browser is never closed by an assistant's end.
+    let (mut slot, closed) = held(true, None);
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, "no discovery is going"));
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
+}
+
+/// A browser the person opened is never closed by an assistant's end: the
+/// end says so and keeps it.
+#[tokio::test]
+async fn a_person_opened_main_slot_is_not_closed_by_the_assistants_end() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_PERSONS};
+    let (mut slot, closed) = held(true, discovering());
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, DISCOVERY_ENDED_PERSONS));
+    assert_eq!(DISCOVERY_ENDED_PERSONS, "the discovery is over; the browser stays open because the person opened it");
+    assert!(slot.as_ref().is_some_and(|b| b.discovery.is_none()), "the discovery is still going");
+    assert!(!closed.load(Ordering::SeqCst), "the person's browser was closed");
 }
 
 /// A browser that has gone is still let go first, through its normal

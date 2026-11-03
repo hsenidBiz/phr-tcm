@@ -409,6 +409,14 @@ function describeKnown(a: Action): Sentence {
       if (a.value === "") return [words("Clear "), ...into];
       return [words(`Type "${a.value}" into `), ...into];
     }
+    case "select_option": {
+      const label = optStr(a.label);
+      const value = optStr(a.value);
+      // One of the two, never both or neither.
+      if ((label === undefined) === (value === undefined)) throw new Unreadable();
+      const chosen = label !== undefined ? `"${label}"` : `the option with the value "${value}"`;
+      return [words(`Choose ${chosen} in `), ...describeTarget(a.selector)];
+    }
     case "wait_for":
       return [words("Wait for "), ...describeTarget(a.selector), words(` to appear${upTo(a.timeout_ms)}`)];
     case "check_text":

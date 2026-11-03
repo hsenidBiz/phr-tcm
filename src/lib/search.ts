@@ -2,6 +2,9 @@
 // The typed text is split into words (a "quoted phrase" is one word); a row
 // matches when EVERY word is found in at least one of its fields. A number
 // field is an id, so "#123" finds it as well as "123".
+//
+// A comma separates alternatives ("1234, 5678"): a row matches when it
+// matches ANY of them. A comma inside "quotes" is just a character.
 
 type Field = string | number | null | undefined;
 
@@ -17,9 +20,40 @@ function words(query: string): string[] {
   return out;
 }
 
+/** The query's comma-separated alternatives, trimmed, empty and repeated
+ * ones dropped; a comma inside "quotes" does not split. A search that goes
+ * to a server runs one request per entry. */
+export function searchAlternatives(query: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (const ch of query) {
+    if (ch === '"') quoted = !quoted;
+    if (ch === "," && !quoted) {
+      parts.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  parts.push(cur);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of parts) {
+    const t = p.trim();
+    const key = t.toLowerCase();
+    if (t === "" || seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
 export function matchesQuery(fields: ReadonlyArray<Field>, query: string): boolean {
-  const ws = words(query);
-  if (ws.length === 0) return true;
+  const alts = searchAlternatives(query)
+    .map(words)
+    .filter((ws) => ws.length > 0);
+  if (alts.length === 0) return true;
   const texts: string[] = [];
   for (const f of fields) {
     if (f == null) continue;
@@ -27,7 +61,7 @@ export function matchesQuery(fields: ReadonlyArray<Field>, query: string): boole
     texts.push(s);
     if (typeof f === "number") texts.push(`#${s}`);
   }
-  return ws.every((w) => texts.some((t) => t.includes(w)));
+  return alts.some((ws) => ws.every((w) => texts.some((t) => t.includes(w))));
 }
 
 /** "Search by name, id, tag, state…": the first four names, then an ellipsis. */

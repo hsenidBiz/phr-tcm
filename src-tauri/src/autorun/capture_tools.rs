@@ -78,6 +78,8 @@ pub struct Set<'a> {
     pub unconfirmed: bool,
     /// The whole set holds nothing (`entries` may be only a part of it).
     pub empty: bool,
+    /// Kept session values that no answer or search match may show.
+    pub hide: Vec<(String, String)>,
 }
 
 impl<'a> Set<'a> {
@@ -86,7 +88,7 @@ impl<'a> Set<'a> {
     pub fn live(cap: &'a NetCapture) -> Self {
         let (entries, _) = cap.list(0, usize::MAX);
         let empty = entries.is_empty();
-        Set { name: "live".to_string(), entries, unconfirmed: !cap.knows_app_site(), empty }
+        Set { name: "live".to_string(), entries, unconfirmed: !cap.knows_app_site(), empty, hide: cap.masked().to_vec() }
     }
 
     /// An imported set, newest first (by start, then by its order in the file).
@@ -94,7 +96,7 @@ impl<'a> Set<'a> {
         let mut entries: Vec<&Captured> = entries.iter().collect();
         entries.sort_by(|a, b| b.started_ms.cmp(&a.started_ms).then(b.id.cmp(&a.id)));
         let empty = entries.is_empty();
-        Set { name: name.to_string(), entries, unconfirmed: false, empty }
+        Set { name: name.to_string(), entries, unconfirmed: false, empty, hide: Vec::new() }
     }
 
     fn get(&self, id: u64) -> Option<&'a Captured> {
@@ -307,11 +309,25 @@ pub struct Taken {
     /// How many the whole set holds.
     total: usize,
     entries: Vec<Captured>,
+    hide: Vec<(String, String)>,
+}
+
+impl Taken {
+    /// The kept values the answer must hide.
+    pub fn hide(&self) -> &[(String, String)] {
+        &self.hide
+    }
 }
 
 impl Taken {
     fn set(&self) -> Set<'_> {
-        Set { name: self.name.clone(), entries: self.entries.iter().collect(), unconfirmed: self.unconfirmed, empty: self.empty }
+        Set {
+            name: self.name.clone(),
+            entries: self.entries.iter().collect(),
+            unconfirmed: self.unconfirmed,
+            empty: self.empty,
+            hide: self.hide.clone(),
+        }
     }
 }
 
@@ -333,7 +349,14 @@ pub fn take(set: &Set, read: Read, args: &Value) -> Result<Taken, (u16, String)>
             set.get(id).cloned().into_iter().collect()
         }
     };
-    Ok(Taken { name: set.name.clone(), unconfirmed: set.unconfirmed, empty: set.empty, total: set.entries.len(), entries })
+    Ok(Taken {
+        name: set.name.clone(),
+        unconfirmed: set.unconfirmed,
+        empty: set.empty,
+        total: set.entries.len(),
+        entries,
+        hide: set.hide.clone(),
+    })
 }
 
 /// `read`'s answer from what `take` took: the redaction and the body
@@ -385,6 +408,13 @@ fn body_text(body: Option<&Body>, mime: Option<&str>) -> Option<String> {
         Some(Body::Text(t)) => Some(redact_body(mime, t)),
         _ => None,
     }
+}
+
+/// `body_text` with the set's kept values hidden as well. Hiding comes
+/// before a body is cut into pages, so a value on a page's edge never shows
+/// in halves.
+fn body_text_hidden(body: Option<&Body>, mime: Option<&str>, hide: &[(String, String)]) -> Option<String> {
+    body_text(body, mime).map(|t| crate::api_templates::exec::hide_text(&t, hide))
 }
 
 /// The request's own content type, the mime its body is redacted as.
@@ -445,12 +475,16 @@ pub fn search(set: &Set, args: &Value) -> (u16, String) {
         .copied()
         .filter(|c| {
             cheap_match(&want, c)
-                && want.get("path").is_none_or(|p| contains_ci(&redact_path_query(&c.url_path_query), p))
+                && want.get("path").is_none_or(|p| {
+                    contains_ci(&crate::api_templates::exec::hide_text(&redact_path_query(&c.url_path_query), &set.hide), p)
+                })
                 && want.get("request_contains").is_none_or(|w| {
-                    body_text(c.req_body.as_ref(), request_mime(c)).is_some_and(|t| contains_ci(&t, w))
+                    body_text(c.req_body.as_ref(), request_mime(c))
+                        .is_some_and(|t| contains_ci(&crate::api_templates::exec::hide_text(&t, &set.hide), w))
                 })
                 && want.get("response_contains").is_none_or(|w| {
-                    body_text(c.resp_body.as_ref(), c.mime.as_deref()).is_some_and(|t| contains_ci(&t, w))
+                    body_text(c.resp_body.as_ref(), c.mime.as_deref())
+                        .is_some_and(|t| contains_ci(&crate::api_templates::exec::hide_text(&t, &set.hide), w))
                 })
         })
         .collect();
@@ -505,7 +539,7 @@ pub fn request(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     let Some(c) = set.get(id) else { return set.no_such(id) };
-    let body = match body_text(c.req_body.as_ref(), request_mime(c)) {
+    let body = match body_text_hidden(c.req_body.as_ref(), request_mime(c), &set.hide) {
         Some(t) => match body_page(&t, offset) {
             Ok(p) => p,
             Err(e) => return e,
@@ -538,7 +572,7 @@ pub fn response(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     let Some(c) = set.get(id) else { return set.no_such(id) };
-    let body = match body_text(c.resp_body.as_ref(), c.mime.as_deref()) {
+    let body = match body_text_hidden(c.resp_body.as_ref(), c.mime.as_deref(), &set.hide) {
         Some(t) => json!({ "kept": true, "chars": t.chars().count() }),
         None => json!({ "kept": false, "why": missing_body(c.resp_body.as_ref(), true, c) }),
     };
@@ -575,7 +609,7 @@ pub fn response_body(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     let Some(c) = set.get(id) else { return set.no_such(id) };
-    let Some(t) = body_text(c.resp_body.as_ref(), c.mime.as_deref()) else {
+    let Some(t) = body_text_hidden(c.resp_body.as_ref(), c.mime.as_deref(), &set.hide) else {
         return (404, missing_body(c.resp_body.as_ref(), true, c).unwrap_or_default());
     };
     match body_page(&t, offset) {
@@ -680,6 +714,15 @@ pub struct TakenExport {
     /// Oldest first.
     entries: Vec<Captured>,
     site: Option<String>,
+    /// The capture's masked kept values (`NetCapture::masked`).
+    hide: Vec<(String, String)>,
+}
+
+impl TakenExport {
+    /// The kept values the file must hide.
+    pub fn hide(&self) -> &[(String, String)] {
+        &self.hide
+    }
 }
 
 /// The export's name checked, and the live capture's requests cloned,
@@ -697,13 +740,16 @@ pub fn take_export(cap: &NetCapture, args: &Value) -> Result<TakenExport, (u16, 
         return Err((404, set.empty_note().to_string()));
     }
     let entries = set.entries.iter().rev().map(|c| (*c).clone()).collect();
-    Ok(TakenExport { stem, entries, site: cap.confirmed_site().map(str::to_string) })
+    Ok(TakenExport { stem, entries, site: cap.confirmed_site().map(str::to_string), hide: cap.masked().to_vec() })
 }
 
 /// The taken requests as HAR 1.2, redacted (`har::to_har`), written
 /// atomically to `<root>/captures/<stem>.har`.
+///
+/// The capture's masked kept values (`NetCapture::masked`) are taken out of
+/// the file before it is written.
 pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
-    let TakenExport { stem, entries, site } = taken;
+    let TakenExport { stem, entries, site, hide } = taken;
     let oldest_first: Vec<&Captured> = entries.iter().collect();
     let har = crate::autorun::har::to_har(&oldest_first, site.as_deref());
     let text = match serde_json::to_string_pretty(&har) {
@@ -713,6 +759,7 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
             return (500, "the capture could not be written as HAR".to_string());
         }
     };
+    let text = crate::api_templates::exec::hide_text(&text, &hide);
     let path = capture_file(root, &stem);
     let replaced = path.exists();
     if let Some(dir) = path.parent() {

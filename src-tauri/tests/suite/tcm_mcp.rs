@@ -2017,12 +2017,15 @@ fn the_descriptions_keep_the_browser_between_replays() {
     assert!(!start.contains("is closed first, and the answer says"), "{start}");
     assert!(start.contains("until the discovery ends"), "{start}");
 
-    // Not only the person's button closes it: release does, and so does an
-    // end whose guard will not lift.
+    // The end releases the browser unless it is asked to keep it.
     let end = desc("end_autorun_discovery");
     assert!(!end.contains("Only the person's End discovery button closes it"), "{end}");
-    assert!(end.contains("the person's End discovery button, a release (reset_autorun_browser)"), "{end}");
-    assert!(end.contains("an end whose save guard will not lift"), "{end}");
+    assert!(end.contains("its browser is closed and its account is free"), "{end}");
+    assert!(end.contains("`keep_browser` true keeps it open and signed in for your next replay or discovery"), "{end}");
+    assert!(end.contains("never closed by it"), "{end}");
+    let keep = &tool("end_autorun_discovery")["inputSchema"]["properties"]["keep_browser"];
+    assert_eq!(keep["type"], "boolean", "{keep}");
+    assert!(keep["description"].as_str().unwrap().contains("default false"), "{keep}");
 
     // A takeover closes the other tabs and goes home, as the start says.
     let replay = desc("replay_autorun_to_step");
@@ -2132,7 +2135,7 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
             serde_json::json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }] }),
             serde_json::json!(["name", "module", "clicks"]),
         ),
-        ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({}), serde_json::json!([])),
+        ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({ "keep_browser": true }), serde_json::json!([])),
         ("reset_autorun_browser", "/autorun-reset", serde_json::json!({}), serde_json::json!([])),
     ];
     rides_with_the_auto_run_tools(&tools);
@@ -3630,6 +3633,17 @@ fn the_explore_tools_are_listed_and_reach_their_routes() {
     let send_says = send["description"].as_str().unwrap();
     assert!(send_says.contains("WebForms postback") && send_says.contains("never saved"), "{send_says}");
     assert!(send["inputSchema"]["properties"]["step"]["description"].as_str().unwrap().contains("postback"));
+    // `save` and `timeout_s` are options of the call, and the description says what the switch covers.
+    assert_eq!(send["inputSchema"]["properties"]["save"]["type"], "boolean");
+    let timeout = &send["inputSchema"]["properties"]["timeout_s"];
+    assert_eq!((timeout["type"].as_str(), timeout["minimum"].as_i64(), timeout["maximum"].as_i64()), (Some("integer"), Some(5), Some(180)));
+    assert!(send_says.contains("save: false") && send_says.contains("timeout_s"), "{send_says}");
+    assert!(send_says.contains("switch") && send_says.contains("POST"), "{send_says}");
+    // `keep` and `{{var.name}}` are told in plain words, for both tools.
+    assert_eq!(send["inputSchema"]["properties"]["keep"]["type"], "object");
+    assert!(send_says.contains("keep") && send_says.contains("{{var."), "{send_says}");
+    let prove_says = tool("prove_api_template")["description"].as_str().unwrap().to_string();
+    assert!(prove_says.contains("{{var."), "{prove_says}");
     let undo = tool("undo_explore_creates");
     assert_eq!(undo["inputSchema"]["required"], serde_json::json!(["session", "ids"]));
     assert_eq!(undo["inputSchema"]["properties"]["ids"]["type"], "array");
@@ -4660,4 +4674,72 @@ fn a_bad_offset_is_refused_and_int_arg_reads_numbers_and_digits() {
     let v = call_tool("get_test_cases", r#"{"offset":"x"}"#, &calls);
     assert!(calls.borrow().is_empty());
     assert!(v.to_string().contains("`offset` must be a whole number"), "{v}");
+}
+
+/// 78 and 79: a failed prove names its writes, an entry can cover calls, and a route can be marked.
+#[test]
+fn the_explore_tools_take_covers_and_route_kind_and_prove_names_its_writes() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap().clone();
+
+    let record = tool("record_explore_change");
+    let props = &record["inputSchema"]["properties"];
+    assert_eq!(props["covers"]["type"], "array");
+    assert_eq!(props["covers"]["items"]["type"], "string");
+    assert_eq!(props["route_kind"]["type"], "object");
+    assert_eq!(props["route_kind"]["properties"]["kind"]["enum"], serde_json::json!(["reads", "writes"]));
+    assert_eq!(props["route_kind"]["required"], serde_json::json!(["route", "kind"]));
+    let says = record["description"].as_str().unwrap();
+    assert!(says.contains("covers") && says.contains("route_kind"), "{says}");
+    assert!(record["inputSchema"]["required"].as_array().map_or(true, |r| r.is_empty()), "{record}");
+
+    let prove = tool("prove_api_template")["description"].as_str().unwrap().to_string();
+    assert!(prove.contains("writes_that_ran") && prove.contains("change list"), "{prove}");
+    assert!(!prove.contains("nothing is rolled back"), "{prove}");
+    let changes = tool("get_explore_changes")["description"].as_str().unwrap().to_string();
+    assert!(changes.contains("covers"), "{changes}");
+
+    // Whole, to the change route.
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let args = serde_json::json!({
+        "change": "changed", "record": "R", "field": "F", "after": "1",
+        "covers": ["POST /a?handler=Save"], "route_kind": { "route": "POST /search", "kind": "reads" }
+    });
+    let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "record_explore_change", "arguments": args } });
+    handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+    let (m, p, b) = calls.borrow().last().unwrap().clone();
+    assert_eq!((m.as_str(), p.as_str()), ("POST", "/autorun-explore-change"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&b).unwrap(), args);
+
+    for name in ["record_explore_change", "prove_api_template", "get_explore_changes"] {
+        let text = tool(name).to_string();
+        assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{name} has a dash");
+        assert!(!text.contains("http"), "{name} names a URL");
+    }
+}
+
+/// Backlog 86 and 87: the discovery tools name the `screenshot` action and
+/// the try tool says it too; none of it carries an em dash.
+#[test]
+fn the_discovery_tools_name_the_screenshot_action() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let all = |name: &str| -> String {
+        let t = tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}"));
+        t.to_string()
+    };
+    for name in ["discover_autorun_actions", "try_autorun_action"] {
+        let said = all(name);
+        assert!(said.contains("screenshot"), "{name} never names the screenshot action");
+        assert!(said.contains("full_page"), "{name} never names full_page");
+        assert!(!said.contains('\u{2014}'), "{name} has an em dash");
+    }
 }

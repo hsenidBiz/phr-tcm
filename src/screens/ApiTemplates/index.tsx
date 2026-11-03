@@ -11,6 +11,7 @@ import { Input } from "../../components/ui/input";
 import { API_TEMPLATES_VIEW_KEY, apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
 import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconRemove, IconTestFiles } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { matchesQuery } from "../../lib/search";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
 import { plural } from "../../lib/plural";
@@ -193,9 +194,9 @@ export default function ApiTemplates({
   // An overview from before flows existed has no `flows` at all.
   const flows = useMemo(() => overview.data?.flows ?? [], [overview.data]);
   const flowsById = useMemo(() => new Map(flows.map((f) => [f.id, f])), [flows]);
-  const q = search.trim().toLowerCase();
+  const q = search.trim();
   const groups = useMemo(() => {
-    const hit = (...texts: Array<string | undefined>) => texts.some((s) => s?.toLowerCase().includes(q));
+    const hit = (...texts: Array<string | undefined>) => matchesQuery(texts, q);
     // A template matches on its own title, module or id, or on the title
     // of its stage or of its flow.
     const templateHit = ({ template: t }: SavedTemplate) => {

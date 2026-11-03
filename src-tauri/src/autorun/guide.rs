@@ -19,6 +19,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "navigate",
     "click",
     "fill",
+    "select_option",
     "hover",
     "wait_for",
     "check_text",
@@ -183,7 +184,7 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   for a picture. Set `"no_save": true` on any script that works on a shared
   draft and must not change it. A repair can turn `no_save` on, never off.
 - Your replays, discovery and resets share your browser and its sign-in. Other assistants may be working at the same
-  time, each in a browser of its own. `end_autorun_discovery` keeps it; a replay to a failing step ends your own
+  time, each in a browser of its own. `end_autorun_discovery` frees it; `keep_browser: true` keeps it for your next replay or discovery; a replay to a failing step ends your own
   discovery first, keeping what it mapped. When the sign-in fails, the session expires or you reach a cap, stop and
   report to the person; never try again in a loop. Name the `case_id` on every discovery call for a `no_save` case.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use its
@@ -286,6 +287,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "fill", "selector": ..., "value": "..." }` - also picks an
   option in a native list by its label, and sets a date, time, colour or
   range field directly
+- `{ "kind": "select_option", "selector": ..., "label": "Numeric" }` - chooses an option in a native list (`<select>`), by its visible text (`label`) or by its `value`, one of them. Prefer it to `fill` on a native list: it reads the list again a moment after the choice and fails if the page's own script put the old one back, and a refusal names the options the list has. Not for a custom dropdown (click it, then click its option)
 - `{ "kind": "hover", "selector": ... }` - moves the pointer onto the element (waited for and scrolled into view as a click is) and gives what it reveals 300 ms to show; presses nothing, and `within_ms` is how long the element is waited for. It is not a check: a later check in the same step proves the reveal (`expect_visible` of the tooltip or menu)
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
@@ -502,6 +504,11 @@ A key can be pressed with modifiers held, joined with `+`: `Ctrl`,
 `times` presses the same combination again, up to 50 times:
 
     { "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 }
+
+`repeat` is not a field: a discovery or a try reads it as `times`, and a
+saved script is refused for it. An action with a key its kind does not
+have is refused the same way (`click does not take force - it takes:
+selector`), not run with the key dropped.
 
 **Dragging to reorder.** `drag` picks `from` up and drops it on `to`, as a
 mouse would. Both are ordinary locators, frame chains included, and both
@@ -1967,6 +1974,11 @@ You open and drive a browser of your own to find what a script needs:
   It stops at the first action that fails unless `stop_on_failure` is
   false, and ending the discovery stops it before its next action. Use it
   for steps you already know, such as a menu path or filling a form.
+- `{ "kind": "screenshot" }`, or with `"full_page": true`, takes a picture of
+  the page in `discover_autorun_actions` and `try_autorun_action` and answers
+  its file path. It counts as one of the 20, changes nothing and never
+  fails the page. It is never saved: a script holding one is refused, since a
+  saved script takes its pictures when a step fails.
 - `save_autorun_area` saves a screen you reached through the menus as an
   area: its name, its test case Module, and the clicks from the home page.
   The app replays the clicks from the home page and saves the area only
@@ -2003,9 +2015,10 @@ You open and drive a browser of your own to find what a script needs:
   the control that switches to it). An area records the mode it was saved in,
   and every trip to it switches to that mode first (and back for an area of
   the other), skipping an account that has only one.
-- `end_autorun_discovery` ends your discovery and keeps the browser: what it
-  mapped is kept, and the browser stays open and signed in for your next
-  replay or discovery; only the person's End discovery button closes it.
+- `end_autorun_discovery` ends your discovery: what it mapped is kept, and the
+  browser is closed and its account freed. `keep_browser: true` keeps it open
+  and signed in for your next replay or discovery. A browser the person opened
+  is never closed by it.
 - `reset_autorun_browser` gives a clean page and keeps the sign-in: it closes
   the other tabs, forgets any dialog a replay expected or saw, lifts your save
   guard, forgets where your last replay stopped, and loads the page the browser
@@ -2039,8 +2052,7 @@ Your replays, discovery and resets share your browser and its sign-in. Other
 assistants may be working at the same time, each in a browser of its own. A
 replay in a browser already signed in as its case's account goes straight to
 the area and says "Signed in already: went to <area>."; `end_autorun_discovery`
-keeps it for your next replay or discovery, so nothing needs closing in
-between.
+frees it; `keep_browser: true` keeps it for your next replay or discovery.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
@@ -2297,7 +2309,14 @@ a new chat picks up from it.
 
 When you call `end_autorun_discovery`, it names the saves the session's browser sent that are
 not on the change list. A change accounts for one save, so three identical saves with one change
-recorded leave two. Name each in your summary, or record it first. For a one-off API call from
+recorded leave two, unless the entry lists `covers`: request lines like "POST /path" it accounts
+for however many times they were sent, for a batch. A POST that only reads (a search) or a GET that
+changes data is told once, with `route_kind` (route and kind) on `record_explore_change`: reads are
+never listed, and a writing GET is noted as a save. A prove that failed after its writes went out
+has them on the list already, as entries made by that prove. A one-off whose path uses a kept
+value is noted with the unfilled `{{var.name}}` in it, so a `request` or `covers` line must use
+that same placeholder form. Name each in your summary, or record
+it first. For a one-off API call from
 the session's page, see `send_api_request` in the API template guide (`get_guide` with topic
 `api_templates`).
 

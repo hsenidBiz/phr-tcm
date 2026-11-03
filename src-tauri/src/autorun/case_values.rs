@@ -386,6 +386,8 @@ pub fn exemptions(script: &CaseScript, test_prefix: &str) -> Exemptions {
     for step in &script.steps {
         walk(&step.actions, &mut |a| match a {
             Action::Fill { value, .. } => typed.push(fold(value)),
+            // An option chosen is data put into the page, as typed text is.
+            Action::SelectOption { label, value, .. } => typed.extend(label.iter().chain(value.iter()).map(|v| fold(v))),
             Action::UseComponent { inputs, .. } => {
                 typed.extend(inputs.values().filter_map(|v| v.as_str()).map(fold));
             }

@@ -45,6 +45,10 @@ pub const PASSWORD_ENV: &str = "SQLCMDPASSWORD";
 /// exactly this long may have been cut, and the answer says so.
 pub const CUT_AT: usize = 256;
 
+/// The most characters one value comes back with. A longer one is cut here
+/// and says so (`cap_cell`).
+pub const CELL_CAP: usize = 65_536;
+
 /// What to say when sqlcmd is nowhere on the machine.
 pub const NOT_INSTALLED: &str = "sqlcmd is not installed on this machine - install it with `winget install sqlcmd` (or the SQL Server command line tools), then try again";
 
@@ -316,6 +320,14 @@ pub fn sqlcmd_file_args(c: &Connection, path: &Path) -> Vec<String> {
 }
 
 /// Every argument but the statement: the connection, and how sqlcmd runs.
+///
+/// Measured 2026-11-03 (backlog 89), as far as this machine allows: only
+/// go-sqlcmd v1.10.0 is installed here, there is no ODBC-tools sqlcmd 15 and
+/// no database to run against, so `-y 0 -s "	"` without `-W` could not be
+/// tried for header, dashes and padding. Without that measurement the flags
+/// stay the ones known to work on both flavours (`-W`, no `-y`/`-Y`), so
+/// sqlcmd still cuts a variable-length value at `CUT_AT`, and the answer adds
+/// a read-it-in-pieces note (`LONG_TEXT_NOTE`) when the output looks cut.
 fn connection_args(c: &Connection) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-S".into(),
@@ -388,21 +400,6 @@ pub fn sqlcmd_env(c: &Connection) -> Vec<(String, String)> {
     vec![(PASSWORD_ENV.to_string(), c.password.clone())]
 }
 
-/// A notice when some value is exactly `CUT_AT` characters long - where
-/// sqlcmd stops. The header and the dashes rule under it are skipped.
-fn cut_notice(stdout: &str) -> Option<String> {
-    let hit = stdout
-        .lines()
-        .skip(2)
-        .any(|line| line.split('\t').any(|cell| cell.trim_end().chars().count() == CUT_AT));
-    hit.then(|| {
-        format!(
-            "... a value is exactly {CUT_AT} characters, which is where sqlcmd cuts text - it may be longer: select SUBSTRING(column, {}, {CUT_AT}) to read on",
-            CUT_AT + 1
-        )
-    })
-}
-
 /// Runs one statement and returns the tab-separated text, capped, and
 /// whether either cap fired.
 ///
@@ -444,11 +441,7 @@ pub async fn run_sql<R: Runner>(
         };
         return Err(hide_password(&said, &c.password));
     }
-    let (mut text, capped) = cap(&out.stdout);
-    if let Some(notice) = cut_notice(&out.stdout) {
-        text.push('\n');
-        text.push_str(&notice);
-    }
+    let (text, capped) = cap(&out.stdout);
     Ok((hide_password(&text, &c.password), capped))
 }
 
@@ -520,9 +513,53 @@ pub async fn run_batch<R: Runner>(
     })
 }
 
+/// A value, whole up to `CELL_CAP` characters; longer is cut there and says so.
+pub fn cap_cell(cell: &str) -> String {
+    if cell.chars().count() <= CELL_CAP {
+        return cell.to_string();
+    }
+    let kept: String = cell.chars().take(CELL_CAP).collect();
+    format!("{kept} (truncated at {CELL_CAP} characters)")
+}
+
+/// A line this long may be where sqlcmd cut a value.
+const LONG_LINE: usize = 200;
+
+/// Said once, after the rows, when the output looks cut or split.
+pub const LONG_TEXT_NOTE: &str = "sqlcmd can cut long text at about 256 characters, and it splits text with line breaks across lines. To read a long value whole, select it in pieces: SUBSTRING(<expression>, 1, 250), SUBSTRING(<expression>, 251, 250), and so on, where <expression> is the column or the call (for example OBJECT_DEFINITION(OBJECT_ID('<view>'))).";
+
+/// Whether `stdout` looks like sqlcmd cut or split a text value: some line
+/// is `LONG_LINE` characters or longer, or a result of ONE column has more
+/// data lines than the "(N rows affected)" sqlcmd printed (a value with line
+/// breaks, one row spread over several lines).
+fn looks_cut(stdout: &str) -> bool {
+    // The header and dashes lines of a wide `SELECT *` are long without any
+    // value being cut, so only the lines after them count.
+    if stdout.lines().skip(2).any(|l| l.chars().count() >= LONG_LINE) {
+        return true;
+    }
+    let mut lines = stdout.lines();
+    let Some(header) = lines.next() else { return false };
+    if header.contains('\t') {
+        return false;
+    }
+    let counted = |l: &str| -> Option<usize> {
+        let t = l.trim();
+        let inner = t.strip_prefix('(')?.strip_suffix(')')?;
+        let n = inner.strip_suffix(" rows affected").or_else(|| inner.strip_suffix(" row affected"))?;
+        n.parse().ok()
+    };
+    let rest: Vec<&str> = lines.skip(1).collect();
+    let Some(total) = rest.iter().rev().find_map(|l| counted(l)) else { return false };
+    let data = rest.iter().filter(|l| !l.trim().is_empty() && counted(l).is_none()).count();
+    data > total
+}
+
 /// Keeps the header line, at most `ROW_CAP` rows after it, and at most
 /// `CHAR_CAP` characters of that - then says, after the body, each cut it
 /// had to make. Both notices can appear; neither ever lands inside a row.
+/// A value over `CELL_CAP` characters is cut there (`cap_cell`), and
+/// `LONG_TEXT_NOTE` follows when the output looks cut or split.
 ///
 /// Returns whether either cap fired, alongside the text, so a caller that
 /// wants to say "capped" does not have to guess from the text itself - a
@@ -533,7 +570,13 @@ fn cap(stdout: &str) -> (String, bool) {
     let rows: Vec<&str> = lines.collect();
     for row in rows.iter().take(ROW_CAP) {
         body.push('\n');
-        body.push_str(row);
+        if row.chars().count() > CELL_CAP {
+            // Only a line this long can hold a cell this long.
+            let cells: Vec<String> = row.split('\t').map(cap_cell).collect();
+            body.push_str(&cells.join("\t"));
+        } else {
+            body.push_str(row);
+        }
     }
 
     let mut capped = false;
@@ -554,6 +597,9 @@ fn cap(stdout: &str) -> (String, bool) {
         };
         notices.push(format!("... output capped at {CHAR_CAP} characters"));
         capped = true;
+    }
+    if looks_cut(stdout) {
+        notices.push(LONG_TEXT_NOTE.to_string());
     }
 
     for notice in notices {

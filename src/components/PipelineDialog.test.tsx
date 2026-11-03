@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { LogDialog, logLineTone } from "./PipelineDialog";
+import type { BuildStage } from "../bindings";
+import { LogDialog, logLineTone, StageTree } from "./PipelineDialog";
 
 const copyText = vi.fn(async (_text: string) => {});
 vi.mock("../lib/clipboard", () => ({ copyText: (t: string) => copyText(t) }));
@@ -97,4 +98,20 @@ test("log lines are coloured by their markers, success before failure", () => {
   // A summary line naming both must read as the pass it is.
   expect(logLineTone("Passed! - Failed: 0")).toBe("text-success");
   expect(logLineTone("plain output")).toBe("text-muted");
+});
+
+test("the stage search takes commas: a stage matching any alternative stays", () => {
+  const stage = (name: string): BuildStage => ({
+    name,
+    state: "completed",
+    result: "succeeded",
+    started: "",
+    finished: "",
+    jobs: [],
+  });
+  const stages = [stage("Build"), stage("Unit Test"), stage("Deploy")];
+  render(<StageTree stages={stages} query="build, deploy" failuresOnly={false} onShowLog={() => {}} />);
+  expect(screen.getByText("Build")).toBeInTheDocument();
+  expect(screen.getByText("Deploy")).toBeInTheDocument();
+  expect(screen.queryByText("Unit Test")).not.toBeInTheDocument();
 });

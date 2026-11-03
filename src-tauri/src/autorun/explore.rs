@@ -23,6 +23,7 @@ use super::test_made::{self, TestMade};
 use crate::browser::net_capture::{Body, Captured};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -42,6 +43,10 @@ pub struct ExploreRun {
     /// A saved setup is running in this session: the actions it drives are
     /// not kept (`autorun::kept`), as they are already a setup's.
     pub setup_running: bool,
+    /// Template ids this session's one-off calls saved on their own. Memory
+    /// only: a later working call of the same route may replace one of them,
+    /// and nothing from an earlier session is ever on it.
+    pub auto_saved: Vec<String>,
 }
 
 /// One explore session's change list, as its file holds it.
@@ -84,6 +89,10 @@ pub struct ChangeEntry {
     /// The request that made the change, `POST /path`, when there was one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    /// Request lines (`POST /path`) this entry accounts for however many
+    /// times they were sent: a batch of identical saves is one entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
     #[serde(default)]
     pub undone: bool,
     /// For a verified create: when its save started and where its id sat in
@@ -125,6 +134,9 @@ pub enum Change {
         hidden: bool,
     },
     Deleted { kind: String, id: String, name: String, held: Option<Value> },
+    /// Writes a failed prove sent: `by` says what made them. It names no
+    /// record, so an undo never deletes it.
+    Sent { by: String },
 }
 
 /// How an explore session ended: how many changes it listed and the saves
@@ -421,21 +433,110 @@ pub fn id_at(body: &Value, pointer: &str) -> Option<String> {
 /// for, in the order they were sent, each as `request_line`. Compared
 /// ignoring case and a trailing `/`, and by count: one change's request
 /// accounts for one save, so three identical saves with one change listed
-/// leave two. The `handler` of a save is part of what it is.
+/// leave two. A line in a change's `covers` accounts for every save of that
+/// request, however many. The `handler` of a save is part of what it is.
 pub fn unaccounted(s: &ExploreSession) -> Vec<String> {
+    unaccounted_with(s, &BTreeMap::new())
+}
+
+/// `unaccounted` for the project whose Auto Run root is `root`: a save to a
+/// route marked as one that only reads (`set_route_kind`) is never listed.
+pub fn unaccounted_in(root: &Path, s: &ExploreSession) -> Vec<String> {
+    unaccounted_with(s, &route_kinds(root))
+}
+
+fn unaccounted_with(s: &ExploreSession, kinds: &BTreeMap<String, RouteKind>) -> Vec<String> {
     let mut named: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for line in s.changes.iter().filter_map(|c| c.request.as_deref()) {
         *named.entry(compared(line)).or_default() += 1;
     }
+    let covered: std::collections::HashSet<String> =
+        s.changes.iter().flat_map(|c| c.covers.iter()).map(|l| compared(l)).collect();
     let mut out = Vec::new();
     for w in &s.writes {
         let line = request_line(&w.method, &w.path);
-        match named.get_mut(&compared(&line)) {
+        let key = compared(&line);
+        if kinds.get(&key) == Some(&RouteKind::Reads) || covered.contains(&key) {
+            continue;
+        }
+        match named.get_mut(&key) {
             Some(left) if *left > 0 => *left -= 1,
             _ => out.push(line),
         }
     }
     out
+}
+
+/// What a route does, when the method alone does not say: a POST that only
+/// reads (a search), or a GET that changes data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RouteKind {
+    Reads,
+    Writes,
+}
+
+/// The file under the explore folder that holds a project's route kinds.
+const ROUTE_KINDS_FILE: &str = "route-kinds";
+
+fn route_kinds_path(root: &Path) -> PathBuf {
+    root.join(EXPLORE_DIR).join(format!("{ROUTE_KINDS_FILE}.json"))
+}
+
+/// This project's route kinds, keyed by the route as `compared` writes it
+/// (`post /hr/x`). A file that does not read is no kinds.
+pub fn route_kinds(root: &Path) -> BTreeMap<String, RouteKind> {
+    let _held = lock();
+    route_kinds_locked(root)
+}
+
+fn route_kinds_locked(root: &Path) -> BTreeMap<String, RouteKind> {
+    let Ok(text) = std::fs::read_to_string(route_kinds_path(root)) else { return BTreeMap::new() };
+    serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).unwrap_or_default()
+}
+
+/// Said for a mark the method already settles.
+pub fn already_that_way(route: &str) -> String {
+    format!("{route} is already treated that way: mark a POST that only reads, or a GET that changes data")
+}
+
+/// Said for a route mark that is not `METHOD /path` and a kind.
+pub const ROUTE_SHAPE: &str =
+    "route_kind is { \"route\": \"POST /path\", \"kind\": \"reads\" | \"writes\" }";
+
+/// The route as `request_line` makes it, when it may be marked `kind`.
+pub fn check_route_kind(route: &str, kind: RouteKind) -> Result<String, String> {
+    let Some(line) = request_of(Some(route)) else { return Err(ROUTE_SHAPE.to_string()) };
+    let method = line.split(' ').next().unwrap_or("");
+    let is_save = crate::browser::save_guard::SAVE_METHODS.contains(&method);
+    if (kind == RouteKind::Reads && !is_save) || (kind == RouteKind::Writes && is_save) {
+        return Err(already_that_way(&line));
+    }
+    Ok(line)
+}
+
+/// Marks `route` (`METHOD /path`) as one that only reads or one that
+/// writes, in this environment (the Auto Run root). A mark the method already says (a read on a
+/// GET, a write on a POST, PUT, PATCH or DELETE) is refused.
+pub fn set_route_kind(root: &Path, route: &str, kind: RouteKind) -> Result<(), String> {
+    let line = check_route_kind(route, kind)?;
+    let _held = lock();
+    let mut kinds = route_kinds_locked(root);
+    kinds.insert(compared(&line), kind);
+    let json = serde_json::to_string_pretty(&kinds).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, root.join(EXPLORE_DIR)).map_err(|e| format!("the explore folder could not be made: {e}"))?;
+    crate::autorun::roots::write_file(root, &route_kinds_path(root), &json)
+}
+
+/// Whether a request of `method` to `path_query` is a save for this
+/// project's change list: a POST, PUT, PATCH or DELETE, or any method on a
+/// route marked as one that writes.
+pub fn counts_as_save(root: &Path, method: &str, path_query: &str) -> bool {
+    let method = method.trim().to_ascii_uppercase();
+    if crate::browser::save_guard::SAVE_METHODS.contains(&method.as_str()) {
+        return true;
+    }
+    route_kinds(root).get(&compared(&request_line(&method, path_query))) == Some(&RouteKind::Writes)
 }
 
 /// Ends the session: its file gets `ended_at`, and the answer counts its
@@ -450,7 +551,7 @@ pub fn end(root: &Path, session: &str) -> Result<ExploreEnd, String> {
     Ok(ExploreEnd {
         session: s.session.clone(),
         changes: s.changes.len(),
-        saves_not_on_the_change_list: unaccounted(&s),
+        saves_not_on_the_change_list: unaccounted_with(&s, &route_kinds_locked(root)),
     })
 }
 
@@ -642,6 +743,7 @@ fn changes_name(earlier: &[ChangeEntry], id: &str) -> bool {
             || match &e.change {
                 Change::Created { id: other, .. } | Change::Deleted { id: other, .. } => other.trim() == id,
                 Change::Changed { record, .. } => words(record).iter().any(|w| w == id),
+                Change::Sent { .. } => false,
             }
     })
 }
@@ -826,13 +928,14 @@ fn keep(
     s: &mut ExploreSession,
     change: Change,
     request: Option<String>,
+    covers: Vec<String>,
     proof: Option<SaveProof>,
 ) -> Result<u32, String> {
     if let Change::Created { kind, id, name, verified: true } = &change {
         keep_made(root, s, kind, id, name)?;
     }
     let n = u32::try_from(s.changes.len()).unwrap_or(u32::MAX).saturating_add(1);
-    s.changes.push(ChangeEntry { n, at: now(), change, request, undone: false, proof });
+    s.changes.push(ChangeEntry { n, at: now(), change, request, covers, undone: false, proof });
     write_for_change(root, s)?;
     Ok(n)
 }
@@ -850,6 +953,37 @@ pub fn record_change(
     session: &str,
     change: Change,
     request: Option<String>,
+    captured: &[&Captured],
+    since_ms: u64,
+) -> Result<Recorded, String> {
+    record_change_covering(root, session, change, request, Vec::new(), captured, since_ms)
+}
+
+/// `covers` as `record_explore_change` is given it: request lines like
+/// `POST /path`, each kept as `request_line` makes it. A line with no method
+/// or no path is refused.
+pub fn covers_from_args(v: &Value) -> Result<Vec<String>, String> {
+    let Some(list) = v.get("covers").filter(|c| !c.is_null()) else { return Ok(Vec::new()) };
+    let refused = || "covers holds request lines like \"POST /path\"".to_string();
+    let lines = list.as_array().ok_or_else(refused)?;
+    let mut out = Vec::new();
+    for line in lines {
+        let line = request_of(line.as_str()).ok_or_else(refused)?;
+        if !out.contains(&line) {
+            out.push(line);
+        }
+    }
+    Ok(out)
+}
+
+/// `record_change` for an entry that also `covers` request lines: every save
+/// of each is accounted for, however many times it was sent.
+pub fn record_change_covering(
+    root: &Path,
+    session: &str,
+    change: Change,
+    request: Option<String>,
+    covers: Vec<String>,
     captured: &[&Captured],
     since_ms: u64,
 ) -> Result<Recorded, String> {
@@ -887,8 +1021,9 @@ pub fn record_change(
             *held = held.take().map(scrubbed);
             note = Some(DELETED_STAYS);
         }
+        Change::Sent { .. } => {}
     }
-    let n = keep(root, &mut s, change, request, proof)?;
+    let n = keep(root, &mut s, change, request, covers, proof)?;
     Ok(Recorded { n, verified, note: note.map(str::to_string) })
 }
 
@@ -915,8 +1050,19 @@ pub(crate) fn record_send_create(
     let _held = lock();
     let mut s = read_for_change(root, session)?;
     let verified = is_new(&id, &s.changes);
-    let n = keep(root, &mut s, Change::Created { kind, id, name, verified }, request_of(Some(request)), None)?;
+    let n = keep(root, &mut s, Change::Created { kind, id, name, verified }, request_of(Some(request)), Vec::new(), None)?;
     Ok((n, verified))
+}
+
+/// A write a failed prove of template `template_id` sent, kept as a `sent`
+/// change that accounts for its save (`request` is `POST /path`). The
+/// session's list of saves is not touched here (`note_writes` does that).
+/// Hands back the entry's number.
+pub fn record_prove_write(root: &Path, session: &str, template_id: &str, request: &str) -> Result<u32, String> {
+    let _held = lock();
+    let mut s = read_for_change(root, session)?;
+    let by = format!("made by a failed prove of {template_id}");
+    keep(root, &mut s, Change::Sent { by }, request_of(Some(request)), Vec::new(), None)
 }
 
 /// Marks the entries `entries` undone: a change the assistant set back by
@@ -977,7 +1123,7 @@ pub fn list(root: &Path, org: &str, project: &str) -> Vec<ExploreSession> {
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-        if !safe_session_id(stem) {
+        if stem == ROUTE_KINDS_FILE || !safe_session_id(stem) {
             continue;
         }
         match load_locked(root, stem) {

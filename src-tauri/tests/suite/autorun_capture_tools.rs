@@ -931,3 +931,109 @@ fn a_read_is_answered_after_its_set_is_let_go() {
     assert_eq!(phase.finish().0, 200);
     assert!(dir.path().join("captures").join("later.har").exists());
 }
+
+// ------------------------------------------------- kept session values
+
+/// A browser whose capture holds one request that carries a kept value, and
+/// masks that value as `send_api_request` does when it keeps one.
+fn browser_masking(value: &str, discovery: bool) -> Option<Browser> {
+    let mut f = Feeder::confirmed();
+    f.get("k1", "/hr/emp/emp%201234%20north?q=emp+1234+north", &json!({ "name": value }).to_string());
+    let mut cap = f.cap;
+    let all: serde_json::Map<String, Value> = [("var.emp".to_string(), json!(value))].into_iter().collect();
+    cap.mask(&v2_lib::api_templates::exec::hidden_values(&all));
+    let mut slot = browser_with(cap);
+    if discovery {
+        slot.as_mut().unwrap().discovery = crate::autorun_discovery::exploring("Leave");
+    }
+    slot
+}
+
+fn assert_masked(slot: &mut Option<Browser>, dir: &TempDir, export_name: &str) {
+    let value = "emp 1234 north";
+    let mut seen = vec![];
+    for (tool, args) in [
+        (CaptureTool::List, json!({})),
+        (CaptureTool::Request, json!({ "id": 1 })),
+        (CaptureTool::ResponseBody, json!({ "id": 1 })),
+        (CaptureTool::Search, json!({ "response_contains": "{{var.emp}}" })),
+    ] {
+        let (status, out) = call(slot, &mut BTreeMap::new(), Some(dir.path()), tool, args);
+        assert_eq!(status, 200, "{out}");
+        seen.push(out);
+    }
+    let (status, out) =
+        call(slot, &mut BTreeMap::new(), Some(dir.path()), CaptureTool::Export, json!({ "name": export_name }));
+    assert_eq!(status, 200, "{out}");
+    seen.push(std::fs::read_to_string(v2_lib::autorun::capture_tools::capture_file(dir.path(), export_name)).unwrap());
+    for text in &seen {
+        for form in [value, "emp%201234%20north", "emp+1234+north"] {
+            assert!(!text.contains(form), "{form} shows in: {text}");
+        }
+    }
+    assert!(seen.iter().any(|t| t.contains("{{var.emp}}")), "{seen:?}");
+    // The masked text is what a search matches: the value itself, or a part
+    // of it, finds nothing, so a search cannot confirm a guess.
+    for guess in [value, "emp 1234", "north"] {
+        let (_, out) = call(
+            slot,
+            &mut BTreeMap::new(),
+            None,
+            CaptureTool::Search,
+            json!({ "response_contains": guess }),
+        );
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"].as_u64(), Some(0), "{guess}: {out}");
+    }
+    let (_, out) = call(slot, &mut BTreeMap::new(), None, CaptureTool::Search, json!({ "path": "1234" }));
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["total"].as_u64(), Some(0), "{out}");
+}
+
+/// A value `send_api_request` kept never comes back through the capture
+/// tools or the export, raw or percent-encoded (item 82).
+#[test]
+fn a_kept_value_is_masked_in_the_capture_tools_and_the_export() {
+    let dir = TempDir::new();
+    let mut slot = browser_masking("emp 1234 north", true);
+    assert_masked(&mut slot, &dir, "kept");
+}
+
+/// A kept value that sits on the edge of a body page is hidden before the
+/// body is cut into pages, so neither page shows half of it.
+#[test]
+fn a_kept_value_on_a_body_page_edge_is_masked_before_paging() {
+    let value = "emp 1234 north";
+    let mut f = Feeder::confirmed();
+    let body = format!("{}{value} and then {}", "ab ".repeat(6665), "cd ".repeat(50));
+    assert!(body.find(value).unwrap() < 20_000 && body.find(value).unwrap() + value.len() > 20_000);
+    f.request("k1", "XHR", "GET", "/hr/page", json!({}), None, 200, "text/plain", json!({}), Some(&body));
+    let mut cap = f.cap;
+    let all: serde_json::Map<String, Value> = [("var.emp".to_string(), json!(value))].into_iter().collect();
+    cap.mask(&v2_lib::api_templates::exec::hidden_values(&all));
+    let mut slot = browser_with(cap);
+    let (status, first) = live(&mut slot, CaptureTool::ResponseBody, json!({ "id": 1 }));
+    assert_eq!(status, 200, "{first}");
+    let next = first["next_offset"].as_u64().expect("a second page");
+    let (_, second) = live(&mut slot, CaptureTool::ResponseBody, json!({ "id": 1, "offset": next }));
+    for page in [&first, &second] {
+        let text = page["text"].as_str().unwrap();
+        for part in ["emp 1", "1234", "north", "emp 12", "4 north"] {
+            assert!(!text.contains(part), "{part:?} shows in a page: {page}");
+        }
+    }
+    let both = format!("{}{}", first["text"].as_str().unwrap(), second["text"].as_str().unwrap());
+    assert!(both.contains("{{var.emp}} and then"), "the placeholder is not where the value was");
+}
+
+/// The masking belongs to the browser: the discovery ending (the browser
+/// kept) or a new discovery starting in it does not lift it.
+#[test]
+fn the_masking_outlives_the_discovery_in_the_same_browser() {
+    let dir = TempDir::new();
+    let mut slot = browser_masking("emp 1234 north", true);
+    slot.as_mut().unwrap().discovery = None;
+    assert_masked(&mut slot, &dir, "after-end");
+    slot.as_mut().unwrap().discovery = crate::autorun_discovery::exploring("Leave");
+    assert_masked(&mut slot, &dir, "after-new");
+}

@@ -50,6 +50,8 @@ pub(crate) struct Script {
     pub(crate) hang_fetch: bool,
     /// `FETCH_FN` answers this many requests, then never answers again.
     pub(crate) hang_after: Option<usize>,
+    /// `FETCH_FN` is given up on by the DevTools wait, as a driver with a limit of its own does.
+    pub(crate) fetch_gives_up: bool,
     /// `Page.navigate` starts but its page never finishes loading.
     never_loads: bool,
     /// `Page.navigate` fails as a browser that has gone away does.
@@ -106,6 +108,9 @@ impl Driver for App {
                 let mut s = self.script.lock().unwrap();
                 s.fetched.push(args);
                 let past = s.hang_after.is_some_and(|k| s.fetched.len() > k);
+                if s.fetch_gives_up {
+                    return Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 35_000 });
+                }
                 (s.hang_fetch || past, s.responses.pop_front())
             };
             if hang {
@@ -318,7 +323,7 @@ fn three_steps() -> ApiTemplate {
 pub(crate) fn request(t: ApiTemplate, mode: Mode) -> RunRequest {
     let mut values = serde_json::Map::new();
     values.insert("cycleName".into(), json!("FY27"));
-    RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t }
+    RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t, step_limit: None, keep: Default::default() }
 }
 
 pub(crate) fn prove() -> Mode {
@@ -951,6 +956,56 @@ mod through_the_bridge {
     }
 
     #[tokio::test]
+    async fn a_prove_fills_values_from_the_askers_kept_values() {
+        use v2_lib::ai_bridge::api_template_prove_with;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let value = format!("kv-{}", "x9Q".repeat(20));
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": value })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        let kept = BTreeMap::from([("name".to_string(), json!(value))]);
+        let call = body(json!({ "values": { "cycleName": "{{var.name}}" } }));
+
+        let (status, out) = api_template_prove_with(
+            kept,
+            None,
+            Some(v2_lib::autorun::slots::SlotNo::MAIN),
+            &ctx(),
+            &call,
+            |_| browsers,
+            no_db,
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!out.contains(&value), "the kept value is in the answer: {out}");
+        let report: RunReport = serde_json::from_str(&out).unwrap();
+        assert_eq!(report.outputs["cycleId"], json!("{{var.name}}"));
+        let saved = store::load(root.path(), ORG, PROJECT, ID).unwrap().expect("saved");
+        let text = serde_json::to_string(&saved).unwrap();
+        assert!(!text.contains(&value), "the proven template holds a kept value: {text}");
+    }
+
+    #[tokio::test]
+    async fn a_prove_with_no_kept_value_is_refused() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let rig = rig(vec![], None);
+        v2_lib::autorun::store::set_root(rig.root.path().to_path_buf());
+        let call = body(json!({ "values": { "cycleName": "{{var.name}}" } }));
+        let (status, out) = api_template_prove(&ctx(), &call, never_opened, no_db, &quick()).await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, "{{var.name}} is not kept in this discovery - keep it first with keep on send_api_request");
+    }
+
+    #[tokio::test]
     async fn a_proven_draft_is_saved_with_its_evidence_and_its_first_run() {
         let _root = crate::serial::autorun();
         let _slot = crate::serial::api_template_run();
@@ -1021,6 +1076,158 @@ mod through_the_bridge {
             "no template, and no history for a template that does not exist"
         );
         assert!(changed.lock().unwrap().is_empty(), "nothing changed, nothing announced");
+    }
+
+    /// The sample template with `extra` more POST steps after its two.
+    fn with_posts(extra: usize) -> ApiTemplate {
+        let mut t = template();
+        for n in 3..3 + extra {
+            t.steps.push(
+                serde_json::from_value(json!({
+                    "name": format!("Step {n}"), "method": "POST",
+                    "path": "/hr/pmsv10/performancecycle", "query": { "handler": format!("H{n}") },
+                    "form": { "CycleId": "{{cycleId}}" }
+                }))
+                .unwrap(),
+            );
+        }
+        t
+    }
+
+    fn call_for(t: &ApiTemplate) -> String {
+        json!({ "template": t, "account": "admin", "values": { "cycleName": "FY27" } }).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_failed_prove_names_the_write_steps_that_ran() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let ok = || answer(200, json!({ "success": true, "cycleId": 274 }));
+        let Rig { browsers, root, .. } =
+            rig(vec![ok(), ok(), ok(), ok(), answer(400, json!({ "success": false }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+
+        let (status, out) = api_template_prove(&ctx(), &call_for(&with_posts(3)), |_| browsers, no_db, &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["failed"], "Step 5", "{v}");
+        assert_eq!(v["note"], v2_lib::ai_bridge::PROVE_WROTE, "{v}");
+        assert_eq!(v2_lib::ai_bridge::PROVE_WROTE, "this prove failed after these write steps went out: what they created or changed is still there");
+        let writes = v["writes_that_ran"].as_array().expect("names the writes");
+        let lines: Vec<(&str, &str, Option<u64>)> = writes
+            .iter()
+            .map(|w| (w["step"].as_str().unwrap(), w["request"].as_str().unwrap(), w["status"].as_u64()))
+            .collect();
+        let page = "/hr/pmsv10/performancecycle";
+        assert_eq!(
+            lines,
+            vec![
+                ("Cycle setup", format!("POST {page}?handler=SaveProgress").as_str(), Some(200)),
+                ("Evaluation rules", format!("POST {page}?handler=SaveEvalRulesProgress").as_str(), Some(200)),
+                ("Step 3", format!("POST {page}?handler=H3").as_str(), Some(200)),
+                ("Step 4", format!("POST {page}?handler=H4").as_str(), Some(200)),
+                ("Step 5", format!("POST {page}?handler=H5").as_str(), Some(400)),
+            ],
+            "{v}"
+        );
+        assert!(v.get("on_change_list").is_none(), "no explore session, no change list: {v}");
+        assert!(!out.contains("example.internal"), "a host reached the answer: {out}");
+        assert_eq!(store::load(root.path(), ORG, PROJECT, ID).unwrap(), None, "a failed prove still saves nothing");
+    }
+
+    /// 78: a prove asked for by an explore session puts its writes on that
+    /// session's change list.
+    #[tokio::test]
+    async fn a_failed_prove_from_an_open_explore_session_goes_on_its_list() {
+        use v2_lib::ai_bridge::api_template_prove_with;
+        use v2_lib::autorun::explore::{begin, load, unaccounted, Change};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let ok = || answer(200, json!({ "success": true, "cycleId": 274 }));
+        let Rig { browsers, root, .. } = rig(vec![ok(), ok(), answer(400, json!({ "success": false }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        let session = begin(root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+
+        let (status, out) = api_template_prove_with(
+            BTreeMap::new(),
+            Some(session.clone()),
+            Some(v2_lib::autorun::slots::SlotNo::MAIN),
+            &ctx(),
+            &call_for(&with_posts(1)),
+            |_| browsers,
+            no_db,
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 502, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["on_change_list"], true, "{v}");
+        let s = load(root.path(), &session).unwrap();
+        assert_eq!(s.changes.len(), 3, "{:?}", s.changes);
+        assert!(s.changes.iter().all(|c| matches!(&c.change, Change::Sent { by } if by.contains(ID))));
+        assert_eq!(s.writes.len(), 3);
+        assert!(unaccounted(&s).is_empty(), "{:?}", unaccounted(&s));
+    }
+
+    #[tokio::test]
+    async fn a_prove_failing_before_any_write_names_none() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let mut t = template();
+        t.steps.insert(
+            0,
+            serde_json::from_value(json!({ "name": "Look up", "method": "GET", "path": "/hr/pmsv10/lookup" })).unwrap(),
+        );
+        let Rig { browsers, root, .. } = rig(vec![answer(500, json!({ "success": false }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+
+        let (status, out) = api_template_prove(&ctx(), &call_for(&t), |_| browsers, no_db, &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["failed"], "Look up", "{v}");
+        assert!(v.get("writes_that_ran").is_none() && v.get("note").is_none(), "{v}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_prove_never_names_a_kept_value() {
+        use v2_lib::ai_bridge::api_template_prove_with;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let value = format!("kv-{}", "x9Q".repeat(20));
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": value })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        let mut t = template();
+        t.steps[1].query.insert("handler".into(), "{{cycleName}}".into());
+        let call = json!({ "template": t, "account": "admin", "values": { "cycleName": "{{var.name}}" } }).to_string();
+        let kept = BTreeMap::from([("name".to_string(), json!(value))]);
+
+        let (status, out) = api_template_prove_with(
+            kept,
+            None,
+            Some(v2_lib::autorun::slots::SlotNo::MAIN),
+            &ctx(),
+            &call,
+            |_| browsers,
+            no_db,
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 502, "{out}");
+        assert!(!out.contains(&value), "the kept value is in the answer: {out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(2), "{v}");
+        assert!(out.contains("{{var.name}}"), "the placeholder stands in for the value: {out}");
     }
 
     #[tokio::test]
@@ -1249,6 +1456,12 @@ mod flows_through_the_bridge {
             .unwrap();
     }
 
+    /// The sentence of a prove that passed every step but saved nothing: the
+    /// answer's `message` when it names its writes, else the answer itself.
+    fn said(out: &str) -> String {
+        serde_json::from_str::<Value>(out).ok().and_then(|v| v["message"].as_str().map(str::to_string)).unwrap_or(out.to_string())
+    }
+
     fn run_body(id: &str, values: Value) -> String {
         json!({ "id": id, "account": "admin", "values": values }).to_string()
     }
@@ -1412,7 +1625,7 @@ mod flows_through_the_bridge {
         assert_eq!(status, 502, "{out}");
         assert!(out.contains("is still not done for cycleId"), "{out}");
         assert!(
-            out.starts_with(
+            said(&out).starts_with(
                 "every step passed, but Participants is still not done for cycleId 274, so the template was not saved; every step passed (1 steps)"
             ),
             "{out}"
@@ -1420,6 +1633,41 @@ mod flows_through_the_bridge {
         assert_eq!(asked(&db), ["setup", "rules", "participants"], "the gate, then its own stage");
         assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
         assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
+    }
+
+    /// 78: every step passed and wrote, but the stage check says it did not
+    /// land, so nothing is saved: the answer still names the writes.
+    #[tokio::test]
+    async fn a_prove_refused_by_its_stage_check_still_names_its_writes() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let r = rig(vec![answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(r.root.path().to_path_buf());
+        flow_store::save(r.root.path(), ORG, PROJECT, &flow()).unwrap();
+        let db = FakeStageDb::new()
+            .answer("/*setup*/", Ok(true))
+            .answer("/*rules*/", Ok(true))
+            .answer("/*participants*/", Ok(false));
+        let body = json!({
+            "template": template_on_stage(PARTICIPANTS, "Add the participants", "participants"),
+            "account": "admin",
+            "values": { "cycleId": 274 },
+        })
+        .to_string();
+        let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("not JSON ({e}): {out}"));
+        assert!(
+            v["message"].as_str().unwrap_or("").starts_with(
+                "every step passed, but Participants is still not done for cycleId 274, so the template was not saved"
+            ),
+            "{v}"
+        );
+        assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(1), "{v}");
+        assert_eq!(v["note"], v2_lib::ai_bridge::PROVE_WROTE, "{v}");
+        assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
     }
 
     #[tokio::test]
@@ -1475,7 +1723,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but the check for Participants could not be run - see the activity folder in Settings, Logs, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
         );
         assert_eq!(asked(&db), ["setup", "rules", "participants"]);
@@ -1508,7 +1756,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but the captured cycleId is not a number (cycleId is a number subject: give a whole number, 0 or more), so the template was not saved; every step passed (2 steps); cycleId 274 created"
         );
         assert!(!out.contains("could not be run"), "{out}");
@@ -1558,7 +1806,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, open, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but stage \"participants\" is no longer in flow pms-performance-cycle, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
         );
         assert_eq!(asked(&db), ["setup", "rules"], "the gate only - no check for a stage that is gone");
@@ -1593,7 +1841,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, open, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but this template's flow pms-performance-cycle is no longer saved, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
         );
         assert_eq!(asked(&db), ["setup", "rules"]);
@@ -2660,4 +2908,74 @@ async fn a_one_off_that_runs_out_of_time_says_so_and_clears_the_deadline() {
     assert!(!out.report.ok);
     assert!(out.report.message().contains("3 minutes"), "{}", out.report.message());
     assert!(out.answer.is_none());
+}
+
+#[tokio::test]
+async fn a_one_off_step_limit_overrides_the_default() {
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    on_the_app(&r);
+    let mut app = r.browsers.next.take().unwrap();
+    let _act = crate::serial::activity_log();
+    let mut req = request(one_off("GET", json!({})), Mode::Explore);
+    req.step_limit = Some(Duration::from_secs(90));
+    let out = run_in_page(&mut app, r.root.path(), &req, &quick(), TokenPage::Here, RUN_LIMIT, &QUICK_PAUSES).await;
+    assert!(out.report.ok, "{}", out.report.message());
+    assert_eq!(r.fetched()[0][2], json!(90_000), "the page was told the longer limit");
+}
+
+#[tokio::test]
+async fn a_one_off_body_with_base64_is_sent_encoded() {
+    use base64::Engine;
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![answer(200, json!({ "success": true }))], None);
+    let t: ApiTemplate = serde_json::from_value(json!({
+        "id": "b64-body", "title": "Encoded body", "module": "PMS", "effect": "create",
+        "description": "Sends a base64 body.", "sources": ["x:1"],
+        "antiforgery": { "page": PAGE },
+        "params": [ { "name": "cycleName", "type": "string", "required": true } ],
+        "steps": [ { "name": "Send", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+                     "json": { "payload": { "$base64": { "name": "{{cycleName}}" } } } } ],
+        "outputs": []
+    }))
+    .unwrap();
+    let report = run(&mut r, t).await;
+    assert!(report.ok, "{report:?}");
+    let fetched = r.fetched();
+    let want = base64::engine::general_purpose::STANDARD.encode(r#"{"name":"FY27"}"#);
+    assert_eq!(fetched[0][0]["body"], json!({ "kind": "json", "value": { "payload": want } }));
+}
+
+#[tokio::test]
+async fn a_run_cut_off_mid_step_says_the_request_may_have_been_processed() {
+    use v2_lib::api_templates::runner::MAYBE_SENT_NO_ANSWER;
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    r.script.lock().unwrap().hang_fetch = true;
+    let mut app = r.browsers.next.take().unwrap();
+    let _act = crate::serial::activity_log();
+    let t = one_off("POST", json!({ "form": { "x": "1" } }));
+    let out = run_in_page(
+        &mut app,
+        r.root.path(),
+        &request(t, Mode::Explore),
+        &quick(),
+        TokenPage::Here,
+        Duration::from_millis(300),
+        &QUICK_PAUSES,
+    )
+    .await;
+    assert!(!out.report.ok);
+    let detail = &out.report.steps.last().unwrap().detail;
+    assert!(detail.contains(MAYBE_SENT_NO_ANSWER), "{detail}");
+}
+
+#[test]
+fn a_run_for_a_long_step_has_room_for_a_token_page_and_a_retry() {
+    use v2_lib::api_templates::runner::{run_limit_for, run_too_long, RUN_LIMIT};
+    let step = Duration::from_secs(180);
+    assert!(run_limit_for(RUN_LIMIT, Some(step)) >= step * 2 + Duration::from_secs(60));
+    assert_eq!(run_limit_for(RUN_LIMIT, None), RUN_LIMIT);
+    assert_eq!(run_limit_for(RUN_LIMIT, Some(Duration::from_secs(5))), RUN_LIMIT);
+    assert_eq!(run_too_long(RUN_LIMIT), "the run took longer than 3 minutes");
+    assert_eq!(run_too_long(Duration::from_secs(420)), "the run took longer than 420 seconds");
 }

@@ -24,6 +24,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { SearchInput } from "../../components/ui/search-input";
+import { matchesQuery } from "../../lib/search";
 import { Select } from "../../components/ui/select";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
@@ -191,11 +192,8 @@ export default function AccountsDialog({
   }, [focusKey]);
 
   const proposals: ProposedAccount[] = proposed.data ?? [];
-  const needle = query.trim().toLowerCase();
-  const shown = needle
-    ? proposals.filter((p) =>
-        [p.key, p.label, p.role ?? "", p.username].some((f) => f.toLowerCase().includes(needle)),
-      )
+  const shown = query.trim()
+    ? proposals.filter((p) => matchesQuery([p.key, p.label, p.role, p.username], query))
     : proposals;
   const pickedCount = proposals.filter((p) => picked.has(p.key)).length;
   const shownPicked = shown.filter((p) => picked.has(p.key)).length;

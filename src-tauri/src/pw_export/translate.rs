@@ -110,6 +110,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         Action::Click { selector }
         | Action::Hover { selector, .. }
         | Action::Fill { selector, .. }
+        | Action::SelectOption { selector, .. }
         | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectHidden { selector, .. }
@@ -1502,6 +1503,14 @@ impl Em<'_> {
             Action::Hover { selector, .. } => self.line(indent, &format!("await {}.hover();", one(selector))),
             Action::Fill { selector, value } => {
                 self.line(indent, &format!("await {}.fill({});", one(selector), lit(value)))
+            }
+            Action::SelectOption { selector, label, value, .. } => {
+                let option = match (label, value) {
+                    (Some(label), _) => format!("{{ label: {} }}", lit(label.trim())),
+                    (None, Some(value)) => format!("{{ value: {} }}", lit(value)),
+                    (None, None) => return no("select_option picks by label or by value, one of them"),
+                };
+                self.line(indent, &format!("await {}.selectOption({option});", one(selector)))
             }
             Action::WaitFor { selector, timeout_ms } => {
                 self.line(indent, &format!("await {}.waitFor({});", one(selector), wait_opts(selector, *timeout_ms)))

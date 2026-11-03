@@ -24,7 +24,7 @@ use v2_lib::autorun::cleanup::{not_this_sessions, ran_in_project};
 use v2_lib::autorun::discovery_map::map_path;
 use v2_lib::autorun::cleanup::EXPLORE_MADE;
 use v2_lib::autorun::explore::{
-    begin, change_from_args, create_proof, id_at, id_pointer, load, same_save, SaveProof, mark_create_undone, mark_undone, no_such_entry, note_writes, record_change,
+    begin, change_from_args, create_proof, end, route_kinds, set_route_kind, RouteKind, id_at, id_pointer, load, same_save, SaveProof, mark_create_undone, mark_undone, no_such_entry, note_writes, record_change,
     safe_session_id, session_id, session_path, unaccounted, undone_by_the_tool, unknown_session, verify_create,
     Change, ChangeEntry, ExploreRun, ExploreSession, SeenWrite, BEFORE_NOT_KNOWN, CHANGES_UNREADABLE, DELETED_STAYS,
     NOT_VERIFIED, NO_EXPLORE_SESSION, SECRET_NOT_KEPT, UNRECORDED_SAVES,
@@ -199,6 +199,30 @@ async fn ending_an_explore_session_names_the_saves_not_on_the_change_list() {
     assert!(load(dir.path(), &id).unwrap().ended_at.is_some());
 }
 
+/// The assistant's end now releases the browser by default, and the answer
+/// still lists the saves the session sent that are not on its change list.
+#[tokio::test]
+async fn a_released_end_still_lists_the_saves_not_on_the_change_list() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_RELEASED};
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let save = Action::Click { selector: "#save".into() };
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_002_000).unwrap();
+    let mut browser = browser_that_saves(&id);
+    browser.as_mut().unwrap().assistant = true;
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, out) = end_discovery_as(&mut browser, EndedBy::Assistant).await;
+    assert_eq!(status, 200, "{out}");
+    let v = parsed(&out);
+    assert_eq!(v["detail"], DISCOVERY_ENDED_RELEASED, "{out}");
+    assert_eq!(v["explore"]["saves_not_on_the_change_list"], json!(["POST /hr/leave/save"]), "{out}");
+    assert_eq!(v["note"], UNRECORDED_SAVES, "{out}");
+    assert!(load(dir.path(), &id).unwrap().ended_at.is_some());
+    assert!(browser.is_none(), "the released end kept the browser");
+}
+
 #[tokio::test]
 async fn ending_an_explore_session_with_every_save_listed_has_no_note() {
     let dir = root_with_recipe_and_account();
@@ -264,6 +288,7 @@ fn entry(n: u32, request: Option<&str>) -> ChangeEntry {
         change: Change::Created { kind: "leave".into(), id: "7".into(), name: "x".into(), verified: true },
         request: request.map(str::to_string),
         undone: false,
+        covers: vec![],
         proof: None,
     }
 }
@@ -314,6 +339,7 @@ fn a_change_list_round_trips_through_its_file() {
         },
         request: Some("POST /a".into()),
         undone: false,
+        covers: vec![],
         proof: None,
     };
     let deleted = ChangeEntry {
@@ -322,6 +348,7 @@ fn a_change_list_round_trips_through_its_file() {
         change: Change::Deleted { kind: "leave".into(), id: "7".into(), name: "x".into(), held: Some(json!({"a": 1})) },
         request: None,
         undone: true,
+        covers: vec![],
         proof: None,
     };
     let s = session_with(&[("POST", "/a")], vec![entry(1, Some("POST /a")), changed, deleted]);
@@ -918,7 +945,7 @@ use v2_lib::autorun::explore::{
 use v2_lib::browser::net_capture::MAX_CAPTURED;
 
 fn change_entry(n: u32, change: Change, request: Option<&str>) -> ChangeEntry {
-    ChangeEntry { n, at: "2026-10-22T00:00:00.000Z".into(), change, request: request.map(str::to_string), undone: false, proof: None }
+    ChangeEntry { n, at: "2026-10-22T00:00:00.000Z".into(), change, request: request.map(str::to_string), covers: vec![], undone: false, proof: None }
 }
 
 /// C1: an edit's save answers with the id of the record it edited; it made
@@ -1437,4 +1464,193 @@ fn id_at_reads_a_string_or_a_number() {
 fn same_save_compares_as_the_change_list_does() {
     assert!(same_save("POST /hr/c?x=1", "post /HR/c/"));
     assert!(!same_save("POST /p?handler=Save", "POST /p?handler=Delete"));
+}
+
+// ---- Backlog 79: covers, and what a route does ----
+
+fn entry_covering(n: u32, request: Option<&str>, covers: &[&str]) -> ChangeEntry {
+    ChangeEntry { covers: covers.iter().map(|c| c.to_string()).collect(), ..entry(n, request) }
+}
+
+#[test]
+fn covers_accounts_for_every_matching_save() {
+    let s = session_with(
+        &[("POST", "/hr/x?handler=Save"), ("POST", "/hr/x?handler=Save"), ("POST", "/hr/x?handler=Save"), ("POST", "/hr/y")],
+        vec![entry_covering(1, None, &["post /HR/x?handler=save"])],
+    );
+    assert_eq!(unaccounted(&s), vec!["POST /hr/y".to_string()]);
+    // A covers line is a request line: the handler is part of it.
+    let s = session_with(&[("POST", "/hr/x?handler=Delete")], vec![entry_covering(1, None, &["POST /hr/x?handler=Save"])]);
+    assert_eq!(unaccounted(&s), vec!["POST /hr/x?handler=Delete".to_string()]);
+    // It reads back from the file as it was written.
+    let text = serde_json::to_string(&entry_covering(1, None, &["POST /a"])).unwrap();
+    assert!(text.contains("\"covers\":[\"POST /a\"]"), "{text}");
+    assert!(!serde_json::to_string(&entry(1, None)).unwrap().contains("covers"));
+    let back: ChangeEntry = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.covers, vec!["POST /a".to_string()]);
+}
+
+#[test]
+fn request_still_counts_one_for_one() {
+    let s = session_with(
+        &[("POST", "/a"), ("POST", "/a"), ("POST", "/a")],
+        vec![entry_covering(1, Some("POST /a"), &["POST /b"])],
+    );
+    assert_eq!(unaccounted(&s), vec!["POST /a".to_string(), "POST /a".to_string()]);
+}
+
+#[test]
+fn a_reads_route_is_never_listed() {
+    let (dir, session) = started();
+    set_route_kind(dir.path(), "POST /hr/search", RouteKind::Reads).unwrap();
+    note_writes(
+        dir.path(),
+        &session,
+        &[("POST".into(), "/hr/search?q=1".into()), ("POST".into(), "/hr/save".into()), ("POST".into(), "/hr/Search/".into())],
+    )
+    .unwrap();
+    let ended = end(dir.path(), &session).unwrap();
+    assert_eq!(ended.saves_not_on_the_change_list, vec!["POST /hr/save".to_string()]);
+    let (status, out) = explore_changes(dir.path(), ORG, PROJECT, &json!({ "session": session }).to_string());
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(parsed(&out)["saves_not_on_the_change_list"], json!(["POST /hr/save"]));
+
+    // A later session of the project: the mark stands.
+    let later = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_100_000).unwrap();
+    note_writes(dir.path(), &later, &[("POST".into(), "/hr/search".into())]).unwrap();
+    assert!(end(dir.path(), &later).unwrap().saves_not_on_the_change_list.is_empty());
+    // Only that route: another handler of the page is still a save.
+    note_writes(dir.path(), &later, &[("POST".into(), "/hr/search?handler=Delete".into())]).unwrap();
+    assert_eq!(
+        end(dir.path(), &later).unwrap().saves_not_on_the_change_list,
+        vec!["POST /hr/search?handler=Delete".to_string()]
+    );
+    // The file of marks is not a session.
+    assert_eq!(v2_lib::autorun::explore::list(dir.path(), ORG, PROJECT).len(), 2);
+}
+
+#[tokio::test]
+async fn a_writes_get_is_noted_and_listed() {
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let save = Action::Click { selector: "#save".into() };
+    let getting = |session: &str| {
+        let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
+        d.on_call_events
+            .push(("Input.dispatchMouseEvent".into(), sent("1", "GET", "https://hr.example.internal/hr/leave/approve?id=5")));
+        slot(d, explore_going(session)).0
+    };
+
+    // Not marked: a GET is a read and is not noted.
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let mut browser = getting(&id);
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(load(dir.path(), &id).unwrap().writes.is_empty());
+
+    set_route_kind(dir.path(), "GET /hr/leave/approve", RouteKind::Writes).unwrap();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_001_000).unwrap();
+    let mut browser = getting(&id);
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["writes"], json!([{ "method": "GET", "path": "/hr/leave/approve" }]), "{body}");
+    let (_, out) = end_discovery_in(&mut browser).await;
+    assert_eq!(parsed(&out)["explore"]["saves_not_on_the_change_list"], json!(["GET /hr/leave/approve"]), "{out}");
+}
+
+#[test]
+fn marking_a_get_as_reads_is_refused() {
+    let dir = root_with_recipe_and_account();
+    let said = |route: &str| format!("{route} is already treated that way: mark a POST that only reads, or a GET that changes data");
+    assert_eq!(set_route_kind(dir.path(), "GET /hr/x", RouteKind::Reads), Err(said("GET /hr/x")));
+    assert_eq!(set_route_kind(dir.path(), "post /hr/x", RouteKind::Writes), Err(said("POST /hr/x")));
+    assert_eq!(set_route_kind(dir.path(), "DELETE /hr/x", RouteKind::Writes), Err(said("DELETE /hr/x")));
+    assert!(set_route_kind(dir.path(), "hr/x", RouteKind::Reads).is_err());
+    assert!(route_kinds(dir.path()).is_empty());
+
+    // And through the tool, with no session going.
+    let mut none: Option<FakeBrowser> = None;
+    let body = json!({ "route_kind": { "route": "GET /hr/x", "kind": "reads" } }).to_string();
+    assert_eq!(record_change_in(&mut none, dir.path(), ORG, PROJECT, &body), (400, said("GET /hr/x")));
+    let body = json!({ "route_kind": { "route": "POST /hr/x", "kind": "maybe" } }).to_string();
+    assert_eq!(record_change_in(&mut none, dir.path(), ORG, PROJECT, &body).0, 400);
+}
+
+#[test]
+fn route_kinds_are_per_project() {
+    let (one, other) = (root_with_recipe_and_account(), root_with_recipe_and_account());
+    set_route_kind(one.path(), "POST /hr/search", RouteKind::Reads).unwrap();
+    set_route_kind(one.path(), "GET /hr/approve", RouteKind::Writes).unwrap();
+    assert_eq!(route_kinds(one.path()).get("post /hr/search"), Some(&RouteKind::Reads));
+    assert_eq!(route_kinds(one.path()).get("get /hr/approve"), Some(&RouteKind::Writes));
+    assert!(route_kinds(other.path()).is_empty());
+    assert!(std::fs::read_to_string(one.path().join("explore").join("route-kinds.json")).unwrap().contains("\"reads\""));
+}
+
+#[tokio::test]
+async fn the_tool_marks_a_route_alone_or_with_a_change_and_takes_covers() {
+    let (dir, session) = started();
+    let mut none: Option<FakeBrowser> = None;
+    let body = json!({ "route_kind": { "route": "POST /hr/search", "kind": "reads" } }).to_string();
+    let (status, out) = record_change_in(&mut none, dir.path(), ORG, PROJECT, &body);
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(parsed(&out), json!("marked POST /hr/search as reads in this environment"));
+    assert!(load(dir.path(), &session).unwrap().changes.is_empty());
+
+    let (mut browser, _) = slot(signin_app(true), explore_going(&session));
+    let change = |covers: Value| {
+        json!({ "change": "changed", "record": "Cycle 1", "field": "Status", "before": "A", "after": "B",
+                "request": "POST /hr/x", "covers": covers })
+        .to_string()
+    };
+    let refused = "covers holds request lines like \"POST /path\"";
+    for bad in [json!(["/hr/x"]), json!(["POST"]), json!("POST /hr/x"), json!([5])] {
+        assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &change(bad)), (400, refused.to_string()));
+    }
+    assert!(load(dir.path(), &session).unwrap().changes.is_empty());
+
+    note_writes(dir.path(), &session, &vec![("POST".to_string(), "/hr/y?handler=Save".to_string()); 3]).unwrap();
+    let (status, out) = record_change_in(&mut browser, dir.path(), ORG, PROJECT, &change(json!(["post /hr/y?handler=Save"])));
+    assert_eq!(status, 200, "{out}");
+    let s = load(dir.path(), &session).unwrap();
+    assert_eq!(s.changes[0].covers, vec!["POST /hr/y?handler=Save".to_string()]);
+    assert!(unaccounted(&s).is_empty());
+
+    // A mark with a change: both happen.
+    let both = json!({ "route_kind": { "route": "GET /hr/z", "kind": "writes" }, "change": "changed", "record": "R",
+                       "field": "F", "after": "1" })
+    .to_string();
+    let (status, out) = record_change_in(&mut browser, dir.path(), ORG, PROJECT, &both);
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(parsed(&out)["route_kind"], "marked GET /hr/z as writes in this environment", "{out}");
+    assert_eq!(route_kinds(dir.path()).get("get /hr/z"), Some(&RouteKind::Writes));
+}
+
+#[test]
+fn a_route_mark_sent_with_a_refused_change_is_not_kept() {
+    let (dir, session) = started();
+    let with = |change: Value| {
+        let mut b = json!({ "route_kind": { "route": "POST /hr/search", "kind": "reads" } });
+        for (k, v) in change.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        b.to_string()
+    };
+    // No session going.
+    let mut none: Option<FakeBrowser> = None;
+    let body = with(json!({ "change": "changed", "record": "R", "field": "F", "after": "1" }));
+    assert_eq!(record_change_in(&mut none, dir.path(), ORG, PROJECT, &body), (409, NO_EXPLORE_SESSION.to_string()));
+    assert!(route_kinds(dir.path()).is_empty());
+    // A change that is no change.
+    let (mut browser, _) = slot(signin_app(true), explore_going(&session));
+    assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &with(json!({ "change": "made" }))).0, 400);
+    assert!(route_kinds(dir.path()).is_empty());
+    // A covers line that is no request line.
+    let bad = with(json!({ "change": "changed", "record": "R", "field": "F", "after": "1", "covers": ["x"] }));
+    assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &bad).0, 400);
+    assert!(route_kinds(dir.path()).is_empty());
+    // Taken: kept.
+    assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &body).0, 200);
+    assert_eq!(route_kinds(dir.path()).len(), 1);
 }

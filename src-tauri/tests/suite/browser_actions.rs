@@ -622,6 +622,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
         Action::Fill { selector: "s".into(), value: "v".into() },
+        serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },

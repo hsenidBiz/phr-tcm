@@ -59,6 +59,43 @@ describe("switched off", () => {
     expect(screen.getByText(/Login flow/)).toBeInTheDocument();
   });
 
+  test("a comma searches once per alternative and lists the combined hits once each", async () => {
+    const queries: string[] = [];
+    mockIPC((cmd, args) => {
+      if (cmd !== "search_pbis") return;
+      const q = (args as { query: string }).query;
+      queries.push(q);
+      const pbi = (id: number, title: string) => ({ id, title, work_item_type: "Product Backlog Item" });
+      if (q === "login") return [pbi(1, "Login flow"), pbi(3, "Shared hit")];
+      if (q === "timeout") return [pbi(2, "Timeout page"), pbi(3, "Shared hit")];
+      return [];
+    });
+    renderPicker();
+
+    const input = screen.getByLabelText("Find PBI");
+    fireEvent.change(input, { target: { value: "login, timeout" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText(/Login flow/)).toBeInTheDocument();
+    expect(await screen.findByText(/Timeout page/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Shared hit/)).toHaveLength(1);
+    expect(queries.sort()).toEqual(["login", "timeout"]);
+  });
+
+  test("when one alternative fails and another succeeds, the hits show with a note", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd !== "search_pbis") return;
+      const q = (args as { query: string }).query;
+      if (q === "bad") throw new Error("boom");
+      return [{ id: 1, title: "Login flow", work_item_type: "Product Backlog Item" }];
+    });
+    renderPicker();
+    const input = screen.getByLabelText("Find PBI");
+    fireEvent.change(input, { target: { value: "login, bad" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText(/Login flow/)).toBeInTheDocument();
+    expect(screen.getByText(/Part of the search failed/)).toBeInTheDocument();
+  });
+
   test("clicking outside dismisses the results; clicking a result still picks", async () => {
     mockIPC((cmd) => {
       if (cmd === "search_pbis")

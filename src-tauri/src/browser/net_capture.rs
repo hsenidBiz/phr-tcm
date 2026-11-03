@@ -257,6 +257,11 @@ pub struct NetCapture {
     refusal_logged: bool,
     /// How many refusals `confirm_app_site` has logged (`refusals_logged`).
     refusals_logged: u32,
+    /// `(placeholder, value)` pairs of the session values an assistant kept
+    /// through this browser (`api_templates::exec::hidden_values`). What the
+    /// capture tools return never shows them, for as long as the browser
+    /// lives: not cleared by `clear`, by a discovery ending or by a new one.
+    masked: Vec<(String, String)>,
 }
 
 impl NetCapture {
@@ -664,6 +669,21 @@ impl NetCapture {
 
     pub fn filter(&self) -> &CaptureFilter {
         &self.filter
+    }
+
+    /// Adds kept values to what this capture's answers hide.
+    pub fn mask(&mut self, pairs: &[(String, String)]) {
+        for pair in pairs {
+            if !self.masked.contains(pair) {
+                self.masked.push(pair.clone());
+            }
+        }
+        self.masked.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+    }
+
+    /// The kept values this capture's answers hide.
+    pub fn masked(&self) -> &[(String, String)] {
+        &self.masked
     }
 
     /// Forget every request and every waiting read; the filter and the

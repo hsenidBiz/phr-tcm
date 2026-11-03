@@ -1048,6 +1048,15 @@ pub fn live_holds_except(now_ms: u64, except: Option<&AgentKey>) -> Vec<LiveHold
         .collect()
 }
 
+/// How long a holder has been quiet, as the answers word it.
+pub fn quiet_words(quiet_for_s: u64) -> String {
+    if quiet_for_s < 60 {
+        "<1 min".to_string()
+    } else {
+        format!("{} min", quiet_for_s / 60)
+    }
+}
+
 /// The holds as the reset answer says them, one line each; empty with none.
 pub fn holds_note(holds: &[LiveHold]) -> String {
     if holds.is_empty() {
@@ -1061,7 +1070,7 @@ pub fn holds_note(holds: &[LiveHold]) -> String {
         } else {
             format!(", cases {}", h.cases.iter().map(i32::to_string).collect::<Vec<_>>().join(" "))
         };
-        let quiet = if h.quiet_for_s < 60 { "<1 min".to_string() } else { format!("{} min", h.quiet_for_s / 60) };
+        let quiet = quiet_words(h.quiet_for_s);
         out.push_str(&format!("\n- {} has the {} browser{account}{cases}, no call for {quiet}", h.agent, h.browser));
     }
     out

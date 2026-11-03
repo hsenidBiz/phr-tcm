@@ -80,14 +80,52 @@ pub fn step_limit(step: &Step) -> Duration {
     }
 }
 
+/// How long `step` may take in the run `req`: the call's own limit when it
+/// set one, else `step_limit`.
+fn limit_for(req: &RunRequest, step: &Step) -> Duration {
+    req.step_limit.unwrap_or_else(|| step_limit(step))
+}
+
+/// Said after a step's timeout when the page itself gave up waiting: the
+/// request went out, and the app may have finished it.
+pub const SENT_NO_ANSWER: &str =
+    "the request was sent and no answer came in time, so the app may still have processed it - check before sending it again";
+/// The same when the browser stopped answering and did not say whether the
+/// request went out.
+pub const MAYBE_SENT_NO_ANSWER: &str =
+    "the browser did not answer in time and did not say whether the request went out, so the app may have processed it - check before sending it again";
+
+/// The start of the sentence for a step that ran out of its limit.
+pub const STEP_TOO_LONG: &str = "the step took longer than ";
+
 /// The sentence for a step that ran out of `limit`.
 fn step_too_long(limit: Duration) -> String {
-    format!("the step took longer than {} seconds", limit.as_secs())
+    format!("{STEP_TOO_LONG}{} seconds", limit.as_secs())
 }
 /// How long a whole run may take once its browser is open.
 pub const RUN_LIMIT: Duration = Duration::from_secs(180);
 
 const RUN_TOO_LONG: &str = "the run took longer than 3 minutes";
+
+/// The sentence for a run that ran out of `limit`: the usual 3 minutes, or the
+/// longer limit a call's `timeout_s` asked for, in seconds.
+pub fn run_too_long(limit: Duration) -> String {
+    if limit > RUN_LIMIT {
+        format!("the run took longer than {} seconds", limit.as_secs())
+    } else {
+        RUN_TOO_LONG.to_string()
+    }
+}
+
+/// The whole-run limit for a call whose steps may take `step_limit`: room for
+/// two full steps (an unread-400 retry runs the step again) and a minute for
+/// the token page and the sign-in checks. Never below `limit`.
+pub fn run_limit_for(limit: Duration, step_limit: Option<Duration>) -> Duration {
+    match step_limit {
+        Some(step) => limit.max(step * 2 + Duration::from_secs(60)),
+        None => limit,
+    }
+}
 /// Names for the parts of a run that are not a template step, as a
 /// `StepReport` and `RunReport::failed` show them.
 const SIGN_IN: &str = "Sign in";
@@ -184,6 +222,9 @@ pub struct PageAnswer {
     /// The body reached `ANSWER_LIMIT_CHARS`: the page stops reading there,
     /// so there may be more.
     pub cut: bool,
+    /// The path the last request ended on (no host, no query), when the
+    /// page said: a redirect shows in it. A postback does not say.
+    pub final_path: Option<String>,
 }
 
 /// A one-off run: the report, the last answer, and where the token was.
@@ -201,6 +242,9 @@ pub struct InPage {
     /// answer before it (`true`) or loaded its page fresh (`false`); `None`
     /// when no postback was answered.
     pub postback_carried: Option<bool>,
+    /// The values `RunRequest::keep` found in the answer, by name. In memory
+    /// only: the caller keeps them and never answers them.
+    pub kept: BTreeMap<String, Value>,
 }
 
 /// How much of an answer's body `FETCH_FN` reads back.
@@ -209,7 +253,7 @@ pub const ANSWER_LIMIT_CHARS: usize = 65_536;
 /// application: nothing was sent.
 pub const OFF_THE_APP: &str = "the explore browser is not on this project's application, so nothing was sent - go back to the app first";
 /// The report's sentence for a POST on a page with no anti-forgery token.
-pub const NO_TOKEN_HERE: &str = "this page has no anti-forgery token, so the POST was not sent - open a page of the app with a form on it, or name one in antiforgery_page";
+pub const NO_TOKEN_HERE: &str = "this page has no anti-forgery token, so the POST was not sent - name a page with one in antiforgery_page";
 /// The report's sentence for a named token page that sent the browser to
 /// another page: the session's sign-in has ended, and this is not the
 /// place to start another.
@@ -224,6 +268,13 @@ pub struct RunRequest {
     pub values: serde_json::Map<String, Value>,
     pub mode: Mode,
     pub template: ApiTemplate,
+    /// How long one step may take, for every step of the run, when the call
+    /// asked for its own limit (a one-off's `timeout_s`); none keeps
+    /// `step_limit`.
+    pub step_limit: Option<Duration>,
+    /// Values to keep from a one-off's answer: name -> capture path. The run
+    /// reads them (`InPage::kept`) and hides them from its own records.
+    pub keep: BTreeMap<String, String>,
 }
 
 /// One step's result. Also used for the parts of a run that come before
@@ -494,6 +545,8 @@ struct Progress {
     token_found: bool,
     /// See `InPage::postback_carried`.
     postback_carried: Option<bool>,
+    /// See `InPage::kept`.
+    kept: BTreeMap<String, Value>,
 }
 
 impl Progress {
@@ -513,6 +566,7 @@ impl Progress {
             token_page: None,
             token_found: false,
             postback_carried: None,
+            kept: BTreeMap::new(),
         }
     }
 
@@ -1024,14 +1078,18 @@ pub async fn run_in_page<D: Driver>(
             ctx.in_page = Some(token_page);
             let timed = tokio::time::timeout(limit, run_signed_in(d, &ctx, retry_pauses, &mut progress)).await;
             if timed.is_err() && progress.failed.is_none() {
-                progress.fail(None, RUN_TOO_LONG);
+                // Cut off while a template step was out: the request may have gone out.
+                let in_a_step = ![SIGN_IN, TOKEN_PAGE, BROWSER].contains(&progress.phase.as_str());
+                let said = run_too_long(limit);
+                progress.fail(None, if in_a_step { format!("{said}: {MAYBE_SENT_NO_ANSWER}") } else { said });
             }
             d.set_deadline(None);
         }
     }
     let (answer, token_page, token_found) = (progress.answer.take(), progress.token_page.take(), progress.token_found);
     let postback_carried = progress.postback_carried;
-    InPage { report: finish(req, progress), answer, token_page, token_found, postback_carried }
+    let kept = std::mem::take(&mut progress.kept);
+    InPage { report: finish(req, progress), answer, token_page, token_found, postback_carried, kept }
 }
 
 /// `run_in_session`'s run, before its report: what it did, and whether it
@@ -1123,7 +1181,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
         };
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
-        d.set_deadline(Some(Instant::now() + step_limit(step)));
+        d.set_deadline(Some(Instant::now() + limit_for(req, step)));
         let mut result =
             run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, &mut carry, 1).await;
         d.set_deadline(None);
@@ -1163,7 +1221,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
             let Some((fresh_doc, fresh_token)) = self::token(d, ctx, progress, false).await else { return };
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
-            d.set_deadline(Some(Instant::now() + step_limit(step)));
+            d.set_deadline(Some(Instant::now() + limit_for(req, step)));
             result =
                 run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, &mut carry, attempt)
                     .await;
@@ -1418,9 +1476,14 @@ async fn page_address<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progre
 /// A browser call that failed, as the person reads it; the raw error goes
 /// to the app log.
 fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
-    applog::warn(format!("api template {}: step {}: {e}", ctx.id(), step.name));
+    applog::warn(format!(
+        "api template {}: step {}: {}",
+        ctx.id(),
+        step.name,
+        super::exec::hide_text(&e.to_string(), &hide_of(ctx))
+    ));
     match e {
-        CdpError::Timeout { .. } => step_too_long(step_limit(step)),
+        CdpError::Timeout { .. } => format!("{}: {MAYBE_SENT_NO_ANSWER}", step_too_long(limit_for(ctx.req, step))),
         _ => "the browser did not answer while sending this step - see Settings, Logs".to_string(),
     }
 }
@@ -1485,6 +1548,7 @@ async fn run_step<D: Driver>(
     if step.is_postback() {
         return run_postback(d, ctx, doc, token, step, vars, progress, carry, attempt).await;
     }
+    let hide0 = hide_of(ctx);
     let files = step_files(ctx, step).map_err(|e| (None, e))?;
     let mut built = build_request(step, vars, &files).map_err(|e| (None, e))?;
     drop(files);
@@ -1498,7 +1562,7 @@ async fn run_step<D: Driver>(
     let started = Instant::now();
     // The page aborts its own request at the step's limit; the DevTools
     // call waits a little longer, so it is the page that says so.
-    let limit = step_limit(step);
+    let limit = limit_for(ctx.req, step);
     let limit_ms = Value::from(limit.as_millis() as u64);
     let answer =
         call_value_within(d, doc, FETCH_FN, &[wire, Value::String(token.to_string()), limit_ms], limit + FETCH_GRACE)
@@ -1517,23 +1581,35 @@ async fn run_step<D: Driver>(
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
-            record(ctx, step, &built, handler, &sent, token);
+            record(ctx, step, &built, handler, &sent, token, &hide0);
             return Err((None, browser_failed(ctx, step, &e)).into());
         }
     };
     let status = answer["status"].as_u64().and_then(|s| u16::try_from(s).ok());
     let text = answer["text"].as_str().unwrap_or("");
-    record(ctx, step, &built, handler, &Sent { status, response: text, content_type: answer["contentType"].as_str(), ..sent }, token);
+    // What the call asked to keep is read from the answer now, so the record
+    // below, the log and every sentence hide it with the values already kept.
+    let found = keep_found(&ctx.req.keep, text);
+    // Held even when the step then fails, so the caller hides it from the answer.
+    progress.kept.extend(found.clone());
+    let hide = {
+        let mut all = ctx.req.values.clone();
+        for (name, value) in &found {
+            all.insert(format!("{}{name}", super::exec::VAR_PREFIX), value.clone());
+        }
+        super::exec::hidden_values(&all)
+    };
+    record(ctx, step, &built, handler, &Sent { status, response: text, content_type: answer["contentType"].as_str(), ..sent }, token, &hide);
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
-            return Err((None, step_too_long(limit)).into());
+            return Err((None, format!("{}: {SENT_NO_ANSWER}", step_too_long(limit))).into());
         }
         applog::warn(format!(
             "api template {}: step {}: the request did not complete: {}",
             ctx.id(),
             step.name,
-            excerpt(&scrub_tokens(&plain(err), Some(token)))
+            excerpt(&scrub_tokens(&super::exec::hide_text(&plain(err), &hide), Some(token)))
         ));
         return Err((None, "the request did not complete - see Settings, Logs".to_string()).into());
     }
@@ -1553,6 +1629,7 @@ async fn run_step<D: Driver>(
             content_type: answer["contentType"].as_str().filter(|c| !c.is_empty()).map(str::to_string),
             body: scrub_tokens(text, Some(token)),
             cut: text.encode_utf16().count() >= ANSWER_LIMIT_CHARS,
+            final_path: answer["finalUrl"].as_str().filter(|u| !u.is_empty()).map(path_of),
         });
     }
 
@@ -1602,10 +1679,13 @@ async fn run_step<D: Driver>(
         // the password that was posted), then the token scrub.
         let (e, shown) = if explore {
             let content_type = answer["contentType"].as_str();
-            let hidden = redact_body(content_type, text);
-            (scrub_tokens(&redact_body(None, &e), Some(token)), self::shown(&hidden, token))
+            let hidden = redact_body(content_type, &super::exec::hide_text(text, &hide));
+            (
+                scrub_tokens(&redact_body(None, &super::exec::hide_text(&e, &hide)), Some(token)),
+                self::shown(&hidden, token, &hide),
+            )
         } else {
-            (scrub_tokens(&e, Some(token)), shown(text, token))
+            (scrub_tokens(&super::exec::hide_text(&e, &hide), Some(token)), shown(text, token, &hide))
         };
         let detail = if shown.is_empty() { e } else { format!("{e} - the response began: {shown}") };
         (Some(status), detail)
@@ -1619,7 +1699,9 @@ async fn run_step<D: Driver>(
         };
         // Later steps get what was captured; the report - and everything
         // built from it - only ever gets it without a token in it.
-        progress.created.insert(name.clone(), scrub_value(&value, Some(token)));
+        let mut shown_value = scrub_value(&value, Some(token));
+        super::exec::hide_json(&mut shown_value, &hide);
+        progress.created.insert(name.clone(), shown_value);
         vars.insert(name.clone(), value);
         got.push(name.as_str());
     }
@@ -1631,6 +1713,27 @@ async fn run_step<D: Driver>(
         detail.push_str(&format!(", captured {}", got.join(", ")));
     }
     Ok((status, detail))
+}
+
+/// The values a call's `keep` finds in a JSON answer: name -> value, for
+/// each path that finds a string, number, boolean or list. A name whose path
+/// finds nothing (or an object) is left out.
+fn keep_found(keep: &BTreeMap<String, String>, text: &str) -> BTreeMap<String, Value> {
+    let mut out = BTreeMap::new();
+    if keep.is_empty() {
+        return out;
+    }
+    let Ok(body) = serde_json::from_str::<Value>(text) else { return out };
+    for (name, path) in keep {
+        let Ok(segs) = parse_capture_path(path) else { continue };
+        match capture(&body, &segs) {
+            Some(v) if !v.is_object() && !v.is_null() => {
+                out.insert(name.clone(), v);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// One postback step: the page sends it (`POSTBACK_FN`) from the page it
@@ -1672,7 +1775,7 @@ async fn run_postback<D: Driver>(
     let button = step.postback.as_ref().map(|p| p.button.clone()).unwrap_or_default();
 
     let started = Instant::now();
-    let limit = step_limit(step);
+    let limit = limit_for(ctx.req, step);
     let args = [
         wire,
         Value::from(limit.as_millis() as u64),
@@ -1696,7 +1799,10 @@ async fn run_postback<D: Driver>(
     };
     // What an error says goes to the log with no address, token or page
     // state in it.
-    let logged = |what: &str| excerpt(&scrub_tokens(&scrub_page_state(&without_hosts(what)), Some(token)));
+    let hide = hide_of(ctx);
+    let logged = |what: &str| {
+        excerpt(&scrub_tokens(&scrub_page_state(&without_hosts(&super::exec::hide_text(what, &hide))), Some(token)))
+    };
 
     let raw = match raw {
         Ok(v) => v,
@@ -1745,7 +1851,10 @@ async fn run_postback<D: Driver>(
         Some(Reply::Refused { why, status, count, names }) => {
             return Err(StepFailure {
                 status: None,
-                detail: refusal_sentence(why, &req.url, &button, status, count, &names),
+                detail: super::exec::hide_text(
+                    &refusal_sentence(why, &req.url, &button, status, count, &names),
+                    &hide_of(ctx),
+                ),
                 unread: false,
                 session_ended: why == Refusal::SignedOut,
                 posted: false,
@@ -1763,6 +1872,7 @@ async fn run_postback<D: Driver>(
             content_type: a.content_type.clone().filter(|c| !c.is_empty()),
             body: kept.clone(),
             cut: a.cut,
+            final_path: None,
         });
     }
     note(&Sent { status: Some(a.status), content_type: a.content_type.as_deref(), ..sent }, Some(&a), &kept);
@@ -1795,12 +1905,12 @@ async fn run_postback<D: Driver>(
             // value) and an address: all lose tokens, page state and hosts;
             // a one-off's is redacted like its other answers. The excerpt is
             // the answer's, and is redacted the same way.
-            let why = without_hosts(&scrub_tokens(&scrub_page_state(&why), Some(token)));
+            let why = without_hosts(&scrub_tokens(&scrub_page_state(&super::exec::hide_text(&why, &hide)), Some(token)));
             let why = if matches!(ctx.req.mode, Mode::Explore) { redact_body(None, &why) } else { why };
             let began = if matches!(ctx.req.mode, Mode::Explore) {
-                shown(&redact_body(a.content_type.as_deref(), &kept), token)
+                shown(&redact_body(a.content_type.as_deref(), &kept), token, &hide_of(ctx))
             } else {
-                shown(&kept, token)
+                shown(&kept, token, &hide_of(ctx))
             };
             let detail = if began.is_empty() { why } else { format!("{why} - the response began: {began}") };
             Err((Some(a.status), detail).into())
@@ -1808,7 +1918,9 @@ async fn run_postback<D: Driver>(
         Verdict::Pass { detail, captured } => {
             carry.carried_to(&a.final_key);
             for (name, value) in captured {
-                progress.created.insert(name.clone(), scrub_value(&Value::String(value.clone()), Some(token)));
+                let mut shown_value = scrub_value(&Value::String(value.clone()), Some(token));
+                super::exec::hide_json(&mut shown_value, &hide_of(ctx));
+                progress.created.insert(name.clone(), shown_value);
                 vars.insert(name, Value::String(value));
             }
             Ok((a.status, detail))
@@ -1835,7 +1947,13 @@ fn record_postback(
     let explore = matches!(ctx.req.mode, Mode::Explore);
     let body = sent_body(req, answered);
     let (request, response) = if explore {
-        (redact_body(None, &body), redact_body(sent.content_type, excerpt_text))
+        {
+        let hide = hide_of(ctx);
+        (
+            redact_body(None, &super::exec::hide_text(&body, &hide)),
+            redact_body(sent.content_type, &super::exec::hide_text(excerpt_text, &hide)),
+        )
+    }
     } else {
         (body, excerpt_text.to_string())
     };
@@ -1848,14 +1966,14 @@ fn record_postback(
             "origin": ctx.origin,
             "step": step.name,
             "method": "POST",
-            "url": if explore { redact_body(None, &req.url) } else { req.url.clone() },
+            "url": if explore { redact_body(None, &super::exec::hide_text(&req.url, &hide_of(ctx))) } else { req.url.clone() },
             "handler": button,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
-            "request": shown(&request, token),
-            "response": shown(&response, token),
+            "request": shown(&request, token, &hide_of(ctx)),
+            "response": shown(&response, token, &hide_of(ctx)),
             "cookies_sent": sent.cookies,
-            "path_case_adapted": sent.path_case_adapted,
+            "path_case_adapted": hidden_json(sent.path_case_adapted, &hide_of(ctx)),
             "attempt": sent.attempt,
             "postback": { "button": button, "carried": answered.map(|a| a.carried), "carry": carry_mode },
         }),
@@ -1865,8 +1983,23 @@ fn record_postback(
 /// A request or response body as a record or a sentence shows it: every
 /// anti-forgery token taken out (`scrub_tokens`) BEFORE the 500-character
 /// excerpt, so the cap can never leave half a token showing.
-fn shown(body: &str, token: &str) -> String {
-    excerpt(&scrub_tokens(&scrub_page_state(body), Some(token)))
+/// Kept values are hidden FIRST, so the cap can never leave half of one.
+fn shown(body: &str, token: &str, hide: &[(String, String)]) -> String {
+    excerpt(&scrub_tokens(&scrub_page_state(&super::exec::hide_text(body, hide)), Some(token)))
+}
+
+/// `v` with the hidden values taken out of its strings.
+fn hidden_json(v: Option<&Value>, hide: &[(String, String)]) -> Option<Value> {
+    v.map(|v| {
+        let mut v = v.clone();
+        super::exec::hide_json(&mut v, hide);
+        v
+    })
+}
+
+/// The kept values a run's `values` carry (`var.*`), to hide.
+fn hide_of(ctx: &Ctx<'_>) -> Vec<(String, String)> {
+    super::exec::hidden_values(&ctx.req.values)
 }
 
 /// What came of one request, for its activity record.
@@ -1892,12 +2025,23 @@ struct Sent<'a> {
 /// one the runner read is not in `built`, and both bodies go through
 /// `shown`, which takes out that one and any other a page carries. Never
 /// a cookie value either: only the names the browser would send.
-fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Option<&str>, sent: &Sent<'_>, token: &str) {
+fn record(
+    ctx: &Ctx<'_>,
+    step: &Step,
+    built: &exec::BuiltRequest,
+    handler: Option<&str>,
+    sent: &Sent<'_>,
+    token: &str,
+    hide: &[(String, String)],
+) {
     // A one-off is the person's own call, with whatever it carries: its
     // bodies are redacted as the captured requests are before they show.
     let explore = matches!(ctx.req.mode, Mode::Explore);
     let (request, response) = if explore {
-        (redact_body(None, &body_text(&built.body)), redact_body(sent.content_type, sent.response))
+        (
+            redact_body(None, &super::exec::hide_text(&body_text(&built.body), hide)),
+            redact_body(sent.content_type, &super::exec::hide_text(sent.response, hide)),
+        )
     } else {
         (body_text(&built.body), sent.response.to_string())
     };
@@ -1910,14 +2054,14 @@ fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Optio
             "origin": ctx.origin,
             "step": step.name,
             "method": method_name(built.method),
-            "url": if explore { redact_body(None, &built.url) } else { built.url.clone() },
+            "url": if explore { redact_body(None, &super::exec::hide_text(&built.url, hide)) } else { built.url.clone() },
             "handler": handler,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
-            "request": shown(&request, token),
-            "response": shown(&response, token),
+            "request": shown(&request, token, hide),
+            "response": shown(&response, token, hide),
             "cookies_sent": sent.cookies,
-            "path_case_adapted": sent.path_case_adapted,
+            "path_case_adapted": hidden_json(sent.path_case_adapted, hide),
             "attempt": sent.attempt,
         }),
     );
@@ -1988,21 +2132,27 @@ async fn adapt_path_case<D: Driver>(
     let cookie = case_blind_cookies(&jar, host, &from).into_iter().max_by_key(|c| c.path.len())?.clone();
     let to = in_cookie_case(&from, &cookie.path);
     if let Some(kept) = lost_by_adapting(&jar, host, &from, &to) {
+        let hide = hide_of(ctx);
         applog::warn(format!(
-            "api template {}: step {}: sent {from} as written - {to} would carry the cookie {} but lose {} on {}",
+            "api template {}: step {}: sent {} as written - {} would carry the cookie {} but lose {} on {}",
             ctx.id(),
             step.name,
+            super::exec::hide_text(&from, &hide),
+            super::exec::hide_text(&to, &hide),
             cookie.name,
             kept.name,
             kept.path
         ));
         return None;
     }
+    let hide = hide_of(ctx);
     applog::info(format!(
-        "api template {}: step {}: sent {to} rather than {from} - the application keeps its cookie {} on {}, \
+        "api template {}: step {}: sent {} rather than {} - the application keeps its cookie {} on {}, \
          and cookie paths are case-sensitive",
         ctx.id(),
         step.name,
+        super::exec::hide_text(&to, &hide),
+        super::exec::hide_text(&from, &hide),
         cookie.name,
         cookie.path
     ));

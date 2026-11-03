@@ -200,3 +200,140 @@ fn a_hover_has_its_example() {
     let example = example_for("hover").expect("hover has an example");
     assert!(example.contains(r#""kind":"hover""#), "{example}");
 }
+
+// ---- unknown keys (backlog 87) -------------------------------------------
+
+/// A key an action's kind does not have is named, with the ones it has; a
+/// nested action's too. Nothing is flagged for a key the kind does take.
+#[test]
+fn unknown_keys_are_named() {
+    use v2_lib::autorun::action_help::{refuse_unknown_keys, unknown_keys};
+    let stray = json!({ "kind": "click", "selector": "#a", "foo": 1 });
+    assert_eq!(unknown_keys(&stray), vec!["foo".to_string()]);
+    let said = refuse_unknown_keys(&stray).unwrap_err();
+    assert_eq!(said, "click does not take foo - it takes: selector");
+
+    let nested = json!({ "kind": "when_visible", "selector": "#b", "then": [
+        { "kind": "click", "selector": "#c", "force": true, "speed": 2 }
+    ] });
+    assert_eq!(unknown_keys(&nested), vec!["force".to_string(), "speed".to_string()]);
+    let said = refuse_unknown_keys(&nested).unwrap_err();
+    assert_eq!(said, "click does not take force, speed - it takes: selector");
+
+    let fine = json!({ "kind": "when_visible", "selector": "#b", "within_ms": 10, "then": [
+        { "kind": "click", "selector": "#c" }
+    ] });
+    assert!(unknown_keys(&fine).is_empty());
+    assert!(refuse_unknown_keys(&fine).is_ok());
+    // Not an object, or no kind it knows: nothing to compare with.
+    assert!(unknown_keys(&json!("click")).is_empty());
+    assert!(unknown_keys(&json!({ "kind": "zzz", "a": 1 })).is_empty());
+}
+
+/// The fields of a kind come from the type itself: `press_key` has `key`
+/// and `times`, and every example in the table is free of unknown keys.
+#[test]
+fn press_key_fields_come_from_the_type() {
+    use v2_lib::autorun::action_help::{fields_of, unknown_keys};
+    assert_eq!(fields_of("press_key"), Some(vec!["key".to_string(), "times".to_string()]));
+    assert_eq!(fields_of("select_option"), Some(vec![
+        "selector".to_string(), "label".to_string(), "value".to_string(), "within_ms".to_string()
+    ]));
+    assert_eq!(fields_of("nonsense"), None);
+    for kind in kinds() {
+        let example: serde_json::Value = serde_json::from_str(example_for(kind).unwrap()).unwrap();
+        assert!(unknown_keys(&example).is_empty(), "{kind}: {:?}", unknown_keys(&example));
+        // The three that gather other keys themselves refuse them when validated.
+        let reads_its_own = ["expect_response", "api_request", "expect_download"].contains(&kind);
+        assert_eq!(fields_of(kind).is_none(), reads_its_own, "{kind}");
+    }
+}
+
+/// `screenshot` is a discovery action, read before any action is: only
+/// `full_page` goes with it, and a saved script is told why it cannot hold one.
+#[test]
+fn a_screenshot_is_read_as_a_discovery_action_and_never_saved() {
+    use v2_lib::autorun::action_help::{refuse_raw_saved_action, screenshot_ask, screenshot_from};
+    let plain = screenshot_from(&json!({ "kind": "screenshot" })).expect("recognised").expect("read");
+    assert_eq!(screenshot_ask(&plain), Some(false));
+    let full = screenshot_from(&json!({ "kind": "screenshot", "full_page": true })).unwrap().unwrap();
+    assert_eq!(screenshot_ask(&full), Some(true));
+    assert_eq!(screenshot_ask(&Action::Reload), None);
+    assert!(screenshot_from(&json!({ "kind": "click", "selector": "#a" })).is_none());
+
+    let stray = screenshot_from(&json!({ "kind": "screenshot", "zoom": 2 })).unwrap().unwrap_err();
+    assert_eq!(stray, "screenshot does not take zoom - it takes: full_page");
+    let bad = screenshot_from(&json!({ "kind": "screenshot", "full_page": "yes" })).unwrap().unwrap_err();
+    assert!(bad.contains("full_page"), "{bad}");
+
+    let saved = refuse_raw_saved_action(&json!({ "kind": "screenshot" })).unwrap_err();
+    assert_eq!(saved, "screenshot is a discovery action: a saved script takes its pictures when a step fails");
+    let inside = json!({ "kind": "when_visible", "selector": "#b", "then": [{ "kind": "screenshot" }] });
+    assert_eq!(refuse_raw_saved_action(&inside).unwrap_err(), saved);
+    let said = refusal_for(&json!({ "kind": "screenshot" }), "unknown variant `screenshot`");
+    assert!(said.starts_with("screenshot is a discovery action"), "{said}");
+}
+
+/// `repeat` on a `press_key` is `times`, said so; both together are refused.
+#[test]
+fn repeat_on_a_press_key_is_moved_to_times() {
+    use v2_lib::autorun::action_help::prepare_repeat;
+    let mut raw = json!({ "kind": "press_key", "key": "Tab", "repeat": 12 });
+    let notes = prepare_repeat(&mut raw).expect("accepted");
+    assert_eq!(raw, json!({ "kind": "press_key", "key": "Tab", "times": 12 }));
+    assert_eq!(notes, vec!["repeat read as times".to_string()]);
+    let mut nested = json!({ "kind": "when_visible", "selector": "#b", "then": [
+        { "kind": "press_key", "key": "Tab", "repeat": 3 }
+    ] });
+    prepare_repeat(&mut nested).expect("accepted");
+    assert_eq!(nested["then"][0]["times"], 3);
+    let mut both = json!({ "kind": "press_key", "key": "Tab", "times": 2, "repeat": 3 });
+    assert_eq!(prepare_repeat(&mut both).unwrap_err(), "press_key takes times or repeat, not both");
+    // Any other kind keeps its keys: `repeat` there is an unknown key.
+    let mut other = json!({ "kind": "click", "selector": "#a", "repeat": 3 });
+    assert!(prepare_repeat(&mut other).expect("untouched").is_empty());
+    assert_eq!(other["repeat"], 3);
+}
+
+/// Backlog 86 fix: a whole-page picture asks for the page's own size as a
+/// clip, as Playwright does; the window one carries neither.
+#[test]
+fn a_full_page_picture_carries_the_pages_size_as_a_clip() {
+    use v2_lib::browser::page::{full_page_size, screenshot_params_full};
+    let plain = screenshot_params_full(false, None);
+    assert!(plain.get("captureBeyondViewport").is_none() && plain.get("clip").is_none(), "{plain}");
+    let sized = screenshot_params_full(true, Some((1280.0, 4200.0)));
+    assert_eq!(sized["captureBeyondViewport"], true);
+    assert_eq!(sized["clip"], json!({ "x": 0, "y": 0, "width": 1280.0, "height": 4200.0, "scale": 1 }));
+    // Size unknown: still asked beyond the window, with no clip.
+    let unknown = screenshot_params_full(true, None);
+    assert_eq!(unknown["captureBeyondViewport"], true);
+    assert!(unknown.get("clip").is_none());
+    // The size is the CSS content size, else the content size; nothing for 0.
+    assert_eq!(full_page_size(&json!({ "cssContentSize": { "width": 10.0, "height": 20.0 } })), Some((10.0, 20.0)));
+    assert_eq!(full_page_size(&json!({ "contentSize": { "width": 5.0, "height": 6.0 } })), Some((5.0, 6.0)));
+    assert_eq!(full_page_size(&json!({ "cssContentSize": { "width": 0.0, "height": 20.0 } })), None);
+    assert_eq!(full_page_size(&json!({})), None);
+}
+
+/// A saved script can never carry the stand-in for a screenshot.
+#[test]
+fn a_saved_script_cannot_carry_the_screenshot_marker() {
+    use v2_lib::autorun::action_help::{refuse_raw_saved_action, screenshot_action};
+    for full in [false, true] {
+        let marked = serde_json::to_value(screenshot_action(full)).unwrap();
+        assert_eq!(refuse_raw_saved_action(&marked).unwrap_err(), "check_text cannot carry that value");
+        let nested = json!({ "kind": "when_visible", "selector": "#b", "then": [marked] });
+        assert!(refuse_raw_saved_action(&nested).is_err());
+    }
+    assert!(refuse_raw_saved_action(&json!({ "kind": "check_text", "value": "Saved" })).is_ok());
+}
+
+/// The kinds an unknown-kind refusal lists include the discovery's screenshot.
+#[test]
+fn the_refusal_for_an_unknown_kind_lists_screenshot() {
+    let said = refusal_for(&json!({ "kind": "zzz" }), "unknown variant");
+    assert!(said.contains("screenshot"), "{said}");
+    // `kinds()` stays the script vocabulary: a screenshot is never saved.
+    assert!(!kinds().contains(&"screenshot"));
+}

@@ -4,7 +4,9 @@
 
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use v2_lib::api_templates::one_off::{body_field_names, derived_id, derived_title, same_call, sends_a_secret};
+use v2_lib::api_templates::one_off::{
+    body_field_names, derived_id, derived_title, is_sign_in_answer, no_token_here, same_call, sends_a_secret, token_pages,
+};
 use v2_lib::api_templates::{ApiTemplate, Step};
 
 fn step(v: Value) -> Step {
@@ -369,4 +371,166 @@ fn a_delete_argument_makes_a_postback_a_delete() {
     let sort = json!({ "step": { "postback": { "page": "/Perf/Eval.aspx", "button": "gvItems", "argument": "Sort$Name" } },
                        "effect": "edit" });
     assert!(parse(&sort.to_string()).is_ok());
+}
+
+#[test]
+fn parse_reads_save_and_timeout() {
+    use v2_lib::api_templates::one_off::parse;
+    let get = |extra: Value| {
+        let mut body = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        parse(&body.to_string())
+    };
+    let plain = get(json!({})).unwrap();
+    assert!(plain.save, "absent means save");
+    assert_eq!(plain.timeout_s, None);
+    let asked = get(json!({ "save": false, "timeout_s": 90 })).unwrap();
+    assert!(!asked.save);
+    assert_eq!(asked.timeout_s, Some(90));
+    assert_eq!(get(json!({ "timeout_s": 5 })).unwrap().timeout_s, Some(5));
+    assert_eq!(get(json!({ "timeout_s": 180 })).unwrap().timeout_s, Some(180));
+    assert_eq!(get(json!({ "save": "no" })).unwrap_err(), (400, "save is true or false".to_string()));
+}
+
+#[test]
+fn timeout_s_out_of_range_is_refused() {
+    use v2_lib::api_templates::one_off::parse;
+    for bad in [json!(4), json!(181), json!("x"), json!(12.5), json!(-3), json!(true)] {
+        let body = json!({ "step": { "method": "GET", "path": "/hr/x" }, "timeout_s": bad });
+        assert_eq!(
+            parse(&body.to_string()).unwrap_err(),
+            (400, "timeout_s is a whole number of seconds from 5 to 180".to_string()),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn same_route_ignores_the_body_but_not_the_query_keys() {
+    use v2_lib::api_templates::one_off::same_route;
+    let t = saved(
+        "create",
+        json!({ "name": "r", "method": "POST", "path": "/hr/x/{{id}}", "query": { "handler": "Save" },
+                "json": { "a": 1 } }),
+    );
+    // Other body fields: still the same route (same_call would say no).
+    let other_body = step(json!({ "method": "POST", "path": "/HR/x/12", "query": { "handler": "save" },
+                                  "json": { "z": 3, "y": 4 } }));
+    assert!(same_route(&t, &other_body));
+    assert!(!same_call(&t, &other_body));
+    // A different query key, handler, method or path is another route.
+    let extra_key = step(json!({ "method": "POST", "path": "/hr/x/12", "query": { "handler": "Save", "q": "1" },
+                                 "json": { "a": 1 } }));
+    assert!(!same_route(&t, &extra_key));
+    let handler = step(json!({ "method": "POST", "path": "/hr/x/12", "query": { "handler": "Publish" }, "json": { "a": 1 } }));
+    assert!(!same_route(&t, &handler));
+    let method = step(json!({ "method": "GET", "path": "/hr/x/12", "query": { "handler": "Save" } }));
+    assert!(!same_route(&t, &method));
+    let path = step(json!({ "method": "POST", "path": "/hr/y/12", "query": { "handler": "Save" }, "json": { "a": 1 } }));
+    assert!(!same_route(&t, &path));
+}
+
+#[test]
+fn parse_reads_keep() {
+    use v2_lib::api_templates::one_off::parse;
+    let get = |keep: Value| {
+        let body = json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": keep });
+        parse(&body.to_string())
+    };
+    assert!(get(json!(null)).unwrap().keep.is_empty());
+    let one = get(json!({ "token": "$.Token", "Row_2": "$.a[?(@.n=='x')].id" })).unwrap();
+    assert_eq!(one.keep.get("token").map(String::as_str), Some("$.Token"));
+    assert_eq!(one.keep.len(), 2);
+    let forty = "a".repeat(40);
+    assert!(get(json!({ forty: "$.a" })).is_ok());
+    for bad in [json!({ "1a": "$.a" }), json!({ "a-b": "$.a" }), json!({ "a".repeat(41): "$.a" }), json!({ "": "$.a" })] {
+        let (status, why) = get(bad.clone()).unwrap_err();
+        assert_eq!(status, 400, "{bad}");
+        assert!(why.contains("keep"), "{why}");
+    }
+    let (status, why) = get(json!({ "t": "Token" })).unwrap_err();
+    assert_eq!((status, why.contains("Token")), (400, true), "{why}");
+    assert_eq!(get(json!("x")).unwrap_err().0, 400);
+    assert_eq!(get(json!({ "t": 5 })).unwrap_err().0, 400);
+}
+
+#[test]
+fn hiding_replaces_long_values_with_their_names_and_leaves_short_ones() {
+    use v2_lib::api_templates::exec::{hidden_values, hide_json, hide_text};
+    let mut values = serde_json::Map::new();
+    values.insert("var.token".into(), json!("abcdefghij"));
+    values.insert("var.short".into(), json!("abc"));
+    values.insert("var.quoted".into(), json!("say \"hello\" now"));
+    values.insert("plain".into(), json!("abcdefghij-not-kept"));
+    let hide = hidden_values(&values);
+    assert_eq!(hide_text("t=abcdefghij;abc", &hide), "t={{var.token}};abc");
+    assert_eq!(hide_text(r#"{"m":"say \"hello\" now"}"#, &hide), r#"{"m":"{{var.quoted}}"}"#);
+    // A form encodes a space as + and a slash as %2F.
+    let mut spaced = serde_json::Map::new();
+    spaced.insert("var.p".into(), json!("a b/c d/e f"));
+    assert_eq!(hide_text("x=a+b%2Fc+d%2Fe+f&y=1", &hidden_values(&spaced)), "x={{var.p}}&y=1");
+    let mut v = json!({ "a": ["abcdefghij"], "b": { "c": "x abcdefghij y" }, "n": 5 });
+    hide_json(&mut v, &hide);
+    assert_eq!(v, json!({ "a": ["{{var.token}}"], "b": { "c": "x {{var.token}} y" }, "n": 5 }));
+}
+
+fn on_page(id: &str, page: &str) -> v2_lib::api_templates::store::SavedTemplate {
+    let mut t = saved("read", json!({ "name": "r", "method": "GET", "path": "/hr/x" }));
+    t.id = id.to_string();
+    t.antiforgery.page = page.to_string();
+    v2_lib::api_templates::store::SavedTemplate { template: t, runs: vec![] }
+}
+
+#[test]
+fn token_pages_are_distinct_most_used_first_paths_only() {
+    let all = vec![
+        on_page("a", "/zeta"),
+        on_page("b", "/beta?mode=create"),
+        on_page("c", "https://hr.example.internal/beta?mode=create"),
+        on_page("d", "/alpha"),
+        on_page("e", "/zeta"),
+        on_page("f", "/solo"),
+        on_page("g", ""),
+    ];
+    assert_eq!(token_pages(&all), vec!["/beta?mode=create", "/zeta", "/alpha", "/solo"]);
+    assert!(token_pages(&[]).is_empty());
+    for page in token_pages(&all) {
+        assert!(!page.contains("://") && !page.contains("example"), "{page}");
+    }
+}
+
+#[test]
+fn no_token_here_names_up_to_three_pages_or_none() {
+    let head = "this page has no anti-forgery token, so the POST was not sent - name a page with one in antiforgery_page";
+    assert_eq!(no_token_here(&[]), format!("{head}; no saved template names one yet"));
+    let some = |n: usize| ["/a", "/b", "/c", "/d"][..n].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(no_token_here(&some(1)), format!("{head}; this project's templates use: /a"));
+    assert_eq!(no_token_here(&some(4)), format!("{head}; this project's templates use: /a, /b, /c"));
+}
+
+#[test]
+fn is_sign_in_answer_cases() {
+    let html = Some("text/html; charset=utf-8");
+    let form = r#"<form><input name="u"><input id="p" TYPE='Password'></form>"#;
+    // Ended on the sign-in page's path (a start path that is not the root).
+    assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login")));
+    // Redirected to another page that has a password input.
+    assert!(is_sign_in_answer(Some("/account/in"), html, form, "/hr/x", Some("/")));
+    assert!(is_sign_in_answer(Some("/"), html, form, "/hr/x", Some("/")));
+    // The site root as the start page alone is not enough: a save that redirects home.
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
+    // A page with a password field that answers in place (change password) is an answer.
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
+    assert!(!is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None));
+    // A redirect to the same page is not a move.
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
+    // The sign-in page asked for on purpose is not a signed-out account.
+    assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login")));
+    // JSON, a text field, or an attribute that only ends in type is not a sign-in page.
+    assert!(!is_sign_in_answer(Some("/a"), Some("application/json"), form, "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input data-type="password">"#, "/hr/x", Some("/")));
 }

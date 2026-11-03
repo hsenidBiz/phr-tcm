@@ -158,6 +158,8 @@ pub(crate) fn opened_for_discovery() -> Option<DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
+        signed_out: false,
     })
 }
 
@@ -174,6 +176,8 @@ pub(crate) fn exploring(area: &str) -> Option<DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
+        signed_out: false,
     })
 }
 
@@ -1380,6 +1384,8 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
+        signed_out: false,
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
@@ -6214,4 +6220,131 @@ fn every_failed_outcome_for_an_offscreen_target_carries_the_reset_hint() {
     assert_eq!(ActionOutcome::failed(o.detail.clone()).detail, o.detail);
     assert_eq!(ActionOutcome::failed("not found").detail, "not found");
     assert_eq!(ActionOutcome::passed("is outside the visible part of the page").detail, "is outside the visible part of the page");
+}
+
+// ------------------------------------------------------ screenshot (86)
+
+/// The stepping page, answering a picture as the browser does and keeping
+/// what it was asked for.
+fn picturing_page() -> ScriptedDriver {
+    use base64::Engine;
+    let mut inner = stepping_answers();
+    ScriptedDriver::new(move |method: &str, params: &Value| {
+        if method == "Page.captureScreenshot" {
+            let data = base64::engine::general_purpose::STANDARD.encode(b"\xFF\xD8\xFFpicture");
+            return Ok(json!({ "data": data }));
+        }
+        if method == "Page.getLayoutMetrics" {
+            return Ok(json!({ "cssContentSize": { "x": 0, "y": 0, "width": 1280.0, "height": 4200.0 } }));
+        }
+        inner(method, params)
+    })
+    .with_net_record()
+}
+
+/// A screenshot in a batch is one of the 20 and answers a picture, saved
+/// under the shots folder, without changing the page or failing.
+#[tokio::test]
+async fn a_screenshot_action_returns_a_picture_and_counts_as_one() {
+    let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
+    // 21 with one of them a screenshot is over the cap; 20 is not.
+    let mut over: Vec<Value> = vec![json!({ "kind": "screenshot" })];
+    over.extend((0..20).map(|_| json!({ "kind": "click", "selector": "#a" })));
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &json!({ "actions": over }).to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
+    let mut fits: Vec<Value> = vec![json!({ "kind": "screenshot" })];
+    fits.extend((0..19).map(|_| json!({ "kind": "click", "selector": "#a" })));
+    let (_, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &json!({ "actions": fits }).to_string(), "1.0.0").await;
+    assert!(out != BATCH_TOO_LONG && !out.contains("is not an action kind") && !out.contains("screenshot does not"), "{out}");
+
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(picturing_page(), exploring("Leave"));
+    let shot = v2_lib::autorun::action_help::screenshot_action(false);
+    let actions = [click("#a"), shot, click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert!(lines[1].starts_with("2. ok: ") && lines[1].contains("picture of the page"), "{text}");
+    let picture = lines[1].split("; picture ").nth(1).expect("the picture is named").trim();
+    assert!(picture.ends_with(".jpg") && picture.contains("shots"), "{picture}");
+    assert!(std::path::Path::new(picture).is_file(), "no file at {picture}");
+    assert!(lines[2].starts_with("3. ok: "), "a screenshot stopped the batch: {text}");
+    assert!(!text.contains("hr.example.internal"), "{text}");
+    let b = browser.as_ref().unwrap();
+    let asked = b.d.calls_to("Page.captureScreenshot");
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].get("captureBeyondViewport").is_none(), "{:?}", asked[0]);
+    // It is a look, not an act: the clicks around it are the only ones.
+    let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
+    assert_eq!(released, 2);
+}
+
+#[tokio::test]
+async fn a_screenshot_with_full_page_asks_beyond_the_viewport() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(picturing_page(), exploring("Leave"));
+    let shot = v2_lib::autorun::action_help::screenshot_action(true);
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[shot], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let b = browser.as_ref().unwrap();
+    let asked = b.d.calls_to("Page.captureScreenshot");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0]["captureBeyondViewport"], true);
+    assert_eq!(asked[0]["format"], "jpeg");
+    // The whole page's size, as the browser measured it, goes as the clip.
+    assert_eq!(b.d.calls_to("Page.getLayoutMetrics").len(), 1);
+    assert_eq!(asked[0]["clip"], json!({ "x": 0, "y": 0, "width": 1280.0, "height": 4200.0, "scale": 1 }));
+}
+
+/// A browser that cannot take the picture fails that action, in words with
+/// no path or protocol text, and the batch stops there as at any failure.
+#[tokio::test]
+async fn a_screenshot_the_browser_cannot_take_fails_that_action_only() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let mut inner = stepping_answers();
+    let driver = ScriptedDriver::new(move |method: &str, params: &Value| {
+        if method == "Page.captureScreenshot" {
+            return Err(v2_lib::browser::cdp::CdpError::Protocol { method: method.into(), message: "no target".into() });
+        }
+        inner(method, params)
+    })
+    .with_net_record();
+    let (mut browser, _) = slot(driver, exploring("Leave"));
+    let shot = v2_lib::autorun::action_help::screenshot_action(false);
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[shot.clone(), click("#a")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].starts_with("1. failed: ") && lines[0].contains("the picture could not be taken - see Settings, Logs"), "{text}");
+    assert!(!text.contains("no target"), "{text}");
+    assert_eq!(lines[1], "Stopped at the failure: 1 action was not run.");
+}
+
+/// Backlog 87: a discovery or a try action with a key its kind does not have
+/// is refused before the browser is touched, and `repeat` is read as `times`.
+#[tokio::test]
+async fn a_tried_action_with_an_unknown_key_is_refused() {
+    let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
+    for (path, body) in [
+        ("/autorun-discover-action", json!({ "action": { "kind": "click", "selector": "#a", "foo": 1 } })),
+        ("/autorun-try", json!({ "action": { "kind": "click", "selector": "#a", "foo": 1 } })),
+    ] {
+        let (status, out) = route(&ctx(), None, "POST", path, &body.to_string(), "1.0.0").await;
+        assert_eq!((status, out.as_str()), (400, "click does not take foo - it takes: selector"), "{path}");
+    }
+    let batch = json!({ "actions": [
+        { "kind": "click", "selector": "#a" },
+        { "kind": "press_key", "key": "Tab", "times": 2, "repeat": 3 },
+    ] });
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &batch.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "action 2: press_key takes times or repeat, not both"));
+    let extra = json!({ "actions": [{ "kind": "screenshot", "zoom": 2 }] });
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &extra.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "action 1: screenshot does not take zoom - it takes: full_page"));
 }

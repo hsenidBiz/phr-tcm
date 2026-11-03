@@ -29,7 +29,7 @@ pub const CLOSE_MS: u64 = 2_000;
 pub fn touches_the_page(action: &Action) -> bool {
     matches!(
         action,
-        Action::Click { .. } | Action::Hover { .. } | Action::ExpectNoChange { .. } | Action::Fill { .. } | Action::Drag { .. } | Action::Upload { .. }
+        Action::Click { .. } | Action::Hover { .. } | Action::ExpectNoChange { .. } | Action::Fill { .. } | Action::SelectOption { .. } | Action::Drag { .. } | Action::Upload { .. }
     )
 }
 

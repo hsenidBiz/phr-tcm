@@ -371,6 +371,15 @@ pub struct DiscoveryState {
     /// while this discovery goes on, never written to the map, gone with the
     /// discovery.
     pub carried: Vec<crate::autorun::discovery_map::AreaMap>,
+    /// Values `send_api_request` kept for `{{var.name}}`, by name. In memory
+    /// only, never answered, logged or written to a file; they go with the
+    /// discovery (its end, its release, or a new start).
+    pub kept: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Set when a call's answer was the app's sign-in page: this discovery's
+    /// account is signed out, and every later `send_api_request` on it is
+    /// refused unsent (`api_templates::one_off::SIGNED_OUT_BEFORE`). It goes
+    /// with the discovery.
+    pub signed_out: bool,
 }
 
 impl DiscoveryState {
@@ -701,6 +710,8 @@ pub(crate) async fn open_for_discovery(
             call_case_id: None,
             explore: no_save.explore.then(crate::autorun::explore::ExploreRun::default),
             carried: Vec::new(),
+            kept: Default::default(),
+            signed_out: false,
         });
     }
     publish_discovery_in(n, &slot);
@@ -709,10 +720,11 @@ pub(crate) async fn open_for_discovery(
 
 /// End the discovery under way in slot `n`'s browser as `by` ends it
 /// (`ai_bridge::end_discovery_as`):
-/// the assistant's `end_autorun_discovery` keeps its browser signed in for
-/// its next replay or discovery, its guard lifted; the person's End
-/// discovery closes it so Auto Run can run again. With no discovery going
-/// this does nothing.
+/// the assistant's `end_autorun_discovery` closes its browser and frees the
+/// account, unless it keeps it (`keep_browser`) signed in for its next
+/// replay or discovery, its guard lifted; with no discovery going it still
+/// closes the browser its replay left open. The person's End discovery
+/// closes it so Auto Run can run again.
 pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (u16, String) {
     // A batch of actions holding the browser gives way before its next
     // action, so this is not kept waiting behind it.
@@ -729,11 +741,17 @@ pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (
     // The assistant's end names what it changed for testing, read here
     // under the lock: the browser it keeps still has it.
     let answer = match by {
-        crate::ai_bridge::EndedBy::Assistant => crate::autorun::overrides::with_note(answer, &overrides_of(&slot)),
-        _ => answer,
+        crate::ai_bridge::EndedBy::Assistant | crate::ai_bridge::EndedBy::AssistantKeeping => {
+            crate::autorun::overrides::with_note(answer, &overrides_of(&slot))
+        }
+        crate::ai_bridge::EndedBy::Person => answer,
     };
     if held && slot.is_none() {
         tell_panes_closed_in(n);
+        // The assistant's end closed the browser: it holds no slot now.
+        if by == crate::ai_bridge::EndedBy::Assistant {
+            crate::commands::autorun_slots::unbind(n);
+        }
     }
     answer
 }

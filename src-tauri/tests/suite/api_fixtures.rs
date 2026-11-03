@@ -1586,6 +1586,8 @@ mod running {
             values: values.clone(),
             mode,
             template: t.clone(),
+            step_limit: None,
+            keep: Default::default(),
         };
         let problems = preflight(dir.path(), &req(Mode::Run), None).unwrap_err();
         assert_eq!(

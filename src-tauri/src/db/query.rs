@@ -371,6 +371,7 @@ fn data_row_count(text: &str) -> usize {
                 && !schema::is_rule(l)
                 && !schema::is_footer(l)
                 && !l.starts_with("... ")
+                && *l != super::sqlcmd::LONG_TEXT_NOTE
         })
         .count()
 }

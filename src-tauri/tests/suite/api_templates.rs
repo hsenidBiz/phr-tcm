@@ -1194,3 +1194,155 @@ fn runs_appended_at_the_same_time_are_all_kept() {
     accounts.dedup();
     assert_eq!(accounts.len(), 16, "every run is in the history: {accounts:?}");
 }
+
+// --- Capture filters and body transforms (backlog 81) ---
+
+fn cap(body: &Value, path: &str) -> Option<Value> {
+    capture(body, &parse_capture_path(path).unwrap())
+}
+
+fn rows() -> Value {
+    json!({"rows": [
+        {"EMP_ID": 7, "EMP_NAME": "NB001 - A", "who": {"code": "x"}, "active": true},
+        {"EMP_ID": 8, "EMP_NAME": "NB002 - B", "who": {"code": "y"}, "active": false},
+        {"EMP_ID": 9, "EMP_NAME": "NB003 - C", "who": {"code": "x"}, "active": true},
+    ]})
+}
+
+#[test]
+fn a_filter_picks_the_matching_rows() {
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='NB001 - A')].EMP_ID"), Some(json!([7])));
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME==\"NB002 - B\")].EMP_ID"), Some(json!([8])));
+}
+
+#[test]
+fn a_not_equal_filter_and_a_dotted_field() {
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME!='NB001 - A')].EMP_ID"), Some(json!([8, 9])));
+    assert_eq!(cap(&rows(), "$.rows[?(@.who.code=='x')].EMP_ID"), Some(json!([7, 9])));
+}
+
+#[test]
+fn a_number_and_a_boolean_literal() {
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_ID==8)].EMP_NAME"), Some(json!(["NB002 - B"])));
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_ID!=8)].EMP_ID"), Some(json!([7, 9])));
+    assert_eq!(cap(&rows(), "$.rows[?(@.active==true)].EMP_ID"), Some(json!([7, 9])));
+    // A number-looking string does not equal a number, in either direction.
+    assert_eq!(cap(&json!({"r": [{"a": "3"}]}), "$.r[?(@.a==3)].a"), None);
+    assert_eq!(cap(&json!({"r": [{"a": 3}]}), "$.r[?(@.a=='3')].a"), None);
+}
+
+#[test]
+fn escaped_echoes_of_a_hidden_value_are_hidden_too() {
+    use v2_lib::api_templates::exec::hide_text;
+    let hide = vec![("{{var.v}}".to_string(), "Smith & Sons/North <b>".to_string())];
+    let b = '\x5c';
+    for echo in [
+        "Smith &amp; Sons/North &lt;b&gt;".to_string(),
+        format!("Smith & Sons{b}/North <b>"),
+        format!("Smith {b}u0026 Sons/North {b}u003cb{b}u003e"),
+        "Smith & Sons/North <b>".to_string(),
+    ] {
+        let out = hide_text(&format!("x {echo} y"), &hide);
+        assert_eq!(out, "x {{var.v}} y", "{echo}");
+    }
+}
+
+#[test]
+fn a_filter_matching_nothing_is_none() {
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='nobody')].EMP_ID"), None);
+    assert_eq!(cap(&json!({"rows": []}), "$.rows[?(@.a=='x')].a"), None);
+}
+
+#[test]
+fn an_index_after_a_filter_picks_one_matching_row() {
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='NB001 - A')][0].EMP_ID"), Some(json!(7)));
+    assert_eq!(cap(&rows(), "$.rows[?(@.who.code=='x')][1].EMP_ID"), Some(json!(9)));
+    assert_eq!(cap(&rows(), "$.rows[?(@.who.code=='x')][2].EMP_ID"), None);
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='nobody')][0].EMP_ID"), None);
+    assert_eq!(cap(&rows(), "$.rows[?(@.EMP_NAME=='NB002 - B')][0].who"), Some(json!({"code": "y"})));
+}
+
+#[test]
+fn an_unterminated_quote_in_a_filter_says_so() {
+    let p = "$.rows[?(@.a=='x)].id";
+    assert_eq!(parse_capture_path(p).unwrap_err(), format!("capture path '{p}' has an unterminated quote"));
+    let p = "$.rows[0";
+    assert_eq!(parse_capture_path(p).unwrap_err(), format!("capture path '{p}' has an unclosed ["));
+}
+
+#[test]
+fn a_malformed_filter_is_refused() {
+    for inner in ["?(@.a=='x' && @.b==1)", "?(a=='x')"] {
+        let p = format!("$.rows[{inner}].id");
+        assert_eq!(
+            parse_capture_path(&p).unwrap_err(),
+            format!(
+                "capture path '{p}' has a filter it cannot read '[{inner}]' - one condition: [?(@.FIELD=='value')] or !="
+            )
+        );
+    }
+    // And it is a template problem, not just a parse error.
+    let mut v = draft();
+    v["steps"][0]["capture"] = json!({ "cycleId": "$.a[?(a=='x')]" });
+    assert!(parse_draft(&v).is_err());
+    let mut v = draft();
+    v["steps"][0]["capture"] = json!({ "cycleId": "$.a[?(@.id=='x')].id" });
+    assert!(parse_draft(&v).is_ok());
+}
+
+fn json_step(body: Value) -> Step {
+    let mut s = plain_step("/hr/x");
+    s.method = Some(Method::Post);
+    s.json = Some(body);
+    s
+}
+
+fn built_json(step: &Step, vars: &BTreeMap<String, Value>) -> Result<Value, String> {
+    match build_request(step, vars, &BTreeMap::new())?.body {
+        Body::Json { value } => Ok(value),
+        other => panic!("not json: {other:?}"),
+    }
+}
+
+fn b64(s: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(s)
+}
+
+#[test]
+fn base64_encodes_the_json_text_after_placeholders() {
+    let step = json_step(json!({"data": {"$base64": {"id": "{{id}}"}}}));
+    let got = built_json(&step, &btree(&[("id", json!(5))])).unwrap();
+    assert_eq!(got, json!({"data": b64(r#"{"id":5}"#)}));
+}
+
+#[test]
+fn base64_of_a_string_is_its_raw_text() {
+    let got = built_json(&json_step(json!({"d": {"$base64": "héllo"}})), &BTreeMap::new()).unwrap();
+    assert_eq!(got, json!({"d": b64("héllo")}));
+}
+
+#[test]
+fn json_stringifies() {
+    let got = built_json(&json_step(json!({"d": {"$json": {"a": [1, "x"]}}})), &BTreeMap::new()).unwrap();
+    assert_eq!(got, json!({"d": r#"{"a":[1,"x"]}"#}));
+}
+
+#[test]
+fn nested_wrappers_inner_first() {
+    let got = built_json(&json_step(json!({"d": {"$base64": {"$json": {"a": 1}}}})), &BTreeMap::new()).unwrap();
+    assert_eq!(got, json!({"d": b64(r#"{"a":1}"#)}));
+}
+
+#[test]
+fn a_wrapper_with_two_keys_is_refused_by_check_and_build() {
+    let sentence = "a $base64 or $json wrapper holds exactly one key";
+    let step = json_step(json!({"d": {"$base64": "x", "other": 1}}));
+    assert_eq!(built_json(&step, &BTreeMap::new()).unwrap_err(), sentence);
+
+    let mut v = draft();
+    v["steps"][0].as_object_mut().unwrap().remove("form");
+    v["steps"][0]["json"] = json!({"d": {"$json": {"a": 1}, "b": 2}});
+    let err = parse_draft(&v).unwrap_err();
+    assert!(err.iter().any(|e| e == &format!("step 'Cycle setup': {sentence}")), "{err:?}");
+}

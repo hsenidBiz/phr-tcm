@@ -146,7 +146,18 @@ checked, not halfway through a run.
 
 `capture` maps a name to a path in the step's JSON response: `$.a.b`,
 `$.list[0]`, or `$.list[*].id` for an array of every element's `id`. A
-capture that finds nothing fails the step.
+filter keeps the rows that match one condition: `$.rows[?(@.EMP_NAME=='NB001 - A')].EMP_ID`
+gives a list of that employee's ids. `[0]` right after the filter takes ONE
+matching row instead: `$.rows[?(@.EMP_NAME=='NB001 - A')][0].EMP_ID` is the
+single value `7`, which is what a body or a path wants. (`!=` keeps the others;
+the value is 'text', "text", a number or true/false; FIELD may be dotted,
+`@.who.code`.)
+One condition only, and no `..`. A capture that finds nothing fails the step.
+
+A JSON body can hold a value the server wants encoded: `{"$base64": X}` is
+the base64 of X's JSON text (a string's own text), and `{"$json": X}` is X as
+JSON text. Placeholders inside are filled first; a wrapper holds that one key.
+`{"data": {"$base64": {"id": "{{id}}"}}}` sends the base64 of `{"id":5}`.
 
 ## WebForms pages (postbacks)
 
@@ -513,7 +524,13 @@ In an explore session (`start_autorun_discovery` with `explore` true, see the Au
 `send_api_request` runs one GET or POST in your explore session's own page: no new browser, no
 sign-in, as the account the session signed in as. The anti-forgery token is read on the page you
 are on; when that page has none, pass `antiforgery_page`, a page of the app with a form on it,
-and the token is read there, in the same tab. The answer is redacted and cut at the first 64 KB.
+and the token is read there, in the same tab. A POST that names none from a page with no token
+opens the page the project's templates use when there is exactly one (the answer says so in
+`token_page`); with none or several, it is refused unsent and the answer lists them. The answer is
+redacted and cut at the first 64 KB. A call answered by the app's sign-in page in place of the page asked
+for (sent to it, or to another page with a password field) is not shown: the answer says
+`signed_out`, and nothing more is sent on that discovery - end it and start again. A page with a
+password field that answers in place, such as change password, is an ordinary answer.
 
 - A GET only reads. A POST needs an explore session, the person's API templates switch and an
   `effect`: `read`, `create`, `edit` or `delete`. A save whose address (or `handler`) says delete
@@ -543,6 +560,23 @@ and the token is read there, in the same tab. The answer is redacted and cut at 
 - A failed call, a delete call, a call with a secret written out in it (in its body, its query,
   or the query of its token page), and a call from a page with no token are never saved: the
   answer says which and why. Send a secret as a param.
+- `save: false` runs a call and neither saves nor matches a template (the answer says it was not saved).
+  A later working call of the same route replaces the template this session saved earlier, so a
+  call that first worked badly does not leave a stale copy behind; a template saved before this
+  session, proven another way, or used by a fixture, flow or setup is never replaced. A replace keeps
+  the template's id, name and description; the answer says "replaced".
+- `timeout_s` (5 to 180, default 30) is how many seconds one step may take. A timeout never tells
+  you whether the app processed the call: the answer says `timed_out` and that it may have, a
+  POST is still on the session's list of saves, and you check the record before sending it again.
+- Kept values: `keep` is `{ "name": "$.path" }`. After a call that worked, each path is read from the
+  answer and held for this discovery only (not on disk; gone when it ends, is released or starts again).
+  The answer says `name (N characters)` and never the value, and a value of 8 or more characters is
+  shown as `{{var.name}}` anywhere it would have appeared. Send it later as `{{var.name}}` in a step or
+  in a `values` string; one that is not kept is refused. A step that uses it is not saved as a
+  template: declare a param and pass `"{{var.name}}"` in `values`. `prove_api_template` takes
+  `{{var.name}}` in `values` the same way.
+- One switch covers every POST from `send_api_request`, even one that only reads: API templates
+  on the AI Bridge tab. With it off the call is refused, and the refusal says so.
 - `run_api_template` runs a saved template in your explore session when the session holds the
   template's account; otherwise it opens its own browser as before.
 
@@ -552,7 +586,11 @@ The first failing step stops the run. Nothing is rolled back - the
 application has no undo - so the answer lists what had already been
 created, which step failed with its handler, and the start of the
 response. A failed prove saves nothing; fix the draft and prove again,
-remembering that whatever it created is still there.
+remembering that whatever it created is still there. When write steps had
+gone out, the answer lists them as `writes_that_ran` (step, request, status)
+and says so in `note` - also when the prove saved nothing because its stage
+check refused it after its writes; in your explore session each is also put on the change
+list, so it is not left as a save nobody named.
 
 Limits: a carried WebForms page up to 8 MB, 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each
 response.
