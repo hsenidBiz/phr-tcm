@@ -85,6 +85,61 @@ pub fn placeholders(s: &str) -> Vec<String> {
     out
 }
 
+/// The prefix of a kept session value's placeholder: `{{var.token}}`.
+pub const VAR_PREFIX: &str = "var.";
+/// A kept string shorter than this is not hidden: it would match too much.
+pub const HIDE_MIN_CHARS: usize = 8;
+
+/// The `(placeholder, value)` pairs worth hiding from `values`: each
+/// `var.*` entry that is a string of `HIDE_MIN_CHARS` or more, longest first.
+pub fn hidden_values(values: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = values
+        .iter()
+        .filter(|(k, _)| k.starts_with(VAR_PREFIX))
+        .filter_map(|(k, v)| match v {
+            Value::String(s) if s.chars().count() >= HIDE_MIN_CHARS => Some((format!("{{{{{k}}}}}"), s.clone())),
+            _ => None,
+        })
+        .collect();
+    out.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+    out
+}
+
+/// `text` with every hidden value (and its JSON-escaped form, for a value
+/// inside JSON text) replaced by its placeholder.
+pub fn hide_text(text: &str, hide: &[(String, String)]) -> String {
+    let mut out = text.to_string();
+    for (name, value) in hide {
+        out = out.replace(value.as_str(), name);
+        if let Ok(escaped) = serde_json::to_string(value) {
+            let inner = &escaped[1..escaped.len() - 1];
+            if inner != value {
+                out = out.replace(inner, name);
+            }
+        }
+    }
+    out
+}
+
+/// `hide_text` through every string of a JSON value (object keys too).
+pub fn hide_json(v: &mut Value, hide: &[(String, String)]) {
+    if hide.is_empty() {
+        return;
+    }
+    match v {
+        Value::String(s) => *s = hide_text(s, hide),
+        Value::Array(items) => items.iter_mut().for_each(|i| hide_json(i, hide)),
+        Value::Object(map) => {
+            let old = std::mem::take(map);
+            for (k, mut val) in old {
+                hide_json(&mut val, hide);
+                map.insert(hide_text(&k, hide), val);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Parses a capture path - `$.a`, `$.a[0]`, `$.a[*].id`,
 /// `$.a[?(@.n=='x')].id` - into segments. Refused, each with a message
 /// naming the path: missing leading `$`, an empty segment (so `$..a`,

@@ -117,6 +117,7 @@ fn discovering() -> Option<DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
     })
 }
 

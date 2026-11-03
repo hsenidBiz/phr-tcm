@@ -227,6 +227,7 @@ fn step_request(
         mode: Mode::Run,
         template: t.clone(),
         step_limit: None,
+        keep: Default::default(),
     })
 }
 

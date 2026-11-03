@@ -1045,6 +1045,7 @@ async fn a_three_step_template_runs_end_to_end_in_a_real_page() {
         mode: v2_lib::api_templates::runner::Mode::Run,
         template,
         step_limit: None,
+        keep: Default::default(),
     };
     let out = v2_lib::api_templates::runner::run_in_page(
         &mut live.cdp,

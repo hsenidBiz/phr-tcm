@@ -429,3 +429,43 @@ fn same_route_ignores_the_body_but_not_the_query_keys() {
     let path = step(json!({ "method": "POST", "path": "/hr/y/12", "query": { "handler": "Save" }, "json": { "a": 1 } }));
     assert!(!same_route(&t, &path));
 }
+
+#[test]
+fn parse_reads_keep() {
+    use v2_lib::api_templates::one_off::parse;
+    let get = |keep: Value| {
+        let body = json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": keep });
+        parse(&body.to_string())
+    };
+    assert!(get(json!(null)).unwrap().keep.is_empty());
+    let one = get(json!({ "token": "$.Token", "Row_2": "$.a[?(@.n=='x')].id" })).unwrap();
+    assert_eq!(one.keep.get("token").map(String::as_str), Some("$.Token"));
+    assert_eq!(one.keep.len(), 2);
+    let forty = "a".repeat(40);
+    assert!(get(json!({ forty: "$.a" })).is_ok());
+    for bad in [json!({ "1a": "$.a" }), json!({ "a-b": "$.a" }), json!({ "a".repeat(41): "$.a" }), json!({ "": "$.a" })] {
+        let (status, why) = get(bad.clone()).unwrap_err();
+        assert_eq!(status, 400, "{bad}");
+        assert!(why.contains("keep"), "{why}");
+    }
+    let (status, why) = get(json!({ "t": "Token" })).unwrap_err();
+    assert_eq!((status, why.contains("Token")), (400, true), "{why}");
+    assert_eq!(get(json!("x")).unwrap_err().0, 400);
+    assert_eq!(get(json!({ "t": 5 })).unwrap_err().0, 400);
+}
+
+#[test]
+fn hiding_replaces_long_values_with_their_names_and_leaves_short_ones() {
+    use v2_lib::api_templates::exec::{hidden_values, hide_json, hide_text};
+    let mut values = serde_json::Map::new();
+    values.insert("var.token".into(), json!("abcdefghij"));
+    values.insert("var.short".into(), json!("abc"));
+    values.insert("var.quoted".into(), json!("say \"hello\" now"));
+    values.insert("plain".into(), json!("abcdefghij-not-kept"));
+    let hide = hidden_values(&values);
+    assert_eq!(hide_text("t=abcdefghij;abc", &hide), "t={{var.token}};abc");
+    assert_eq!(hide_text(r#"{"m":"say \"hello\" now"}"#, &hide), r#"{"m":"{{var.quoted}}"}"#);
+    let mut v = json!({ "a": ["abcdefghij"], "b": { "c": "x abcdefghij y" }, "n": 5 });
+    hide_json(&mut v, &hide);
+    assert_eq!(v, json!({ "a": ["{{var.token}}"], "b": { "c": "x {{var.token}} y" }, "n": 5 }));
+}

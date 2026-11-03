@@ -328,7 +328,10 @@ mod routing {
         assert!(request.contains("asker: Option<SlotNo>"), "{request}");
         assert!(request.contains("assistant_browser_holds(n, &req.account)"), "{request}");
         assert!(!request.contains("SlotNo::MAIN"), "a template run still asks main's browser: {request}");
-        for head in ["pub async fn api_template_prove_for<", "pub async fn api_template_run_for<"] {
+        // The proof reads its asker's kept values, then hands them to the
+        // function that runs it.
+        assert!(body(&bridge, "pub async fn api_template_prove_for<").contains("api_template_prove_with(kept, asker,"));
+        for head in ["pub async fn api_template_prove_with<", "pub async fn api_template_run_for<"] {
             assert!(body(&bridge, head).contains("run_api_template_request(ctx, &root, req,"), "{head}");
             assert!(body(&bridge, head).contains("asker"), "{head}");
         }

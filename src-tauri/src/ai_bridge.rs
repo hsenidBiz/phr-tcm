@@ -1808,6 +1808,63 @@ pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: cra
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
+    let kept = match asker {
+        Some(n) => {
+            let slot = crate::commands::autorun::session_slot(n).lock().await;
+            slot.as_ref().and_then(|s| s.discovery.as_ref()).map(|d| d.kept.clone()).unwrap_or_default()
+        }
+        None => Default::default(),
+    };
+    api_template_prove_with(kept, asker, ctx, body, open, open_db, timing).await
+}
+
+/// Fills `{{var.name}}` in the strings of `values` from `kept` and adds each
+/// used kept value as a `var.<name>` entry, which the run hides from its
+/// records and answers. A name that is not kept is refused naming it.
+pub fn fill_kept_values(
+    values: serde_json::Map<String, serde_json::Value>,
+    kept: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<serde_json::Map<String, serde_json::Value>, (u16, String)> {
+    use crate::api_templates::exec::{placeholders, substitute, VAR_PREFIX};
+    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::String(s) => out.extend(placeholders(s)),
+            serde_json::Value::Array(a) => a.iter().for_each(|i| walk(i, out)),
+            serde_json::Value::Object(m) => m.values().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut names = Vec::new();
+    values.values().for_each(|v| walk(v, &mut names));
+    let mut vars: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    for full in names.into_iter().filter(|n| n.starts_with(VAR_PREFIX)) {
+        match kept.get(&full[VAR_PREFIX.len()..]) {
+            Some(v) => {
+                vars.insert(full, v.clone());
+            }
+            None => return Err((400, crate::api_templates::one_off::var_not_kept(&full))),
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for (k, v) in values {
+        out.insert(k, substitute(&v, &vars));
+    }
+    for (full, v) in vars {
+        out.insert(full, v);
+    }
+    Ok(out)
+}
+
+/// `api_template_prove_for` with the asker's kept values handed in.
+pub async fn api_template_prove_with<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    kept: std::collections::BTreeMap<String, serde_json::Value>,
+    asker: Option<SlotNo>,
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
     use crate::api_templates::runner::{Mode, RunRequest};
     use crate::api_templates::{store, valid_id, ApiTemplate};
     if !ctx.api_writes {
@@ -1832,6 +1889,10 @@ pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: cra
         Ok(c) => c,
         Err(refused) => return refused,
     };
+    let call_values = match fill_kept_values(call.values, &kept) {
+        Ok(values) => values,
+        Err(refused) => return refused,
+    };
     let replace = v["replace"].as_bool().unwrap_or(false);
     let why = v["why"].as_str().map(str::to_string);
     let existing = match store::load(&root, &ctx.org, &ctx.project, &template.id) {
@@ -1849,10 +1910,11 @@ pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: cra
         org: ctx.org.clone(),
         project: ctx.project.clone(),
         account: call.account,
-        values: call.values,
+        values: call_values,
         mode: Mode::Prove { replace, why },
         template,
         step_limit: None,
+        keep: Default::default(),
     };
     run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await
 }
@@ -1933,6 +1995,7 @@ fn run_request_from(
         mode: Mode::Run,
         template,
         step_limit: None,
+        keep: Default::default(),
     };
     Ok((req, call.browser))
 }
@@ -5607,6 +5670,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     call_case_id: None,
                     explore,
                     carried: Vec::new(),
+                    kept: Default::default(),
                 };
                 let must_not_save = discovery_must_not_save(root, &state);
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });
@@ -7581,6 +7645,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
     };
     let session = state.explore_session().map(str::to_string);
     let floor = state.explore.as_ref().map_or(0, |run| run.began_ms);
+    let kept_before = state.kept.clone();
     if posts && session.is_none() {
         return (409, oo::POST_NEEDS_EXPLORE.to_string());
     }
@@ -7600,14 +7665,47 @@ pub async fn send_in<B: DiscoveryBrowser>(
         }
     }
     let page = one.antiforgery_page.clone();
+    // Each kept value the call uses goes to the run as a param named
+    // `var.<name>`; the saved template never sees it (`one` is untouched).
+    let mut template = oo::as_template(&one, oo::ONE_OFF_ID, page.as_deref().unwrap_or("/"));
+    let mut vars: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    for full in oo::vars_used(&one) {
+        let Some(value) = kept_before.get(&full[crate::api_templates::exec::VAR_PREFIX.len()..]) else {
+            return (400, oo::var_not_kept(&full));
+        };
+        vars.insert(full, value.clone());
+    }
+    let mut run_values = serde_json::Map::new();
+    for (k, v) in &one.values {
+        run_values.insert(k.clone(), crate::api_templates::exec::substitute(v, &vars));
+    }
+    for (full, value) in &vars {
+        use crate::api_templates::ParamType;
+        let kind = match value {
+            serde_json::Value::Number(_) => ParamType::Number,
+            serde_json::Value::Bool(_) => ParamType::Boolean,
+            serde_json::Value::Array(_) => ParamType::List,
+            _ => ParamType::String,
+        };
+        template.params.push(crate::api_templates::Param {
+            name: full.clone(),
+            kind,
+            required: true,
+            description: None,
+            lookup: None,
+            default: None,
+        });
+        run_values.insert(full.clone(), value.clone());
+    }
     let req = RunRequest {
         org: ctx.org.clone(),
         project: ctx.project.clone(),
         account,
-        values: one.values.clone(),
+        values: run_values,
         mode: Mode::Explore,
-        template: oo::as_template(&one, oo::ONE_OFF_ID, page.as_deref().unwrap_or("/")),
+        template,
         step_limit: one.timeout_s.map(|s| std::time::Duration::from_secs(u64::from(s))),
+        keep: one.keep.clone(),
     };
     if let Err(problems) = preflight(root, &req, None) {
         return (400, problems.join("\n"));
@@ -7644,16 +7742,56 @@ pub async fn send_in<B: DiscoveryBrowser>(
             }
         }
     }
+    // What the discovery keeps now: what it kept, and what this call found
+    // when it worked. A value that was found but not kept (a failed call) is
+    // still hidden below.
+    let mut kept_lines = Vec::new();
+    let mut keep_failed = Vec::new();
+    let mut kept_now = kept_before;
+    if report.ok {
+        for (name, path) in &one.keep {
+            match out.kept.get(name) {
+                Some(value) => {
+                    let len = match value {
+                        serde_json::Value::String(s) => s.chars().count(),
+                        other => other.to_string().chars().count(),
+                    };
+                    kept_lines.push(format!("{name} ({len} characters)"));
+                    kept_now.insert(name.clone(), value.clone());
+                }
+                None => keep_failed.push(format!("{name}: found nothing at {path}")),
+            }
+        }
+        if let Some(d) = parts.discovery.as_mut() {
+            d.kept = kept_now.clone();
+        }
+    }
+    let hide = {
+        let mut all = serde_json::Map::new();
+        for (name, value) in kept_now.iter().chain(out.kept.iter()) {
+            all.insert(format!("{}{name}", crate::api_templates::exec::VAR_PREFIX), value.clone());
+        }
+        crate::api_templates::exec::hidden_values(&all)
+    };
     let mut v = serde_json::json!({
         "ok": report.ok,
         "status": out.answer.as_ref().map(|a| a.status),
         "captured": report.created,
         "request": request,
     });
+    if !kept_lines.is_empty() {
+        v["kept"] = serde_json::json!(kept_lines);
+    }
+    if !keep_failed.is_empty() {
+        v["keep_failed"] = serde_json::json!(keep_failed);
+    }
     if let Some(a) = &out.answer {
         v["response"] = serde_json::json!({
             "content_type": a.content_type,
-            "body": crate::autorun::capture_redact::redact_body(a.content_type.as_deref(), &a.body),
+            "body": crate::autorun::capture_redact::redact_body(
+                a.content_type.as_deref(),
+                &crate::api_templates::exec::hide_text(&a.body, &hide),
+            ),
             "cut": a.cut,
         });
     }
@@ -7710,6 +7848,10 @@ pub async fn send_in<B: DiscoveryBrowser>(
             _ if !one.save => {
                 v["template"] = serde_json::json!({ "not_saved": oo::NOT_SAVED_ASKED });
             }
+            // A saved template cannot reach a kept value.
+            _ if oo::step_uses_var(&one) => {
+                v["template"] = serde_json::json!({ "not_saved": oo::VAR_NOT_SAVED });
+            }
             // A postback may have carried on from the call before it, so it
             // cannot stand alone as a template.
             _ if one.step.is_postback() => {
@@ -7728,6 +7870,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
             None => v["template"] = serde_json::json!({ "not_saved": oo::PLAIN_DISCOVERY_NOT_SAVED }),
         }
     }
+    crate::api_templates::exec::hide_json(&mut v, &hide);
     (if report.ok { 200 } else { 502 }, v.to_string())
 }
 

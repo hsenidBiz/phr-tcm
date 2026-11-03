@@ -559,6 +559,13 @@ and the token is read there, in the same tab. The answer is redacted and cut at 
 - `timeout_s` (5 to 180, default 30) is how many seconds one step may take. A timeout never tells
   you whether the app processed the call: the answer says `timed_out` and that it may have, a
   POST is still on the session's list of saves, and you check the record before sending it again.
+- Kept values: `keep` is `{ "name": "$.path" }`. After a call that worked, each path is read from the
+  answer and held for this discovery only (not on disk; gone when it ends, is released or starts again).
+  The answer says `name (N characters)` and never the value, and a value of 8 or more characters is
+  shown as `{{var.name}}` anywhere it would have appeared. Send it later as `{{var.name}}` in a step or
+  in a `values` string; one that is not kept is refused. A step that uses it is not saved as a
+  template: declare a param and pass `"{{var.name}}"` in `values`. `prove_api_template` takes
+  `{{var.name}}` in `values` the same way.
 - One switch covers every POST from `send_api_request`, even one that only reads: API templates
   on the AI Bridge tab. With it off the call is refused, and the refusal says so.
 - `run_api_template` runs a saved template in your explore session when the session holds the

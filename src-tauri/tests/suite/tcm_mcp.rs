@@ -3636,6 +3636,16 @@ fn the_explore_tools_are_listed_and_reach_their_routes() {
     assert_eq!((timeout["type"].as_str(), timeout["minimum"].as_i64(), timeout["maximum"].as_i64()), (Some("integer"), Some(5), Some(180)));
     assert!(send_says.contains("save: false") && send_says.contains("timeout_s"), "{send_says}");
     assert!(send_says.contains("switch") && send_says.contains("POST"), "{send_says}");
+    // `keep` and `{{var.name}}` are told in plain words, for both tools.
+    assert_eq!(send["inputSchema"]["properties"]["keep"]["type"], "object");
+    assert!(send_says.contains("keep") && send_says.contains("{{var."), "{send_says}");
+    let prove_says = tool("prove_api_template")["description"].as_str().unwrap().to_string();
+    assert!(prove_says.contains("{{var."), "{prove_says}");
+    // `keep` and `{{var.name}}` are told in plain words, for both tools.
+    assert_eq!(send["inputSchema"]["properties"]["keep"]["type"], "object");
+    assert!(send_says.contains("keep") && send_says.contains("{{var."), "{send_says}");
+    let prove_says = tool("prove_api_template")["description"].as_str().unwrap().to_string();
+    assert!(prove_says.contains("{{var."), "{prove_says}");
     let undo = tool("undo_explore_creates");
     assert_eq!(undo["inputSchema"]["required"], serde_json::json!(["session", "ids"]));
     assert_eq!(undo["inputSchema"]["properties"]["ids"]["type"], "array");

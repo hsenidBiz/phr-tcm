@@ -1211,3 +1211,187 @@ async fn a_template_proven_another_way_or_named_by_a_flow_is_never_replaced() {
     assert_eq!(v["template"]["saved"], json!(true), "{v}");
     assert_eq!(saved_ids(&r).len(), 3);
 }
+
+// ---------------------------------------------------------------------------
+// Kept session values: `keep` and `{{var.name}}` (item 82)
+// ---------------------------------------------------------------------------
+
+/// A 480-character value, as long as a real session token.
+fn long_value() -> String {
+    format!("kv-{}", "x9Q".repeat(159))
+}
+
+fn keep_token_call() -> Value {
+    json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": { "token": "$.Ref" } })
+}
+
+fn post_with_var(json_body: Value) -> Value {
+    json!({ "step": { "method": "POST", "path": "/hr/y", "json": json_body }, "effect": "edit" })
+}
+
+#[tokio::test]
+async fn keep_stores_a_value_and_answers_only_its_length() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let (status, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["kept"], json!(["token (480 characters)"]), "{v}");
+    assert!(!v.to_string().contains(&value), "the value came back: {v}");
+    assert!(v["response"]["body"].as_str().unwrap().contains("{{var.token}}"), "{v}");
+    let held = &browser.as_ref().unwrap().discovery.as_ref().unwrap().kept;
+    assert_eq!(held.get("token"), Some(&json!(value)), "it is held for the discovery");
+}
+
+#[tokio::test]
+async fn a_later_call_sends_the_kept_value() {
+    use v2_lib::api_templates::one_off::VAR_NOT_SAVED;
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "echo": value }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.token}}" }))).await;
+    assert_eq!(status, 200, "{v}");
+    let sent = &r.fetched()[1][0]["body"];
+    assert_eq!(sent["value"], json!({ "t": value }), "the page received the real value: {sent}");
+    assert_eq!(v["template"], json!({ "not_saved": VAR_NOT_SAVED }), "{v}");
+    assert!(!v.to_string().contains(&value), "the echo came back: {v}");
+    assert!(v["response"]["body"].as_str().unwrap().contains("{{var.token}}"), "{v}");
+}
+
+#[tokio::test]
+async fn a_kept_value_in_values_still_saves_the_template() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+
+    on_the_app(&r);
+    let mut call = post_with_var(json!({ "t": "{{p}}" }));
+    call["params"] = json!([{ "name": "p", "type": "string", "required": true }]);
+    call["values"] = json!({ "p": "{{var.token}}" });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(r.fetched()[1][0]["body"]["value"], json!({ "t": value }));
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    let id = v["template"]["id"].as_str().unwrap();
+    let t = store::load(r.root.path(), ORG, PROJECT, id).unwrap().unwrap();
+    let text = serde_json::to_string(&t).unwrap();
+    assert!(!text.contains(&value), "a saved template never holds a kept value: {text}");
+    assert!(text.contains("{{p}}"), "{text}");
+}
+
+#[tokio::test]
+async fn a_var_not_kept_is_refused_naming_it() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.x}}" }))).await;
+    assert_eq!(status, 400, "{v}");
+    assert_eq!(
+        v,
+        json!("{{var.x}} is not kept in this discovery - keep it first with keep on send_api_request")
+    );
+    assert!(r.fetched().is_empty(), "nothing was sent");
+
+    let mut call = post_with_var(json!({ "t": "{{p}}" }));
+    call["params"] = json!([{ "name": "p", "type": "string", "required": true }]);
+    call["values"] = json!({ "p": "{{var.y}}" });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 400, "{v}");
+    assert!(v.as_str().unwrap().starts_with("{{var.y}} is not kept"), "{v}");
+}
+
+#[tokio::test]
+async fn a_keep_that_finds_nothing_says_so_and_keeps_the_rest() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut call = keep_token_call();
+    call["keep"] = json!({ "token": "$.Ref", "gone": "$.Nope" });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["kept"], json!(["token (480 characters)"]), "{v}");
+    assert_eq!(v["keep_failed"], json!(["gone: found nothing at $.Nope"]), "{v}");
+}
+
+#[tokio::test]
+async fn kept_values_end_with_the_discovery() {
+    let _locks = locks();
+    let value = long_value();
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, id) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+    assert!(!browser.as_ref().unwrap().discovery.as_ref().unwrap().kept.is_empty());
+
+    let fresh = exploring("Leave").map(|s| DiscoveryState {
+        explore: Some(ExploreRun { session: Some(id), ..ExploreRun::default() }),
+        ..s
+    });
+    assert!(fresh.as_ref().unwrap().kept.is_empty());
+    browser.as_mut().unwrap().discovery = fresh;
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.token}}" }))).await;
+    assert_eq!(status, 400, "{v}");
+    assert!(v.as_str().unwrap().contains("{{var.token}} is not kept"), "{v}");
+}
+
+#[tokio::test]
+async fn a_kept_value_is_never_in_the_answer_or_the_log() {
+    let _log = crate::serial::log_tail();
+    let _locks = locks();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    let value = long_value();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "Ref": value })),
+            answer(200, json!({ "Ref": value, "other": "fine" })),
+            answer(500, json!({ "error": format!("bad token {value}") })),
+            answer(200, json!({ "Ref": value })),
+        ],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut texts = vec![];
+
+    let (_, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    texts.push(v.to_string());
+
+    on_the_app(&r);
+    let call = json!({ "step": { "method": "GET", "path": "/hr/x", "capture": { "again": "$.Ref" } }, "save": false });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["captured"]["again"], json!("{{var.token}}"), "{v}");
+    texts.push(v.to_string());
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_with_var(json!({ "t": "{{var.token}}" }))).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().contains("{{var.token}}"), "{v}");
+    texts.push(v.to_string());
+
+    on_the_app(&r);
+    let mut call = keep_token_call();
+    call["step"]["expect"] = json!({ "status": 201 });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 502, "{v}");
+    texts.push(v.to_string());
+
+    for text in &texts {
+        assert!(!text.contains(&value), "the value is in an answer: {text}");
+    }
+    let log: String = v2_lib::applog::recent(500).iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    assert!(!log.contains(&value), "the value is in the log");
+    let records = crate::common::activity_records(activity.path(), "api");
+    assert!(!records.is_empty());
+    assert!(!records.iter().any(|r| r.to_string().contains(&value)), "the value is in an activity record");
+    assert!(records.iter().any(|r| r.to_string().contains("{{var.token}}")), "the record shows the name");
+}

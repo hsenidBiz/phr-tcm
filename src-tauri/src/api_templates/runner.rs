@@ -236,6 +236,9 @@ pub struct InPage {
     /// answer before it (`true`) or loaded its page fresh (`false`); `None`
     /// when no postback was answered.
     pub postback_carried: Option<bool>,
+    /// The values `RunRequest::keep` found in the answer, by name. In memory
+    /// only: the caller keeps them and never answers them.
+    pub kept: BTreeMap<String, Value>,
 }
 
 /// How much of an answer's body `FETCH_FN` reads back.
@@ -263,6 +266,9 @@ pub struct RunRequest {
     /// asked for its own limit (a one-off's `timeout_s`); none keeps
     /// `step_limit`.
     pub step_limit: Option<Duration>,
+    /// Values to keep from a one-off's answer: name -> capture path. The run
+    /// reads them (`InPage::kept`) and hides them from its own records.
+    pub keep: BTreeMap<String, String>,
 }
 
 /// One step's result. Also used for the parts of a run that come before
@@ -533,6 +539,8 @@ struct Progress {
     token_found: bool,
     /// See `InPage::postback_carried`.
     postback_carried: Option<bool>,
+    /// See `InPage::kept`.
+    kept: BTreeMap<String, Value>,
 }
 
 impl Progress {
@@ -552,6 +560,7 @@ impl Progress {
             token_page: None,
             token_found: false,
             postback_carried: None,
+            kept: BTreeMap::new(),
         }
     }
 
@@ -1073,7 +1082,8 @@ pub async fn run_in_page<D: Driver>(
     }
     let (answer, token_page, token_found) = (progress.answer.take(), progress.token_page.take(), progress.token_found);
     let postback_carried = progress.postback_carried;
-    InPage { report: finish(req, progress), answer, token_page, token_found, postback_carried }
+    let kept = std::mem::take(&mut progress.kept);
+    InPage { report: finish(req, progress), answer, token_page, token_found, postback_carried, kept }
 }
 
 /// `run_in_session`'s run, before its report: what it did, and whether it
@@ -1460,7 +1470,12 @@ async fn page_address<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progre
 /// A browser call that failed, as the person reads it; the raw error goes
 /// to the app log.
 fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
-    applog::warn(format!("api template {}: step {}: {e}", ctx.id(), step.name));
+    applog::warn(format!(
+        "api template {}: step {}: {}",
+        ctx.id(),
+        step.name,
+        super::exec::hide_text(&e.to_string(), &hide_of(ctx))
+    ));
     match e {
         CdpError::Timeout { .. } => format!("{}: {MAYBE_SENT_NO_ANSWER}", step_too_long(limit_for(ctx.req, step))),
         _ => "the browser did not answer while sending this step - see Settings, Logs".to_string(),
@@ -1527,6 +1542,7 @@ async fn run_step<D: Driver>(
     if step.is_postback() {
         return run_postback(d, ctx, doc, token, step, vars, progress, carry, attempt).await;
     }
+    let hide0 = hide_of(ctx);
     let files = step_files(ctx, step).map_err(|e| (None, e))?;
     let mut built = build_request(step, vars, &files).map_err(|e| (None, e))?;
     drop(files);
@@ -1559,13 +1575,25 @@ async fn run_step<D: Driver>(
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
-            record(ctx, step, &built, handler, &sent, token);
+            record(ctx, step, &built, handler, &sent, token, &hide0);
             return Err((None, browser_failed(ctx, step, &e)).into());
         }
     };
     let status = answer["status"].as_u64().and_then(|s| u16::try_from(s).ok());
     let text = answer["text"].as_str().unwrap_or("");
-    record(ctx, step, &built, handler, &Sent { status, response: text, content_type: answer["contentType"].as_str(), ..sent }, token);
+    // What the call asked to keep is read from the answer now, so the record
+    // below, the log and every sentence hide it with the values already kept.
+    let found = keep_found(&ctx.req.keep, text);
+    // Held even when the step then fails, so the caller hides it from the answer.
+    progress.kept.extend(found.clone());
+    let hide = {
+        let mut all = ctx.req.values.clone();
+        for (name, value) in &found {
+            all.insert(format!("{}{name}", super::exec::VAR_PREFIX), value.clone());
+        }
+        super::exec::hidden_values(&all)
+    };
+    record(ctx, step, &built, handler, &Sent { status, response: text, content_type: answer["contentType"].as_str(), ..sent }, token, &hide);
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
@@ -1575,7 +1603,7 @@ async fn run_step<D: Driver>(
             "api template {}: step {}: the request did not complete: {}",
             ctx.id(),
             step.name,
-            excerpt(&scrub_tokens(&plain(err), Some(token)))
+            excerpt(&scrub_tokens(&super::exec::hide_text(&plain(err), &hide), Some(token)))
         ));
         return Err((None, "the request did not complete - see Settings, Logs".to_string()).into());
     }
@@ -1644,10 +1672,13 @@ async fn run_step<D: Driver>(
         // the password that was posted), then the token scrub.
         let (e, shown) = if explore {
             let content_type = answer["contentType"].as_str();
-            let hidden = redact_body(content_type, text);
-            (scrub_tokens(&redact_body(None, &e), Some(token)), self::shown(&hidden, token))
+            let hidden = redact_body(content_type, &super::exec::hide_text(text, &hide));
+            (
+                scrub_tokens(&redact_body(None, &super::exec::hide_text(&e, &hide)), Some(token)),
+                self::shown(&hidden, token, &hide),
+            )
         } else {
-            (scrub_tokens(&e, Some(token)), shown(text, token))
+            (scrub_tokens(&super::exec::hide_text(&e, &hide), Some(token)), shown(text, token, &hide))
         };
         let detail = if shown.is_empty() { e } else { format!("{e} - the response began: {shown}") };
         (Some(status), detail)
@@ -1661,7 +1692,9 @@ async fn run_step<D: Driver>(
         };
         // Later steps get what was captured; the report - and everything
         // built from it - only ever gets it without a token in it.
-        progress.created.insert(name.clone(), scrub_value(&value, Some(token)));
+        let mut shown_value = scrub_value(&value, Some(token));
+        super::exec::hide_json(&mut shown_value, &hide);
+        progress.created.insert(name.clone(), shown_value);
         vars.insert(name.clone(), value);
         got.push(name.as_str());
     }
@@ -1673,6 +1706,27 @@ async fn run_step<D: Driver>(
         detail.push_str(&format!(", captured {}", got.join(", ")));
     }
     Ok((status, detail))
+}
+
+/// The values a call's `keep` finds in a JSON answer: name -> value, for
+/// each path that finds a string, number, boolean or list. A name whose path
+/// finds nothing (or an object) is left out.
+fn keep_found(keep: &BTreeMap<String, String>, text: &str) -> BTreeMap<String, Value> {
+    let mut out = BTreeMap::new();
+    if keep.is_empty() {
+        return out;
+    }
+    let Ok(body) = serde_json::from_str::<Value>(text) else { return out };
+    for (name, path) in keep {
+        let Ok(segs) = parse_capture_path(path) else { continue };
+        match capture(&body, &segs) {
+            Some(v) if !v.is_object() && !v.is_null() => {
+                out.insert(name.clone(), v);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// One postback step: the page sends it (`POSTBACK_FN`) from the page it
@@ -1738,7 +1792,10 @@ async fn run_postback<D: Driver>(
     };
     // What an error says goes to the log with no address, token or page
     // state in it.
-    let logged = |what: &str| excerpt(&scrub_tokens(&scrub_page_state(&without_hosts(what)), Some(token)));
+    let hide = hide_of(ctx);
+    let logged = |what: &str| {
+        excerpt(&scrub_tokens(&scrub_page_state(&without_hosts(&super::exec::hide_text(what, &hide))), Some(token)))
+    };
 
     let raw = match raw {
         Ok(v) => v,
@@ -1837,12 +1894,12 @@ async fn run_postback<D: Driver>(
             // value) and an address: all lose tokens, page state and hosts;
             // a one-off's is redacted like its other answers. The excerpt is
             // the answer's, and is redacted the same way.
-            let why = without_hosts(&scrub_tokens(&scrub_page_state(&why), Some(token)));
+            let why = without_hosts(&scrub_tokens(&scrub_page_state(&super::exec::hide_text(&why, &hide)), Some(token)));
             let why = if matches!(ctx.req.mode, Mode::Explore) { redact_body(None, &why) } else { why };
             let began = if matches!(ctx.req.mode, Mode::Explore) {
-                shown(&redact_body(a.content_type.as_deref(), &kept), token)
+                shown(&redact_body(a.content_type.as_deref(), &kept), token, &hide_of(ctx))
             } else {
-                shown(&kept, token)
+                shown(&kept, token, &hide_of(ctx))
             };
             let detail = if began.is_empty() { why } else { format!("{why} - the response began: {began}") };
             Err((Some(a.status), detail).into())
@@ -1877,7 +1934,13 @@ fn record_postback(
     let explore = matches!(ctx.req.mode, Mode::Explore);
     let body = sent_body(req, answered);
     let (request, response) = if explore {
-        (redact_body(None, &body), redact_body(sent.content_type, excerpt_text))
+        {
+        let hide = hide_of(ctx);
+        (
+            redact_body(None, &super::exec::hide_text(&body, &hide)),
+            redact_body(sent.content_type, &super::exec::hide_text(excerpt_text, &hide)),
+        )
+    }
     } else {
         (body, excerpt_text.to_string())
     };
@@ -1894,8 +1957,8 @@ fn record_postback(
             "handler": button,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
-            "request": shown(&request, token),
-            "response": shown(&response, token),
+            "request": shown(&request, token, &hide_of(ctx)),
+            "response": shown(&response, token, &hide_of(ctx)),
             "cookies_sent": sent.cookies,
             "path_case_adapted": sent.path_case_adapted,
             "attempt": sent.attempt,
@@ -1907,8 +1970,14 @@ fn record_postback(
 /// A request or response body as a record or a sentence shows it: every
 /// anti-forgery token taken out (`scrub_tokens`) BEFORE the 500-character
 /// excerpt, so the cap can never leave half a token showing.
-fn shown(body: &str, token: &str) -> String {
-    excerpt(&scrub_tokens(&scrub_page_state(body), Some(token)))
+/// Kept values are hidden FIRST, so the cap can never leave half of one.
+fn shown(body: &str, token: &str, hide: &[(String, String)]) -> String {
+    excerpt(&scrub_tokens(&scrub_page_state(&super::exec::hide_text(body, hide)), Some(token)))
+}
+
+/// The kept values a run's `values` carry (`var.*`), to hide.
+fn hide_of(ctx: &Ctx<'_>) -> Vec<(String, String)> {
+    super::exec::hidden_values(&ctx.req.values)
 }
 
 /// What came of one request, for its activity record.
@@ -1934,12 +2003,23 @@ struct Sent<'a> {
 /// one the runner read is not in `built`, and both bodies go through
 /// `shown`, which takes out that one and any other a page carries. Never
 /// a cookie value either: only the names the browser would send.
-fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Option<&str>, sent: &Sent<'_>, token: &str) {
+fn record(
+    ctx: &Ctx<'_>,
+    step: &Step,
+    built: &exec::BuiltRequest,
+    handler: Option<&str>,
+    sent: &Sent<'_>,
+    token: &str,
+    hide: &[(String, String)],
+) {
     // A one-off is the person's own call, with whatever it carries: its
     // bodies are redacted as the captured requests are before they show.
     let explore = matches!(ctx.req.mode, Mode::Explore);
     let (request, response) = if explore {
-        (redact_body(None, &body_text(&built.body)), redact_body(sent.content_type, sent.response))
+        (
+            redact_body(None, &super::exec::hide_text(&body_text(&built.body), hide)),
+            redact_body(sent.content_type, &super::exec::hide_text(sent.response, hide)),
+        )
     } else {
         (body_text(&built.body), sent.response.to_string())
     };
@@ -1956,8 +2036,8 @@ fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Optio
             "handler": handler,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
-            "request": shown(&request, token),
-            "response": shown(&response, token),
+            "request": shown(&request, token, hide),
+            "response": shown(&response, token, hide),
             "cookies_sent": sent.cookies,
             "path_case_adapted": sent.path_case_adapted,
             "attempt": sent.attempt,

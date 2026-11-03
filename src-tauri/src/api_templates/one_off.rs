@@ -35,6 +35,45 @@ pub const LOADED_FRESH: &str = "loaded the page fresh";
 
 const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"?, \"save\"?: false, \"timeout_s\"?: 5-180 }";
 
+/// Whether `name` may name a kept value: a letter, then letters, digits or
+/// `_`, 40 characters at most.
+pub fn valid_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && name.len() <= 40
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Said for a step that uses a kept value: a saved template cannot reach it.
+pub const VAR_NOT_SAVED: &str = "not saved as a template: it uses a kept value ({{var.<name>}}), which a saved template cannot reach - use a param and pass the kept value in values";
+
+/// Said for a `{{var.name}}` that is not kept.
+pub fn var_not_kept(name: &str) -> String {
+    format!("{{{{{name}}}}} is not kept in this discovery - keep it first with keep on send_api_request")
+}
+
+/// Every `var.*` name a call uses: in its step, or in its `values` strings.
+pub fn vars_used(o: &OneOff) -> std::collections::BTreeSet<String> {
+    fn walk(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) => out.extend(super::exec::placeholders(s)),
+            Value::Array(a) => a.iter().for_each(|i| walk(i, out)),
+            Value::Object(m) => m.values().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut names = super::step_placeholder_names(&o.step);
+    for v in o.values.values() {
+        walk(v, &mut names);
+    }
+    names.into_iter().filter(|n| n.starts_with(super::exec::VAR_PREFIX)).collect()
+}
+
+/// Whether the call's STEP (not only its `values`) uses a kept value.
+pub fn step_uses_var(o: &OneOff) -> bool {
+    super::step_placeholder_names(&o.step).iter().any(|n| n.starts_with(super::exec::VAR_PREFIX))
+}
+
 /// The seconds a call's `timeout_s` may ask for a step.
 pub const TIMEOUT_MIN_S: u64 = 5;
 pub const TIMEOUT_MAX_S: u64 = 180;
@@ -90,6 +129,9 @@ pub struct OneOff {
     pub save: bool,
     /// Seconds one step may take, 5 to 180; none keeps the runner's own limit.
     pub timeout_s: Option<u16>,
+    /// Values to keep for the discovery: name -> capture path read from the
+    /// answer. Never saved, never answered.
+    pub keep: BTreeMap<String, String>,
 }
 
 fn bad<T>(why: impl Into<String>) -> Result<T, (u16, String)> {
@@ -195,6 +237,27 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         Some(_) => return bad(TIMEOUT_RANGE),
     };
 
+    let keep = match obj.get("keep") {
+        None | Some(Value::Null) => BTreeMap::new(),
+        Some(Value::Object(m)) => {
+            let mut keep = BTreeMap::new();
+            for (name, path) in m {
+                if !valid_var_name(name) {
+                    return bad(format!("keep name \"{name}\" must start with a letter and use only letters, digits and _ (40 characters at most)"));
+                }
+                let Some(path) = path.as_str() else {
+                    return bad(format!("keep \"{name}\" needs a capture path such as $.Token"));
+                };
+                if let Err(e) = super::exec::parse_capture_path(path) {
+                    return bad(format!("keep \"{name}\" is not a valid capture path: {e}"));
+                }
+                keep.insert(name.clone(), path.to_string());
+            }
+            keep
+        }
+        Some(_) => return bad("keep is an object of names to capture paths"),
+    };
+
     let one = OneOff {
         step,
         effect,
@@ -209,6 +272,7 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         module: text(obj, "module"),
         save,
         timeout_s,
+        keep,
     };
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET

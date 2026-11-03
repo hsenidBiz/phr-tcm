@@ -323,7 +323,7 @@ fn three_steps() -> ApiTemplate {
 pub(crate) fn request(t: ApiTemplate, mode: Mode) -> RunRequest {
     let mut values = serde_json::Map::new();
     values.insert("cycleName".into(), json!("FY27"));
-    RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t, step_limit: None }
+    RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t, step_limit: None, keep: Default::default() }
 }
 
 pub(crate) fn prove() -> Mode {
@@ -953,6 +953,55 @@ mod through_the_bridge {
 
     pub(super) fn never_opened(_: Browser) -> FakeBrowsers {
         panic!("a browser was opened for a call that should have been refused first")
+    }
+
+    #[tokio::test]
+    async fn a_prove_fills_values_from_the_askers_kept_values() {
+        use v2_lib::ai_bridge::api_template_prove_with;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let value = format!("kv-{}", "x9Q".repeat(20));
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": value })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        let kept = BTreeMap::from([("name".to_string(), json!(value))]);
+        let call = body(json!({ "values": { "cycleName": "{{var.name}}" } }));
+
+        let (status, out) = api_template_prove_with(
+            kept,
+            Some(v2_lib::autorun::slots::SlotNo::MAIN),
+            &ctx(),
+            &call,
+            |_| browsers,
+            no_db,
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!out.contains(&value), "the kept value is in the answer: {out}");
+        let report: RunReport = serde_json::from_str(&out).unwrap();
+        assert_eq!(report.outputs["cycleId"], json!("{{var.name}}"));
+        let saved = store::load(root.path(), ORG, PROJECT, ID).unwrap().expect("saved");
+        let text = serde_json::to_string(&saved).unwrap();
+        assert!(!text.contains(&value), "the proven template holds a kept value: {text}");
+    }
+
+    #[tokio::test]
+    async fn a_prove_with_no_kept_value_is_refused() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let rig = rig(vec![], None);
+        v2_lib::autorun::store::set_root(rig.root.path().to_path_buf());
+        let call = body(json!({ "values": { "cycleName": "{{var.name}}" } }));
+        let (status, out) = api_template_prove(&ctx(), &call, never_opened, no_db, &quick()).await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, "{{var.name}} is not kept in this discovery - keep it first with keep on send_api_request");
     }
 
     #[tokio::test]

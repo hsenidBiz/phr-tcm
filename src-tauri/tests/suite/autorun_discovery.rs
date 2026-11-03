@@ -158,6 +158,7 @@ pub(crate) fn opened_for_discovery() -> Option<DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
     })
 }
 
@@ -174,6 +175,7 @@ pub(crate) fn exploring(area: &str) -> Option<DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
     })
 }
 
@@ -1380,6 +1382,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");

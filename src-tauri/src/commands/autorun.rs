@@ -371,6 +371,10 @@ pub struct DiscoveryState {
     /// while this discovery goes on, never written to the map, gone with the
     /// discovery.
     pub carried: Vec<crate::autorun::discovery_map::AreaMap>,
+    /// Values `send_api_request` kept for `{{var.name}}`, by name. In memory
+    /// only, never answered, logged or written to a file; they go with the
+    /// discovery (its end, its release, or a new start).
+    pub kept: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl DiscoveryState {
@@ -701,6 +705,7 @@ pub(crate) async fn open_for_discovery(
             call_case_id: None,
             explore: no_save.explore.then(crate::autorun::explore::ExploreRun::default),
             carried: Vec::new(),
+            kept: Default::default(),
         });
     }
     publish_discovery_in(n, &slot);

@@ -279,6 +279,7 @@ fn request(org: &str, project: &str, t: &ApiTemplate, entry: &TestMade) -> RunRe
         mode: Mode::Cleanup,
         template: t.clone(),
         step_limit: None,
+        keep: Default::default(),
     }
 }
 

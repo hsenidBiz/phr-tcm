@@ -980,6 +980,7 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
     });
     b.d.guard_saves(&[]).await.unwrap();
     b.guard_owner = Some(GuardOwner::Discovery);
@@ -2032,6 +2033,7 @@ fn begun_discovery() -> Option<v2_lib::commands::autorun::DiscoveryState> {
         call_case_id: None,
         explore: None,
         carried: Vec::new(),
+        kept: Default::default(),
     })
 }
 
