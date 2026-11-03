@@ -324,3 +324,18 @@ test("an old draft with no attachment keys over a case that has some is no chang
   const q = queued({ steps: [{ action: "Open", expected: "Shown" }, { action: "Save", expected: "Saved" }] });
   expect(diffCase(q, cur).noop).toBe(true);
 });
+
+test("a removal the case no longer holds is no change once its files were read", () => {
+  const cur = current({ steps: twoSteps([]), step_ids: ["2", "3"], attachments_read: true });
+  const q = queued({ steps: twoSteps([]), removed_attachments: ["gone"] });
+  const d = diffCase(q, cur);
+  expect(d.noop).toBe(true);
+  expect(d.attachments.removed).toEqual([]);
+  expect(attachmentLines(d)).toEqual([]);
+});
+
+test("a removal is still shown when the case's files could not be read", () => {
+  const cur = current({ steps: twoSteps([]), step_ids: ["2", "3"], attachments_read: false });
+  const q = queued({ steps: twoSteps([]), removed_attachments: ["gone"] });
+  expect(diffCase(q, cur).noop).toBe(false);
+});

@@ -116,6 +116,9 @@ function diffAttachments(queued: TestCase, current: TestCaseFull): Pick<CaseDiff
   for (const id of new Set(queued.removed_attachments ?? [])) {
     if (carried.has(id)) continue;
     const was = heldAt.get(id);
+    // Read and not there: the removal already went through, so it is no
+    // change - the review must not promise one the upload cannot make.
+    if (!was && current.attachments_read !== false) continue;
     detail.push({ step: was ? was.step : 0, kind: "removed", name: was?.name || "a file" });
   }
   const names = (k: "added" | "removed" | "moved") => detail.filter((d) => d.kind === k).map((d) => d.name);

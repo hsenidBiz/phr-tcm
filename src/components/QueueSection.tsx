@@ -963,6 +963,12 @@ export default function QueueSection({
       if (claims.length > 0) {
         const got = await commands.claimCreatedStepFiles(org, claims);
         if (got.status === "ok") createdResults = withClaimedFiles(createdResults, got.data);
+        else {
+          toast.warning(
+            "Could not check which step files those cases already have in Azure DevOps. Uploading them again would attach their files a second time.",
+            { duration: 20000 },
+          );
+        }
       }
       // A smaller hold keeps its ids, plus what this Check just claimed,
       // and each still-held row keeps its own content signature.
