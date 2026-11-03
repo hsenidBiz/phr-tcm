@@ -72,6 +72,8 @@ test("a case whose only change is step types says which steps change, in the ope
       detail: [],
     },
     blankSkipped: [],
+    attachments: { added: [], removed: [], moved: [] },
+    attachmentDetail: [],
     noop: false,
   };
   render(<div role="grid">{QueueRowInner(props(diff))}</div>);
@@ -79,6 +81,24 @@ test("a case whose only change is step types says which steps change, in the ope
   expect(
     screen.getByText("Steps 1 and 3 become validation steps, because they have an Expected Result."),
   ).toBeInTheDocument();
+});
+
+test("a case whose only change is a step file names it, per step, in the open diff", () => {
+  const diff: CaseDiff = {
+    fields: [],
+    steps: { added: 0, removed: 0, changed: 0, retyped: 0, retypedDetail: [], detail: [] },
+    blankSkipped: [],
+    attachments: { added: ["a.png"], removed: ["old.png"], moved: [] },
+    attachmentDetail: [
+      { step: 1, kind: "added", name: "a.png" },
+      { step: 0, kind: "removed", name: "old.png" },
+    ],
+    noop: false,
+  };
+  render(<div role="grid">{QueueRowInner(props(diff))}</div>);
+  expect(screen.getByText("Step files:")).toBeInTheDocument();
+  expect(screen.getByText("Step 2: adds a.png.")).toBeInTheDocument();
+  expect(screen.getByText("Step 1: removes old.png.")).toBeInTheDocument();
 });
 
 test("a row whose upload outcome is unknown says so", () => {

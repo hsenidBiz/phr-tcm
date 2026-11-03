@@ -76,6 +76,12 @@ export const commands = {
 	 *  "outcome unknown" (C2). Read only.
 	 */
 	reconcileUpload: (organization: string, project: string, pbiId: number, since: string, titles: string[], excludeIds: number[]) => typedError<ReconcileAnswer, string>(__TAURI_INVOKE("reconcile_upload", { organization, project, pbiId, since, titles, excludeIds })),
+	/**
+	 *  After a Check claims creates, which of their step files Azure DevOps holds
+	 *  (see `claimed_step_files`), so the queue can swap each path for its id.
+	 *  Read only.
+	 */
+	claimCreatedStepFiles: (organization: string, cases: ClaimedCase_Deserialize[]) => typedError<ClaimedFiles[], string>(__TAURI_INVOKE("claim_created_step_files", { organization, cases })),
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
@@ -3517,6 +3523,27 @@ export type ChangeOutcome = {
 	 *  The change itself was written.
 	 */
 	list_error: string | null,
+};
+
+/**  A create a Check claimed, with the steps its row carries. */
+export type ClaimedCase = ClaimedCase_Serialize | ClaimedCase_Deserialize;
+
+/**  A create a Check claimed, with the steps its row carries. */
+export type ClaimedCase_Deserialize = {
+	id: number,
+	steps: Step_Deserialize[],
+};
+
+/**  A create a Check claimed, with the steps its row carries. */
+export type ClaimedCase_Serialize = {
+	id: number,
+	steps: Step_Serialize[],
+};
+
+/**  The step files of one claimed create. */
+export type ClaimedFiles = {
+	id: number,
+	attached: AttachedFile[],
 };
 
 /**  One line of the preview. */

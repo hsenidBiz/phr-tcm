@@ -363,3 +363,47 @@ async fn an_update_that_did_not_land_stays_failed_with_paths() {
     assert_eq!(r[0].action, "failed");
     assert!(r[0].attached.is_empty());
 }
+
+#[tokio::test]
+async fn a_later_claimed_create_gets_its_files_stamped_by_step_and_name() {
+    use v2_lib::commands::queue::claimed_step_files;
+    let server = MockServer::start().await;
+    let f1 = temp_file("claim", "login.png", b"png");
+    let f2 = temp_file("claim", "other.png", b"png");
+    let mut tc = case("Held create", None, vec![step("one"), step("two")]);
+    tc.steps[0].attachments.push(attach_path(&f1));
+    tc.steps[1].attachments.push(attach_path(&f2));
+    // Step 1 is stored as id 2, step 2 as id 3 (the create numbers from 2).
+    mount_server_state(
+        &server,
+        json!({"value": [{"id": 905, "rev": 1, "fields": {},
+            "relations": [
+                attached_relation(&server, "guid-b", "other.png", "[TestStep=3]:"),
+                attached_relation(&server, "guid-a", "login.png", "[TestStep=2]:"),
+                attached_relation(&server, "guid-z", "unrelated.png", "")]}]}),
+        &[],
+    )
+    .await;
+    let got = claimed_step_files(&client(&server), "o", &[(905, tc.steps.clone())]).await;
+    let files = &got[&905];
+    assert_eq!(files.len(), 2);
+    assert_eq!((files[0].step, files[0].id.as_str(), files[0].name.as_str()), (0, "guid-a", "login.png"));
+    assert_eq!((files[1].step, files[1].id.as_str()), (1, "guid-b"));
+    assert_eq!(files[0].path, f1.to_string_lossy());
+}
+
+#[tokio::test]
+async fn a_claimed_create_claims_only_what_azure_devops_holds_and_reads_nothing_without_files() {
+    use v2_lib::commands::queue::claimed_step_files;
+    let server = MockServer::start().await;
+    let f = temp_file("claim2", "login.png", b"png");
+    let mut with = case("Held create", None, vec![step("one")]);
+    with.steps[0].attachments.push(attach_path(&f));
+    mount_server_state(&server, json!({"value": [{"id": 906, "rev": 1, "fields": {}}]}), &[]).await;
+    let none = claimed_step_files(&client(&server), "o", &[(906, with.steps.clone())]).await;
+    assert!(none.get(&906).is_none_or(|v| v.is_empty()), "a file that is not on the case is not claimed");
+    let before = server.received_requests().await.unwrap().len();
+    let plain = claimed_step_files(&client(&server), "o", &[(907, vec![step("one")])]).await;
+    assert!(plain.is_empty());
+    assert_eq!(server.received_requests().await.unwrap().len(), before, "no request for a case with no files");
+}

@@ -27,7 +27,8 @@
  *      each.
  */
 import { keysFor } from "./fileSync";
-import type { TestCase } from "../bindings";
+import type { AttachedFile, TestCase } from "../bindings";
+import { stampResult } from "./stepAttachments";
 
 /** One row of what the submit reported back. */
 export type SubmitOutcome = {
@@ -38,6 +39,12 @@ export type SubmitOutcome = {
   action: string;
   /** The work item id; the NEW one for a created case. */
   id?: number | null;
+  /** The step files the row attached: each local path becomes its stored id
+   * on the row, so uploading it again attaches nothing twice. */
+  attached?: AttachedFile[];
+  /** What a finished row had to say. A row with a note left something out
+   * (its step-file removals did not run), so they stay on the row. */
+  error?: string | null;
 };
 
 export type KeepResult = {
@@ -95,11 +102,12 @@ export function keepUploaded(sent: TestCase[], live: TestCase[], results: Submit
         unmatched += 1;
         return;
       }
-      queue[at] = { ...queue[at], update_id: r.id };
+      queue[at] = stampResult({ ...queue[at], update_id: r.id }, sent[r.index], r);
       uploadedIds.add(r.id);
     } else if (r.action === "updated") {
       const id = sent[r.index]?.update_id ?? r.id;
       if (id != null) uploadedIds.add(id);
+      if (at != null && sent[r.index]) queue[at] = stampResult(queue[at], sent[r.index], r);
     } else if (r.action === "failed" && at != null) {
       failedAt.push(at);
     }

@@ -464,3 +464,28 @@ test("a row's file occurrence follows the app's pairing, not queue order", () =>
   // A hand-typed row belongs to no file.
   expect(fileOwners([tc("Typed")], [w])).toEqual([{ path: "", occurrence: null }]);
 });
+
+test("an attachment-only edit in the file is folded in and reported by name", () => {
+  const before = tc("A", { update_id: 5 });
+  const after = tc("A", {
+    update_id: 5,
+    steps: [{ action: "do", expected: "ok", attachments: [{ path: "C:/x/a.png", name: "a.png" }] }],
+  });
+  expect(changedSteps(before, after)).toEqual([]);
+  const f = changedFields(before, after);
+  expect(f.map((x) => x.name)).toEqual(["Step files"]);
+  expect(f[0].new).toContain("a.png");
+  expect(f[0].new).not.toContain("C:");
+});
+
+test("swapping a path for its stored id is not a change", () => {
+  const a = tc("A", {
+    update_id: 5,
+    steps: [{ action: "do", expected: "ok", attachments: [{ path: "C:/x/a.png", name: "a.png" }] }],
+  });
+  const b = tc("A", {
+    update_id: 5,
+    steps: [{ action: "do", expected: "ok", attachments: [{ id: "g", name: "a.png" }] }],
+  });
+  expect(changedFields(a, b)).toEqual([]);
+});

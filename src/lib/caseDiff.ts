@@ -31,6 +31,12 @@ export type CaseDiff = {
     detail: StepDiff[];
   };
   blankSkipped: string[];
+  /** Step files the upload will add, unlink, or re-point to another step -
+   * file NAMES only, never a path or a URL. */
+  attachments: { added: string[]; removed: string[]; moved: string[] };
+  /** The same, one entry per file with its step (0-based), for the lines the
+   * open diff reads out. `from` is the step a moved file leaves. */
+  attachmentDetail: { step: number; kind: "added" | "removed" | "moved"; name: string; from?: number }[];
   noop: boolean;
 };
 
@@ -81,6 +87,54 @@ function tagsEqual(a: string, b: string): boolean {
  * no Module field has `moduleRef: null`, and the update skips that field
  * entirely - so the review must not promise a change that cannot happen. */
 export type FieldRefs = { moduleRef: string | null; preconditionsRef: string | null };
+
+/** The step-file changes an update makes, read against the attachments the
+ * case holds now (`current.steps[].attachments`). Added: a new file (a
+ * local path). Removed: an id the case holds and the queued case lists in
+ * `removed_attachments`. Moved: an id the queued case carries on a
+ * different step than the case holds it on. Anything the queued case says
+ * nothing about is not a change - an old draft with no attachment keys
+ * leaves a case's files alone. */
+function diffAttachments(queued: TestCase, current: TestCaseFull): Pick<CaseDiff, "attachments" | "attachmentDetail"> {
+  const detail: CaseDiff["attachmentDetail"] = [];
+  const heldAt = new Map<string, { step: number; name: string }>();
+  current.steps.forEach((s, i) => {
+    for (const a of s.attachments ?? []) if (a.id) heldAt.set(a.id, { step: i, name: a.name });
+  });
+  const carried = new Set<string>();
+  queued.steps.forEach((s, i) => {
+    for (const a of s.attachments ?? []) {
+      if (a.path) {
+        detail.push({ step: i, kind: "added", name: a.name });
+      } else if (a.id) {
+        carried.add(a.id);
+        const was = heldAt.get(a.id);
+        if (was && was.step !== i) detail.push({ step: i, kind: "moved", name: was.name || a.name, from: was.step });
+      }
+    }
+  });
+  for (const id of new Set(queued.removed_attachments ?? [])) {
+    if (carried.has(id)) continue;
+    const was = heldAt.get(id);
+    detail.push({ step: was ? was.step : 0, kind: "removed", name: was?.name || "a file" });
+  }
+  const names = (k: "added" | "removed" | "moved") => detail.filter((d) => d.kind === k).map((d) => d.name);
+  return {
+    attachments: { added: names("added"), removed: names("removed"), moved: names("moved") },
+    attachmentDetail: detail,
+  };
+}
+
+/** What the open diff says about step files, one plain sentence per file. */
+export function attachmentLines(d: CaseDiff): string[] {
+  return d.attachmentDetail.map((a) =>
+    a.kind === "added"
+      ? `Step ${a.step + 1}: adds ${a.name}.`
+      : a.kind === "removed"
+        ? `Step ${a.step + 1}: removes ${a.name}.`
+        : `Step ${a.step + 1}: ${a.name} moves here from step ${(a.from ?? 0) + 1}.`,
+  );
+}
 
 export function diffCase(
   queued: TestCase,
@@ -194,11 +248,14 @@ export function diffCase(
     detail,
   };
 
+  const files = diffAttachments(queued, current);
+
   return {
     fields,
     steps,
     blankSkipped,
-    noop: fields.length === 0 && detail.length === 0 && retyped === 0,
+    ...files,
+    noop: fields.length === 0 && detail.length === 0 && retyped === 0 && files.attachmentDetail.length === 0,
   };
 }
 
@@ -239,5 +296,12 @@ export function diffSummary(d: CaseDiff): string {
   const stepCount = d.steps.added + d.steps.removed + d.steps.changed;
   if (stepCount) parts.push(`${stepCount} step${stepCount === 1 ? "" : "s"}`);
   if (d.steps.retyped) parts.push(`${d.steps.retyped} step type${d.steps.retyped === 1 ? "" : "s"}`);
+  const a = d.attachments;
+  const files = [
+    ...a.added.map((n) => `+${n}`),
+    ...a.removed.map((n) => `-${n}`),
+    ...a.moved.map((n) => `${n} moved`),
+  ];
+  if (files.length) parts.push(`files ${files.join(" ")}`);
   return parts.length ? `Click to view ${parts.join(" · ")} changing` : "";
 }

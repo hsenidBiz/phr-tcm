@@ -51,6 +51,21 @@ const stepsSig = (c: TestCase) =>
     .map((s) => `${s.action}\u0000${s.expected}${s.shared != null ? `\u0002${s.shared}` : ""}`)
     .join("\u0001");
 
+/** Step files by NAME, one line per step that has any - what a file edit
+ * is compared and reported on. A path swapped for the id it became (an
+ * upload's stamp) keeps its name, so that is not a change; a file added,
+ * removed or moved to another step is. Never a path or an id. */
+function filesText(c: TestCase): string {
+  const lines: string[] = [];
+  c.steps.forEach((s, i) => {
+    const names = (s.attachments ?? []).map((a) => a.name).sort();
+    if (names.length) lines.push(`Step ${i + 1}: ${names.join(", ")}`);
+  });
+  const gone = c.removed_attachments?.length ?? 0;
+  if (gone) lines.push(`${gone} to remove`);
+  return lines.join("; ");
+}
+
 /** One field that differs, with both sides - the report renders the actual
  * words that changed, not just the field's name. Knowing "Title changed"
  * still means opening the file to find out what it changed to. */
@@ -80,6 +95,7 @@ export function changedFields(before: TestCase, after: TestCase): FieldChange[] 
   push("Comment", before.comment ?? "", after.comment ?? "");
   push("Reviewer notes", before.reviewer_notes ?? "", after.reviewer_notes ?? "");
   push("Area", before.area ?? "", after.area ?? "");
+  push("Step files", filesText(before), filesText(after));
   if ((before.update_id ?? null) !== (after.update_id ?? null)) {
     out.push({
       name: "Work item id",

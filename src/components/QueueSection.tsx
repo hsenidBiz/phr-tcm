@@ -25,6 +25,7 @@ import { summariseSubmit } from "../lib/submitSummary";
 import {
   ambiguousRows,
   checkExcludeIds,
+  claimsForCheck,
   heldRows,
   holdFromResults,
   loadHold,
@@ -32,6 +33,7 @@ import {
   reconciledResults,
   saveHold,
   subscribeHold,
+  withClaimedFiles,
 } from "../lib/uploadHold";
 import {
   queueWriterFor,
@@ -951,7 +953,17 @@ export default function QueueSection({
         return;
       }
       const { found, ambiguous } = r.data;
-      const { results: createdResults, orphans } = reconciledResults(queue, heldRows(queue, h), found);
+      const reconciled = reconciledResults(queue, heldRows(queue, h), found);
+      const { orphans } = reconciled;
+      // A claimed create may carry files the interrupted upload attached:
+      // ask which ones the case holds, so each path becomes its stored id and
+      // a second upload cannot attach it again. A failed read claims nothing.
+      let createdResults = reconciled.results;
+      const claims = claimsForCheck(queue, createdResults);
+      if (claims.length > 0) {
+        const got = await commands.claimCreatedStepFiles(org, claims);
+        if (got.status === "ok") createdResults = withClaimedFiles(createdResults, got.data);
+      }
       // A smaller hold keeps its ids, plus what this Check just claimed,
       // and each still-held row keeps its own content signature.
       const next = narrowHold(h, ambiguous, found.map((f) => f.id));
@@ -1076,7 +1088,7 @@ export default function QueueSection({
     // per-case comments ride on the cases, and the file-level comments
     // block survives because merge_cases_into_draft keeps every top-level
     // key it does not own.
-    const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id }));
+    const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id, attached: r.attached, error: r.error }));
     // The watch list as it is at the moment of asking: the screen showing
     // this queue, if one is mounted, and storage only when none is (or it
     // watches nothing). Storage alone is not enough - a failed storage

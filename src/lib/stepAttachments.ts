@@ -24,6 +24,22 @@ export function withSteps(tc: TestCase, steps: Step[]): TestCase {
   return next;
 }
 
+/** A queue row after one uploaded result: what `stampSaved` does for the
+ * Update editor, for the rows an upload reports. The row's removals count as
+ * applied when the result carries no note (a note on a finished row is the
+ * upload saying it left something out). The same object comes back when the
+ * result has nothing to stamp. */
+export function stampResult(
+  tc: TestCase,
+  sent: TestCase,
+  r: { attached?: AttachedFile[]; error?: string | null },
+): TestCase {
+  const attached = r.attached ?? [];
+  const applied = !r.error;
+  const clears = applied && (sent.removed_attachments?.length ?? 0) > 0;
+  return attached.length > 0 || clears ? stampSaved(tc, sent, attached, applied) : tc;
+}
+
 /** `tc` after a save that `sent` it: each uploaded file's local path is swapped
  * for the id Azure DevOps gave it (so saving again cannot attach it twice),
  * and, when the save applied its attachment work (`applied`: it had nothing

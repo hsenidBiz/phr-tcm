@@ -1860,6 +1860,97 @@ pub async fn reconcile_upload(
     reconcile_with(&client, &organization, &project, pbi_id, &since, &titles, &exclude_ids).await
 }
 
+/// A create a Check claimed, with the steps its row carries.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct ClaimedCase {
+    pub id: i32,
+    pub steps: Vec<crate::steps_xml::Step>,
+}
+
+/// The step files of one claimed create.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct ClaimedFiles {
+    pub id: i32,
+    pub attached: Vec<AttachedFile>,
+}
+
+/// The step files a create already holds, for a create the upload could not
+/// confirm and a Check claimed later. The blobs' ids were never reported
+/// back, so each local file is matched to the relation Azure DevOps holds by
+/// the step it sits on (the create numbers steps from 2) and its file name;
+/// a relation answers one file only. A file with no such relation is left a
+/// path. Read only; a case with no local files costs no request, and a read
+/// that fails claims nothing.
+pub async fn claimed_step_files(
+    client: &ado::AdoClient,
+    organization: &str,
+    claims: &[(i32, Vec<crate::steps_xml::Step>)],
+) -> std::collections::HashMap<i32, Vec<AttachedFile>> {
+    let wanted: Vec<&(i32, Vec<crate::steps_xml::Step>)> = claims
+        .iter()
+        .filter(|(_, steps)| steps.iter().any(|s| s.attachments.iter().any(|a| a.path.is_some())))
+        .collect();
+    let mut out = std::collections::HashMap::new();
+    if wanted.is_empty() {
+        return out;
+    }
+    let ids: Vec<i32> = wanted.iter().map(|(id, _)| *id).collect();
+    let held = match client.case_relations(organization, &ids).await {
+        Ok(m) => m,
+        Err(e) => {
+            crate::applog::warn(format!("could not check which step files the claimed cases hold ({e})"));
+            return out;
+        }
+    };
+    for (id, steps) in wanted {
+        let Some(rel) = held.get(id) else { continue };
+        let step_ids = crate::steps_xml::parse_step_ids(&crate::steps_xml::build_steps_xml(steps));
+        let mut used = vec![false; rel.attachments.len()];
+        let mut files = Vec::new();
+        for (j, step) in steps.iter().enumerate() {
+            let Some(want) = step_ids.get(j) else { continue };
+            for att in &step.attachments {
+                let Some(path) = att.path.as_deref() else { continue };
+                let at = rel.attachments.iter().enumerate().position(|(k, r)| {
+                    !used[k]
+                        && r.name == att.name
+                        && crate::step_attachments::parse_marker(&r.comment).is_some_and(|(sid, _)| &sid == want)
+                });
+                if let Some(k) = at {
+                    used[k] = true;
+                    files.push(AttachedFile {
+                        step: j as u32,
+                        path: path.to_string(),
+                        id: rel.attachments[k].guid.clone(),
+                        name: att.name.clone(),
+                    });
+                }
+            }
+        }
+        if !files.is_empty() {
+            out.insert(*id, files);
+        }
+    }
+    out
+}
+
+/// After a Check claims creates, which of their step files Azure DevOps holds
+/// (see `claimed_step_files`), so the queue can swap each path for its id.
+/// Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn claim_created_step_files(
+    app: tauri::AppHandle,
+    organization: String,
+    cases: Vec<ClaimedCase>,
+) -> Result<Vec<ClaimedFiles>, String> {
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let client = ado::AdoClient::new(token);
+    let claims: Vec<(i32, Vec<crate::steps_xml::Step>)> = cases.into_iter().map(|c| (c.id, c.steps)).collect();
+    let mut got = claimed_step_files(&client, &organization, &claims).await;
+    Ok(claims.iter().filter_map(|(id, _)| got.remove(id).map(|attached| ClaimedFiles { id: *id, attached })).collect())
+}
+
 fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemResult {
     SubmitItemResult {
         index: index as u32,

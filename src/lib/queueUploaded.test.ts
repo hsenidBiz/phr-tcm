@@ -139,3 +139,49 @@ test("an unknown outcome leaves its row untouched and unmarked", () => {
   expect(uploadedIds.size).toBe(0);
   expect(unmatched).toBe(0);
 });
+
+const withFile = (title: string, over: Partial<TestCase> = {}) =>
+  tc(title, {
+    steps: [
+      { action: "a", expected: "b" },
+      { action: "c", expected: "d", attachments: [{ path: "C:/x/a.png", name: "a.png", size: 3 }] },
+    ],
+    ...over,
+  });
+
+test("second_upload_carries_ids_not_paths", () => {
+  const sent = [withFile("A", { update_id: 5 }), withFile("B")];
+  const { queue } = keepUploaded(sent, sent, [
+    { index: 0, action: "updated", id: 5, attached: [{ step: 1, path: "C:/x/a.png", id: "g-1", name: "a.png" }] },
+    { index: 1, action: "created", id: 901, attached: [{ step: 1, path: "C:/x/a.png", id: "g-2", name: "a.png" }] },
+  ]);
+  expect(queue[0].steps[1].attachments).toEqual([{ id: "g-1", name: "a.png", size: 3 }]);
+  expect(queue[1].steps[1].attachments).toEqual([{ id: "g-2", name: "a.png", size: 3 }]);
+  expect(queue[1].update_id).toBe(901);
+});
+
+test("a failed row keeps its paths", () => {
+  const sent = [withFile("A")];
+  const { queue } = keepUploaded(sent, sent, [bad(0)]);
+  expect(queue[0].steps[1].attachments?.[0].path).toBe("C:/x/a.png");
+});
+
+test("removals the upload applied are cleared; ones it did not apply stay", () => {
+  const sent = [
+    withFile("A", { update_id: 5, removed_attachments: ["old"] }),
+    withFile("B", { update_id: 6, removed_attachments: ["old2"] }),
+  ];
+  const { queue } = keepUploaded(sent, sent, [
+    { index: 0, action: "updated", id: 5, attached: [] },
+    { index: 1, action: "updated", id: 6, attached: [], error: "Its step attachments were not changed." },
+  ]);
+  expect(queue[0].removed_attachments).toBeUndefined();
+  expect(queue[1].removed_attachments).toEqual(["old2"]);
+});
+
+test("what was removed in the live queue since the send stays", () => {
+  const sent = [withFile("A", { update_id: 5, removed_attachments: ["old"] })];
+  const live = [withFile("A", { update_id: 5, removed_attachments: ["old", "newer"] })];
+  const { queue } = keepUploaded(sent, live, [{ index: 0, action: "updated", id: 5, attached: [] }]);
+  expect(queue[0].removed_attachments).toEqual(["newer"]);
+});
