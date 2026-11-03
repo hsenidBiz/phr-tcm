@@ -1848,7 +1848,10 @@ async fn run_postback<D: Driver>(
         Some(Reply::Refused { why, status, count, names }) => {
             return Err(StepFailure {
                 status: None,
-                detail: refusal_sentence(why, &req.url, &button, status, count, &names),
+                detail: super::exec::hide_text(
+                    &refusal_sentence(why, &req.url, &button, status, count, &names),
+                    &hide_of(ctx),
+                ),
                 unread: false,
                 session_ended: why == Refusal::SignedOut,
                 posted: false,
@@ -1912,7 +1915,9 @@ async fn run_postback<D: Driver>(
         Verdict::Pass { detail, captured } => {
             carry.carried_to(&a.final_key);
             for (name, value) in captured {
-                progress.created.insert(name.clone(), scrub_value(&Value::String(value.clone()), Some(token)));
+                let mut shown_value = scrub_value(&Value::String(value.clone()), Some(token));
+                super::exec::hide_json(&mut shown_value, &hide_of(ctx));
+                progress.created.insert(name.clone(), shown_value);
                 vars.insert(name, Value::String(value));
             }
             Ok((a.status, detail))
@@ -1958,14 +1963,14 @@ fn record_postback(
             "origin": ctx.origin,
             "step": step.name,
             "method": "POST",
-            "url": if explore { redact_body(None, &req.url) } else { req.url.clone() },
+            "url": if explore { redact_body(None, &super::exec::hide_text(&req.url, &hide_of(ctx))) } else { req.url.clone() },
             "handler": button,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
             "request": shown(&request, token, &hide_of(ctx)),
             "response": shown(&response, token, &hide_of(ctx)),
             "cookies_sent": sent.cookies,
-            "path_case_adapted": sent.path_case_adapted,
+            "path_case_adapted": hidden_json(sent.path_case_adapted, &hide_of(ctx)),
             "attempt": sent.attempt,
             "postback": { "button": button, "carried": answered.map(|a| a.carried), "carry": carry_mode },
         }),
@@ -1978,6 +1983,15 @@ fn record_postback(
 /// Kept values are hidden FIRST, so the cap can never leave half of one.
 fn shown(body: &str, token: &str, hide: &[(String, String)]) -> String {
     excerpt(&scrub_tokens(&scrub_page_state(&super::exec::hide_text(body, hide)), Some(token)))
+}
+
+/// `v` with the hidden values taken out of its strings.
+fn hidden_json(v: Option<&Value>, hide: &[(String, String)]) -> Option<Value> {
+    v.map(|v| {
+        let mut v = v.clone();
+        super::exec::hide_json(&mut v, hide);
+        v
+    })
 }
 
 /// The kept values a run's `values` carry (`var.*`), to hide.
@@ -2037,14 +2051,14 @@ fn record(
             "origin": ctx.origin,
             "step": step.name,
             "method": method_name(built.method),
-            "url": if explore { redact_body(None, &built.url) } else { built.url.clone() },
+            "url": if explore { redact_body(None, &super::exec::hide_text(&built.url, hide)) } else { built.url.clone() },
             "handler": handler,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
             "request": shown(&request, token, hide),
             "response": shown(&response, token, hide),
             "cookies_sent": sent.cookies,
-            "path_case_adapted": sent.path_case_adapted,
+            "path_case_adapted": hidden_json(sent.path_case_adapted, hide),
             "attempt": sent.attempt,
         }),
     );
@@ -2115,21 +2129,27 @@ async fn adapt_path_case<D: Driver>(
     let cookie = case_blind_cookies(&jar, host, &from).into_iter().max_by_key(|c| c.path.len())?.clone();
     let to = in_cookie_case(&from, &cookie.path);
     if let Some(kept) = lost_by_adapting(&jar, host, &from, &to) {
+        let hide = hide_of(ctx);
         applog::warn(format!(
-            "api template {}: step {}: sent {from} as written - {to} would carry the cookie {} but lose {} on {}",
+            "api template {}: step {}: sent {} as written - {} would carry the cookie {} but lose {} on {}",
             ctx.id(),
             step.name,
+            super::exec::hide_text(&from, &hide),
+            super::exec::hide_text(&to, &hide),
             cookie.name,
             kept.name,
             kept.path
         ));
         return None;
     }
+    let hide = hide_of(ctx);
     applog::info(format!(
-        "api template {}: step {}: sent {to} rather than {from} - the application keeps its cookie {} on {}, \
+        "api template {}: step {}: sent {} rather than {} - the application keeps its cookie {} on {}, \
          and cookie paths are case-sensitive",
         ctx.id(),
         step.name,
+        super::exec::hide_text(&to, &hide),
+        super::exec::hide_text(&from, &hide),
         cookie.name,
         cookie.path
     ));

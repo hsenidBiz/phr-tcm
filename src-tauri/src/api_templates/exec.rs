@@ -93,29 +93,54 @@ pub const HIDE_MIN_CHARS: usize = 8;
 /// The `(placeholder, value)` pairs worth hiding from `values`: each
 /// `var.*` entry that is a string of `HIDE_MIN_CHARS` or more, longest first.
 pub fn hidden_values(values: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = values
-        .iter()
-        .filter(|(k, _)| k.starts_with(VAR_PREFIX))
-        .filter_map(|(k, v)| match v {
-            Value::String(s) if s.chars().count() >= HIDE_MIN_CHARS => Some((format!("{{{{{k}}}}}"), s.clone())),
-            _ => None,
-        })
-        .collect();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (k, v) in values.iter().filter(|(k, _)| k.starts_with(VAR_PREFIX)) {
+        let name = format!("{{{{{k}}}}}");
+        let mut texts: Vec<String> = Vec::new();
+        match v {
+            Value::String(s) => texts.push(s.clone()),
+            Value::Number(n) => texts.push(n.to_string()),
+            // A kept list: the whole list as JSON text, and each string or
+            // number in it.
+            Value::Array(items) => {
+                texts.push(v.to_string());
+                for i in items {
+                    match i {
+                        Value::String(s) => texts.push(s.clone()),
+                        Value::Number(n) => texts.push(n.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        for t in texts {
+            if t.chars().count() >= HIDE_MIN_CHARS {
+                out.push((name.clone(), t));
+            }
+        }
+    }
     out.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
     out
 }
 
-/// `text` with every hidden value (and its JSON-escaped form, for a value
-/// inside JSON text) replaced by its placeholder.
+/// `text` with every hidden value replaced by its placeholder: as written,
+/// as JSON text holds it, and as an address or a form holds it (percent
+/// encoded, or with `+` for a space).
 pub fn hide_text(text: &str, hide: &[(String, String)]) -> String {
     let mut out = text.to_string();
     for (name, value) in hide {
-        out = out.replace(value.as_str(), name);
+        let mut forms = vec![value.clone()];
         if let Ok(escaped) = serde_json::to_string(value) {
-            let inner = &escaped[1..escaped.len() - 1];
-            if inner != value {
-                out = out.replace(inner, name);
-            }
+            forms.push(escaped[1..escaped.len() - 1].to_string());
+        }
+        forms.push(percent_encode_segment(value));
+        forms.push(urlencoding::encode(value).into_owned());
+        forms.push(value.replace(' ', "+"));
+        forms.sort_by_key(|f| std::cmp::Reverse(f.len()));
+        forms.dedup();
+        for form in forms {
+            out = out.replace(form.as_str(), name);
         }
     }
     out

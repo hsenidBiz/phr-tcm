@@ -931,3 +931,43 @@ fn a_read_is_answered_after_its_set_is_let_go() {
     assert_eq!(phase.finish().0, 200);
     assert!(dir.path().join("captures").join("later.har").exists());
 }
+
+// ------------------------------------------------- kept session values
+
+/// A value `send_api_request` kept never comes back through the capture
+/// tools or the export, raw or percent-encoded (item 82).
+#[test]
+fn a_kept_value_is_masked_in_the_capture_tools_and_the_export() {
+    let value = "emp 1234 north";
+    let mut f = Feeder::confirmed();
+    f.get("k1", "/hr/emp/emp%201234%20north?q=emp+1234+north", &json!({ "name": value }).to_string());
+    let dir = TempDir::new();
+    let mut slot = browser_with(f.cap);
+    slot.as_mut().unwrap().discovery = crate::autorun_discovery::exploring("Leave").map(|mut s| {
+        s.kept.insert("emp".into(), json!(value));
+        s
+    });
+
+    let mut seen = vec![];
+    for (tool, args) in [
+        (CaptureTool::List, json!({})),
+        (CaptureTool::Request, json!({ "id": 1 })),
+        (CaptureTool::ResponseBody, json!({ "id": 1 })),
+        (CaptureTool::Search, json!({ "text": "emp" })),
+    ] {
+        let (status, out) = call(&mut slot, &mut BTreeMap::new(), Some(dir.path()), tool, args);
+        assert_eq!(status, 200, "{out}");
+        seen.push(out);
+    }
+    let (status, out) =
+        call(&mut slot, &mut BTreeMap::new(), Some(dir.path()), CaptureTool::Export, json!({ "name": "kept" }));
+    assert_eq!(status, 200, "{out}");
+    let file = std::fs::read_to_string(v2_lib::autorun::capture_tools::capture_file(dir.path(), "kept")).unwrap();
+    seen.push(file);
+    for text in &seen {
+        for form in [value, "emp%201234%20north", "emp+1234+north"] {
+            assert!(!text.contains(form), "{form} shows in: {text}");
+        }
+    }
+    assert!(seen.iter().any(|t| t.contains("{{var.emp}}")), "{seen:?}");
+}

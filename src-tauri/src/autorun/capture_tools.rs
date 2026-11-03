@@ -703,6 +703,12 @@ pub fn take_export(cap: &NetCapture, args: &Value) -> Result<TakenExport, (u16, 
 /// The taken requests as HAR 1.2, redacted (`har::to_har`), written
 /// atomically to `<root>/captures/<stem>.har`.
 pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
+    write_export_hiding(root, taken, &[])
+}
+
+/// `write_export` with the values `hide` names (an assistant's kept session
+/// values, `api_templates::exec::hide_text`) taken out of the file first.
+pub fn write_export_hiding(root: &Path, taken: TakenExport, hide: &[(String, String)]) -> (u16, String) {
     let TakenExport { stem, entries, site } = taken;
     let oldest_first: Vec<&Captured> = entries.iter().collect();
     let har = crate::autorun::har::to_har(&oldest_first, site.as_deref());
@@ -713,6 +719,7 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
             return (500, "the capture could not be written as HAR".to_string());
         }
     };
+    let text = crate::api_templates::exec::hide_text(&text, hide);
     let path = capture_file(root, &stem);
     let replaced = path.exists();
     if let Some(dir) = path.parent() {

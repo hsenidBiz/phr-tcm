@@ -3641,11 +3641,6 @@ fn the_explore_tools_are_listed_and_reach_their_routes() {
     assert!(send_says.contains("keep") && send_says.contains("{{var."), "{send_says}");
     let prove_says = tool("prove_api_template")["description"].as_str().unwrap().to_string();
     assert!(prove_says.contains("{{var."), "{prove_says}");
-    // `keep` and `{{var.name}}` are told in plain words, for both tools.
-    assert_eq!(send["inputSchema"]["properties"]["keep"]["type"], "object");
-    assert!(send_says.contains("keep") && send_says.contains("{{var."), "{send_says}");
-    let prove_says = tool("prove_api_template")["description"].as_str().unwrap().to_string();
-    assert!(prove_says.contains("{{var."), "{prove_says}");
     let undo = tool("undo_explore_creates");
     assert_eq!(undo["inputSchema"]["required"], serde_json::json!(["session", "ids"]));
     assert_eq!(undo["inputSchema"]["properties"]["ids"]["type"], "array");

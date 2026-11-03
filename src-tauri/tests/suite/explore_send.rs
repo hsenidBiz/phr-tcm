@@ -1622,3 +1622,64 @@ async fn kept_lists_and_numbers_are_hidden_too() {
         assert!(!text.contains(shown), "{shown} shows in a later answer: {text}");
     }
 }
+
+#[tokio::test]
+async fn a_kept_value_in_the_path_or_query_is_never_in_the_record_or_the_log() {
+    let _log = crate::serial::log_tail();
+    let _locks = locks();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    // Not token-shaped (spaces), so only the kept-value hiding can mask it.
+    let value = "emp 1234 north";
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    assert_eq!(v["kept"], json!(["token (14 characters)"]), "{v}");
+
+    on_the_app(&r);
+    let call = json!({
+        "step": { "method": "GET", "path": "/hr/emp/{{var.token}}", "query": { "q": "{{var.token}}" } },
+        "save": false
+    });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+
+    let records = crate::common::activity_records(activity.path(), "api");
+    let sent = records.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+    let log: String = v2_lib::applog::recent(500).iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    for text in [v.to_string(), sent.clone(), log] {
+        for form in [value, "emp%201234%20north", "emp+1234+north"] {
+            assert!(!text.contains(form), "{form} shows in: {text}");
+        }
+    }
+    assert!(sent.contains("{{var.token}}"), "the record shows the name: {sent}");
+}
+
+#[tokio::test]
+async fn kept_lists_and_numbers_are_hidden_too() {
+    let _locks = locks();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "Ids": ["first value here", "second value", "x"], "Num": 123456789012u64 })),
+            answer(200, json!({ "echo": "first value here and second value", "n": 123456789012u64 })),
+        ],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut call = json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": { "ids": "$.Ids", "num": "$.Num" } });
+    call["save"] = json!(false);
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    let text = v.to_string();
+    for shown in ["first value here", "second value", "123456789012"] {
+        assert!(!text.contains(shown), "{shown} shows in: {text}");
+    }
+    assert!(text.contains("{{var.ids}}") && text.contains("{{var.num}}"), "{text}");
+
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, json!({ "step": { "method": "GET", "path": "/hr/y" }, "save": false })).await;
+    let text = v.to_string();
+    for shown in ["first value here", "second value", "123456789012"] {
+        assert!(!text.contains(shown), "{shown} shows in a later answer: {text}");
+    }
+}

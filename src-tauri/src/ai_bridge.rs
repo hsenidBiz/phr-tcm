@@ -1916,7 +1916,11 @@ pub async fn api_template_prove_with<B: crate::api_templates::held::Keeps, D: cr
         step_limit: None,
         keep: Default::default(),
     };
-    run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await
+    // Whatever a sentence built outside the run quotes is hidden too.
+    let hide = crate::api_templates::exec::hidden_values(&req.values);
+    let (status, out) =
+        run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await;
+    (status, crate::api_templates::exec::hide_text(&out, &hide))
 }
 
 /// `POST /api-template-run`: run a saved template and return its outputs,
@@ -3391,8 +3395,9 @@ pub async fn set_cookie_in<B: DiscoveryBrowser>(n: SlotNo, slot: &mut Option<B>,
 /// of its set, to be redacted and answered with no lock held.
 pub enum CapturePhase {
     Answered((u16, String)),
-    Read(crate::autorun::capture_tools::Read, crate::autorun::capture_tools::Taken, serde_json::Value),
-    Export(std::path::PathBuf, crate::autorun::capture_tools::TakenExport),
+    /// The last member is the kept session values to take out of the answer.
+    Read(crate::autorun::capture_tools::Read, crate::autorun::capture_tools::Taken, serde_json::Value, Vec<(String, String)>),
+    Export(std::path::PathBuf, crate::autorun::capture_tools::TakenExport, Vec<(String, String)>),
 }
 
 impl CapturePhase {
@@ -3402,8 +3407,11 @@ impl CapturePhase {
         use crate::autorun::capture_tools as ct;
         match self {
             CapturePhase::Answered(a) => a,
-            CapturePhase::Read(read, taken, args) => ct::answer(&taken, read, &args),
-            CapturePhase::Export(root, taken) => ct::write_export(&root, taken),
+            CapturePhase::Read(read, taken, args, hide) => {
+                let (status, text) = ct::answer(&taken, read, &args);
+                (status, crate::api_templates::exec::hide_text(&text, &hide))
+            }
+            CapturePhase::Export(root, taken, hide) => ct::write_export_hiding(&root, taken, &hide),
         }
     }
 }
@@ -3422,6 +3430,15 @@ pub fn capture_tool_in<B: DiscoveryBrowser>(
     body: &str,
 ) -> (u16, String) {
     capture_tool_begin(slot, imported, root, tool, body).finish()
+}
+
+/// The `(placeholder, value)` pairs to hide for a discovery's kept values.
+fn kept_hide_pairs(kept: &std::collections::BTreeMap<String, serde_json::Value>) -> Vec<(String, String)> {
+    let all: serde_json::Map<String, serde_json::Value> = kept
+        .iter()
+        .map(|(n, v)| (format!("{}{n}", crate::api_templates::exec::VAR_PREFIX), v.clone()))
+        .collect();
+    crate::api_templates::exec::hidden_values(&all)
 }
 
 /// The part of a capture call that needs its set: what it takes out of the
@@ -3450,8 +3467,15 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
         CaptureTool::ResponseBody => Some(ct::Read::ResponseBody),
         _ => None,
     };
+    // The kept session values of the discovery this browser holds are never
+    // returned through a capture: the one-off request is a fetch the capture
+    // sees, with the value in its address and body.
+    let hide = slot
+        .as_mut()
+        .and_then(|b| b.parts().discovery.as_ref().map(|d| kept_hide_pairs(&d.kept)))
+        .unwrap_or_default();
     let taken = |set: &ct::Set, read: ct::Read, args: serde_json::Value| match ct::take(set, read, &args) {
-        Ok(t) => CapturePhase::Read(read, t, args),
+        Ok(t) => CapturePhase::Read(read, t, args, hide.clone()),
         Err(e) => Answered(e),
     };
     if tool == CaptureTool::Import {
@@ -3490,7 +3514,7 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
         (CaptureTool::GetFilter, _) => Answered((200, ct::filter_answer(cap, imported).to_string())),
         (CaptureTool::Export, _) => match root {
             Some(root) => match ct::take_export(cap, &args) {
-                Ok(t) => CapturePhase::Export(root.to_path_buf(), t),
+                Ok(t) => CapturePhase::Export(root.to_path_buf(), t, hide.clone()),
                 Err(e) => Answered(e),
             },
             None => no_root(),
