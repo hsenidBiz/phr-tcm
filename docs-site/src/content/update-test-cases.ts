@@ -424,7 +424,7 @@ export const updateTestCases: Screen = {
     },
   ],
   tips: [
-    "Attach files to a step: press **Attach** under the step, pick one or more files, and they are listed under it with their size. Each file can be up to 25 MB. Press the x on a file to remove it; a file already on the case is taken off it when you upload. Steps that use Shared Steps cannot carry files. A copied case does not carry the originals' attachments. Files stay with their step when steps are moved.",
+    "Attach files to a step: press **Attach** under the step, pick one or more files, and they are listed under it with their size. Each file can be up to 25 MB. Press the x on a file to remove it; a file that was already on the case is taken off it when you press **Save changes**. Steps that use Shared Steps cannot carry files. A copied case does not carry the originals' attachments. Files stay with their step when steps are moved.",
     "Cases picked with **Edit cases** in Search Suites open here with **Back to Product Backlog Item cases** above them, which returns to the Product Backlog Item's own list. **Move to Product Backlog Item** is greyed out for them. They are edited and deleted in the project of the plan they came from.",
     "A case you open keeps what you type until you save or discard it, even if you fold its group.",
   ],
