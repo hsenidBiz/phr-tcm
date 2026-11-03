@@ -467,6 +467,10 @@ fn hiding_replaces_long_values_with_their_names_and_leaves_short_ones() {
     let hide = hidden_values(&values);
     assert_eq!(hide_text("t=abcdefghij;abc", &hide), "t={{var.token}};abc");
     assert_eq!(hide_text(r#"{"m":"say \"hello\" now"}"#, &hide), r#"{"m":"{{var.quoted}}"}"#);
+    // A form encodes a space as + and a slash as %2F.
+    let mut spaced = serde_json::Map::new();
+    spaced.insert("var.p".into(), json!("a b/c d/e f"));
+    assert_eq!(hide_text("x=a+b%2Fc+d%2Fe+f&y=1", &hidden_values(&spaced)), "x={{var.p}}&y=1");
     let mut v = json!({ "a": ["abcdefghij"], "b": { "c": "x abcdefghij y" }, "n": 5 });
     hide_json(&mut v, &hide);
     assert_eq!(v, json!({ "a": ["{{var.token}}"], "b": { "c": "x {{var.token}} y" }, "n": 5 }));

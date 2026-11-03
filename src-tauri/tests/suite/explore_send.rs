@@ -1622,3 +1622,29 @@ async fn kept_lists_and_numbers_are_hidden_too() {
         assert!(!text.contains(shown), "{shown} shows in a later answer: {text}");
     }
 }
+
+#[tokio::test]
+async fn a_kept_value_stays_masked_in_the_browsers_capture_after_the_discovery() {
+    let _locks = locks();
+    let value = "emp 1234 north";
+    let mut r = rig(vec![answer(200, json!({ "Ref": value }))], None);
+    let (mut browser, id) = exploring_session(&mut r).await;
+    send(&mut browser, &r, true, keep_token_call()).await;
+    let masked = |b: &mut Option<PageBrowser>| {
+        use v2_lib::browser::cdp::Driver;
+        let cap = Driver::capture(&b.as_ref().unwrap().d).expect("a capture");
+        cap.masked().to_vec()
+    };
+    assert_eq!(masked(&mut browser), vec![("{{var.token}}".to_string(), value.to_string())]);
+
+    // The discovery ends and the browser stays: still masked.
+    browser.as_mut().unwrap().discovery = None;
+    assert_eq!(masked(&mut browser).len(), 1);
+    // A new discovery in it: still masked, though nothing is kept in it.
+    browser.as_mut().unwrap().discovery = exploring("Leave").map(|s| DiscoveryState {
+        explore: Some(ExploreRun { session: Some(id), ..ExploreRun::default() }),
+        ..s
+    });
+    assert!(browser.as_ref().unwrap().discovery.as_ref().unwrap().kept.is_empty());
+    assert_eq!(masked(&mut browser).len(), 1);
+}

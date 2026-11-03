@@ -3395,9 +3395,8 @@ pub async fn set_cookie_in<B: DiscoveryBrowser>(n: SlotNo, slot: &mut Option<B>,
 /// of its set, to be redacted and answered with no lock held.
 pub enum CapturePhase {
     Answered((u16, String)),
-    /// The last member is the kept session values to take out of the answer.
-    Read(crate::autorun::capture_tools::Read, crate::autorun::capture_tools::Taken, serde_json::Value, Vec<(String, String)>),
-    Export(std::path::PathBuf, crate::autorun::capture_tools::TakenExport, Vec<(String, String)>),
+    Read(crate::autorun::capture_tools::Read, crate::autorun::capture_tools::Taken, serde_json::Value),
+    Export(std::path::PathBuf, crate::autorun::capture_tools::TakenExport),
 }
 
 impl CapturePhase {
@@ -3407,11 +3406,12 @@ impl CapturePhase {
         use crate::autorun::capture_tools as ct;
         match self {
             CapturePhase::Answered(a) => a,
-            CapturePhase::Read(read, taken, args, hide) => {
+            // The browser's masked kept values never show in an answer.
+            CapturePhase::Read(read, taken, args) => {
                 let (status, text) = ct::answer(&taken, read, &args);
-                (status, crate::api_templates::exec::hide_text(&text, &hide))
+                (status, crate::api_templates::exec::hide_text(&text, taken.hide()))
             }
-            CapturePhase::Export(root, taken, hide) => ct::write_export_hiding(&root, taken, &hide),
+            CapturePhase::Export(root, taken) => ct::write_export(&root, taken),
         }
     }
 }
@@ -3430,15 +3430,6 @@ pub fn capture_tool_in<B: DiscoveryBrowser>(
     body: &str,
 ) -> (u16, String) {
     capture_tool_begin(slot, imported, root, tool, body).finish()
-}
-
-/// The `(placeholder, value)` pairs to hide for a discovery's kept values.
-fn kept_hide_pairs(kept: &std::collections::BTreeMap<String, serde_json::Value>) -> Vec<(String, String)> {
-    let all: serde_json::Map<String, serde_json::Value> = kept
-        .iter()
-        .map(|(n, v)| (format!("{}{n}", crate::api_templates::exec::VAR_PREFIX), v.clone()))
-        .collect();
-    crate::api_templates::exec::hidden_values(&all)
 }
 
 /// The part of a capture call that needs its set: what it takes out of the
@@ -3467,15 +3458,8 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
         CaptureTool::ResponseBody => Some(ct::Read::ResponseBody),
         _ => None,
     };
-    // The kept session values of the discovery this browser holds are never
-    // returned through a capture: the one-off request is a fetch the capture
-    // sees, with the value in its address and body.
-    let hide = slot
-        .as_mut()
-        .and_then(|b| b.parts().discovery.as_ref().map(|d| kept_hide_pairs(&d.kept)))
-        .unwrap_or_default();
     let taken = |set: &ct::Set, read: ct::Read, args: serde_json::Value| match ct::take(set, read, &args) {
-        Ok(t) => CapturePhase::Read(read, t, args, hide.clone()),
+        Ok(t) => CapturePhase::Read(read, t, args),
         Err(e) => Answered(e),
     };
     if tool == CaptureTool::Import {
@@ -3514,7 +3498,7 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
         (CaptureTool::GetFilter, _) => Answered((200, ct::filter_answer(cap, imported).to_string())),
         (CaptureTool::Export, _) => match root {
             Some(root) => match ct::take_export(cap, &args) {
-                Ok(t) => CapturePhase::Export(root.to_path_buf(), t, hide.clone()),
+                Ok(t) => CapturePhase::Export(root.to_path_buf(), t),
                 Err(e) => Answered(e),
             },
             None => no_root(),
@@ -7865,6 +7849,11 @@ pub async fn send_in<B: DiscoveryBrowser>(
         }
         crate::api_templates::exec::hidden_values(&all)
     };
+    // The browser's capture saw this call's fetch, so it hides these values
+    // for as long as the browser lives (not only while this discovery does).
+    if let Some(cap) = crate::browser::cdp::Driver::capture_mut(parts.driver) {
+        cap.mask(&hide);
+    }
     let mut v = serde_json::json!({
         "ok": report.ok,
         "status": out.answer.as_ref().map(|a| a.status),

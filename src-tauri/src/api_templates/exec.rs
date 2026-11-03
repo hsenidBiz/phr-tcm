@@ -135,7 +135,10 @@ pub fn hide_text(text: &str, hide: &[(String, String)]) -> String {
             forms.push(escaped[1..escaped.len() - 1].to_string());
         }
         forms.push(percent_encode_segment(value));
-        forms.push(urlencoding::encode(value).into_owned());
+        let encoded = urlencoding::encode(value).into_owned();
+        // A form: a space is +, any other character percent encoded.
+        forms.push(encoded.replace("%20", "+"));
+        forms.push(encoded);
         forms.push(value.replace(' ', "+"));
         forms.sort_by_key(|f| std::cmp::Reverse(f.len()));
         forms.dedup();
