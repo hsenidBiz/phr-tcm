@@ -27,6 +27,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.4-beta.1",
+    date: "2026-11-03",
+    items: [
+      "Every search bar takes commas to look for several things at once: \"1234, 5678\" finds both cases, and \"login error, timeout\" finds rows with both login and error as well as rows with timeout.",
+      "Assistants can send a one-off request without saving it as a template, give a slow request more time, keep a long value for later requests without it passing through the conversation, and pick one row out of a list or build a base64 body.",
+      "A one-off request that lands on the sign-in page now says it was signed out instead of returning the page, and a request from a page with no security token uses the project's usual token page.",
+      "A template check that fails after it has already changed data now says which changes it made, and the assistant's list of changes can cover several calls and remember which routes only read.",
+      "In discovery an assistant can take a screenshot, pick an option from a drop-down list in one step, and repeat a key press; a step with a misspelt field is refused instead of quietly ignored.",
+      "When an assistant finishes exploring, its browser is closed and the account it used is freed for others; an account in use says who holds it and for how long.",
+      "A database query that returns long text says how to read it in pieces instead of cutting it off silently.",
+    ],
+  },
+  {
     version: "2.4.3-beta.15",
     date: "2026-11-02",
     items: [
