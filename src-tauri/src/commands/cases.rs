@@ -27,14 +27,17 @@ pub async fn pbi_test_cases_full(
     preconditions_ref: Option<String>,
 ) -> Result<Vec<ado::TestCaseFull>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token)
+    let client = ado::AdoClient::new(token);
+    let mut cases = client
         .get_pbi_test_cases_full(
             &organization,
             pbi_id,
             module_ref.as_deref(),
             preconditions_ref.as_deref(),
         )
-        .await
+        .await?;
+    client.load_step_attachments(&organization, &mut cases).await;
+    Ok(cases)
 }
 
 /// Test cases for arbitrary ids (suite browser handoffs).
@@ -48,14 +51,17 @@ pub async fn test_cases_by_ids(
     preconditions_ref: Option<String>,
 ) -> Result<Vec<ado::TestCaseFull>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token)
+    let client = ado::AdoClient::new(token);
+    let mut cases = client
         .get_test_cases_by_ids(
             &organization,
             &ids,
             module_ref.as_deref(),
             preconditions_ref.as_deref(),
         )
-        .await
+        .await?;
+    client.load_step_attachments(&organization, &mut cases).await;
+    Ok(cases)
 }
 
 /// Save one existing case from the editor (no suite-ensure, no pacing).
@@ -74,6 +80,9 @@ pub async fn test_cases_by_ids(
 /// TestCaseFull (`preconditions_stored`): with it a save that did not edit
 /// the field leaves it out, and a field stored as Markdown is written as
 /// Markdown - see `prereq_patch`.
+///
+/// Returns the notes to show for the row (for example, attachments that
+/// could not be changed); an empty list means nothing to say.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -87,12 +96,12 @@ pub async fn update_test_case(
     original_steps_xml: Option<String>,
     original_tags: Option<String>,
     original_preconditions: Option<ado::StoredText>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let id = tc.update_id.ok_or("update_test_case requires update_id")?;
     tc.is_valid()?;
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     ado::AdoClient::new(token)
-        .update_test_case_from_model(
+        .update_test_case_with_attachments(
             &organization,
             &project,
             id,
@@ -108,7 +117,6 @@ pub async fn update_test_case(
             ado::BlankPolicy::Clear,
         )
         .await
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -566,7 +566,8 @@ impl AdoClient {
         iteration_path: &str,
         preconditions_ref: Option<&str>,
         link_pbi: Option<i32>,
-    ) -> Vec<serde_json::Value> {
+        attach: &crate::step_attachments::AttachmentInput<'_>,
+    ) -> (Vec<serde_json::Value>, Vec<String>) {
         let mut patch = vec![
             serde_json::json!({"op": "add", "path": "/fields/System.Title", "value": tc.title}),
             serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps",
@@ -614,7 +615,12 @@ impl AdoClient {
                 },
             }));
         }
-        patch
+        // A create writes the Steps field from the steps, so the ids are the
+        // ones `build_steps_xml` numbers (2, 3, ...).
+        let ids = crate::steps_xml::parse_step_ids(&crate::steps_xml::build_steps_xml(&tc.steps));
+        let extra = crate::step_attachments::document_ops(tc, &ids, attach);
+        patch.extend(extra.ops);
+        (patch, extra.notes)
     }
 
     /// The canonical URL of a work item - what a relation points at.
@@ -643,7 +649,8 @@ impl AdoClient {
     ) -> Result<i32, AdoError> {
         let patch = self.create_test_case_doc(
             organization, project, tc, module_ref, area_path, iteration_path, preconditions_ref, None,
-        );
+            &crate::step_attachments::AttachmentInput::NONE,
+        ).0;
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/$Test%20Case?api-version=7.1",
             self.base_url,
@@ -779,8 +786,75 @@ impl AdoClient {
     ) -> Result<(), AdoError> {
         let ops = self.update_test_case_doc(
             tc, module_ref, preconditions_ref, original_steps_xml, original_tags, original_prereq, blanks,
-        );
+            &crate::step_attachments::AttachmentInput::NONE,
+        ).0;
         self.patch_work_item_ops(organization, project, tc_id, ops).await
+    }
+
+    /// `update_test_case_from_model` plus the case's step attachments.
+    ///
+    /// A case with no attachment work (no step carries one, none removed)
+    /// takes the plain path: no extra request, the document 2.4.2 sent.
+    /// Otherwise the case's relations are read first (a failed read saves
+    /// everything else and says so), new files are uploaded, and the
+    /// relation ops ride in the same PATCH. Returns the row notes.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_test_case_with_attachments(
+        &self,
+        organization: &str,
+        project: &str,
+        tc_id: i32,
+        tc: &crate::model::TestCase,
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+        original_steps_xml: Option<&str>,
+        original_tags: Option<&str>,
+        original_prereq: Option<&super::StoredText>,
+        blanks: BlankPolicy,
+    ) -> Result<Vec<String>, String> {
+        use crate::step_attachments::{has_attachment_work, AttachmentInput};
+        if !has_attachment_work(tc) {
+            self.update_test_case_from_model(
+                organization, project, tc_id, tc, module_ref, preconditions_ref,
+                original_steps_xml, original_tags, original_prereq, blanks,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            return Ok(vec![]);
+        }
+        let mut notes: Vec<String> = Vec::new();
+        let current = match self.case_relations(organization, &[tc_id]).await {
+            Ok(mut m) => m.remove(&tc_id),
+            Err(e) => {
+                crate::applog::warn(&format!("could not read attachments of #{tc_id}: {e}"));
+                None
+            }
+        };
+        let uploaded = if current.is_some() {
+            self.upload_step_files(organization, project, &tc.steps).await?
+        } else {
+            notes.push(
+                "Its step attachments were not changed: they could not be read from Azure DevOps. \
+                 Upload it again to change them. Settings → Logs has the details."
+                    .to_string(),
+            );
+            Vec::new()
+        };
+        let (ops, doc_notes) = self.update_test_case_doc(
+            tc, module_ref, preconditions_ref, original_steps_xml, original_tags, original_prereq, blanks,
+            &AttachmentInput { current: current.as_ref(), uploaded: &uploaded, skip: current.is_none() },
+        );
+        notes.extend(doc_notes);
+        let guarded = ops.iter().any(|o| o["op"] == "test" && o["path"] == "/rev");
+        self.patch_work_item_ops(organization, project, tc_id, ops).await.map_err(|e| match e {
+            AdoError::Http { status: 400 | 409 | 412, .. } if guarded => {
+                crate::applog::warn(&format!("attachment save of #{tc_id} refused: {e}"));
+                "This case changed in Azure DevOps after it was read, so nothing was saved. Upload it again."
+                    .to_string()
+            }
+            other => other.to_string(),
+        })?;
+        Ok(notes)
     }
 
     /// The JSON-patch ops an update sends - the same document whether it
@@ -795,7 +869,8 @@ impl AdoClient {
         original_tags: Option<&str>,
         original_prereq: Option<&super::StoredText>,
         blanks: BlankPolicy,
-    ) -> Vec<serde_json::Value> {
+        attach: &crate::step_attachments::AttachmentInput<'_>,
+    ) -> (Vec<serde_json::Value>, Vec<String>) {
         let mut fields = vec![
             ("System.Title".to_string(), tc.title.clone()),
             (
@@ -859,7 +934,13 @@ impl AdoClient {
             ops.push(serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": p}));
         }
         ops.extend(tag_ops);
-        ops
+        let extra = if attach.skip || !crate::step_attachments::has_attachment_work(tc) {
+            Default::default()
+        } else {
+            crate::step_attachments::document_ops(tc, &final_step_ids(&tc.steps, original_steps_xml), attach)
+        };
+        ops.extend(extra.ops);
+        (ops, extra.notes)
     }
 
     /// PATCH the Test Case to add a TestedBy-Reverse relation to the PBI -
@@ -1887,6 +1968,16 @@ pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::
 ///
 /// A shared step whose reference could not be read, with no original node
 /// to keep in its place, is refused: `ref="0"` names no work item.
+/// The step ids an UPDATE leaves in the Steps field, in document order: those of
+/// the XML `steps_patch` writes, else of the original when nothing is
+/// written. Empty when neither exists (a refused write with no baseline).
+pub fn final_step_ids(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> Vec<String> {
+    match steps_patch(steps, original_xml) {
+        Some(xml) => crate::steps_xml::parse_step_ids(&xml),
+        None => original_xml.map(crate::steps_xml::parse_step_ids).unwrap_or_default(),
+    }
+}
+
 fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> Option<String> {
     // build_steps_xml(&[]) emits a single blank placeholder step, so writing
     // it would replace a real step list with one empty row. Nothing upstream

@@ -1195,7 +1195,8 @@ pub fn queue_item_request(
                 original_tags,
                 original_prereq,
                 ado::BlankPolicy::Skip,
-            )),
+                &crate::step_attachments::AttachmentInput::NONE,
+            ).0),
         },
         // The batch API creates with PATCH against the type's URL, as its
         // own reference does - a POST there is refused. The document
@@ -1211,7 +1212,8 @@ pub fn queue_item_request(
                 iteration_path,
                 p_ref,
                 Some(pbi_id),
-            ));
+                &crate::step_attachments::AttachmentInput::NONE,
+            ).0);
             BatchRequest {
                 method: BatchMethod::Patch,
                 uri: create_uri(project),

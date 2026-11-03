@@ -35,7 +35,7 @@ fn client() -> AdoClient {
 
 #[test]
 fn a_create_writes_2_when_the_case_sets_no_priority() {
-    let doc = client().create_test_case_doc("org", "Web", &case("A", None), None, "", "", None, None);
+    let doc = client().create_test_case_doc("org", "Web", &case("A", None), None, "", "", None, None, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     let op = priority_op(&doc).expect("a create always writes a priority");
     assert_eq!(op["op"], "add");
     assert_eq!(op["value"], 2);
@@ -44,7 +44,7 @@ fn a_create_writes_2_when_the_case_sets_no_priority() {
 #[test]
 fn a_create_writes_the_priority_the_case_sets() {
     for p in 1..=4 {
-        let doc = client().create_test_case_doc("org", "Web", &case("A", Some(p)), None, "", "", None, None);
+        let doc = client().create_test_case_doc("org", "Web", &case("A", Some(p)), None, "", "", None, None, &v2_lib::step_attachments::AttachmentInput::NONE).0;
         assert_eq!(priority_op(&doc).expect("priority op")["value"], p);
     }
 }
@@ -52,7 +52,7 @@ fn a_create_writes_the_priority_the_case_sets() {
 #[test]
 fn an_update_leaves_priority_out_when_the_case_sets_none_whatever_the_blank_policy() {
     for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
-        let ops = client().update_test_case_doc(&case("A", None), None, None, None, None, None, blanks);
+        let ops = client().update_test_case_doc(&case("A", None), None, None, None, None, None, blanks, &v2_lib::step_attachments::AttachmentInput::NONE).0;
         assert!(priority_op(&ops).is_none(), "{blanks:?}: {ops:?}");
     }
 }
@@ -60,7 +60,7 @@ fn an_update_leaves_priority_out_when_the_case_sets_none_whatever_the_blank_poli
 #[test]
 fn an_update_writes_the_priority_when_the_case_sets_one() {
     for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
-        let ops = client().update_test_case_doc(&case("A", Some(3)), None, None, None, None, None, blanks);
+        let ops = client().update_test_case_doc(&case("A", Some(3)), None, None, None, None, None, blanks, &v2_lib::step_attachments::AttachmentInput::NONE).0;
         let op = priority_op(&ops).expect("priority op");
         assert_eq!(op["op"], "add");
         assert_eq!(op["value"], 3);

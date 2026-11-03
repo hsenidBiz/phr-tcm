@@ -111,6 +111,11 @@ pub fn fill_step_attachments(cases: &mut [TestCaseFull], rel: &HashMap<i32, Case
             let Some((step_id, comment)) = parse_marker(&a.comment) else { continue };
             let Some(j) = case.step_ids.iter().position(|s| *s == step_id) else { continue };
             let Some(step) = case.steps.get_mut(j) else { continue };
+            // Idempotent: filling a case that already shows this attachment
+            // must not show it twice.
+            if step.attachments.iter().any(|x| x.id.as_deref() == Some(a.guid.as_str())) {
+                continue;
+            }
             step.attachments.push(StepAttachment {
                 id: Some(a.guid.clone()),
                 path: None,

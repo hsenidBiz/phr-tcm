@@ -255,11 +255,14 @@ export const commands = {
 	 *  TestCaseFull (`preconditions_stored`): with it a save that did not edit
 	 *  the field leaves it out, and a field stored as Markdown is written as
 	 *  Markdown - see `prereq_patch`.
+	 * 
+	 *  Returns the notes to show for the row (for example, attachments that
+	 *  could not be changed); an empty list means nothing to say.
 	 */
 	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null, originalTags: string | null, originalPreconditions: {
 	value: string,
 	markdown: boolean,
-} | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
+} | null) => typedError<string[], string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),

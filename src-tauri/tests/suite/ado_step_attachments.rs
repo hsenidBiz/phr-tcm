@@ -206,3 +206,167 @@ fn attachments_module_issues_no_delete() {
     let src = include_str!("../../src/ado/attachments.rs");
     assert!(!src.contains(".delete(") && !src.contains("Method::DELETE"));
 }
+
+// ---- Task 3: filling is idempotent; the save flow ----
+
+#[test]
+fn fill_twice_does_not_duplicate() {
+    let mut cases = vec![case(1, &["2", "3"])];
+    let mut rel = HashMap::new();
+    rel.insert(1, CaseRelations { rev: 4, attachments: vec![relation(0, "g3", "[TestStep=3]:note")] });
+    fill_step_attachments(&mut cases, &rel);
+    fill_step_attachments(&mut cases, &rel);
+    assert_eq!(cases[0].steps[1].attachments.len(), 1);
+}
+
+use v2_lib::ado::BlankPolicy;
+use v2_lib::model::TestCase;
+
+fn tc_with(steps: Vec<Step>) -> TestCase {
+    TestCase { title: "T".into(), steps, update_id: Some(55), ..Default::default() }
+}
+
+fn plain_step() -> Step {
+    Step { action: "a".into(), expected: "e".into(), ..Default::default() }
+}
+
+fn patch_bodies(reqs: &[wiremock::Request]) -> Vec<serde_json::Value> {
+    reqs.iter()
+        .filter(|r| r.method.as_str() == "PATCH")
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect()
+}
+
+async fn mount_relations(server: &MockServer, relations: serde_json::Value) {
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"value": [{"id": 55, "rev": 7, "relations": relations}]})))
+        .mount(server)
+        .await;
+}
+
+async fn mount_patch_ok(server: &MockServer) {
+    Mock::given(method("PATCH")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 55}))).mount(server).await;
+}
+
+#[tokio::test]
+async fn save_without_attachment_work_reads_no_relations() {
+    let server = MockServer::start().await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let tc = tc_with(vec![plain_step()]);
+    let notes = client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    assert!(notes.is_empty());
+    let reqs = server.received_requests().await.unwrap();
+    assert!(reqs.iter().all(|r| r.method.as_str() != "GET"), "no relations read");
+    assert!(!serde_json::to_string(&patch_bodies(&reqs)).unwrap().contains("/relations/"));
+}
+
+#[tokio::test]
+async fn save_removes_a_removed_attachment_with_a_rev_guard() {
+    let server = MockServer::start().await;
+    mount_relations(&server, json!([
+        {"rel": "AttachedFile", "url": "https://x/_apis/wit/attachments/g1", "attributes": {"name": "a.png", "comment": "[TestStep=2]:"}}
+    ])).await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut tc = tc_with(vec![plain_step()]);
+    tc.removed_attachments = vec!["g1".into()];
+    client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    assert!(reqs.iter().all(|r| r.method.as_str() != "DELETE"));
+    let body = patch_bodies(&reqs).pop().unwrap();
+    let ops = body.as_array().unwrap();
+    let t = ops.iter().position(|o| o["op"] == "test" && o["path"] == "/rev" && o["value"] == 7).expect("test /rev");
+    let r = ops.iter().position(|o| o["op"] == "remove" && o["path"] == "/relations/0").expect("remove");
+    assert!(t < r);
+}
+
+#[tokio::test]
+async fn save_uploads_new_file_then_links_it() {
+    let dir = temp_dir("save");
+    let f = dir.join("new.png");
+    std::fs::write(&f, b"png").unwrap();
+    let server = MockServer::start().await;
+    mount_relations(&server, json!([])).await;
+    Mock::given(method("POST")).and(path("/org/proj/_apis/wit/attachments"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": "gnew", "url": "https://x/_apis/wit/attachments/gnew"})))
+        .mount(&server).await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let att = StepAttachment { path: Some(f.to_str().unwrap().into()), name: "new.png".into(), ..Default::default() };
+    let tc = tc_with(vec![Step { attachments: vec![att], ..plain_step() }]);
+    client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    let body = patch_bodies(&reqs).pop().unwrap();
+    let add = body.as_array().unwrap().iter().find(|o| o["path"] == "/relations/-").expect("add");
+    assert_eq!(add["value"]["url"], "https://x/_apis/wit/attachments/gnew");
+    assert_eq!(add["value"]["attributes"]["comment"], "[TestStep=2]:");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn save_with_missing_file_sends_nothing() {
+    let server = MockServer::start().await;
+    mount_relations(&server, json!([])).await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let dir = temp_dir("missing");
+    let att = StepAttachment { path: Some(dir.join("gone.png").to_str().unwrap().into()), name: "gone.png".into(), ..Default::default() };
+    let tc = tc_with(vec![Step { attachments: vec![att], ..plain_step() }]);
+    let err = client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap_err();
+    assert!(err.contains("gone.png"), "{err}");
+    let reqs = server.received_requests().await.unwrap();
+    assert!(patch_bodies(&reqs).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn relations_read_failure_still_saves_and_says_so() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut tc = tc_with(vec![plain_step()]);
+    tc.removed_attachments = vec!["g1".into()];
+    let notes = client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert!(!notes[0].to_lowercase().contains("http"), "{notes:?}");
+    let body = patch_bodies(&server.received_requests().await.unwrap()).pop().unwrap();
+    assert!(!body.to_string().contains("/relations/"));
+}
+
+#[tokio::test]
+async fn update_command_rev_mismatch_message_has_no_url() {
+    let server = MockServer::start().await;
+    mount_relations(&server, json!([
+        {"rel": "AttachedFile", "url": "https://x/_apis/wit/attachments/g1", "attributes": {"name": "a.png", "comment": "[TestStep=2]:"}}
+    ])).await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({"message": "Test operation failed at https://dev.azure.com/secret/path"})))
+        .mount(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut tc = tc_with(vec![plain_step()]);
+    tc.removed_attachments = vec!["g1".into()];
+    let err = client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap_err();
+    assert!(err.contains("changed in Azure DevOps"), "{err}");
+    assert!(!err.to_lowercase().contains("http"), "{err}");
+}

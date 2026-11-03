@@ -229,3 +229,40 @@ pub fn relation_ops(
     ops.extend(adds);
     AttachmentOps { ops, notes }
 }
+
+/// What a create or update document needs to write a case's step
+/// attachments. Callers that do no attachment work pass `NONE`.
+#[derive(Debug, Clone, Copy)]
+pub struct AttachmentInput<'a> {
+    /// The case's `AttachedFile` relations as read now; `None` for a create.
+    pub current: Option<&'a CaseRelations>,
+    /// Blobs already uploaded for the draft's local files.
+    pub uploaded: &'a [Uploaded],
+    /// Write no attachment ops and no notes: the caller could not read the
+    /// relations (or does no attachment work) and says so itself.
+    pub skip: bool,
+}
+
+impl AttachmentInput<'static> {
+    /// No attachment work: the document is exactly what 2.4.2 built.
+    pub const NONE: AttachmentInput<'static> = AttachmentInput { current: None, uploaded: &[], skip: true };
+}
+
+/// The attachment ops for a document, or a note when they cannot be
+/// written. Nothing at all when the case has no attachment work.
+pub fn document_ops(tc: &TestCase, final_ids: &[String], attach: &AttachmentInput<'_>) -> AttachmentOps {
+    if attach.skip || !has_attachment_work(tc) {
+        return AttachmentOps::default();
+    }
+    if final_ids.len() != tc.steps.len() {
+        return AttachmentOps {
+            ops: vec![],
+            notes: vec![
+                "Its step attachments were not saved: its steps could not be matched to the ones in Azure DevOps. \
+                 Settings → Logs has the details."
+                    .to_string(),
+            ],
+        };
+    }
+    relation_ops(final_ids, &tc.steps, &tc.removed_attachments, attach.current, attach.uploaded)
+}
