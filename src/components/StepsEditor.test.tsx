@@ -201,25 +201,25 @@ function latest() {
 }
 
 test("Attach adds a checked file to that step as a name and size, not a path in the UI", async () => {
-  openDialog.mockResolvedValue(["C:\shots\a.png"]);
+  openDialog.mockResolvedValue(["C:\\shots\\a.png"]);
   mockIPC((cmd) => {
     if (cmd === "describe_step_files")
-      return [{ path: "C:\shots\a.png", name: "a.png", size: 2048, refused: null }];
+      return [{ path: "C:\\shots\\a.png", name: "a.png", size: 2048, refused: null }];
   });
   const { out, Probe } = latest();
   render(<Probe initial={three} />);
   fireEvent.click(screen.getByRole("button", { name: "Attach a file to step 2" }));
   expect(await screen.findByText("a.png")).toBeTruthy();
-  expect(out.steps[1].attachments).toEqual([{ path: "C:\shots\a.png", name: "a.png", size: 2048 }]);
+  expect(out.steps[1].attachments).toEqual([{ path: "C:\\shots\\a.png", name: "a.png", size: 2048 }]);
   expect(out.steps[0].attachments ?? []).toEqual([]);
   expect(document.body.textContent).not.toContain("shots");
 });
 
 test("a refused file shows its sentence and adds nothing", async () => {
-  openDialog.mockResolvedValue(["C:\big.bin"]);
+  openDialog.mockResolvedValue(["C:\\big.bin"]);
   mockIPC((cmd) => {
     if (cmd === "describe_step_files")
-      return [{ path: "C:\big.bin", name: "big.bin", size: null, refused: "big.bin is over 25 MB." }];
+      return [{ path: "C:\\big.bin", name: "big.bin", size: null, refused: "big.bin is over 25 MB." }];
   });
   const { out, Probe } = latest();
   render(<Probe initial={three} />);
@@ -258,4 +258,14 @@ test("a shared step row has no Attach button", () => {
   render(<Harness initial={[three[0], { action: "", expected: "", shared: 812 }]} />);
   expect(screen.getByRole("button", { name: "Attach a file to step 1" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Attach a file to step 2" })).toBeNull();
+});
+
+test("a picker or check that fails says so instead of vanishing", async () => {
+  openDialog.mockRejectedValue(new Error("boom"));
+  mockIPC(() => []);
+  const { out, Probe } = latest();
+  render(<Probe initial={three} />);
+  fireEvent.click(screen.getByRole("button", { name: "Attach a file to step 1" }));
+  await vi.waitFor(() => expect(toastMock.error).toHaveBeenCalled());
+  expect(out.steps[0].attachments ?? []).toEqual([]);
 });

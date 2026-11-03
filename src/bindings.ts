@@ -262,7 +262,7 @@ export const commands = {
 	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null, originalTags: string | null, originalPreconditions: {
 	value: string,
 	markdown: boolean,
-} | null) => typedError<string[], string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
+} | null) => typedError<UpdateSaved, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
 	/**
 	 *  Check files a person (or an assistant) picked for a step: exists, is a
 	 *  plain local file, within the size cap. Reads file metadata only, never
@@ -7903,6 +7903,16 @@ export type UpdateProgress = {
 	percent: number,
 	downloaded: number | null,
 	total: number | null,
+};
+
+/**
+ *  What a save has to say: notes for the person, and the step files it
+ *  attached (step, local path, new id) so the editor can swap each path for
+ *  its id.
+ */
+export type UpdateSaved = {
+	notes: string[],
+	attached: AttachedFile[],
 };
 
 /**

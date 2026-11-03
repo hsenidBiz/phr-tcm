@@ -64,6 +64,15 @@ pub async fn test_cases_by_ids(
     Ok(cases)
 }
 
+/// What a save has to say: notes for the person, and the step files it
+/// attached (step, local path, new id) so the editor can swap each path for
+/// its id.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct UpdateSaved {
+    pub notes: Vec<String>,
+    pub attached: Vec<crate::commands::queue::AttachedFile>,
+}
+
 /// Save one existing case from the editor (no suite-ensure, no pacing).
 /// The case must carry update_id; blank-skip semantics apply as always.
 ///
@@ -96,12 +105,12 @@ pub async fn update_test_case(
     original_steps_xml: Option<String>,
     original_tags: Option<String>,
     original_preconditions: Option<ado::StoredText>,
-) -> Result<Vec<String>, String> {
+) -> Result<UpdateSaved, String> {
     let id = tc.update_id.ok_or("update_test_case requires update_id")?;
     tc.is_valid()?;
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     ado::AdoClient::new(token)
-        .update_test_case_with_attachments(
+        .update_test_case_attached(
             &organization,
             &project,
             id,
@@ -117,6 +126,7 @@ pub async fn update_test_case(
             ado::BlankPolicy::Clear,
         )
         .await
+        .map(|(notes, attached)| UpdateSaved { notes, attached })
 }
 
 #[tauri::command]

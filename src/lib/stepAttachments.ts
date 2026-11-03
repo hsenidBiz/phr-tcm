@@ -1,4 +1,4 @@
-import type { Step, TestCase } from "../bindings";
+import type { AttachedFile, Step, TestCase } from "../bindings";
 
 /** The GUIDs of the attachments Azure DevOps already holds that a list of steps carries. */
 function heldIds(steps: Step[]): Set<string> {
@@ -21,5 +21,32 @@ export function withSteps(tc: TestCase, steps: Step[]): TestCase {
   const next: TestCase = { ...tc, steps };
   if (removed.size > 0) next.removed_attachments = [...removed];
   else delete next.removed_attachments;
+  return next;
+}
+
+/** `tc` after a save that `sent` it: each uploaded file's local path is swapped
+ * for the id Azure DevOps gave it (so saving again cannot attach it twice),
+ * and, when the save applied its attachment work (`applied`: it had nothing
+ * to say about it), the removals it carried are cleared. What was typed since
+ * the save stays. */
+export function stampSaved(tc: TestCase, sent: TestCase, attached: AttachedFile[], applied: boolean): TestCase {
+  const steps = tc.steps.map((s) => ({ ...s }));
+  for (const a of attached) {
+    const list = steps[a.step]?.attachments;
+    const k = list ? list.findIndex((x) => x.path === a.path) : -1;
+    if (!list || k < 0) continue;
+    const size = list[k].size;
+    steps[a.step] = {
+      ...steps[a.step],
+      attachments: list.map((x, m) => (m === k ? { id: a.id, name: a.name, ...(size != null ? { size } : {}) } : x)),
+    };
+  }
+  const next: TestCase = { ...tc, steps };
+  if (applied) {
+    const done = new Set(sent.removed_attachments ?? []);
+    const left = (tc.removed_attachments ?? []).filter((id) => !done.has(id));
+    if (left.length > 0) next.removed_attachments = left;
+    else delete next.removed_attachments;
+  }
   return next;
 }

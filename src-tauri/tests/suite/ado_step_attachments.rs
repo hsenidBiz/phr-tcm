@@ -429,3 +429,41 @@ async fn same_file_on_two_steps_is_two_blobs_and_two_distinct_relations() {
     assert_eq!(adds[1]["value"]["attributes"]["comment"], "[TestStep=3]:");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn save_reports_the_files_it_attached_with_their_ids() {
+    let dir = temp_dir("attached");
+    let f = dir.join("new.png");
+    std::fs::write(&f, b"png").unwrap();
+    let server = MockServer::start().await;
+    mount_relations(&server, json!([])).await;
+    Mock::given(method("POST")).and(path("/org/proj/_apis/wit/attachments"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": "gnew", "url": "https://x/_apis/wit/attachments/gnew"})))
+        .mount(&server).await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let att = StepAttachment { path: Some(f.to_str().unwrap().into()), name: "new.png".into(), ..Default::default() };
+    let tc = tc_with(vec![plain_step(), Step { attachments: vec![att], ..plain_step() }]);
+    let (notes, attached) = client
+        .update_test_case_attached("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    assert!(notes.is_empty());
+    assert_eq!(attached.len(), 1);
+    assert_eq!((attached[0].step, attached[0].id.as_str(), attached[0].name.as_str()), (1, "gnew", "new.png"));
+    assert_eq!(attached[0].path, f.to_str().unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn save_that_attached_nothing_reports_nothing() {
+    let server = MockServer::start().await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let tc = tc_with(vec![plain_step()]);
+    let (_, attached) = client
+        .update_test_case_attached("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    assert!(attached.is_empty());
+}

@@ -1474,7 +1474,7 @@ pub async fn plan_chunk(
 /// sat on. Uploads are one per path attachment, in step order; a file whose
 /// link was not written (the case's steps could not be matched) is left out
 /// so its path is kept.
-fn attached_files(
+pub(crate) fn attached_files(
     tc: &model::TestCase,
     uploaded: &[crate::step_attachments::Uploaded],
     body: &serde_json::Value,

@@ -8,5 +8,14 @@ import type { Step } from "../bindings";
  * not use it, because dropping a stored step there would renumber the
  * steps Azure DevOps already holds. */
 export function keptSteps(steps: Step[]): Step[] {
-  return steps.filter((s) => s.shared != null || s.action.trim() !== "" || s.expected.trim() !== "");
+  return steps.filter(
+    (s) =>
+      s.shared != null ||
+      s.action.trim() !== "" ||
+      s.expected.trim() !== "" ||
+      // A step holding a file stays even with no text: the review gate then
+      // names the missing action, and a file is never dropped (or an
+      // existing one removed from the work item) without the person's say.
+      (s.attachments ?? []).length > 0,
+  );
 }

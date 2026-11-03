@@ -812,6 +812,31 @@ impl AdoClient {
         original_prereq: Option<&super::StoredText>,
         blanks: BlankPolicy,
     ) -> Result<Vec<String>, String> {
+        self.update_test_case_attached(
+            organization, project, tc_id, tc, module_ref, preconditions_ref,
+            original_steps_xml, original_tags, original_prereq, blanks,
+        )
+        .await
+        .map(|(notes, _)| notes)
+    }
+
+    /// `update_test_case_with_attachments` that also reports the files it
+    /// attached (step, local path, new id), so the editor can swap each path
+    /// for its id and never upload it twice.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_test_case_attached(
+        &self,
+        organization: &str,
+        project: &str,
+        tc_id: i32,
+        tc: &crate::model::TestCase,
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+        original_steps_xml: Option<&str>,
+        original_tags: Option<&str>,
+        original_prereq: Option<&super::StoredText>,
+        blanks: BlankPolicy,
+    ) -> Result<(Vec<String>, Vec<crate::commands::queue::AttachedFile>), String> {
         use crate::step_attachments::{has_attachment_work, AttachmentInput};
         if !has_attachment_work(tc) {
             self.update_test_case_from_model(
@@ -820,7 +845,7 @@ impl AdoClient {
             )
             .await
             .map_err(|e| e.to_string())?;
-            return Ok(vec![]);
+            return Ok((vec![], vec![]));
         }
         let mut notes: Vec<String> = Vec::new();
         let current = match self.case_relations(organization, &[tc_id]).await {
@@ -842,6 +867,7 @@ impl AdoClient {
         );
         notes.extend(doc_notes);
         let guarded = ops.iter().any(|o| o["op"] == "test" && o["path"] == "/rev");
+        let attached = crate::commands::queue::attached_files(tc, &uploaded, &serde_json::Value::Array(ops.clone()));
         self.patch_work_item_ops(organization, project, tc_id, ops).await.map_err(|e| match e {
             AdoError::Http { status, ref body } if guarded && is_failed_rev_test(status, body) => {
                 crate::applog::warn(&format!("attachment save of #{tc_id} refused: {e}"));
@@ -850,7 +876,7 @@ impl AdoClient {
             }
             other => other.to_string(),
         })?;
-        Ok(notes)
+        Ok((notes, attached))
     }
 
     /// The JSON-patch ops an update sends - the same document whether it

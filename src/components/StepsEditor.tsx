@@ -56,14 +56,24 @@ export default function StepsEditor({
     onChange(next);
   };
 
+  // The picker is async: attach to the steps as they are when it closes.
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
+
   /** Pick files for step `i`. Rust checks them (name, size, the rules for
    * a plain local file under the cap); a refused one is told to the person
    * and adds nothing. Only names and sizes are shown - never the path. */
   const attach = async (i: number) => {
-    const picked = await open({ multiple: true });
-    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
-    if (paths.length === 0) return;
-    const checks = await commands.describeStepFiles(paths);
+    let checks: Awaited<ReturnType<typeof commands.describeStepFiles>>;
+    try {
+      const picked = await open({ multiple: true });
+      const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+      if (paths.length === 0) return;
+      checks = await commands.describeStepFiles(paths);
+    } catch {
+      toast.error("The files could not be checked. Try again.");
+      return;
+    }
     const added: StepAttachment[] = [];
     for (const c of checks) {
       if (c.refused) toast.error(c.refused);
@@ -76,10 +86,6 @@ export default function StepsEditor({
       ),
     );
   };
-  // The picker is async: attach to the steps as they are when it closes.
-  const stepsRef = useRef(steps);
-  stepsRef.current = steps;
-
   // Index being dragged, and the row currently under it. Component state,
   // not dataTransfer: jsdom and some WebViews give dataTransfer trouble,
   // and the indices never need to leave this component anyway.

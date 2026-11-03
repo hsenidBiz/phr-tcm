@@ -82,3 +82,20 @@ test("deleting a step that holds an existing attachment saves it as removed", ()
   fireEvent.click(save());
   expect(onSave.mock.calls[0][0]).toMatchObject({ steps: [original.steps[0]], removed_attachments: ["g1"] });
 });
+
+test("clearing the text of a step that holds a file does not remove the file; the missing action is named", () => {
+  const withFile: TestCase = {
+    ...original,
+    steps: [
+      original.steps[0],
+      { action: "Upload", expected: "Done", attachments: [{ id: "g1", name: "old.png" }] },
+    ],
+  };
+  const onSave = mount(withFile);
+  fireEvent.change(screen.getByLabelText("Step 2 action"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("Step 2 expected"), { target: { value: "" } });
+  expect(screen.getByLabelText("Step 2 action")).toBeInTheDocument();
+  expect(screen.getByText("Step 2 action is empty.")).toBeInTheDocument();
+  expect(save()).toBeDisabled();
+  expect(onSave).not.toHaveBeenCalled();
+});
