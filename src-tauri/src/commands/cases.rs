@@ -284,44 +284,31 @@ pub struct StepFileCheck {
 
 /// Check files a person (or an assistant) picked for a step: exists, is a
 /// plain local file, within the size cap. Reads file metadata only, never
-/// contents.
+/// contents. Async and off the UI thread: a path on a stale mapped drive
+/// can block for a long time and must not freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub fn describe_step_files(paths: Vec<String>) -> Vec<StepFileCheck> {
-    paths
-        .into_iter()
-        .map(|path| {
-            let name = std::path::Path::new(&path)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "that file".to_string());
-            let refused = |why: String| StepFileCheck {
-                path: path.clone(),
+pub async fn describe_step_files(paths: Vec<String>) -> Vec<StepFileCheck> {
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        let p = path.clone();
+        let checked = tokio::task::spawn_blocking(move || ado::attachments::check_step_file(&p)).await;
+        let name = ado::attachments::step_file_name(&path);
+        out.push(match checked {
+            Ok(Ok((name, size))) => StepFileCheck {
+                path,
+                name,
+                size: Some(u32::try_from(size).unwrap_or(u32::MAX)),
+                refused: None,
+            },
+            Ok(Err(why)) => StepFileCheck { path, name, size: None, refused: Some(why) },
+            Err(_) => StepFileCheck {
+                path,
                 name: name.clone(),
                 size: None,
-                refused: Some(why),
-            };
-            if !crate::test_files::is_plain_local_path(&path) {
-                return refused(format!("\"{name}\" is not on a local drive, so it cannot be attached."));
-            }
-            let Ok(meta) = std::fs::metadata(&path) else {
-                return refused(format!("\"{name}\" could not be found, so it was not attached."));
-            };
-            if !meta.is_file() {
-                return refused(format!("\"{name}\" is not a file, so it cannot be attached."));
-            }
-            if meta.len() > crate::step_attachments::STEP_ATTACHMENT_MAX_BYTES {
-                return refused(format!(
-                    "\"{name}\" is larger than {} MB, so it cannot be attached.",
-                    crate::step_attachments::STEP_ATTACHMENT_MAX_BYTES / (1024 * 1024)
-                ));
-            }
-            StepFileCheck {
-                path: path.clone(),
-                name: name.clone(),
-                size: Some(meta.len() as u32),
-                refused: None,
-            }
-        })
-        .collect()
+                refused: Some(format!("\"{name}\" could not be checked, so it was not attached.")),
+            },
+        });
+    }
+    out
 }

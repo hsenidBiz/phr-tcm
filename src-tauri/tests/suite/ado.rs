@@ -1688,7 +1688,7 @@ async fn a_title_only_edit_leaves_the_prerequisites_out() {
         // The queue's batch document follows the same rule.
         tc.update_id = Some(301);
         let req = v2_lib::commands::queue::queue_item_request(
-            &doc_client(), "org", "proj", 42, &tc, None, Some("Custom.Prec"), "", "", None, None, Some(&stored), 1,
+            &doc_client(), "org", "proj", 42, &tc, None, Some("Custom.Prec"), "", "", None, None, Some(&stored), 1, &v2_lib::step_attachments::AttachmentInput::NONE
         )
         .unwrap();
         assert!(prereq_ops(req.body.as_array().unwrap()).is_empty(), "{}", req.body);

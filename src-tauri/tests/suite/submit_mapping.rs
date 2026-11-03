@@ -49,7 +49,7 @@ fn tag_ops(body: &serde_json::Value) -> Vec<String> {
 fn a_create_is_one_document_that_links_the_pbi() {
     let req = queue_item_request(
         &client(), "acme", "Web", 42, &case("New one", None), None, None,
-        "Web\\Team", "Web\\Sprint 1", None, None, None, 3,
+        "Web\\Team", "Web\\Sprint 1", None, None, None, 3, &v2_lib::step_attachments::AttachmentInput::NONE
     )
     .unwrap();
     assert_eq!(req.uri, create_uri("Web"));
@@ -68,7 +68,7 @@ fn a_create_is_one_document_that_links_the_pbi() {
 fn an_update_patches_its_own_work_item_and_links_nothing() {
     let req = queue_item_request(
         &client(), "acme", "Web", 42, &case("Old one", Some(777)), None, None,
-        "Web\\Team", "Web\\Sprint 1", None, None, None, 1,
+        "Web\\Team", "Web\\Sprint 1", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE
     )
     .unwrap();
     assert_eq!(req.uri, update_uri(777));
@@ -86,25 +86,25 @@ fn an_update_patches_its_own_work_item_and_links_nothing() {
 fn baselines_shape_updates_only() {
     let mut tc = case("Tagged", None);
     tc.tags = "smoke".into();
-    let plain = queue_item_request(&client(), "acme", "Web", 42, &tc, None, None, "", "", None, None, None, 1).unwrap();
+    let plain = queue_item_request(&client(), "acme", "Web", 42, &tc, None, None, "", "", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
     let with = queue_item_request(
         &client(), "acme", "Web", 42, &tc, None, None, "", "",
-        Some("<steps id=\"0\" last=\"2\"></steps>"), Some("legacy; old"), None, 1,
+        Some("<steps id=\"0\" last=\"2\"></steps>"), Some("legacy; old"), None, 1, &v2_lib::step_attachments::AttachmentInput::NONE
     )
     .unwrap();
     assert_eq!(plain.body, with.body, "a create ignores what an existing case held");
 
     let mut up = tc.clone();
     up.update_id = Some(777);
-    let no_base = queue_item_request(&client(), "acme", "Web", 42, &up, None, None, "", "", None, None, None, 1).unwrap();
-    let same = queue_item_request(&client(), "acme", "Web", 42, &up, None, None, "", "", None, Some("smoke"), None, 1).unwrap();
+    let no_base = queue_item_request(&client(), "acme", "Web", 42, &up, None, None, "", "", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
+    let same = queue_item_request(&client(), "acme", "Web", 42, &up, None, None, "", "", None, Some("smoke"), None, 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
     assert_eq!(tag_ops(&no_base.body), vec!["add", "replace"]);
     assert!(tag_ops(&same.body).is_empty(), "tags already as wanted - nothing to write");
 }
 
 #[test]
 fn an_invalid_case_never_becomes_a_request() {
-    let err = queue_item_request(&client(), "acme", "Web", 42, &case("", None), None, None, "", "", None, None, None, 1)
+    let err = queue_item_request(&client(), "acme", "Web", 42, &case("", None), None, None, "", "", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE)
         .unwrap_err();
     assert!(err.contains("Title is required"), "{err}");
 }
@@ -117,7 +117,7 @@ fn an_invalid_case_never_becomes_a_request() {
 fn a_create_with_a_non_positive_shared_reference_is_refused() {
     let mut tc = case("Uses shared", None);
     tc.steps.push(Step { shared: Some(0), ..Default::default() });
-    let err = queue_item_request(&client(), "acme", "Web", 42, &tc, None, None, "", "", None, None, None, 1)
+    let err = queue_item_request(&client(), "acme", "Web", 42, &tc, None, None, "", "", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE)
         .unwrap_err();
     assert!(err.contains("Shared Steps"), "{err}");
 }
@@ -530,21 +530,21 @@ fn an_update_with_no_prerequisites_baseline_leaves_them_out() {
     };
     let mut up = case("Old one", Some(777));
     up.preconditions = "Signed in as admin".into();
-    let blind = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, None, 1).unwrap();
+    let blind = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
     assert!(prereq(&blind).is_empty(), "{}", blind.body);
     assert!(paths(&blind.body).contains(&"/fields/System.Title".to_string()), "the rest of the update still goes");
 
     // With the baseline, an edit is written and an unchanged copy is not.
     let held = v2_lib::ado::StoredText { value: "<p>Signed in as <b>admin</b></p>".into(), markdown: false };
-    let same = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, Some(&held), 1).unwrap();
+    let same = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, Some(&held), 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
     assert!(prereq(&same).is_empty(), "{}", same.body);
     up.preconditions = "Signed in as a viewer".into();
-    let edit = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, Some(&held), 1).unwrap();
+    let edit = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, Some(&held), 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
     assert_eq!(prereq(&edit).len(), 1, "{}", edit.body);
 
     let mut new = case("New one", None);
     new.preconditions = "Signed in as admin".into();
-    let create = queue_item_request(&client(), "acme", "Web", 42, &new, None, Some("Custom.Prec"), "", "", None, None, None, 1).unwrap();
+    let create = queue_item_request(&client(), "acme", "Web", 42, &new, None, Some("Custom.Prec"), "", "", None, None, None, 1, &v2_lib::step_attachments::AttachmentInput::NONE).unwrap();
     assert_eq!(prereq(&create).len(), 1, "{}", create.body);
 }
 
@@ -561,6 +561,7 @@ fn an_update_whose_prerequisites_were_left_out_says_so_on_its_row() {
         action: action.into(),
         id: Some(700 + index as i32),
         error: None,
+        attached: vec![],
     };
     let mut blind = case("Blind", Some(701));
     blind.preconditions = "Signed in as admin".into();

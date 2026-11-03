@@ -19,7 +19,19 @@ pub struct ImportResult {
     pub specs: Vec<String>,
 }
 
-#[derive(Debug, serde::Serialize, specta::Type)]
+/// A step file the upload attached: which step (0-based) held the local
+/// `path`, and the Azure DevOps attachment id it became. The queue swaps
+/// the path for the id so uploading the same queue again does not attach
+/// the file twice.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct AttachedFile {
+    pub step: u32,
+    pub path: String,
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct SubmitItemResult {
     pub index: u32,
     pub title: String,
@@ -30,6 +42,10 @@ pub struct SubmitItemResult {
     pub action: String,
     pub id: Option<i32>,
     pub error: Option<String>,
+    /// The step files this row attached, for rows that were created or
+    /// updated. Empty when the row had no new files.
+    #[serde(default)]
+    pub attached: Vec<AttachedFile>,
 }
 
 /// Cases per `$batch` call. See the loop in `submit_queue` for why it is
@@ -769,6 +785,10 @@ pub async fn submit_queue(
     // that did not edit it leaves it out, and a field stored as Markdown is
     // written as Markdown - see `prereq_patch`.
     let mut prereq_before: std::collections::HashMap<i32, ado::StoredText> = Default::default();
+    // The step-attachment relations of the update rows that have attachment
+    // work (one read; none when no row has any).
+    let mut relations_before: std::collections::HashMap<i32, crate::step_attachments::CaseRelations> =
+        Default::default();
     if let Ok(token) = get_fresh_token(&app).await {
         let client = ado::AdoClient::new(token);
         let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
@@ -808,6 +828,7 @@ pub async fn submit_queue(
                 )),
             }
         }
+        relations_before = read_queue_relations(&client, &organization, &queue).await.found;
         // A queue of NOTHING but updates never touches the selected PBI:
         // updates PATCH their own work items where they already live, and
         // the area/iteration defaults below are only read by creates. The
@@ -927,38 +948,38 @@ pub async fn submit_queue(
             }
             Ok(token) => {
                 let client = ado::AdoClient::new(token);
-                // A case that fails validation is reported without being
-                // sent; the rest of the chunk still goes.
-                let mut sent_idx: Vec<usize> = vec![];
-                let mut reqs: Vec<crate::ado::wit_batch::BatchRequest> = vec![];
-                for i in chunk_start..end {
-                    let tc = &queue[i];
-                    match queue_item_request(
-                        &client,
-                        &organization,
-                        &project,
+                // A case that fails validation, or whose step file cannot be
+                // sent, is reported without being sent; the rest still goes.
+                let plan = plan_chunk(
+                    &client,
+                    &QueueContext {
+                        organization: &organization,
+                        project: &project,
                         pbi_id,
-                        tc,
-                        module_ref.as_deref(),
-                        preconditions_ref.as_deref(),
-                        &effective_area,
-                        &effective_iteration,
-                        tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
-                        tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
-                        tc.update_id.and_then(|id| prereq_before.get(&id)),
-                        i - chunk_start + 1,
-                    ) {
-                        Ok(req) => {
-                            reqs.push(req);
-                            sent_idx.push(i);
-                        }
-                        Err(msg) => chunk[i - chunk_start] = Some(failed_item(i, tc, msg)),
-                    }
+                        module_ref: module_ref.as_deref(),
+                        preconditions_ref: preconditions_ref.as_deref(),
+                        area_path: &effective_area,
+                        iteration_path: &effective_iteration,
+                        steps_before: &steps_before,
+                        tags_before: &tags_before,
+                        prereq_before: &prereq_before,
+                        relations: &relations_before,
+                    },
+                    &queue,
+                    chunk_start..end,
+                )
+                .await;
+                for f in &plan.failed {
+                    chunk[f.index as usize - chunk_start] = Some(f.clone());
                 }
+                let sent_idx = &plan.sent_idx;
+                let reqs = &plan.reqs;
                 if !reqs.is_empty() {
-                    match client.wit_batch(&organization, &reqs).await {
+                    match client.wit_batch(&organization, reqs).await {
                         Ok(items) => {
-                            for r in map_batch_results(&queue, &sent_idx, &items) {
+                            let mut mapped = map_batch_results(&queue, sent_idx, &items);
+                            plan.apply(&mut mapped, &items);
+                            for r in mapped {
                                 let i = r.index as usize;
                                 chunk[i - chunk_start] = Some(r);
                             }
@@ -981,7 +1002,7 @@ pub async fn submit_queue(
                                 pbi_id,
                                 &upload_since,
                                 &queue,
-                                &sent_idx,
+                                sent_idx,
                                 &e,
                                 &already_claimed,
                             )
@@ -1173,14 +1194,39 @@ pub fn queue_item_request(
     original_tags: Option<&str>,
     original_prereq: Option<&ado::StoredText>,
     temp_id: usize,
+    attach: &crate::step_attachments::AttachmentInput<'_>,
 ) -> Result<crate::ado::wit_batch::BatchRequest, String> {
+    queue_item_request_noted(
+        client, organization, project, pbi_id, tc, m_ref, p_ref, area_path, iteration_path,
+        original_steps_xml, original_tags, original_prereq, temp_id, attach,
+    )
+    .map(|(req, _)| req)
+}
+
+/// `queue_item_request`, also returning the notes the attachment ops left
+/// for the row (plain sentences, no URL).
+#[allow(clippy::too_many_arguments)]
+pub fn queue_item_request_noted(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    pbi_id: i32,
+    tc: &model::TestCase,
+    m_ref: Option<&str>,
+    p_ref: Option<&str>,
+    area_path: &str,
+    iteration_path: &str,
+    original_steps_xml: Option<&str>,
+    original_tags: Option<&str>,
+    original_prereq: Option<&ado::StoredText>,
+    temp_id: usize,
+    attach: &crate::step_attachments::AttachmentInput<'_>,
+) -> Result<(crate::ado::wit_batch::BatchRequest, Vec<String>), String> {
     use crate::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchMethod, BatchRequest};
     tc.is_valid()?;
     Ok(match tc.update_id {
-        Some(existing_id) => BatchRequest {
-            method: BatchMethod::Patch,
-            uri: update_uri(existing_id),
-            body: serde_json::Value::Array(client.update_test_case_doc(
+        Some(existing_id) => {
+            let (ops, notes) = client.update_test_case_doc(
                 tc,
                 m_ref,
                 // An update with no baseline for its prerequisites - the
@@ -1195,15 +1241,23 @@ pub fn queue_item_request(
                 original_tags,
                 original_prereq,
                 ado::BlankPolicy::Skip,
-                &crate::step_attachments::AttachmentInput::NONE,
-            ).0),
-        },
+                attach,
+            );
+            (
+                BatchRequest {
+                    method: BatchMethod::Patch,
+                    uri: update_uri(existing_id),
+                    body: serde_json::Value::Array(ops),
+                },
+                notes,
+            )
+        }
         // The batch API creates with PATCH against the type's URL, as its
         // own reference does - a POST there is refused. The document
         // starts with the batch-local temporary id (see `temp_id_op`).
         None => {
             let mut doc = vec![temp_id_op(temp_id)];
-            doc.extend(client.create_test_case_doc(
+            let (ops, notes) = client.create_test_case_doc(
                 organization,
                 project,
                 tc,
@@ -1212,15 +1266,241 @@ pub fn queue_item_request(
                 iteration_path,
                 p_ref,
                 Some(pbi_id),
-                &crate::step_attachments::AttachmentInput::NONE,
-            ).0);
-            BatchRequest {
-                method: BatchMethod::Patch,
-                uri: create_uri(project),
-                body: serde_json::Value::Array(doc),
-            }
+                attach,
+            );
+            doc.extend(ops);
+            (
+                BatchRequest {
+                    method: BatchMethod::Patch,
+                    uri: create_uri(project),
+                    body: serde_json::Value::Array(doc),
+                },
+                notes,
+            )
         }
     })
+}
+
+/// What the queue upload holds about the rows' existing state, so a chunk
+/// can be planned without reaching for the network again.
+pub struct QueueContext<'a> {
+    pub organization: &'a str,
+    pub project: &'a str,
+    pub pbi_id: i32,
+    pub module_ref: Option<&'a str>,
+    pub preconditions_ref: Option<&'a str>,
+    pub area_path: &'a str,
+    pub iteration_path: &'a str,
+    /// For update rows: the Steps field, tags and prerequisites as Azure
+    /// DevOps holds them (see `submit_queue`).
+    pub steps_before: &'a std::collections::HashMap<i32, String>,
+    pub tags_before: &'a std::collections::HashMap<i32, String>,
+    pub prereq_before: &'a std::collections::HashMap<i32, ado::StoredText>,
+    /// For update rows with attachment work: their `AttachedFile` relations.
+    pub relations: &'a std::collections::HashMap<i32, crate::step_attachments::CaseRelations>,
+}
+
+/// The relations of the update rows that have attachment work.
+#[derive(Default)]
+pub struct RelationsRead {
+    pub found: std::collections::HashMap<i32, crate::step_attachments::CaseRelations>,
+    /// The read was tried and failed (logged); every wanted row lacks an entry.
+    pub failed: bool,
+}
+
+/// One read for the whole queue: the relations of each update row that has
+/// attachment work. A queue with no such row costs no request at all.
+pub async fn read_queue_relations(
+    client: &ado::AdoClient,
+    organization: &str,
+    queue: &[model::TestCase],
+) -> RelationsRead {
+    let mut ids: Vec<i32> = queue
+        .iter()
+        .filter(|tc| crate::step_attachments::has_attachment_work(tc))
+        .filter_map(|tc| tc.update_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return RelationsRead::default();
+    }
+    match client.case_relations(organization, &ids).await {
+        Ok(found) => RelationsRead { found, failed: false },
+        Err(e) => {
+            crate::applog::warn(format!("could not read the attachments of {} update(s) ({e})", ids.len()));
+            RelationsRead { found: Default::default(), failed: true }
+        }
+    }
+}
+
+/// A chunk, ready to send: the rows that become requests, the rows refused
+/// before sending, and what to say about the rest once the batch answers.
+#[derive(Default)]
+pub struct ChunkPlan {
+    /// Queue index of the k-th request.
+    pub sent_idx: Vec<usize>,
+    pub reqs: Vec<crate::ado::wit_batch::BatchRequest>,
+    /// Rows that failed before anything was sent (a file that cannot be
+    /// read, an upload that was refused, an invalid case).
+    pub failed: Vec<SubmitItemResult>,
+    /// Row notes by queue index.
+    pub notes: std::collections::HashMap<usize, Vec<String>>,
+    /// The files each row will have attached, by queue index.
+    pub attached: std::collections::HashMap<usize, Vec<AttachedFile>>,
+    /// Rows whose document guards the revision (`test /rev`).
+    pub guarded: std::collections::HashSet<usize>,
+}
+
+impl ChunkPlan {
+    /// Fold the plan's knowledge into the batch's results: the files a
+    /// landed row attached, its notes, and a plain sentence for a row whose
+    /// revision guard fired. `items` are the batch's answers, aligned with
+    /// `sent_idx`.
+    pub fn apply(&self, results: &mut [SubmitItemResult], items: &[crate::ado::wit_batch::BatchItem]) {
+        for (&i, item) in self.sent_idx.iter().zip(items) {
+            if !self.guarded.contains(&i) || item.ok() {
+                continue;
+            }
+            if crate::ado::endpoints::is_failed_rev_test(item.code, &item.body.to_string()) {
+                crate::applog::warn(format!("attachment save of queue row {i} refused: {}", item.message()));
+                if let Some(r) = results.iter_mut().find(|r| r.index as usize == i) {
+                    r.error = Some(
+                        "This case changed in Azure DevOps after it was read, so nothing was saved. \
+                         Upload it again."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        for r in results.iter_mut().filter(|r| r.action == "created" || r.action == "updated") {
+            let i = r.index as usize;
+            if let Some(a) = self.attached.get(&i) {
+                r.attached = a.clone();
+            }
+            if let Some(notes) = self.notes.get(&i) {
+                let joined = notes.join(" ");
+                r.error = Some(match r.error.take() {
+                    Some(e) => format!("{e} {joined}"),
+                    None => joined,
+                });
+            }
+        }
+    }
+}
+
+/// Turn rows `range` of the queue into requests. A row with new files has
+/// them uploaded first (once per attachment); an upload or file error fails
+/// that row alone, before anything about it is sent. Rows with no
+/// attachment work are built exactly as before and cost no extra request.
+pub async fn plan_chunk(
+    client: &ado::AdoClient,
+    ctx: &QueueContext<'_>,
+    queue: &[model::TestCase],
+    range: std::ops::Range<usize>,
+) -> ChunkPlan {
+    use crate::step_attachments::{has_attachment_work, AttachmentInput};
+    let mut plan = ChunkPlan::default();
+    let start = range.start;
+    for i in range {
+        let tc = &queue[i];
+        if let Err(e) = tc.is_valid() {
+            plan.failed.push(failed_item(i, tc, e));
+            continue;
+        }
+        let work = has_attachment_work(tc);
+        let relations = tc.update_id.and_then(|id| ctx.relations.get(&id));
+        // An update whose relations could not be read goes without
+        // attachment changes and says so; nothing is uploaded for it.
+        let skip = !work || (tc.update_id.is_some() && relations.is_none());
+        let mut notes: Vec<String> = Vec::new();
+        if work && skip {
+            notes.push(crate::step_attachments::ATTACHMENTS_NOT_READ.to_string());
+        }
+        let uploaded = if skip {
+            Vec::new()
+        } else {
+            match client.upload_step_files(ctx.organization, ctx.project, &tc.steps).await {
+                Ok(u) => u,
+                Err(sentence) => {
+                    plan.failed.push(failed_item(i, tc, sentence));
+                    continue;
+                }
+            }
+        };
+        let attach = AttachmentInput { current: relations, uploaded: &uploaded, skip };
+        match queue_item_request_noted(
+            client,
+            ctx.organization,
+            ctx.project,
+            ctx.pbi_id,
+            tc,
+            ctx.module_ref,
+            ctx.preconditions_ref,
+            ctx.area_path,
+            ctx.iteration_path,
+            tc.update_id.and_then(|id| ctx.steps_before.get(&id)).map(String::as_str),
+            tc.update_id.and_then(|id| ctx.tags_before.get(&id)).map(String::as_str),
+            tc.update_id.and_then(|id| ctx.prereq_before.get(&id)),
+            i - start + 1,
+            &attach,
+        ) {
+            Ok((req, doc_notes)) => {
+                notes.extend(doc_notes);
+                let guarded = req
+                    .body
+                    .as_array()
+                    .is_some_and(|ops| ops.iter().any(|o| o["op"] == "test" && o["path"] == "/rev"));
+                if guarded {
+                    plan.guarded.insert(i);
+                }
+                let attached = attached_files(tc, &uploaded, &req.body);
+                if !attached.is_empty() {
+                    plan.attached.insert(i, attached);
+                }
+                if !notes.is_empty() {
+                    plan.notes.insert(i, notes);
+                }
+                plan.reqs.push(req);
+                plan.sent_idx.push(i);
+            }
+            Err(msg) => plan.failed.push(failed_item(i, tc, msg)),
+        }
+    }
+    plan
+}
+
+/// The uploaded files that the document actually links, with the step each
+/// sat on. Uploads are one per path attachment, in step order; a file whose
+/// link was not written (the case's steps could not be matched) is left out
+/// so its path is kept.
+fn attached_files(
+    tc: &model::TestCase,
+    uploaded: &[crate::step_attachments::Uploaded],
+    body: &serde_json::Value,
+) -> Vec<AttachedFile> {
+    let linked = |url: &str| {
+        body.as_array().is_some_and(|ops| {
+            ops.iter().any(|o| o["path"] == "/relations/-" && o["value"]["url"].as_str() == Some(url))
+        })
+    };
+    let mut done = uploaded.iter();
+    let mut out = Vec::new();
+    for (j, step) in tc.steps.iter().enumerate() {
+        for att in &step.attachments {
+            let Some(path) = att.path.as_deref() else { continue };
+            let Some(u) = done.next() else { return out };
+            if linked(&u.url) {
+                out.push(AttachedFile {
+                    step: j as u32,
+                    path: path.to_string(),
+                    id: u.guid.clone(),
+                    name: u.name.clone(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// What an updated row says when its prerequisites were left out.
@@ -1278,6 +1558,7 @@ pub fn map_batch_results(
                     action: if tc.update_id.is_some() { "updated" } else { "created" }.into(),
                     id: Some(id),
                     error: None,
+                    attached: vec![],
                 }
             } else {
                 // A create with no id is not a create (see create_test_case):
@@ -1392,6 +1673,7 @@ fn unknown_item(index: usize, tc: &model::TestCase, error: &str) -> SubmitItemRe
         error: Some(format!(
             "Outcome unknown ({error}). Azure DevOps may have created this case - check before uploading it again."
         )),
+        attached: vec![],
     }
 }
 
@@ -1432,6 +1714,7 @@ pub fn failed_batch_results(
                     action: "created".into(),
                     id: Some(id),
                     error: None,
+                    attached: vec![],
                 }
             } else if found.is_none() || still_running || ambiguous.contains(tc.title.trim()) {
                 unknown_item(i, tc, error)
@@ -1579,5 +1862,6 @@ fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemR
         action: "failed".into(),
         id: None,
         error: Some(error),
+        attached: vec![],
     }
 }

@@ -59,6 +59,11 @@ pub fn parse_marker(comment: &str) -> Option<(String, String)> {
     Some((id.to_string(), rest[close + 2..].to_string()))
 }
 
+/// The row note for an update whose attachments could not be read from
+/// Azure DevOps (so none were changed). Names no URL.
+pub const ATTACHMENTS_NOT_READ: &str = "Its step attachments were not changed: they could not be read from Azure DevOps. \
+     Upload it again to change them. Settings → Logs has the details.";
+
 /// The GUID of an attachment URL: its last path segment, query stripped.
 pub fn attachment_guid(url: &str) -> Option<String> {
     let no_query = url.split(['?', '#']).next().unwrap_or("");

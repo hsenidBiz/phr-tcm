@@ -266,7 +266,8 @@ export const commands = {
 	/**
 	 *  Check files a person (or an assistant) picked for a step: exists, is a
 	 *  plain local file, within the size cap. Reads file metadata only, never
-	 *  contents.
+	 *  contents. Async and off the UI thread: a path on a stale mapped drive
+	 *  can block for a long time and must not freeze the window.
 	 */
 	describeStepFiles: (paths: string[]) => __TAURI_INVOKE<StepFileCheck[]>("describe_step_files", { paths }),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
@@ -2656,6 +2657,19 @@ export type AssignedItem = {
 	state: string,
 	/**  The project the item lives in (per-project reads: the argument). */
 	project: string,
+};
+
+/**
+ *  A step file the upload attached: which step (0-based) held the local
+ *  `path`, and the Azure DevOps attachment id it became. The queue swaps
+ *  the path for the id so uploading the same queue again does not attach
+ *  the file twice.
+ */
+export type AttachedFile = {
+	step: number,
+	path: string,
+	id: string,
+	name: string,
 };
 
 export type AudioSpectrum = {
@@ -7164,6 +7178,11 @@ export type SubmitItemResult = {
 	action: string,
 	id: number | null,
 	error: string | null,
+	/**
+	 *  The step files this row attached, for rows that were created or
+	 *  updated. Empty when the row had no new files.
+	 */
+	attached?: AttachedFile[],
 };
 
 /**  Emitted once per queue item while submit_queue runs. */

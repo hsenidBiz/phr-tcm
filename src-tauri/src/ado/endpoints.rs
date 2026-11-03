@@ -833,11 +833,7 @@ impl AdoClient {
         let uploaded = if current.is_some() {
             self.upload_step_files(organization, project, &tc.steps).await?
         } else {
-            notes.push(
-                "Its step attachments were not changed: they could not be read from Azure DevOps. \
-                 Upload it again to change them. Settings → Logs has the details."
-                    .to_string(),
-            );
+            notes.push(crate::step_attachments::ATTACHMENTS_NOT_READ.to_string());
             Vec::new()
         };
         let (ops, doc_notes) = self.update_test_case_doc(
@@ -2090,6 +2086,6 @@ fn stores_markdown(w: &serde_json::Value, field: &str) -> bool {
 
 /// Whether a PATCH refusal is the `test /rev` guard failing: 412, or a 400
 /// whose body names the test operation. Any other 400 is a rule refusal.
-fn is_failed_rev_test(status: u16, body: &str) -> bool {
+pub fn is_failed_rev_test(status: u16, body: &str) -> bool {
     status == 412 || (status == 400 && body.to_lowercase().contains("test operation"))
 }

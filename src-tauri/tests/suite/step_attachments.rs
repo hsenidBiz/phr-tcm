@@ -404,8 +404,8 @@ fn id_count_mismatch_gives_note_not_ops() {
 
 // ---- describe_step_files (metadata only) ----
 
-#[test]
-fn describe_refuses_folder_missing_and_big() {
+#[tokio::test]
+async fn describe_refuses_folder_missing_and_big() {
     use v2_lib::commands::cases::describe_step_files;
     let dir = std::env::temp_dir().join(format!("att-describe-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -424,7 +424,7 @@ fn describe_refuses_folder_missing_and_big() {
     std::fs::create_dir_all(&sub).unwrap();
     let mut paths = paths;
     paths[0] = sub.to_string_lossy().into_owned();
-    let out = describe_step_files(paths.clone());
+    let out = describe_step_files(paths.clone()).await;
     assert_eq!(out.len(), 4);
     for c in &out[..3] {
         assert!(c.refused.is_some(), "{} should be refused", c.path);
@@ -441,10 +441,10 @@ fn describe_refuses_folder_missing_and_big() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn describe_refuses_non_local_paths() {
+#[tokio::test]
+async fn describe_refuses_non_local_paths() {
     use v2_lib::commands::cases::describe_step_files;
-    let out = describe_step_files(vec![r"\\server\share\a.png".into(), "relative/a.png".into()]);
+    let out = describe_step_files(vec![r"\\server\share\a.png".into(), "relative/a.png".into()]).await;
     assert!(out.iter().all(|c| c.refused.is_some() && c.size.is_none()));
     assert!(!out[0].refused.as_ref().unwrap().contains("server"));
 }

@@ -228,6 +228,7 @@ mod specs_field;
 mod startup_window;
 mod step_attachments;
 mod steps_xml;
+mod submit_attachments;
 mod submit_mapping;
 mod suite_lookup;
 mod suite_manage;

@@ -125,14 +125,13 @@ pub fn fill_step_attachments(cases: &mut [TestCaseFull], rel: &HashMap<i32, Case
     }
 }
 
-/// Read a local file for upload: a plain local path, an existing file, no
-/// larger than the cap. Returns the file name and its bytes. The sentences
-/// name the file and never a URL.
-pub fn read_step_file(path: &str) -> Result<(String, Vec<u8>), String> {
-    let name = std::path::Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "that file".to_string());
+/// The one check a step file must pass, shared by the picker
+/// (`describe_step_files`) and the upload (`read_step_file`): a plain local
+/// path, an existing file, no larger than the cap. Reads metadata only.
+/// Returns the file name and its size. The sentences name the file and
+/// never a folder or URL.
+pub fn check_step_file(path: &str) -> Result<(String, u64), String> {
+    let name = step_file_name(path);
     if !crate::test_files::is_plain_local_path(path) {
         return Err(format!("\"{name}\" is not on a local drive, so it cannot be attached."));
     }
@@ -147,6 +146,21 @@ pub fn read_step_file(path: &str) -> Result<(String, Vec<u8>), String> {
             STEP_ATTACHMENT_MAX_BYTES / (1024 * 1024)
         ));
     }
+    Ok((name, meta.len()))
+}
+
+/// The file name of a path, or a stand-in when it has none.
+pub fn step_file_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "that file".to_string())
+}
+
+/// Read a local file for upload after `check_step_file`. Returns the file
+/// name and its bytes.
+pub fn read_step_file(path: &str) -> Result<(String, Vec<u8>), String> {
+    let (name, _) = check_step_file(path)?;
     let bytes = std::fs::read(path).map_err(|e| {
         crate::applog::warn(&format!("could not read step file \"{name}\": {e}"));
         format!("\"{name}\" could not be read, so it was not attached.")
