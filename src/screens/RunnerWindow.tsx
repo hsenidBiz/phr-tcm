@@ -6,7 +6,7 @@ import { Pin, PinOff, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "../lib/toast";
 import HoverDismissToaster from "../components/HoverDismissToaster";
-import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
+import { commands, type RunAttachment, type TestCaseFull, type TestCaseFull_Serialize } from "../bindings";
 import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
 import CaseText from "../components/CaseText";
@@ -282,7 +282,7 @@ export default function RunnerWindow() {
   // Before `order` is seeded (the effect above has not committed yet), fall
   // back to the fetch order directly so the first paint is not empty.
   const list = order
-    ? order.map((id) => arrivedById.get(id)).filter((c): c is TestCaseFull => Boolean(c))
+    ? order.map((id) => arrivedById.get(id)).filter((c): c is TestCaseFull_Serialize => Boolean(c))
     : arrived;
   const current = list[idx];
 

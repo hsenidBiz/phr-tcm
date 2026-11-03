@@ -15,6 +15,7 @@ import {
 import { Button } from "./ui/button";
 import { Modal } from "./ui/modal";
 import { IconCancel, IconConfirm } from "../lib/actionIcons";
+import { withoutStepFiles } from "../lib/testCaseConvert";
 
 /** Bulk edit for the selected cases: every field shows at once and defaults
  * to "leave unchanged"; chosen fields are applied to each case IN ADDITION
@@ -61,7 +62,8 @@ export default function BulkEditDialog({
         const r = await commands.updateTestCase(
           org,
           project,
-          tc,
+          // Without the step files, so this save cannot touch one.
+          withoutStepFiles(tc),
           prefs.moduleRef,
           prefs.preconditionsRef,
           // What makes "steps are never touched" below actually true: with

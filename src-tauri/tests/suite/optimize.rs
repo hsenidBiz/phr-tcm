@@ -1575,15 +1575,25 @@ fn attachments_survive_optimize() {
 }
 
 #[test]
-fn an_emptied_step_hands_its_existing_attachments_to_removed() {
+fn a_blank_step_holding_files_is_kept_and_nothing_is_unlinked() {
     use v2_lib::step_attachments::StepAttachment;
-    let mut empty = step("", "");
-    empty.attachments = vec![
+    let mut held = step("", "");
+    held.attachments = vec![
         StepAttachment { id: Some("g7".into()), name: "a.png".into(), ..Default::default() },
         StepAttachment { path: Some("C:/x.png".into()), name: "x.png".into(), ..Default::default() },
     ];
-    let c = case("Blank", "Leave", "", vec![empty, step("Save", "Saved.")]);
-    let (out, _) = optimize(vec![c], None);
-    assert!(out[0].steps.iter().all(|s| !s.action.is_empty()));
-    assert_eq!(out[0].removed_attachments, vec!["g7".to_string()]);
+    let c = case("Blank", "Leave", "", vec![held, step("Save", "Saved.")]);
+    let (out, report) = optimize(vec![c], None);
+    let kept = out[0].steps.iter().find(|s| !s.attachments.is_empty()).expect("the step holding files stayed");
+    assert_eq!(kept.attachments.len(), 2, "a file is never dropped without the person's say");
+    assert!(out[0].removed_attachments.is_empty());
+    assert_eq!(report.empty_steps_removed, 0);
+}
+
+#[test]
+fn a_blank_step_without_files_still_goes() {
+    let c = case("Blank", "Leave", "", vec![step("", ""), step("Save", "Saved.")]);
+    let (out, report) = optimize(vec![c], None);
+    assert!(out[0].steps.iter().all(|s| !s.action.trim().is_empty()));
+    assert_eq!(report.empty_steps_removed, 1);
 }

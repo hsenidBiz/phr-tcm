@@ -20,7 +20,7 @@ import type {
   Step,
   SuiteEntry,
   TestCase,
-  TestCaseFull,
+  TestCaseFull_Serialize,
   TestCaseSummary,
   TestPoint,
 } from "../bindings";
@@ -42,7 +42,7 @@ export const TOUR_PBI: PbiHit = {
 const steps = (...pairs: [string, string][]): Step[] =>
   pairs.map(([action, expected]) => ({ action, expected }));
 
-export const TOUR_CASES: TestCaseFull[] = [
+export const TOUR_CASES: TestCaseFull_Serialize[] = [
   {
     id: 90101,
     title: "Guest checkout - a guest can pay by card",
@@ -55,6 +55,7 @@ export const TOUR_CASES: TestCaseFull[] = [
     ),
     step_ids: ["2", "3", "4"],
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     module_value: "Checkout",
     preconditions: "A product is in stock and nobody is signed in.",
@@ -70,6 +71,7 @@ export const TOUR_CASES: TestCaseFull[] = [
     ),
     step_ids: ["2", "3"],
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     module_value: "Checkout",
     preconditions: "A product is in the basket.",
@@ -85,6 +87,7 @@ export const TOUR_CASES: TestCaseFull[] = [
     ),
     step_ids: ["2", "3"],
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     module_value: "Checkout",
     preconditions: "A product is in the basket.",
@@ -100,6 +103,7 @@ export const TOUR_CASES: TestCaseFull[] = [
     ),
     step_ids: ["2", "3"],
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     module_value: "Checkout",
     preconditions: "A guest email address is available.",

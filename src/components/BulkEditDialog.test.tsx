@@ -206,3 +206,33 @@ test("Tags: Add with nothing typed is no change, and Replace with nothing reads 
   await waitFor(() => expect(onDone).toHaveBeenCalled());
   expect(sent.map((t) => t.tags)).toEqual(["", ""]);
 });
+
+test("Apply never sends step files back: they cannot add, remove or re-point anything", async () => {
+  const sent: Record<string, unknown>[] = [];
+  const args: unknown[] = [];
+  mockIPC((cmd, a) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return ["Billing", "Payroll"];
+    if (cmd === "update_test_case") {
+      sent.push((a as Sent).tc);
+      args.push(a);
+      return null;
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onDone = vi.fn();
+  const withFile = fullCase(1, {
+    steps: [{ action: "Open", expected: "Shown", attachments: [{ id: "g-1", name: "a.png", comment: "" }] }],
+  } as Partial<TestCaseFull>);
+  render(
+    <QueryClientProvider client={qc}>
+      <BulkEditDialog org="acme" project="Web" cases={[withFile]} onClose={() => {}} onDone={onDone} />
+    </QueryClientProvider>,
+  );
+  pickOption("Priority", "Priority 1");
+  fireEvent.click(screen.getByRole("button", { name: /^Apply to 1$/ }));
+  await waitFor(() => expect(onDone).toHaveBeenCalled());
+  expect(JSON.stringify(sent[0].steps)).not.toContain("attachments");
+  expect((args[0] as { tc: { removed_attachments?: unknown } }).tc.removed_attachments).toBeUndefined();
+});

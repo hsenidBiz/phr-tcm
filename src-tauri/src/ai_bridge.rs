@@ -14672,7 +14672,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         a step may carry `attachments`: `{{\"path\": \"C:/shots/login.png\"}}` attaches a new file (a full local path on this machine, 25 MB at most,\n\
         never on a shared step), and an entry with an `id` is one already on the case, so keep those exactly as exported.\n\
         To take an existing one off, prefer `transform_cases` `remove_attachment` (it does both parts); by hand, delete its entry AND list its `id` in the case's `remove_attachments`.\n\
-        `attach_file` needs a `where` naming the case. Existing attachments are not copied to a case without an `id`,\n\
+        `attach_file` needs a `where` naming the case. Existing attachments are not copied to a case without an `id`.\n\
         `tags` (semicolon-separated, never commas),\n\
         `automation_status` (exactly {statuses}),\n\
         `priority` (optional, a number 1-4: a new case without one is created with 2,\n\

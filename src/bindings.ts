@@ -7569,7 +7569,7 @@ export type TestCaseFull_Serialize = {
 	 *  True once this case's step attachments were read from Azure DevOps
 	 *  (`load_step_attachments`). False means "not read", never "none".
 	 */
-	attachments_read?: boolean,
+	attachments_read: boolean,
 };
 
 export type TestCaseSummary = {

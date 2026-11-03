@@ -56,6 +56,7 @@ const existing: TestCaseFull = {
   steps: [{ action: "Open", expected: "Shown" }],
   step_ids: ["2"],
   steps_xml: "",
+  attachments_read: true,
   module_value: "",
   preconditions: "",
   priority: 3,

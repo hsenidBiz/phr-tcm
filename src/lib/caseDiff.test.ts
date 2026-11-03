@@ -22,6 +22,7 @@ function current(over: Partial<TestCaseFull> = {}): TestCaseFull {
     tags: "smoke",
     automation_status: "Planned",
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     steps: [{ action: "Open", expected: "Shown" }],
     step_ids: ["2"],

@@ -467,3 +467,41 @@ async fn save_that_attached_nothing_reports_nothing() {
         .unwrap();
     assert!(attached.is_empty());
 }
+
+#[test]
+fn an_unread_case_still_serializes_attachments_read_false() {
+    // The webview tells "not read" from "none" by this key; omitting it when
+    // false made `=== false` never true.
+    let v = serde_json::to_value(case(1, &["2"])).unwrap();
+    assert_eq!(v.get("attachments_read"), Some(&json!(false)));
+}
+
+#[tokio::test]
+async fn an_upload_refusal_never_shows_the_server_body() {
+    let dir = temp_dir("body");
+    let f = dir.join("big.png");
+    std::fs::write(&f, b"x").unwrap();
+    let steps = vec![Step {
+        attachments: vec![StepAttachment {
+            path: Some(f.to_str().unwrap().to_string()),
+            name: "big.png".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }];
+    for (status, body) in [(400u16, "<html><h1>IIS detail</h1></html>"), (413, "<html>Request Entity Too Large</html>")] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/o/p/_apis/wit/attachments"))
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .mount(&server)
+            .await;
+        let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+        let e = client.upload_step_files("o", "p", &steps).await.unwrap_err();
+        assert!(e.contains("big.png"), "{e}");
+        for bad in ["<html", "IIS", "Entity", "http"] {
+            assert!(!e.contains(bad), "{status}: {e}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

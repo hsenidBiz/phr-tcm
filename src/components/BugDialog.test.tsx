@@ -37,6 +37,7 @@ afterEach(() => {
 
 const testCase = {
   steps_xml: "",
+  attachments_read: true,
   priority: 2,
   id: 201,
   title: "Valid login",

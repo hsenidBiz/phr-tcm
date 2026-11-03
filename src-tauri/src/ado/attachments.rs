@@ -86,8 +86,10 @@ impl AdoClient {
                     return Err(format!("\"{name}\" could not be uploaded to Azure DevOps."));
                 }
                 Err(e) => {
-                    crate::applog::warn(&format!("attachment upload failed for \"{name}\": {e}"));
-                    return Err(format!("\"{name}\" could not be uploaded: {}", e.user_text()));
+                    // The raw body (an on-prem server can answer with a whole
+                    // HTML page) goes to the log, never to the person.
+                    crate::applog::warn(&format!("attachment upload failed for \"{name}\": {e} {}", e.user_text()));
+                    return Err(upload_failed_sentence(&name, &e));
                 }
             };
             let Some(guid) = attachment_guid(&url) else {
@@ -96,6 +98,19 @@ impl AdoClient {
             done.push(Uploaded { path: path.to_string(), guid, url, name });
         }
         Ok(done)
+    }
+}
+
+/// What to tell the person when one file would not upload: the file's name
+/// and a plain reason, never the server's own body.
+fn upload_failed_sentence(name: &str, e: &AdoError) -> String {
+    match e {
+        AdoError::Http { status: 413, .. } => {
+            format!("\"{name}\" is larger than the server accepts.")
+        }
+        // The transport's own sentences already say what to try.
+        AdoError::Network(m) => format!("\"{name}\" could not be uploaded: {m}"),
+        _ => format!("\"{name}\" could not be uploaded to Azure DevOps. Settings \u{2192} Logs has the details."),
     }
 }
 
