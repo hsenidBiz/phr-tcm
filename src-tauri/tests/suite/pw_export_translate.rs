@@ -1928,7 +1928,7 @@ fn a_hover_is_a_locator_hover() {
 #[test]
 fn a_select_option_is_a_locator_select_option() {
     let got = one_step(json!([
-        { "kind": "select_option", "selector": "#type", "label": "Numeric" },
+        { "kind": "select_option", "selector": "#type", "label": " Numeric " },
         { "kind": "select_option", "selector": "#kind", "value": "it's" }
     ]))
     .run()

@@ -160,7 +160,7 @@ pub fn refusal_for(action: &Value, serde_error: &str) -> String {
                 Some(k) => format!("\"{k}\" is not an action kind"),
                 None => "an action needs a \"kind\"".to_string(),
             };
-            format!("{named}; the kinds are {}", kinds().join(", "))
+            format!("{named}; the kinds are {}, and {SCREENSHOT_KIND} in a discovery or a try", kinds().join(", "))
         }
     };
     format!("{body} - call get_guide (topic autorun) for the vocabulary.")
@@ -469,6 +469,12 @@ pub fn refuse_raw_saved_action(raw: &Value) -> Result<(), String> {
         let Some(o) = raw.as_object() else { return Ok(()) };
         if o.get("kind").and_then(Value::as_str) == Some(SCREENSHOT_KIND) {
             return Err(SAVED_SCREENSHOT.to_string());
+        }
+        // The stand-in a discovery batch carries a screenshot as is never saved.
+        if o.get("kind").and_then(Value::as_str) == Some("check_text")
+            && o.get("value").and_then(Value::as_str).is_some_and(|v| v == SHOT_MARK || v == SHOT_MARK_FULL)
+        {
+            return Err("check_text cannot carry that value".to_string());
         }
         for key in NESTED_ACTIONS {
             for inner in o.get(*key).and_then(Value::as_array).into_iter().flatten() {

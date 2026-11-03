@@ -1506,7 +1506,7 @@ impl Em<'_> {
             }
             Action::SelectOption { selector, label, value, .. } => {
                 let option = match (label, value) {
-                    (Some(label), _) => format!("{{ label: {} }}", lit(label)),
+                    (Some(label), _) => format!("{{ label: {} }}", lit(label.trim())),
                     (None, Some(value)) => format!("{{ value: {} }}", lit(value)),
                     (None, None) => return no("select_option picks by label or by value, one of them"),
                 };

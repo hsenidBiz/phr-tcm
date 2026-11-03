@@ -352,7 +352,7 @@ pub const SELECT_OPTION_JS: &str = r#"async function(byLabel, byValue) {
   const want = byLabel === null ? null : String(byLabel).trim();
   const all = Array.from(this.options);
   const opt = want !== null ? all.find((o) => o.label.trim() === want) : all.find((o) => o.value === byValue);
-  if (!opt) return { state: 'missing', labels: all.map((o) => o.label.trim()) };
+  if (!opt) return { state: 'missing', labels: all.map((o) => o.label.trim()), values: all.map((o) => o.value) };
   const label = opt.label.trim();
   if (opt.disabled || (opt.parentElement instanceof HTMLOptGroupElement && opt.parentElement.disabled)) {
     return { state: 'disabled', label };
@@ -770,8 +770,16 @@ pub async fn select_option<D: Driver>(
         }
         Some("missing") => {
             let asked = label.or(value).unwrap_or("");
-            let labels: Vec<String> =
-                said["labels"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect();
+            let strings = |k: &str| -> Vec<String> {
+                said[k].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect()
+            };
+            // Asked by value, what can be asked is the values, each with its label.
+            let labels: Vec<String> = match (label, strings("values")) {
+                (None, values) if !values.is_empty() => {
+                    values.iter().zip(strings("labels")).map(|(v, l)| format!("{v} ({l})")).collect()
+                }
+                _ => strings("labels"),
+            };
             let has = if labels.is_empty() {
                 "it has no options".to_string()
             } else {

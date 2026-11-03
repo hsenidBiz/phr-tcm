@@ -220,14 +220,29 @@ pub fn screenshot_params() -> Value {
     json!({ "format": "jpeg", "quality": 60 })
 }
 
-/// `screenshot_params`, asking beyond the window too when `full_page` is set
-/// (`captureBeyondViewport`): a discovery's `screenshot` action.
-pub fn screenshot_params_full(full_page: bool) -> Value {
+/// `screenshot_params`, for a picture of the whole page when `full_page`:
+/// asked beyond the window (`captureBeyondViewport`) with the page's own size
+/// as the clip, as Playwright does - without a clip the browser keeps to the
+/// window's size. `size` is the page's width and height in CSS pixels
+/// (`full_page_size`); unknown, only the first is sent.
+pub fn screenshot_params_full(full_page: bool, size: Option<(f64, f64)>) -> Value {
     let mut params = screenshot_params();
     if full_page {
         params["captureBeyondViewport"] = json!(true);
+        if let Some((width, height)) = size {
+            params["clip"] = json!({ "x": 0, "y": 0, "width": width, "height": height, "scale": 1 });
+        }
     }
     params
+}
+
+/// The page's whole size from a `Page.getLayoutMetrics` answer: its CSS
+/// content size, else its content size. `None` when neither is a real size.
+pub fn full_page_size(metrics: &Value) -> Option<(f64, f64)> {
+    ["cssContentSize", "contentSize"].iter().find_map(|k| {
+        let (w, h) = (metrics[*k]["width"].as_f64()?, metrics[*k]["height"].as_f64()?);
+        (w > 0.0 && h > 0.0).then_some((w, h))
+    })
 }
 
 /// The JPEG bytes in a `SCREENSHOT` answer.
@@ -249,7 +264,14 @@ pub async fn screenshot<D: Driver>(d: &mut D) -> Result<Vec<u8>, CdpError> {
 }
 
 /// `screenshot`, of the whole page rather than the window when `full_page`.
+/// A browser that will not give the page's size still gets the picture, taken
+/// beyond the window without a clip.
 pub async fn screenshot_of<D: Driver>(d: &mut D, full_page: bool) -> Result<Vec<u8>, CdpError> {
-    let r = d.call(SCREENSHOT, screenshot_params_full(full_page)).await?;
+    let size = if full_page {
+        d.call("Page.getLayoutMetrics", json!({})).await.ok().and_then(|m| full_page_size(&m))
+    } else {
+        None
+    };
+    let r = d.call(SCREENSHOT, screenshot_params_full(full_page, size)).await?;
     image_of(&r)
 }

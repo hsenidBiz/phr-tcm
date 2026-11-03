@@ -6234,6 +6234,9 @@ fn picturing_page() -> ScriptedDriver {
             let data = base64::engine::general_purpose::STANDARD.encode(b"\xFF\xD8\xFFpicture");
             return Ok(json!({ "data": data }));
         }
+        if method == "Page.getLayoutMetrics" {
+            return Ok(json!({ "cssContentSize": { "x": 0, "y": 0, "width": 1280.0, "height": 4200.0 } }));
+        }
         inner(method, params)
     })
     .with_net_record()
@@ -6287,10 +6290,14 @@ async fn a_screenshot_with_full_page_asks_beyond_the_viewport() {
     let shot = v2_lib::autorun::action_help::screenshot_action(true);
     let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[shot], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
-    let asked = browser.as_ref().unwrap().d.calls_to("Page.captureScreenshot");
+    let b = browser.as_ref().unwrap();
+    let asked = b.d.calls_to("Page.captureScreenshot");
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0]["captureBeyondViewport"], true);
     assert_eq!(asked[0]["format"], "jpeg");
+    // The whole page's size, as the browser measured it, goes as the clip.
+    assert_eq!(b.d.calls_to("Page.getLayoutMetrics").len(), 1);
+    assert_eq!(asked[0]["clip"], json!({ "x": 0, "y": 0, "width": 1280.0, "height": 4200.0, "scale": 1 }));
 }
 
 /// A browser that cannot take the picture fails that action, in words with

@@ -717,8 +717,14 @@ async fn select_option_missing_lists_up_to_ten_labels() {
     }
     // A short list is named whole.
     let mut d = list_answering(json!({ "state": "missing", "labels": ["a", "b", "c"] }));
-    match select_option(&mut d, &ready(), None, Some("z")).await {
+    match select_option(&mut d, &ready(), Some("z"), None).await {
         Err(Blocked::Page(msg)) => assert_eq!(msg, "the list has no option \"z\" - it has: a, b, c"),
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+    // Asked by value, the values are what is listed, each with its label.
+    let mut d = list_answering(json!({ "state": "missing", "labels": ["A", "B"], "values": ["1", "2"] }));
+    match select_option(&mut d, &ready(), None, Some("z")).await {
+        Err(Blocked::Page(msg)) => assert_eq!(msg, "the list has no option \"z\" - it has: 1 (A), 2 (B)"),
         other => panic!("expected a page reason, got {other:?}"),
     }
 }

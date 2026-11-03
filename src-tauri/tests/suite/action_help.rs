@@ -294,3 +294,46 @@ fn repeat_on_a_press_key_is_moved_to_times() {
     assert!(prepare_repeat(&mut other).expect("untouched").is_empty());
     assert_eq!(other["repeat"], 3);
 }
+
+/// Backlog 86 fix: a whole-page picture asks for the page's own size as a
+/// clip, as Playwright does; the window one carries neither.
+#[test]
+fn a_full_page_picture_carries_the_pages_size_as_a_clip() {
+    use v2_lib::browser::page::{full_page_size, screenshot_params_full};
+    let plain = screenshot_params_full(false, None);
+    assert!(plain.get("captureBeyondViewport").is_none() && plain.get("clip").is_none(), "{plain}");
+    let sized = screenshot_params_full(true, Some((1280.0, 4200.0)));
+    assert_eq!(sized["captureBeyondViewport"], true);
+    assert_eq!(sized["clip"], json!({ "x": 0, "y": 0, "width": 1280.0, "height": 4200.0, "scale": 1 }));
+    // Size unknown: still asked beyond the window, with no clip.
+    let unknown = screenshot_params_full(true, None);
+    assert_eq!(unknown["captureBeyondViewport"], true);
+    assert!(unknown.get("clip").is_none());
+    // The size is the CSS content size, else the content size; nothing for 0.
+    assert_eq!(full_page_size(&json!({ "cssContentSize": { "width": 10.0, "height": 20.0 } })), Some((10.0, 20.0)));
+    assert_eq!(full_page_size(&json!({ "contentSize": { "width": 5.0, "height": 6.0 } })), Some((5.0, 6.0)));
+    assert_eq!(full_page_size(&json!({ "cssContentSize": { "width": 0.0, "height": 20.0 } })), None);
+    assert_eq!(full_page_size(&json!({})), None);
+}
+
+/// A saved script can never carry the stand-in for a screenshot.
+#[test]
+fn a_saved_script_cannot_carry_the_screenshot_marker() {
+    use v2_lib::autorun::action_help::{refuse_raw_saved_action, screenshot_action};
+    for full in [false, true] {
+        let marked = serde_json::to_value(screenshot_action(full)).unwrap();
+        assert_eq!(refuse_raw_saved_action(&marked).unwrap_err(), "check_text cannot carry that value");
+        let nested = json!({ "kind": "when_visible", "selector": "#b", "then": [marked] });
+        assert!(refuse_raw_saved_action(&nested).is_err());
+    }
+    assert!(refuse_raw_saved_action(&json!({ "kind": "check_text", "value": "Saved" })).is_ok());
+}
+
+/// The kinds an unknown-kind refusal lists include the discovery's screenshot.
+#[test]
+fn the_refusal_for_an_unknown_kind_lists_screenshot() {
+    let said = refusal_for(&json!({ "kind": "zzz" }), "unknown variant");
+    assert!(said.contains("screenshot"), "{said}");
+    // `kinds()` stays the script vocabulary: a screenshot is never saved.
+    assert!(!kinds().contains(&"screenshot"));
+}
