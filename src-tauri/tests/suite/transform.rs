@@ -4,6 +4,7 @@
 
 use v2_lib::ai_bridge::{route, BridgeContext};
 use v2_lib::model::TestCase;
+use v2_lib::step_attachments::StepAttachment;
 use v2_lib::steps_xml::Step;
 use v2_lib::transform::{apply, parse_ops, parse_ops_full};
 
@@ -12,7 +13,7 @@ fn ctx() -> BridgeContext {
 }
 
 fn step(action: &str) -> Step {
-    Step { action: action.into(), expected: "It happens.".into(), shared: None }
+    Step { action: action.into(), expected: "It happens.".into(), shared: None, attachments: vec![] }
 }
 
 fn case(title: &str, steps: Vec<Step>) -> TestCase {
@@ -683,7 +684,7 @@ fn no_op_can_write_the_comment_field() {
 #[test]
 fn supported_ops_is_the_parsers_whole_vocabulary() {
     use v2_lib::transform::SUPPORTED_OPS;
-    assert_eq!(SUPPORTED_OPS.len(), 25);
+    assert_eq!(SUPPORTED_OPS.len(), 27);
     assert!(!SUPPORTED_OPS.contains(&"set_comment"));
     for name in SUPPORTED_OPS {
         let extra = match name {
@@ -693,6 +694,8 @@ fn supported_ops_is_the_parsers_whole_vocabulary() {
             "prepend_step" | "append_step" => r#","action":"Do it","expected":"Done""#,
             "split_step" => r#","find":"a","into":[{"action":"x","expected":"y"}]"#,
             "remove_cases" => r#","where":{"title_contains":"x"}"#,
+            "attach_file" => r#","path":"C:/shots/a.png","step":1,"where":{"at_index":0}"#,
+            "remove_attachment" => r#","name":"a.png""#,
             "insert_cases" => r#","cases":[{"title":"T","steps":[{"action":"a","expected":"b"}]}]"#,
             "sort_by" | "group_by" => r#","value":"title""#,
             "set_findings" => r#","value":[{"kind":"spec","title":"AC-3 contradicts the table"}]"#,
@@ -989,4 +992,124 @@ fn insert_cases_does_not_echo_a_dropped_message_for_an_aliased_step() {
     let (out, _) = apply(vec![], &ops);
     assert_eq!(out[0].steps.len(), 1);
     assert!(!ignored.iter().any(|l| l.contains("has no action")), "{ignored:?}");
+}
+
+// ---- step attachments ---------------------------------------------------
+
+fn with_attachments(action: &str, atts: Vec<StepAttachment>) -> Step {
+    Step { action: action.into(), expected: "".into(), shared: None, attachments: atts }
+}
+
+fn existing(id: &str, name: &str) -> StepAttachment {
+    StepAttachment { id: Some(id.into()), name: name.into(), ..Default::default() }
+}
+
+#[test]
+fn attach_file_adds_to_step_and_remove_attachment_moves_existing_to_removed() {
+    let cases = vec![case(
+        "C",
+        vec![with_attachments("One", vec![existing("g1", "old.png")]), step("Two")],
+    )];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "attach_file", "path": "C:/shots/new.png", "step": 2, "where": { "at_index": 0 } },
+        { "op": "remove_attachment", "name": "OLD.png" },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].steps[1].attachments.len(), 1, "{report:?}");
+    let a = &out[0].steps[1].attachments[0];
+    assert_eq!((a.path.as_deref(), a.name.as_str()), (Some("C:/shots/new.png"), "new.png"));
+    assert!(out[0].steps[0].attachments.is_empty());
+    assert_eq!(out[0].removed_attachments, vec!["g1".to_string()]);
+
+    // A new (path) attachment is just dropped: nothing to unlink.
+    let ops = parse_ops(&serde_json::json!([{ "op": "remove_attachment", "name": "new.png", "step": 2 }])).unwrap();
+    let (out2, _) = apply(out, &ops);
+    assert!(out2[0].steps[1].attachments.is_empty());
+    assert_eq!(out2[0].removed_attachments, vec!["g1".to_string()]);
+}
+
+#[test]
+fn attach_file_declines_in_words() {
+    let shared = Step { shared: Some(9), ..Default::default() };
+    let cases = vec![case("C", vec![step("One"), shared])];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "attach_file", "path": "C:/a.png", "step": 5, "where": { "at_index": 0 } },
+        { "op": "attach_file", "path": "C:/a.png", "step": 2, "where": { "at_index": 0 } },
+        { "op": "remove_attachment", "name": "nothing.png" },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert!(out[0].steps.iter().all(|s| s.attachments.is_empty()));
+    let w = report.warnings.join("
+");
+    assert!(w.contains("no step 5"), "{w}");
+    assert!(w.contains("Shared Steps"), "{w}");
+    assert!(w.contains("nothing.png"), "{w}");
+    // Bad input is refused at parse time.
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "where": { "at_index": 0 } }])).is_err());
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "", "step": 1, "where": { "at_index": 0 } }])).is_err());
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "//srv/share/a.png", "step": 1, "where": { "at_index": 0 } }])).is_err());
+    assert!(parse_ops(&serde_json::json!([{ "op": "remove_attachment" }])).is_err());
+}
+
+#[test]
+fn split_step_keeps_attachments_on_first_part() {
+    let cases = vec![case(
+        "C",
+        vec![with_attachments("Fill and save", vec![existing("g1", "a.png")]), step("Other")],
+    )];
+    let ops = parse_ops(&serde_json::json!([{
+        "op": "split_step", "find": "fill and save",
+        "into": [{ "action": "Fill", "expected": "" }, { "action": "Save", "expected": "" }],
+    }]))
+    .unwrap();
+    let (out, _) = apply(cases, &ops);
+    assert_eq!(out[0].steps.len(), 3);
+    assert_eq!(out[0].steps[0].attachments.len(), 1);
+    assert!(out[0].steps[1].attachments.is_empty());
+    assert!(out[0].removed_attachments.is_empty());
+}
+
+#[test]
+fn remove_step_matching_moves_existing_ids_to_removed() {
+    let cases = vec![case(
+        "C",
+        vec![
+            with_attachments("Preamble", vec![existing("g1", "a.png"), StepAttachment { path: Some("C:/x.png".into()), name: "x.png".into(), ..Default::default() }]),
+            step("Real"),
+        ],
+    )];
+    let ops = parse_ops(&serde_json::json!([{ "op": "remove_step_matching", "value": "preamble" }])).unwrap();
+    let (out, _) = apply(cases, &ops);
+    assert_eq!(out[0].steps.len(), 1);
+    assert_eq!(out[0].removed_attachments, vec!["g1".to_string()], "only existing ids are unlinked");
+}
+
+#[test]
+fn insert_cases_carries_step_attachments() {
+    let ops = parse_ops_full(&serde_json::json!([{
+        "op": "insert_cases",
+        "cases": [{
+            "title": "New",
+            "steps": [{ "action": "Open", "expected": "x", "attachments": [{ "path": "C:/shots/a.png" }] }],
+            "remove_attachments": ["g9"],
+        }],
+    }]))
+    .unwrap();
+    let (ops, ignored) = ops;
+    assert!(ignored.iter().all(|i| !i.contains("attachments")), "{ignored:?}");
+    let (out, _) = apply(vec![case("Old", vec![step("a")])], &ops);
+    let new = out.iter().find(|c| c.title == "New").unwrap();
+    assert_eq!(new.steps[0].attachments[0].name, "a.png");
+    assert_eq!(new.removed_attachments, vec!["g9".to_string()]);
+}
+
+#[test]
+fn attach_file_requires_a_where_filter() {
+    let err = parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "step": 1 }])).unwrap_err();
+    assert!(err.contains("where"), "{err}");
+    let err = parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "step": 1, "where": { "title_contains": " " } }])).unwrap_err();
+    assert!(err.contains("where"), "{err}");
+    assert!(parse_ops(&serde_json::json!([{ "op": "attach_file", "path": "C:/a.png", "step": 1, "where": { "at_index": 0 } }])).is_ok());
 }

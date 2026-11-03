@@ -15204,6 +15204,50 @@ async fn validate_json(
                 if crate::steps_xml::contains_html_markup(&tc.preconditions) {
                     hits.push("preconditions".to_string());
                 }
+                // A new file must exist and fit the cap, judged by the same
+                // check the picker and the upload use. A path that is not a
+                // plain local one was already warned by the importer.
+                for (n, s) in tc.steps.iter().enumerate() {
+                    for att in s.attachments.iter().filter_map(|a| a.path.as_deref()) {
+                        if !crate::test_files::is_plain_local_path(att) {
+                            continue;
+                        }
+                        if let Err(why) = crate::ado::attachments::check_step_file(att) {
+                            // check_step_file speaks of an upload that failed; nothing has been tried yet.
+                            let why = why
+                                .replace("so it was not attached", "so it will not be attached")
+                                .replace("cannot be attached", "will not be attached");
+                            warnings.push(format!("Test case {} ('{}') step {}: {why}", i + 1, tc.title, n + 1));
+                        }
+                    }
+                }
+                // Removal is two-part: the entry goes AND its id is listed.
+                for g in &tc.removed_attachments {
+                    if let Some(n) = tc
+                        .steps
+                        .iter()
+                        .position(|s| s.attachments.iter().any(|a| a.id.as_deref() == Some(g.as_str())))
+                    {
+                        warnings.push(format!(
+                            "Test case {} ('{}'): attachment {g} is listed in remove_attachments but is still on step {}, so it stays. \
+                             Delete its entry from the step too, or use the remove_attachment op.",
+                            i + 1,
+                            tc.title,
+                            n + 1
+                        ));
+                    }
+                }
+                if tc.update_id.is_none()
+                    && (!tc.removed_attachments.is_empty()
+                        || tc.steps.iter().any(|s| s.attachments.iter().any(|a| a.id.is_some())))
+                {
+                    warnings.push(format!(
+                        "Test case {} ('{}'): this case has no id, so it is created new and the existing \
+                         attachments (and remove_attachments) it lists are not copied. Attach files by 'path' instead.",
+                        i + 1,
+                        tc.title
+                    ));
+                }
                 if !hits.is_empty() {
                     warnings.push(format!(
                         "Test case {} ('{}'): {} contains an HTML tag name in angle brackets, \
@@ -16044,6 +16088,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         ## Format\n\
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`, or `{{\"shared\": N}}` for a Shared Steps reference - keep those exactly as exported, never invent one),\n\
+        a step may carry `attachments`: `{{\"path\": \"C:/shots/login.png\"}}` attaches a new file (a full local path on this machine, 25 MB at most,\n\
+        never on a shared step), and an entry with an `id` is one already on the case, so keep those exactly as exported.\n\
+        To take an existing one off, prefer `transform_cases` `remove_attachment` (it does both parts); by hand, delete its entry AND list its `id` in the case's `remove_attachments`.\n\
+        `attach_file` needs a `where` naming the case. Existing attachments are not copied to a case without an `id`.\n\
         `tags` (semicolon-separated, never commas),\n\
         `automation_status` (exactly {statuses}),\n\
         `priority` (optional, a number 1-4: a new case without one is created with 2,\n\
@@ -16316,10 +16364,14 @@ async fn test_cases(
                 .into(),
         ),
         (Some(pbi), ids) => {
-            let cases = match client.get_pbi_test_cases_full(&ctx.org, pbi, module_ref, preconditions_ref).await {
+            let mut cases = match client.get_pbi_test_cases_full(&ctx.org, pbi, module_ref, preconditions_ref).await {
                 Ok(c) => c,
                 Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
             };
+            // Existing step attachments, by name; a failed read only logs.
+            if !titles_only {
+                client.load_step_attachments(&ctx.org, &mut cases).await;
+            }
             let Some(ids) = ids else {
                 return (200, case_page(&cases, limit, offset, titles_only).to_string());
             };
@@ -16338,6 +16390,9 @@ async fn test_cases(
         }
         (None, Some(ids)) => match client.get_test_cases_by_ids(&ctx.org, &ids, module_ref, preconditions_ref).await {
             Ok(mut cases) => {
+                if !titles_only {
+                    client.load_step_attachments(&ctx.org, &mut cases).await;
+                }
                 // The batch read answers in id order; give back the order asked.
                 cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));
                 (200, case_page(&cases, limit, offset, titles_only).to_string())
@@ -16439,6 +16494,12 @@ fn case_page(
         "total": total,
         "offset": offset,
     });
+    if !titles_only && cases.iter().skip(offset).take(page).any(|c| !c.attachments_read) {
+        out["attachments_note"] = serde_json::json!(
+            "Step attachments could not be read from Azure DevOps, so none are shown: a step may have files. \
+             Do not attach a file again on this evidence."
+        );
+    }
     if offset + returned < total {
         // Say so explicitly: a silently incomplete page is how a
         // duplicate check quietly misses cases.
@@ -16686,6 +16747,9 @@ async fn suite_cases(
         .await
     {
         Ok(mut cases) => {
+            if !titles_only {
+                client.load_step_attachments(&ctx.org, &mut cases).await;
+            }
             // The work item read answers in id order; put the suite's own
             // order back so the page reads like the suite does.
             cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));

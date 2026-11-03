@@ -63,6 +63,7 @@ pub mod saved_session;
 pub mod spec_pane;
 pub mod speccov;
 pub mod state;
+pub mod step_attachments;
 pub mod steps_xml;
 pub mod test_map;
 pub mod test_files;
@@ -139,6 +140,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::unwatch_all_files,
             queue::submit_queue,
             queue::reconcile_upload,
+            queue::claim_created_step_files,
             testplan::ensure_pbi_suite,
             runs::list_test_points,
             runs::result_failure_detail,
@@ -177,6 +179,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             cases::list_test_case_fields,
             cases::pbi_test_cases_full,
             cases::update_test_case,
+            cases::describe_step_files,
             queue::export_queue_json,
             testplan::list_plans_with_suites,
             runs::get_result_detail,

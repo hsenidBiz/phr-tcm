@@ -22,6 +22,7 @@ fn a_shared_draft_carries_the_app_only_fields() {
             action: "Open the published cycle.".into(),
             expected: "No Copy from Previous button is shown.".into(),
             shared: None,
+            attachments: vec![],
         }],
         automation_status: "Not Automated".into(),
         reviewer_notes: "Spec: Step10-ManagePerformanceCycle.md 7.7 (AC-3)".into(),

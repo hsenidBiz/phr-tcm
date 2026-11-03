@@ -3,6 +3,7 @@ import type { SubmitItemResult, TestCase } from "../bindings";
 import {
   ambiguousRows,
   checkExcludeIds,
+  claimsForCheck,
   heldRows,
   holdFromResults,
   holdSignature,
@@ -11,6 +12,7 @@ import {
   reconciledResults,
   saveHold,
   subscribeHold,
+  withClaimedFiles,
 } from "./uploadHold";
 
 afterEach(() => localStorage.clear());
@@ -184,4 +186,18 @@ test("a Check keeps each still-held row's own signature", () => {
     sigs: ["sb1", "sb2"],
   });
   expect(narrowHold(h, [], [7])).toBeNull();
+});
+
+test("a claimed create's step files are asked for only when its row carries local paths", () => {
+  const withPath = tc("A", { steps: [{ action: "a", expected: "b", attachments: [{ path: "C:/x/a.png", name: "a.png" }] }] });
+  const stored = tc("B", { steps: [{ action: "a", expected: "b", attachments: [{ id: "g", name: "b.png" }] }] });
+  const queue = [withPath, stored, tc("C")];
+  const results = [res(0, "created", 901), res(1, "created", 902), res(2, "created", 903)];
+  const claims = claimsForCheck(queue, results);
+  expect(claims.map((c) => c.id)).toEqual([901]);
+  const merged = withClaimedFiles(results, [
+    { id: 901, attached: [{ step: 0, path: "C:/x/a.png", id: "g-1", name: "a.png" }] },
+  ]);
+  expect(merged[0].attached).toEqual([{ step: 0, path: "C:/x/a.png", id: "g-1", name: "a.png" }]);
+  expect(merged[1].attached ?? []).toEqual([]);
 });

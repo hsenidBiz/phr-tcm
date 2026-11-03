@@ -27,7 +27,7 @@ import { groupIndices } from "../../lib/grouping";
 import { CASE_SEARCH_PLACEHOLDER, caseSearchFields, matchesQuery } from "../../lib/search";
 import { unwrap } from "../../lib/ipc";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
-import { toTestCase } from "../../lib/testCaseConvert";
+import { toTestCase, withoutStepFiles } from "../../lib/testCaseConvert";
 import { IconBulkEdit, IconClear, IconCollapseAll, IconExport, IconRemove, IconRename, IconMoveToPbi } from "../../lib/actionIcons";
 
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
@@ -266,7 +266,7 @@ export default function ExistingCases({
         const r = await commands.updateTestCase(
           org,
           project,
-          { ...toTestCase(full), title: row.after, update_id: full.id },
+          withoutStepFiles({ ...toTestCase(full), title: row.after, update_id: full.id }),
           prefs.moduleRef,
           prefs.preconditionsRef,
           full.steps_xml,

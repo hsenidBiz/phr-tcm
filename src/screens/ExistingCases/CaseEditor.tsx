@@ -15,6 +15,7 @@ import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import { toTestCase } from "../../lib/testCaseConvert";
 import { validateCase } from "../../lib/validate";
+import { stampSaved, withSteps } from "../../lib/stepAttachments";
 import { IconConfirm, IconUndo } from "../../lib/actionIcons";
 
 export default function CaseEditor({
@@ -88,11 +89,18 @@ export default function CaseEditor({
         original.preconditions_stored ?? null,
       );
       if (r.status === "error") throw new Error(r.error);
-      return sent;
+      return { sent, notes: r.data?.notes ?? [], attached: r.data?.attached ?? [] };
     },
-    onSuccess: (sent) => {
+    onSuccess: ({ sent, notes, attached }) => {
       toast.success(`Updated #${original.id}: ${sent.title}`);
-      setBaseline(sent); // what is now in Azure DevOps is the thing to revert to
+      // What the save had to say about attachments (a file that was already
+      // gone, a step that moved) - each is a sentence for the person.
+      for (const note of notes) toast.warning(note);
+      // The files it attached now have ids: swap them in, so a second save
+      // sends the id and uploads nothing again. No refetch is needed.
+      const applied = notes.length === 0;
+      setTc((t) => stampSaved(t, sent, attached, applied));
+      setBaseline(stampSaved(sent, sent, attached, applied));
       onSaved();
     },
     onError: (e) => toast.error(`Save failed: ${e.message}`),
@@ -162,7 +170,12 @@ export default function CaseEditor({
         </div>
       )}
 
-      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
+      {original.attachments_read === false && (
+        <p className="text-xs text-warning">
+          Attachments could not be read, so the files on these steps are not shown.
+        </p>
+      )}
+      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => withSteps(t, steps))} />
 
       <div className="flex items-center gap-3">
         <Button

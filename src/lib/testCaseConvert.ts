@@ -16,3 +16,14 @@ export function toTestCase(c: TestCaseFull): TestCase {
     priority: c.priority,
   };
 }
+
+/** The same case with no step files, and no removals. For edits that never
+ *  touch steps (bulk edit, Power Rename): the save then takes the exact path
+ *  of a case without files, so it cannot add, remove or re-point one. */
+export function withoutStepFiles(tc: TestCase): TestCase {
+  const { removed_attachments: _removed, ...rest } = tc;
+  return {
+    ...rest,
+    steps: tc.steps.map(({ attachments: _files, ...step }) => step),
+  };
+}

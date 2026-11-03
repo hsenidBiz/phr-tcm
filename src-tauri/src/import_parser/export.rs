@@ -47,7 +47,15 @@ the cases in the browser; fill it from the documents named at intake.";
 pub fn step_json(s: &crate::steps_xml::Step) -> serde_json::Value {
     match s.shared {
         Some(id) => serde_json::json!({ "shared": id }),
-        None => serde_json::json!({ "action": s.action, "expected": s.expected }),
+        None => {
+            let mut v = serde_json::json!({ "action": s.action, "expected": s.expected });
+            // Only when there are any, so a file without attachments is
+            // byte-identical to what 2.4.2 wrote.
+            if !s.attachments.is_empty() {
+                v["attachments"] = serde_json::json!(s.attachments);
+            }
+            v
+        }
     }
 }
 
@@ -98,6 +106,9 @@ fn case_record(tc: &TestCase) -> Value {
     }
     if !tc.findings.is_empty() {
         rec["findings"] = serde_json::json!(tc.findings);
+    }
+    if !tc.removed_attachments.is_empty() {
+        rec["remove_attachments"] = serde_json::json!(tc.removed_attachments);
     }
     rec
 }
@@ -261,6 +272,13 @@ fn patch_case(obj: &mut Map<String, Value>, old: &TestCase, new: &TestCase) {
     if new.steps != old.steps {
         patch_steps(obj, &old.steps, &new.steps);
     }
+    if new.removed_attachments != old.removed_attachments {
+        if new.removed_attachments.is_empty() {
+            obj.remove("remove_attachments");
+        } else {
+            obj.insert("remove_attachments".into(), serde_json::json!(new.removed_attachments));
+        }
+    }
 }
 
 /// Write under the alias the object already uses, else the canonical key.
@@ -322,6 +340,13 @@ fn patch_step(raw: &Value, old: &Step, new: &Step) -> Value {
             }
             if new.expected != old.expected {
                 set_text(&mut m, &STEP_EXPECTED_KEYS, &new.expected);
+            }
+            if new.attachments != old.attachments {
+                if new.attachments.is_empty() {
+                    m.remove("attachments");
+                } else {
+                    m.insert("attachments".into(), serde_json::json!(new.attachments));
+                }
             }
             Value::Object(m)
         }

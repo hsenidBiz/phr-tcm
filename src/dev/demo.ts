@@ -136,6 +136,7 @@ const full = (
   // What ADO would hold; the editor compares against it to decide whether
   // a save needs to write Steps at all.
   steps_xml: "",
+  attachments_read: true,
   priority: 2,
   automation_status: "Not Automated",
   steps: steps.map(([action, expected]) => ({ action, expected })),
@@ -1157,7 +1158,7 @@ function applyPatches() {
         if (tc.tags.trim()) existing.tags = tc.tags;
         if (tc.preconditions.trim()) existing.preconditions = tc.preconditions;
       }
-      return ok(null);
+      return ok([]);
     },
 
     ensurePbiSuite: (_o: string, _p: string, pbiId: number) =>

@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
 import type { TestCase } from "../bindings";
-import { diffSummary, retypedLines, type CaseDiff } from "../lib/caseDiff";
+import { attachmentLines, diffSummary, retypedLines, type CaseDiff } from "../lib/caseDiff";
 import { cn } from "../lib/cn";
 import { fileChangeSummary, type SyncChange } from "../lib/fileSync";
 import CaseStepsTable from "./CaseStepsTable";
@@ -337,6 +337,18 @@ export function QueueRowInner({
                 </div>
               ))}
               <div className="text-faint">The step text and formatting stay exactly as they are.</div>
+            </div>
+          )}
+          {/* Step files, one sentence each, by name - a file-only change
+              has no text to draw either. */}
+          {diff.attachmentDetail.length > 0 && (
+            <div className="space-y-0.5">
+              <span className="font-medium text-muted">Step files:</span>
+              {attachmentLines(diff).map((line, i) => (
+                <div key={`${i}:${line}`} className="text-text">
+                  {line}
+                </div>
+              ))}
             </div>
           )}
           {diff.blankSkipped.length > 0 && (

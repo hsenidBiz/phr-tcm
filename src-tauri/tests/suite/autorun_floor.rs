@@ -187,9 +187,9 @@ fn output_is_sorted_by_step_number_with_no_duplicates() {
 #[test]
 fn expected_of_trims_and_keeps_position_including_empty_ones() {
     let steps = vec![
-        Step { action: "Open the page".to_string(), expected: "  A toast says Saved  ".to_string(), shared: None },
-        Step { action: "Click save".to_string(), expected: "".to_string(), shared: None },
-        Step { action: "Reload".to_string(), expected: "\tThe row is gone\n".to_string(), shared: None },
+        Step { action: "Open the page".to_string(), expected: "  A toast says Saved  ".to_string(), shared: None, attachments: vec![] },
+        Step { action: "Click save".to_string(), expected: "".to_string(), shared: None, attachments: vec![] },
+        Step { action: "Reload".to_string(), expected: "\tThe row is gone\n".to_string(), shared: None, attachments: vec![] },
     ];
     let out = expected_of(&steps);
     assert_eq!(out.len(), 3);
@@ -207,9 +207,9 @@ fn expected_of_trims_and_keeps_position_including_empty_ones() {
 #[test]
 fn a_script_step_on_a_shared_steps_row_is_refused() {
     let steps = vec![
-        Step { action: "Open the page".into(), expected: "The page shows".into(), shared: None },
+        Step { action: "Open the page".into(), expected: "The page shows".into(), shared: None, attachments: vec![] },
         Step { shared: Some(812), ..Default::default() },
-        Step { action: "Save".into(), expected: "Saved".into(), shared: None },
+        Step { action: "Save".into(), expected: "Saved".into(), shared: None, attachments: vec![] },
     ];
     let expected = expected_of(&steps);
     assert!(expected[1].shared && !expected[0].shared && !expected[2].shared);

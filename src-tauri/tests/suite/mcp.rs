@@ -25,3 +25,10 @@ fn a_request_always_gets_an_answer_even_when_it_makes_no_sense() {
     // Even an unparseable notification cannot be told apart from a request,
     // so it gets the null-id parse error. That is the protocol's answer.
 }
+
+#[test]
+fn transform_ops_listed() {
+    let call = |_: &str, _: &str, _: &str| Ok((200, "{}".to_string()));
+    let r = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0", &call).unwrap();
+    assert!(r.contains("attach_file") && r.contains("remove_attachment"), "{r}");
+}

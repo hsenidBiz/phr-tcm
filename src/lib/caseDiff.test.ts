@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { TestCase, TestCaseFull } from "../bindings";
-import { diffCase, diffSummary, retypedLines, type CaseDiff } from "./caseDiff";
+import { attachmentLines, diffCase, diffSummary, retypedLines, type CaseDiff } from "./caseDiff";
 
 function queued(over: Partial<TestCase> = {}): TestCase {
   return {
@@ -22,6 +22,7 @@ function current(over: Partial<TestCaseFull> = {}): TestCaseFull {
     tags: "smoke",
     automation_status: "Planned",
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     steps: [{ action: "Open", expected: "Shown" }],
     step_ids: ["2"],
@@ -170,6 +171,8 @@ test("step-type repairs read as sentences, one per target type", () => {
     fields: [],
     steps: { added: 0, removed: 0, changed: 0, retyped: retypedDetail.length, retypedDetail, detail: [] },
     blankSkipped: [],
+    attachments: { added: [], removed: [], moved: [] },
+    attachmentDetail: [],
     noop: false,
   });
   expect(retypedLines(withRetyped([{ index: 3, from: "ActionStep", to: "ValidateStep" }]))).toEqual([
@@ -270,4 +273,70 @@ test("preconditions saved before they were Markdown are no change", () => {
   // A real edit still differs from both.
   const edited = diffCase(queued({ preconditions: "Signed in as **admin**\n\n- one" }), cur);
   expect(edited.fields.map((f) => f.name)).toContain("Preconditions");
+});
+
+const held = (id: string, name: string) => ({ id, name });
+const twoSteps = (a1: { id: string; name: string }[], a2: { id: string; name: string }[] = []) => [
+  { action: "Open", expected: "Shown", attachments: a1 },
+  { action: "Save", expected: "Saved", attachments: a2 },
+];
+
+test("attachment_only_change_is_a_change", () => {
+  const q = queued({
+    steps: [{ action: "Open", expected: "Shown", attachments: [{ path: "C:\shots\a.png", name: "a.png" }] }],
+  });
+  const d = diffCase(q, current());
+  expect(d.noop).toBe(false);
+  expect(d.attachments.added).toEqual(["a.png"]);
+  const summary = diffSummary(d);
+  expect(summary).toContain("a.png");
+  expect(summary).not.toContain("shots");
+  expect(attachmentLines(d)).toEqual(["Step 1: adds a.png."]);
+});
+
+test("existing_attachment_on_other_step_is_moved", () => {
+  const cur = current({ steps: twoSteps([held("g1", "login.png")]) , step_ids: ["2", "3"] });
+  const q = queued({ steps: twoSteps([], [held("g1", "login.png")]) });
+  const d = diffCase(q, cur);
+  expect(d.noop).toBe(false);
+  expect(d.attachments).toEqual({ added: [], removed: [], moved: ["login.png"] });
+  expect(attachmentLines(d)).toEqual(["Step 2: login.png moves here from step 1."]);
+});
+
+test("a removed attachment is named from the case as it stands", () => {
+  const cur = current({ steps: twoSteps([held("g1", "old.png")]), step_ids: ["2", "3"] });
+  const q = queued({ steps: twoSteps([]), removed_attachments: ["g1"] });
+  const d = diffCase(q, cur);
+  expect(d.noop).toBe(false);
+  expect(d.attachments.removed).toEqual(["old.png"]);
+  expect(attachmentLines(d)).toEqual(["Step 1: removes old.png."]);
+});
+
+test("attachments kept where they are are no change", () => {
+  const cur = current({ steps: twoSteps([held("g1", "login.png")]), step_ids: ["2", "3"] });
+  const q = queued({ steps: twoSteps([held("g1", "login.png")]) });
+  const d = diffCase(q, cur);
+  expect(d.noop).toBe(true);
+  expect(diffSummary(d)).toBe("");
+});
+
+test("an old draft with no attachment keys over a case that has some is no change", () => {
+  const cur = current({ steps: twoSteps([held("g1", "login.png")]), step_ids: ["2", "3"] });
+  const q = queued({ steps: [{ action: "Open", expected: "Shown" }, { action: "Save", expected: "Saved" }] });
+  expect(diffCase(q, cur).noop).toBe(true);
+});
+
+test("a removal the case no longer holds is no change once its files were read", () => {
+  const cur = current({ steps: twoSteps([]), step_ids: ["2", "3"], attachments_read: true });
+  const q = queued({ steps: twoSteps([]), removed_attachments: ["gone"] });
+  const d = diffCase(q, cur);
+  expect(d.noop).toBe(true);
+  expect(d.attachments.removed).toEqual([]);
+  expect(attachmentLines(d)).toEqual([]);
+});
+
+test("a removal is still shown when the case's files could not be read", () => {
+  const cur = current({ steps: twoSteps([]), step_ids: ["2", "3"], attachments_read: false });
+  const q = queued({ steps: twoSteps([]), removed_attachments: ["gone"] });
+  expect(diffCase(q, cur).noop).toBe(false);
 });

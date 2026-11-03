@@ -336,8 +336,8 @@ async fn a_repair_adding_a_guard_without_a_quirk_is_refused_through_the_save() {
     let _root = crate::serial::autorun();
     set_root(dir.0.clone());
     let steps = vec![
-        v2_lib::steps_xml::Step { action: "Open".into(), expected: "".into(), shared: None },
-        v2_lib::steps_xml::Step { action: "Save".into(), expected: "A confirmation appears".into(), shared: None },
+        v2_lib::steps_xml::Step { action: "Open".into(), expected: "".into(), shared: None, attachments: vec![] },
+        v2_lib::steps_xml::Step { action: "Save".into(), expected: "A confirmation appears".into(), shared: None, attachments: vec![] },
     ];
     let server = MockServer::start().await;
     Mock::given(method("GET"))

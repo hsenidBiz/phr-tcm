@@ -15,12 +15,17 @@
  * top-level key it does not own).
  */
 
-import type { DraftEdit, TestCase } from "../bindings";
+import type { AttachedFile, DraftEdit, TestCase } from "../bindings";
+import { stampResult } from "./stepAttachments";
 
 export type StampOutcome = {
   index: number;
   action: string; // "created" | "updated" | "failed" | "skipped"
   id?: number | null;
+  /** The step files the row attached (path -> stored id) and the note a
+   * finished row carried; see `stampResult`. */
+  attached?: AttachedFile[];
+  error?: string | null;
 };
 
 /** `slice` is the file's rows after the submit; `edits` pairs each with the
@@ -54,9 +59,9 @@ export function stampFileSlices(
     const qi = prev.indexOf(sentCase);
     if (qi < 0) continue;
     if (r.action === "created" && r.id != null) {
-      post.set(qi, { ...sentCase, update_id: r.id });
+      post.set(qi, stampResult({ ...sentCase, update_id: r.id }, sentCase, r));
     } else if (r.action === "updated") {
-      post.set(qi, sentCase);
+      post.set(qi, stampResult(sentCase, sentCase, r));
     }
     // "failed": the file keeps the case exactly as it was - still a draft,
     // still ready to retry.

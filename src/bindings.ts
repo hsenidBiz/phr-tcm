@@ -76,6 +76,12 @@ export const commands = {
 	 *  "outcome unknown" (C2). Read only.
 	 */
 	reconcileUpload: (organization: string, project: string, pbiId: number, since: string, titles: string[], excludeIds: number[]) => typedError<ReconcileAnswer, string>(__TAURI_INVOKE("reconcile_upload", { organization, project, pbiId, since, titles, excludeIds })),
+	/**
+	 *  After a Check claims creates, which of their step files Azure DevOps holds
+	 *  (see `claimed_step_files`), so the queue can swap each path for its id.
+	 *  Read only.
+	 */
+	claimCreatedStepFiles: (organization: string, cases: ClaimedCase_Deserialize[]) => typedError<ClaimedFiles[], string>(__TAURI_INVOKE("claim_created_step_files", { organization, cases })),
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
@@ -277,11 +283,21 @@ export const commands = {
 	 *  TestCaseFull (`preconditions_stored`): with it a save that did not edit
 	 *  the field leaves it out, and a field stored as Markdown is written as
 	 *  Markdown - see `prereq_patch`.
+	 * 
+	 *  Returns the notes to show for the row (for example, attachments that
+	 *  could not be changed); an empty list means nothing to say.
 	 */
 	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null, originalTags: string | null, originalPreconditions: {
 	value: string,
 	markdown: boolean,
-} | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
+} | null) => typedError<UpdateSaved, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
+	/**
+	 *  Check files a person (or an assistant) picked for a step: exists, is a
+	 *  plain local file, within the size cap. Reads file metadata only, never
+	 *  contents. Async and off the UI thread: a path on a stale mapped drive
+	 *  can block for a long time and must not freeze the window.
+	 */
+	describeStepFiles: (paths: string[]) => __TAURI_INVOKE<StepFileCheck[]>("describe_step_files", { paths }),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
@@ -2912,6 +2928,19 @@ export type AssignedItem = {
 	project: string,
 };
 
+/**
+ *  A step file the upload attached: which step (0-based) held the local
+ *  `path`, and the Azure DevOps attachment id it became. The queue swaps
+ *  the path for the id so uploading the same queue again does not attach
+ *  the file twice.
+ */
+export type AttachedFile = {
+	step: number,
+	path: string,
+	id: string,
+	name: string,
+};
+
 export type AudioSpectrum = {
 	/**  `BAND_COUNT` values in 0..=1, low frequencies first. */
 	bands: (number | null)[],
@@ -3883,6 +3912,27 @@ export type CheckedAccount = {
 	check: SignInCheck,
 	/**  `sign_in_check::summary`. */
 	summary: string,
+};
+
+/**  A create a Check claimed, with the steps its row carries. */
+export type ClaimedCase = ClaimedCase_Serialize | ClaimedCase_Deserialize;
+
+/**  A create a Check claimed, with the steps its row carries. */
+export type ClaimedCase_Deserialize = {
+	id: number,
+	steps: Step_Deserialize[],
+};
+
+/**  A create a Check claimed, with the steps its row carries. */
+export type ClaimedCase_Serialize = {
+	id: number,
+	steps: Step_Serialize[],
+};
+
+/**  The step files of one claimed create. */
+export type ClaimedFiles = {
+	id: number,
+	attached: AttachedFile[],
 };
 
 /**  One line of the preview. */
@@ -7638,6 +7688,44 @@ export type StateInfo = {
 
 export type Step = Step_Serialize | Step_Deserialize;
 
+export type StepAttachment = StepAttachment_Serialize | StepAttachment_Deserialize;
+
+export type StepAttachment_Deserialize = {
+	/**
+	 *  An attachment Azure DevOps already holds: its GUID (last segment of
+	 *  the relation URL).
+	 */
+	id?: string | null,
+	/**  A new file: a full local path on this machine, read only at upload. */
+	path?: string | null,
+	/**
+	 *  File name as shown (ADO's `name` attribute; for a new file, the
+	 *  path's file name).
+	 */
+	name: string,
+	size?: number | null,
+	/**  Text after `[TestStep=N]:`, kept verbatim when re-pointed. */
+	comment?: string,
+};
+
+export type StepAttachment_Serialize = {
+	/**
+	 *  An attachment Azure DevOps already holds: its GUID (last segment of
+	 *  the relation URL).
+	 */
+	id?: string | null,
+	/**  A new file: a full local path on this machine, read only at upload. */
+	path?: string | null,
+	/**
+	 *  File name as shown (ADO's `name` attribute; for a new file, the
+	 *  path's file name).
+	 */
+	name: string,
+	size?: number | null,
+	/**  Text after `[TestStep=N]:`, kept verbatim when re-pointed. */
+	comment?: string,
+};
+
 /**
  *  A browser dialog a step met: its kind (`alert`, `confirm`, `prompt`,
  *  `beforeunload`) and its message, cut to 200 characters. Page text,
@@ -7646,6 +7734,15 @@ export type Step = Step_Serialize | Step_Deserialize;
 export type StepDialog = {
 	kind: string,
 	message: string,
+};
+
+/**  What the step editor learns about one picked file. */
+export type StepFileCheck = {
+	path: string,
+	name: string,
+	size: number | null,
+	/**  A sentence naming the file (never its folder) when it cannot be attached. */
+	refused: string | null,
 };
 
 export type StepRecord = StepRecord_Serialize | StepRecord_Deserialize;
@@ -7848,6 +7945,11 @@ export type Step_Deserialize = {
 	 *  it only keeps, moves or drops the reference.
 	 */
 	shared?: number | null,
+	/**
+	 *  Files attached to this step. Absent from JSON/IPC when empty, so
+	 *  every existing file and draft reads and writes exactly as before.
+	 */
+	attachments?: StepAttachment_Deserialize[],
 };
 
 export type Step_Serialize = {
@@ -7860,6 +7962,11 @@ export type Step_Serialize = {
 	 *  it only keeps, moves or drops the reference.
 	 */
 	shared?: number | null,
+	/**
+	 *  Files attached to this step. Absent from JSON/IPC when empty, so
+	 *  every existing file and draft reads and writes exactly as before.
+	 */
+	attachments?: StepAttachment_Serialize[],
 };
 
 /**
@@ -7896,6 +8003,11 @@ export type SubmitItemResult = {
 	action: string,
 	id: number | null,
 	error: string | null,
+	/**
+	 *  The step files this row attached, for rows that were created or
+	 *  updated. Empty when the row had no new files.
+	 */
+	attached?: AttachedFile[],
 };
 
 /**  Emitted once per queue item while submit_queue runs. */
@@ -8185,6 +8297,11 @@ export type TestCaseFull_Deserialize = {
 	 *  none (or one outside the picklist).
 	 */
 	priority: number | null,
+	/**
+	 *  True once this case's step attachments were read from Azure DevOps
+	 *  (`load_step_attachments`). False means "not read", never "none".
+	 */
+	attachments_read?: boolean,
 };
 
 /**
@@ -8246,6 +8363,11 @@ export type TestCaseFull_Serialize = {
 	 *  none (or one outside the picklist).
 	 */
 	priority: number | null,
+	/**
+	 *  True once this case's step attachments were read from Azure DevOps
+	 *  (`load_step_attachments`). False means "not read", never "none".
+	 */
+	attachments_read: boolean,
 };
 
 export type TestCaseSummary = {
@@ -8333,6 +8455,11 @@ export type TestCase_Deserialize = {
 	 *  a transform. `comment` stays the developer's.
 	 */
 	findings?: CaseFinding_Deserialize[],
+	/**
+	 *  GUIDs of step attachments the user removed - singly, or by deleting
+	 *  the step that held them. Absent when empty.
+	 */
+	removed_attachments?: string[],
 };
 
 export type TestCase_Serialize = {
@@ -8413,6 +8540,11 @@ export type TestCase_Serialize = {
 	 *  a transform. `comment` stays the developer's.
 	 */
 	findings?: CaseFinding_Serialize[],
+	/**
+	 *  GUIDs of step attachments the user removed - singly, or by deleting
+	 *  the step that held them. Absent when empty.
+	 */
+	removed_attachments?: string[],
 };
 
 /**  One file in a project's Test files. */
@@ -8596,6 +8728,16 @@ export type UpdateProgress = {
 	percent: number,
 	downloaded: number | null,
 	total: number | null,
+};
+
+/**
+ *  What a save has to say: notes for the person, and the step files it
+ *  attached (step, local path, new id) so the editor can swap each path for
+ *  its id.
+ */
+export type UpdateSaved = {
+	notes: string[],
+	attached: AttachedFile[],
 };
 
 /**

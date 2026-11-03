@@ -129,3 +129,34 @@ describe("unstampedCreated", () => {
     expect(out).toEqual([]);
   });
 });
+
+describe("stamping attachments into the watched file", () => {
+  const withFile = (title: string, over: Partial<TestCase> = {}) =>
+    tc(title, {
+      steps: [{ action: "Do", expected: "Done", attachments: [{ path: "C:/x/a.png", name: "a.png", size: 3 }] }],
+      ...over,
+    });
+
+  it("swaps the uploaded path for its id and clears the applied removals", () => {
+    const a = withFile("A", { update_id: 5, removed_attachments: ["old"] });
+    const b = withFile("B");
+    const files = stampFileSlices([a, b], ["f.json", "f.json"], [a, b], [
+      { index: 0, action: "updated", attached: [{ step: 0, path: "C:/x/a.png", id: "g-1", name: "a.png" }] },
+      { index: 1, action: "created", id: 701, attached: [{ step: 0, path: "C:/x/a.png", id: "g-2", name: "a.png" }] },
+    ]);
+    const f = files.get("f.json")!;
+    expect(f.changed).toBe(true);
+    expect(f.slice[0].steps[0].attachments).toEqual([{ id: "g-1", name: "a.png", size: 3 }]);
+    expect(f.slice[0].removed_attachments).toBeUndefined();
+    expect(f.slice[1].steps[0].attachments).toEqual([{ id: "g-2", name: "a.png", size: 3 }]);
+    expect(f.slice[1].update_id).toBe(701);
+  });
+
+  it("keeps the removals when the upload said it did not apply them", () => {
+    const a = withFile("A", { update_id: 5, removed_attachments: ["old"] });
+    const files = stampFileSlices([a], ["f.json"], [a], [
+      { index: 0, action: "updated", error: "Its step attachments were not changed." },
+    ]);
+    expect(files.get("f.json")!.slice[0].removed_attachments).toEqual(["old"]);
+  });
+});

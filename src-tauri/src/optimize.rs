@@ -720,6 +720,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             },
             expected: "The home page is displayed.".to_string(),
             shared: None,
+            attachments: vec![],
         }
     });
 
@@ -732,6 +733,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: entry.to_string(),
             expected: "The application opens.".to_string(),
             shared: None,
+            attachments: vec![],
         });
         out.extend(signin_step);
     } else {
@@ -740,6 +742,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: entry.to_string(),
             expected: "The module opens.".to_string(),
             shared: None,
+            attachments: vec![],
         });
     }
 
@@ -773,6 +776,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: format!("Navigate to the {target}."),
             expected: format!("The {target} is displayed."),
             shared: None,
+            attachments: vec![],
         });
         consumed.push((*sentence).clone());
     }
@@ -784,6 +788,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: format!("Navigate to {}.", c.module_value.trim()),
             expected: format!("The {} page is displayed.", c.module_value.trim()),
             shared: None,
+            attachments: vec![],
         });
     }
     (out, consumed)
@@ -949,7 +954,19 @@ pub fn optimize_full(
         }
 
         let before = c.steps.len();
-        c.steps.retain(|s| s.shared.is_some() || !s.action.trim().is_empty() || !s.expected.trim().is_empty());
+        let (kept, emptied): (Vec<_>, Vec<_>) = std::mem::take(&mut c.steps)
+            .into_iter()
+            .partition(|s| {
+                s.shared.is_some()
+                    || !s.action.trim().is_empty()
+                    || !s.expected.trim().is_empty()
+                    // A step holding a file stays (as keptSteps does): a file
+                    // is never unlinked without the person's say.
+                    || !s.attachments.is_empty()
+            });
+        c.steps = kept;
+        // The files on a step that goes are unlinked at upload.
+        crate::step_attachments::note_removed_steps(&mut c.removed_attachments, &emptied);
         report.empty_steps_removed += before - c.steps.len();
 
         for (i, s) in c.steps.iter_mut().enumerate() {

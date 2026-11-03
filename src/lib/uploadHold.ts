@@ -34,7 +34,7 @@
  * nothing is refused, but the hold itself is left exactly as it was, and it
  * applies again the moment a same-titled row reappears.
  */
-import type { ReconciledCase, SubmitItemResult, TestCase } from "../bindings";
+import type { ClaimedFiles, ReconciledCase, SubmitItemResult, TestCase } from "../bindings";
 
 export type UploadHold = {
   /** ISO time the upload started (less a margin): the lookup's lower bound. */
@@ -279,4 +279,25 @@ export function reconciledResults(
     results.push({ index: at, title: queue[at].title, action: "created", id: f.id, error: null });
   }
   return { results, orphans };
+}
+
+/** The creates a Check claimed whose row still holds a local file path on a
+ * step: those are asked about (`claim_created_step_files`) so each path can
+ * become the id the case already holds. A row with no such file costs no
+ * request. */
+export function claimsForCheck(queue: TestCase[], results: SubmitItemResult[]): { id: number; steps: TestCase["steps"] }[] {
+  const out: { id: number; steps: TestCase["steps"] }[] = [];
+  for (const r of results) {
+    const tc = queue[r.index];
+    if (r.action !== "created" || r.id == null || !tc) continue;
+    if (tc.steps.some((s) => (s.attachments ?? []).some((a) => a.path))) out.push({ id: r.id, steps: tc.steps });
+  }
+  return out;
+}
+
+/** The claimed results with the files Azure DevOps was found to hold, so they
+ * go through the queue's stamping exactly as a finished upload's do. */
+export function withClaimedFiles(results: SubmitItemResult[], files: ClaimedFiles[]): SubmitItemResult[] {
+  const byId = new Map(files.map((f) => [f.id, f.attached]));
+  return results.map((r) => (r.id != null && byId.has(r.id) ? { ...r, attached: byId.get(r.id) } : r));
 }

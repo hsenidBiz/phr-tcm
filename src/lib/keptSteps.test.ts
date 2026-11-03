@@ -19,3 +19,9 @@ test("a step with only one half, or a shared steps reference, is kept", () => {
   ];
   expect(keptSteps(steps)).toEqual(steps);
 });
+
+test("a blank step that holds an attachment is kept, so nothing is silently lost", () => {
+  const steps = [{ action: "", expected: "", attachments: [{ id: "g1", name: "old.png" }] }];
+  expect(keptSteps(steps)).toEqual(steps);
+  expect(keptSteps([{ action: "", expected: "", attachments: [] }])).toEqual([]);
+});

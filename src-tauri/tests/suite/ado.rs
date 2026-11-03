@@ -316,6 +316,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
             action: "Do".into(),
             expected: "Done".into(),
             shared: None,
+            attachments: vec![],
         }],
         tags: "smoke".into(),
         automation_status: "Planned".into(),
@@ -330,6 +331,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         tester_order: None,
         findings: vec![],
         source: Default::default(),
+        removed_attachments: vec![],
     }
 }
 
@@ -877,7 +879,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
         let client = v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri());
         let tc = v2_lib::model::TestCase {
             title: "T".into(),
-            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
+            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None, attachments: vec![] }],
             automation_status: "Planned".into(),
             preconditions: "value < 10 & rising".into(),
             ..Default::default()
@@ -1107,7 +1109,7 @@ async fn a_case_exported_and_reimported_does_not_rewrite_its_steps() {
 async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
     let blank = v2_lib::model::TestCase {
         title: "T".into(),
-        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None, attachments: vec![] }],
         automation_status: "Planned".into(),
         tags: String::new(),
         module_value: String::new(),
@@ -1174,7 +1176,7 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
 async fn a_field_of_only_spaces_counts_as_blank() {
     let spaces = v2_lib::model::TestCase {
         title: "T".into(),
-        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None, attachments: vec![] }],
         automation_status: "Planned".into(),
         tags: "   ".into(),
         module_value: "\t ".into(),
@@ -1457,8 +1459,9 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
         tester_order: None,
         findings: vec![],
         source: Default::default(),
+        removed_attachments: vec![],
     };
-    let linked = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, Some(100));
+    let linked = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, Some(100), &v2_lib::step_attachments::AttachmentInput::NONE).0;
     let rel = linked
         .iter()
         .find(|op| op["path"] == "/relations/-")
@@ -1467,7 +1470,7 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
     let url = rel["value"]["url"].as_str().unwrap();
     assert!(url.ends_with("/my%20org/Web/_apis/wit/workitems/100"), "{url}");
 
-    let plain = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, None);
+    let plain = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, None, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     assert!(plain.iter().all(|op| op["path"] != "/relations/-"));
     assert_eq!(plain.len() + 1, linked.len());
 }
@@ -1563,6 +1566,7 @@ async fn a_real_edit_adding_line_breaks_is_saved() {
         action: "Open the page Click Save".into(),
         expected: "Saved".into(),
         shared: None,
+        attachments: vec![],
     }]);
     let mut tc = case_from(&plain, "T");
     tc.steps[0].action = "Open the page\nClick **Save**".into();
@@ -1644,17 +1648,17 @@ fn prerequisites_are_written_as_html_lists_and_code() {
 
     let mut tc = sample_tc();
     tc.preconditions = md.into();
-    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
+    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     assert_eq!(prereq_ops(&create), [serde_json::json!(want)], "a create writes the HTML");
 
     // An update with no baseline writes it the same way.
-    let update = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, None, BlankPolicy::Skip);
+    let update = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, None, BlankPolicy::Skip, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     assert_eq!(prereq_ops(&update), [serde_json::json!(want)]);
 
     // Plain text is a paragraph, escaped, and no Markdown symbol reaches
     // Azure DevOps.
     tc.preconditions = "Logged out & a <cycleId> exists".into();
-    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
+    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     assert_eq!(prereq_ops(&create), [serde_json::json!("<p>Logged out &amp; a &lt;cycleId&gt; exists</p>")]);
 }
 
@@ -1677,14 +1681,14 @@ async fn a_title_only_edit_leaves_the_prerequisites_out() {
         tc.title = "Only the title changed".into();
         tc.preconditions = draft.clone();
         for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
-            let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), blanks);
+            let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), blanks, &v2_lib::step_attachments::AttachmentInput::NONE).0;
             assert!(prereq_ops(&ops).is_empty(), "draft {draft:?} rewrote the prerequisites: {ops:?}");
             assert!(ops.iter().any(|o| o["path"] == "/fields/System.Title"));
         }
         // The queue's batch document follows the same rule.
         tc.update_id = Some(301);
         let req = v2_lib::commands::queue::queue_item_request(
-            &doc_client(), "org", "proj", 42, &tc, None, Some("Custom.Prec"), "", "", None, None, Some(&stored), 1,
+            &doc_client(), "org", "proj", 42, &tc, None, Some("Custom.Prec"), "", "", None, None, Some(&stored), 1, &v2_lib::step_attachments::AttachmentInput::NONE
         )
         .unwrap();
         assert!(prereq_ops(req.body.as_array().unwrap()).is_empty(), "{}", req.body);
@@ -1693,7 +1697,7 @@ async fn a_title_only_edit_leaves_the_prerequisites_out() {
     // A real edit is written, as HTML.
     let mut tc = sample_tc();
     tc.preconditions = format!("{}\n- three", full.preconditions);
-    let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip);
+    let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     let written = prereq_ops(&ops);
     assert_eq!(written.len(), 1, "{ops:?}");
     assert!(written[0].as_str().unwrap().contains("<li>three</li>"), "{written:?}");
@@ -1709,7 +1713,7 @@ async fn an_old_bulleted_value_reads_back_and_saves_unchanged() {
     for draft in [full.preconditions.clone(), v2_lib::steps_xml::html_to_text(html)] {
         let mut tc = sample_tc();
         tc.preconditions = draft;
-        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Clear);
+        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Clear, &v2_lib::step_attachments::AttachmentInput::NONE).0;
         assert!(prereq_ops(&ops).is_empty(), "{ops:?}");
     }
     // The old writer's raw newlines are whitespace in HTML, but the text
@@ -1718,7 +1722,7 @@ async fn an_old_bulleted_value_reads_back_and_saves_unchanged() {
     let full = read_prereq(typed, None).await;
     let mut tc = sample_tc();
     tc.preconditions = "first line\nsecond line".into();
-    let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, full.preconditions_stored.as_ref(), BlankPolicy::Skip);
+    let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, full.preconditions_stored.as_ref(), BlankPolicy::Skip, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     assert!(prereq_ops(&ops).is_empty(), "{ops:?}");
 }
 
@@ -1736,11 +1740,11 @@ async fn a_markdown_field_is_written_as_markdown() {
 
         let mut tc = sample_tc();
         tc.preconditions = md.into();
-        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip);
+        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip, &v2_lib::step_attachments::AttachmentInput::NONE).0;
         assert!(prereq_ops(&ops).is_empty(), "unchanged stays out: {ops:?}");
 
         tc.preconditions = format!("{md}\n- a **second** user");
-        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip);
+        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip, &v2_lib::step_attachments::AttachmentInput::NONE).0;
         assert_eq!(prereq_ops(&ops), [serde_json::json!(tc.preconditions)], "written as Markdown");
     }
     // Another field's format says nothing about this one.
@@ -1756,7 +1760,7 @@ fn a_blank_policy_still_applies() {
     let empty = StoredText { value: String::new(), markdown: false };
     let mut tc = sample_tc();
     let ops = |tc: &v2_lib::model::TestCase, original: Option<&StoredText>, blanks| {
-        prereq_ops(&doc_client().update_test_case_doc(tc, None, Some("Custom.Prec"), None, None, original, blanks))
+        prereq_ops(&doc_client().update_test_case_doc(tc, None, Some("Custom.Prec"), None, None, original, blanks, &v2_lib::step_attachments::AttachmentInput::NONE).0)
     };
     for blank in ["", "   "] {
         tc.preconditions = blank.into();
@@ -1776,7 +1780,7 @@ fn a_blank_policy_still_applies() {
     }
     // A create never writes a blank.
     tc.preconditions = "  ".into();
-    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
+    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None, &v2_lib::step_attachments::AttachmentInput::NONE).0;
     assert!(prereq_ops(&create).is_empty());
 }
 

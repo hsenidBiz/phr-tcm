@@ -8,7 +8,7 @@ use v2_lib::steps_xml::Step;
 use v2_lib::transform::{apply, parse_ops};
 
 fn step(action: &str, expected: &str) -> Step {
-    Step { action: action.into(), expected: expected.into(), shared: None }
+    Step { action: action.into(), expected: expected.into(), shared: None, attachments: vec![] }
 }
 
 fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
@@ -28,6 +28,7 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         tester_order: None,
         findings: vec![],
         source: Default::default(),
+        removed_attachments: vec![],
     }
 }
 
@@ -69,8 +70,9 @@ fn a_declined_entry_step_says_why() {
                 action: "In the PMS Module, open Performance Management from the main menu.".into(),
                 expected: "The list is shown.".into(),
                 shared: None,
+                attachments: vec![],
             },
-            Step { action: "Click Approve.".into(), expected: "It is approved.".into(), shared: None },
+            Step { action: "Click Approve.".into(), expected: "It is approved.".into(), shared: None, attachments: vec![] },
         ],
     );
     let (_out, report) = optimize(
@@ -96,7 +98,7 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
             title,
             "",
             pre,
-            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into(), shared: None }],
+            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into(), shared: None, attachments: vec![] }],
         )
     };
     // Deliberately alternating setups: the tester ordering would group
@@ -134,7 +136,7 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
 #[test]
 fn both_orders_are_stamped_whatever_the_array_order_is() {
     let mk = |title: &str, pre: &str| {
-        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new(), shared: None }])
+        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new(), shared: None, attachments: vec![] }])
     };
     // Alternating setups so spec order and tester order genuinely differ.
     let draft = vec![
@@ -1558,4 +1560,40 @@ fn the_optimizer_keeps_shared_steps() {
     );
     let (out, _) = optimize(vec![c], None);
     assert!(out[0].steps.iter().any(|s| s.shared == Some(812)), "{:?}", out[0].steps);
+}
+
+#[test]
+fn attachments_survive_optimize() {
+    use v2_lib::step_attachments::StepAttachment;
+    let att = StepAttachment { id: Some("g1".into()), name: "a.png".into(), size: Some(5), ..Default::default() };
+    let mut with = step("Open the form (see the spec for details)", "The form opens, because it does.");
+    with.attachments = vec![att.clone()];
+    let c = case("Attach", "Leave", "Signed in as Employee", vec![with, step("Save", "Saved.")]);
+    let (out, _) = optimize(vec![c], None);
+    let kept = out[0].steps.iter().find(|s| s.action.starts_with("Open the form")).expect("the step is still there");
+    assert_eq!(kept.attachments, vec![att], "tidying the text must not drop the file");
+}
+
+#[test]
+fn a_blank_step_holding_files_is_kept_and_nothing_is_unlinked() {
+    use v2_lib::step_attachments::StepAttachment;
+    let mut held = step("", "");
+    held.attachments = vec![
+        StepAttachment { id: Some("g7".into()), name: "a.png".into(), ..Default::default() },
+        StepAttachment { path: Some("C:/x.png".into()), name: "x.png".into(), ..Default::default() },
+    ];
+    let c = case("Blank", "Leave", "", vec![held, step("Save", "Saved.")]);
+    let (out, report) = optimize(vec![c], None);
+    let kept = out[0].steps.iter().find(|s| !s.attachments.is_empty()).expect("the step holding files stayed");
+    assert_eq!(kept.attachments.len(), 2, "a file is never dropped without the person's say");
+    assert!(out[0].removed_attachments.is_empty());
+    assert_eq!(report.empty_steps_removed, 0);
+}
+
+#[test]
+fn a_blank_step_without_files_still_goes() {
+    let c = case("Blank", "Leave", "", vec![step("", ""), step("Save", "Saved.")]);
+    let (out, report) = optimize(vec![c], None);
+    assert!(out[0].steps.iter().all(|s| !s.action.trim().is_empty()));
+    assert_eq!(report.empty_steps_removed, 1);
 }

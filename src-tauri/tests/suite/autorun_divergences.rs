@@ -59,11 +59,12 @@ fn ctx() -> BridgeContext {
 /// step 2 expects a dropdown of Level 1 to Level 4.
 fn case_147556() -> v2_lib::ado::TestCaseFull {
     let steps = vec![
-        Step { action: "Open the DEF page".into(), expected: "".into(), shared: None },
+        Step { action: "Open the DEF page".into(), expected: "".into(), shared: None, attachments: vec![] },
         Step {
             action: "Open the level dropdown".into(),
             expected: "The dropdown lists Level 1 to Level 4".into(),
             shared: None,
+            attachments: vec![],
         },
     ];
     v2_lib::ado::TestCaseFull {
@@ -79,6 +80,7 @@ fn case_147556() -> v2_lib::ado::TestCaseFull {
         preconditions: "The DEF table holds exactly 4 levels".into(),
         preconditions_legacy: None,
         preconditions_stored: None,
+        attachments_read: false,
         priority: None,
     }
 }
@@ -520,7 +522,7 @@ fn the_route_is_auto_runs() {
 async fn client_with_case_7() -> (MockServer, AdoClient) {
     let server = MockServer::start().await;
     let steps: Vec<Step> =
-        (1..=3).map(|i| Step { action: format!("Step {i}"), expected: String::new(), shared: None }).collect();
+        (1..=3).map(|i| Step { action: format!("Step {i}"), expected: String::new(), shared: None, attachments: vec![] }).collect();
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/_apis/wit/workitems"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [{

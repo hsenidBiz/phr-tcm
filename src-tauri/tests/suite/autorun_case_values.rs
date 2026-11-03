@@ -51,7 +51,7 @@ fn ctx() -> BridgeContext {
 fn case_of(id: i32, title: &str, steps: &[(&str, &str)], preconditions: &str) -> v2_lib::ado::TestCaseFull {
     let steps: Vec<Step> = steps
         .iter()
-        .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into(), shared: None })
+        .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into(), shared: None, attachments: vec![] })
         .collect();
     v2_lib::ado::TestCaseFull {
         id,
@@ -66,6 +66,7 @@ fn case_of(id: i32, title: &str, steps: &[(&str, &str)], preconditions: &str) ->
         preconditions: preconditions.into(),
         preconditions_legacy: None,
         preconditions_stored: None,
+        attachments_read: false,
         priority: None,
     }
 }

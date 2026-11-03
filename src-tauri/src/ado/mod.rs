@@ -9,6 +9,7 @@
 //! the work-item-tracking API calls. Test plans and the Work Manager extend
 //! the same client from `ado_testplan` / `work_board`.
 
+pub mod attachments;
 pub mod endpoints;
 pub mod fanout;
 pub mod wit_batch;
@@ -137,6 +138,10 @@ pub struct TestCaseFull {
     /// `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
     /// none (or one outside the picklist).
     pub priority: Option<i32>,
+    /// True once this case's step attachments were read from Azure DevOps
+    /// (`load_step_attachments`). False means "not read", never "none".
+    #[serde(default)]
+    pub attachments_read: bool,
 }
 
 /// A rich-text field as Azure DevOps holds it: its raw value, and whether

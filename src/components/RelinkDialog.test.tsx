@@ -22,6 +22,7 @@ function tc(id: number, title: string): TestCaseFull {
     steps: [],
     step_ids: [],
     steps_xml: "",
+    attachments_read: true,
     priority: 2,
     module_value: "",
     preconditions: "",

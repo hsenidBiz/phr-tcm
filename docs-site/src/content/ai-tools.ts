@@ -423,6 +423,7 @@ export const aiBridge: Screen = {
     },
   ],
   tips: [
+    "An assistant can attach a file to a step of a case it writes or updates by naming the file. The file is uploaded with the case when you upload it, up to 25 MB each; a copied case does not carry the originals' attachments.",
     "None of the tools an assistant gets through this app can create, update or delete anything in Azure DevOps. You import what it writes yourself, on Import Test Cases.",
     "The AI Bridge only works while this app is open and signed in.",
   ],
