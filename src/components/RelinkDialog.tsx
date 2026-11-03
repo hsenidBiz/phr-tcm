@@ -148,6 +148,9 @@ export default function RelinkDialog({
           />
           <div className="min-h-0 flex-1 space-y-2 overflow-auto">
             {hits.isLoading && query && <p className="text-xs text-faint">Searching…</p>}
+            {hits.partial && (
+              <p className="text-xs text-warning">Part of the search failed, so some PBIs may be missing.</p>
+            )}
             {(hits.data ?? [])
               .filter((h) => h.id !== fromPbi)
               .map((h) => (

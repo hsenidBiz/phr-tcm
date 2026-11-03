@@ -128,6 +128,12 @@ describe("commas", () => {
 });
 
 describe("searchAlternatives", () => {
+  test("a lone quote does not break the split: the rest is one alternative", () => {
+    expect(searchAlternatives('"a, b')).toEqual(['"a, b']);
+    expect(matchesQuery(["a, b"], '"a, b')).toBe(true);
+    expect(matchesQuery(["x"], '", x')).toBe(false);
+  });
+
   test("splits on commas outside quotes, trimmed, empties dropped", () => {
     expect(searchAlternatives("1234, 5678")).toEqual(["1234", "5678"]);
     expect(searchAlternatives(" login error ,, timeout, ")).toEqual(["login error", "timeout"]);

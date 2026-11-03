@@ -204,6 +204,18 @@ test("groups templates by module and filters by title, module or id", async () =
   expect(screen.getByText(/No template matches/)).toBeInTheDocument();
 });
 
+test("a comma in the template search shows what matches any alternative", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+  await screen.findByRole("region", { name: "PMS / Performance Cycle" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search templates" }), {
+    target: { value: "publish, remove a goal" },
+  });
+  expect(screen.getByText("Publish a performance cycle")).toBeInTheDocument();
+  expect(screen.getByText("Remove a goal")).toBeInTheDocument();
+  expect(screen.queryByText("Create a draft performance cycle")).not.toBeInTheDocument();
+});
+
 test("a row shows its effect badge and last run, and keeps its parameters and proof for its details", async () => {
   mockOverview(OVERVIEW);
   renderScreen();

@@ -190,6 +190,11 @@ export default function PbiPicker({
           {query && hits.isError && (
             <p className="px-3 py-2 text-sm text-danger">{hits.error?.message}</p>
           )}
+          {query && hits.partial && (
+            <p className="px-3 py-2 text-xs text-warning">
+              Part of the search failed, so some PBIs may be missing.
+            </p>
+          )}
           {query && hits.data && hits.data.length === 0 && (
             <p className="px-3 py-2 text-sm text-muted">No PBIs match "{query}".</p>
           )}

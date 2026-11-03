@@ -7,6 +7,8 @@ type Combined = {
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
+  /** Some alternatives failed while others returned hits. */
+  partial: boolean;
 };
 
 /** A PBI search against the server, one request per comma-separated
@@ -19,7 +21,7 @@ export function usePbiSearch(
   enabled: boolean,
   fetcher: (alternative: string) => Promise<PbiHit[]>,
 ): Combined {
-  return useQueries({
+  const result = useQueries({
     queries: searchAlternatives(query).map((alt) => ({
       queryKey: [...keyPrefix, alt],
       queryFn: () => fetcher(alt),
@@ -35,10 +37,11 @@ export function usePbiSearch(
           isLoading: pending,
           isError: false,
           error: null,
+          partial: false,
         };
       }
       if (failed && results.every((r) => r.isError || r.data === undefined)) {
-        return { data: undefined, isLoading: false, isError: true, error: failed.error };
+        return { data: undefined, isLoading: false, isError: true, error: failed.error, partial: false };
       }
       const seen = new Set<number>();
       const data: PbiHit[] = [];
@@ -49,7 +52,9 @@ export function usePbiSearch(
           data.push(h);
         }
       }
-      return { data, isLoading: false, isError: false, error: null };
+      return { data, isLoading: false, isError: false, error: null, partial: Boolean(failed) };
     },
   });
+  // A disabled search has nothing to show, whatever an earlier one cached.
+  return enabled ? result : { ...result, data: undefined, isLoading: false, partial: false };
 }
