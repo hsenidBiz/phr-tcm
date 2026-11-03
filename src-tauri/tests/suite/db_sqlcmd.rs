@@ -7,11 +7,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use v2_lib::db::{
-    cap_cell, find_sqlcmd, parse_connection, rows_of, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_file_args, sqlcmd_path, Connection,
+    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_file_args, sqlcmd_path, Connection,
     Output, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV, ROW_CAP,
     SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };
 use v2_lib::db_defaults::DB_PRESETS;
+
+const LONG_TEXT_NOTE: &str = "sqlcmd can cut long text at about 256 characters, and it splits text with line breaks across lines. To read a long value whole, select it in pieces: SUBSTRING(<expression>, 1, 250), SUBSTRING(<expression>, 251, 250), and so on, where <expression> is the column or the call (for example OBJECT_DEFINITION(OBJECT_ID('<view>'))).";
 
 /// A stand-in for sqlcmd. It answers with whatever it was built with and
 /// keeps every call, so a test can assert what the real process would have
@@ -298,7 +300,7 @@ async fn a_huge_answer_is_cut_at_the_character_cap() {
         .unwrap();
 
     assert!(text.contains("... output capped at 60000 characters"), "no cap line");
-    assert!(text.chars().count() <= CHAR_CAP + 64, "{} characters", text.chars().count());
+    assert!(text.chars().count() <= CHAR_CAP + 64 + LONG_TEXT_NOTE.len(), "{} characters", text.chars().count());
     // One row wider than the whole cap is cut where it is cut: the only
     // alternative would be handing back the header and nothing else.
     assert!(text.starts_with("blob\nxxx"));
@@ -323,10 +325,10 @@ async fn when_both_caps_fire_both_are_reported_and_no_row_is_left_half_written()
     assert!(text.contains("... output capped at 60000 characters"), "the char cap went unsaid");
     // The character cut landed between rows, so every row that survived is
     // a whole row - a half-written one would be read as data.
-    for line in text.lines().skip(1).filter(|l| !l.starts_with("... ")) {
+    for line in text.lines().skip(1).filter(|l| !l.starts_with("... ") && *l != LONG_TEXT_NOTE) {
         assert!(line.ends_with(&wide), "a row was cut in half, {} characters", line.len());
     }
-    assert!(text.chars().count() <= CHAR_CAP + 128, "{} characters", text.chars().count());
+    assert!(text.chars().count() <= CHAR_CAP + 128 + LONG_TEXT_NOTE.len(), "{} characters", text.chars().count());
 }
 
 #[tokio::test]
@@ -537,57 +539,14 @@ async fn the_password_travels_in_the_environment_not_the_arguments() {
     assert_eq!(calls[0].3, vec![(PASSWORD_ENV.to_string(), c.password.clone())]);
 }
 
-/// A text value of `len` characters made of `lines` lines (so `lines - 1`
-/// line breaks), the way a view's definition comes back.
-fn multi_line(len: usize, lines: usize) -> String {
-    let per = (len - (lines - 1)) / lines;
-    let mut parts: Vec<String> = (0..lines).map(|_| "a".repeat(per)).collect();
-    let used: usize = parts.iter().map(|p| p.len()).sum::<usize>() + (lines - 1);
-    parts[lines - 1].push_str(&"a".repeat(len - used));
-    parts.join("\n")
-}
-
-/// A view definition with line breaks, longer than 256 characters, must
-/// come back whole and in ONE cell - not split into a row per line.
-#[tokio::test]
-async fn a_multi_line_value_longer_than_256_comes_back_whole() {
-    let def = multi_line(900, 13);
-    assert_eq!(def.chars().count(), 900);
-    assert_eq!(def.matches('\n').count(), 12);
-    let out = format!("id\tdefinition\n--\t----------\n7\t{def}\n\n(1 rows affected)\n");
-    let rows = rows_of(&out, 2);
-    assert_eq!(rows[0], vec!["id", "definition"]);
-    assert_eq!(rows[2].len(), 2, "{rows:?}");
-    assert_eq!(rows[2][0], "7");
-    assert_eq!(rows[2][1].chars().count(), 900);
-    assert_eq!(rows[2][1], def);
-
-    // and through run_sql the whole value is in the answer.
-    let fake = FakeRunner::answering(&out);
-    let (text, capped) =
-        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, definition FROM v").await.unwrap();
-    assert!(text.contains(&def), "{text}");
-    assert!(!capped);
-}
-
-/// A value with line breaks in a column that is not the last one stays in
-/// its cell too: the row is not finished until it has all its tabs.
-#[test]
-fn a_multi_line_value_in_a_middle_column_stays_one_cell() {
-    let out = "a\tb\tc\n-\t-\t-\nx\tfirst\nsecond\tz\ny\tq\tw\n";
-    let rows = rows_of(out, 3);
-    assert_eq!(rows[2], vec!["x", "first\nsecond", "z"]);
-    assert_eq!(rows[3], vec!["y", "q", "w"]);
-}
-
 /// A cell over 65536 characters is cut there and says so.
 #[test]
 fn a_cell_over_64k_is_truncated_with_the_marker() {
     let big = "z".repeat(70_000);
-    let cut = cap_cell(&big);
+    let cut = v2_lib::db::cap_cell(&big);
     assert_eq!(cut, format!("{} (truncated at 65536 characters)", "z".repeat(65_536)));
     let exact = "z".repeat(65_536);
-    assert_eq!(cap_cell(&exact), exact);
+    assert_eq!(v2_lib::db::cap_cell(&exact), exact);
 }
 
 /// No design-A flavour is measured on this machine (only go-sqlcmd is
@@ -602,25 +561,66 @@ fn the_flags_are_the_measured_ones() {
     assert_eq!(args[i + 1], "\t");
 }
 
-/// With -W, sqlcmd cuts a variable-length value at 256 characters, and -W
-/// cannot be combined with the -y that would widen it. A value exactly that
-/// long may have been cut, so the cell itself says so, names its column
-/// and how to read on - and a shorter value carries nothing.
-#[tokio::test]
-async fn a_cell_at_256_names_its_column_and_how_to_read_on() {
-    let at_cut = "x".repeat(CUT_AT);
-    let fake = FakeRunner::answering(&format!("note\twide\n----\t----\nk\t{at_cut}\n\n(1 rows affected)\n"));
-    let (text, _) =
-        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT note, wide FROM t").await.unwrap();
-    let want = format!("{at_cut} (may be cut at 256 characters - read on with SUBSTRING(wide, 257, 65536))");
-    assert!(text.contains(&want), "{text}");
-    assert!(!text.lines().any(|l| l.starts_with("... ") && l.contains("256 characters")), "{text}");
+async fn answer_to(stdout: &str) -> String {
+    let fake = FakeRunner::answering(stdout);
+    run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT 1").await.unwrap().0
+}
 
-    let shorter = "x".repeat(CUT_AT - 1);
-    let fake = FakeRunner::answering(&format!("note\twide\n----\t----\nk\t{shorter}\n\n(1 rows affected)\n"));
-    let (text, _) =
-        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT note, wide FROM t").await.unwrap();
-    assert!(!text.contains("256 characters"), "{text}");
+/// A line of 200 characters or more may be where sqlcmd cut a value, so the
+/// answer carries ONE note, after the rows, on how to read it whole.
+#[tokio::test]
+async fn a_long_line_adds_the_read_it_in_pieces_note() {
+    let long = "x".repeat(200);
+    let text = answer_to(&format!("wide\n----\n{long}\n\n(1 rows affected)\n")).await;
+    assert!(text.contains(&long), "{text}");
+    assert_eq!(text.matches(LONG_TEXT_NOTE).count(), 1, "{text}");
+    assert!(text.trim_end().ends_with(LONG_TEXT_NOTE), "{text}");
+
+    let short = "x".repeat(199);
+    let text = answer_to(&format!("wide\n----\n{short}\n\n(1 rows affected)\n")).await;
+    assert!(!text.contains("SUBSTRING"), "{text}");
+}
+
+/// A one-column result whose lines outnumber the rows sqlcmd counted is a
+/// value with line breaks split across lines: same note.
+#[tokio::test]
+async fn a_single_column_split_over_lines_adds_the_note() {
+    let text = answer_to("def\n---\nCREATE VIEW v AS\nSELECT 1\nFROM t\n\n(1 rows affected)\n").await;
+    assert_eq!(text.matches(LONG_TEXT_NOTE).count(), 1, "{text}");
+
+    // three rows of one column, three lines: nothing to say.
+    let text = answer_to("n\n-\na\nb\nc\n\n(3 rows affected)\n").await;
+    assert!(!text.contains("SUBSTRING"), "{text}");
+}
+
+/// The note appears once even when a batch-sized answer has many long lines.
+#[tokio::test]
+async fn many_long_lines_still_carry_one_note() {
+    let long = "x".repeat(250);
+    let text = answer_to(&format!("a\tb\n-\t-\n{long}\t{long}\n{long}\t{long}\n\n(2 rows affected)\n")).await;
+    assert_eq!(text.matches(LONG_TEXT_NOTE).count(), 1, "{text}");
+}
+
+/// A row whose last column is empty keeps its separator: db_lookup's FK-less
+/// tables arrive as five cells, the last one empty.
+#[tokio::test]
+async fn a_row_with_an_empty_last_cell_keeps_its_tab() {
+    let text = answer_to("sch\ttab\tfks\n---\t---\t---\ndbo\tLeaveType\t\n\n(1 rows affected)\n").await;
+    assert!(text.lines().any(|l| l == "dbo\tLeaveType\t"), "{text:?}");
+}
+
+/// The same row through db_lookup's renderer: a table with no foreign keys
+/// is listed, not dropped.
+#[tokio::test]
+async fn a_lookup_row_with_no_foreign_keys_is_kept() {
+    let text = answer_to("sch	tab	rows_est	cols	fks
+---	---	---	---	---
+dbo	LeaveType	12	name	
+
+(1 rows affected)
+").await;
+    let out = v2_lib::db::render_lookup(&text);
+    assert!(out.contains("dbo.LeaveType (12 rows est.)"), "{out}");
 }
 
 // ------------------------------------------- procedures, views and functions

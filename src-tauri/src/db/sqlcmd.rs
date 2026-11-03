@@ -513,57 +513,6 @@ pub async fn run_batch<R: Runner>(
     })
 }
 
-/// Whether `line` is one sqlcmd prints after a result set.
-fn is_footer(line: &str) -> bool {
-    let t = line.trim();
-    t.starts_with('(') && (t.ends_with("rows affected)") || t.ends_with("row affected)"))
-}
-
-/// Splits sqlcmd's output into rows of cells. A row is finished when it has
-/// `columns - 1` tabs, so a value with line breaks in it (a view's
-/// definition) stays ONE cell: the lines that follow an unfinished row
-/// belong to it, and so do tab-less lines after a finished row (the lines of a
-/// long last column). The header and the
-/// dashes line under it come back as rows too; "(N rows affected)" lines
-/// and the blank line before them come back as one-cell rows of their own.
-///
-/// What cannot be told apart, because sqlcmd escapes nothing: a value that
-/// itself contains a tab (it reads as two cells), and a value with line
-/// breaks in a result of ONE column (every line looks like a row).
-pub fn rows_of(stdout: &str, columns: usize) -> Vec<Vec<String>> {
-    let want = columns.saturating_sub(1);
-    let tabs = |t: &str| t.matches('\t').count();
-    let lines: Vec<&str> = stdout.lines().collect();
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut cur: Option<String> = None;
-    let flush = |cur: &mut Option<String>, rows: &mut Vec<Vec<String>>| {
-        if let Some(c) = cur.take() {
-            rows.push(c.trim_end().split('\t').map(str::to_string).collect());
-        }
-    };
-    for (i, line) in lines.iter().enumerate() {
-        let standalone = is_footer(line) || (line.is_empty() && lines.get(i + 1).is_some_and(|n| is_footer(n)));
-        if standalone {
-            flush(&mut cur, &mut rows);
-            rows.push(vec![(*line).to_string()]);
-            continue;
-        }
-        match cur.as_mut() {
-            Some(c) if tabs(c) < want || (want > 0 && tabs(line) == 0) => {
-                c.push('\n');
-                c.push_str(line);
-            }
-            Some(_) => {
-                flush(&mut cur, &mut rows);
-                cur = Some((*line).to_string());
-            }
-            None => cur = Some((*line).to_string()),
-        }
-    }
-    flush(&mut cur, &mut rows);
-    rows
-}
-
 /// A value, whole up to `CELL_CAP` characters; longer is cut there and says so.
 pub fn cap_cell(cell: &str) -> String {
     if cell.chars().count() <= CELL_CAP {
@@ -573,49 +522,59 @@ pub fn cap_cell(cell: &str) -> String {
     format!("{kept} (truncated at {CELL_CAP} characters)")
 }
 
-/// A value of exactly `CUT_AT` characters may be where sqlcmd cut it: say
-/// so in the cell, naming the column and how to read the rest.
-fn mark_cuts(cells: &mut [String], header: &[String]) {
-    for (i, cell) in cells.iter_mut().enumerate() {
-        if cell.chars().count() == CUT_AT {
-            let name = header.get(i).map(|h| h.trim()).filter(|h| !h.is_empty()).unwrap_or("column");
-            cell.push_str(&format!(
-                " (may be cut at {CUT_AT} characters - read on with SUBSTRING({name}, {}, {CELL_CAP}))",
-                CUT_AT + 1
-            ));
-        }
+/// A line this long may be where sqlcmd cut a value.
+const LONG_LINE: usize = 200;
+
+/// Said once, after the rows, when the output looks cut or split.
+pub const LONG_TEXT_NOTE: &str = "sqlcmd can cut long text at about 256 characters, and it splits text with line breaks across lines. To read a long value whole, select it in pieces: SUBSTRING(<expression>, 1, 250), SUBSTRING(<expression>, 251, 250), and so on, where <expression> is the column or the call (for example OBJECT_DEFINITION(OBJECT_ID('<view>'))).";
+
+/// Whether `stdout` looks like sqlcmd cut or split a text value: some line
+/// is `LONG_LINE` characters or longer, or a result of ONE column has more
+/// data lines than the "(N rows affected)" sqlcmd printed (a value with line
+/// breaks, one row spread over several lines).
+fn looks_cut(stdout: &str) -> bool {
+    if stdout.lines().any(|l| l.chars().count() >= LONG_LINE) {
+        return true;
     }
+    let mut lines = stdout.lines();
+    let Some(header) = lines.next() else { return false };
+    if header.contains('\t') {
+        return false;
+    }
+    let counted = |l: &str| -> Option<usize> {
+        let t = l.trim();
+        let inner = t.strip_prefix('(')?.strip_suffix(')')?;
+        let n = inner.strip_suffix(" rows affected").or_else(|| inner.strip_suffix(" row affected"))?;
+        n.parse().ok()
+    };
+    let rest: Vec<&str> = lines.skip(1).collect();
+    let Some(total) = rest.iter().rev().find_map(|l| counted(l)) else { return false };
+    let data = rest.iter().filter(|l| !l.trim().is_empty() && counted(l).is_none()).count();
+    data > total
 }
 
 /// Keeps the header line, at most `ROW_CAP` rows after it, and at most
 /// `CHAR_CAP` characters of that - then says, after the body, each cut it
 /// had to make. Both notices can appear; neither ever lands inside a row.
-/// A row is a whole result row, line breaks inside a value included
-/// (`rows_of`); each value is held to `CELL_CAP` and a value of exactly
-/// `CUT_AT` characters is marked (`mark_cuts`).
+/// A value over `CELL_CAP` characters is cut there (`cap_cell`), and
+/// `LONG_TEXT_NOTE` follows when the output looks cut or split.
 ///
 /// Returns whether either cap fired, alongside the text, so a caller that
 /// wants to say "capped" does not have to guess from the text itself - a
 /// SELECT can return a value that happens to contain the same words.
 fn cap(stdout: &str) -> (String, bool) {
-    let header_line = stdout.lines().next().unwrap_or("");
-    let header: Vec<String> = header_line.split('\t').map(str::to_string).collect();
-    let mut all = rows_of(stdout, header.len()).into_iter();
-    let mut body = all.next().map(|r| r.join("\t")).unwrap_or_default();
-    let rows: Vec<Vec<String>> = all.collect();
-    let mut shown: Vec<String> = Vec::new();
-    for (n, row) in rows.iter().take(ROW_CAP).enumerate() {
-        let mut cells: Vec<String> = row.iter().map(|c| cap_cell(c)).collect();
-        // The first row after the header is the dashes line; a one-cell row
-        // in a wider result is a footer. Neither holds a cut value.
-        if n > 0 && (header.len() == 1 || cells.len() > 1) {
-            mark_cuts(&mut cells, &header);
-        }
-        shown.push(cells.join("\t"));
-    }
-    for row in &shown {
+    let mut lines = stdout.lines();
+    let mut body = lines.next().unwrap_or("").to_string();
+    let rows: Vec<&str> = lines.collect();
+    for row in rows.iter().take(ROW_CAP) {
         body.push('\n');
-        body.push_str(row);
+        if row.chars().count() > CELL_CAP {
+            // Only a line this long can hold a cell this long.
+            let cells: Vec<String> = row.split('\t').map(cap_cell).collect();
+            body.push_str(&cells.join("\t"));
+        } else {
+            body.push_str(row);
+        }
     }
 
     let mut capped = false;
@@ -625,23 +584,20 @@ fn cap(stdout: &str) -> (String, bool) {
         capped = true;
     }
     if body.chars().count() > CHAR_CAP {
+        let kept: String = body.chars().take(CHAR_CAP).collect();
         // Cut between rows, so nothing is left half-written and read as
         // data. The exception is a single row wider than the whole cap:
-        // trimming to a row boundary there would hand back the header
+        // trimming to the line boundary there would hand back the header
         // and nothing else, so that one is cut where it falls.
-        let mut kept = header_line.to_string();
-        let mut fitted = 0;
-        for row in &shown {
-            if kept.chars().count() + 1 + row.chars().count() > CHAR_CAP {
-                break;
-            }
-            kept.push('\n');
-            kept.push_str(row);
-            fitted += 1;
-        }
-        body = if fitted > 0 { kept } else { body.chars().take(CHAR_CAP).collect() };
+        body = match kept.rfind('\n') {
+            Some(at) if kept[..at].lines().count() > 1 => kept[..at].to_string(),
+            _ => kept,
+        };
         notices.push(format!("... output capped at {CHAR_CAP} characters"));
         capped = true;
+    }
+    if looks_cut(stdout) {
+        notices.push(LONG_TEXT_NOTE.to_string());
     }
 
     for notice in notices {
