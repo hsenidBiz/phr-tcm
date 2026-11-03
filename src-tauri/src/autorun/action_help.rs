@@ -11,7 +11,6 @@
 use crate::browser::actions::Action;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
 
 /// How long after an action's own wait a discovery or try call lets it run
 /// before it answers that the action did not.
@@ -354,12 +353,11 @@ pub fn screenshot_from(raw: &Value) -> Option<Result<Action, String>> {
 
 /// Each action kind's own field names, in the order the type declares them,
 /// from the very definition the TypeScript bindings are generated from, so
-/// the list can never drift from `Action`. Empty when the definition cannot be
+/// the list can never drift from `Action`. Built per call (it runs only when an action is tried, found or saved). Empty when the definition cannot be
 /// read, which turns the unknown-key refusal off rather than refusing
 /// everything.
-fn kind_fields() -> &'static BTreeMap<String, Vec<String>> {
-    static FIELDS: OnceLock<BTreeMap<String, Vec<String>>> = OnceLock::new();
-    FIELDS.get_or_init(|| {
+fn kind_fields() -> BTreeMap<String, Vec<String>> {
+    {
         use specta::datatype::{DataType, Fields, Reference};
         use specta::Format as _;
         let mut types = specta::Types::default();
@@ -398,14 +396,14 @@ fn kind_fields() -> &'static BTreeMap<String, Vec<String>> {
             out.insert(name.to_string(), fields);
         }
         out
-    })
+    }
 }
 
 /// The field names of action kind `kind` (`"press_key"` is `key`, `times`),
 /// or `None` for a kind that is not one, or that reads any other key itself
 /// (`expect_response`, `api_request`, `expect_download`).
 pub fn fields_of(kind: &str) -> Option<Vec<String>> {
-    kind_fields().get(kind).cloned()
+    kind_fields().remove(kind)
 }
 
 /// Keys of the nested action lists an action holds.

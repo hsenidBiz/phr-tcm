@@ -524,7 +524,7 @@ pub fn set_route_kind(root: &Path, route: &str, kind: RouteKind) -> Result<(), S
     let mut kinds = route_kinds_locked(root);
     kinds.insert(compared(&line), kind);
     let json = serde_json::to_string_pretty(&kinds).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(root.join(EXPLORE_DIR)).map_err(|e| format!("the explore folder could not be made: {e}"))?;
+    crate::autorun::roots::create_dir_all(root, root.join(EXPLORE_DIR)).map_err(|e| format!("the explore folder could not be made: {e}"))?;
     crate::autorun::roots::write_file(root, &route_kinds_path(root), &json)
 }
 
