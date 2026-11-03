@@ -237,3 +237,36 @@ fn shared_step_with_attachment_is_invalid() {
     };
     assert!(ok.is_valid().is_ok());
 }
+
+#[test]
+fn a_case_level_attachment_is_never_re_pointed() {
+    // No `[TestStep=` marker: a case-level attachment. A hand-written draft
+    // naming its GUID on a step must not mark it.
+    let cur = CaseRelations { rev: 5, attachments: vec![rel(2, "case-level", "uploaded by a person")] };
+    let steps = vec![step("a", vec![existing("case-level")])];
+    let out = relation_ops(&ids(&["2"]), &steps, &[], Some(&cur), &[]);
+    assert!(out.ops.is_empty(), "{:?}", out.ops);
+    assert_eq!(out.notes.len(), 1);
+    assert!(!out.notes[0].to_lowercase().contains("http"));
+}
+
+#[test]
+fn a_case_level_attachment_is_never_removed() {
+    let cur = CaseRelations {
+        rev: 5,
+        attachments: vec![rel(2, "case-level", "uploaded by a person"), rel(3, "on-step", "[TestStep=2]:")],
+    };
+    let steps = vec![step("a", vec![])];
+    let removed = vec!["case-level".to_string(), "on-step".to_string()];
+    let out = relation_ops(&ids(&["2"]), &steps, &removed, Some(&cur), &[]);
+    // Only the step's own attachment goes.
+    assert_eq!(
+        out.ops,
+        vec![
+            json!({"op": "test", "path": "/rev", "value": 5}),
+            json!({"op": "remove", "path": "/relations/3"}),
+        ]
+    );
+    assert_eq!(out.notes.len(), 1);
+    assert!(!out.notes[0].to_lowercase().contains("http"));
+}

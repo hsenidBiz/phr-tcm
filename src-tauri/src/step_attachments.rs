@@ -150,13 +150,16 @@ pub fn relation_ops(
                 if step_id.is_empty() {
                     continue;
                 }
-                let (old_id, rest) = match parse_marker(&r.comment) {
-                    Some((id, rest)) => (Some(id), rest),
-                    None => (None, r.comment.clone()),
+                // No marker: a case-level attachment. Never marked, even if a
+                // hand-written draft names its GUID.
+                let Some((old_id, rest)) = parse_marker(&r.comment) else {
+                    notes.push(format!(
+                        "\"{}\" is attached to the whole case, not a step, so it was left as it is.",
+                        att.name
+                    ));
+                    continue;
                 };
-                if old_id.as_deref() != Some(step_id)
-                    && !replaces.iter().any(|(i, _)| *i == r.index)
-                {
+                if old_id != step_id && !replaces.iter().any(|(i, _)| *i == r.index) {
                     replaces.push((r.index, marker(step_id, &rest)));
                 }
             } else if let Some(path) = att.path.as_deref() {
@@ -192,6 +195,13 @@ pub fn relation_ops(
                 continue;
             }
             if let Some(r) = cur.attachments.iter().find(|r| &r.guid == g) {
+                if parse_marker(&r.comment).is_none() {
+                    notes.push(format!(
+                        "\"{}\" is attached to the whole case, not a step, so it was not removed.",
+                        r.name
+                    ));
+                    continue;
+                }
                 if !removes.contains(&r.index) {
                     removes.push(r.index);
                 }

@@ -1165,6 +1165,7 @@ impl AdoClient {
                     preconditions,
                     preconditions_legacy,
                     preconditions_stored,
+                    attachments_read: false,
                 });
             }
         }

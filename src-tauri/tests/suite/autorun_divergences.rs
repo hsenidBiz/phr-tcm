@@ -80,6 +80,7 @@ fn case_147556() -> v2_lib::ado::TestCaseFull {
         preconditions: "The DEF table holds exactly 4 levels".into(),
         preconditions_legacy: None,
         preconditions_stored: None,
+        attachments_read: false,
         priority: None,
     }
 }

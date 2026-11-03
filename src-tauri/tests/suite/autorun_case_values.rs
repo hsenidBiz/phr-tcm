@@ -66,6 +66,7 @@ fn case_of(id: i32, title: &str, steps: &[(&str, &str)], preconditions: &str) ->
         preconditions: preconditions.into(),
         preconditions_legacy: None,
         preconditions_stored: None,
+        attachments_read: false,
         priority: None,
     }
 }
