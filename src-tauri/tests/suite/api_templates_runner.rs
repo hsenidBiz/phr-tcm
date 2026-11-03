@@ -2701,3 +2701,38 @@ async fn a_one_off_body_with_base64_is_sent_encoded() {
     let want = base64::engine::general_purpose::STANDARD.encode(r#"{"name":"FY27"}"#);
     assert_eq!(fetched[0][0]["body"], json!({ "kind": "json", "value": { "payload": want } }));
 }
+
+#[tokio::test]
+async fn a_run_cut_off_mid_step_says_the_request_may_have_been_processed() {
+    use v2_lib::api_templates::runner::MAYBE_SENT_NO_ANSWER;
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    r.script.lock().unwrap().hang_fetch = true;
+    let mut app = r.browsers.next.take().unwrap();
+    let _act = crate::serial::activity_log();
+    let t = one_off("POST", json!({ "form": { "x": "1" } }));
+    let out = run_in_page(
+        &mut app,
+        r.root.path(),
+        &request(t, Mode::Explore),
+        &quick(),
+        TokenPage::Here,
+        Duration::from_millis(300),
+        &QUICK_PAUSES,
+    )
+    .await;
+    assert!(!out.report.ok);
+    let detail = &out.report.steps.last().unwrap().detail;
+    assert!(detail.contains(MAYBE_SENT_NO_ANSWER), "{detail}");
+}
+
+#[test]
+fn a_run_for_a_long_step_has_room_for_a_token_page_and_a_retry() {
+    use v2_lib::api_templates::runner::{run_limit_for, run_too_long, RUN_LIMIT};
+    let step = Duration::from_secs(180);
+    assert!(run_limit_for(RUN_LIMIT, Some(step)) >= step * 2 + Duration::from_secs(60));
+    assert_eq!(run_limit_for(RUN_LIMIT, None), RUN_LIMIT);
+    assert_eq!(run_limit_for(RUN_LIMIT, Some(Duration::from_secs(5))), RUN_LIMIT);
+    assert_eq!(run_too_long(RUN_LIMIT), "the run took longer than 3 minutes");
+    assert_eq!(run_too_long(Duration::from_secs(420)), "the run took longer than 420 seconds");
+}

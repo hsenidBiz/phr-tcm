@@ -1181,3 +1181,33 @@ async fn a_devtools_timeout_says_it_may_not_know() {
     assert_eq!(v["timed_out"], json!(true), "{v}");
     assert_eq!(load(r.root.path(), &session).unwrap().writes.len(), 1);
 }
+
+#[tokio::test]
+async fn a_template_proven_another_way_or_named_by_a_flow_is_never_replaced() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })); 3], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"]["id"], json!("post-hr-x"), "{v}");
+
+    // A prove of the same template afterwards: no longer proven by an explore call.
+    let mut t = store::load(r.root.path(), ORG, PROJECT, "post-hr-x").unwrap().unwrap();
+    t.proven.as_mut().unwrap().via = None;
+    store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "y": "2" }))).await;
+    assert_eq!(v["template"], json!({ "id": "post-hr-x-2", "saved": true }), "{v}");
+
+    // A flow that names the newer template keeps it too.
+    let dir = v2_lib::api_templates::flow_store::flows_dir(r.root.path(), ORG, PROJECT);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("f.json"),
+        json!({ "id": "f", "title": "F", "module": "M", "subject": { "name": "cycleId", "type": "number" }, "stages": [ { "id": "post-hr-x-2", "title": "S", "check": "x" } ] }).to_string(),
+    )
+    .unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "w": "3" }))).await;
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    assert_eq!(saved_ids(&r).len(), 3);
+}

@@ -103,6 +103,26 @@ fn step_too_long(limit: Duration) -> String {
 pub const RUN_LIMIT: Duration = Duration::from_secs(180);
 
 const RUN_TOO_LONG: &str = "the run took longer than 3 minutes";
+
+/// The sentence for a run that ran out of `limit`: the usual 3 minutes, or the
+/// longer limit a call's `timeout_s` asked for, in seconds.
+pub fn run_too_long(limit: Duration) -> String {
+    if limit > RUN_LIMIT {
+        format!("the run took longer than {} seconds", limit.as_secs())
+    } else {
+        RUN_TOO_LONG.to_string()
+    }
+}
+
+/// The whole-run limit for a call whose steps may take `step_limit`: room for
+/// two full steps (an unread-400 retry runs the step again) and a minute for
+/// the token page and the sign-in checks. Never below `limit`.
+pub fn run_limit_for(limit: Duration, step_limit: Option<Duration>) -> Duration {
+    match step_limit {
+        Some(step) => limit.max(step * 2 + Duration::from_secs(60)),
+        None => limit,
+    }
+}
 /// Names for the parts of a run that are not a template step, as a
 /// `StepReport` and `RunReport::failed` show them.
 const SIGN_IN: &str = "Sign in";
@@ -1043,7 +1063,10 @@ pub async fn run_in_page<D: Driver>(
             ctx.in_page = Some(token_page);
             let timed = tokio::time::timeout(limit, run_signed_in(d, &ctx, retry_pauses, &mut progress)).await;
             if timed.is_err() && progress.failed.is_none() {
-                progress.fail(None, RUN_TOO_LONG);
+                // Cut off while a template step was out: the request may have gone out.
+                let in_a_step = ![SIGN_IN, TOKEN_PAGE, BROWSER].contains(&progress.phase.as_str());
+                let said = run_too_long(limit);
+                progress.fail(None, if in_a_step { format!("{said}: {MAYBE_SENT_NO_ANSWER}") } else { said });
             }
             d.set_deadline(None);
         }

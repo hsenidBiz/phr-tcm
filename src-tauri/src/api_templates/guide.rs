@@ -554,7 +554,8 @@ and the token is read there, in the same tab. The answer is redacted and cut at 
 - `save: false` runs a call and neither saves nor matches a template (the answer says it was not saved).
   A later working call of the same route replaces the template this session saved earlier, so a
   call that first worked badly does not leave a stale copy behind; a template saved before this
-  session, proven another way, or used by a fixture, flow or setup is never replaced.
+  session, proven another way, or used by a fixture, flow or setup is never replaced. A replace keeps
+  the template's id, name and description; the answer says "replaced".
 - `timeout_s` (5 to 180, default 30) is how many seconds one step may take. A timeout never tells
   you whether the app processed the call: the answer says `timed_out` and that it may have, a
   POST is still on the session's list of saves, and you check the record before sending it again.

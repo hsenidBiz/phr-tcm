@@ -7620,10 +7620,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
     // judged against.
     let sent_at = crate::autorun::sessions::now_ms();
     // A call that asked for longer steps gets a run that can hold one.
-    let limit = match req.step_limit {
-        Some(step) => limit.max(step + std::time::Duration::from_secs(30)),
-        None => limit,
-    };
+    let limit = crate::api_templates::runner::run_limit_for(limit, req.step_limit);
     let out = run_in_page(parts.driver, root, &req, timing, how, limit, retry_pauses).await;
 
     let report = &out.report;
