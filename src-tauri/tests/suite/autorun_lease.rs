@@ -752,7 +752,7 @@ async fn a_re_hold_does_not_bump_the_generation() {
 
 mod across_browsers {
     use super::*;
-    use v2_lib::ai_bridge::{in_use_by_words, with_holder_named};
+    use v2_lib::ai_bridge::{in_use_by_words, with_holder_named_at};
     use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey};
     use v2_lib::autorun::slots::SlotNo;
     use v2_lib::commands::autorun_slots as slots;
@@ -772,8 +772,50 @@ mod across_browsers {
         slots::clear();
     }
 
+    /// The clock the naming reads: a few seconds after the agents above were last heard.
+    const NOW: u64 = 10_000;
+
+    fn with_holder_named(answer: (u16, String), caller_slot: SlotNo, env: &str) -> (u16, String) {
+        with_holder_named_at(answer, caller_slot, env, NOW)
+    }
+
     fn named_by(label: &str) -> String {
-        format!(". {label} is signed in as it: work on cases that sign in as another account, or wait until {label} is done.")
+        named_after(label, "<1 min")
+    }
+
+    fn named_after(label: &str, quiet: &str) -> String {
+        format!(". {label} is signed in as it (no call for {quiet}): work on cases that sign in as another account, or wait until {label} is done.")
+    }
+
+    /// The holder is named with how long since its last call, worded as the
+    /// reset's holds note words it, and a refusal with no live assistant
+    /// holder keeps today's sentence.
+    #[test]
+    fn the_holder_is_named_with_how_long_since_its_last_call() {
+        let _a = crate::serial::agents();
+        let _l = crate::serial::account_leases();
+        fresh();
+        let env = "env-ab000003";
+        let a = register(ID_A, 1_000);
+        slots::bind(SlotNo(1), &a);
+        let held = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 1 }).unwrap();
+        let sentence = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 0 }).unwrap_err();
+        let at = |now: u64| with_holder_named_at((409, sentence.clone()), SlotNo::MAIN, env, now).1;
+        assert_eq!(at(1_000 + 59_000), format!("{sentence}{}", named_after("Assistant 1", "<1 min")));
+        assert_eq!(at(1_000 + 60_000), format!("{sentence}{}", named_after("Assistant 1", "1 min")));
+        assert_eq!(at(1_000 + 7 * 60_000 + 5_000), format!("{sentence}{}", named_after("Assistant 1", "7 min")));
+        // A call it makes after that resets the time.
+        agents::note_call(
+            &AgentHeaders { id: Some(ID_A.into()), pid: Some(4242), client: Some("claude-code".into()), name: None }.caller(),
+            &AgentHeaders { id: Some(ID_A.into()), pid: Some(4242), client: Some("claude-code".into()), name: None },
+            1_000 + 6 * 60_000,
+        );
+        assert_eq!(at(1_000 + 7 * 60_000), format!("{sentence}{}", named_after("Assistant 1", "1 min")));
+        // No live assistant holder: today's sentence.
+        slots::unbind(SlotNo(1));
+        assert_eq!(at(1_000 + 7 * 60_000), sentence);
+        drop(held);
+        fresh();
     }
 
     #[test]

@@ -625,7 +625,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   `at_area` is false, or to reach another area, carry out its menu path from",
             "   the guide's areas section with `discover_autorun_actions`. Explore it, passing `area` on",
             "   `discover_autorun_actions` if you move to another area. Then call",
-            "   `end_autorun_discovery`. Then bring the Auto Run browser to the failing",
+            "   `end_autorun_discovery` with `keep_browser: true`. Then bring the Auto Run browser to the failing",
             "   step with",
             "   `replay_autorun_to_step`, never past it, then look with `get_autorun_page`",
             "   and `probe_autorun_locator`. Base the diagnosis on what the page shows, not on",

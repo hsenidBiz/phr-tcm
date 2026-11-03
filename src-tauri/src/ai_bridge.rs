@@ -662,7 +662,12 @@ pub async fn route_as(
             Some(going) => with_overrides_seen(going, None, slot),
             None => {
                 crate::autorun::page_compact::forget(slot);
-                let answer = crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await;
+                let keeping = serde_json::from_str::<serde_json::Value>(body)
+                    .ok()
+                    .and_then(|v| v.get("keep_browser").and_then(serde_json::Value::as_bool))
+                    .unwrap_or(false);
+                let by = if keeping { EndedBy::AssistantKeeping } else { EndedBy::Assistant };
+                let answer = crate::commands::autorun::end_discovery(by, slot).await;
                 // Done with its discovery: the cases it held are free.
                 end_claims_of(holder, answer.0);
                 answer
@@ -7271,6 +7276,15 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
 pub const DISCOVERY_ENDED_KEPT: &str =
     "the discovery is over; its browser stays open and signed in, for your next replay or discovery";
 
+/// Said once an assistant's end (without `keep_browser`) has ended the
+/// discovery, closed its browser and let its account go.
+pub const DISCOVERY_ENDED_RELEASED: &str = "the discovery is over, its browser is closed and its account is free";
+
+/// Said by an assistant's end of a discovery in a browser the person
+/// opened: that browser is never closed by an assistant.
+pub const DISCOVERY_ENDED_PERSONS: &str =
+    "the discovery is over; the browser stays open because the person opened it";
+
 /// Said once a discovery is over and its browser closed: by the assistant's
 /// release, and by an end whose guard would not lift.
 pub(crate) const DISCOVERY_ENDED_CLOSED: &str = "the discovery is over and its browser is closed";
@@ -7299,18 +7313,45 @@ pub enum EndedBy {
     /// The person's End discovery on the Setup card: it closes the
     /// assistant's discovery browser so Auto Run can run again.
     Person,
-    /// The assistant's `end_autorun_discovery`: the browser stays, signed in,
-    /// for its next replay or discovery.
+    /// The assistant's `end_autorun_discovery`: the browser is closed and
+    /// its account let go (a browser the person opened stays).
     Assistant,
+    /// The assistant's `end_autorun_discovery` with `keep_browser`: the
+    /// browser stays, signed in, for its next replay or discovery.
+    AssistantKeeping,
 }
 
-/// End the discovery in `slot` as `by` ends it: the assistant's end keeps
-/// the browser (`end_discovery_in`), the person's closes it
-/// (`end_discovery_closing`). A mapping run's summary is kept either way.
+/// End the discovery in `slot` as `by` ends it: the assistant's end closes
+/// the browser unless it keeps it (`end_discovery_releasing`,
+/// `end_discovery_in`), the person's always closes it
+/// (`end_discovery_closing`). A mapping run's summary is kept in every case.
 pub async fn end_discovery_as<B: DiscoveryBrowser>(slot: &mut Option<B>, by: EndedBy) -> (u16, String) {
     match by {
-        EndedBy::Assistant => end_discovery_in(slot).await,
+        EndedBy::Assistant => end_discovery_releasing(slot).await,
+        EndedBy::AssistantKeeping => end_discovery_in(slot).await,
         EndedBy::Person => end_discovery_closing(slot),
+    }
+}
+
+/// The assistant's end of a discovery, by default: the release path
+/// (`end_discovery_closing`) with the same ended answer (a mapping run's
+/// summary, an explore session's change list and unrecorded saves) and the
+/// words that the browser is closed and its account free. A browser the
+/// person opened is never closed by an assistant: that end keeps it, and says so.
+pub async fn end_discovery_releasing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+    let persons = match slot.as_mut() {
+        Some(b) => b.parts().discovery.is_some() && !b.opened_by_assistant(),
+        None => false,
+    };
+    if persons {
+        return match end_discovery_keeping(slot, true).await {
+            Some(ended) => ended_answer(DISCOVERY_ENDED_PERSONS, ended.summary, ended.explore),
+            None => (200, "no discovery is going".to_string()),
+        };
+    }
+    match close_discovery(slot) {
+        Some((summary, explore)) => ended_answer(DISCOVERY_ENDED_RELEASED, summary, explore),
+        None => (200, "no discovery is going".to_string()),
     }
 }
 
@@ -12570,6 +12611,18 @@ pub fn in_use_by_words(holder: &crate::autorun::lease::Holder, caller_slot: Opti
 /// unchanged. `env` is the active environment's id, the key the lease table
 /// uses. Labels only: never a login or an id.
 pub fn with_holder_named(answer: (u16, String), caller_slot: impl Into<Option<SlotNo>>, env: &str) -> (u16, String) {
+    with_holder_named_at(answer, caller_slot, env, crate::autorun::sessions::now_ms())
+}
+
+/// `with_holder_named` at `now_ms`: the sentence also says how long it has
+/// been since the holder's last call, worded as the reset's holds note words
+/// it ("no call for <1 min" / "no call for N min").
+pub fn with_holder_named_at(
+    answer: (u16, String),
+    caller_slot: impl Into<Option<SlotNo>>,
+    env: &str,
+    now_ms: u64,
+) -> (u16, String) {
     use crate::autorun::lease::{holder_of, locate_in_use, Holder};
     let (status, text) = answer;
     let Some((key, end)) = locate_in_use(&text).map(|(key, _, end)| (key.to_string(), end)) else {
@@ -12582,13 +12635,18 @@ pub fn with_holder_named(answer: (u16, String), caller_slot: impl Into<Option<Sl
         if caller_slot == Some(slot) {
             return None;
         }
-        label_of_slot(slot)
+        let label = label_of_slot(slot)?;
+        let quiet = crate::commands::autorun_slots::bound(slot)
+            .and_then(|key| crate::autorun::agents::info(&key))
+            .map(|info| crate::commands::autorun_slots::quiet_words(now_ms.saturating_sub(info.last_ms) / 1000));
+        Some((label, quiet))
     })();
-    let Some(label) = named else { return (status, text) };
+    let Some((label, quiet)) = named else { return (status, text) };
+    let quiet = quiet.map(|q| format!(" (no call for {q})")).unwrap_or_default();
     // The sentence's own full stop, if the answer has one, is the one this ends with.
     let rest = text[end..].strip_prefix('.').unwrap_or(&text[end..]);
     let said = format!(
-        ". {label} is signed in as it: work on cases that sign in as another account, or wait until {label} is done."
+        ". {label} is signed in as it{quiet}: work on cases that sign in as another account, or wait until {label} is done."
     );
     (status, format!("{}{said}{rest}", &text[..end]))
 }

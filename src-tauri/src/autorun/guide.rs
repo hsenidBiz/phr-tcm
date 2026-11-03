@@ -184,7 +184,7 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   for a picture. Set `"no_save": true` on any script that works on a shared
   draft and must not change it. A repair can turn `no_save` on, never off.
 - Your replays, discovery and resets share your browser and its sign-in. Other assistants may be working at the same
-  time, each in a browser of its own. `end_autorun_discovery` keeps it; a replay to a failing step ends your own
+  time, each in a browser of its own. `end_autorun_discovery` frees it (`keep_browser: true` keeps it); a replay to a failing step ends your own
   discovery first, keeping what it mapped. When the sign-in fails, the session expires or you reach a cap, stop and
   report to the person; never try again in a loop. Name the `case_id` on every discovery call for a `no_save` case.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use its
@@ -2015,9 +2015,10 @@ You open and drive a browser of your own to find what a script needs:
   the control that switches to it). An area records the mode it was saved in,
   and every trip to it switches to that mode first (and back for an area of
   the other), skipping an account that has only one.
-- `end_autorun_discovery` ends your discovery and keeps the browser: what it
-  mapped is kept, and the browser stays open and signed in for your next
-  replay or discovery; only the person's End discovery button closes it.
+- `end_autorun_discovery` ends your discovery: what it mapped is kept, and the
+  browser is closed and its account freed. `keep_browser: true` keeps it open
+  and signed in for your next replay or discovery. A browser the person opened
+  is never closed by it.
 - `reset_autorun_browser` gives a clean page and keeps the sign-in: it closes
   the other tabs, forgets any dialog a replay expected or saw, lifts your save
   guard, forgets where your last replay stopped, and loads the page the browser
@@ -2051,8 +2052,7 @@ Your replays, discovery and resets share your browser and its sign-in. Other
 assistants may be working at the same time, each in a browser of its own. A
 replay in a browser already signed in as its case's account goes straight to
 the area and says "Signed in already: went to <area>."; `end_autorun_discovery`
-keeps it for your next replay or discovery, so nothing needs closing in
-between.
+frees it (`keep_browser: true` keeps it) for your next replay or discovery.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a

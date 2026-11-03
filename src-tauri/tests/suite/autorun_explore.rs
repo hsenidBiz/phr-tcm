@@ -199,6 +199,30 @@ async fn ending_an_explore_session_names_the_saves_not_on_the_change_list() {
     assert!(load(dir.path(), &id).unwrap().ended_at.is_some());
 }
 
+/// The assistant's end now releases the browser by default, and the answer
+/// still lists the saves the session sent that are not on its change list.
+#[tokio::test]
+async fn a_released_end_still_lists_the_saves_not_on_the_change_list() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_RELEASED};
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let save = Action::Click { selector: "#save".into() };
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_002_000).unwrap();
+    let mut browser = browser_that_saves(&id);
+    browser.as_mut().unwrap().assistant = true;
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, out) = end_discovery_as(&mut browser, EndedBy::Assistant).await;
+    assert_eq!(status, 200, "{out}");
+    let v = parsed(&out);
+    assert_eq!(v["detail"], DISCOVERY_ENDED_RELEASED, "{out}");
+    assert_eq!(v["explore"]["saves_not_on_the_change_list"], json!(["POST /hr/leave/save"]), "{out}");
+    assert_eq!(v["note"], UNRECORDED_SAVES, "{out}");
+    assert!(load(dir.path(), &id).unwrap().ended_at.is_some());
+    assert!(browser.is_none(), "the released end kept the browser");
+}
+
 #[tokio::test]
 async fn ending_an_explore_session_with_every_save_listed_has_no_note() {
     let dir = root_with_recipe_and_account();

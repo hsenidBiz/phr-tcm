@@ -793,8 +793,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "end_autorun_discovery",
-            "description": "End your discovery: what it mapped is kept, and its browser stays open and signed in for your next replay or discovery. It is closed only by the person's End discovery button, a release (reset_autorun_browser), or an end whose save guard will not lift (the answer then says its browser is closed). Call it when you have finished exploring. Safe to call when no discovery is going.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "End your discovery: what it mapped is kept, and its browser is closed and its account is free, so another assistant can sign in as it. `keep_browser` true keeps it open and signed in for your next replay or discovery. A browser the person opened is never closed by it (the answer says so). Call it when you have finished exploring. Safe to call when no discovery is going.",
+            "inputSchema": schema(serde_json::json!({
+                "keep_browser": { "type": "boolean", "description": "Optional, default false: true keeps the browser open and signed in for your next replay or discovery, and its account stays held." },
+            }), &[]),
         },
         {
             "name": "reset_autorun_browser",

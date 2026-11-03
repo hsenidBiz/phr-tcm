@@ -1485,8 +1485,9 @@ fn the_guide_says_release_only_when_broken() {
     for broken in ["frozen, wrong account, session gone", "\"the browser did not answer\"", "never between replays"] {
         assert!(discovering.contains(broken), "Discovering the app never says {broken:?}: {discovering}");
     }
-    assert!(discovering.contains("`end_autorun_discovery` ends your discovery and keeps the browser"), "{discovering}");
-    assert!(discovering.contains("only the person's End discovery button closes it"), "{discovering}");
+    assert!(discovering.contains("`end_autorun_discovery` ends your discovery"), "{discovering}");
+    assert!(discovering.contains("the browser is closed and its account freed. `keep_browser: true` keeps it open"), "{discovering}");
+    assert!(discovering.contains("A browser the person opened is never closed by it"), "{discovering}");
     assert!(discovering.contains("takes over a browser your replay left open"), "{discovering}");
     assert!(!discovering.contains("`end_autorun_discovery` closes the browser"), "{discovering}");
     assert!(!discovering.contains("closes a browser your replay left open and says"), "{discovering}");
@@ -1760,7 +1761,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("Set `\"no_save\": true` on any script that works on a shared draft and must not change it", "Scripts that must not save"),
         ("A repair can turn `no_save` on, never off", "Scripts that must not save"),
         ("Your replays, discovery and resets share your browser and its sign-in", "Discovering the app"),
-        ("`end_autorun_discovery` keeps it", "Discovering the app"),
+        ("`end_autorun_discovery` frees it (`keep_browser: true` keeps it)", "Discovering the app"),
         ("`reset_autorun_browser` gives a clean page", "Discovering the app"),
         ("only for a broken browser (frozen, wrong account, session gone), never between replays", "Discovering the app"),
         ("Name the `case_id` on every discovery call for a `no_save` case", "Scripts that must not save"),

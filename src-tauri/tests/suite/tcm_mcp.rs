@@ -2017,12 +2017,15 @@ fn the_descriptions_keep_the_browser_between_replays() {
     assert!(!start.contains("is closed first, and the answer says"), "{start}");
     assert!(start.contains("until the discovery ends"), "{start}");
 
-    // Not only the person's button closes it: release does, and so does an
-    // end whose guard will not lift.
+    // The end releases the browser unless it is asked to keep it.
     let end = desc("end_autorun_discovery");
     assert!(!end.contains("Only the person's End discovery button closes it"), "{end}");
-    assert!(end.contains("the person's End discovery button, a release (reset_autorun_browser)"), "{end}");
-    assert!(end.contains("an end whose save guard will not lift"), "{end}");
+    assert!(end.contains("its browser is closed and its account is free"), "{end}");
+    assert!(end.contains("`keep_browser` true keeps it open and signed in for your next replay or discovery"), "{end}");
+    assert!(end.contains("never closed by it"), "{end}");
+    let keep = &tool("end_autorun_discovery")["inputSchema"]["properties"]["keep_browser"];
+    assert_eq!(keep["type"], "boolean", "{keep}");
+    assert!(keep["description"].as_str().unwrap().contains("default false"), "{keep}");
 
     // A takeover closes the other tabs and goes home, as the start says.
     let replay = desc("replay_autorun_to_step");
@@ -2132,7 +2135,7 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
             serde_json::json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }] }),
             serde_json::json!(["name", "module", "clicks"]),
         ),
-        ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({}), serde_json::json!([])),
+        ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({ "keep_browser": true }), serde_json::json!([])),
         ("reset_autorun_browser", "/autorun-reset", serde_json::json!({}), serde_json::json!([])),
     ];
     rides_with_the_auto_run_tools(&tools);

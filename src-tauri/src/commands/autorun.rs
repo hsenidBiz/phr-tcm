@@ -740,11 +740,17 @@ pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (
     // The assistant's end names what it changed for testing, read here
     // under the lock: the browser it keeps still has it.
     let answer = match by {
-        crate::ai_bridge::EndedBy::Assistant => crate::autorun::overrides::with_note(answer, &overrides_of(&slot)),
-        _ => answer,
+        crate::ai_bridge::EndedBy::Assistant | crate::ai_bridge::EndedBy::AssistantKeeping => {
+            crate::autorun::overrides::with_note(answer, &overrides_of(&slot))
+        }
+        crate::ai_bridge::EndedBy::Person => answer,
     };
     if held && slot.is_none() {
         tell_panes_closed_in(n);
+        // The assistant's end closed the browser: it holds no slot now.
+        if by == crate::ai_bridge::EndedBy::Assistant {
+            crate::commands::autorun_slots::unbind(n);
+        }
     }
     answer
 }
