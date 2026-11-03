@@ -220,7 +220,9 @@ fn every_transform_keeps_priority() {
         { "op": "group_by", "value": "tags" },
         { "op": "dedupe" },
         { "op": "remove_cases", "where": { "at_index": 2 } },
-        { "op": "insert_cases", "cases": [{ "title": "New", "priority": 2, "steps": [{ "action": "Go", "expected": "" }] }] }
+        { "op": "insert_cases", "cases": [{ "title": "New", "priority": 2, "steps": [{ "action": "Go", "expected": "" }] }] },
+        { "op": "attach_file", "where": { "title_contains": "Login" }, "step": 1, "path": "C:\\files\\shot.png" },
+        { "op": "remove_attachment", "name": "shot.png", "step": 1 }
     ]);
     let list = ops.as_array().unwrap();
     // The list above covers the whole vocabulary, so a new op cannot be
