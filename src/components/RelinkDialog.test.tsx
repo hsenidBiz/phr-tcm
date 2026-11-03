@@ -195,3 +195,36 @@ test("a relink target is searched in the cases' own project while combined", asy
   expect(asked.some((c) => c.cmd === "search_pbis_all")).toBe(false);
   expect(asked.find((c) => c.cmd === "relink_test_cases")?.args.project).toBe("Web");
 });
+
+test("a comma searches for several destinations at once, each hit once", async () => {
+  const queries: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd !== "search_pbis") return;
+    const q = (args as { query: string }).query;
+    queries.push(q);
+    const pbi = (id: number, title: string) => ({ id, title, work_item_type: "Product Backlog Item" });
+    if (q === "alpha") return [pbi(200, "Alpha PBI"), pbi(300, "Both PBI")];
+    if (q === "beta") return [pbi(201, "Beta PBI"), pbi(300, "Both PBI")];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RelinkDialog
+        org="acme"
+        project="Web"
+        fromPbi={100}
+        cases={[tc(1, "Valid login")]}
+        onClose={() => {}}
+        onMoved={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  fireEvent.change(screen.getByLabelText("Search for the destination PBI"), {
+    target: { value: "alpha, beta" },
+  });
+  expect(await screen.findByText("Alpha PBI", {}, { timeout: 3000 })).toBeInTheDocument();
+  expect(await screen.findByText("Beta PBI")).toBeInTheDocument();
+  expect(screen.getAllByText("Both PBI")).toHaveLength(1);
+  expect(queries.sort()).toEqual(["alpha", "beta"]);
+});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { caseSearchFields, matchesQuery, searchPlaceholder } from "./search";
+import { caseSearchFields, matchesQuery, searchAlternatives, searchPlaceholder } from "./search";
 
 describe("matchesQuery", () => {
   const fields = [4321, "Login - Locked Account", "smoke; regression", "Active", null, undefined];
@@ -85,5 +85,58 @@ describe("searchPlaceholder", () => {
     expect(searchPlaceholder(["name", "id", "tag", "state", "priority"])).toBe(
       "Search by name, id, tag, state…",
     );
+  });
+});
+
+describe("commas", () => {
+  const login = [1234, "Login error on submit", "smoke"];
+  const timeout = [5678, "Report timeout", "regression"];
+  const other = [9999, "Something else", ""];
+
+  test("a comma searches for several: a row matching ANY alternative is found", () => {
+    const hit = (r: (string | number)[], q: string) => matchesQuery(r, q);
+    expect(hit(login, "1234, 5678")).toBe(true);
+    expect(hit(timeout, "1234, 5678")).toBe(true);
+    expect(hit(other, "1234, 5678")).toBe(false);
+    expect(hit(timeout, "1234,5678")).toBe(true);
+  });
+
+  test("within one alternative every word must still match", () => {
+    expect(matchesQuery(login, "login error, timeout")).toBe(true);
+    expect(matchesQuery(timeout, "login error, timeout")).toBe(true);
+    expect(matchesQuery(["Login page"], "login error, timeout")).toBe(false);
+  });
+
+  test("a number field still matches #123 inside an alternative", () => {
+    expect(matchesQuery(timeout, "#1234, #5678")).toBe(true);
+    expect(matchesQuery(other, "#1234, #5678")).toBe(false);
+  });
+
+  test("a comma inside quotes is a literal character", () => {
+    expect(matchesQuery(["Hello, world"], '"hello, world"')).toBe(true);
+    expect(matchesQuery(["Hello world"], '"hello, world"')).toBe(false);
+    expect(matchesQuery(["Hello, world"], '"hello, world", nothing')).toBe(true);
+  });
+
+  test("empty alternatives are ignored; only commas and spaces match everything", () => {
+    expect(matchesQuery(login, ",,")).toBe(true);
+    expect(matchesQuery(login, " , ,  ")).toBe(true);
+    expect(matchesQuery(login, "nothing,")).toBe(false);
+    expect(matchesQuery(login, ",,smoke,")).toBe(true);
+    expect(matchesQuery(login, "nothing,,")).toBe(false);
+  });
+});
+
+describe("searchAlternatives", () => {
+  test("splits on commas outside quotes, trimmed, empties dropped", () => {
+    expect(searchAlternatives("1234, 5678")).toEqual(["1234", "5678"]);
+    expect(searchAlternatives(" login error ,, timeout, ")).toEqual(["login error", "timeout"]);
+    expect(searchAlternatives('"a, b", c')).toEqual(['"a, b"', "c"]);
+    expect(searchAlternatives(" , ")).toEqual([]);
+    expect(searchAlternatives("")).toEqual([]);
+  });
+
+  test("removes repeated alternatives", () => {
+    expect(searchAlternatives("a, A, a")).toEqual(["a"]);
   });
 });

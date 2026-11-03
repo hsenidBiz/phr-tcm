@@ -307,6 +307,7 @@ export const gettingStarted: Screen = {
     "On a fresh install with **Treat all projects as one** on, the app sets your home project for you, from the only project, the one that already has Auto Run files, or the first Product Backlog Item you pick (a message says so when the organisation has several projects). You can change it in Settings.",
     "If your session runs out, a window asks you to sign in again. What is already on screen stays readable in the meantime.",
     "Until a Product Backlog Item is chosen, the test case screens show a short prompt and your recent Product Backlog Items instead of their usual content.",
+    "Every search box takes commas to look for several things at once: **1234, 5678** finds both test cases, and **login error, timeout** finds what has both login and error, plus what has timeout. A comma inside \"quotes\" is just a comma.",
     "Settings has an interface tour that walks you through the app one screen at a time.",
   ],
   howTo: [

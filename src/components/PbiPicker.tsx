@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { History, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
+import { usePbiSearch } from "../lib/usePbiSearch";
 import {
   COMBINED,
   scopeSegment,
@@ -126,20 +126,12 @@ export default function PbiPicker({
     setOpen(false);
   };
 
-  const hits = useQuery(
-    combined
-      ? {
-          queryKey: ["pbis-all", org, query],
-          queryFn: () => unwrap(commands.searchPbisAll(org, query)),
-          enabled: Boolean(org && query),
-          retry: false,
-        }
-      : {
-          queryKey: ["pbis", org, project, query],
-          queryFn: () => unwrap(commands.searchPbis(org, project, query)),
-          enabled: Boolean(org && project && query),
-          retry: false,
-        },
+  const hits = usePbiSearch(
+    combined ? ["pbis-all", org] : ["pbis", org, project],
+    query,
+    combined ? Boolean(org) : Boolean(org && project),
+    (alt) =>
+      unwrap(combined ? commands.searchPbisAll(org, alt) : commands.searchPbis(org, project, alt)),
   );
   const shownHits = query ? hits.data ?? [] : [];
   const hitsSpan = spansProjects(shownHits);
@@ -196,7 +188,7 @@ export default function PbiPicker({
         <div className="absolute left-0 top-full z-30 mt-1 w-full min-w-[28rem] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-surface shadow-xl">
           {query && hits.isLoading && <p className="px-3 py-2 text-sm text-muted">Searching</p>}
           {query && hits.isError && (
-            <p className="px-3 py-2 text-sm text-danger">{hits.error.message}</p>
+            <p className="px-3 py-2 text-sm text-danger">{hits.error?.message}</p>
           )}
           {query && hits.data && hits.data.length === 0 && (
             <p className="px-3 py-2 text-sm text-muted">No PBIs match "{query}".</p>

@@ -497,6 +497,16 @@ test("the search box filters by name, key, role and username, and says when noth
   expect(screen.getByRole("heading", { name: "Proposed by the assistant (3)" })).toBeInTheDocument();
 });
 
+test("a comma in the search box shows the logins matching any of the alternatives", async () => {
+  mountWithProposals({ proposals: MANY });
+  await openTab("Proposed");
+  await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
+  search("kim, ann");
+  expect(screen.getByRole("checkbox", { name: "Add hr.admin" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Add pay.clerk" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Add hr.sup" })).not.toBeInTheDocument();
+});
+
 test("Select all shown ticks only the shown logins, and the picks stay across a search change", async () => {
   const m = mountWithProposals({ proposals: MANY });
   await openTab("Proposed");

@@ -25,6 +25,7 @@ import { commands, type BuildStage, type PrBuild } from "../bindings";
 import { cn } from "../lib/cn";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
+import { matchesQuery } from "../lib/search";
 import { SearchInput } from "./ui/search-input";
 import { Modal } from "./ui/modal";
 
@@ -265,7 +266,7 @@ export function LogDialog({
 }
 
 /** Stage -> job -> step tree for one run, filtered by the search box. */
-function StageTree({
+export function StageTree({
   stages,
   query,
   failuresOnly,
@@ -276,8 +277,7 @@ function StageTree({
   failuresOnly: boolean;
   onShowLog: (view: { title: string; logId: number; live: boolean }) => void;
 }) {
-  const q = query.trim().toLowerCase();
-  const hit = (name: string) => !q || name.toLowerCase().includes(q);
+  const hit = (name: string) => matchesQuery([name], query);
 
   const filtered = stages
     .map((st) => {
