@@ -74,6 +74,117 @@ pub fn step_uses_var(o: &OneOff) -> bool {
     super::step_placeholder_names(&o.step).iter().any(|n| n.starts_with(super::exec::VAR_PREFIX))
 }
 
+/// Said, with the pages the project's templates use, to a POST from a page
+/// with no anti-forgery token that named none.
+pub const NO_TOKEN_NAMED: &str = super::runner::NO_TOKEN_HERE;
+/// Said when a call's answer was the app's sign-in page.
+pub const SIGNED_OUT: &str = "the app answered with its sign-in page: this account was signed out, so the answer is not shown - end the discovery and start it again to sign in afresh";
+/// Said to a call on a discovery whose account an earlier call found signed out.
+pub const SIGNED_OUT_BEFORE: &str = "not sent: this discovery's account was signed out by an earlier call - end the discovery and start it again to sign in afresh";
+
+/// An address as a page: the path and query, never a scheme or host.
+fn page_of(address: &str) -> String {
+    let no_fragment = address.split('#').next().unwrap_or("");
+    let rest = match no_fragment.find("://") {
+        Some(i) => {
+            let after = &no_fragment[i + 3..];
+            after.find('/').map_or("/", |j| &after[j..])
+        }
+        None => no_fragment,
+    };
+    rest.to_string()
+}
+
+/// A path as two addresses of one page are compared: no scheme, host, query
+/// or fragment, lower case, no trailing `/`.
+fn compared_path(address: &str) -> String {
+    let page = page_of(address);
+    let path = page.split('?').next().unwrap_or("").to_ascii_lowercase();
+    match path.trim_end_matches('/') {
+        "" => "/".to_string(),
+        p => p.to_string(),
+    }
+}
+
+/// The token pages (`antiforgery.page`) of the project's saved templates,
+/// distinct, the one most templates name first and ties alphabetical. A page
+/// is a path and query; a value with a scheme and host is reduced to that.
+pub fn token_pages(saved: &[super::store::SavedTemplate]) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for t in saved {
+        let page = page_of(t.template.antiforgery.page.trim());
+        if !page.is_empty() {
+            *counts.entry(page).or_default() += 1;
+        }
+    }
+    let mut pages: Vec<(String, usize)> = counts.into_iter().collect();
+    // `counts` is alphabetical and the sort is stable.
+    pages.sort_by(|a, b| b.1.cmp(&a.1));
+    pages.into_iter().map(|(page, _)| page).collect()
+}
+
+/// Said to a POST from a page with no anti-forgery token that named none:
+/// up to three pages the project's templates use.
+pub fn no_token_here(pages: &[String]) -> String {
+    if pages.is_empty() {
+        return format!("{NO_TOKEN_NAMED}; no saved template names one yet");
+    }
+    let shown: Vec<&str> = pages.iter().take(3).map(String::as_str).collect();
+    format!("{NO_TOKEN_NAMED}; this project's templates use: {}", shown.join(", "))
+}
+
+/// Whether the body has an `<input>` whose `type` is `password`.
+fn has_password_input(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("<input") {
+        let start = from + i;
+        let end = lower[start..].find('>').map_or(lower.len(), |j| start + j);
+        let tag = &lower[start..end];
+        let mut at = 0;
+        while let Some(k) = tag[at..].find("type") {
+            let rest = tag[at + k + 4..].trim_start();
+            if let Some(value) = rest.strip_prefix('=') {
+                let value = value.trim_start();
+                if value.strip_prefix('"').or_else(|| value.strip_prefix('\'')).is_some_and(|v| v.trim_start().starts_with("password")) {
+                    return true;
+                }
+            }
+            at += k + 4;
+        }
+        from = end.max(start + 6);
+    }
+    false
+}
+
+/// Whether an answer is the app's sign-in page: it ended on the sign-in
+/// page's path (`start_path`), or it is HTML with a password input. Asking
+/// for the sign-in page itself (`request_path` is `start_path`) is not a
+/// sign-out, and a body that is not HTML never is one.
+pub fn is_sign_in_answer(
+    final_path: Option<&str>,
+    content_type: Option<&str>,
+    body: &str,
+    request_path: &str,
+    start_path: Option<&str>,
+) -> bool {
+    let start = start_path.map(compared_path);
+    if start.as_deref() == Some(compared_path(request_path).as_str()) {
+        return false;
+    }
+    if let (Some(final_path), Some(start)) = (final_path, &start) {
+        if compared_path(final_path) == *start {
+            return true;
+        }
+    }
+    content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html")) && has_password_input(body)
+}
+
+/// The path of the sign-in recipe's start address, for `is_sign_in_answer`.
+pub fn sign_in_path(start_url: &str) -> String {
+    compared_path(start_url)
+}
+
 /// The seconds a call's `timeout_s` may ask for a step.
 pub const TIMEOUT_MIN_S: u64 = 5;
 pub const TIMEOUT_MAX_S: u64 = 180;

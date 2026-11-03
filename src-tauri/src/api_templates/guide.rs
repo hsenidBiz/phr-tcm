@@ -521,7 +521,11 @@ In an explore session (`start_autorun_discovery` with `explore` true, see the Au
 `send_api_request` runs one GET or POST in your explore session's own page: no new browser, no
 sign-in, as the account the session signed in as. The anti-forgery token is read on the page you
 are on; when that page has none, pass `antiforgery_page`, a page of the app with a form on it,
-and the token is read there, in the same tab. The answer is redacted and cut at the first 64 KB.
+and the token is read there, in the same tab. A POST that names none from a page with no token
+opens the page the project's templates use when there is exactly one (the answer says so in
+`token_page`); with none or several, it is refused unsent and the answer lists them. The answer is
+redacted and cut at the first 64 KB. An answer that is the app's sign-in page is not shown: the
+answer says `signed_out`, and nothing more is sent on that discovery - end it and start again.
 
 - A GET only reads. A POST needs an explore session, the person's API templates switch and an
   `effect`: `read`, `create`, `edit` or `delete`. A save whose address (or `handler`) says delete

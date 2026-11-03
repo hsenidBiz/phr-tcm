@@ -144,6 +144,7 @@ fn discovering() -> Option<DiscoveryState> {
         explore: None,
         carried: Vec::new(),
         kept: Default::default(),
+        signed_out: false,
     })
 }
 

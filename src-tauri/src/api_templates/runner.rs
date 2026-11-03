@@ -219,6 +219,9 @@ pub struct PageAnswer {
     /// The body reached `ANSWER_LIMIT_CHARS`: the page stops reading there,
     /// so there may be more.
     pub cut: bool,
+    /// The path the last request ended on (no host, no query), when the
+    /// page said: a redirect shows in it. A postback does not say.
+    pub final_path: Option<String>,
 }
 
 /// A one-off run: the report, the last answer, and where the token was.
@@ -247,7 +250,7 @@ pub const ANSWER_LIMIT_CHARS: usize = 65_536;
 /// application: nothing was sent.
 pub const OFF_THE_APP: &str = "the explore browser is not on this project's application, so nothing was sent - go back to the app first";
 /// The report's sentence for a POST on a page with no anti-forgery token.
-pub const NO_TOKEN_HERE: &str = "this page has no anti-forgery token, so the POST was not sent - open a page of the app with a form on it, or name one in antiforgery_page";
+pub const NO_TOKEN_HERE: &str = "this page has no anti-forgery token, so the POST was not sent - name a page with one in antiforgery_page";
 /// The report's sentence for a named token page that sent the browser to
 /// another page: the session's sign-in has ended, and this is not the
 /// place to start another.
@@ -1623,6 +1626,7 @@ async fn run_step<D: Driver>(
             content_type: answer["contentType"].as_str().filter(|c| !c.is_empty()).map(str::to_string),
             body: scrub_tokens(text, Some(token)),
             cut: text.encode_utf16().count() >= ANSWER_LIMIT_CHARS,
+            final_path: answer["finalUrl"].as_str().filter(|u| !u.is_empty()).map(path_of),
         });
     }
 
@@ -1862,6 +1866,7 @@ async fn run_postback<D: Driver>(
             content_type: a.content_type.clone().filter(|c| !c.is_empty()),
             body: kept.clone(),
             cut: a.cut,
+            final_path: None,
         });
     }
     note(&Sent { status: Some(a.status), content_type: a.content_type.as_deref(), ..sent }, Some(&a), &kept);

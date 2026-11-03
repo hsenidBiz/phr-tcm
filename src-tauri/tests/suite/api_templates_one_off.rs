@@ -4,7 +4,9 @@
 
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use v2_lib::api_templates::one_off::{body_field_names, derived_id, derived_title, same_call, sends_a_secret};
+use v2_lib::api_templates::one_off::{
+    body_field_names, derived_id, derived_title, is_sign_in_answer, no_token_here, same_call, sends_a_secret, token_pages,
+};
 use v2_lib::api_templates::{ApiTemplate, Step};
 
 fn step(v: Value) -> Step {
@@ -468,4 +470,54 @@ fn hiding_replaces_long_values_with_their_names_and_leaves_short_ones() {
     let mut v = json!({ "a": ["abcdefghij"], "b": { "c": "x abcdefghij y" }, "n": 5 });
     hide_json(&mut v, &hide);
     assert_eq!(v, json!({ "a": ["{{var.token}}"], "b": { "c": "x {{var.token}} y" }, "n": 5 }));
+}
+
+fn on_page(id: &str, page: &str) -> v2_lib::api_templates::store::SavedTemplate {
+    let mut t = saved("read", json!({ "name": "r", "method": "GET", "path": "/hr/x" }));
+    t.id = id.to_string();
+    t.antiforgery.page = page.to_string();
+    v2_lib::api_templates::store::SavedTemplate { template: t, runs: vec![] }
+}
+
+#[test]
+fn token_pages_are_distinct_most_used_first_paths_only() {
+    let all = vec![
+        on_page("a", "/zeta"),
+        on_page("b", "/beta?mode=create"),
+        on_page("c", "https://hr.example.internal/beta?mode=create"),
+        on_page("d", "/alpha"),
+        on_page("e", "/zeta"),
+        on_page("f", "/solo"),
+        on_page("g", ""),
+    ];
+    assert_eq!(token_pages(&all), vec!["/beta?mode=create", "/zeta", "/alpha", "/solo"]);
+    assert!(token_pages(&[]).is_empty());
+    for page in token_pages(&all) {
+        assert!(!page.contains("://") && !page.contains("example"), "{page}");
+    }
+}
+
+#[test]
+fn no_token_here_names_up_to_three_pages_or_none() {
+    let head = "this page has no anti-forgery token, so the POST was not sent - name a page with one in antiforgery_page";
+    assert_eq!(no_token_here(&[]), format!("{head}; no saved template names one yet"));
+    let some = |n: usize| ["/a", "/b", "/c", "/d"][..n].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(no_token_here(&some(1)), format!("{head}; this project's templates use: /a"));
+    assert_eq!(no_token_here(&some(4)), format!("{head}; this project's templates use: /a, /b, /c"));
+}
+
+#[test]
+fn is_sign_in_answer_cases() {
+    let html = Some("text/html; charset=utf-8");
+    let form = r#"<form><input name="u"><input id="p" TYPE='Password'></form>"#;
+    // The final page is the sign-in page.
+    assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login")));
+    // HTML with a password input, for a page that is not the sign-in page.
+    assert!(is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
+    assert!(is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None));
+    // The sign-in page asked for on purpose is not a signed-out account.
+    assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login")));
+    // The word password in JSON, or a text field, is not a sign-in page.
+    assert!(!is_sign_in_answer(Some("/hr/x"), Some("application/json"), form, "/hr/x", Some("/login")));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/login")));
 }

@@ -1395,3 +1395,127 @@ async fn a_kept_value_is_never_in_the_answer_or_the_log() {
     assert!(!records.iter().any(|r| r.to_string().contains(&value)), "the value is in an activity record");
     assert!(records.iter().any(|r| r.to_string().contains("{{var.token}}")), "the record shows the name");
 }
+
+/// A saved template whose token page is `page`.
+fn saved_on(r: &Rig, id: &str, page: &str) {
+    let mut t = crate::api_templates_runner::template();
+    t.id = id.to_string();
+    t.antiforgery.page = page.to_string();
+    store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+}
+
+fn at(path: &str) -> String {
+    format!("https://hr.example.internal{path}")
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_uses_the_projects_one_token_page() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    saved_on(&r, "has-a-token-page", "/hr/pmsv10/updatehub");
+    let (mut browser, _) = exploring_session(&mut r).await;
+    {
+        let mut s = r.script.lock().unwrap();
+        s.hrefs = VecDeque::from(vec![at(PAGE), at(PAGE), at("/hr/pmsv10/updatehub"), at("/hr/pmsv10/updatehub")]);
+        s.tokens = VecDeque::from(vec![None]);
+    }
+    let (status, v) = send(&mut browser, &r, true, post_to(PATH, "edit")).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["token_page"], "/hr/pmsv10/updatehub (the page this project's templates use)", "{v}");
+    assert_eq!(r.fetched().len(), 1, "sent once");
+    assert!(r.navigated().ends_with("/hr/pmsv10/updatehub"), "{}", r.navigated());
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_and_two_pages_is_refused_naming_them() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    saved_on(&r, "page-one", "/hr/pmsv10/updatehub");
+    saved_on(&r, "page-two", "/hr/pmsv10/performancecycle?mode=create");
+    let (mut browser, _) = exploring_session(&mut r).await;
+    r.script.lock().unwrap().token = None;
+    let (status, v) = send(&mut browser, &r, true, post_to(PATH, "edit")).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["failed"], "Anti-forgery token", "{v}");
+    let detail = v["detail"].as_str().unwrap();
+    assert!(detail.starts_with("this page has no anti-forgery token, so the POST was not sent - name a page with one in antiforgery_page; this project's templates use: "), "{detail}");
+    assert!(detail.contains("/hr/pmsv10/performancecycle?mode=create") && detail.contains("/hr/pmsv10/updatehub"), "{detail}");
+    assert!(!detail.contains("example.internal"), "{detail}");
+    assert!(r.fetched().is_empty(), "something was sent");
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_and_no_saved_page_says_so() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    r.script.lock().unwrap().token = None;
+    let (status, v) = send(&mut browser, &r, true, post_to(PATH, "edit")).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().ends_with("; no saved template names one yet"), "{v}");
+    assert!(r.fetched().is_empty());
+}
+
+fn login_page(final_path: &str, redirected: bool) -> Value {
+    json!({
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "finalUrl": at(final_path),
+        "redirected": redirected,
+        "text": "<html><form><input name=\"user\"><input type=\"password\" name=\"pass\"></form></html>",
+    })
+}
+
+#[tokio::test]
+async fn a_login_page_at_the_same_url_is_signed_out_and_the_next_call_is_not_sent() {
+    let _locks = locks();
+    let mut r = rig(vec![login_page("/hr/x", false), answer(200, json!({ "late": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+
+    let (status, v) = send(&mut browser, &r, false, get.clone()).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["signed_out"], true, "{v}");
+    assert_eq!(v["detail"], v2_lib::api_templates::one_off::SIGNED_OUT, "{v}");
+    assert!(v.get("response").is_none(), "a signed-out answer carries no body: {v}");
+    assert!(v.get("template").is_none(), "{v}");
+    assert!(!v.to_string().contains("password"), "{v}");
+    {
+        let b = browser.as_mut().unwrap();
+        assert!(b.account.is_none(), "still signed in");
+        assert!(b.discovery.as_ref().unwrap().signed_out);
+    }
+
+    let (status, text) =
+        send_in(&mut browser, &ctx(false), r.root.path(), &get.to_string(), &quick(), RUN_LIMIT, &QUICK_PAUSES).await;
+    assert_eq!((status, text.as_str()), (409, v2_lib::api_templates::one_off::SIGNED_OUT_BEFORE));
+    assert_eq!(r.fetched().len(), 1, "the second call was sent");
+}
+
+#[tokio::test]
+async fn a_redirect_to_the_start_page_is_signed_out() {
+    let _locks = locks();
+    let mut r = rig(vec![login_page("/", true)], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 502, "{v}");
+    assert_eq!(v["signed_out"], true, "{v}");
+    assert!(v.get("response").is_none(), "{v}");
+    assert!(browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_sign_in_page_asked_for_on_purpose_is_an_answer_not_a_sign_out() {
+    let _locks = locks();
+    let mut r = rig(vec![login_page("/", false)], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/" } });
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}

@@ -5671,6 +5671,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     explore,
                     carried: Vec::new(),
                     kept: Default::default(),
+                    signed_out: false,
                 };
                 let must_not_save = discovery_must_not_save(root, &state);
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });
@@ -7643,6 +7644,11 @@ pub async fn send_in<B: DiscoveryBrowser>(
     let Some(state) = parts.discovery.as_ref() else {
         return (409, oo::NO_SESSION_FOR_SEND.to_string());
     };
+    // An earlier call found this discovery's account signed out; nothing
+    // more is sent on it, however long this call waited for the slot.
+    if state.signed_out {
+        return (409, oo::SIGNED_OUT_BEFORE.to_string());
+    }
     let session = state.explore_session().map(str::to_string);
     let floor = state.explore.as_ref().map_or(0, |run| run.began_ms);
     let kept_before = state.kept.clone();
@@ -7719,7 +7725,31 @@ pub async fn send_in<B: DiscoveryBrowser>(
     let sent_at = crate::autorun::sessions::now_ms();
     // A call that asked for longer steps gets a run that can hold one.
     let limit = crate::api_templates::runner::run_limit_for(limit, req.step_limit);
-    let out = run_in_page(parts.driver, root, &req, timing, how, limit, retry_pauses).await;
+    let named_a_page = matches!(how, TokenPage::Open(_));
+    let mut out = run_in_page(parts.driver, root, &req, timing, how.clone(), limit, retry_pauses).await;
+    // A POST from a page with no token, naming no page to read one on: the
+    // run stopped before anything was sent, so it is safe to say where to
+    // look. One page used by the project's templates is opened and tried
+    // once; with none or several, the caller is told which there are.
+    let mut token_page_used: Option<String> = None;
+    let mut no_token_detail: Option<String> = None;
+    let no_token_stop = posts
+        && !one.step.is_postback()
+        && !named_a_page
+        && out.answer.is_none()
+        && out.report.failed.as_deref() == Some("Anti-forgery token")
+        && out.report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::NO_TOKEN_HERE));
+    if no_token_stop {
+        let pages = crate::api_templates::store::list(root, &ctx.org, &ctx.project)
+            .map(|saved| oo::token_pages(&saved))
+            .unwrap_or_default();
+        if let [page] = pages.as_slice() {
+            token_page_used = Some(format!("{page} (the page this project's templates use)"));
+            out = run_in_page(parts.driver, root, &req, timing, TokenPage::Open(page.clone()), limit, retry_pauses).await;
+        } else {
+            no_token_detail = Some(oo::no_token_here(&pages));
+        }
+    }
 
     let report = &out.report;
     let request = oo::request_of(&one);
@@ -7741,6 +7771,33 @@ pub async fn send_in<B: DiscoveryBrowser>(
                 crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
             }
         }
+    }
+    // The answer is the app's sign-in page: this discovery's account is signed
+    // out. The answer is not shown (it is the sign-in page, not data), the
+    // saved session is forgotten so the next discovery signs in afresh, and
+    // nothing more is sent on this one.
+    let start_path = crate::autorun::recipe::load_effective_recipe_if_any(root, &ctx.org, &ctx.project)
+        .ok()
+        .flatten()
+        .map(|recipe| oo::sign_in_path(&recipe.start_url));
+    let signed_out = out.answer.as_ref().is_some_and(|a| {
+        oo::is_sign_in_answer(
+            a.final_path.as_deref(),
+            a.content_type.as_deref(),
+            &a.body,
+            &oo::request_path(&one),
+            start_path.as_deref(),
+        )
+    });
+    if signed_out {
+        if let Some(d) = parts.discovery.as_mut() {
+            d.signed_out = true;
+        }
+        parts.signed_in.take();
+        crate::autorun::sessions::forget_session(root, &req.account);
+        crate::applog::warn("Auto Run explore session: a call was answered with the sign-in page, so its account is signed out");
+        let v = serde_json::json!({ "ok": false, "signed_out": true, "detail": oo::SIGNED_OUT, "request": request });
+        return (502, v.to_string());
     }
     // What the discovery keeps now: what it kept, and what this call found
     // when it worked. A value that was found but not kept (a failed call) is
@@ -7779,6 +7836,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
         "captured": report.created,
         "request": request,
     });
+    if let Some(page) = &token_page_used {
+        v["token_page"] = serde_json::json!(page);
+    }
     if !kept_lines.is_empty() {
         v["kept"] = serde_json::json!(kept_lines);
     }
@@ -7800,7 +7860,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
     }
     if !report.ok {
         v["failed"] = serde_json::json!(report.failed);
-        v["detail"] = serde_json::json!(report.message());
+        v["detail"] = serde_json::json!(no_token_detail.unwrap_or_else(|| report.message()));
         if timed_out {
             v["timed_out"] = serde_json::json!(true);
         }

@@ -375,6 +375,11 @@ pub struct DiscoveryState {
     /// only, never answered, logged or written to a file; they go with the
     /// discovery (its end, its release, or a new start).
     pub kept: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Set when a call's answer was the app's sign-in page: this discovery's
+    /// account is signed out, and every later `send_api_request` on it is
+    /// refused unsent (`api_templates::one_off::SIGNED_OUT_BEFORE`). It goes
+    /// with the discovery.
+    pub signed_out: bool,
 }
 
 impl DiscoveryState {
@@ -706,6 +711,7 @@ pub(crate) async fn open_for_discovery(
             explore: no_save.explore.then(crate::autorun::explore::ExploreRun::default),
             carried: Vec::new(),
             kept: Default::default(),
+            signed_out: false,
         });
     }
     publish_discovery_in(n, &slot);
