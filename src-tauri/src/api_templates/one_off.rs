@@ -33,7 +33,15 @@ pub const CARRIED_ON: &str = "carried on from your previous postback to this pag
 /// Said in an answer for a postback that loaded its page before posting.
 pub const LOADED_FRESH: &str = "loaded the page fresh";
 
-const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"? }";
+const SHAPE: &str = "{ \"step\": { \"method\": \"GET\" | \"POST\", \"path\": ..., \"query\"?, \"json\"? | \"form\"?, \"capture\"?, \"expect\"? } | { \"postback\": { \"page\", \"button\", \"argument\"?, \"fresh\"? }, \"form\"?, \"capture\"?, \"expect\"? }, \"effect\"?: \"read\" | \"create\" | \"edit\" | \"delete\", \"created\"?: { \"kind\", \"id\", \"name\" }, \"person_said_yes\"?: true, \"params\"?, \"values\"?, \"antiforgery_page\"?, \"save\"?: false, \"timeout_s\"?: 5-180 }";
+
+/// The seconds a call's `timeout_s` may ask for a step.
+pub const TIMEOUT_MIN_S: u64 = 5;
+pub const TIMEOUT_MAX_S: u64 = 180;
+/// Said to a `timeout_s` that is not a whole number in that range.
+pub const TIMEOUT_RANGE: &str = "timeout_s is a whole number of seconds from 5 to 180";
+/// Said under `template` for a call that asked not to be saved.
+pub const NOT_SAVED_ASKED: &str = "not saved: the call said save: false";
 
 /// A `created.id` that names no capture of the step.
 pub fn not_a_capture(name: &str) -> String {
@@ -78,6 +86,10 @@ pub struct OneOff {
     pub name: Option<String>,
     pub description: Option<String>,
     pub module: Option<String>,
+    /// `false` sends the call and saves no template; absent is `true`.
+    pub save: bool,
+    /// Seconds one step may take, 5 to 180; none keeps the runner's own limit.
+    pub timeout_s: Option<u16>,
 }
 
 fn bad<T>(why: impl Into<String>) -> Result<T, (u16, String)> {
@@ -169,6 +181,20 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         Some(_) => return bad(format!("values is an object of param names to values. Expected {SHAPE}.")),
     };
 
+    let save = match obj.get("save") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return bad("save is true or false"),
+    };
+    let timeout_s = match obj.get("timeout_s") {
+        None | Some(Value::Null) => None,
+        Some(Value::Number(n)) => match n.as_u64().filter(|s| (TIMEOUT_MIN_S..=TIMEOUT_MAX_S).contains(s)) {
+            Some(s) => Some(s as u16),
+            None => return bad(TIMEOUT_RANGE),
+        },
+        Some(_) => return bad(TIMEOUT_RANGE),
+    };
+
     let one = OneOff {
         step,
         effect,
@@ -181,6 +207,8 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         name: text(obj, "name"),
         description: text(obj, "description"),
         module: text(obj, "module"),
+        save,
+        timeout_s,
     };
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET
@@ -350,12 +378,12 @@ fn handler_of(step: &Step) -> Option<&str> {
     step.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")).map(|(_, v)| v.as_str())
 }
 
-/// The same call: one step, not a delete template, the same method, the same
-/// path segment by segment (ASCII case ignored; a segment that is wholly a
-/// {{placeholder}} on either side matches any), the same query keys with the
-/// same `handler` value (case ignored), json vs form alike, and equal
-/// `body_field_names`.
-pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
+/// The same route: one step, not a delete template, the same method, the
+/// same path segment by segment (ASCII case ignored; a segment that is
+/// wholly a {{placeholder}} on either side matches any), and the same query
+/// keys with the same `handler` value (case ignored). The body is not looked
+/// at.
+pub fn same_route(saved: &ApiTemplate, step: &Step) -> bool {
     let [one] = saved.steps.as_slice() else { return false };
     // A postback may carry on from the call before it, so it never stands
     // for a saved template, nor does a saved postback template stand for it.
@@ -372,12 +400,37 @@ pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
     if keys(one) != keys(step) {
         return false;
     }
-    let same_handler = match (handler_of(one), handler_of(step)) {
+    match (handler_of(one), handler_of(step)) {
         (Some(x), Some(y)) => x.eq_ignore_ascii_case(y),
         (None, None) => true,
         _ => false,
-    };
-    same_handler && body_of(one) == body_of(step) && body_field_names(one) == body_field_names(step)
+    }
+}
+
+/// The same call: `same_route`, json vs form alike, and equal
+/// `body_field_names`.
+pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
+    let [one] = saved.steps.as_slice() else { return false };
+    same_route(saved, step) && body_of(one) == body_of(step) && body_field_names(one) == body_field_names(step)
+}
+
+/// Whether a saved fixture, flow or setup of the project names the template
+/// `id`. A fixture names it as a step's `template`; a flow or a setup is
+/// read as text for `"id"` as a whole JSON string, which errs on the side of
+/// "in use". A store that cannot be read is an `Err`: the caller must then
+/// leave the template alone.
+pub fn is_referenced(root: &std::path::Path, org: &str, project: &str, id: &str) -> Result<bool, String> {
+    let quoted = serde_json::to_string(id).map_err(|e| e.to_string())?;
+    let fixtures = super::fixture_store::list(root, org, project)?;
+    if fixtures.iter().any(|f| f.fixture.steps.iter().any(|s| s.template == id)) {
+        return Ok(true);
+    }
+    let flows = super::flow_store::list(root, org, project)?;
+    if serde_json::to_string(&flows).map_err(|e| e.to_string())?.contains(&quoted) {
+        return Ok(true);
+    }
+    let setups = crate::autorun::setups::load_setups(root, org, project)?;
+    Ok(serde_json::to_string(&setups).map_err(|e| e.to_string())?.contains(&quoted))
 }
 
 /// The saved template that is the same call as `step`, if there is one. Only

@@ -50,6 +50,8 @@ pub(crate) struct Script {
     pub(crate) hang_fetch: bool,
     /// `FETCH_FN` answers this many requests, then never answers again.
     pub(crate) hang_after: Option<usize>,
+    /// `FETCH_FN` is given up on by the DevTools wait, as a driver with a limit of its own does.
+    pub(crate) fetch_gives_up: bool,
     /// `Page.navigate` starts but its page never finishes loading.
     never_loads: bool,
     /// `Page.navigate` fails as a browser that has gone away does.
@@ -106,6 +108,9 @@ impl Driver for App {
                 let mut s = self.script.lock().unwrap();
                 s.fetched.push(args);
                 let past = s.hang_after.is_some_and(|k| s.fetched.len() > k);
+                if s.fetch_gives_up {
+                    return Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 35_000 });
+                }
                 (s.hang_fetch || past, s.responses.pop_front())
             };
             if hang {
@@ -318,7 +323,7 @@ fn three_steps() -> ApiTemplate {
 pub(crate) fn request(t: ApiTemplate, mode: Mode) -> RunRequest {
     let mut values = serde_json::Map::new();
     values.insert("cycleName".into(), json!("FY27"));
-    RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t }
+    RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t, step_limit: None }
 }
 
 pub(crate) fn prove() -> Mode {
@@ -2660,4 +2665,17 @@ async fn a_one_off_that_runs_out_of_time_says_so_and_clears_the_deadline() {
     assert!(!out.report.ok);
     assert!(out.report.message().contains("3 minutes"), "{}", out.report.message());
     assert!(out.answer.is_none());
+}
+
+#[tokio::test]
+async fn a_one_off_step_limit_overrides_the_default() {
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    on_the_app(&r);
+    let mut app = r.browsers.next.take().unwrap();
+    let _act = crate::serial::activity_log();
+    let mut req = request(one_off("GET", json!({})), Mode::Explore);
+    req.step_limit = Some(Duration::from_secs(90));
+    let out = run_in_page(&mut app, r.root.path(), &req, &quick(), TokenPage::Here, RUN_LIMIT, &QUICK_PAUSES).await;
+    assert!(out.report.ok, "{}", out.report.message());
+    assert_eq!(r.fetched()[0][2], json!(90_000), "the page was told the longer limit");
 }

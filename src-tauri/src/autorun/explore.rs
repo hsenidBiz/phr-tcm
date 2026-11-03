@@ -42,6 +42,10 @@ pub struct ExploreRun {
     /// A saved setup is running in this session: the actions it drives are
     /// not kept (`autorun::kept`), as they are already a setup's.
     pub setup_running: bool,
+    /// Template ids this session's one-off calls saved on their own. Memory
+    /// only: a later working call of the same route may replace one of them,
+    /// and nothing from an earlier session is ever on it.
+    pub auto_saved: Vec<String>,
 }
 
 /// One explore session's change list, as its file holds it.

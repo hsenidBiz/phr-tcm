@@ -3231,6 +3231,7 @@ mod api_template_routes {
             assert_eq!(out, API_WRITES_OFF, "{path}");
         }
         assert!(API_WRITES_OFF.contains("AI Bridge"), "names where to turn it on");
+        assert!(API_WRITES_OFF.contains("send_api_request"), "says the switch also covers send_api_request");
         assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched, the slot is free");
     }
 

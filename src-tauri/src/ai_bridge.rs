@@ -1094,8 +1094,7 @@ pub fn network_guard(path: &str, on: bool) -> Option<(u16, String)> {
 
 /// Said when a prove or a run arrives while the person's API templates
 /// switch is off - before anything else about the call is looked at.
-pub const API_WRITES_OFF: &str =
-    "API templates are switched off - turn them on under API templates on the AI Bridge tab";
+pub const API_WRITES_OFF: &str = "API templates are switched off, and that switch also covers POSTs from send_api_request (even ones that only read) - turn it on under API templates on the AI Bridge tab";
 
 // Said when a prove, a run or a fixture run arrives while another one
 // holds the process-wide slot (`runner::claim`).
@@ -1853,6 +1852,7 @@ pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: cra
         values: call.values,
         mode: Mode::Prove { replace, why },
         template,
+        step_limit: None,
     };
     run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await
 }
@@ -1932,6 +1932,7 @@ fn run_request_from(
         values: call.values,
         mode: Mode::Run,
         template,
+        step_limit: None,
     };
     Ok((req, call.browser))
 }
@@ -7606,6 +7607,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
         values: one.values.clone(),
         mode: Mode::Explore,
         template: oo::as_template(&one, oo::ONE_OFF_ID, page.as_deref().unwrap_or("/")),
+        step_limit: one.timeout_s.map(|s| std::time::Duration::from_secs(u64::from(s))),
     };
     if let Err(problems) = preflight(root, &req, None) {
         return (400, problems.join("\n"));
@@ -7617,13 +7619,25 @@ pub async fn send_in<B: DiscoveryBrowser>(
     // What the capture saw before this call was sent is what its answer is
     // judged against.
     let sent_at = crate::autorun::sessions::now_ms();
+    // A call that asked for longer steps gets a run that can hold one.
+    let limit = match req.step_limit {
+        Some(step) => limit.max(step + std::time::Duration::from_secs(30)),
+        None => limit,
+    };
     let out = run_in_page(parts.driver, root, &req, timing, how, limit, retry_pauses).await;
 
     let report = &out.report;
     let request = oo::request_of(&one);
     // A postback that timed out, or whose browser stopped answering, after the
     // post went out has no status but may have saved: it counts as sent.
-    let sent = report.steps.iter().any(|s| s.status.is_some() || s.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED));
+    // A plain step that ran out of time may have been processed too
+    // (`SENT_NO_ANSWER`, `MAYBE_SENT_NO_ANSWER`), so it counts the same.
+    let timed_out = report.steps.iter().any(|s| {
+        s.detail.contains(crate::api_templates::runner::SENT_NO_ANSWER)
+            || s.detail.contains(crate::api_templates::runner::MAYBE_SENT_NO_ANSWER)
+    });
+    let sent = timed_out
+        || report.steps.iter().any(|s| s.status.is_some() || s.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED));
     // Every POST that was sent is a save, whatever the call said it does: a
     // "read" that wrote must not leave the session's saves looking clean.
     if posts && sent {
@@ -7652,6 +7666,9 @@ pub async fn send_in<B: DiscoveryBrowser>(
     if !report.ok {
         v["failed"] = serde_json::json!(report.failed);
         v["detail"] = serde_json::json!(report.message());
+        if timed_out {
+            v["timed_out"] = serde_json::json!(true);
+        }
     }
     match (one.effect, &one.created, &session) {
         (Effect::Create, Some(made), Some(session)) if report.ok => {
@@ -7692,6 +7709,10 @@ pub async fn send_in<B: DiscoveryBrowser>(
     }
     if report.ok {
         match &session {
+            // The call said not to keep it.
+            _ if !one.save => {
+                v["template"] = serde_json::json!({ "not_saved": oo::NOT_SAVED_ASKED });
+            }
             // A postback may have carried on from the call before it, so it
             // cannot stand alone as a template.
             _ if one.step.is_postback() => {
@@ -7700,7 +7721,11 @@ pub async fn send_in<B: DiscoveryBrowser>(
             Some(session) => {
                 let status = out.answer.as_ref().map(|a| a.status);
                 let token = (out.token_page.as_deref(), out.token_found);
-                v["template"] = save_or_match_one_off(root, ctx, &req.account, session, &one, status, token, report);
+                // What this session's earlier one-offs saved, which a later working
+                // call of the same route may replace.
+                let mut none = Vec::new();
+                let auto_saved = parts.discovery.as_mut().and_then(|d| d.explore.as_mut()).map_or(&mut none, |run| &mut run.auto_saved);
+                v["template"] = save_or_match_one_off(root, ctx, &req.account, session, &one, status, token, report, auto_saved);
             }
             // A plain discovery has no session to name as the proof.
             None => v["template"] = serde_json::json!({ "not_saved": oo::PLAIN_DISCOVERY_NOT_SAVED }),
@@ -7914,9 +7939,51 @@ async fn api_template_explore_undo(ctx: &BridgeContext, body: &str, n: SlotNo) -
     explore_undo_in(&mut slot, &mut browsers, ctx, &root, body, &crate::commands::autorun_replay::replay_timing(false)).await
 }
 
+/// The proof a working explore call gives the template it saves.
+fn explore_proof(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    account: &str,
+    report: &crate::api_templates::runner::RunReport,
+) -> crate::api_templates::Proven {
+    crate::api_templates::Proven {
+        at: crate::applog::stamp(),
+        origin: recipe_origin(root, org, project).unwrap_or_default(),
+        account: account.to_string(),
+        outputs: report.outputs.clone(),
+        environment: crate::environments::active(root).ok().map(|e| e.name),
+        via: Some(crate::api_templates::EXPLORE_PROOF.to_string()),
+    }
+}
+
+/// Adds a working explore call to template `id`'s run history.
+fn log_explore_run(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    account: &str,
+    report: &crate::api_templates::runner::RunReport,
+    id: &str,
+) {
+    let record = crate::api_templates::store::RunRecord {
+        at: crate::applog::stamp(),
+        mode: crate::api_templates::runner::Mode::Explore.label().to_string(),
+        account: account.to_string(),
+        ok: true,
+        failed_step: None,
+        detail: None,
+        outputs: report.outputs.clone(),
+    };
+    if let Err(e) = crate::api_templates::store::append_run(root, org, project, id, record) {
+        crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}"));
+    }
+}
+
 /// What `send_in` answers under `template` for a call that worked: it is
 /// not saved (a delete, a secret written out, a page with no token), or it
-/// is the same call as a template already saved (`reused`), or it is saved
+/// is the same call as a template already saved (`reused`), or it replaces
+/// the template an earlier call of this session auto-saved (`replaced`), or it is saved
 /// now as a one-step template proven by the session that made it. A save
 /// that fails is logged and answered without a path.
 #[allow(clippy::too_many_arguments)]
@@ -7929,10 +7996,11 @@ fn save_or_match_one_off(
     status: Option<u16>,
     token: (Option<&str>, bool),
     report: &crate::api_templates::runner::RunReport,
+    auto_saved: &mut Vec<String>,
 ) -> serde_json::Value {
     use crate::api_templates::one_off as oo;
-    use crate::api_templates::store::{self, RunRecord};
-    use crate::api_templates::{Effect, Expect, Proven, EXPLORE_PROOF};
+    use crate::api_templates::store;
+    use crate::api_templates::{Effect, Expect, EXPLORE_PROOF};
     let not_saved = |why: &str| serde_json::json!({ "not_saved": why });
     if one.effect == Effect::Delete {
         return not_saved(oo::DELETES_NOT_SAVED);
@@ -7979,6 +8047,39 @@ fn save_or_match_one_off(
             one.step.expect.status = status;
         }
     }
+    // A later working call of the same route replaces what an earlier call of
+    // this session auto-saved, instead of leaving it beside a `-2` copy - but
+    // only a template this session saved, still proven by an explore call, and
+    // named by no fixture, flow or setup. The very same call is matched below.
+    let mine = auto_saved.iter().rev().find_map(|mine| {
+        let t = &saved.iter().find(|s| s.template.id == *mine)?.template;
+        let proven_here = t.proven.as_ref().is_some_and(|p| p.via.as_deref() == Some(EXPLORE_PROOF));
+        let same_step = t.steps.as_slice() == std::slice::from_ref(&one.step);
+        (proven_here && oo::same_route(t, &one.step) && !same_step).then(|| t.clone())
+    });
+    if let Some(old) = mine {
+        match oo::is_referenced(root, org, project, &old.id) {
+            Ok(false) => {
+                let mut t = oo::as_template(&one, &old.id, token_page);
+                (t.title, t.module, t.description, t.sources) = (old.title, old.module, old.description, old.sources);
+                if crate::api_templates::check(&t).is_empty() {
+                    t.proven = Some(explore_proof(root, org, project, account, report));
+                    if let Err(e) = store::save(root, org, project, &t) {
+                        crate::applog::warn(format!("Auto Run explore session: the template could not be replaced: {e}"));
+                        return could_not();
+                    }
+                    crate::applog::info(format!("api template {} replaced by a later working call of the same route", t.id));
+                    log_explore_run(root, org, project, account, report, &t.id);
+                    templates_changed(&t.id);
+                    return serde_json::json!({ "id": t.id, "replaced": true });
+                }
+            }
+            Ok(true) => {}
+            Err(e) => crate::applog::warn(format!(
+                "Auto Run explore session: a template was not replaced, the saved fixtures, flows and setups could not be read: {e}"
+            )),
+        }
+    }
     if let Some(same) = oo::matching(&saved, &one.step) {
         return serde_json::json!({ "id": same.id, "reused": true });
     }
@@ -7999,31 +8100,14 @@ fn save_or_match_one_off(
         crate::applog::warn(format!("Auto Run explore session: the call is not a template: {}", problems.join("; ")));
         return could_not();
     }
-    t.proven = Some(Proven {
-        at: crate::applog::stamp(),
-        origin: recipe_origin(root, org, project).unwrap_or_default(),
-        account: account.to_string(),
-        outputs: report.outputs.clone(),
-        environment: crate::environments::active(root).ok().map(|e| e.name),
-        via: Some(EXPLORE_PROOF.to_string()),
-    });
+    t.proven = Some(explore_proof(root, org, project, account, report));
     if let Err(e) = store::save(root, org, project, &t) {
         crate::applog::warn(format!("Auto Run explore session: the template could not be saved: {e}"));
         return could_not();
     }
-    let record = RunRecord {
-        at: crate::applog::stamp(),
-        mode: crate::api_templates::runner::Mode::Explore.label().to_string(),
-        account: account.to_string(),
-        ok: true,
-        failed_step: None,
-        detail: None,
-        outputs: report.outputs.clone(),
-    };
-    if let Err(e) = store::append_run(root, org, project, &id, record) {
-        crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}"));
-    }
+    log_explore_run(root, org, project, account, report, &id);
     templates_changed(&id);
+    auto_saved.push(id.clone());
     serde_json::json!({ "id": id, "saved": true })
 }
 

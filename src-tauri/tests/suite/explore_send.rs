@@ -1064,3 +1064,120 @@ async fn a_postback_one_off_that_never_went_out_is_not_noted() {
     assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
     assert!(v["record_change"].is_null(), "{v}");
 }
+
+fn post_form(path: &str, form: Value) -> Value {
+    json!({ "step": { "method": "POST", "path": path, "form": form }, "effect": "edit" })
+}
+
+#[tokio::test]
+async fn save_false_sends_but_saves_and_matches_nothing() {
+    use v2_lib::api_templates::one_off::NOT_SAVED_ASKED;
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let mut asked = post_form("/hr/x", json!({ "x": "1" }));
+    asked["save"] = json!(false);
+    let (status, v) = send(&mut browser, &r, true, asked).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "not_saved": NOT_SAVED_ASKED }), "{v}");
+    assert_eq!(r.fetched().len(), 1, "the call was sent");
+    assert!(saved_ids(&r).is_empty());
+
+    // The same call without save: false is saved as a new template, not matched to anything.
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    assert_eq!(saved_ids(&r).len(), 1);
+}
+
+#[tokio::test]
+async fn a_later_working_call_replaces_the_failing_auto_save() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "id": -1 })), answer(200, json!({ "id": 5 }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let id = "post-hr-x";
+
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"], json!({ "id": id, "saved": true }), "{v}");
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "y": "2", "z": "3" }))).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "id": id, "replaced": true }), "{v}");
+    assert_eq!(saved_ids(&r), vec![id.to_string()], "no -2 copy");
+    let t = store::load(r.root.path(), ORG, PROJECT, id).unwrap().unwrap();
+    let form = t.steps[0].form.as_ref().expect("a form");
+    assert!(form.contains_key("y") && !form.contains_key("x"), "{form:?}");
+    assert!(t.proven.is_some());
+}
+
+#[tokio::test]
+async fn a_template_from_another_session_or_in_use_is_never_replaced() {
+    let _locks = locks();
+    let mut r = rig(
+        vec![answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true }))],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "x": "1" }))).await;
+    assert_eq!(v["template"]["id"], json!("post-hr-x"), "{v}");
+
+    // A later session: nothing was auto-saved by it yet.
+    browser.as_mut().unwrap().discovery.as_mut().unwrap().explore.as_mut().unwrap().auto_saved.clear();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "y": "2" }))).await;
+    assert_eq!(v["template"], json!({ "id": "post-hr-x-2", "saved": true }), "{v}");
+
+    // This session saved post-hr-x-2, but a saved fixture names it now.
+    let dir = v2_lib::api_templates::fixture_store::fixtures_dir(r.root.path(), ORG, PROJECT);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("uses-it.json"),
+        json!({ "id": "uses-it", "name": "Uses it", "account": "admin", "steps": [ { "template": "post-hr-x-2" } ] }).to_string(),
+    )
+    .unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, post_form("/hr/x", json!({ "w": "3" }))).await;
+    assert_eq!(v["template"], json!({ "id": "post-hr-x-3", "saved": true }), "{v}");
+    assert_eq!(saved_ids(&r).len(), 3);
+}
+
+#[tokio::test]
+async fn a_timed_out_post_is_noted_and_may_have_been_processed() {
+    use v2_lib::api_templates::runner::SENT_NO_ANSWER;
+    let _locks = locks();
+    let mut r = rig(vec![json!({ "error": "timeout" })], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    let mut edit = post_form("/hr/x", json!({ "x": "1" }));
+    edit["timeout_s"] = json!(60);
+    let (status, v) = send(&mut browser, &r, true, edit).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().contains(SENT_NO_ANSWER), "{v}");
+    assert!(v["detail"].as_str().unwrap().contains("60 seconds"), "{v}");
+    assert_eq!(v["timed_out"], json!(true), "{v}");
+    assert_eq!(r.fetched()[0][2], json!(60_000), "the page was told 60 seconds");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "{:?}", s.writes);
+    assert_eq!(s.writes[0].path, "/hr/x");
+    assert_eq!(v["record_change"], json!(edit_reminder("POST /hr/x")), "{v}");
+}
+
+#[tokio::test]
+async fn a_devtools_timeout_says_it_may_not_know() {
+    use v2_lib::api_templates::runner::MAYBE_SENT_NO_ANSWER;
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().fetch_gives_up = true;
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    // The browser stops answering for the longest the wait allows.
+    let mut edit = post_form("/hr/x", json!({ "x": "1" }));
+    edit["timeout_s"] = json!(5);
+    let (status, v) = send(&mut browser, &r, true, edit).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v["detail"].as_str().unwrap().contains(MAYBE_SENT_NO_ANSWER), "{v}");
+    assert_eq!(v["timed_out"], json!(true), "{v}");
+    assert_eq!(load(r.root.path(), &session).unwrap().writes.len(), 1);
+}

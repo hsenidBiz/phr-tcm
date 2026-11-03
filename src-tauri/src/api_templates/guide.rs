@@ -543,6 +543,15 @@ and the token is read there, in the same tab. The answer is redacted and cut at 
 - A failed call, a delete call, a call with a secret written out in it (in its body, its query,
   or the query of its token page), and a call from a page with no token are never saved: the
   answer says which and why. Send a secret as a param.
+- `save: false` runs a call and neither saves nor matches a template (the answer says it was not saved).
+  A later working call of the same route replaces the template this session saved earlier, so a
+  call that first worked badly does not leave a stale copy behind; a template saved before this
+  session, proven another way, or used by a fixture, flow or setup is never replaced.
+- `timeout_s` (5 to 180, default 30) is how many seconds one step may take. A timeout never tells
+  you whether the app processed the call: the answer says `timed_out` and that it may have, a
+  POST is still on the session's list of saves, and you check the record before sending it again.
+- One switch covers every POST from `send_api_request`, even one that only reads: API templates
+  on the AI Bridge tab. With it off the call is refused, and the refusal says so.
 - `run_api_template` runs a saved template in your explore session when the session holds the
   template's account; otherwise it opens its own browser as before.
 

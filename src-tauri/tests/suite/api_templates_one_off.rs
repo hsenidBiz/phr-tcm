@@ -370,3 +370,62 @@ fn a_delete_argument_makes_a_postback_a_delete() {
                        "effect": "edit" });
     assert!(parse(&sort.to_string()).is_ok());
 }
+
+#[test]
+fn parse_reads_save_and_timeout() {
+    use v2_lib::api_templates::one_off::parse;
+    let get = |extra: Value| {
+        let mut body = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        parse(&body.to_string())
+    };
+    let plain = get(json!({})).unwrap();
+    assert!(plain.save, "absent means save");
+    assert_eq!(plain.timeout_s, None);
+    let asked = get(json!({ "save": false, "timeout_s": 90 })).unwrap();
+    assert!(!asked.save);
+    assert_eq!(asked.timeout_s, Some(90));
+    assert_eq!(get(json!({ "timeout_s": 5 })).unwrap().timeout_s, Some(5));
+    assert_eq!(get(json!({ "timeout_s": 180 })).unwrap().timeout_s, Some(180));
+    assert_eq!(get(json!({ "save": "no" })).unwrap_err(), (400, "save is true or false".to_string()));
+}
+
+#[test]
+fn timeout_s_out_of_range_is_refused() {
+    use v2_lib::api_templates::one_off::parse;
+    for bad in [json!(4), json!(181), json!("x"), json!(12.5), json!(-3), json!(true)] {
+        let body = json!({ "step": { "method": "GET", "path": "/hr/x" }, "timeout_s": bad });
+        assert_eq!(
+            parse(&body.to_string()).unwrap_err(),
+            (400, "timeout_s is a whole number of seconds from 5 to 180".to_string()),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn same_route_ignores_the_body_but_not_the_query_keys() {
+    use v2_lib::api_templates::one_off::same_route;
+    let t = saved(
+        "create",
+        json!({ "name": "r", "method": "POST", "path": "/hr/x/{{id}}", "query": { "handler": "Save" },
+                "json": { "a": 1 } }),
+    );
+    // Other body fields: still the same route (same_call would say no).
+    let other_body = step(json!({ "method": "POST", "path": "/HR/x/12", "query": { "handler": "save" },
+                                  "json": { "z": 3, "y": 4 } }));
+    assert!(same_route(&t, &other_body));
+    assert!(!same_call(&t, &other_body));
+    // A different query key, handler, method or path is another route.
+    let extra_key = step(json!({ "method": "POST", "path": "/hr/x/12", "query": { "handler": "Save", "q": "1" },
+                                 "json": { "a": 1 } }));
+    assert!(!same_route(&t, &extra_key));
+    let handler = step(json!({ "method": "POST", "path": "/hr/x/12", "query": { "handler": "Publish" }, "json": { "a": 1 } }));
+    assert!(!same_route(&t, &handler));
+    let method = step(json!({ "method": "GET", "path": "/hr/x/12", "query": { "handler": "Save" } }));
+    assert!(!same_route(&t, &method));
+    let path = step(json!({ "method": "POST", "path": "/hr/y/12", "query": { "handler": "Save" }, "json": { "a": 1 } }));
+    assert!(!same_route(&t, &path));
+}

@@ -80,6 +80,21 @@ pub fn step_limit(step: &Step) -> Duration {
     }
 }
 
+/// How long `step` may take in the run `req`: the call's own limit when it
+/// set one, else `step_limit`.
+fn limit_for(req: &RunRequest, step: &Step) -> Duration {
+    req.step_limit.unwrap_or_else(|| step_limit(step))
+}
+
+/// Said after a step's timeout when the page itself gave up waiting: the
+/// request went out, and the app may have finished it.
+pub const SENT_NO_ANSWER: &str =
+    "the request was sent and no answer came in time, so the app may still have processed it - check before sending it again";
+/// The same when the browser stopped answering and did not say whether the
+/// request went out.
+pub const MAYBE_SENT_NO_ANSWER: &str =
+    "the browser did not answer in time and did not say whether the request went out, so the app may have processed it - check before sending it again";
+
 /// The sentence for a step that ran out of `limit`.
 fn step_too_long(limit: Duration) -> String {
     format!("the step took longer than {} seconds", limit.as_secs())
@@ -224,6 +239,10 @@ pub struct RunRequest {
     pub values: serde_json::Map<String, Value>,
     pub mode: Mode,
     pub template: ApiTemplate,
+    /// How long one step may take, for every step of the run, when the call
+    /// asked for its own limit (a one-off's `timeout_s`); none keeps
+    /// `step_limit`.
+    pub step_limit: Option<Duration>,
 }
 
 /// One step's result. Also used for the parts of a run that come before
@@ -1123,7 +1142,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
         };
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
-        d.set_deadline(Some(Instant::now() + step_limit(step)));
+        d.set_deadline(Some(Instant::now() + limit_for(req, step)));
         let mut result =
             run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, &mut carry, 1).await;
         d.set_deadline(None);
@@ -1163,7 +1182,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
             let Some((fresh_doc, fresh_token)) = self::token(d, ctx, progress, false).await else { return };
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
-            d.set_deadline(Some(Instant::now() + step_limit(step)));
+            d.set_deadline(Some(Instant::now() + limit_for(req, step)));
             result =
                 run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, &mut carry, attempt)
                     .await;
@@ -1420,7 +1439,7 @@ async fn page_address<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progre
 fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
     applog::warn(format!("api template {}: step {}: {e}", ctx.id(), step.name));
     match e {
-        CdpError::Timeout { .. } => step_too_long(step_limit(step)),
+        CdpError::Timeout { .. } => format!("{}: {MAYBE_SENT_NO_ANSWER}", step_too_long(limit_for(ctx.req, step))),
         _ => "the browser did not answer while sending this step - see Settings, Logs".to_string(),
     }
 }
@@ -1498,7 +1517,7 @@ async fn run_step<D: Driver>(
     let started = Instant::now();
     // The page aborts its own request at the step's limit; the DevTools
     // call waits a little longer, so it is the page that says so.
-    let limit = step_limit(step);
+    let limit = limit_for(ctx.req, step);
     let limit_ms = Value::from(limit.as_millis() as u64);
     let answer =
         call_value_within(d, doc, FETCH_FN, &[wire, Value::String(token.to_string()), limit_ms], limit + FETCH_GRACE)
@@ -1527,7 +1546,7 @@ async fn run_step<D: Driver>(
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
-            return Err((None, step_too_long(limit)).into());
+            return Err((None, format!("{}: {SENT_NO_ANSWER}", step_too_long(limit))).into());
         }
         applog::warn(format!(
             "api template {}: step {}: the request did not complete: {}",
@@ -1672,7 +1691,7 @@ async fn run_postback<D: Driver>(
     let button = step.postback.as_ref().map(|p| p.button.clone()).unwrap_or_default();
 
     let started = Instant::now();
-    let limit = step_limit(step);
+    let limit = limit_for(ctx.req, step);
     let args = [
         wire,
         Value::from(limit.as_millis() as u64),

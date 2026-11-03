@@ -1044,6 +1044,7 @@ async fn a_three_step_template_runs_end_to_end_in_a_real_page() {
         values: serde_json::Map::new(),
         mode: v2_lib::api_templates::runner::Mode::Run,
         template,
+        step_limit: None,
     };
     let out = v2_lib::api_templates::runner::run_in_page(
         &mut live.cdp,

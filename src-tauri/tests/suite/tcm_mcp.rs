@@ -3630,6 +3630,12 @@ fn the_explore_tools_are_listed_and_reach_their_routes() {
     let send_says = send["description"].as_str().unwrap();
     assert!(send_says.contains("WebForms postback") && send_says.contains("never saved"), "{send_says}");
     assert!(send["inputSchema"]["properties"]["step"]["description"].as_str().unwrap().contains("postback"));
+    // `save` and `timeout_s` are options of the call, and the description says what the switch covers.
+    assert_eq!(send["inputSchema"]["properties"]["save"]["type"], "boolean");
+    let timeout = &send["inputSchema"]["properties"]["timeout_s"];
+    assert_eq!((timeout["type"].as_str(), timeout["minimum"].as_i64(), timeout["maximum"].as_i64()), (Some("integer"), Some(5), Some(180)));
+    assert!(send_says.contains("save: false") && send_says.contains("timeout_s"), "{send_says}");
+    assert!(send_says.contains("switch") && send_says.contains("POST"), "{send_says}");
     let undo = tool("undo_explore_creates");
     assert_eq!(undo["inputSchema"]["required"], serde_json::json!(["session", "ids"]));
     assert_eq!(undo["inputSchema"]["properties"]["ids"]["type"], "array");
