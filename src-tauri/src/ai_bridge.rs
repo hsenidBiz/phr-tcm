@@ -7780,15 +7780,26 @@ pub async fn send_in<B: DiscoveryBrowser>(
         .ok()
         .flatten()
         .map(|recipe| oo::sign_in_path(&recipe.start_url));
-    let signed_out = out.answer.as_ref().is_some_and(|a| {
-        oo::is_sign_in_answer(
-            a.final_path.as_deref(),
-            a.content_type.as_deref(),
-            &a.body,
-            &oo::request_path(&one),
-            start_path.as_deref(),
-        )
-    });
+    // A postback is judged by the postback rule (`postback.rs`); when that
+    // rule refused it as signed out, later sends on this discovery are
+    // refused too.
+    if one.step.is_postback()
+        && report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::SENT_ELSEWHERE))
+    {
+        if let Some(d) = parts.discovery.as_mut() {
+            d.signed_out = true;
+        }
+    }
+    let signed_out = !one.step.is_postback()
+        && out.answer.as_ref().is_some_and(|a| {
+            oo::is_sign_in_answer(
+                a.final_path.as_deref(),
+                a.content_type.as_deref(),
+                &a.body,
+                &oo::request_path(&one),
+                start_path.as_deref(),
+            )
+        });
     if signed_out {
         if let Some(d) = parts.discovery.as_mut() {
             d.signed_out = true;

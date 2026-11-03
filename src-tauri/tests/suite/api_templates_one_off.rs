@@ -510,14 +510,23 @@ fn no_token_here_names_up_to_three_pages_or_none() {
 fn is_sign_in_answer_cases() {
     let html = Some("text/html; charset=utf-8");
     let form = r#"<form><input name="u"><input id="p" TYPE='Password'></form>"#;
-    // The final page is the sign-in page.
+    // Ended on the sign-in page's path (a start path that is not the root).
     assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login")));
-    // HTML with a password input, for a page that is not the sign-in page.
-    assert!(is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
-    assert!(is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None));
+    // Redirected to another page that has a password input.
+    assert!(is_sign_in_answer(Some("/account/in"), html, form, "/hr/x", Some("/")));
+    assert!(is_sign_in_answer(Some("/"), html, form, "/hr/x", Some("/")));
+    // The site root as the start page alone is not enough: a save that redirects home.
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
+    // A page with a password field that answers in place (change password) is an answer.
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
+    assert!(!is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None));
+    // A redirect to the same page is not a move.
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
     // The sign-in page asked for on purpose is not a signed-out account.
     assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login")));
-    // The word password in JSON, or a text field, is not a sign-in page.
-    assert!(!is_sign_in_answer(Some("/hr/x"), Some("application/json"), form, "/hr/x", Some("/login")));
-    assert!(!is_sign_in_answer(Some("/hr/x"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/login")));
+    // JSON, a text field, or an attribute that only ends in type is not a sign-in page.
+    assert!(!is_sign_in_answer(Some("/a"), Some("application/json"), form, "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input data-type="password">"#, "/hr/x", Some("/")));
 }

@@ -1469,9 +1469,9 @@ fn login_page(final_path: &str, redirected: bool) -> Value {
 }
 
 #[tokio::test]
-async fn a_login_page_at_the_same_url_is_signed_out_and_the_next_call_is_not_sent() {
+async fn a_login_page_the_call_was_sent_to_another_page_for_is_signed_out_and_the_next_call_is_not_sent() {
     let _locks = locks();
-    let mut r = rig(vec![login_page("/hr/x", false), answer(200, json!({ "late": true }))], None);
+    let mut r = rig(vec![login_page("/account/in", true), answer(200, json!({ "late": true }))], None);
     let (mut browser, _) = exploring_session(&mut r).await;
     let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
 
@@ -1496,16 +1496,28 @@ async fn a_login_page_at_the_same_url_is_signed_out_and_the_next_call_is_not_sen
 }
 
 #[tokio::test]
-async fn a_redirect_to_the_start_page_is_signed_out() {
+async fn a_page_with_a_password_field_that_answers_in_place_is_an_answer() {
     let _locks = locks();
-    let mut r = rig(vec![login_page("/", true)], None);
+    let mut r = rig(vec![login_page("/hr/x", false)], None);
     let (mut browser, _) = exploring_session(&mut r).await;
     let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
     let (status, v) = send(&mut browser, &r, false, get).await;
-    assert_eq!(status, 502, "{v}");
-    assert_eq!(v["signed_out"], true, "{v}");
-    assert!(v.get("response").is_none(), "{v}");
-    assert!(browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_redirect_home_with_no_password_field_is_not_signed_out() {
+    let _locks = locks();
+    let mut home = login_page("/", true);
+    home["text"] = json!("<html>dashboard</html>");
+    let mut r = rig(vec![home], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (_, v) = send(&mut browser, &r, false, get).await;
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
 }
 
 #[tokio::test]
@@ -1518,4 +1530,95 @@ async fn a_sign_in_page_asked_for_on_purpose_is_an_answer_not_a_sign_out() {
     assert_eq!(status, 200, "{v}");
     assert!(v.get("signed_out").is_none(), "{v}");
     assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_postback_on_a_page_with_a_password_field_is_not_signed_out() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(
+        200,
+        json!({ "excerpt": "<html><input type=\"password\" name=\"p\"></html>" }),
+    )]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("signed_out").is_none(), "{v}");
+    assert!(!browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out);
+}
+
+#[tokio::test]
+async fn a_postback_the_runner_judges_signed_out_ends_the_discovery_for_later_sends() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({}))], None);
+    r.script.lock().unwrap().postbacks = VecDeque::from(vec![page_reply(200, json!({ "signedOut": true }))]);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (status, v) = send(&mut browser, &r, true, postback_call(json!({}))).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(browser.as_mut().unwrap().discovery.as_ref().unwrap().signed_out, "{v}");
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (status, text) =
+        send_in(&mut browser, &ctx(true), r.root.path(), &get.to_string(), &quick(), RUN_LIMIT, &QUICK_PAUSES).await;
+    assert_eq!((status, text.as_str()), (409, v2_lib::api_templates::one_off::SIGNED_OUT_BEFORE));
+}
+
+#[tokio::test]
+async fn a_kept_value_in_the_path_or_query_is_never_in_the_record_or_the_log() {
+    let _log = crate::serial::log_tail();
+    let _locks = locks();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    // Not token-shaped (spaces), so only the kept-value hiding can mask it.
+    let value = "emp 1234 north";
+    let mut r = rig(vec![answer(200, json!({ "Ref": value })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let (_, v) = send(&mut browser, &r, true, keep_token_call()).await;
+    assert_eq!(v["kept"], json!(["token (14 characters)"]), "{v}");
+
+    on_the_app(&r);
+    let call = json!({
+        "step": { "method": "GET", "path": "/hr/emp/{{var.token}}", "query": { "q": "{{var.token}}" } },
+        "save": false
+    });
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+
+    let records = crate::common::activity_records(activity.path(), "api");
+    let sent = records.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+    let log: String = v2_lib::applog::recent(500).iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    for text in [v.to_string(), sent.clone(), log] {
+        for form in [value, "emp%201234%20north", "emp+1234+north"] {
+            assert!(!text.contains(form), "{form} shows in: {text}");
+        }
+    }
+    assert!(sent.contains("{{var.token}}"), "the record shows the name: {sent}");
+}
+
+#[tokio::test]
+async fn kept_lists_and_numbers_are_hidden_too() {
+    let _locks = locks();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "Ids": ["first value here", "second value", "x"], "Num": 123456789012u64 })),
+            answer(200, json!({ "echo": "first value here and second value", "n": 123456789012u64 })),
+        ],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let mut call = json!({ "step": { "method": "GET", "path": "/hr/x" }, "keep": { "ids": "$.Ids", "num": "$.Num" } });
+    call["save"] = json!(false);
+    let (status, v) = send(&mut browser, &r, true, call).await;
+    assert_eq!(status, 200, "{v}");
+    let text = v.to_string();
+    for shown in ["first value here", "second value", "123456789012"] {
+        assert!(!text.contains(shown), "{shown} shows in: {text}");
+    }
+    assert!(text.contains("{{var.ids}}") && text.contains("{{var.num}}"), "{text}");
+
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, json!({ "step": { "method": "GET", "path": "/hr/y" }, "save": false })).await;
+    let text = v.to_string();
+    for shown in ["first value here", "second value", "123456789012"] {
+        assert!(!text.contains(shown), "{shown} shows in a later answer: {text}");
+    }
 }

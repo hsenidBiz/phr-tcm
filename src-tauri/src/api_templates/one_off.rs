@@ -143,6 +143,11 @@ fn has_password_input(body: &str) -> bool {
         let tag = &lower[start..end];
         let mut at = 0;
         while let Some(k) = tag[at..].find("type") {
+            let before = tag[..at + k].chars().last();
+            if !before.is_some_and(char::is_whitespace) {
+                at += k + 4;
+                continue;
+            }
             let rest = tag[at + k + 4..].trim_start();
             if let Some(value) = rest.strip_prefix('=') {
                 let value = value.trim_start();
@@ -157,10 +162,13 @@ fn has_password_input(body: &str) -> bool {
     false
 }
 
-/// Whether an answer is the app's sign-in page: it ended on the sign-in
-/// page's path (`start_path`), or it is HTML with a password input. Asking
-/// for the sign-in page itself (`request_path` is `start_path`) is not a
-/// sign-out, and a body that is not HTML never is one.
+/// Whether an answer is the app's sign-in page served in place of the page
+/// asked for. Either it ended on the sign-in recipe's start path (unless that
+/// is the site root, which a save may redirect to for other reasons), or the
+/// call was moved to a different page and that page has a password input.
+/// A page with a password field that answers in place (change password) is
+/// an answer, and so is the sign-in page asked for on purpose. A postback is
+/// judged by `api_templates::postback`, not here.
 pub fn is_sign_in_answer(
     final_path: Option<&str>,
     content_type: Option<&str>,
@@ -168,16 +176,20 @@ pub fn is_sign_in_answer(
     request_path: &str,
     start_path: Option<&str>,
 ) -> bool {
+    let asked = compared_path(request_path);
     let start = start_path.map(compared_path);
-    if start.as_deref() == Some(compared_path(request_path).as_str()) {
+    if start.as_deref() == Some(asked.as_str()) {
         return false;
     }
-    if let (Some(final_path), Some(start)) = (final_path, &start) {
-        if compared_path(final_path) == *start {
-            return true;
-        }
+    let Some(ended) = final_path.map(compared_path) else {
+        return false;
+    };
+    if start.as_deref().is_some_and(|s| s != "/" && s == ended) {
+        return true;
     }
-    content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html")) && has_password_input(body)
+    ended != asked
+        && content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"))
+        && has_password_input(body)
 }
 
 /// The path of the sign-in recipe's start address, for `is_sign_in_answer`.
