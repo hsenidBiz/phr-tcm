@@ -46,6 +46,10 @@ pub struct Step {
     /// it only keeps, moves or drops the reference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared: Option<i32>,
+    /// Files attached to this step. Absent from JSON/IPC when empty, so
+    /// every existing file and draft reads and writes exactly as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::step_attachments::StepAttachment>,
 }
 
 fn escape_xml(text: &str) -> String {
@@ -638,7 +642,7 @@ pub fn parse_steps_readings(xml_str: &str) -> (Vec<Step>, Vec<Step>) {
     let old = old_steps(xml_str);
     let read = |pick: fn(&OldField) -> &String| -> Vec<Step> {
         old.iter()
-            .map(|o| Step { action: pick(&o.action).clone(), expected: pick(&o.expected).clone(), shared: o.shared })
+            .map(|o| Step { action: pick(&o.action).clone(), expected: pick(&o.expected).clone(), shared: o.shared, attachments: vec![] })
             .collect()
     };
     (read(|f| &f.md), read(|f| &f.legacy))
@@ -769,6 +773,7 @@ fn read_steps(xml_str: &str, read: impl Fn(&str) -> String) -> Vec<Step> {
                             action: p.first().cloned().unwrap_or_default(),
                             expected: p.get(1).cloned().unwrap_or_default(),
                             shared: None,
+                            attachments: vec![],
                         });
                     }
                 }

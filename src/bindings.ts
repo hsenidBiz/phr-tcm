@@ -6840,6 +6840,44 @@ export type StateInfo = {
 
 export type Step = Step_Serialize | Step_Deserialize;
 
+export type StepAttachment = StepAttachment_Serialize | StepAttachment_Deserialize;
+
+export type StepAttachment_Deserialize = {
+	/**
+	 *  An attachment Azure DevOps already holds: its GUID (last segment of
+	 *  the relation URL).
+	 */
+	id?: string | null,
+	/**  A new file: a full local path on this machine, read only at upload. */
+	path?: string | null,
+	/**
+	 *  File name as shown (ADO's `name` attribute; for a new file, the
+	 *  path's file name).
+	 */
+	name: string,
+	size?: number | null,
+	/**  Text after `[TestStep=N]:`, kept verbatim when re-pointed. */
+	comment?: string,
+};
+
+export type StepAttachment_Serialize = {
+	/**
+	 *  An attachment Azure DevOps already holds: its GUID (last segment of
+	 *  the relation URL).
+	 */
+	id?: string | null,
+	/**  A new file: a full local path on this machine, read only at upload. */
+	path?: string | null,
+	/**
+	 *  File name as shown (ADO's `name` attribute; for a new file, the
+	 *  path's file name).
+	 */
+	name: string,
+	size?: number | null,
+	/**  Text after `[TestStep=N]:`, kept verbatim when re-pointed. */
+	comment?: string,
+};
+
 /**
  *  A browser dialog a step met: its kind (`alert`, `confirm`, `prompt`,
  *  `beforeunload`) and its message, cut to 200 characters. Page text,
@@ -7050,6 +7088,11 @@ export type Step_Deserialize = {
 	 *  it only keeps, moves or drops the reference.
 	 */
 	shared?: number | null,
+	/**
+	 *  Files attached to this step. Absent from JSON/IPC when empty, so
+	 *  every existing file and draft reads and writes exactly as before.
+	 */
+	attachments?: StepAttachment_Deserialize[],
 };
 
 export type Step_Serialize = {
@@ -7062,6 +7105,11 @@ export type Step_Serialize = {
 	 *  it only keeps, moves or drops the reference.
 	 */
 	shared?: number | null,
+	/**
+	 *  Files attached to this step. Absent from JSON/IPC when empty, so
+	 *  every existing file and draft reads and writes exactly as before.
+	 */
+	attachments?: StepAttachment_Serialize[],
 };
 
 /**
@@ -7535,6 +7583,11 @@ export type TestCase_Deserialize = {
 	 *  a transform. `comment` stays the developer's.
 	 */
 	findings?: CaseFinding_Deserialize[],
+	/**
+	 *  GUIDs of step attachments the user removed - singly, or by deleting
+	 *  the step that held them. Absent when empty.
+	 */
+	removed_attachments?: string[],
 };
 
 export type TestCase_Serialize = {
@@ -7615,6 +7668,11 @@ export type TestCase_Serialize = {
 	 *  a transform. `comment` stays the developer's.
 	 */
 	findings?: CaseFinding_Serialize[],
+	/**
+	 *  GUIDs of step attachments the user removed - singly, or by deleting
+	 *  the step that held them. Absent when empty.
+	 */
+	removed_attachments?: string[],
 };
 
 /**  One file in a project's Test files. */

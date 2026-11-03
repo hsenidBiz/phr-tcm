@@ -8,7 +8,7 @@ use v2_lib::steps_xml::Step;
 use v2_lib::transform::{apply, parse_ops};
 
 fn step(action: &str, expected: &str) -> Step {
-    Step { action: action.into(), expected: expected.into(), shared: None }
+    Step { action: action.into(), expected: expected.into(), shared: None, attachments: vec![] }
 }
 
 fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
@@ -28,6 +28,7 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         tester_order: None,
         findings: vec![],
         source: Default::default(),
+        removed_attachments: vec![],
     }
 }
 
@@ -69,8 +70,9 @@ fn a_declined_entry_step_says_why() {
                 action: "In the PMS Module, open Performance Management from the main menu.".into(),
                 expected: "The list is shown.".into(),
                 shared: None,
+                attachments: vec![],
             },
-            Step { action: "Click Approve.".into(), expected: "It is approved.".into(), shared: None },
+            Step { action: "Click Approve.".into(), expected: "It is approved.".into(), shared: None, attachments: vec![] },
         ],
     );
     let (_out, report) = optimize(
@@ -96,7 +98,7 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
             title,
             "",
             pre,
-            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into(), shared: None }],
+            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into(), shared: None, attachments: vec![] }],
         )
     };
     // Deliberately alternating setups: the tester ordering would group
@@ -134,7 +136,7 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
 #[test]
 fn both_orders_are_stamped_whatever_the_array_order_is() {
     let mk = |title: &str, pre: &str| {
-        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new(), shared: None }])
+        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new(), shared: None, attachments: vec![] }])
     };
     // Alternating setups so spec order and tester order genuinely differ.
     let draft = vec![

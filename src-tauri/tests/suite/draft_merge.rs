@@ -364,7 +364,7 @@ fn a_named_occurrence_wins_over_queue_order_so_extra_keys_stay_with_their_case()
     let parsed = parse_json_text(&old).unwrap().cases;
     let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
     let b_edited = TestCase {
-        steps: vec![Step { action: "B, edited.".into(), expected: String::new(), shared: None }],
+        steps: vec![Step { action: "B, edited.".into(), expected: String::new(), shared: None, attachments: vec![] }],
         ..row(1)
     };
     let out = apply_draft_edits(
@@ -460,7 +460,7 @@ fn a_second_write_counts_occurrences_against_the_first_writes_real_file_order() 
     // Edit the queue's last row (still A). Paired against the FILE-order
     // snapshot, A is occurrence 1 and the untouched C is occurrence 2.
     let a_edited = TestCase {
-        steps: vec![Step { action: "Open A.".into(), expected: "A, edited.".into(), shared: None }],
+        steps: vec![Step { action: "Open A.".into(), expected: "A, edited.".into(), shared: None, attachments: vec![] }],
         ..snap(0)
     };
     let out = apply_draft_edits(
@@ -490,8 +490,8 @@ fn an_after_case_with_every_field_set_round_trips_through_a_write() {
     let original = TestCase {
         title: "Every field".into(),
         steps: vec![
-            Step { action: "Open.".into(), expected: "It opens.".into(), shared: None },
-            Step { action: String::new(), expected: String::new(), shared: Some(501) },
+            Step { action: "Open.".into(), expected: "It opens.".into(), shared: None, attachments: vec![] },
+            Step { action: String::new(), expected: String::new(), shared: Some(501), attachments: vec![] },
         ],
         tags: "smoke;regression".into(),
         automation_status: "Planned".into(),
@@ -511,6 +511,7 @@ fn an_after_case_with_every_field_set_round_trips_through_a_write() {
             detail: "Rounds half up; the spec doesn't say.".into(),
         }],
         source: Default::default(),
+        removed_attachments: vec![],
     };
     // No entry in the (empty) file matches `TestCase::default()`, so this
     // is exactly the "brand new case" path: it lands in `unmatched`.

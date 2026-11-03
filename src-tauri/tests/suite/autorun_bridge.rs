@@ -85,7 +85,7 @@ async fn client_with_cases(cases: &[(i32, &str, &[&str])]) -> (MockServer, AdoCl
             let steps: Vec<Step> = expected
                 .iter()
                 .enumerate()
-                .map(|(i, e)| Step { action: format!("Step {}", i + 1), expected: (*e).to_string(), shared: None })
+                .map(|(i, e)| Step { action: format!("Step {}", i + 1), expected: (*e).to_string(), shared: None, attachments: vec![] })
                 .collect();
             serde_json::json!({
                 "id": id,

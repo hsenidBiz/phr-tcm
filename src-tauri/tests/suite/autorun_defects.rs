@@ -520,7 +520,7 @@ async fn client_with_case_7() -> (MockServer, AdoClient) {
     let server = MockServer::start().await;
     let steps: Vec<Step> =
         (1..=3)
-        .map(|i| Step { action: format!("Step {i}"), expected: if i == 3 { "Saved".to_string() } else { String::new() }, shared: None })
+        .map(|i| Step { action: format!("Step {i}"), expected: if i == 3 { "Saved".to_string() } else { String::new() }, shared: None, attachments: vec![] })
         .collect();
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/_apis/wit/workitems"))

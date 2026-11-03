@@ -63,6 +63,7 @@ pub mod saved_session;
 pub mod spec_pane;
 pub mod speccov;
 pub mod state;
+pub mod step_attachments;
 pub mod steps_xml;
 pub mod test_map;
 pub mod test_files;

@@ -120,6 +120,10 @@ pub struct TestCase {
     /// a transform. `comment` stays the developer's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<CaseFinding>,
+    /// GUIDs of step attachments the user removed - singly, or by deleting
+    /// the step that held them. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_attachments: Vec<String>,
     /// See `SourceIndex`. Off the IPC boundary and out of every file.
     #[serde(skip)]
     #[specta(skip)]
@@ -167,6 +171,12 @@ impl TestCase {
             if let Some(id) = step.shared {
                 if id <= 0 {
                     return Err(format!("Step {} has an invalid Shared Steps reference.", i + 1));
+                }
+                if !step.attachments.is_empty() {
+                    return Err(format!(
+                        "Step {} is a Shared Steps reference, which cannot carry attachments.",
+                        i + 1
+                    ));
                 }
                 continue;
             }

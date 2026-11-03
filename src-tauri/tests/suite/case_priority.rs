@@ -18,7 +18,7 @@ const PRIORITY: &str = "/fields/Microsoft.VSTS.Common.Priority";
 fn case(title: &str, priority: Option<i32>) -> TestCase {
     TestCase {
         title: title.into(),
-        steps: vec![Step { action: "Open the page.".into(), expected: "It opens.".into(), shared: None }],
+        steps: vec![Step { action: "Open the page.".into(), expected: "It opens.".into(), shared: None, attachments: vec![] }],
         automation_status: "Not Automated".into(),
         priority,
         ..Default::default()

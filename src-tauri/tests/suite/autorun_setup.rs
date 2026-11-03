@@ -1116,7 +1116,7 @@ async fn an_assistant_repair_of_a_setup_scripts_steps_lands() {
     store::save_script(root, &sc).unwrap();
 
     let server = MockServer::start().await;
-    let xml = build_steps_xml(&[Step { action: "Step 1".into(), expected: String::new(), shared: None }]);
+    let xml = build_steps_xml(&[Step { action: "Step 1".into(), expected: String::new(), shared: None, attachments: vec![] }]);
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/wit/workitems")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{

@@ -316,6 +316,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
             action: "Do".into(),
             expected: "Done".into(),
             shared: None,
+            attachments: vec![],
         }],
         tags: "smoke".into(),
         automation_status: "Planned".into(),
@@ -330,6 +331,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         tester_order: None,
         findings: vec![],
         source: Default::default(),
+        removed_attachments: vec![],
     }
 }
 
@@ -877,7 +879,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
         let client = v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri());
         let tc = v2_lib::model::TestCase {
             title: "T".into(),
-            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
+            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None, attachments: vec![] }],
             automation_status: "Planned".into(),
             preconditions: "value < 10 & rising".into(),
             ..Default::default()
@@ -1107,7 +1109,7 @@ async fn a_case_exported_and_reimported_does_not_rewrite_its_steps() {
 async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
     let blank = v2_lib::model::TestCase {
         title: "T".into(),
-        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None, attachments: vec![] }],
         automation_status: "Planned".into(),
         tags: String::new(),
         module_value: String::new(),
@@ -1174,7 +1176,7 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
 async fn a_field_of_only_spaces_counts_as_blank() {
     let spaces = v2_lib::model::TestCase {
         title: "T".into(),
-        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None, attachments: vec![] }],
         automation_status: "Planned".into(),
         tags: "   ".into(),
         module_value: "\t ".into(),
@@ -1457,6 +1459,7 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
         tester_order: None,
         findings: vec![],
         source: Default::default(),
+        removed_attachments: vec![],
     };
     let linked = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, Some(100));
     let rel = linked
@@ -1563,6 +1566,7 @@ async fn a_real_edit_adding_line_breaks_is_saved() {
         action: "Open the page Click Save".into(),
         expected: "Saved".into(),
         shared: None,
+        attachments: vec![],
     }]);
     let mut tc = case_from(&plain, "T");
     tc.steps[0].action = "Open the page\nClick **Save**".into();

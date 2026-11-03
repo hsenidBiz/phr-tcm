@@ -12,7 +12,7 @@ fn ctx() -> BridgeContext {
 }
 
 fn step(action: &str) -> Step {
-    Step { action: action.into(), expected: "It happens.".into(), shared: None }
+    Step { action: action.into(), expected: "It happens.".into(), shared: None, attachments: vec![] }
 }
 
 fn case(title: &str, steps: Vec<Step>) -> TestCase {

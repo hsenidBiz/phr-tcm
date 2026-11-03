@@ -522,6 +522,7 @@ pub fn parse_ops_full(
                         action,
                         expected: sv["expected"].as_str().unwrap_or("").to_string(),
                         shared: None,
+                        attachments: vec![],
                     });
                 }
                 if into.is_empty() {
@@ -627,6 +628,7 @@ pub fn parse_ops_full(
                         tester_order: None,
                         // An inserted case starts with no findings.
                         findings: vec![],
+                        removed_attachments: vec![],
                         source: Default::default(),
                     });
                 }
@@ -1046,6 +1048,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                     action: action.clone(),
                                     expected: expected.clone(),
                                     shared: None,
+                                    attachments: vec![],
                                 },
                             );
                         }
@@ -1054,6 +1057,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                 action: action.clone(),
                                 expected: expected.clone(),
                                 shared: None,
+                                attachments: vec![],
                             });
                         }
                         Op::RemoveStepMatching(find) => {

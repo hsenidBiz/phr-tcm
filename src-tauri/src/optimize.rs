@@ -720,6 +720,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             },
             expected: "The home page is displayed.".to_string(),
             shared: None,
+            attachments: vec![],
         }
     });
 
@@ -732,6 +733,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: entry.to_string(),
             expected: "The application opens.".to_string(),
             shared: None,
+            attachments: vec![],
         });
         out.extend(signin_step);
     } else {
@@ -740,6 +742,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: entry.to_string(),
             expected: "The module opens.".to_string(),
             shared: None,
+            attachments: vec![],
         });
     }
 
@@ -773,6 +776,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: format!("Navigate to the {target}."),
             expected: format!("The {target} is displayed."),
             shared: None,
+            attachments: vec![],
         });
         consumed.push((*sentence).clone());
     }
@@ -784,6 +788,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             action: format!("Navigate to {}.", c.module_value.trim()),
             expected: format!("The {} page is displayed.", c.module_value.trim()),
             shared: None,
+            attachments: vec![],
         });
     }
     (out, consumed)

@@ -285,7 +285,7 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
         return StepRead { step: None, warnings };
     }
     StepRead {
-        step: Some(Step { action: step_lines(&action), expected: step_lines(&expected), shared: None }),
+        step: Some(Step { action: step_lines(&action), expected: step_lines(&expected), shared: None, attachments: vec![] }),
         warnings: vec![],
     }
 }
@@ -562,6 +562,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             spec_order,
             tester_order,
             findings,
+            removed_attachments: vec![],
             source: crate::model::SourceIndex(Some(i)),
         });
     }

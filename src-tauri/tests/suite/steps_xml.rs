@@ -7,6 +7,7 @@ fn step(action: &str, expected: &str) -> Step {
         action: action.to_string(),
         expected: expected.to_string(),
         shared: None,
+        attachments: vec![],
     }
 }
 
