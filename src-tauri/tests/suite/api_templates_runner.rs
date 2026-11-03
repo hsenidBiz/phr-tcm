@@ -2679,3 +2679,25 @@ async fn a_one_off_step_limit_overrides_the_default() {
     assert!(out.report.ok, "{}", out.report.message());
     assert_eq!(r.fetched()[0][2], json!(90_000), "the page was told the longer limit");
 }
+
+#[tokio::test]
+async fn a_one_off_body_with_base64_is_sent_encoded() {
+    use base64::Engine;
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![answer(200, json!({ "success": true }))], None);
+    let t: ApiTemplate = serde_json::from_value(json!({
+        "id": "b64-body", "title": "Encoded body", "module": "PMS", "effect": "create",
+        "description": "Sends a base64 body.", "sources": ["x:1"],
+        "antiforgery": { "page": PAGE },
+        "params": [ { "name": "cycleName", "type": "string", "required": true } ],
+        "steps": [ { "name": "Send", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+                     "json": { "payload": { "$base64": { "name": "{{cycleName}}" } } } } ],
+        "outputs": []
+    }))
+    .unwrap();
+    let report = run(&mut r, t).await;
+    assert!(report.ok, "{report:?}");
+    let fetched = r.fetched();
+    let want = base64::engine::general_purpose::STANDARD.encode(r#"{"name":"FY27"}"#);
+    assert_eq!(fetched[0][0]["body"], json!({ "kind": "json", "value": { "payload": want } }));
+}

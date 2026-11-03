@@ -15,13 +15,55 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-/// One segment of a parsed capture path: `.name`, `[N]` or `[*]` (every
-/// element of an array).
+/// One segment of a parsed capture path: `.name`, `[N]`, `[*]` (every
+/// element of an array) or `[?(@.FIELD=='value')]` (the elements whose
+/// FIELD does, or with `!=` does not, equal one literal).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Seg {
     Key(String),
     Index(usize),
     All,
+    Filter { field: Vec<String>, equals: bool, value: Value },
+}
+
+static FILTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"^\?\(@\.([A-Za-z0-9_$-]+(?:\.[A-Za-z0-9_$-]+)*)\s*(==|!=)\s*('[^']*'|"[^"]*"|-?\d+(?:\.\d+)?|true|false)\s*\)$"#,
+    )
+    .expect("the filter pattern is valid")
+});
+
+/// `?(@.FIELD==literal)` as a segment, or None when it is not that one shape.
+fn parse_filter(inner: &str) -> Option<Seg> {
+    let c = FILTER.captures(inner)?;
+    let lit = &c[3];
+    let value = match lit.chars().next()? {
+        '\'' | '"' => Value::String(lit[1..lit.len() - 1].to_string()),
+        _ => serde_json::from_str(lit).ok()?,
+    };
+    Some(Seg::Filter { field: c[1].split('.').map(str::to_string).collect(), equals: &c[2] == "==", value })
+}
+
+/// A filter literal equals a value: strings exactly, numbers numerically,
+/// booleans as they are - a number-looking string is never a number.
+fn literal_equals(v: &Value, lit: &Value) -> bool {
+    match (v, lit) {
+        (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
+        _ => v == lit,
+    }
+}
+
+/// Whether a row passes a filter. A row without the field is not equal to
+/// anything, so `!=` keeps it and `==` drops it.
+fn filter_keeps(item: &Value, field: &[String], equals: bool, lit: &Value) -> bool {
+    let mut cur = item;
+    for k in field {
+        match cur.get(k) {
+            Some(next) => cur = next,
+            None => return !equals,
+        }
+    }
+    literal_equals(cur, lit) == equals
 }
 
 /// Every `{{name}}` placeholder found in `s`, in order, names only (no
@@ -43,11 +85,12 @@ pub fn placeholders(s: &str) -> Vec<String> {
     out
 }
 
-/// Parses a capture path - `$.a`, `$.a[0]`, `$.a[*].id` - into segments.
-/// Refused, each with a message naming the path: missing leading `$`, an
-/// empty segment (so `$..a`, recursive descent, is refused rather than
-/// silently accepted), an unclosed `[`, or an index that is neither `*`
-/// nor all digits.
+/// Parses a capture path - `$.a`, `$.a[0]`, `$.a[*].id`,
+/// `$.a[?(@.n=='x')].id` - into segments. Refused, each with a message
+/// naming the path: missing leading `$`, an empty segment (so `$..a`,
+/// recursive descent, is refused rather than silently accepted), an
+/// unclosed `[`, a filter that is not one condition, or an index that is
+/// neither `*` nor all digits.
 pub fn parse_capture_path(p: &str) -> Result<Vec<Seg>, String> {
     let mut chars = p.chars().peekable();
     if chars.next() != Some('$') {
@@ -74,9 +117,15 @@ pub fn parse_capture_path(p: &str) -> Result<Vec<Seg>, String> {
             '[' => {
                 chars.next();
                 let mut inner = String::new();
+                // A filter's quoted literal may hold a `]`.
+                let mut quote: Option<char> = None;
                 while let Some(&c2) = chars.peek() {
-                    if c2 == ']' {
-                        break;
+                    match quote {
+                        Some(q) if c2 == q => quote = None,
+                        Some(_) => {}
+                        None if c2 == ']' => break,
+                        None if (c2 == '\'' || c2 == '"') && inner.starts_with('?') => quote = Some(c2),
+                        None => {}
                     }
                     inner.push(c2);
                     chars.next();
@@ -84,7 +133,16 @@ pub fn parse_capture_path(p: &str) -> Result<Vec<Seg>, String> {
                 if chars.next() != Some(']') {
                     return Err(format!("capture path '{p}' has an unclosed ["));
                 }
-                if inner == "*" {
+                if inner.starts_with('?') {
+                    match parse_filter(&inner) {
+                        Some(seg) => segs.push(seg),
+                        None => {
+                            return Err(format!(
+                                "capture path '{p}' has a filter it cannot read '[{inner}]' - one condition: [?(@.FIELD=='value')] or !="
+                            ))
+                        }
+                    }
+                } else if inner == "*" {
                     segs.push(Seg::All);
                 } else if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit()) {
                     segs.push(Seg::Index(inner.parse().expect("all-digit string parses as usize")));
@@ -121,6 +179,55 @@ pub fn capture(body: &Value, path: &[Seg]) -> Option<Value> {
                 Some(Value::Array(out))
             }
         }
+        Some((Seg::Filter { field, equals, value }, rest)) => {
+            let items = body.as_array()?;
+            let out: Vec<Value> = items
+                .iter()
+                .filter(|item| filter_keeps(item, field, *equals, value))
+                .filter_map(|item| capture(item, rest))
+                .collect();
+            if out.is_empty() {
+                None
+            } else {
+                Some(Value::Array(out))
+            }
+        }
+    }
+}
+
+/// The sentence for a `$base64` / `$json` wrapper that holds more than its one key.
+pub const WRAPPER_SHAPE: &str = "a $base64 or $json wrapper holds exactly one key";
+
+/// Replaces every object that has exactly the one key `$base64` (the
+/// standard padded base64 of its value's JSON text; a string's raw text,
+/// unquoted) or `$json` (its value's compact JSON text, as a string),
+/// inner wrappers first. A wrapper key beside any other key is refused.
+pub fn apply_transforms(v: &Value) -> Result<Value, String> {
+    match v {
+        Value::Array(items) => items.iter().map(apply_transforms).collect::<Result<Vec<_>, _>>().map(Value::Array),
+        Value::Object(map) => {
+            if let Some(key) = ["$base64", "$json"].into_iter().find(|k| map.contains_key(*k)) {
+                if map.len() != 1 {
+                    return Err(WRAPPER_SHAPE.to_string());
+                }
+                let inner = apply_transforms(&map[key])?;
+                let text = match (&inner, key) {
+                    (Value::String(s), "$base64") => s.clone(),
+                    _ => serde_json::to_string(&inner).map_err(|e| e.to_string())?,
+                };
+                return Ok(Value::String(if key == "$base64" {
+                    base64::engine::general_purpose::STANDARD.encode(text.as_bytes())
+                } else {
+                    text
+                }));
+            }
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, val) in map {
+                out.insert(k.clone(), apply_transforms(val)?);
+            }
+            Ok(Value::Object(out))
+        }
+        other => Ok(other.clone()),
     }
 }
 
@@ -325,7 +432,7 @@ pub fn build_request(
     let url = if query.is_empty() { path } else { format!("{path}?{query}") };
 
     let body = if let Some(json) = &step.json {
-        Body::Json { value: substitute(json, vars) }
+        Body::Json { value: apply_transforms(&substitute(json, vars))? }
     } else if let Some(form) = &step.form {
         let fields =
             form.iter().map(|(k, v)| (substitute_str(k, vars), substitute_str(v, vars))).collect();

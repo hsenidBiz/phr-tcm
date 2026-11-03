@@ -693,6 +693,10 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
 
         problems.extend(file_problems(step));
 
+        if let Some(Err(e)) = step.json.as_ref().map(exec::apply_transforms) {
+            problems.push(format!("step '{}': {e}", step.name));
+        }
+
         let mut reported = HashSet::new();
         for name in step_placeholder_names(step) {
             if !known.contains(name.as_str()) && reported.insert(name.clone()) {

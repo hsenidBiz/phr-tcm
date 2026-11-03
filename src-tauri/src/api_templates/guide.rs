@@ -146,7 +146,15 @@ checked, not halfway through a run.
 
 `capture` maps a name to a path in the step's JSON response: `$.a.b`,
 `$.list[0]`, or `$.list[*].id` for an array of every element's `id`. A
-capture that finds nothing fails the step.
+filter keeps the rows that match one condition: `$.rows[?(@.EMP_NAME=='NB001 - A')].EMP_ID`
+gives a list of that employee's ids (`!=` keeps the others; the value is
+'text', "text", a number or true/false; FIELD may be dotted, `@.who.code`).
+One condition only, and no `..`. A capture that finds nothing fails the step.
+
+A JSON body can hold a value the server wants encoded: `{"$base64": X}` is
+the base64 of X's JSON text (a string's own text), and `{"$json": X}` is X as
+JSON text. Placeholders inside are filled first; a wrapper holds that one key.
+`{"data": {"$base64": {"id": "{{id}}"}}}` sends the base64 of `{"id":5}`.
 
 ## WebForms pages (postbacks)
 
