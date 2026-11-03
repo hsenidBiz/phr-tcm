@@ -2297,7 +2297,12 @@ a new chat picks up from it.
 
 When you call `end_autorun_discovery`, it names the saves the session's browser sent that are
 not on the change list. A change accounts for one save, so three identical saves with one change
-recorded leave two. Name each in your summary, or record it first. For a one-off API call from
+recorded leave two, unless the entry lists `covers`: request lines like "POST /path" it accounts
+for however many times they were sent, for a batch. A POST that only reads (a search) or a GET that
+changes data is told once, with `route_kind` (route and kind) on `record_explore_change`: reads are
+never listed, and a writing GET is noted as a save. A prove that failed after its writes went out
+has them on the list already, as entries made by that prove. Name each in your summary, or record
+it first. For a one-off API call from
 the session's page, see `send_api_request` in the API template guide (`get_guide` with topic
 `api_templates`).
 

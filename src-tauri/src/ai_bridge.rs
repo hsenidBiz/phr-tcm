@@ -2004,6 +2004,110 @@ fn run_request_from(
     Ok((req, call.browser))
 }
 
+/// Said beside a failed prove that sent writes: the steps are named in
+/// `writes_that_ran`.
+pub const PROVE_WROTE: &str = "this prove failed after these write steps went out: what they created or changed is still there";
+
+/// The POST steps of `template` that went out in `report`, each as its name,
+/// its path with the values and what the run captured filled in (and its
+/// `?handler=`), and its status. A step went out when it has a status, or a
+/// postback or a plain step timed out after it was sent. A kept value
+/// (`var.*`) is never filled in: its placeholder stays, so no request line
+/// holds one.
+fn sent_post_steps<'a>(
+    template: &'a crate::api_templates::ApiTemplate,
+    report: &crate::api_templates::runner::RunReport,
+    vars: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Vec<(&'a str, String, Option<u16>)> {
+    use crate::api_templates::exec::{substitute_str, VAR_PREFIX};
+    use crate::api_templates::Method;
+    let mut with_captures: std::collections::BTreeMap<String, serde_json::Value> =
+        vars.iter().filter(|(k, _)| !k.starts_with(VAR_PREFIX)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    with_captures.extend(report.created.clone());
+    template
+        .steps
+        .iter()
+        .filter(|s| s.method() == Method::Post)
+        .filter_map(|s| {
+            // A postback that timed out after the post went out has no status but may have saved.
+            let ran = report.steps.iter().find(|r| {
+                r.name == s.name
+                    && (r.status.is_some()
+                        || r.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED)
+                        || r.detail.contains(crate::api_templates::runner::SENT_NO_ANSWER)
+                        || r.detail.contains(crate::api_templates::runner::MAYBE_SENT_NO_ANSWER))
+            })?;
+            let path = substitute_str(&s.address(), &with_captures);
+            // The `handler` says which save the page's address is.
+            let path = match s.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")) {
+                Some((_, handler)) => format!("{path}?handler={}", substitute_str(handler.trim(), &with_captures)),
+                None => path,
+            };
+            Some((s.name.as_str(), path, ran.status))
+        })
+        .collect()
+}
+
+/// Each POST step of `template` that went out in `report`, as
+/// `("POST", path)`: what `explore::note_writes` takes.
+pub fn sent_posts(
+    template: &crate::api_templates::ApiTemplate,
+    report: &crate::api_templates::runner::RunReport,
+    vars: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Vec<(String, String)> {
+    sent_post_steps(template, report, vars).into_iter().map(|(_, path, _)| ("POST".to_string(), path)).collect()
+}
+
+/// A failed prove's report as the answer: when write steps went out it also
+/// names them (`writes_that_ran`, with `PROVE_WROTE`), and - for an asker with
+/// an explore session - notes each as a save and keeps it on the change list
+/// as a `sent` change (`on_change_list`). With no write sent, the report as it
+/// is. No address, host or kept value goes into it.
+pub fn failed_prove_answer(
+    root: &std::path::Path,
+    explore: Option<&str>,
+    template: &crate::api_templates::ApiTemplate,
+    values: &serde_json::Map<String, serde_json::Value>,
+    report: &crate::api_templates::runner::RunReport,
+) -> String {
+    use crate::autorun::explore as ex;
+    let mut v = serde_json::to_value(report).unwrap_or_else(|_| serde_json::json!({ "ok": report.ok }));
+    let vars: std::collections::BTreeMap<String, serde_json::Value> =
+        crate::api_templates::with_defaults(template, values).into_iter().collect();
+    let hide = crate::api_templates::exec::hidden_values(values);
+    let sent: Vec<(&str, String, Option<u16>)> = sent_post_steps(template, report, &vars)
+        .into_iter()
+        .map(|(name, path, status)| (name, crate::api_templates::exec::hide_text(&path, &hide), status))
+        .collect();
+    if sent.is_empty() {
+        return v.to_string();
+    }
+    v["writes_that_ran"] = serde_json::json!(sent
+        .iter()
+        .map(|(name, path, status)| serde_json::json!({
+            "step": name,
+            "request": ex::request_line("POST", path),
+            "status": status,
+        }))
+        .collect::<Vec<_>>());
+    v["note"] = serde_json::json!(PROVE_WROTE);
+    if let Some(session) = explore {
+        let posts: Vec<(String, String)> = sent.iter().map(|(_, path, _)| ("POST".to_string(), path.clone())).collect();
+        let mut kept = ex::note_writes(root, session, &posts).map_err(|why| {
+            crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+        });
+        for (_, path, _) in &sent {
+            let line = ex::request_line("POST", path);
+            if let Err(why) = ex::record_prove_write(root, session, &template.id, &line) {
+                crate::applog::warn(format!("Auto Run explore session: a failed prove's write could not be kept: {why}"));
+                kept = Err(());
+            }
+        }
+        v["on_change_list"] = serde_json::json!(kept.is_ok());
+    }
+    v.to_string()
+}
+
 /// Said beside the report of a saved template that ran in the assistant's
 /// own explore session instead of a browser of its own.
 pub const RAN_IN_YOUR_SESSION: &str = "Ran in your explore session's browser, as its account.";
@@ -2086,32 +2190,7 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
 
     // Each POST step that was sent, by its path with the values and what the
     // run captured filled in.
-    let mut with_captures = vars;
-    with_captures.extend(report.created.clone());
-    let sent: Vec<(String, String)> = req
-        .template
-        .steps
-        .iter()
-        .filter(|s| s.method() == Method::Post)
-        // A postback that timed out after the post went out has no status but may have saved.
-        .filter(|s| {
-            report.steps.iter().any(|r| {
-                r.name == s.name && (r.status.is_some() || r.detail.contains(crate::api_templates::postback::MAY_HAVE_SAVED))
-            })
-        })
-        .map(|s| {
-            let path = crate::api_templates::exec::substitute_str(&s.address(), &with_captures);
-            // The `handler` says which save the page's address is.
-            let path = match s.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")) {
-                Some((_, handler)) => format!(
-                    "{path}?handler={}",
-                    crate::api_templates::exec::substitute_str(handler.trim(), &with_captures)
-                ),
-                None => path,
-            };
-            ("POST".to_string(), path)
-        })
-        .collect();
+    let sent = sent_posts(&req.template, report, &vars);
     if let Err(why) = ex::note_writes(root, &session, &sent) {
         crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
     }
@@ -2391,6 +2470,18 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
         return (500, sentence);
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
+    // A prove that failed after its write steps went out names them, and an
+    // asker in an explore session gets them on its change list.
+    if !report.ok && matches!(req.mode, Mode::Prove { .. }) {
+        let explore = match asker {
+            Some(n) => {
+                let slot = crate::commands::autorun::session_slot(n).lock().await;
+                slot.as_ref().and_then(|s| s.discovery.as_ref()).and_then(|d| d.explore_session()).map(str::to_string)
+            }
+            None => None,
+        };
+        text = failed_prove_answer(root, explore.as_deref(), &req.template, &req.values, &report);
+    }
     if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
         // A template run is not the caller's own browser's, so the hint asks
         // the caller's: a caller with no browser has none to free.
@@ -5223,7 +5314,7 @@ pub async fn try_in_session<D: crate::browser::cdp::Driver>(
         crate::browser::cdp::Driver::net_unmark(d, mark);
         let saves: Vec<(String, String)> = sent
             .iter()
-            .filter(|s| crate::browser::save_guard::SAVE_METHODS.contains(&s.method.as_str()))
+            .filter(|s| crate::autorun::explore::counts_as_save(root, &s.method, &s.path_query))
             .filter(|s| !crate::browser::save_guard::stopped_by_guard(s))
             .map(|s| (s.method.clone(), s.path_query.clone()))
             .collect();
@@ -7087,7 +7178,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     let mut writes = Vec::new();
     let mut blocked = Vec::new();
     for sent in sent {
-        if !crate::browser::save_guard::SAVE_METHODS.contains(&sent.method.as_str()) {
+        if !crate::autorun::explore::counts_as_save(root, &sent.method, &sent.path_query) {
             continue;
         }
         let path = without_typed(&crate::autorun::discovery_map::path_only(&sent.path_query), action);
@@ -7369,6 +7460,32 @@ pub fn record_change_in<B: DiscoveryBrowser>(
             Err(why) => explore_refusal(why),
         };
     }
+    // A route marked as one that only reads (or one that writes) is the
+    // project's, not the session's: it needs no going session.
+    let mut marked = None;
+    if let Some(mark) = v.get("route_kind").filter(|m| !m.is_null()) {
+        let route = mark.get("route").and_then(|r| r.as_str());
+        let kind = match mark.get("kind").and_then(|k| k.as_str()).map(|k| k.trim().to_ascii_lowercase()).as_deref() {
+            Some("reads") => Some(ex::RouteKind::Reads),
+            Some("writes") => Some(ex::RouteKind::Writes),
+            _ => None,
+        };
+        let (Some(route), Some(kind)) = (route, kind) else {
+            return (400, ex::ROUTE_SHAPE.to_string());
+        };
+        if let Err(why) = ex::set_route_kind(root, route, kind) {
+            return (400, why);
+        }
+        let said = format!(
+            "marked {} as {} for this project",
+            route.trim(),
+            if kind == ex::RouteKind::Reads { "reads" } else { "writes" }
+        );
+        if v.get("change").is_none() {
+            return (200, serde_json::json!(said).to_string());
+        }
+        marked = Some(said);
+    }
     let Some(browser) = slot.as_mut() else {
         return (409, ex::NO_EXPLORE_SESSION.to_string());
     };
@@ -7386,11 +7503,21 @@ pub fn record_change_in<B: DiscoveryBrowser>(
         Err(why) => return (400, why),
     };
     let request = v.get("request").and_then(|r| r.as_str()).map(str::to_string);
+    let covers = match ex::covers_from_args(&v) {
+        Ok(covers) => covers,
+        Err(why) => return (400, why),
+    };
     let captured: Vec<&crate::browser::net_capture::Captured> = crate::browser::cdp::Driver::capture(&*parts.driver)
         .map(|c| c.list(0, usize::MAX).0)
         .unwrap_or_default();
-    match ex::record_change(root, &session, change, request, &captured, since) {
-        Ok(recorded) => (200, serde_json::to_string(&recorded).unwrap_or_default()),
+    match ex::record_change_covering(root, &session, change, request, covers, &captured, since) {
+        Ok(recorded) => {
+            let mut out = serde_json::to_value(&recorded).unwrap_or_default();
+            if let Some(said) = marked {
+                out["route_kind"] = serde_json::json!(said);
+            }
+            (200, out.to_string())
+        }
         Err(why) => explore_refusal(why),
     }
 }
@@ -7583,7 +7710,7 @@ pub fn explore_changes(root: &std::path::Path, org: &str, project: &str, body: &
             Ok(s) if !ex::ran_in(&s, org, project) => (400, ex::other_project(&s)),
             Ok(s) => {
                 let mut out = serde_json::to_value(&s).unwrap_or_default();
-                out["saves_not_on_the_change_list"] = serde_json::json!(ex::unaccounted(&s));
+                out["saves_not_on_the_change_list"] = serde_json::json!(ex::unaccounted_in(root, &s));
                 // What an undo would delete, as the person is told it first.
                 out["verified_creates"] = serde_json::json!(ex::verified_creates(&s));
                 (200, out.to_string())
@@ -7780,6 +7907,16 @@ pub async fn send_in<B: DiscoveryBrowser>(
             }
         }
     }
+    // A GET to a route the project marked as one that changes data is a save
+    // too (`record_explore_change` with `route_kind`).
+    let writing_get = !posts && sent && ex::counts_as_save(root, "GET", &oo::request_path(&one));
+    if writing_get {
+        if let Some(session) = &session {
+            if let Err(why) = ex::note_writes(root, session, &[("GET".to_string(), oo::request_path(&one))]) {
+                crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+            }
+        }
+    }
     // The answer is the app's sign-in page: this discovery's account is signed
     // out. The answer is not shown (it is the sign-in page, not data), the
     // saved session is forgotten so the next discovery signs in afresh, and
@@ -7923,6 +8060,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
             }
         }
         (Effect::Edit, _, _) if sent => v["record_change"] = serde_json::json!(oo::edit_reminder(&request)),
+        _ if writing_get => v["record_change"] = serde_json::json!(oo::edit_reminder(&request)),
         (Effect::Delete, _, _) if sent => v["record_change"] = serde_json::json!(oo::delete_reminder(&request)),
         _ => {}
     }

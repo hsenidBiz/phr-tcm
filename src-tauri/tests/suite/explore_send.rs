@@ -1648,3 +1648,125 @@ async fn a_kept_value_stays_masked_in_the_browsers_capture_after_the_discovery()
     assert!(browser.as_ref().unwrap().discovery.as_ref().unwrap().kept.is_empty());
     assert_eq!(masked(&mut browser).len(), 1);
 }
+
+// ---- 78: a failed prove from an explore session ----
+
+/// The report of a prove of the sample template that sent its first write
+/// and was refused at its second.
+fn prove_failed_at_the_second_write() -> v2_lib::api_templates::runner::RunReport {
+    serde_json::from_value(json!({
+        "ok": false,
+        "template": "pms-create-draft-cycle",
+        "outputs": {},
+        "created": { "cycleId": 274 },
+        "steps": [
+            { "name": "Cycle setup", "handler": "SaveProgress", "status": 200, "ok": true, "detail": "" },
+            { "name": "Evaluation rules", "handler": "SaveEvalRulesProgress", "status": 400, "ok": false,
+              "detail": "expected status 200, got 400" }
+        ],
+        "failed": "Evaluation rules"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_failed_prove_from_an_explore_session_goes_on_its_change_list() {
+    use v2_lib::ai_bridge::{failed_prove_answer, PROVE_WROTE};
+    use v2_lib::autorun::explore::unaccounted;
+    let r = rig(vec![], None);
+    let session = begin(r.root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let values = json!({ "cycleName": "FY27" }).as_object().unwrap().clone();
+
+    let text = failed_prove_answer(
+        r.root.path(),
+        Some(&session),
+        &crate::api_templates_runner::template(),
+        &values,
+        &prove_failed_at_the_second_write(),
+    );
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["note"], PROVE_WROTE, "{v}");
+    assert_eq!(v["on_change_list"], true, "{v}");
+    assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(2), "{v}");
+
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 2, "{:?}", s.writes);
+    assert_eq!(s.changes.len(), 2, "{:?}", s.changes);
+    for entry in &s.changes {
+        assert_eq!(
+            entry.change,
+            Change::Sent { by: "made by a failed prove of pms-create-draft-cycle".to_string() },
+            "{entry:?}"
+        );
+        assert!(!entry.undone);
+    }
+    assert_eq!(s.changes[0].request.as_deref(), Some(format!("POST {PATH}?handler=SaveProgress").as_str()));
+    assert_eq!(s.changes[1].request.as_deref(), Some(format!("POST {PATH}?handler=SaveEvalRulesProgress").as_str()));
+    assert!(unaccounted(&s).is_empty(), "{:?}", unaccounted(&s));
+    let file = serde_json::to_string(&s).unwrap();
+    assert!(file.contains("\"change\":\"sent\""), "{file}");
+    assert!(!file.contains("example.internal"), "{file}");
+
+    // An asker with no explore session gets the names and no list.
+    let text = failed_prove_answer(
+        r.root.path(),
+        None,
+        &crate::api_templates_runner::template(),
+        &values,
+        &prove_failed_at_the_second_write(),
+    );
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(2), "{v}");
+    assert!(v.get("on_change_list").is_none(), "{v}");
+    assert_eq!(load(r.root.path(), &session).unwrap().changes.len(), 2);
+}
+
+#[test]
+fn a_sent_change_is_never_undone_or_taken_for_a_create() {
+    use v2_lib::autorun::explore::{mark_undone, verified_creates};
+    let r = rig(vec![], None);
+    let session = begin(r.root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let values = json!({ "cycleName": "FY27" }).as_object().unwrap().clone();
+    failed_prove(&r, &session, &values);
+    let s = load(r.root.path(), &session).unwrap();
+    assert!(verified_creates(&s).is_empty());
+    assert!(test_made::list(r.root.path()).is_empty());
+    // Set back by hand like any other entry, and listed as it was.
+    mark_undone(r.root.path(), &session, &[1]).unwrap();
+    assert!(load(r.root.path(), &session).unwrap().changes[0].undone);
+}
+
+fn failed_prove(r: &Rig, session: &str, values: &serde_json::Map<String, Value>) {
+    v2_lib::ai_bridge::failed_prove_answer(
+        r.root.path(),
+        Some(session),
+        &crate::api_templates_runner::template(),
+        values,
+        &prove_failed_at_the_second_write(),
+    );
+}
+
+/// 79: a GET to a route the project marked as one that changes data is a save.
+#[tokio::test]
+async fn a_get_to_a_writes_route_is_noted_as_a_save() {
+    use v2_lib::autorun::explore::{set_route_kind, unaccounted, RouteKind};
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })); 2], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/leave/approve", "query": { "id": "5" } } });
+
+    let (status, v) = send(&mut browser, &r, false, get.clone()).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(load(r.root.path(), &session).unwrap().writes.is_empty(), "a plain GET was noted");
+    assert!(v.get("record_change").is_none(), "{v}");
+
+    set_route_kind(r.root.path(), "GET /hr/leave/approve", RouteKind::Writes).unwrap();
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v["record_change"].is_string(), "{v}");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "{:?}", s.writes);
+    assert_eq!((s.writes[0].method.as_str(), s.writes[0].path.as_str()), ("GET", "/hr/leave/approve"));
+    assert_eq!(unaccounted(&s), vec!["GET /hr/leave/approve".to_string()]);
+}

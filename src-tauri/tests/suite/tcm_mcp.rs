@@ -4672,3 +4672,52 @@ fn a_bad_offset_is_refused_and_int_arg_reads_numbers_and_digits() {
     assert!(calls.borrow().is_empty());
     assert!(v.to_string().contains("`offset` must be a whole number"), "{v}");
 }
+
+/// 78 and 79: a failed prove names its writes, an entry can cover calls, and a route can be marked.
+#[test]
+fn the_explore_tools_take_covers_and_route_kind_and_prove_names_its_writes() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap().clone();
+
+    let record = tool("record_explore_change");
+    let props = &record["inputSchema"]["properties"];
+    assert_eq!(props["covers"]["type"], "array");
+    assert_eq!(props["covers"]["items"]["type"], "string");
+    assert_eq!(props["route_kind"]["type"], "object");
+    assert_eq!(props["route_kind"]["properties"]["kind"]["enum"], serde_json::json!(["reads", "writes"]));
+    assert_eq!(props["route_kind"]["required"], serde_json::json!(["route", "kind"]));
+    let says = record["description"].as_str().unwrap();
+    assert!(says.contains("covers") && says.contains("route_kind"), "{says}");
+    assert!(record["inputSchema"]["required"].as_array().map_or(true, |r| r.is_empty()), "{record}");
+
+    let prove = tool("prove_api_template")["description"].as_str().unwrap().to_string();
+    assert!(prove.contains("writes_that_ran") && prove.contains("change list"), "{prove}");
+    assert!(!prove.contains("nothing is rolled back"), "{prove}");
+    let changes = tool("get_explore_changes")["description"].as_str().unwrap().to_string();
+    assert!(changes.contains("covers"), "{changes}");
+
+    // Whole, to the change route.
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let args = serde_json::json!({
+        "change": "changed", "record": "R", "field": "F", "after": "1",
+        "covers": ["POST /a?handler=Save"], "route_kind": { "route": "POST /search", "kind": "reads" }
+    });
+    let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "record_explore_change", "arguments": args } });
+    handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+    let (m, p, b) = calls.borrow().last().unwrap().clone();
+    assert_eq!((m.as_str(), p.as_str()), ("POST", "/autorun-explore-change"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&b).unwrap(), args);
+
+    for name in ["record_explore_change", "prove_api_template", "get_explore_changes"] {
+        let text = tool(name).to_string();
+        assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{name} has a dash");
+        assert!(!text.contains("http"), "{name} names a URL");
+    }
+}

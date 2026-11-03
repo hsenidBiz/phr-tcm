@@ -21,6 +21,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
 - A call that worked is saved as an API template, or matched to one already saved: reuse a saved
   template rather than building the same call again.
 - End with `end_autorun_discovery`, and name every save it lists as not on the change list.
+- Mark a POST that only reads with route_kind once, rather than explaining it every time.
 - Undo or remove only when the person asks, from `get_explore_changes`: set changed fields back to
   their before value, and remove verified creates with `undo_explore_creates`. Before that, tell
   the person each record it will delete (kind, id and name) and wait for their yes in this chat;

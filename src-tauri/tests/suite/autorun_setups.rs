@@ -65,6 +65,7 @@ fn entry(n: u32, kind: &str, id: &str, name: &str, saved_ms: u64, id_at: Option<
         n,
         at: "2026-10-27T00:00:00Z".to_string(),
         change: Change::Created { kind: kind.into(), id: id.into(), name: name.into(), verified },
+        covers: vec![],
         request: Some("POST /hr/leave/save".to_string()),
         undone: false,
         proof: if verified {

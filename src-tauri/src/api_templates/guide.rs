@@ -583,7 +583,10 @@ The first failing step stops the run. Nothing is rolled back - the
 application has no undo - so the answer lists what had already been
 created, which step failed with its handler, and the start of the
 response. A failed prove saves nothing; fix the draft and prove again,
-remembering that whatever it created is still there.
+remembering that whatever it created is still there. When write steps had
+gone out, the answer lists them as `writes_that_ran` (step, request, status)
+and says so in `note`; in your explore session each is also put on the change
+list, so it is not left as a save nobody named.
 
 Limits: a carried WebForms page up to 8 MB, 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each
 response.

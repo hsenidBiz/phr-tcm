@@ -1055,7 +1055,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "record_explore_change",
-            "description": "Record every change of an explore session onto its change list: a record you created, changed or deleted. Call it as soon as the change is made, so it can be undone later and so the list outlives the chat. A created record is checked against the saves the session's own browser made, and only a create the app confirmed can be undone later: a save of the session answered with its id, and nothing the session saw or sent before (an edit's save, a read that showed it, a sign-in) carried that id. With `session` and `undone`, mark entries you set back by hand on a saved session, going or ended. Needs an explore session started with start_autorun_discovery (explore true), except for marking entries undone.",
+            "description": "Record every change of an explore session onto its change list: a record you created, changed or deleted. Call it as soon as the change is made, so it can be undone later and so the list outlives the chat. A created record is checked against the saves the session's own browser made, and only a create the app confirmed can be undone later: a save of the session answered with its id, and nothing the session saw or sent before (an edit's save, a read that showed it, a sign-in) carried that id. With `session` and `undone`, mark entries you set back by hand on a saved session, going or ended. One entry accounts for one save, unless it lists `covers`: request lines like \"POST /path\" it accounts for however many times they were sent, for a batch of identical saves. Mark a route once with `route_kind` (route and kind) instead of explaining it every time: a POST that only reads is never listed as a save, and a GET that changes data is noted as one; alone, it needs no change. Needs an explore session started with start_autorun_discovery (explore true), except for marking entries undone and routes.",
             "inputSchema": schema(serde_json::json!({
                 "change": { "type": "string", "enum": ["created", "changed", "deleted"], "description": "What happened to the record." },
                 "kind": { "type": "string", "description": "created or deleted: what the record is, such as a leave type or an employee." },
@@ -1069,11 +1069,21 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                 "request": { "type": "string", "description": "Optional: the save request that made the change, as METHOD and path." },
                 "session": { "type": "string", "description": "With `undone`: the saved session's id, from get_explore_changes." },
                 "undone": { "type": "array", "items": { "type": "number" }, "description": "With `session`: the numbers of the entries you set back by hand." },
+                "covers": { "type": "array", "items": { "type": "string" }, "description": "Optional: request lines like \"POST /path\" this entry accounts for however many times they were sent." },
+                "route_kind": {
+                    "type": "object",
+                    "description": "Optional: mark a route for this project, alone or with a change.",
+                    "properties": {
+                        "route": { "type": "string", "description": "The route, as METHOD and path, like \"POST /path\"." },
+                        "kind": { "type": "string", "enum": ["reads", "writes"], "description": "reads: a POST that only reads. writes: a GET that changes data." }
+                    },
+                    "required": ["route", "kind"]
+                },
             }), &[]),
         },
         {
             "name": "get_explore_changes",
-            "description": "The saved explore sessions of this project, newest first, each with its account, environment and how many changes it made and how many are undone. With `session`, that session's whole change list, the saves its browser sent that no change accounts for (one change accounts for one save), and its `verified_creates`: each with its kind, id, name and the request that proved it, which is what an undo would delete. Use it to pick up where an earlier chat stopped.",
+            "description": "The saved explore sessions of this project, newest first, each with its account, environment and how many changes it made and how many are undone. With `session`, that session's whole change list, the saves its browser sent that no change accounts for (one change accounts for one save, unless it lists `covers`), and its `verified_creates`: each with its kind, id, name and the request that proved it, which is what an undo would delete. Use it to pick up where an earlier chat stopped.",
             "inputSchema": schema(serde_json::json!({
                 "session": { "type": "string", "description": "Optional: one session's id, from the list this tool gives with none." },
             }), &[]),
@@ -1166,7 +1176,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "prove_api_template",
-            "description": "Run a draft API template in a fresh signed-in browser and save it only if every step passed. Every problem with the draft, the values or the account comes back together before anything runs. The first failing step stops the run and nothing is rolled back: the answer says which step failed, with the start of the response, and what had already been created. Proving an id that is already saved replaces it only with replace: true and a why. A string in `values` may be `{{var.name}}`: it is filled from a value you kept in your own discovery with `keep` on send_api_request (never shown in any answer), and the template stores the param, never the value. A step may be a WebForms postback (see the guide); a postback is never retried. Refused while the API templates switch on the AI Bridge tab is off. Call get_guide (topic api_templates) first for the format.",
+            "description": "Run a draft API template in a fresh signed-in browser and save it only if every step passed. Every problem with the draft, the values or the account comes back together before anything runs. The first failing step stops the run: the answer says which step failed, with the start of the response, and what had already been created. When write steps had gone out, it also lists them as `writes_that_ran` (step, request, status): what they created or changed is still there, and in your explore session each is put on its change list. Proving an id that is already saved replaces it only with replace: true and a why. A string in `values` may be `{{var.name}}`: it is filled from a value you kept in your own discovery with `keep` on send_api_request (never shown in any answer), and the template stores the param, never the value. A step may be a WebForms postback (see the guide); a postback is never retried. Refused while the API templates switch on the AI Bridge tab is off. Call get_guide (topic api_templates) first for the format.",
             "inputSchema": schema(serde_json::json!({
                 "template": { "type": "object", "description": "The draft, in the format get_guide (topic api_templates) describes - without `proven`, which the app writes." },
                 "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
