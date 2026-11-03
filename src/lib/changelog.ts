@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.4-beta.3",
+    date: "2026-11-04",
+    items: [
+      "The case editors have one Preview button, beside Add Step, that shows the preconditions and every step formatted at once.",
+      "Attach is now a small paperclip at the end of each step's row, and a step's file list appears only once it has a file.",
+    ],
+  },
+  {
     version: "2.4.4-beta.2",
     date: "2026-11-03",
     items: [
