@@ -126,6 +126,9 @@ pub fn relation_ops(
     // (index, new comment)
     let mut replaces: Vec<(usize, String)> = Vec::new();
     let mut adds: Vec<Value> = Vec::new();
+    // How many attachments with each path have been placed: the k-th use of a
+    // path takes the k-th upload of it (uploads are one per attachment).
+    let mut used: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     let mut carried: Vec<&str> = Vec::new();
 
     for (j, step) in steps.iter().enumerate() {
@@ -167,7 +170,10 @@ pub fn relation_ops(
                     notes.push(format!("\"{}\" could not be attached to step {}.", att.name, j + 1));
                     continue;
                 }
-                let Some(up) = uploaded.iter().find(|u| u.path == path) else {
+                let k = used.entry(path).or_insert(0);
+                let up = uploaded.iter().filter(|u| u.path == path).nth(*k);
+                *k += 1;
+                let Some(up) = up else {
                     notes.push(format!("\"{}\" was not uploaded, so it was not attached.", att.name));
                     continue;
                 };
@@ -255,6 +261,11 @@ pub fn document_ops(tc: &TestCase, final_ids: &[String], attach: &AttachmentInpu
         return AttachmentOps::default();
     }
     if final_ids.len() != tc.steps.len() {
+        crate::applog::warn(&format!(
+            "step attachments skipped: {} step ids written for {} steps",
+            final_ids.len(),
+            tc.steps.len()
+        ));
         return AttachmentOps {
             ops: vec![],
             notes: vec![

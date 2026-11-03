@@ -847,7 +847,7 @@ impl AdoClient {
         notes.extend(doc_notes);
         let guarded = ops.iter().any(|o| o["op"] == "test" && o["path"] == "/rev");
         self.patch_work_item_ops(organization, project, tc_id, ops).await.map_err(|e| match e {
-            AdoError::Http { status: 400 | 409 | 412, .. } if guarded => {
+            AdoError::Http { status, ref body } if guarded && is_failed_rev_test(status, body) => {
                 crate::applog::warn(&format!("attachment save of #{tc_id} refused: {e}"));
                 "This case changed in Azure DevOps after it was read, so nothing was saved. Upload it again."
                     .to_string()
@@ -2086,4 +2086,10 @@ fn stores_markdown(w: &serde_json::Value, field: &str) -> bool {
             k.eq_ignore_ascii_case(field) && v.as_str().is_some_and(|f| f.eq_ignore_ascii_case("markdown"))
         })
     })
+}
+
+/// Whether a PATCH refusal is the `test /rev` guard failing: 412, or a 400
+/// whose body names the test operation. Any other 400 is a rule refusal.
+fn is_failed_rev_test(status: u16, body: &str) -> bool {
+    status == 412 || (status == 400 && body.to_lowercase().contains("test operation"))
 }

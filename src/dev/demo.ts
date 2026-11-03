@@ -1156,7 +1156,7 @@ function applyPatches() {
         if (tc.tags.trim()) existing.tags = tc.tags;
         if (tc.preconditions.trim()) existing.preconditions = tc.preconditions;
       }
-      return ok(null);
+      return ok([]);
     },
 
     ensurePbiSuite: (_o: string, _p: string, pbiId: number) =>

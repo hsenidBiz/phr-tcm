@@ -67,8 +67,8 @@ impl AdoClient {
         }
     }
 
-    /// Upload every distinct local file named by a step attachment's `path`,
-    /// once each. The first failure returns its sentence.
+    /// Upload every local file named by a step attachment's `path`, once per
+    /// attachment (the same file on two steps is two blobs and two relations). The first failure returns its sentence.
     pub async fn upload_step_files(
         &self,
         organization: &str,
@@ -78,9 +78,6 @@ impl AdoClient {
         let mut done: Vec<Uploaded> = Vec::new();
         for att in steps.iter().flat_map(|s| s.attachments.iter()) {
             let Some(path) = att.path.as_deref() else { continue };
-            if done.iter().any(|u| u.path == path) {
-                continue;
-            }
             let (name, bytes) = read_step_file(path)?;
             let url = match self.upload_wi_attachment(organization, project, &name, bytes).await {
                 Ok(u) if !u.is_empty() => u,

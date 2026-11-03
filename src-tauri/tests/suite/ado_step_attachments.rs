@@ -134,7 +134,7 @@ fn read_step_file_refuses_over_cap_and_unc() {
 }
 
 #[tokio::test]
-async fn upload_step_files_posts_octet_stream_once_per_path() {
+async fn upload_step_files_posts_once_per_attachment() {
     let dir = temp_dir("up");
     let a = dir.join("a.png");
     let b = dir.join("b.log");
@@ -147,7 +147,7 @@ async fn upload_step_files_posts_octet_stream_once_per_path() {
         .respond_with(ResponseTemplate::new(201).set_body_json(
             json!({"id": "guid-a", "url": "https://x/_apis/wit/attachments/guid-a?fileName=a.png"}),
         ))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -164,14 +164,15 @@ async fn upload_step_files_posts_octet_stream_once_per_path() {
         name: n.into(),
         ..Default::default()
     };
-    // a.png appears on two steps: uploaded once.
+    // a.png is on two steps: it is uploaded twice (two blobs, as the spec says).
     let steps = vec![
         Step { attachments: vec![att(&a, "a.png"), att(&b, "b.log")], ..Default::default() },
         Step { attachments: vec![att(&a, "a.png")], ..Default::default() },
     ];
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let up = client.upload_step_files("o", "p", &steps).await.unwrap();
-    assert_eq!(up.len(), 2);
+    assert_eq!(up.len(), 3);
+    assert_eq!(up.iter().filter(|u| u.name == "a.png").count(), 2);
     let ua = up.iter().find(|u| u.name == "a.png").unwrap();
     assert_eq!(ua.guid, "guid-a");
     assert!(ua.url.contains("guid-a"));
@@ -369,4 +370,62 @@ async fn update_command_rev_mismatch_message_has_no_url() {
         .unwrap_err();
     assert!(err.contains("changed in Azure DevOps"), "{err}");
     assert!(!err.to_lowercase().contains("http"), "{err}");
+}
+
+#[tokio::test]
+async fn only_a_failed_rev_test_is_reported_as_a_concurrent_change() {
+    for (status, body, changed) in [
+        (412u16, json!({"message": "Precondition failed"}), true),
+        (400, json!({"message": "Test operation failed: the value of /rev did not match"}), true),
+        (400, json!({"message": "TF401320: Rule Error for field Title: too long"}), false),
+    ] {
+        let server = MockServer::start().await;
+        mount_relations(&server, json!([
+            {"rel": "AttachedFile", "url": "https://x/_apis/wit/attachments/g1", "attributes": {"name": "a.png", "comment": "[TestStep=2]:"}}
+        ])).await;
+        Mock::given(method("PATCH")).respond_with(ResponseTemplate::new(status).set_body_json(body)).mount(&server).await;
+        let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+        let mut tc = tc_with(vec![plain_step()]);
+        tc.removed_attachments = vec!["g1".into()];
+        let err = client
+            .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+            .await
+            .unwrap_err();
+        assert_eq!(err.contains("changed in Azure DevOps"), changed, "{status}: {err}");
+    }
+}
+
+#[tokio::test]
+async fn same_file_on_two_steps_is_two_blobs_and_two_distinct_relations() {
+    let dir = temp_dir("twice");
+    let f = dir.join("same.png");
+    std::fs::write(&f, b"png").unwrap();
+    let server = MockServer::start().await;
+    mount_relations(&server, json!([])).await;
+    let n = std::sync::atomic::AtomicUsize::new(0);
+    Mock::given(method("POST")).and(path("/org/proj/_apis/wit/attachments"))
+        .respond_with(move |_: &wiremock::Request| {
+            let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ResponseTemplate::new(201).set_body_json(json!({"id": format!("g{i}"), "url": format!("https://x/_apis/wit/attachments/g{i}")}))
+        })
+        .expect(2)
+        .mount(&server).await;
+    mount_patch_ok(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let att = || StepAttachment { path: Some(f.to_str().unwrap().into()), name: "same.png".into(), ..Default::default() };
+    let tc = tc_with(vec![
+        Step { attachments: vec![att()], ..plain_step() },
+        Step { attachments: vec![att()], ..plain_step() },
+    ]);
+    client
+        .update_test_case_with_attachments("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    let body = patch_bodies(&server.received_requests().await.unwrap()).pop().unwrap();
+    let adds: Vec<&serde_json::Value> = body.as_array().unwrap().iter().filter(|o| o["path"] == "/relations/-").collect();
+    assert_eq!(adds.len(), 2);
+    assert_ne!(adds[0]["value"]["url"], adds[1]["value"]["url"]);
+    assert_eq!(adds[0]["value"]["attributes"]["comment"], "[TestStep=2]:");
+    assert_eq!(adds[1]["value"]["attributes"]["comment"], "[TestStep=3]:");
+    let _ = std::fs::remove_dir_all(&dir);
 }
