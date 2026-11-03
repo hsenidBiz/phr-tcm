@@ -171,6 +171,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             cases::list_test_case_fields,
             cases::pbi_test_cases_full,
             cases::update_test_case,
+            cases::describe_step_files,
             queue::export_queue_json,
             testplan::list_plans_with_suites,
             runs::get_result_detail,

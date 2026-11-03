@@ -401,3 +401,50 @@ fn id_count_mismatch_gives_note_not_ops() {
     assert_eq!(notes.len(), 1);
     assert!(!notes[0].to_lowercase().contains("http"));
 }
+
+// ---- describe_step_files (metadata only) ----
+
+#[test]
+fn describe_refuses_folder_missing_and_big() {
+    use v2_lib::commands::cases::describe_step_files;
+    let dir = std::env::temp_dir().join(format!("att-describe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let small = dir.join("small.png");
+    std::fs::write(&small, b"12345").unwrap();
+    let big = dir.join("big.bin");
+    let f = std::fs::File::create(&big).unwrap();
+    f.set_len(26 * 1024 * 1024).unwrap();
+    let missing = dir.join("gone.txt");
+
+    let paths: Vec<String> = [&dir, &missing, &big, &small]
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let sub = dir.join("pick");
+    std::fs::create_dir_all(&sub).unwrap();
+    let mut paths = paths;
+    paths[0] = sub.to_string_lossy().into_owned();
+    let out = describe_step_files(paths.clone());
+    assert_eq!(out.len(), 4);
+    for c in &out[..3] {
+        assert!(c.refused.is_some(), "{} should be refused", c.path);
+        assert!(c.size.is_none());
+        // A sentence names the file, never the folder it sits in.
+        let s = c.refused.as_ref().unwrap();
+        assert!(!s.contains("att-describe-"), "path leaked: {s}");
+    }
+    assert!(out[2].refused.as_ref().unwrap().contains("big.bin"));
+    assert_eq!(out[3].refused, None);
+    assert_eq!(out[3].size, Some(5));
+    assert_eq!(out[3].name, "small.png");
+    assert_eq!(out[3].path, paths[3]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn describe_refuses_non_local_paths() {
+    use v2_lib::commands::cases::describe_step_files;
+    let out = describe_step_files(vec![r"\\server\share\a.png".into(), "relative/a.png".into()]);
+    assert!(out.iter().all(|c| c.refused.is_some() && c.size.is_none()));
+    assert!(!out[0].refused.as_ref().unwrap().contains("server"));
+}

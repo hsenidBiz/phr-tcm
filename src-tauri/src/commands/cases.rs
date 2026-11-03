@@ -271,3 +271,57 @@ pub async fn delete_test_cases(
         .delete_test_cases_permanently(&organization, &project, area.as_deref(), &ids)
         .await
 }
+
+/// What the step editor learns about one picked file.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct StepFileCheck {
+    pub path: String,
+    pub name: String,
+    pub size: Option<u32>,
+    /// A sentence naming the file (never its folder) when it cannot be attached.
+    pub refused: Option<String>,
+}
+
+/// Check files a person (or an assistant) picked for a step: exists, is a
+/// plain local file, within the size cap. Reads file metadata only, never
+/// contents.
+#[tauri::command]
+#[specta::specta]
+pub fn describe_step_files(paths: Vec<String>) -> Vec<StepFileCheck> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "that file".to_string());
+            let refused = |why: String| StepFileCheck {
+                path: path.clone(),
+                name: name.clone(),
+                size: None,
+                refused: Some(why),
+            };
+            if !crate::test_files::is_plain_local_path(&path) {
+                return refused(format!("\"{name}\" is not on a local drive, so it cannot be attached."));
+            }
+            let Ok(meta) = std::fs::metadata(&path) else {
+                return refused(format!("\"{name}\" could not be found, so it was not attached."));
+            };
+            if !meta.is_file() {
+                return refused(format!("\"{name}\" is not a file, so it cannot be attached."));
+            }
+            if meta.len() > crate::step_attachments::STEP_ATTACHMENT_MAX_BYTES {
+                return refused(format!(
+                    "\"{name}\" is larger than {} MB, so it cannot be attached.",
+                    crate::step_attachments::STEP_ATTACHMENT_MAX_BYTES / (1024 * 1024)
+                ));
+            }
+            StepFileCheck {
+                path: path.clone(),
+                name: name.clone(),
+                size: Some(meta.len() as u32),
+                refused: None,
+            }
+        })
+        .collect()
+}

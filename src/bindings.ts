@@ -263,6 +263,12 @@ export const commands = {
 	value: string,
 	markdown: boolean,
 } | null) => typedError<string[], string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
+	/**
+	 *  Check files a person (or an assistant) picked for a step: exists, is a
+	 *  plain local file, within the size cap. Reads file metadata only, never
+	 *  contents.
+	 */
+	describeStepFiles: (paths: string[]) => __TAURI_INVOKE<StepFileCheck[]>("describe_step_files", { paths }),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
@@ -6889,6 +6895,15 @@ export type StepAttachment_Serialize = {
 export type StepDialog = {
 	kind: string,
 	message: string,
+};
+
+/**  What the step editor learns about one picked file. */
+export type StepFileCheck = {
+	path: string,
+	name: string,
+	size: number | null,
+	/**  A sentence naming the file (never its folder) when it cannot be attached. */
+	refused: string | null,
 };
 
 export type StepRecord = StepRecord_Serialize | StepRecord_Deserialize;
