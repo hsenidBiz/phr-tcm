@@ -1602,3 +1602,115 @@ fn a_case_without_prerequisites_still_says_none() {
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<b>Prerequisites:</b> <span class='none'>None</span>"), "{html}");
 }
+
+// ---- step attachments ---------------------------------------------------
+
+/// A file written before step attachments existed loads with none, and
+/// exports with no attachment key anywhere.
+#[test]
+fn old_file_loads_identically() {
+    use v2_lib::import_parser::{parse_json_text, queue_to_json_string};
+    let text = r#"[{"id": 5, "title": "Old", "steps": [{"action": "Open", "expected": "Shown"}, {"shared": 9}]}]"#;
+    let out = parse_json_text(text).unwrap();
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert_eq!(out.cases.len(), 1);
+    assert!(out.cases[0].steps.iter().all(|s| s.attachments.is_empty()));
+    assert!(out.cases[0].removed_attachments.is_empty());
+    let exported = queue_to_json_string(&out.cases).unwrap();
+    assert!(!exported.contains("attachments"), "{exported}");
+}
+
+#[test]
+fn path_attachment_and_bad_entries() {
+    use v2_lib::import_parser::parse_json_text;
+    let dir = std::env::temp_dir().join("tcm-v2-import-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("shot.png");
+    std::fs::write(&file, b"x").unwrap();
+    let path = file.to_string_lossy().to_string();
+    let text = serde_json::json!([{
+        "title": "With files",
+        "steps": [
+            {"action": "Open", "expected": "Shown", "attachments": [
+                {"path": path},
+                {},
+                {"id": "11111111-aaaa", "name": "kept.docx", "size": 12, "comment": "note"},
+                {"path": r"\\server\share\x.png"}
+            ]},
+            {"shared": 7, "attachments": [{"path": path}]},
+        ],
+        "remove_attachments": ["22222222-bbbb"],
+    }])
+    .to_string();
+    let out = parse_json_text(&text).unwrap();
+    assert_eq!(out.cases.len(), 1);
+    let c = &out.cases[0];
+    let a = &c.steps[0].attachments;
+    assert_eq!(a.len(), 3, "{a:?}");
+    assert_eq!(a[0].path.as_deref(), Some(path.as_str()));
+    assert_eq!(a[0].name, "shot.png", "name comes from the file name");
+    assert_eq!(a[1].id.as_deref(), Some("11111111-aaaa"));
+    assert_eq!((a[1].name.as_str(), a[1].size, a[1].comment.as_str()), ("kept.docx", Some(12), "note"));
+    assert_eq!(a[2].name, "x.png", "a non-local path is kept so validate can say so");
+    assert!(c.steps[1].attachments.is_empty(), "never on a shared step");
+    assert_eq!(c.removed_attachments, vec!["22222222-bbbb".to_string()]);
+    let w = out.warnings.join("\n");
+    assert!(w.contains("step 1") && w.contains("attachment 2") && w.contains("neither"), "{w}");
+    assert!(w.contains("step 1") && w.contains("attachment 4") && w.contains("local"), "{w}");
+    assert!(w.contains("step 2") && w.contains("shared"), "{w}");
+}
+
+#[test]
+fn export_round_trip_keeps_attachments() {
+    use v2_lib::import_parser::{parse_json_text, queue_to_json_string};
+    use v2_lib::step_attachments::StepAttachment;
+    let queue = vec![TestCase {
+        title: "Round trip".into(),
+        steps: vec![
+            Step {
+                action: "Open".into(),
+                expected: "Shown".into(),
+                shared: None,
+                attachments: vec![
+                    StepAttachment { path: Some(r"C:\shots\login.png".into()), name: "login.png".into(), ..Default::default() },
+                    StepAttachment {
+                        id: Some("33333333-cccc".into()),
+                        name: "old.docx".into(),
+                        size: Some(40),
+                        comment: "hi".into(),
+                        ..Default::default()
+                    },
+                ],
+            },
+            Step { action: "Next".into(), expected: "".into(), shared: None, attachments: vec![] },
+        ],
+        update_id: Some(3),
+        removed_attachments: vec!["44444444-dddd".into()],
+        ..Default::default()
+    }];
+    let text = queue_to_json_string(&queue).unwrap();
+    let back = parse_json_text(&text).unwrap();
+    assert!(back.warnings.is_empty(), "{:?}", back.warnings);
+    assert_eq!(back.cases[0].steps, queue[0].steps);
+    assert_eq!(back.cases[0].removed_attachments, queue[0].removed_attachments);
+    assert!(!text.contains("\"attachments\": []"), "empty lists are not written: {text}");
+}
+
+/// Patching a draft in place writes a changed attachment list and removals,
+/// and leaves a step whose list did not change exactly as written.
+#[test]
+fn draft_write_back_carries_attachment_changes() {
+    use v2_lib::import_parser::{merge_cases_into_draft, parse_json_text};
+    use v2_lib::step_attachments::StepAttachment;
+    let old = r#"[{"id": 5, "title": "T", "steps": [{"action": "A", "expected": "B", "attachments": [{"id": "g1", "name": "a.png"}]}, {"step": "C", "result": "D"}]}]"#;
+    let mut cases = parse_json_text(old).unwrap().cases;
+    cases[0].steps[0].attachments.clear();
+    cases[0].removed_attachments = vec!["g1".into()];
+    cases[0].steps[1].attachments.push(StepAttachment { path: Some(r"C:\x\n.png".into()), name: "n.png".into(), ..Default::default() });
+    let out = merge_cases_into_draft(old, &cases).unwrap();
+    let back = parse_json_text(&out).unwrap().cases;
+    assert!(back[0].steps[0].attachments.is_empty());
+    assert_eq!(back[0].removed_attachments, vec!["g1".to_string()]);
+    assert_eq!(back[0].steps[1].attachments.len(), 1);
+    assert!(out.contains("\"step\"") && out.contains("\"result\""), "aliases kept: {out}");
+}

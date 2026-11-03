@@ -954,7 +954,12 @@ pub fn optimize_full(
         }
 
         let before = c.steps.len();
-        c.steps.retain(|s| s.shared.is_some() || !s.action.trim().is_empty() || !s.expected.trim().is_empty());
+        let (kept, emptied): (Vec<_>, Vec<_>) = std::mem::take(&mut c.steps)
+            .into_iter()
+            .partition(|s| s.shared.is_some() || !s.action.trim().is_empty() || !s.expected.trim().is_empty());
+        c.steps = kept;
+        // The files on a step that goes are unlinked at upload.
+        crate::step_attachments::note_removed_steps(&mut c.removed_attachments, &emptied);
         report.empty_steps_removed += before - c.steps.len();
 
         for (i, s) in c.steps.iter_mut().enumerate() {

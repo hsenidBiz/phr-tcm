@@ -86,18 +86,24 @@ pub enum Op {
     SplitStep { find: String, into: Vec<crate::steps_xml::Step> },
     /// Round 8 §7.2 - see normalise_citation_notes.
     NormaliseCitations,
+    /// Attach a local file to a step (1-based). Read at upload, never here.
+    AttachFile { path: String, step: usize },
+    /// Take a step attachment off by file name (case-insensitive), from one
+    /// step or every step. An existing one is unlinked at upload; a new one
+    /// is simply dropped.
+    RemoveAttachment { name: String, step: Option<usize> },
 }
 
 /// Every operation `parse_ops` accepts, in the order the tool description
 /// lists them. One list, two readers: the unknown-op refusal and the MCP
 /// tool description (mcp.rs) are both built from it, so an op can no
 /// longer be reachable and undocumented at the same time.
-pub const SUPPORTED_OPS: [&str; 25] = [
+pub const SUPPORTED_OPS: [&str; 27] = [
     "set_tags", "add_tags", "remove_tags", "set_module", "set_automation_status",
     "set_preconditions", "set_area", "set_reviewer_notes", "set_findings", "prefix_title", "suffix_title",
     "replace_in_title", "replace_in_steps", "replace_in_notes", "replace_in_preconditions",
     "normalise_citations", "prepend_step", "append_step", "remove_step_matching", "split_step",
-    "sort_by", "group_by", "dedupe", "remove_cases", "insert_cases",
+    "sort_by", "group_by", "dedupe", "remove_cases", "insert_cases", "attach_file", "remove_attachment",
 ];
 
 /// The writing guide's "Transform ops" section: which keys each op reads,
@@ -125,6 +131,9 @@ pub fn ops_reference() -> String {
         - prepend_step and append_step take `{{action, expected}}`; remove_step_matching takes \
         `{{value|find|action}}` (a substring of a step's action); split_step takes \
         `{{find, into: [{{action, expected}}, ...]}}` and replaces each matching step with that sequence.\n\
+        - attach_file takes `{{path, step}}` (a full local path, step counted from 1) and adds that \
+        file to the step; remove_attachment takes `{{name, step?}}` (the file name; every step when `step` \
+        is left out) and takes it off. Neither reaches Azure DevOps until the case is uploaded.\n\
         - remove_cases takes only a required `where`; insert_cases takes `{{cases}}` and optionally ONE \
         of at_index (zero-based), before or after (a title fragment) - without one it appends; dedupe \
         takes nothing (the first copy wins, nothing is merged).\n\n\
@@ -530,6 +539,34 @@ pub fn parse_ops_full(
                 }
                 Op::SplitStep { find, into }
             }
+            "attach_file" => {
+                let path = str_of(v, "path").trim().to_string();
+                if path.is_empty() {
+                    return Err(format!("{label}: attach_file needs \"path\" - the full local path of the file."));
+                }
+                if !crate::test_files::is_plain_local_path(&path) {
+                    return Err(format!(
+                        "{label}: attach_file \"path\" must be a full path on a local drive, like C:/shots/login.png."
+                    ));
+                }
+                let step = v["step"].as_u64().filter(|n| *n >= 1).ok_or(format!(
+                    "{label}: attach_file needs \"step\" - the step to attach to, counted from 1."
+                ))?;
+                Op::AttachFile { path, step: step as usize }
+            }
+            "remove_attachment" => {
+                let name = str_of(v, "name").trim().to_string();
+                if name.is_empty() {
+                    return Err(format!("{label}: remove_attachment needs \"name\" - the file name to take off."));
+                }
+                let step = match v.get("step") {
+                    None | Some(serde_json::Value::Null) => None,
+                    Some(n) => Some(n.as_u64().filter(|n| *n >= 1).ok_or(format!(
+                        "{label}: remove_attachment \"step\" must be a step number counted from 1."
+                    ))? as usize),
+                };
+                Op::RemoveAttachment { name, step }
+            }
             "remove_cases" => {
                 let f = &v["where"];
                 // `"x".contains("")` is true for every title, so an empty
@@ -598,6 +635,7 @@ pub fn parse_ops_full(
                         Some(Ok(p)) => Some(p),
                         Some(Err(why)) => return Err(format!("{label}: cases[{j}] ('{title}'): {why}")),
                     };
+                    let removed_attachments = crate::import_parser::removed_attachments_of(rv);
                     cases.push(TestCase {
                         title,
                         steps,
@@ -628,7 +666,7 @@ pub fn parse_ops_full(
                         tester_order: None,
                         // An inserted case starts with no findings.
                         findings: vec![],
-                        removed_attachments: vec![],
+                        removed_attachments,
                         source: Default::default(),
                     });
                 }
@@ -966,6 +1004,8 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
                             | Op::SetArea(_)
+                            | Op::AttachFile { .. }
+                            | Op::RemoveAttachment { .. }
                     )
                     .then(|| c.clone());
                     match other {
@@ -1068,6 +1108,12 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                 .filter(|s| !s.action.to_lowercase().contains(&needle))
                                 .cloned()
                                 .collect();
+                            let dropped: Vec<crate::steps_xml::Step> = c
+                                .steps
+                                .iter()
+                                .filter(|s| s.action.to_lowercase().contains(&needle))
+                                .cloned()
+                                .collect();
                             // A case with no steps does not survive the
                             // importer - it is skipped - so emptying one
                             // here deleted it from the draft while the
@@ -1082,6 +1128,9 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                 ));
                             } else {
                                 c.steps = kept;
+                                // The files on a removed step are unlinked
+                                // at upload; a new file is just gone.
+                                crate::step_attachments::note_removed_steps(&mut c.removed_attachments, &dropped);
                             }
                         }
                         Op::SplitStep { find, into } => {
@@ -1089,12 +1138,68 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             let mut rebuilt: Vec<crate::steps_xml::Step> = vec![];
                             for s in c.steps.drain(..) {
                                 if s.action.to_lowercase().contains(&needle) {
+                                    let first = rebuilt.len();
                                     rebuilt.extend(into.iter().cloned());
+                                    // The matched step's files stay with the
+                                    // first part.
+                                    if let Some(f) = rebuilt.get_mut(first) {
+                                        f.attachments.extend(s.attachments.iter().cloned());
+                                    }
                                 } else {
                                     rebuilt.push(s);
                                 }
                             }
                             c.steps = rebuilt;
+                        }
+                        Op::AttachFile { path, step } => {
+                            let name = crate::ado::attachments::step_file_name(path);
+                            match c.steps.get_mut(step - 1) {
+                                None => report.warnings.push(format!(
+                                    "'{}': it has no step {step}, so \"{name}\" was not attached.",
+                                    c.title
+                                )),
+                                Some(s) if s.shared.is_some() => report.warnings.push(format!(
+                                    "'{}': step {step} is a Shared Steps reference, which cannot carry \
+                                     attachments, so \"{name}\" was not attached.",
+                                    c.title
+                                )),
+                                Some(s) => {
+                                    if !s.attachments.iter().any(|a| a.path.as_deref() == Some(path.as_str())) {
+                                        s.attachments.push(crate::step_attachments::StepAttachment {
+                                            path: Some(path.clone()),
+                                            name,
+                                            ..Default::default()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        Op::RemoveAttachment { name, step } => {
+                            let mut found = false;
+                            for (j, s) in c.steps.iter_mut().enumerate() {
+                                if step.is_some_and(|n| n != j + 1) {
+                                    continue;
+                                }
+                                let (gone, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut s.attachments)
+                                    .into_iter()
+                                    .partition(|a| a.name.eq_ignore_ascii_case(name));
+                                s.attachments = keep;
+                                found |= !gone.is_empty();
+                                for a in gone {
+                                    if let Some(id) = a.id {
+                                        if !c.removed_attachments.contains(&id) {
+                                            c.removed_attachments.push(id);
+                                        }
+                                    }
+                                }
+                            }
+                            if !found {
+                                report.warnings.push(format!(
+                                    "'{}': no attachment named \"{name}\"{}, so nothing was removed.",
+                                    c.title,
+                                    step.map(|n| format!(" on step {n}")).unwrap_or_default()
+                                ));
+                            }
                         }
                         Op::NormaliseCitations => {
                             let (text, outcome) = normalise_citation_notes(&c.reviewer_notes);
@@ -1129,6 +1234,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             || before.reviewer_notes != c.reviewer_notes
                             || before.preconditions != c.preconditions
                             || before.area != c.area
+                            || before.removed_attachments != c.removed_attachments
                         {
                             modified += 1;
                         }
@@ -1155,7 +1261,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         "Normalised citations: {normalised} normalised, {exempted} exempted, \
                          {unchanged} unchanged, {by_hand} left for hand."
                     ));
-                } else if matches!(other, Op::SetArea(_)) {
+                } else if matches!(other, Op::SetArea(_) | Op::AttachFile { .. } | Op::RemoveAttachment { .. }) {
                     // Reported like the find-driven ops (`modified`, not
                     // `applied to`), because "touched" here is every case
                     // the filter selected and says nothing about whether
@@ -1273,6 +1379,10 @@ fn describe(op: &Op) -> String {
         Op::RemoveCases => "Removed cases".to_string(),
         Op::InsertCases { cases, .. } => format!("Inserted {} case(s)", cases.len()),
         Op::NormaliseCitations => "Normalised citations".to_string(),
+        Op::AttachFile { path, step } => {
+            format!("Attached '{}' to step {step}", crate::ado::attachments::step_file_name(path))
+        }
+        Op::RemoveAttachment { name, .. } => format!("Removed attachment '{name}'"),
     }
 }
 
@@ -1292,6 +1402,8 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
         "split_step" => &["op", "where", "value", "find", "into"],
         "remove_cases" | "dedupe" | "normalise_citations" => &["op", "where"],
         "insert_cases" => &["op", "where", "cases", "at_index", "before", "after"],
+        "attach_file" => &["op", "where", "path", "step"],
+        "remove_attachment" => &["op", "where", "name", "step"],
         _ => &["op", "where"],
     }
 }
@@ -1306,7 +1418,7 @@ fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
     const KNOWN: &[&str] = &[
         "title", "name", "test_case_name", "steps", "tags", "automation_status", "module",
         "module_value", "preconditions", "id", "test_case_id", "work_item_id", "update_id",
-        "spec_order", "tester_order", "priority",
+        "spec_order", "tester_order", "priority", "remove_attachments",
     ];
     let mut out = vec![];
     if let Some(obj) = rv.as_object() {
@@ -1326,7 +1438,8 @@ fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
                 for k in obj.keys() {
                     let known_step_key = crate::import_parser::STEP_ACTION_KEYS.contains(&k.as_str())
                         || crate::import_parser::STEP_EXPECTED_KEYS.contains(&k.as_str())
-                        || k == "shared";
+                        || k == "shared"
+                        || k == "attachments";
                     if !known_step_key && !out.contains(&format!("steps.{k}")) {
                         out.push(format!("steps.{k}"));
                     }

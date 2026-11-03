@@ -109,6 +109,17 @@ pub struct AttachmentOps {
     pub notes: Vec<String>,
 }
 
+/// Record that `dropped` steps were removed from a case: the GUIDs of their
+/// existing attachments are unlinked at upload (once each); a new file simply
+/// goes with the step.
+pub fn note_removed_steps(removed: &mut Vec<String>, dropped: &[Step]) {
+    for id in dropped.iter().flat_map(|s| s.attachments.iter()).filter_map(|a| a.id.as_ref()) {
+        if !removed.contains(id) {
+            removed.push(id.clone());
+        }
+    }
+}
+
 /// Whether saving `tc` has any attachment work to do.
 pub fn has_attachment_work(tc: &TestCase) -> bool {
     !tc.removed_attachments.is_empty() || tc.steps.iter().any(|s| !s.attachments.is_empty())

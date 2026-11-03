@@ -13785,6 +13785,19 @@ async fn validate_json(
                 if crate::steps_xml::contains_html_markup(&tc.preconditions) {
                     hits.push("preconditions".to_string());
                 }
+                // A new file must exist and fit the cap, judged by the same
+                // check the picker and the upload use. A path that is not a
+                // plain local one was already warned by the importer.
+                for (n, s) in tc.steps.iter().enumerate() {
+                    for att in s.attachments.iter().filter_map(|a| a.path.as_deref()) {
+                        if !crate::test_files::is_plain_local_path(att) {
+                            continue;
+                        }
+                        if let Err(why) = crate::ado::attachments::check_step_file(att) {
+                            warnings.push(format!("Test case {} ('{}') step {}: {why}", i + 1, tc.title, n + 1));
+                        }
+                    }
+                }
                 if !hits.is_empty() {
                     warnings.push(format!(
                         "Test case {} ('{}'): {} contains an HTML tag name in angle brackets, \
@@ -14625,6 +14638,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         ## Format\n\
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`, or `{{\"shared\": N}}` for a Shared Steps reference - keep those exactly as exported, never invent one),\n\
+        a step may carry `attachments`: `{{\"path\": \"C:/shots/login.png\"}}` attaches a new file (a full local path on this machine, 25 MB at most,\n\
+        never on a shared step), and an entry with an `id` is one already on the case, so keep those exactly as exported.\n\
+        To take an existing one off, delete its entry AND list its `id` in the case's `remove_attachments`; the case lets go of the file.\n\
+        `transform_cases` has `attach_file` and `remove_attachment` for bulk work,\n\
         `tags` (semicolon-separated, never commas),\n\
         `automation_status` (exactly {statuses}),\n\
         `priority` (optional, a number 1-4: a new case without one is created with 2,\n\
@@ -14889,10 +14906,12 @@ async fn test_cases(
                 .into(),
         ),
         (Some(pbi), ids) => {
-            let cases = match client.get_pbi_test_cases_full(&ctx.org, pbi, module_ref, preconditions_ref).await {
+            let mut cases = match client.get_pbi_test_cases_full(&ctx.org, pbi, module_ref, preconditions_ref).await {
                 Ok(c) => c,
                 Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
             };
+            // Existing step attachments, by name; a failed read only logs.
+            client.load_step_attachments(&ctx.org, &mut cases).await;
             let Some(ids) = ids else {
                 return (200, case_page(&cases, limit, offset, titles_only).to_string());
             };
@@ -14911,6 +14930,7 @@ async fn test_cases(
         }
         (None, Some(ids)) => match client.get_test_cases_by_ids(&ctx.org, &ids, module_ref, preconditions_ref).await {
             Ok(mut cases) => {
+                client.load_step_attachments(&ctx.org, &mut cases).await;
                 // The batch read answers in id order; give back the order asked.
                 cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));
                 (200, case_page(&cases, limit, offset, titles_only).to_string())
@@ -15259,6 +15279,7 @@ async fn suite_cases(
         .await
     {
         Ok(mut cases) => {
+            client.load_step_attachments(&ctx.org, &mut cases).await;
             // The work item read answers in id order; put the suite's own
             // order back so the page reads like the suite does.
             cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));

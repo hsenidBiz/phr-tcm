@@ -5283,3 +5283,97 @@ async fn the_agent_headers_do_not_take_room_from_the_body() {
     let over = post(port, &token, 65536 + 1024).await;
     assert!(over.starts_with("HTTP/1.1 413"), "a body over the cap was not refused: {over:?}");
 }
+
+// ---- step attachments ---------------------------------------------------
+
+/// `get_test_cases` shows a step's existing attachments by name and id -
+/// never the blob URL, and so never a host.
+#[tokio::test]
+async fn get_test_cases_shows_existing_step_attachments_without_urls() {
+    use wiremock::matchers::query_param;
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .and(query_param("$expand", "relations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 201, "rev": 4,
+                "relations": [
+                    { "rel": "AttachedFile", "url": "https://dev.azure.com/acme/_apis/wit/attachments/aaaa-1111?fileName=login.png",
+                      "attributes": { "name": "login.png", "resourceSize": 2048, "comment": "[TestStep=2]:" } },
+                    { "rel": "AttachedFile", "url": "https://dev.azure.com/acme/_apis/wit/attachments/bbbb-2222",
+                      "attributes": { "name": "whole-case.pdf", "comment": "" } },
+                ],
+            }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [case_json(201, "Login")]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/test-cases?ids=201", "", "1.10.3").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let atts = &v["test_cases"][0]["steps"][0]["attachments"];
+    assert_eq!(atts.as_array().map(Vec::len), Some(1), "{body}");
+    assert_eq!(atts[0]["name"], "login.png");
+    assert_eq!(atts[0]["id"], "aaaa-1111");
+    assert!(!body.contains("http") && !body.contains("_apis") && !body.contains("whole-case"), "no URL or host: {body}");
+}
+
+/// A bad attachment is a warning, named by case and step; a good one is not.
+#[tokio::test]
+async fn validate_warns_about_bad_step_attachments() {
+    let dir = std::env::temp_dir().join(format!("tcm-att-validate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let good = dir.join("good.png");
+    std::fs::write(&good, b"x").unwrap();
+    let big = dir.join("huge.bin");
+    std::fs::File::create(&big).unwrap().set_len(26 * 1024 * 1024).unwrap();
+    let missing = dir.join("gone.png");
+    let draft = serde_json::json!({ "test_cases": [{
+        "title": "Files",
+        "automation_status": "Not Automated",
+        "steps": [
+            { "action": "Open.", "expected": "Shown.", "attachments": [
+                { "path": good.to_string_lossy() },
+                { "path": missing.to_string_lossy() },
+                { "path": big.to_string_lossy() },
+                { "path": "//srv/share/x.png" },
+                {},
+            ]},
+            { "shared": 5, "attachments": [{ "path": good.to_string_lossy() }] },
+        ],
+    }]})
+    .to_string();
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.18.6").await;
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let all: Vec<String> = v["warnings"].as_array().unwrap().iter().map(|w| w.as_str().unwrap().to_string()).collect();
+    let has = |needles: &[&str]| all.iter().filter(|w| needles.iter().all(|n| w.contains(n))).count();
+    assert_eq!(has(&["Files", "step 1", "gone.png", "could not be found"]), 1, "{all:?}");
+    assert_eq!(has(&["Files", "step 1", "huge.bin", "25 MB"]), 1, "{all:?}");
+    assert_eq!(has(&["x.png", "local"]), 1, "reported once, by the importer: {all:?}");
+    assert_eq!(has(&["neither"]), 1, "{all:?}");
+    assert_eq!(has(&["step 2", "shared step"]), 1, "{all:?}");
+}
+
+#[tokio::test]
+async fn the_writing_guide_documents_step_attachments() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "allowedValues": ["Login"] })))
+        .mount(&server)
+        .await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.10.3").await;
+    assert_eq!(status, 200);
+    for needle in ["attachments", "remove_attachments", "25 MB", "local path", "never on a shared step", "attach_file"] {
+        assert!(body.contains(needle), "the writing guide should say {needle:?}");
+    }
+}

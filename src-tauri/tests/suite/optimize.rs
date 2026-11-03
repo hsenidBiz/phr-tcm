@@ -1561,3 +1561,29 @@ fn the_optimizer_keeps_shared_steps() {
     let (out, _) = optimize(vec![c], None);
     assert!(out[0].steps.iter().any(|s| s.shared == Some(812)), "{:?}", out[0].steps);
 }
+
+#[test]
+fn attachments_survive_optimize() {
+    use v2_lib::step_attachments::StepAttachment;
+    let att = StepAttachment { id: Some("g1".into()), name: "a.png".into(), size: Some(5), ..Default::default() };
+    let mut with = step("Open the form (see the spec for details)", "The form opens, because it does.");
+    with.attachments = vec![att.clone()];
+    let c = case("Attach", "Leave", "Signed in as Employee", vec![with, step("Save", "Saved.")]);
+    let (out, _) = optimize(vec![c], None);
+    let kept = out[0].steps.iter().find(|s| s.action.starts_with("Open the form")).expect("the step is still there");
+    assert_eq!(kept.attachments, vec![att], "tidying the text must not drop the file");
+}
+
+#[test]
+fn an_emptied_step_hands_its_existing_attachments_to_removed() {
+    use v2_lib::step_attachments::StepAttachment;
+    let mut empty = step("", "");
+    empty.attachments = vec![
+        StepAttachment { id: Some("g7".into()), name: "a.png".into(), ..Default::default() },
+        StepAttachment { path: Some("C:/x.png".into()), name: "x.png".into(), ..Default::default() },
+    ];
+    let c = case("Blank", "Leave", "", vec![empty, step("Save", "Saved.")]);
+    let (out, _) = optimize(vec![c], None);
+    assert!(out[0].steps.iter().all(|s| !s.action.is_empty()));
+    assert_eq!(out[0].removed_attachments, vec!["g7".to_string()]);
+}

@@ -264,6 +264,11 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
             },
             Some(id) => {
                 let mut warnings = vec![];
+                if rs.get("attachments").and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty()) {
+                    warnings.push(format!(
+                        "step {n}: a shared step cannot carry attachments - they are ignored."
+                    ));
+                }
                 if !action.is_empty() || !expected.is_empty() {
                     warnings.push(format!(
                         "step {n}: a shared step's 'action' and 'expected' are ignored - its steps live in Shared Steps #{id}."
@@ -284,9 +289,95 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
         };
         return StepRead { step: None, warnings };
     }
+    let (attachments, warnings) = read_attachments(rs, n);
     StepRead {
-        step: Some(Step { action: step_lines(&action), expected: step_lines(&expected), shared: None, attachments: vec![] }),
-        warnings: vec![],
+        step: Some(Step { action: step_lines(&action), expected: step_lines(&expected), shared: None, attachments }),
+        warnings,
+    }
+}
+
+/// A step's `attachments` list: `{path}` (a new local file), or `{id, name,
+/// size?, comment?}` (one Azure DevOps already holds, as exported). A bare
+/// string is a path. An entry with neither is dropped with a warning; a
+/// path that is not a plain local one is kept and warned, so `validate_cases`
+/// and the upload can name it. Whether the file exists is not checked here:
+/// it may be created later.
+fn read_attachments(rs: &serde_json::Value, n: usize) -> (Vec<crate::step_attachments::StepAttachment>, Vec<String>) {
+    use crate::step_attachments::StepAttachment;
+    let mut out = vec![];
+    let mut warnings = vec![];
+    let list = match rs.get("attachments") {
+        None | Some(serde_json::Value::Null) => return (out, warnings),
+        Some(serde_json::Value::Array(l)) => l,
+        Some(_) => {
+            warnings.push(format!("step {n}: 'attachments' must be a list - ignored."));
+            return (out, warnings);
+        }
+    };
+    let text = |v: &serde_json::Value, key: &str| {
+        v.get(key).and_then(|x| x.as_str()).map(str::trim).filter(|x| !x.is_empty()).map(str::to_string)
+    };
+    for (k, a) in list.iter().enumerate() {
+        let k = k + 1;
+        let (id, path) = match a {
+            serde_json::Value::String(p) if !p.trim().is_empty() => (None, Some(p.trim().to_string())),
+            serde_json::Value::Object(_) => (text(a, "id"), text(a, "path")),
+            _ => (None, None),
+        };
+        if let Some(id) = id {
+            let name = text(a, "name").unwrap_or_else(|| id.clone());
+            out.push(StepAttachment {
+                id: Some(id),
+                path: None,
+                name,
+                size: a.get("size").and_then(|x| x.as_u64()).and_then(|x| u32::try_from(x).ok()),
+                comment: a.get("comment").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            });
+        } else if let Some(path) = path {
+            let name = crate::ado::attachments::step_file_name(&path);
+            if !crate::test_files::is_plain_local_path(&path) {
+                warnings.push(format!(
+                    "step {n}: attachment {k} (\"{name}\") is not a plain local path, so it cannot be attached."
+                ));
+            }
+            out.push(StepAttachment { id: None, path: Some(path), name, size: None, comment: String::new() });
+        } else {
+            warnings.push(format!(
+                "step {n}: attachment {k} has neither an 'id' (one already on the case) nor a 'path' (a new file) - skipped."
+            ));
+        }
+    }
+    (out, warnings)
+}
+
+/// `remove_attachments` of one case object, warnings discarded - for callers
+/// with no warning channel (`insert_cases`).
+pub(crate) fn removed_attachments_of(v: &serde_json::Value) -> Vec<String> {
+    read_removed_attachments(v, "", "", &mut vec![])
+}
+
+/// A case's `remove_attachments`: GUIDs of existing step attachments to
+/// unlink. Anything but a list of strings is warned and ignored.
+fn read_removed_attachments(obj: &serde_json::Value, label: &str, title: &str, warnings: &mut Vec<String>) -> Vec<String> {
+    match obj.get("remove_attachments") {
+        None | Some(serde_json::Value::Null) => vec![],
+        Some(serde_json::Value::Array(l)) => {
+            let mut out: Vec<String> = vec![];
+            for v in l {
+                match v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(g) if !out.iter().any(|x| x == g) => out.push(g.to_string()),
+                    Some(_) => {}
+                    None => warnings.push(format!(
+                        "{label} ('{title}'): a 'remove_attachments' entry is not an attachment id - skipped."
+                    )),
+                }
+            }
+            out
+        }
+        Some(_) => {
+            warnings.push(format!("{label} ('{title}'): 'remove_attachments' must be a list - ignored."));
+            vec![]
+        }
     }
 }
 
@@ -540,6 +631,8 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             }
         }
 
+        let removed_attachments = read_removed_attachments(&raw_v, &label, &title, &mut warnings);
+
         if steps.is_empty() {
             warnings.push(format!(
                 "{label} ('{title}'): has no steps with an action - skipped."
@@ -562,7 +655,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             spec_order,
             tester_order,
             findings,
-            removed_attachments: vec![],
+            removed_attachments,
             source: crate::model::SourceIndex(Some(i)),
         });
     }
