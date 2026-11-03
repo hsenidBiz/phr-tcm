@@ -1808,14 +1808,18 @@ pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: cra
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    let kept = match asker {
+    let (kept, explore) = match asker {
         Some(n) => {
             let slot = crate::commands::autorun::session_slot(n).lock().await;
-            slot.as_ref().and_then(|s| s.discovery.as_ref()).map(|d| d.kept.clone()).unwrap_or_default()
+            let discovery = slot.as_ref().and_then(|s| s.discovery.as_ref());
+            (
+                discovery.map(|d| d.kept.clone()).unwrap_or_default(),
+                discovery.and_then(|d| d.explore_session()).map(str::to_string),
+            )
         }
         None => Default::default(),
     };
-    api_template_prove_with(kept, asker, ctx, body, open, open_db, timing).await
+    api_template_prove_with(kept, explore, asker, ctx, body, open, open_db, timing).await
 }
 
 /// Fills `{{var.name}}` in the strings of `values` from `kept` and adds each
@@ -1858,6 +1862,7 @@ pub fn fill_kept_values(
 /// `api_template_prove_for` with the asker's kept values handed in.
 pub async fn api_template_prove_with<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     kept: std::collections::BTreeMap<String, serde_json::Value>,
+    explore: Option<String>,
     asker: Option<SlotNo>,
     ctx: &BridgeContext,
     body: &str,
@@ -1919,7 +1924,7 @@ pub async fn api_template_prove_with<B: crate::api_templates::held::Keeps, D: cr
     // Whatever a sentence built outside the run quotes is hidden too.
     let hide = crate::api_templates::exec::hidden_values(&req.values);
     let (status, out) =
-        run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await;
+        run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, explore, open, open_db, timing).await;
     (status, crate::api_templates::exec::hide_text(&out, &hide))
 }
 
@@ -1959,7 +1964,7 @@ pub async fn api_template_run_for<B: crate::api_templates::held::Keeps, D: crate
         Ok(read) => read,
         Err(refused) => return refused,
     };
-    run_api_template_request(ctx, &root, req, None, which, asker, open, open_db, timing).await
+    run_api_template_request(ctx, &root, req, None, which, asker, None, open, open_db, timing).await
 }
 
 /// What `api_template_run` reads of its call: the saved template, the
@@ -2063,12 +2068,17 @@ pub fn sent_posts(
 /// an explore session - notes each as a save and keeps it on the change list
 /// as a `sent` change (`on_change_list`). With no write sent, the report as it
 /// is. No address, host or kept value goes into it.
+///
+/// `sentence` is the plain answer of a prove whose steps all passed but which
+/// saved nothing (a stage check refused it, or the save failed): with no write
+/// sent it is the answer as it is; with writes it becomes `message` beside them.
 pub fn failed_prove_answer(
     root: &std::path::Path,
     explore: Option<&str>,
     template: &crate::api_templates::ApiTemplate,
     values: &serde_json::Map<String, serde_json::Value>,
     report: &crate::api_templates::runner::RunReport,
+    sentence: Option<&str>,
 ) -> String {
     use crate::autorun::explore as ex;
     let mut v = serde_json::to_value(report).unwrap_or_else(|_| serde_json::json!({ "ok": report.ok }));
@@ -2080,7 +2090,10 @@ pub fn failed_prove_answer(
         .map(|(name, path, status)| (name, crate::api_templates::exec::hide_text(&path, &hide), status))
         .collect();
     if sent.is_empty() {
-        return v.to_string();
+        return sentence.map_or_else(|| v.to_string(), str::to_string);
+    }
+    if let Some(sentence) = sentence {
+        v["message"] = serde_json::json!(sentence);
     }
     v["writes_that_ran"] = serde_json::json!(sent
         .iter()
@@ -2253,6 +2266,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     existing: Option<&crate::api_templates::ApiTemplate>,
     which: crate::browser::launch::Browser,
     asker: Option<SlotNo>,
+    explore: Option<String>,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
@@ -2463,24 +2477,30 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     if changed {
         templates_changed(id);
     }
+    // A prove whose steps ran wrote to the site even when nothing was saved:
+    // its answer names those writes, and an explore session lists them.
+    let is_prove = matches!(req.mode, Mode::Prove { .. });
     if let Some(sentence) = incomplete {
-        return (502, sentence);
+        let said = if is_prove {
+            failed_prove_answer(root, explore.as_deref(), &req.template, &req.values, &report, Some(&sentence))
+        } else {
+            sentence
+        };
+        return (502, said);
     }
     if let Some(sentence) = not_saved {
-        return (500, sentence);
+        let said = if is_prove {
+            failed_prove_answer(root, explore.as_deref(), &req.template, &req.values, &report, Some(&sentence))
+        } else {
+            sentence
+        };
+        return (500, said);
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
     // A prove that failed after its write steps went out names them, and an
     // asker in an explore session gets them on its change list.
-    if !report.ok && matches!(req.mode, Mode::Prove { .. }) {
-        let explore = match asker {
-            Some(n) => {
-                let slot = crate::commands::autorun::session_slot(n).lock().await;
-                slot.as_ref().and_then(|s| s.discovery.as_ref()).and_then(|d| d.explore_session()).map(str::to_string)
-            }
-            None => None,
-        };
-        text = failed_prove_answer(root, explore.as_deref(), &req.template, &req.values, &report);
+    if !report.ok && is_prove {
+        text = failed_prove_answer(root, explore.as_deref(), &req.template, &req.values, &report, None);
     }
     if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
         // A template run is not the caller's own browser's, so the hint asks
@@ -7473,18 +7493,22 @@ pub fn record_change_in<B: DiscoveryBrowser>(
         let (Some(route), Some(kind)) = (route, kind) else {
             return (400, ex::ROUTE_SHAPE.to_string());
         };
-        if let Err(why) = ex::set_route_kind(root, route, kind) {
+        if let Err(why) = ex::check_route_kind(route, kind) {
             return (400, why);
         }
         let said = format!(
-            "marked {} as {} for this project",
+            "marked {} as {} in this environment",
             route.trim(),
             if kind == ex::RouteKind::Reads { "reads" } else { "writes" }
         );
         if v.get("change").is_none() {
-            return (200, serde_json::json!(said).to_string());
+            return match ex::set_route_kind(root, route, kind) {
+                Ok(()) => (200, serde_json::json!(said).to_string()),
+                Err(why) => (400, why),
+            };
         }
-        marked = Some(said);
+        // With a change, the mark is kept only once the change is taken.
+        marked = Some((route.to_string(), kind, said));
     }
     let Some(browser) = slot.as_mut() else {
         return (409, ex::NO_EXPLORE_SESSION.to_string());
@@ -7513,8 +7537,11 @@ pub fn record_change_in<B: DiscoveryBrowser>(
     match ex::record_change_covering(root, &session, change, request, covers, &captured, since) {
         Ok(recorded) => {
             let mut out = serde_json::to_value(&recorded).unwrap_or_default();
-            if let Some(said) = marked {
-                out["route_kind"] = serde_json::json!(said);
+            if let Some((route, kind, said)) = marked {
+                match ex::set_route_kind(root, &route, kind) {
+                    Ok(()) => out["route_kind"] = serde_json::json!(said),
+                    Err(why) => out["route_kind"] = serde_json::json!(format!("not marked: {why}")),
+                }
             }
             (200, out.to_string())
         }

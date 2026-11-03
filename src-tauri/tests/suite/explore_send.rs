@@ -1683,6 +1683,7 @@ fn a_failed_prove_from_an_explore_session_goes_on_its_change_list() {
         &crate::api_templates_runner::template(),
         &values,
         &prove_failed_at_the_second_write(),
+        None,
     );
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["note"], PROVE_WROTE, "{v}");
@@ -1714,6 +1715,7 @@ fn a_failed_prove_from_an_explore_session_goes_on_its_change_list() {
         &crate::api_templates_runner::template(),
         &values,
         &prove_failed_at_the_second_write(),
+        None,
     );
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(2), "{v}");
@@ -1743,6 +1745,7 @@ fn failed_prove(r: &Rig, session: &str, values: &serde_json::Map<String, Value>)
         &crate::api_templates_runner::template(),
         values,
         &prove_failed_at_the_second_write(),
+        None,
     );
 }
 

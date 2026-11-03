@@ -1571,7 +1571,7 @@ async fn the_tool_marks_a_route_alone_or_with_a_change_and_takes_covers() {
     let body = json!({ "route_kind": { "route": "POST /hr/search", "kind": "reads" } }).to_string();
     let (status, out) = record_change_in(&mut none, dir.path(), ORG, PROJECT, &body);
     assert_eq!(status, 200, "{out}");
-    assert_eq!(parsed(&out), json!("marked POST /hr/search as reads for this project"));
+    assert_eq!(parsed(&out), json!("marked POST /hr/search as reads in this environment"));
     assert!(load(dir.path(), &session).unwrap().changes.is_empty());
 
     let (mut browser, _) = slot(signin_app(true), explore_going(&session));
@@ -1599,6 +1599,34 @@ async fn the_tool_marks_a_route_alone_or_with_a_change_and_takes_covers() {
     .to_string();
     let (status, out) = record_change_in(&mut browser, dir.path(), ORG, PROJECT, &both);
     assert_eq!(status, 200, "{out}");
-    assert_eq!(parsed(&out)["route_kind"], "marked GET /hr/z as writes for this project", "{out}");
+    assert_eq!(parsed(&out)["route_kind"], "marked GET /hr/z as writes in this environment", "{out}");
     assert_eq!(route_kinds(dir.path()).get("get /hr/z"), Some(&RouteKind::Writes));
+}
+
+#[test]
+fn a_route_mark_sent_with_a_refused_change_is_not_kept() {
+    let (dir, session) = started();
+    let with = |change: Value| {
+        let mut b = json!({ "route_kind": { "route": "POST /hr/search", "kind": "reads" } });
+        for (k, v) in change.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        b.to_string()
+    };
+    // No session going.
+    let mut none: Option<FakeBrowser> = None;
+    let body = with(json!({ "change": "changed", "record": "R", "field": "F", "after": "1" }));
+    assert_eq!(record_change_in(&mut none, dir.path(), ORG, PROJECT, &body), (409, NO_EXPLORE_SESSION.to_string()));
+    assert!(route_kinds(dir.path()).is_empty());
+    // A change that is no change.
+    let (mut browser, _) = slot(signin_app(true), explore_going(&session));
+    assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &with(json!({ "change": "made" }))).0, 400);
+    assert!(route_kinds(dir.path()).is_empty());
+    // A covers line that is no request line.
+    let bad = with(json!({ "change": "changed", "record": "R", "field": "F", "after": "1", "covers": ["x"] }));
+    assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &bad).0, 400);
+    assert!(route_kinds(dir.path()).is_empty());
+    // Taken: kept.
+    assert_eq!(record_change_in(&mut browser, dir.path(), ORG, PROJECT, &body).0, 200);
+    assert_eq!(route_kinds(dir.path()).len(), 1);
 }

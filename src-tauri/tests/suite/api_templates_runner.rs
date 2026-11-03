@@ -973,6 +973,7 @@ mod through_the_bridge {
 
         let (status, out) = api_template_prove_with(
             kept,
+            None,
             Some(v2_lib::autorun::slots::SlotNo::MAIN),
             &ctx(),
             &call,
@@ -1136,6 +1137,42 @@ mod through_the_bridge {
         assert_eq!(store::load(root.path(), ORG, PROJECT, ID).unwrap(), None, "a failed prove still saves nothing");
     }
 
+    /// 78: a prove asked for by an explore session puts its writes on that
+    /// session's change list.
+    #[tokio::test]
+    async fn a_failed_prove_from_an_open_explore_session_goes_on_its_list() {
+        use v2_lib::ai_bridge::api_template_prove_with;
+        use v2_lib::autorun::explore::{begin, load, unaccounted, Change};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let ok = || answer(200, json!({ "success": true, "cycleId": 274 }));
+        let Rig { browsers, root, .. } = rig(vec![ok(), ok(), answer(400, json!({ "success": false }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        let session = begin(root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+
+        let (status, out) = api_template_prove_with(
+            BTreeMap::new(),
+            Some(session.clone()),
+            Some(v2_lib::autorun::slots::SlotNo::MAIN),
+            &ctx(),
+            &call_for(&with_posts(1)),
+            |_| browsers,
+            no_db,
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 502, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["on_change_list"], true, "{v}");
+        let s = load(root.path(), &session).unwrap();
+        assert_eq!(s.changes.len(), 3, "{:?}", s.changes);
+        assert!(s.changes.iter().all(|c| matches!(&c.change, Change::Sent { by } if by.contains(ID))));
+        assert_eq!(s.writes.len(), 3);
+        assert!(unaccounted(&s).is_empty(), "{:?}", unaccounted(&s));
+    }
+
     #[tokio::test]
     async fn a_prove_failing_before_any_write_names_none() {
         let _root = crate::serial::autorun();
@@ -1177,6 +1214,7 @@ mod through_the_bridge {
 
         let (status, out) = api_template_prove_with(
             kept,
+            None,
             Some(v2_lib::autorun::slots::SlotNo::MAIN),
             &ctx(),
             &call,
@@ -1418,6 +1456,12 @@ mod flows_through_the_bridge {
             .unwrap();
     }
 
+    /// The sentence of a prove that passed every step but saved nothing: the
+    /// answer's `message` when it names its writes, else the answer itself.
+    fn said(out: &str) -> String {
+        serde_json::from_str::<Value>(out).ok().and_then(|v| v["message"].as_str().map(str::to_string)).unwrap_or(out.to_string())
+    }
+
     fn run_body(id: &str, values: Value) -> String {
         json!({ "id": id, "account": "admin", "values": values }).to_string()
     }
@@ -1581,7 +1625,7 @@ mod flows_through_the_bridge {
         assert_eq!(status, 502, "{out}");
         assert!(out.contains("is still not done for cycleId"), "{out}");
         assert!(
-            out.starts_with(
+            said(&out).starts_with(
                 "every step passed, but Participants is still not done for cycleId 274, so the template was not saved; every step passed (1 steps)"
             ),
             "{out}"
@@ -1589,6 +1633,41 @@ mod flows_through_the_bridge {
         assert_eq!(asked(&db), ["setup", "rules", "participants"], "the gate, then its own stage");
         assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
         assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
+    }
+
+    /// 78: every step passed and wrote, but the stage check says it did not
+    /// land, so nothing is saved: the answer still names the writes.
+    #[tokio::test]
+    async fn a_prove_refused_by_its_stage_check_still_names_its_writes() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let r = rig(vec![answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(r.root.path().to_path_buf());
+        flow_store::save(r.root.path(), ORG, PROJECT, &flow()).unwrap();
+        let db = FakeStageDb::new()
+            .answer("/*setup*/", Ok(true))
+            .answer("/*rules*/", Ok(true))
+            .answer("/*participants*/", Ok(false));
+        let body = json!({
+            "template": template_on_stage(PARTICIPANTS, "Add the participants", "participants"),
+            "account": "admin",
+            "values": { "cycleId": 274 },
+        })
+        .to_string();
+        let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("not JSON ({e}): {out}"));
+        assert!(
+            v["message"].as_str().unwrap_or("").starts_with(
+                "every step passed, but Participants is still not done for cycleId 274, so the template was not saved"
+            ),
+            "{v}"
+        );
+        assert_eq!(v["writes_that_ran"].as_array().map(Vec::len), Some(1), "{v}");
+        assert_eq!(v["note"], v2_lib::ai_bridge::PROVE_WROTE, "{v}");
+        assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
     }
 
     #[tokio::test]
@@ -1644,7 +1723,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but the check for Participants could not be run - see the activity folder in Settings, Logs, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
         );
         assert_eq!(asked(&db), ["setup", "rules", "participants"]);
@@ -1677,7 +1756,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but the captured cycleId is not a number (cycleId is a number subject: give a whole number, 0 or more), so the template was not saved; every step passed (2 steps); cycleId 274 created"
         );
         assert!(!out.contains("could not be run"), "{out}");
@@ -1727,7 +1806,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, open, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but stage \"participants\" is no longer in flow pms-performance-cycle, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
         );
         assert_eq!(asked(&db), ["setup", "rules"], "the gate only - no check for a stage that is gone");
@@ -1762,7 +1841,7 @@ mod flows_through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &body, open, handed(&db), &quick()).await;
         assert_eq!(status, 502, "{out}");
         assert_eq!(
-            out,
+            said(&out),
             "every step passed, but this template's flow pms-performance-cycle is no longer saved, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
         );
         assert_eq!(asked(&db), ["setup", "rules"]);

@@ -1072,7 +1072,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                 "covers": { "type": "array", "items": { "type": "string" }, "description": "Optional: request lines like \"POST /path\" this entry accounts for however many times they were sent." },
                 "route_kind": {
                     "type": "object",
-                    "description": "Optional: mark a route for this project, alone or with a change.",
+                    "description": "Optional: mark a route for this environment, alone or with a change.",
                     "properties": {
                         "route": { "type": "string", "description": "The route, as METHOD and path, like \"POST /path\"." },
                         "kind": { "type": "string", "enum": ["reads", "writes"], "description": "reads: a POST that only reads. writes: a GET that changes data." }

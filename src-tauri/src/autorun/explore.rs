@@ -504,16 +504,22 @@ pub fn already_that_way(route: &str) -> String {
 pub const ROUTE_SHAPE: &str =
     "route_kind is { \"route\": \"POST /path\", \"kind\": \"reads\" | \"writes\" }";
 
-/// Marks `route` (`METHOD /path`) as one that only reads or one that
-/// writes, for this project. A mark the method already says (a read on a
-/// GET, a write on a POST, PUT, PATCH or DELETE) is refused.
-pub fn set_route_kind(root: &Path, route: &str, kind: RouteKind) -> Result<(), String> {
+/// The route as `request_line` makes it, when it may be marked `kind`.
+pub fn check_route_kind(route: &str, kind: RouteKind) -> Result<String, String> {
     let Some(line) = request_of(Some(route)) else { return Err(ROUTE_SHAPE.to_string()) };
     let method = line.split(' ').next().unwrap_or("");
     let is_save = crate::browser::save_guard::SAVE_METHODS.contains(&method);
     if (kind == RouteKind::Reads && !is_save) || (kind == RouteKind::Writes && is_save) {
         return Err(already_that_way(&line));
     }
+    Ok(line)
+}
+
+/// Marks `route` (`METHOD /path`) as one that only reads or one that
+/// writes, in this environment (the Auto Run root). A mark the method already says (a read on a
+/// GET, a write on a POST, PUT, PATCH or DELETE) is refused.
+pub fn set_route_kind(root: &Path, route: &str, kind: RouteKind) -> Result<(), String> {
+    let line = check_route_kind(route, kind)?;
     let _held = lock();
     let mut kinds = route_kinds_locked(root);
     kinds.insert(compared(&line), kind);
