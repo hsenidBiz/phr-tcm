@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { type PbiHit, type Step, type TestCase } from "../bindings";
-import { CaseTextField, PreviewToggle } from "../components/CaseText";
+import { CaseTextField } from "../components/CaseText";
 import DefaultTagsDialog from "../components/DefaultTagsDialog";
 import ModuleField from "../components/ModuleField";
 import PickPbiEmpty from "../components/PickPbiEmpty";
@@ -153,12 +153,16 @@ export default function ManualEntry({
                 value={preconditions}
                 onChange={setPreconditions}
               />
-              <PreviewToggle what="preconditions" on={previewPre} onToggle={() => setPreviewPre((p) => !p)} />
             </div>
           </div>
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted">Steps</p>
-            <StepsEditor steps={steps} onChange={setSteps} org={org} />
+            <StepsEditor
+              steps={steps}
+              onChange={setSteps}
+              org={org}
+              preview={{ on: previewPre, onToggle: () => setPreviewPre((p) => !p), what: "preconditions and steps" }}
+            />
           </div>
         </div>
         <Button disabled={!title.trim() || cleanSteps.length === 0} onClick={addManual}>

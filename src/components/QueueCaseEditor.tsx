@@ -8,7 +8,7 @@ import type { TestCase } from "../bindings";
 import { keptSteps } from "../lib/keptSteps";
 import { withSteps } from "../lib/stepAttachments";
 import { validateCase } from "../lib/validate";
-import { CaseTextField, PreviewToggle } from "./CaseText";
+import { CaseTextField } from "./CaseText";
 import ModuleField from "./ModuleField";
 import PrioritySelect from "./PrioritySelect";
 import StepsEditor from "./StepsEditor";
@@ -97,7 +97,6 @@ export default function QueueCaseEditor({
           value={tc.preconditions}
           onChange={(v) => setTc((t) => ({ ...t, preconditions: v }))}
         />
-        <PreviewToggle what="preconditions" on={previewPre} onToggle={() => setPreviewPre((p) => !p)} />
       </div>
       {/* In-app note: round-trips through the JSON export, never sent to ADO. */}
       <Textarea
@@ -108,7 +107,12 @@ export default function QueueCaseEditor({
         onChange={(e) => setTc((t) => ({ ...t, comment: e.target.value }))}
       />
 
-      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => withSteps(t, steps))} />
+      <StepsEditor
+        steps={tc.steps}
+        org={org}
+        onChange={(steps) => setTc((t) => withSteps(t, steps))}
+        preview={{ on: previewPre, onToggle: () => setPreviewPre((p) => !p), what: "preconditions and steps" }}
+      />
 
       <div className="flex items-center gap-3">
         <Button

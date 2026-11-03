@@ -166,7 +166,7 @@ export const manualEntry: Screen = {
     },
   ],
   tips: [
-    "Attach files to a step: press **Attach** under the step, pick one or more files, and they are listed under it with their size. Each file can be up to 25 MB. Press the x on a file to take it off the step. Steps that use Shared Steps cannot carry files. A copied case does not carry the originals' attachments.",
+    "Attach files to a step: press the paperclip at the end of the step's row, pick one or more files, and they are listed under the step with their size. Each file can be up to 25 MB. Press the x on a file to take it off the step. Steps that use Shared Steps cannot carry files. A copied case does not carry the originals' attachments.",
     "Nothing reaches Azure DevOps until you review the queue and confirm the upload on Import Test Cases or here.",
     "A case written here is always created new. To change a case already in Azure DevOps, use Update Test Cases, or import a file that carries its id.",
     "The queue is kept on this computer for each Product Backlog Item, so closing the app never loses it.",
