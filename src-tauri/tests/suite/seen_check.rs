@@ -3688,6 +3688,43 @@ fn a_loop_tried_since_and_passed_saves() {
     assert_eq!(loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None).refusals.len(), 1);
 }
 
+/// What a discovery try files for the loop, when it files anything
+/// (`ai_bridge::loop_rows_verdict`), as the bridge files it.
+fn file_try(map: &mut DiscoveryMap, outcome: &v2_lib::browser::actions::ActionOutcome, at: u64) {
+    if let Some(refused) = v2_lib::ai_bridge::loop_rows_verdict(outcome) {
+        record_loop_rows(&mut map.areas[0], rows(&["A"], refused.as_deref(), at));
+    }
+}
+
+#[test]
+fn a_try_that_never_ran_the_guard_leaves_an_older_refusal_in_place() {
+    use v2_lib::browser::actions::ActionOutcome;
+    let mut map = map_tried(vec![rows(&["A"], Some("refused"), 5)]);
+    // Found nothing, or none of the protected texts was on the page: it passed, but never asked.
+    file_try(&mut map, &ActionOutcome::passed(".delete: ran 0 passes, none left"), 9);
+    let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
+    assert_eq!(review.refusals.len(), 1, "{review:?}");
+    // One that went past a real check replaces it with a pass.
+    let told_apart = format!(".delete: ran 1 pass, none left; {}", v2_lib::browser::repeat::ROWS_TOLD_APART_MARK);
+    file_try(&mut map, &ActionOutcome::passed(told_apart), 12);
+    let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
+    assert!(review.refusals.is_empty() && review.notes.is_empty(), "{review:?}");
+}
+
+#[test]
+fn a_refused_try_still_files_its_refusal() {
+    use v2_lib::browser::actions::ActionOutcome;
+    let mut map = map_tried(vec![rows(&["A"], None, 5)]);
+    let said = format!(".delete: 2 matches found, but {} \"A\" is on the page", v2_lib::browser::repeat::EXCEPT_GUARD_MARK);
+    file_try(&mut map, &ActionOutcome::failed(said), 9);
+    assert_eq!(loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None).refusals.len(), 1);
+    // A failure for another reason files nothing.
+    let mut map = map_tried(vec![rows(&["A"], None, 5)]);
+    file_try(&mut map, &ActionOutcome::failed(".delete: still 2 rows after max 3 passes"), 9);
+    let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
+    assert!(review.refusals.is_empty(), "{review:?}");
+}
+
 #[test]
 fn an_untried_loop_with_except_saves_with_a_note() {
     let map = map_tried(vec![rows(&["Other"], Some("refused"), 5)]);

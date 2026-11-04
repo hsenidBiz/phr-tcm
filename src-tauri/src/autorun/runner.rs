@@ -1955,6 +1955,9 @@ async fn repeat_while_visible<D: Driver>(
     let row_wait_ms = settle_ms.map_or(ROW_GONE_WAIT_MS, u64::from);
     // What passes ended quietly because their row had already gone.
     let mut notes: Vec<String> = Vec::new();
+    // Whether the first look had a match whose row read an except text: the
+    // rows were told apart, which is what `except_guard` asks.
+    let mut told_apart = false;
     loop {
         if passes > 0 && here.stop_heard() {
             return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
@@ -1964,6 +1967,9 @@ async fn repeat_while_visible<D: Driver>(
             Err(e) if e.is_transient() => Vec::new(),
             Err(e) => return (crate::browser::actions::harness(e), None),
         };
+        if passes == 0 {
+            told_apart = !except.is_empty() && found.iter().any(|m| m.kept.is_some());
+        }
         // Before the FIRST pass only: rows that cannot be told apart
         // delete nothing (`repeat::except_guard`).
         if passes == 0 && !except.is_empty() && !found.is_empty() && found.iter().all(|m| m.kept.is_none()) {
@@ -1990,7 +1996,8 @@ async fn repeat_while_visible<D: Driver>(
             let said = passes_said(passes);
             let kept_said = kept_said(&kept);
             let noted = if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) };
-            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}{noted}")), None);
+            let told = if told_apart { format!("; {}", repeat::ROWS_TOLD_APART_MARK) } else { String::new() };
+            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}{noted}{told}")), None);
         };
         if (!except.is_empty() || scoped) && !next.row {
             let why = format!(
