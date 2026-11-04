@@ -216,11 +216,6 @@ pub async fn except_on_page<D: Driver>(d: &mut D, except: &[String], found: &[Ma
     Ok(shown)
 }
 
-/// Said by a passed loop's outcome when its first look found matches and at
-/// least one match's row read an except text: the rows can be told apart,
-/// which is what `except_guard` asks. A pass without it never asked.
-pub const ROWS_TOLD_APART_MARK: &str = "its rows were told apart by their protected texts";
-
 /// The fixed part of `except_guard`'s sentence, for telling it in an outcome.
 pub const EXCEPT_GUARD_MARK: &str = "no match's row reads an except text although";
 

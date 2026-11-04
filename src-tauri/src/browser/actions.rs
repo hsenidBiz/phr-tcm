@@ -1252,6 +1252,13 @@ pub struct ActionOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub guard: Option<GuardTrace>,
+    /// A `repeat_while_visible` with `except` whose first look had a match
+    /// whose row read an except text: its rows can be told apart, which is
+    /// what `repeat::except_guard` asks. In memory only, as `page_step`, for
+    /// whoever files what a try found (`ai_bridge::loop_rows_verdict`).
+    #[serde(skip)]
+    #[specta(skip)]
+    pub rows_told_apart: bool,
 }
 
 /// One guard's record: whether its `then` ran (a `when_visible` that showed,

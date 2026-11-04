@@ -1860,6 +1860,65 @@ fn an_except_loop_checks_its_rows_before_the_first_pass() {
     let plain = loop_with(json!([]));
     assert!(!plain.contains("no match's row reads an except text"), "{plain}");
     assert!(!plain.contains("onPage"), "{plain}");
+    // The first pass reads the page once: the guard rides on the same look.
+    assert_eq!(got.matches("evaluateAll(").count(), 1, "{got}");
+}
+
+/// The rows may sit in a frame while the protected text is on the top page:
+/// the guard asks the page `cur` too, as Auto Run asks the top document.
+#[test]
+fn an_except_loop_in_a_frame_also_asks_the_top_document() {
+    let got = one_step(json!([{
+        "kind": "repeat_while_visible", "selector": [{ "css": "iframe#list" }, { "css": ".delete" }], "max": 3,
+        "except": ["Customer Focus"], "then": [{ "kind": "click", "selector": { "css": "#confirm" } }]
+    }]))
+    .run()
+    .unwrap();
+    let ask = got.find("await cur.evaluate((except) =>").expect("the top document is asked");
+    let first_pass = got.find("await cur.locator('#confirm')").expect("the then action");
+    assert!(ask < first_pass, "{got}");
+    assert!(got.contains("contentFrame()"), "{got}");
+}
+
+/// The emitted loop parses as JavaScript and throws the guard's sentence
+/// before any `then` action runs, with a page that holds a protected text no
+/// row reads.
+#[test]
+fn the_exported_except_loop_parses_and_refuses_before_acting() {
+    use std::process::Command;
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated loop was not run");
+        return;
+    }
+    let got = lf(&one_step(json!([{
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3, "except": ["Core Competencies"],
+        "then": [{ "kind": "click", "selector": { "css": "#confirm" } }]
+    }]))
+    .run()
+    .unwrap());
+    let from = got.find("    const except = [").expect("the loop");
+    let end_marker = "e.removeAttribute('data-autorun-row')));
+";
+    let end = from + got[from..].find(end_marker).expect("its end") + end_marker.len();
+    let block = &got[from..end];
+    // `cur` finds two matches (no rows) and a page that shows the protected text.
+    let script = format!(
+        "const clicks = [];
+const expect = () => ({{ toHaveCount: async () => {{}} }});
+globalThis.document = {{ querySelectorAll: () => [], body: {{ innerText: 'Core Competencies' }} }};
+const els = [{{ ownerDocument: document }}, {{ ownerDocument: document }}];
+const cur = {{ locator: () => ({{ filter: () => cur.locator(), first: () => cur.locator(), nth: () => cur.locator(), evaluateAll: async (fn, arg) => fn(els, arg), click: async () => clicks.push('click') }}), evaluate: async (fn, arg) => fn(arg) }};
+(async () => {{
+{block}}})().then(() => {{ console.log('NO THROW'); process.exit(2); }}, (e) => {{ console.log(e.message + '|' + clicks.length); }});
+"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("loop.js");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("no match's row reads an except text although") && said.trim().ends_with("|0"), "{said}
+{}", String::from_utf8_lossy(&out.stderr));
 }
 
 #[test]

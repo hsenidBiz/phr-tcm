@@ -3697,6 +3697,27 @@ fn file_try(map: &mut DiscoveryMap, outcome: &v2_lib::browser::actions::ActionOu
 }
 
 #[test]
+fn the_bridge_files_one_record_per_loop_with_except_and_only_with_a_verdict() {
+    use v2_lib::browser::actions::{Action, ActionOutcome};
+    let act = |except: serde_json::Value| -> Action {
+        serde_json::from_value(serde_json::json!({
+            "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 5, "except": except,
+            "then": [ { "kind": "click", "selector": [ { "css": "[data-autorun-row]" }, { "css": ".delete" } ] } ]
+        }))
+        .unwrap()
+    };
+    let told = ActionOutcome { rows_told_apart: true, ..ActionOutcome::passed("done") };
+    let filed = v2_lib::ai_bridge::loop_rows_to_file(&act(serde_json::json!(["A"])), &told, 7);
+    assert_eq!(filed, vec![rows(&["A"], None, 7)]);
+    assert!(v2_lib::ai_bridge::loop_rows_to_file(&act(serde_json::json!([])), &told, 7).is_empty(), "no except");
+    assert!(v2_lib::ai_bridge::loop_rows_to_file(&act(serde_json::json!(["A"])), &ActionOutcome::passed("done"), 7).is_empty(), "never asked");
+    let refused = ActionOutcome::failed(format!("x {} \"A\" is on the page", v2_lib::browser::repeat::EXCEPT_GUARD_MARK));
+    let filed = v2_lib::ai_bridge::loop_rows_to_file(&act(serde_json::json!(["A"])), &refused, 8);
+    assert_eq!(filed.len(), 1);
+    assert!(filed[0].refused.is_some());
+}
+
+#[test]
 fn a_try_that_never_ran_the_guard_leaves_an_older_refusal_in_place() {
     use v2_lib::browser::actions::ActionOutcome;
     let mut map = map_tried(vec![rows(&["A"], Some("refused"), 5)]);
@@ -3705,8 +3726,8 @@ fn a_try_that_never_ran_the_guard_leaves_an_older_refusal_in_place() {
     let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
     assert_eq!(review.refusals.len(), 1, "{review:?}");
     // One that went past a real check replaces it with a pass.
-    let told_apart = format!(".delete: ran 1 pass, none left; {}", v2_lib::browser::repeat::ROWS_TOLD_APART_MARK);
-    file_try(&mut map, &ActionOutcome::passed(told_apart), 12);
+    let told_apart = ActionOutcome { rows_told_apart: true, ..ActionOutcome::passed(".delete: ran 1 pass, none left") };
+    file_try(&mut map, &told_apart, 12);
     let review = loop_rows_review(&map, &delete_loop(serde_json::json!(["A"])), None);
     assert!(review.refusals.is_empty() && review.notes.is_empty(), "{review:?}");
 }

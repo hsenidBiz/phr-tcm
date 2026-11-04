@@ -1282,44 +1282,8 @@ impl Em<'_> {
         self.line(indent, "{");
         let i = indent + 2;
         self.line(i, &format!("const except = {except_js};"));
-        if !except.is_empty() {
-            // Before the first pass, `repeat::except_guard`'s check, run in the
-            // page with the app's own scripts: matches found, none of their
-            // rows reads an except text, yet one is on the page - so a
-            // protected row could be among the matches. Nothing is deleted
-            // before the throw.
-            let why = |s: &str| serde_json::to_string(s).map_err(|e| Untranslatable(e.to_string()));
-            let found_but = why(&format!(" found, but {EXCEPT_GUARD_MARK} \""))?;
-            let on_page = why("\" is on the page: point selector at something inside each row, so each row holds its own name")?;
-            self.line(i, &format!("const unclear = await {all}.evaluateAll((els, except) => {{"));
-            let mut js = |name: &str, body: &str| {
-                let mut lines = body.lines();
-                if let Some(first) = lines.next() {
-                    self.line(i + 2, &format!("const {name} = {first}"));
-                }
-                for l in lines {
-                    self.line(i + 2, l);
-                }
-            };
-            js("rowOf", &format!("{ROW_OF_JS};"));
-            js("keptOf", &format!("{KEPT_OF_JS};"));
-            js("onPage", &format!("{EXCEPT_ON_PAGE_JS};"));
-            for l in [
-                "if (!els.length) return null;".to_string(),
-                "if (els.some((e) => { const row = rowOf(e); return row && keptOf(row, except) !== null; })) return null;".to_string(),
-                "const shown = [];".to_string(),
-                "for (const t of [document, ...els].flatMap((e) => onPage.call(e, except))) if (!shown.includes(t)) shown.push(t);".to_string(),
-                "if (!shown.length) return null;".to_string(),
-                format!(
-                    "return els.length + (els.length === 1 ? ' match' : ' matches') + {found_but} + shown[0] + {on_page};"
-                ),
-            ] {
-                self.line(i + 2, &l);
-            }
-            self.line(i, "}, except);");
-            self.line(i, "if (unclear) throw new Error(unclear);");
-        }
-        self.line(i, &format!("const pick = () => {all}.evaluateAll((els, except) => {{"));
+        let guarded = !except.is_empty();
+        self.line(i, &format!("const pick = (first) => {all}.evaluateAll((els, [except, first]) => {{"));
         let mut js = |name: &str, body: &str| {
             let mut lines = body.lines();
             if let Some(first) = lines.next() {
@@ -1331,25 +1295,72 @@ impl Em<'_> {
         };
         js("rowOf", &format!("{ROW_OF_JS};"));
         js("keptOf", &format!("{KEPT_OF_JS};"));
+        if guarded {
+            js("onPage", &format!("{EXCEPT_ON_PAGE_JS};"));
+        }
         for l in [
             "for (const d of document.querySelectorAll('[data-autorun-row]')) d.removeAttribute('data-autorun-row');",
             "let left = 0;",
-            "let first = null;",
+            "let first_row = null;",
+            "let kept = false;",
+            "let noRow = false;",
             "for (const e of els) {",
             "  const row = rowOf(e);",
-            "  if (except.length && !row) throw new Error('a match is not inside a list row');",
-            "  if (row && except.length && keptOf(row, except) !== null) continue;",
+            "  if (except.length && !row) noRow = true;",
+            "  if (row && except.length && keptOf(row, except) !== null) { kept = true; continue; }",
             "  left++;",
-            "  if (!first) first = row;",
+            "  if (!first_row) first_row = row;",
             "}",
-            "if (first) first.setAttribute('data-autorun-row', '');",
-            "return left;",
+            "if (first_row) first_row.setAttribute('data-autorun-row', '');",
         ] {
             self.line(i + 2, l);
         }
-        self.line(i, "}, except);");
+        if guarded {
+            self.line(i + 2, "const shown = [];");
+            self.line(
+                i + 2,
+                "if (first && els.length && !kept) for (const t of [document, ...els].flatMap((e) => onPage.call(e, except))) if (!shown.includes(t)) shown.push(t);",
+            );
+        }
+        self.line(i + 2, if guarded { "return { left, n: els.length, kept, noRow, shown };" } else { "return { left, n: els.length, kept, noRow, shown: [] };" });
+        self.line(i, "}, [except, first]);");
         self.line(i, "for (let pass = 0; ; pass++) {");
-        self.line(i + 2, "const left = await pick();");
+        self.line(i + 2, "const found = await pick(pass === 0);");
+        if guarded {
+            // Before the first pass, `repeat::except_guard`'s check, run on the
+            // same look as the pass with the app's own scripts: matches found,
+            // none of their rows reads an except text, yet one is on the page
+            // - the matches' own document (a frame) or the top page `cur` -
+            // so a protected row could be among the matches. Nothing is
+            // deleted before the throw.
+            let why = |s: &str| serde_json::to_string(s).map_err(|e| Untranslatable(e.to_string()));
+            let found_but = why(&format!(" found, but {EXCEPT_GUARD_MARK} \""))?;
+            let on_page = why("\" is on the page: point selector at something inside each row, so each row holds its own name")?;
+            self.line(i + 2, "if (pass === 0 && found.n > 0 && !found.kept) {");
+            self.line(i + 4, "const shown = found.shown.slice();");
+            self.line(i + 4, "for (const t of await cur.evaluate((except) => {");
+            let mut top = |name: &str, body: &str| {
+                let mut lines = body.lines();
+                if let Some(first) = lines.next() {
+                    self.line(i + 6, &format!("const {name} = {first}"));
+                }
+                for l in lines {
+                    self.line(i + 6, l);
+                }
+            };
+            top("onPage", &format!("{EXCEPT_ON_PAGE_JS};"));
+            self.line(i + 6, "return onPage.call(document, except);");
+            self.line(i + 4, "}, except)) if (!shown.includes(t)) shown.push(t);");
+            self.line(
+                i + 4,
+                &format!(
+                    "if (shown.length) throw new Error(found.n + (found.n === 1 ? ' match' : ' matches') + {found_but} + shown[0] + {on_page});"
+                ),
+            );
+            self.line(i + 2, "}");
+        }
+        self.line(i + 2, "if (found.noRow) throw new Error('a match is not inside a list row');");
+        self.line(i + 2, "const left = found.left;");
         self.line(i + 2, "if (left === 0) break;");
         self.line(
             i + 2,

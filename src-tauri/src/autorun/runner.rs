@@ -1996,8 +1996,9 @@ async fn repeat_while_visible<D: Driver>(
             let said = passes_said(passes);
             let kept_said = kept_said(&kept);
             let noted = if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) };
-            let told = if told_apart { format!("; {}", repeat::ROWS_TOLD_APART_MARK) } else { String::new() };
-            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}{noted}{told}")), None);
+            let mut out = ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}{noted}"));
+            out.rows_told_apart = told_apart;
+            return (out, None);
         };
         if (!except.is_empty() || scoped) && !next.row {
             let why = format!(

@@ -10972,7 +10972,24 @@ pub fn loop_rows_verdict(outcome: &crate::browser::actions::ActionOutcome) -> Op
     if guard_said {
         return Some(Some(outcome.detail.clone()));
     }
-    (outcome.ok && outcome.detail.contains(crate::browser::repeat::ROWS_TOLD_APART_MARK)).then_some(None)
+    (outcome.ok && outcome.rows_told_apart).then_some(None)
+}
+
+/// The loop-rows records a discovery try of `action` files, at `at`: one per
+/// `repeat_while_visible` with `except` in it, when the try has a verdict
+/// (`loop_rows_verdict`); none otherwise.
+pub fn loop_rows_to_file(action: &crate::browser::actions::Action, outcome: &crate::browser::actions::ActionOutcome, at: u64) -> Vec<crate::autorun::discovery_map::LoopRows> {
+    let Some(refused) = loop_rows_verdict(outcome) else { return Vec::new() };
+    action
+        .each()
+        .into_iter()
+        .filter_map(|each| match each {
+            crate::browser::actions::Action::RepeatWhileVisible { selector, except, .. } if !except.is_empty() => {
+                Some(crate::autorun::discovery_map::LoopRows { selector: selector.clone(), except: except.clone(), refused: refused.clone(), at })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// One tried action in a browser already guarded for its case
@@ -11334,19 +11351,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // (`seen_check::loop_rows_review`). Only a try that went past the guard
     // (it passed having read its rows) or was stopped by it says anything.
     if files_finds && !project.trim().is_empty() {
-        let verdict = loop_rows_verdict(&outcome);
-        for each in action.each() {
-            let crate::browser::actions::Action::RepeatWhileVisible { selector, except, .. } = each else { continue };
-            let Some(refused) = verdict.clone() else { continue };
-            if except.is_empty() {
-                continue;
-            }
-            let rows = crate::autorun::discovery_map::LoopRows {
-                selector: selector.clone(),
-                except: except.clone(),
-                refused,
-                at: crate::autorun::sessions::now_ms(),
-            };
+        for rows in loop_rows_to_file(action, &outcome, crate::autorun::sessions::now_ms()) {
             let area = recording_area(root, discovery_area, Some(case_id));
             if let Err(why) =
                 crate::autorun::discovery_map::record_loop_rows_in(root, organization, project, area.as_deref(), rows)

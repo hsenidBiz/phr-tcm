@@ -812,22 +812,21 @@ async fn a_loop_whose_protected_rows_are_not_on_the_page_still_runs() {
 /// a discovery try that never asked leaves an older refusal alone.
 #[tokio::test]
 async fn only_a_loop_that_told_its_rows_apart_says_so() {
-    use v2_lib::browser::repeat::ROWS_TOLD_APART_MARK;
     let (mut d, _) = goal_groups(vec!["Customer Focus", "Old A"]);
     let out = run(&mut d, vec![action(reset_goal_groups(10))]).await;
-    assert!(out[0].ok && out[0].detail.contains(ROWS_TOLD_APART_MARK), "{:?}", out[0]);
+    assert!(out[0].ok && out[0].rows_told_apart, "{:?}", out[0]);
     // Nothing matched.
     let (mut d, _) = goal_groups(vec![]);
     let out = run(&mut d, vec![action(reset_goal_groups(10))]).await;
-    assert!(out[0].ok && !out[0].detail.contains(ROWS_TOLD_APART_MARK), "{:?}", out[0]);
+    assert!(out[0].ok && !out[0].rows_told_apart, "{:?}", out[0]);
     // The protected rows are not on the page: nothing was read.
     let (mut d, _) = goal_groups(vec!["Old A", "Old B"]);
     let out = run(&mut d, vec![action(reset_goal_groups(10))]).await;
-    assert!(out[0].ok && !out[0].detail.contains(ROWS_TOLD_APART_MARK), "{:?}", out[0]);
+    assert!(out[0].ok && !out[0].rows_told_apart, "{:?}", out[0]);
     // No except at all.
     let (mut d, _) = goal_groups(vec!["Old A"]);
     let out = run(&mut d, vec![delete_loop(json!({}))]).await;
-    assert!(out[0].ok && !out[0].detail.contains(ROWS_TOLD_APART_MARK), "{:?}", out[0]);
+    assert!(out[0].ok && !out[0].rows_told_apart, "{:?}", out[0]);
 }
 
 fn blind_loop() -> Action {
