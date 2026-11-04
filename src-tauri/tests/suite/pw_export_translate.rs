@@ -1838,6 +1838,30 @@ fn a_repeat_loop_waits_for_its_row_as_long_as_settle_ms() {
     assert!(loop_with(json!({})).contains("toHaveCount(0, { timeout: 5000 })"));
 }
 
+/// An exported delete loop with `except` runs Auto Run's rows guard before its
+/// first pass (nothing is deleted before the throw); one without `except`
+/// carries none.
+#[test]
+fn an_except_loop_checks_its_rows_before_the_first_pass() {
+    let loop_with = |except: Value| {
+        one_step(json!([{
+            "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3, "except": except,
+            "then": [{ "kind": "click", "selector": { "css": "#confirm" } }]
+        }]))
+        .run()
+        .unwrap()
+    };
+    let got = loop_with(json!(["Core Competencies"]));
+    let guard = got.find("no match's row reads an except text although").expect("the guard's wording is in the spec");
+    let first_pass = got.find("await cur.locator('#confirm')").expect("the then action");
+    assert!(guard < first_pass, "{got}");
+    assert!(got.contains("const onPage"), "{got}");
+    assert!(got.contains("throw new Error("), "{got}");
+    let plain = loop_with(json!([]));
+    assert!(!plain.contains("no match's row reads an except text"), "{plain}");
+    assert!(!plain.contains("onPage"), "{plain}");
+}
+
 #[test]
 fn has_text_becomes_a_filter_before_nth() {
     let got = lf(&one_step(json!([

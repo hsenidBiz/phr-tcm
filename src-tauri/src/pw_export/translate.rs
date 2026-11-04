@@ -1273,7 +1273,7 @@ impl Em<'_> {
     /// `then` actions, whose row-scoped locators resolve inside it. It ends
     /// when none is left and throws once `max` passes left some.
     fn repeat(&mut self, selector: &Target, max: Option<u32>, except: &[String], then: &[Action], settle_ms: Option<u32>, indent: usize) -> Res<()> {
-        use crate::browser::repeat::{KEPT_OF_JS, ROW_OF_JS, ROW_SCOPE};
+        use crate::browser::repeat::{EXCEPT_GUARD_MARK, EXCEPT_ON_PAGE_JS, KEPT_OF_JS, ROW_OF_JS, ROW_SCOPE};
         let Some(max) = max else {
             return no("repeat_while_visible without max cannot be exported");
         };
@@ -1282,6 +1282,43 @@ impl Em<'_> {
         self.line(indent, "{");
         let i = indent + 2;
         self.line(i, &format!("const except = {except_js};"));
+        if !except.is_empty() {
+            // Before the first pass, `repeat::except_guard`'s check, run in the
+            // page with the app's own scripts: matches found, none of their
+            // rows reads an except text, yet one is on the page - so a
+            // protected row could be among the matches. Nothing is deleted
+            // before the throw.
+            let why = |s: &str| serde_json::to_string(s).map_err(|e| Untranslatable(e.to_string()));
+            let found_but = why(&format!(" found, but {EXCEPT_GUARD_MARK} \""))?;
+            let on_page = why("\" is on the page: point selector at something inside each row, so each row holds its own name")?;
+            self.line(i, &format!("const unclear = await {all}.evaluateAll((els, except) => {{"));
+            let mut js = |name: &str, body: &str| {
+                let mut lines = body.lines();
+                if let Some(first) = lines.next() {
+                    self.line(i + 2, &format!("const {name} = {first}"));
+                }
+                for l in lines {
+                    self.line(i + 2, l);
+                }
+            };
+            js("rowOf", &format!("{ROW_OF_JS};"));
+            js("keptOf", &format!("{KEPT_OF_JS};"));
+            js("onPage", &format!("{EXCEPT_ON_PAGE_JS};"));
+            for l in [
+                "if (!els.length) return null;".to_string(),
+                "if (els.some((e) => { const row = rowOf(e); return row && keptOf(row, except) !== null; })) return null;".to_string(),
+                "const shown = [];".to_string(),
+                "for (const t of [document, ...els].flatMap((e) => onPage.call(e, except))) if (!shown.includes(t)) shown.push(t);".to_string(),
+                "if (!shown.length) return null;".to_string(),
+                format!(
+                    "return els.length + (els.length === 1 ? ' match' : ' matches') + {found_but} + shown[0] + {on_page};"
+                ),
+            ] {
+                self.line(i + 2, &l);
+            }
+            self.line(i, "}, except);");
+            self.line(i, "if (unclear) throw new Error(unclear);");
+        }
         self.line(i, &format!("const pick = () => {all}.evaluateAll((els, except) => {{"));
         let mut js = |name: &str, body: &str| {
             let mut lines = body.lines();
