@@ -2084,14 +2084,16 @@ test("Auto Run sends results to the PBI's project while its files stay home", as
   ).toBe(true);
 });
 
-test("names the environment whose scripts are on screen", async () => {
+// The title bar names the environment; the screen no longer repeats it.
+test("the scripts list carries no environment pill of its own", async () => {
   savedRecipe = RECIPE;
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "env_list" ? envList("https://qa.example.com/start") : undefined,
   );
   renderScreen();
   await screen.findByText("Login - valid credentials");
-  expect(await screen.findByRole("note", { name: "Environment" })).toHaveTextContent("Scripts for QA");
+  expect(screen.queryByRole("note", { name: "Environment" })).toBeNull();
+  expect(screen.queryByText(/Scripts for/)).toBeNull();
 });
 
 test("shows the per-environment move notice once", async () => {

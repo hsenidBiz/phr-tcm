@@ -1179,7 +1179,8 @@ test("a delete template saved before Clean up names no kind, and its row says so
   expect(within(screen.getByRole("listitem", { name: "Create a goal" })).queryByText("needs a kind")).toBeNull();
 });
 
-test("names the environment whose templates are on screen", async () => {
+// The title bar names the environment; the screen no longer repeats it.
+test("the templates screen carries no environment pill of its own", async () => {
   mockOverview(OVERVIEW, (cmd) =>
     cmd === "env_list"
       ? {
@@ -1192,7 +1193,9 @@ test("names the environment whose templates are on screen", async () => {
       : undefined,
   );
   renderScreen();
-  expect(await screen.findByRole("note", { name: "Environment" })).toHaveTextContent("Templates for Staging");
+  expect(await screen.findByText("Project")).toBeInTheDocument();
+  expect(screen.queryByRole("note", { name: "Environment" })).toBeNull();
+  expect(screen.queryByText(/Templates for/)).toBeNull();
 });
 
 test("a postback step shows its page, button, fields and HTML checks", async () => {

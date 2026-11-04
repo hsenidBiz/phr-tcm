@@ -1,4 +1,3 @@
-import EnvironmentLabel from "../../components/EnvironmentLabel";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -288,7 +287,6 @@ export default function ApiTemplates({
         <span>
           Project <span className="font-medium text-text">{project}</span>
         </span>
-        <EnvironmentLabel prefix="Templates for" />
         {overview.data && (
           <span>
             Runs against{" "}
