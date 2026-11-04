@@ -28,7 +28,11 @@ const REVIEW = "auto-run-review";
 const SETUP = "auto-run-setup";
 const SETUP_END = "auto-run-setup-end";
 const SITE = "auto-run-site-address";
+/** Taller than the main window's 900px: the selection bar and the Setup
+ * panel's Accounts and Areas rows sit below that line. */
+const TALL = { w: 1440, h: 1100 };
 const ACCOUNTS = "auto-run-accounts";
+const ACCOUNTS_PROPOSED = "auto-run-accounts-proposed";
 const ASSISTANTS = "auto-run-assistants";
 
 const NAV: Step = { nav: "Auto Run" };
@@ -77,7 +81,7 @@ export const autoRun: Screen = {
       route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
       alt: "Auto Run on its Test cases tab: the result filters, the search and its toolbar, the cases with their last results, two of them open, and the Setup panel beside them",
     },
-    { id: SELECTED, route: [NAV, READY, ...PICK_TWO], alt: "Two scripted cases selected, with the buttons that run them" },
+    { id: SELECTED, route: [NAV, READY, ...PICK_TWO], size: TALL, alt: "Two scripted cases selected, with the buttons that run them" },
     {
       id: SCRIPT,
       route: TO_SCRIPT,
@@ -130,7 +134,7 @@ export const autoRun: Screen = {
       route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept all" } }],
       alt: "Reviewing an unattended run before sending it to Azure DevOps",
     },
-    { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: the environment, site address, sign-in, accounts, areas, discovery and components" },
+    { id: SETUP, route: TO_SETUP, size: TALL, alt: "The Setup panel opened beside the cases: the environment, site address, sign-in, accounts, areas, discovery and components" },
     {
       id: SETUP_END,
       route: [...TO_SETUP, { scrollTo: { role: "button", name: "Manage test files" } }],
@@ -144,7 +148,12 @@ export const autoRun: Screen = {
     {
       id: ACCOUNTS,
       route: [...TO_SETUP, { click: { role: "button", name: "Edit accounts" } }, { waitFor: { role: "button", name: "Save accounts" } }],
-      alt: "The Accounts window, with a login the assistant proposed",
+      alt: "The Accounts window, on its Accounts tab with the rows to fill in",
+    },
+    {
+      id: ACCOUNTS_PROPOSED,
+      route: [...TO_SETUP, { click: { role: "button", name: "Edit accounts" } }, { waitFor: { role: "button", name: "Save accounts" } }, { click: { role: "tab", nameRe: "^Proposed" } }, { waitFor: { role: "button", name: "Dismiss" } }],
+      alt: "The Accounts window on its Proposed tab, with a login the assistant proposed",
     },
     // The Assistants card shows above the tabs while an assistant is working.
     {
@@ -872,7 +881,7 @@ export const autoRun: Screen = {
     },
     {
       id: "proposed",
-      shot: ACCOUNTS,
+      shot: ACCOUNTS_PROPOSED,
       group: "setup",
       locate: { role: "heading", nameRe: "^Proposed by the assistant" },
       name: "Proposed by the assistant",

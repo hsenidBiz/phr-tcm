@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 3 November 2026, after 2.4.1; backlog 77 to 89 built for 2.4.4-beta.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below.</p>
+  <p class="sub">Updated 4 November 2026: backlog 63, 64 and 71 done, the environment pill removed from Auto Run and API Templates, and every How To Use shot retaken; earlier, after 2.4.1: backlog 77 to 89 built for 2.4.4-beta.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -71,7 +71,7 @@
       <li>Hand check owed: two subagents of one session given different agent names get two browsers.</li>
       <li>Hand check owed (phase 5): an assistant's own browser left 30 minutes without a call closes, its row on the card loses its browser, and that assistant's next call says why; the main browser stays open however long it is left, and a browser with a replay going is not closed.</li>
       <li>Hand check owed: Task Manager memory and CPU with three browsers on PeoplesHR, recorded here. The limit of three may be lowered on that measurement, never raised.</li>
-      <li>Owed, taken in the one capture run after phase 5 (not before): the How To Use shot of the Assistants card with the two sample assistants, one in the main browser and one in its own browser (both light and dark; the shot is <code>auto-run-assistants</code>, declared with its controls in <code>docs-site/src/content/auto-run.ts</code> in place of the two Assistants tips; the guard tests reject a shot with no captured image and positions, so it goes in together with the capture, not before). The sample data already shows both: demo mode lists Assistant 1 replaying in the main browser and Assistant 2 discovering in its own. The capture needs the dev app (<code>npm run docs:dev</code>) with the installed app closed.</li>
+      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The Assistants card shot is among them.</li>
     </ul>
   </div>
 
@@ -99,7 +99,7 @@
       <li>Hand check owed: Check sign-in to an area for several accounts (the seven HR-admin logins to Definition Wizard): reaches / stopped where, Cancel, and the proposals preferring the ones that reached it.</li>
       <li>Hand check owed: the Reset expired passwords switch on a test environment (one expired account on QA Automation), including a reset that is not confirmed: the old password stays stored and the message says so.</li>
       <li>Hand check owed: the run window's warning for accounts expired or due within a week.</li>
-      <li>Owed: retake the How To Use shots that show the Accounts window and the Edit environments window (the text is written; the shots are not retaken).</li>
+      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The Accounts window now has a shot per tab (Accounts, and Proposed).</li>
     </ul>
   </div>
 
@@ -137,9 +137,9 @@
       <li>Hand check owed: a <code>has_text</code> delete and a <code>remember_text</code> pills check on a Competencies case.</li>
       <li>Hand check owed: 135342 gets its clean-up step through one patch.</li>
       <li>Hand check owed: get_accounts on QA Automation lists no password.</li>
-      <li>Owed: retake the How To Use shot of the Auto Run Setup panel (the Environment row now has Import scripts…) and rebuild the guide.</li>
-      <li>Open (63): the Playwright export of a delete loop with <code>except</code> does not carry Auto Run's refusal of a loop whose rows cannot be told apart, so an exported spec can delete where Auto Run refuses. Found in the final review of 55-62.</li>
-      <li>Open (64): a discovery try that passes without the rows guard ever running (condition false, empty first look) is recorded as a pass and can erase an older save-time refusal; every run still runs the guard. Found in the final review of 55-62.</li>
+      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The Setup panel shot shows Import scripts.</li>
+      <li>Done (63): an exported Playwright test runs the same rows check as Auto Run before its first pass (in the page and in the list's own frame) and stops with the same sentence.</li>
+      <li>Done (64): a discovery try files a pass only when a row it saw named a protected text; a try that never ran the check files nothing, so an older refusal stays.</li>
     </ul>
   </div>
 
@@ -152,7 +152,7 @@
       <li>Hand check owed: a whole-case replay starts from the beginning even when the discovery left the browser mid-case, and says why it did not carry on.</li>
       <li>Hand check owed: a guarded clean-up's then saves unseen with a note, and is filed as seen the first time its guard fires (135540).</li>
       <li>Hand check owed: the by-text row of a typed name (135388): if its name came from a placeholder or a noted value, it still needs a sighting (70).</li>
-      <li>Open (71): a guarded clean-up target that has never fired is not shown anywhere after the save. The case card and the auditor cannot see it, and a whole replay can mark the case checked.</li>
+      <li>Done (71) in 2.4.3-beta.12: a clean-up guard that never fired is listed on the case card until a replay or run fires it.</li>
     </ul>
   </div>
 
@@ -161,7 +161,7 @@
     <div class="head"><span class="title">Each environment keeps its own Auto Run data</span><span class="status todo">Built, hand checks owed</span></div>
     <p>Scripts, areas, components, quirks, saved setups, API templates, fixtures and flows live in a folder per environment; run history stays with the environment that made it. The update copies the existing data into every environment once. Switching environment switches the folder, and is refused while a browser or run is busy. Copy Auto Run data in Edit environments, and Copy to environment and Copy from environment on a script, move data between environments (a removed environment's data is kept for 30 days). Playwright export and Sync work in one export environment, shown as Exports from.</p>
     <ul>
-      <li>Owed: retake the How To Use shots auto-run-selected and auto-run-setup with the environment label (their frames need a taller capture; the screenshot tool's light and dark passes placed the bottom-pinned selection bar differently).</li>
+      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The environment label is gone from these screens (the title bar names the environment), and both frames are taller so the selection bar and the Setup rows fit.</li>
       <li>Hand check owed: the first start after the update on the owner's real data. Two environments with scripts in both, history only in the active one, the launch time noted, and the old flat layout untouched if the copy fails.</li>
       <li>Hand check owed: switching environment with a browser open is refused and says why; with Auto Run open and nothing busy, the list reloads and an open editor closes.</li>
       <li>Hand check owed: an assistant's save that was in flight during a switch is refused.</li>
@@ -170,7 +170,7 @@
       <li>Hand check owed: remove an environment, then copy its data back from the removed entry within 30 days.</li>
       <li>Hand check owed: Playwright export is refused outside the export environment and names the one to switch to; Sync works in it; changing the export environment moves both.</li>
       <li>Hand check owed: import a backup made before the update. Its files fill every environment, the confirmation names what it replaces, and the previous data is kept in the removed area for 30 days.</li>
-      <li>Owed: retake the How To Use shots whose frames change (the Scripts for and Templates for labels and the Copy to environment button).</li>
+      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each).</li>
     </ul>
   </div>
 

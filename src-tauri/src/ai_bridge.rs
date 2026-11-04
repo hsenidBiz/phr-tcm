@@ -10963,6 +10963,35 @@ fn component_outcome(steps: &[(String, crate::browser::actions::ActionOutcome)])
     }
 }
 
+/// What a discovery try files for its `repeat_while_visible` with `except`
+/// (`seen_check::loop_rows_review`, newest wins): `Some(None)` when the try
+/// went past the rows check, `Some(Some(why))` when the check refused it,
+/// `None` when it never ran the check.
+pub fn loop_rows_verdict(outcome: &crate::browser::actions::ActionOutcome) -> Option<Option<String>> {
+    let guard_said = outcome.detail.contains(crate::browser::repeat::EXCEPT_GUARD_MARK);
+    if guard_said {
+        return Some(Some(outcome.detail.clone()));
+    }
+    (outcome.ok && outcome.rows_told_apart).then_some(None)
+}
+
+/// The loop-rows records a discovery try of `action` files, at `at`: one per
+/// `repeat_while_visible` with `except` in it, when the try has a verdict
+/// (`loop_rows_verdict`); none otherwise.
+pub fn loop_rows_to_file(action: &crate::browser::actions::Action, outcome: &crate::browser::actions::ActionOutcome, at: u64) -> Vec<crate::autorun::discovery_map::LoopRows> {
+    let Some(refused) = loop_rows_verdict(outcome) else { return Vec::new() };
+    action
+        .each()
+        .into_iter()
+        .filter_map(|each| match each {
+            crate::browser::actions::Action::RepeatWhileVisible { selector, except, .. } if !except.is_empty() => {
+                Some(crate::autorun::discovery_map::LoopRows { selector: selector.clone(), except: except.clone(), refused: refused.clone(), at })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// One tried action in a browser already guarded for its case
 /// (`commands::autorun::guard_for_case`), as the route answers it.
 /// `case_id` is the case the try is for: a tried `return_to_area` goes to
@@ -11320,20 +11349,9 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // A discovery try of a `repeat_while_visible` with `except` files whether
     // its rows could be told apart, so the save can judge the same loop
     // (`seen_check::loop_rows_review`). Only a try that went past the guard
-    // (it passed) or was stopped by it says anything.
+    // (it passed having read its rows) or was stopped by it says anything.
     if files_finds && !project.trim().is_empty() {
-        let guard_said = outcome.detail.contains(crate::browser::repeat::EXCEPT_GUARD_MARK);
-        for each in action.each() {
-            let crate::browser::actions::Action::RepeatWhileVisible { selector, except, .. } = each else { continue };
-            if except.is_empty() || !(outcome.ok || guard_said) {
-                continue;
-            }
-            let rows = crate::autorun::discovery_map::LoopRows {
-                selector: selector.clone(),
-                except: except.clone(),
-                refused: guard_said.then(|| outcome.detail.clone()),
-                at: crate::autorun::sessions::now_ms(),
-            };
+        for rows in loop_rows_to_file(action, &outcome, crate::autorun::sessions::now_ms()) {
             let area = recording_area(root, discovery_area, Some(case_id));
             if let Err(why) =
                 crate::autorun::discovery_map::record_loop_rows_in(root, organization, project, area.as_deref(), rows)

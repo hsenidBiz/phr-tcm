@@ -1124,14 +1124,14 @@ dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg
     has no such guard, so it can delete where Auto Run would stop. Found in the final review of
     55-62.
 
-    - **Open.** The export should carry the same refusal, or say in its header that it does not.
+    - **Done (after 2.4.4-beta.4).** The exported loop runs the same rows check before its first pass, asking the page and the list's own frame for the except texts, and throws the guard's sentence before anything is deleted.
 
 64. **A discovery try that never ran the rows guard is recorded as a pass.** When the loop's
     condition is false or the first look is empty, the guard is skipped and the try is saved as a
     pass, which can erase an older refusal recorded when the script was saved. Every run still
     runs the guard, so deletes are protected. Found in the final review of 55-62.
 
-    - **Open.** A try that did not run the guard should leave an older refusal in place.
+    - **Done (after 2.4.4-beta.4).** A try files a pass only when a match's row read an except text (the only way the guard lets a loop through); a try that never ran the check files nothing.
 
 ## The fix round on 2.4.3-beta.10 (agreed 2026-11-01)
 

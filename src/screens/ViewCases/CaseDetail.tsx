@@ -51,7 +51,7 @@ export default function CaseDetail({
         <table className="w-full border-collapse text-xs">
           <thead>
             <tr className="text-left text-faint">
-              <th className="w-8 px-3 py-1 font-medium">#</th>
+              <th className="w-8 whitespace-nowrap px-3 py-1 font-medium">#</th>
               <th className="px-3 py-1 font-medium">Action</th>
               <th className="px-3 py-1 font-medium">Expected</th>
             </tr>
@@ -59,7 +59,7 @@ export default function CaseDetail({
           <tbody>
             {c.steps.map((s, i) => (
               <tr key={i} className="border-t border-border/40 align-top">
-                <td className="px-3 py-1 text-faint">{i + 1}</td>
+                <td className="whitespace-nowrap px-3 py-1 tabular-nums text-faint">{i + 1}</td>
                 {s.shared != null ? (
                   <td colSpan={2} className="px-3 py-1">
                     <SharedStepLabel id={s.shared} />

@@ -66,7 +66,7 @@ export default function CaseStepsTable({
         <table className="w-full border-collapse text-xs">
           <thead>
             <tr className="text-left text-faint">
-              <th className="w-8 px-3 py-1 font-medium">#</th>
+              <th className="w-8 whitespace-nowrap px-3 py-1 font-medium">#</th>
               <th className="px-3 py-1 font-medium">Action</th>
               <th className="px-3 py-1 font-medium">Expected</th>
             </tr>
@@ -74,7 +74,7 @@ export default function CaseStepsTable({
           <tbody>
             {steps.map((s, si) => (
               <tr key={si} className="border-t border-border/40 align-top">
-                <td className="px-3 py-1 text-faint">{si + 1}</td>
+                <td className="whitespace-nowrap px-3 py-1 tabular-nums text-faint">{si + 1}</td>
                 {s.shared != null ? (
                   <td colSpan={2} className="px-3 py-1">
                     <SharedStepLabel id={s.shared} org={org} />

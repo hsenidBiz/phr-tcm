@@ -123,7 +123,7 @@ export default function CasePreview({
           <table className="w-full border-collapse text-xs">
             <thead>
               <tr className="text-left text-faint">
-                <th className="w-8 px-2 py-1 font-medium">#</th>
+                <th className="w-8 whitespace-nowrap px-2 py-1 font-medium">#</th>
                 <th className="px-2 py-1 font-medium">Action</th>
                 <th className="px-2 py-1 font-medium">Expected</th>
               </tr>
@@ -131,7 +131,7 @@ export default function CasePreview({
             <tbody>
               {tc.steps.map((s, i) => (
                 <tr key={i} className="border-t border-border/40 align-top">
-                  <td className="px-2 py-1 text-faint">{i + 1}</td>
+                  <td className="whitespace-nowrap px-2 py-1 tabular-nums text-faint">{i + 1}</td>
                   {s.shared != null ? (
                     // A Shared Steps reference: its steps live in that work
                     // item, so it is one named line, not an empty row.
