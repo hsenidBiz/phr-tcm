@@ -54,12 +54,13 @@ function ago(iso: string): string {
   return d.toLocaleDateString();
 }
 
-/** Fira Sans draws a 1 about 0.8px left of its own box (its flag reaches
- * left) and a 7 about 0.3px, measured against the badge's 16px circle; the
- * other digits sit within 0.1px. Nudged right so the count looks centred. */
+/** Fira Sans's 1 is a stem with a small flag reaching left, so its weight
+ * sits about 0.4px right of its own box at the badge's 10px (measured from
+ * the font's ink) and the eye reads it right of centre. Nudged left by that
+ * much. Centring its outline box instead pushed it the other way and made
+ * it look further right. The other digits' weight sits within 0.1px. */
 const BADGE_NUDGE: Record<number, string> = {
-  1: "relative left-[0.75px]",
-  7: "relative left-[0.3px]",
+  1: "relative left-[-0.4px]",
 };
 
 export default function NotificationBell({

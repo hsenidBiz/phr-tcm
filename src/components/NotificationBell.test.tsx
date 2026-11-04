@@ -40,14 +40,14 @@ test("the badge shows the unread count and opening the panel clears it", () => {
   expect(screen.getByRole("button", { name: "Notifications" })).not.toHaveTextContent("2");
 });
 
-/// Fira Sans draws a 1 (and a little a 7) left of its own box, because of
-/// its flag, so the badge nudges those right to sit in the circle's middle.
-test("the badge's 1 is nudged right to sit centred, a 2 is not", () => {
+/// Fira Sans's 1 carries its weight right of its box (the stem), so the
+/// badge nudges it LEFT to look centred; a 2 is not nudged.
+test("the badge's 1 is nudged left to look centred, a 2 is not", () => {
   raise("acme", [{ id: "assigned:501", kind: "assigned", title: "Task #501 assigned to you", body: "x" }]);
   const { unmount } = render(<NotificationBell org="acme" />);
   const one = screen.getByRole("button", { name: "Notifications, 1 unread" }).querySelector(".label-trim")!;
   expect(one).toHaveTextContent("1");
-  expect(one).toHaveClass("relative", "left-[0.75px]");
+  expect(one).toHaveClass("relative", "left-[-0.4px]");
   unmount();
 
   resetForTests();
