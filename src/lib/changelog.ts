@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.4-beta.5",
+    date: "2026-11-04",
+    items: [
+      "Step numbers 10 and above stay on one line in the steps tables of Run Tests and View Test Cases.",
+      "Auto Run and API Templates no longer show a separate environment pill: the title bar names the environment.",
+      "A test exported to Playwright stops before deleting rows that Auto Run would refuse to delete, with the same reason Auto Run gives.",
+      "A discovery try that never checked a delete loop's rows no longer clears an earlier warning about that loop.",
+      "The How To Use screenshots are retaken for the current screens, and the Accounts window has a picture of its Proposed tab.",
+    ],
+  },
+  {
     version: "2.4.4-beta.4",
     date: "2026-11-04",
     items: [
