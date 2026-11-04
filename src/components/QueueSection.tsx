@@ -1760,11 +1760,11 @@ export default function QueueSection({
             title={folded ? "Expand group" : "Collapse group"}
             onClick={() => toggleFoldedArea(g.key)}
           >
-            <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-              {/* The bucket for cases with no area, in italics, so a real
-                  area that happens to be called "No area" reads apart. */}
+            <span className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
+              {/* The bucket for cases with no area, in the faint colour, so
+                  a real area that happens to be called "No area" reads apart. */}
               <span
-                className={g.key === "" ? "italic text-muted" : undefined}
+                className={g.key === "" ? "text-faint" : undefined}
                 title={g.key === "" ? "Cases with no area" : undefined}
               >
                 {g.name}

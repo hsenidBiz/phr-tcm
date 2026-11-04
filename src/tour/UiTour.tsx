@@ -317,7 +317,7 @@ export default function UiTour({
       ))}
       {rect ? (
         <div
-          className="pointer-events-none fixed rounded-lg border-2 border-accent transition-all duration-300"
+          className="pointer-events-none fixed rounded-lg border-2 border-accent transition-[top,left,width,height] duration-300"
           style={{
             top: rect.top - pad,
             left: rect.left - pad,
@@ -332,7 +332,7 @@ export default function UiTour({
         <div className="pointer-events-none fixed inset-0 bg-black/60" />
       )}
       <div
-        className="pointer-events-auto fixed space-y-2 rounded-lg border border-border bg-surface p-4 shadow-2xl transition-all duration-300"
+        className="pointer-events-auto fixed space-y-2 rounded-lg border border-border bg-surface p-4 shadow-2xl transition-[top,left] duration-300"
         style={{ top: cardTop, left: cardLeft, width: CARD_W }}
       >
         <div className="flex items-baseline justify-between gap-2">

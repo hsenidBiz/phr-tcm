@@ -10,6 +10,7 @@
 
 import { ChevronDown, ChevronRight, FilePlus2, FileMinus2, FilePen, X } from "lucide-react";
 import { useState } from "react";
+import { IconWarning } from "../lib/actionIcons";
 import { cn } from "../lib/cn";
 import { countBy, type SyncChange } from "../lib/fileSync";
 import CaseStepsTable from "./CaseStepsTable";
@@ -88,8 +89,9 @@ export default function SyncReport({
           </span>
         ))}
         {warnings > 0 && (
-          <span className="id-mono text-xs text-warning">
-            ⚠ {warnings} warning{warnings === 1 ? "" : "s"}
+          <span className="id-mono inline-flex items-center gap-1 text-xs text-warning">
+            <IconWarning className="size-3.5" aria-hidden />
+            {warnings} warning{warnings === 1 ? "" : "s"}
           </span>
         )}
         <button

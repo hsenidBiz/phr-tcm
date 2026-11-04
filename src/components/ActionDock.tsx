@@ -107,7 +107,7 @@ export default function ActionDock({
           // carry tabIndex={-1}.
           inert={hidden ? true : undefined}
           className={cn(
-            "fixed right-6 z-40 flex items-center gap-2 transition-all duration-200",
+            "fixed right-6 z-40 flex items-center gap-2 transition-[transform,opacity] duration-200",
             surface && "rounded-full border border-border bg-surface p-2.5 shadow-2xl",
             hidden
               ? "pointer-events-none translate-y-3 opacity-0"

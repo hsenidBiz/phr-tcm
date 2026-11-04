@@ -53,7 +53,7 @@ function Avatar({ comment }: { comment: WorkComment }) {
   return (
     <span
       aria-label={comment.created_by}
-      className="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold text-white"
+      className="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold text-white"
       style={{ backgroundColor: colorFor(comment.created_by) }}
     >
       {initials(comment.created_by)}
@@ -173,7 +173,7 @@ export default function CommentsPanel({
 
   return (
     <section className="space-y-2 border-t border-border pt-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Comments</h3>
+      <h3 className="text-xs font-semibold text-muted">Comments</h3>
 
       {/* The composer is the same markdown editor the description uses -
           toolbar, live preview - so a comment can carry lists, links and

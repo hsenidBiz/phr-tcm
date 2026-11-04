@@ -473,7 +473,7 @@ function RunNode({
 
             {b.deployments.length > 0 && (
               <div className="space-y-1 border-t border-border/60 pt-2">
-                <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-faint">
+                <p className="flex items-center gap-1 text-[11px] font-semibold text-faint">
                   <Rocket size={11} /> Environments
                 </p>
                 <ul className="space-y-0.5">

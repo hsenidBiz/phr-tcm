@@ -642,7 +642,7 @@ export default function WorkItemDrawer({
               </div>
 
               <div className="space-y-3 overflow-y-auto p-5">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-faint">
+                <h3 className="text-xs font-semibold text-faint">
                   Planning
                 </h3>
                 {(
@@ -693,7 +693,7 @@ export default function WorkItemDrawer({
                     onChange={(v) => setDraft({ ...draft, targetDate: v })}
                   />
                 </div>
-                <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-faint">
+                <h3 className="pt-2 text-xs font-semibold text-faint">
                   Classification
                 </h3>
                 <p className="break-words text-xs text-faint">

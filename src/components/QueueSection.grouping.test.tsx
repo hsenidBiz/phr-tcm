@@ -316,9 +316,9 @@ test("the bucket for cases with no area reads apart from a real area called No a
   grouped();
   renderQueue([tc("Real", "No area"), tc("Loose case", "")]);
   const [real, bucket] = screen.getAllByText("No area");
-  expect(real).not.toHaveClass("italic");
+  expect(real).not.toHaveClass("text-faint");
   expect(real).not.toHaveAttribute("title");
-  expect(bucket).toHaveClass("italic", "text-muted");
+  expect(bucket).toHaveClass("text-faint");
   expect(bucket).toHaveAttribute("title", "Cases with no area");
 });
 

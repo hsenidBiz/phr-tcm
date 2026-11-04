@@ -225,7 +225,7 @@ export default function PbiPicker({
             ))}
             {!query && recents.length > 0 && (
               <>
-                <li className="px-2 py-1 text-[10px] uppercase tracking-wide text-faint">
+                <li className="px-2 py-1 text-[10px] text-faint">
                   Recently used
                 </li>
                 {recents.map((hit) => (

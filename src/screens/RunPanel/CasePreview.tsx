@@ -63,7 +63,7 @@ export default function CasePreview({
     <div className="space-y-3 border-l-2 border-accent/50 bg-surface-2/40 px-4 py-3">
       {(comment || bugIds.length > 0) && (
         <div className="rounded-md border border-danger/30 bg-danger/5 p-2">
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-danger">
+          <p className="mb-1 text-[11px] font-semibold text-danger">
             Last result
           </p>
           {comment ? (

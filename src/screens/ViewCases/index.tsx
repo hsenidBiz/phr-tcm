@@ -478,7 +478,7 @@ export default function ViewCases({
                   title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
                   onClick={() => toggleCollapsed(group)}
                 >
-                  <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                  <span className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
                     {group} ({items.length})
                   </span>
                 </button>

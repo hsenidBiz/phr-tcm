@@ -158,7 +158,7 @@ export default function CommandPalette({
             <CommandList>
               {(group: Group) => (
                 <CommandGroup key={group.value} items={group.items}>
-                  <CommandGroupLabel className="text-[10px] uppercase tracking-wide text-faint">
+                  <CommandGroupLabel className="text-[10px] text-faint">
                     {group.value}
                   </CommandGroupLabel>
                   <CommandCollection>

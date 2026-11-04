@@ -137,7 +137,7 @@ export default function MarkdownField({
         onChange={(e) => onChange(e.target.value)}
       />
       <div>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">
+        <span className="text-[10px] font-semibold text-faint">
           Preview
         </span>
         <div

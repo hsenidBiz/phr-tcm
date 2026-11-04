@@ -27,7 +27,7 @@ export default function CaseText({
 }) {
   const html = useMemo(() => renderCaseMarkdown(text, kind), [text, kind]);
   if (!text.trim()) {
-    return empty ? <p className={cn("italic text-faint", className)}>{empty}</p> : null;
+    return empty ? <p className={cn("text-faint", className)}>{empty}</p> : null;
   }
   return (
     <div

@@ -996,7 +996,7 @@ export default function AutoRun({
                             title={shut ? "Expand group" : "Collapse group"}
                             onClick={() => toggleCollapsed(label)}
                           >
-                            <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                            <span className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
                               {label} ({indices.length})
                             </span>
                           </button>

@@ -16,7 +16,7 @@ import SharedStepLabel from "./SharedStepLabel";
  * spaced out, it becomes the landmark that lets a long line be read as two
  * halves at a glance. */
 function Arrow() {
-  return <span className="px-1 font-bold text-accent">{"⇒"}</span>;
+  return <span className="px-1 font-semibold text-accent">{"⇒"}</span>;
 }
 
 /** A changed step is ONE neutral line with only the differing words marked
@@ -87,7 +87,7 @@ export default function StepDiffLines({ d, org }: { d: StepDiff; org?: string })
                 {/* Not the accent on an added/removed line: those are already
                     fully green or red, and a third colour inside them reads as
                     a third meaning. Weight and spacing carry it here. */}
-                <span className="px-1 font-bold">{"⇒"}</span>
+                <span className="px-1 font-semibold">{"⇒"}</span>
                 {step.expected}
               </span>
             )}

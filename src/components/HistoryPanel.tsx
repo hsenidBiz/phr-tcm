@@ -190,7 +190,7 @@ export default function HistoryPanel({
     <div className="space-y-3">
       {journey.length > 0 && (
         <section className="rounded-md border border-border bg-surface p-2">
-          <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-faint">
+          <h4 className="mb-1.5 text-[10px] font-semibold text-faint">
             Time in each state
           </h4>
           <ul className="space-y-1">
@@ -242,7 +242,7 @@ export default function HistoryPanel({
         <div className="space-y-3">
           {days.map((day) => (
             <div key={day.label}>
-              <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
+              <h4 className="mb-1 text-[10px] font-semibold text-faint">
                 {day.label}
               </h4>
               <ul>
