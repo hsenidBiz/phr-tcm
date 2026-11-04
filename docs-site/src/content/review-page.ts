@@ -187,7 +187,7 @@ export const reviewPage: Screen = {
       shot: PAGE,
       group: "case",
       locate: { css: `${FIRST} .op-new` },
-      name: "NEW",
+      name: "New",
       does: "On a draft: uploading will create this case.",
     },
     {
@@ -195,7 +195,7 @@ export const reviewPage: Screen = {
       shot: PAGE,
       group: "case",
       locate: { css: `${UPDATE} .op-update` },
-      name: "UPDATE",
+      name: "Update",
       does: "On a draft: uploading will update the work item it names.",
     },
     {

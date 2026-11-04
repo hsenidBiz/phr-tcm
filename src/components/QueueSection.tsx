@@ -2332,12 +2332,12 @@ export default function QueueSection({
                   )}
                 >
                   {r.action === "created"
-                    ? "NEW"
+                    ? "New"
                     : r.action === "updated"
-                      ? "UPDATED"
+                      ? "Updated"
                       : r.action === "unknown"
-                        ? "UNKNOWN"
-                        : "FAILED"}
+                        ? "Unknown"
+                        : "Failed"}
                 </Badge>
                 {r.id != null && <span className="id-mono shrink-0 text-faint">#{r.id}</span>}
                 <span className="min-w-0 break-words text-text">{r.title}</span>

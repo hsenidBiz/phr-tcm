@@ -439,9 +439,9 @@ pub fn export_queue_page_in(
         // DevOps the question does not arise.
         let op = if draft_page {
             if tc.update_id.is_some() {
-                "<span class='chip op-update'>UPDATE</span>"
+                "<span class='chip op-update'>Update</span>"
             } else {
-                "<span class='chip op-new'>NEW</span>"
+                "<span class='chip op-new'>New</span>"
             }
         } else {
             ""

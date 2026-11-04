@@ -410,8 +410,8 @@ test("a double-click or a drag across a row's text leaves the selection alone", 
 
 test("a row's name carries its status as well as its title", () => {
   renderQueue([{ ...tc("Changed", "A"), update_id: 5002 }, tc("Brand new", "A")]);
-  expect(screen.getByRole("row", { name: "Changed UPDATE #5002" })).toBeInTheDocument();
-  expect(screen.getByRole("row", { name: "Brand new NEW" })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: "Changed Update #5002" })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: "Brand new New" })).toBeInTheDocument();
 });
 
 test("a Shift-click range reaches the row being edited inside a folded group", async () => {

@@ -220,9 +220,9 @@ export function QueueRowInner({
             {stepsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           {tc.update_id != null ? (
-            <Badge id={id("op")} className="bg-warning/20 text-warning">UPDATE #{tc.update_id}</Badge>
+            <Badge id={id("op")} className="bg-warning/20 text-warning">Update #{tc.update_id}</Badge>
           ) : (
-            <Badge id={id("op")} className="bg-success/20 text-success">NEW</Badge>
+            <Badge id={id("op")} className="bg-success/20 text-success">New</Badge>
           )}
           {uploaded && (
             <Badge id={id("uploaded")} className="bg-success/20 text-success">

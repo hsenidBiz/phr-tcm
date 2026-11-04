@@ -246,7 +246,7 @@ test("Edit opens the inline editor and Save writes back into the queue", async (
 test("editing preserves the UPDATE badge (update_id survives a save)", async () => {
   baseMocks();
   renderQueue([makeCase({ update_id: 777 })]);
-  expect(screen.getByText("UPDATE #777")).toBeInTheDocument();
+  expect(screen.getByText("Update #777")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Case title"), {
@@ -255,7 +255,7 @@ test("editing preserves the UPDATE badge (update_id survives a save)", async () 
   fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
 
   expect(await screen.findByText("Renamed update")).toBeInTheDocument();
-  expect(screen.getByText("UPDATE #777")).toBeInTheDocument();
+  expect(screen.getByText("Update #777")).toBeInTheDocument();
 });
 
 test("Save is blocked while the edited case is invalid", async () => {
@@ -1510,7 +1510,7 @@ test("an unknown outcome marks the row and refuses the next upload", async () =>
   const ipc = holdMocks(() => []);
   renderQueue([makeCase({ title: "Brand new" })]);
   await uploadOnce();
-  expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+  expect(screen.getByText("Unknown")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
@@ -1534,7 +1534,7 @@ test("Check that finds the case stamps its id and lifts the hold", async () => {
   await waitFor(() =>
     expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument(),
   );
-  expect(screen.getByText("UPDATE #901")).toBeInTheDocument();
+  expect(screen.getByText("Update #901")).toBeInTheDocument();
   expect(asked).toMatchObject({ organization: "acme", project: "Web", pbiId: 42, titles: ["Brand new"] });
   expect(typeof asked!.since).toBe("string");
   expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).toBeNull();
@@ -1602,7 +1602,7 @@ test("Check that finds nothing returns the row to normal", async () => {
     expect(screen.queryByRole("button", { name: /Check with Azure DevOps/ })).not.toBeInTheDocument(),
   );
   expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
-  expect(screen.getByText("NEW")).toBeInTheDocument();
+  expect(screen.getByText("New")).toBeInTheDocument();
 });
 
 test("a Check that cannot reach Azure DevOps keeps the hold", async () => {

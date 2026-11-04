@@ -34,7 +34,7 @@ describe("stampFileSlices", () => {
     const f = files.get("C:/d/a.json")!;
     expect(f.changed).toBe(true);
     expect(f.slice).toHaveLength(2);
-    // The created case now says UPDATE #501 - importing it again is an
+    // The created case now says Update #501 - importing it again is an
     // update that matches the server, which the review gate skips.
     expect(f.slice[0].update_id).toBe(501);
     // Its comment rides along untouched - stamping must never cost a note.

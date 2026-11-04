@@ -23,7 +23,7 @@ export const recipes: Recipe[] = [
     steps: [
       { text: "Export the cases with their ids from View Test Cases.", link: "view-test-cases" },
       { text: "Edit the file. Keep each case's id: that is what makes it an update.", link: "import-file" },
-      { text: "Press **Import JSON** and pick the file. Updates are marked **UPDATE** and a number.", link: "import-file/update-badge" },
+      { text: "Press **Import JSON** and pick the file. Updates are marked **Update** and a number.", link: "import-file/update-badge" },
       { text: "Open **what will change** on each one to check the changes.", link: "import-file/what-changes" },
       { text: "Press **Review**, then confirm.", link: "import-file/confirm" },
     ],
