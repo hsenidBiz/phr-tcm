@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.2",
+    date: "2026-11-05",
+    items: [
+      "A failed case in an Auto Run review has a Raise bug button: it opens the bug form filled in with the steps up to the failure, what the page said, the environment, the account and the failure screenshots, linked to the test case and the PBI. Nothing is filed until you press File.",
+      "Auto Run lists flaky cases: those that both passed and failed in their last 10 runs on the same environment, with the pattern and the last failure. Mark one as flaky and its failures are counted as flaky rather than failed in Auto Run's own summaries; Azure DevOps still receives them as failed.",
+      "When you review the queue before uploading, a case is warned about a step with no expected result, an expected result that says nothing to check (such as \"Works\"), or a first step that refers to an earlier state while the case has no preconditions. The warnings never stop the upload.",
+      "The changelog in Settings scrolls as one list once the earlier versions are open.",
+    ],
+  },
+  {
     version: "2.4.5-beta.1",
     date: "2026-11-05",
     items: [
