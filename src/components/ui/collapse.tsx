@@ -49,19 +49,23 @@ const canAnimate = (el: HTMLElement | null): el is HTMLElement =>
   el != null && typeof el.animate === "function";
 
 /**
- * Mark the long-list rows (`.cv-row`) a grow of `span` pixels can bring on
- * screen, so index.css renders them before the grow starts. A growing fold
+ * Mark the long-list rows (`.cv-row`) a grow can bring on screen, so
+ * index.css renders them before the grow starts. A growing fold
  * clips its content, and a clipped `content-visibility: auto` row counts as
  * off screen: a large group rendered its rows a band at a time as the clip
  * edge moved, stalling the grow, then the rest at once when the clip came
- * off. Only rows within the span and one more window below it are marked -
- * the margin covers rows whose real height outgrows the estimate they were
- * measured at. The hundreds further down a big group stay skipped: the grow
- * never shows them, and rendering them all would cost the opening frame.
+ * off. It runs BEFORE the grow is measured: a row that has not rendered yet
+ * measures at its placeholder size, so a fold measured first grew to the
+ * placeholders' height and the rest of the group snapped in at the end.
+ * A grow covers at most one window, so rows within two windows of the
+ * fold's top are marked - the second covers rows whose real height outgrows
+ * the placeholder they are laid out at here. The hundreds further down a big
+ * group stay skipped: the grow never shows them, and rendering them all
+ * would cost the opening frame.
  */
-function revealRows(panel: HTMLElement, span: number): HTMLElement[] {
+function revealRows(panel: HTMLElement): HTMLElement[] {
   const top = panel.getBoundingClientRect().top;
-  const reach = span + window.innerHeight;
+  const reach = 2 * window.innerHeight;
   const marked: HTMLElement[] = [];
   // Document order is top-to-bottom order here, so the first row past the
   // reach ends the walk and a long group costs no more than a short one.
@@ -261,12 +265,14 @@ function Panel({
     if (!entering) return;
     const node = el.current;
     if (!canAnimate(node)) return;
+    // Rows first, so the measure below is of rendered rows (revealRows).
+    revealed.current = revealRows(node);
     const span = visibleSpan(node);
     if (span < 2) {
+      unreveal();
       setEntering(false);
       return;
     }
-    revealed.current = revealRows(node, span);
     const ms = foldMs(span);
     const easing = span > TALL_PX ? EASE_TALL : EASE;
     if (!asked.current) {

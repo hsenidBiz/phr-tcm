@@ -626,3 +626,47 @@ test("under StrictMode the grow keeps the hold onGrow gave it, though the effect
     m.restore();
   }
 });
+
+// A freshly mounted `.cv-row` has not rendered yet, so it measures at its
+// placeholder size (contain-intrinsic-size) until it is marked to render.
+// The grow measured before marking, so it eased out at the placeholder
+// height and the rest of the group snapped in when the animation ended.
+test("the grow measures its rows at their real size, not their placeholder", () => {
+  inWindow(800, () => {
+    const grows: Keyframe[][] = [];
+    const realAnimate = Element.prototype.animate;
+    const realRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.animate = function (this: Element, frames: Keyframe[] | PropertyIndexedKeyframes | null) {
+      if ((this as HTMLElement).classList.contains("t-collapse")) grows.push(frames as Keyframe[]);
+      return { cancel() {}, onfinish: null } as unknown as Animation;
+    } as typeof Element.prototype.animate;
+    // Ten rows: 20px each as placeholders, 64px once rendered.
+    const rowH = (r: HTMLElement) => (r.hasAttribute("data-unfolding") ? 64 : 20);
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const el = this as HTMLElement;
+      const list = [...document.querySelectorAll<HTMLElement>(".t-collapse .cv-row")];
+      const i = list.indexOf(el);
+      const top = i < 0 ? 0 : list.slice(0, i).reduce((s, r) => s + rowH(r), 0);
+      const height = i < 0 ? list.reduce((s, r) => s + rowH(r), 0) : rowH(el);
+      return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON() {} } as DOMRect;
+    };
+    try {
+      render(
+        <Collapse open>
+          <ul>
+            {Array.from({ length: 10 }, (_, i) => (
+              <li key={i} className="cv-row">
+                Case {i}
+              </li>
+            ))}
+          </ul>
+        </Collapse>,
+      );
+      expect(grows).toHaveLength(1);
+      expect(grows[0][1]).toEqual({ height: "640px" });
+    } finally {
+      Element.prototype.animate = realAnimate;
+      Element.prototype.getBoundingClientRect = realRect;
+    }
+  });
+});
