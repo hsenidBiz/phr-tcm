@@ -560,3 +560,33 @@ test("without a mark the same failure counts as failed", async () => {
   expect(results).toHaveTextContent("2 failed");
   expect(results).not.toHaveTextContent("flaky");
 });
+
+test("Clear results refreshes the Flaky cases list, which reads the same run files", async () => {
+  let cleared = false;
+  renderPastRuns([runOf()], 7, (cmd) => {
+    if (cmd === "auto_run_flaky_cases") {
+      return cleared
+        ? []
+        : [
+            {
+              case_id: 201,
+              title: "Valid login",
+              environment: "QA",
+              pattern: [true, false],
+              last_failure: null,
+              last_failed_at: "1",
+              marked: false,
+            },
+          ];
+    }
+    if (cmd === "auto_run_clear_runs") {
+      cleared = true;
+      return 1;
+    }
+    return null;
+  });
+  expect(await screen.findByRole("listitem", { name: "Flaky case Valid login" })).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Clear results" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Clear 1 run" }));
+  await waitFor(() => expect(screen.queryByRole("listitem", { name: "Flaky case Valid login" })).toBeNull());
+});

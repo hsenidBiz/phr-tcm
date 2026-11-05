@@ -12,6 +12,7 @@ import {
   type ReviewRequest,
 } from "../lib/backgroundRun";
 import { useDiscoveryActive } from "../lib/discoveryActive";
+import { invalidateRuns } from "../screens/AutoRun/flaky";
 import { toast } from "../lib/toast";
 
 /**
@@ -35,7 +36,7 @@ export function useBackgroundRunHost(goToReview: (r: ReviewRequest) => void): vo
   useEffect(
     () =>
       onRunEnded((e) => {
-        void qc.invalidateQueries({ queryKey: ["autorun-runs"] });
+        void invalidateRuns(qc);
         // A run that passes a marked step clears the mark on disk; the rows
         // read each script through their own query.
         void qc.invalidateQueries({ queryKey: ["autorun-script"] });

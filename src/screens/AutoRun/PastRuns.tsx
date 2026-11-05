@@ -15,7 +15,7 @@ import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../.
 import FlakyBadge from "./FlakyBadge";
 import FlakyCases from "./FlakyCases";
 import ResultFilterRow from "./ResultFilterRow";
-import { useFlakyMarks } from "./flaky";
+import { invalidateRuns, useFlakyMarks } from "./flaky";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
@@ -130,7 +130,7 @@ export default function PastRuns({
     mutationFn: () => unwrapStr(commands.autoRunClearRuns()),
     onSuccess: async (removed) => {
       setClearOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await invalidateRuns(queryClient);
       toast.success(`${removed} run${removed === 1 ? "" : "s"} removed.`);
     },
     onError: (e) => toast.error(`Could not clear runs: ${e.message}`),

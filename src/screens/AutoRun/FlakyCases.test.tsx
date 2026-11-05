@@ -81,3 +81,14 @@ test("marking a case calls the set command and refreshes the list", async () => 
   await waitFor(() => expect(calls).toEqual([{ caseId: 201, flaky: true }, { caseId: 201, flaky: false }]));
   expect(await screen.findByRole("button", { name: "Mark case 201 as flaky" })).toBeInTheDocument();
 });
+
+test("a marked case that no longer alternates is listed and can be unmarked", async () => {
+  const calls: unknown[] = [];
+  renderList([{ ...ROW, pattern: [false, false], marked: true }], (cmd, args) => {
+    if (cmd === "auto_run_set_flaky") calls.push(args);
+    return null;
+  });
+  const unmark = await screen.findByRole("button", { name: "Unmark case 201 as flaky" });
+  fireEvent.click(unmark);
+  await waitFor(() => expect(calls).toEqual([{ caseId: 201, flaky: false }]));
+});

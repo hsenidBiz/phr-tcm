@@ -81,13 +81,15 @@ function renderReview(
     extra?: (cmd: string, args: unknown) => unknown;
     onReplay?: (caseId: number, title: string, step: number) => void;
     replayBlocked?: string;
+    /** Answers `auto_run_shot`; a throw is a shot that is gone. */
+    shot?: (name: string) => string;
   } = {},
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_load_run") return run;
     if (cmd === "auto_run_shot") {
       const a = args as { name: string };
-      return `data:image/png;base64,${a.name}`;
+      return overrides.shot ? overrides.shot(a.name) : `data:image/png;base64,${a.name}`;
     }
     return overrides.extra?.(String(cmd), args) ?? null;
   });
@@ -1163,6 +1165,22 @@ test("Raise bug is offered on a failed case only and opens a filled-in bug", asy
   expect(filed.screenshotsB64).toEqual(["shot-201-2.png", "out-201-2.png"]);
   expect(await within(caseCard(201)).findByText("Bug #777")).toBeTruthy();
   expect(screen.queryByLabelText("Bug title")).toBeNull();
+});
+
+test("Raise bug still opens when one of the failure's screenshots is gone", async () => {
+  renderReview(BUG_RUN, {
+    extra: (cmd) => (cmd === "test_cases_by_ids" ? [BUG_CASE] : null),
+    shot: (name) => {
+      if (name === "out-201-2.png") throw new Error("no such file");
+      return `data:image/png;base64,${name}`;
+    },
+  });
+  render(<Toaster />);
+  await screen.findByText("Valid login");
+  fireEvent.click(within(caseCard(201)).getByRole("button", { name: /Raise bug/ }));
+  expect(await screen.findByLabelText("Bug title")).toBeTruthy();
+  expect(screen.getByText(/1 screenshot\(s\) attached/)).toBeTruthy();
+  expect(await screen.findByText(/1 screenshot of this failure is no longer on this machine/)).toBeTruthy();
 });
 
 // Flaky: a failed case whose script is marked Flaky is counted apart in the review and tagged.

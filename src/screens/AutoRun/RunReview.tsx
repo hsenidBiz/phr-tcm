@@ -10,6 +10,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invalidateRuns } from "./flaky";
 import { toast } from "../../lib/toast";
 import { commands, type LocalRun_Serialize, type PublishResult, type TestCaseFull } from "../../bindings";
 import BugDialog from "../../components/BugDialog";
@@ -247,9 +248,17 @@ export default function RunReview(props: {
         toast.error("Could not read the test case to raise a bug.");
         return;
       }
-      const shots = await Promise.all(
+      // A screenshot is pruned over time: keep the ones that still load, and say so once for the rest.
+      const loaded = await Promise.allSettled(
         failureShotNames(c).map((n) => unwrapStr(commands.autoRunShot(n)).then((u) => u.replace(/^data:[^,]*,/, ""))),
       );
+      const shots = loaded.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      const missing = loaded.length - shots.length;
+      if (missing > 0) {
+        toast.info(
+          `${missing} screenshot${missing === 1 ? "" : "s"} of this failure ${missing === 1 ? "is" : "are"} no longer on this machine.`,
+        );
+      }
       const repro = autoRunRepro(c, testCase.steps, run, (s, n) =>
         `${n}. ${sharedStepText(s.shared!, queryClient.getQueryData<string>(sharedStepQueryKey(props.org, s.shared!)))}`,
       );
@@ -306,7 +315,7 @@ export default function RunReview(props: {
       // What is on disk now matches this screen's own edits - Send is no
       // longer blocked on an unsaved change.
       setBaseline(Object.fromEntries(run.cases.map((c) => [c.case_id, { verdict: c.verdict, note: c.note }])));
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await invalidateRuns(queryClient);
       await queryClient.invalidateQueries({ queryKey: ["autorun-run", runId] });
       toast.success("Review saved.");
     } catch (e) {
@@ -370,7 +379,7 @@ export default function RunReview(props: {
       setRun((prev) =>
         prev ? { ...prev, published: { run_id: r.run_id, web_url: r.web_url, at: String(Date.now()) } } : prev,
       );
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await invalidateRuns(queryClient);
       await queryClient.invalidateQueries({ queryKey: ["autorun-run", runId] });
     } catch (e) {
       // Same shape as every other Azure DevOps failure in this app - see

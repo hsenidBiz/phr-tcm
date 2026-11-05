@@ -7,6 +7,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
+import { invalidateRuns } from "./flaky";
 import { toast } from "../../lib/toast";
 import {
   commands,
@@ -785,7 +786,7 @@ export default function RunPane({
     // re-write a run already counted. Bookkeeping only: a failure to count
     // is logged on the Rust side and never stands in the way of the save.
     await commands.autoRunCountEvidence(org, project, id).catch(() => null);
-    await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+    await invalidateRuns(queryClient);
     // Counting may have cleared a suspected-defect mark on a script; the
     // case rows read each script through their own query.
     await queryClient.invalidateQueries({ queryKey: ["autorun-script"] });

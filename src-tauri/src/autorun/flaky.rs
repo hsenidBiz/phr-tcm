@@ -60,6 +60,14 @@ fn started(run: &LocalRun) -> u64 {
 /// one fail. A run where the case was Blocked or not judged counts toward the window but is neither.
 /// Ordered by the time of the newest failure, latest first.
 pub fn flaky_cases(runs: &[LocalRun], window: usize) -> Vec<FlakyCase> {
+    flaky_cases_with_marks(runs, window, &[])
+}
+
+/// [`flaky_cases`], plus every case in `marked` that has runs on an environment even when it is not
+/// currently alternating (it now passes or fails every run), so a mark can always be found and removed.
+/// Such a case's `last_failed_at` is its newest failure, else its newest judged run, else its newest run.
+/// Each case's `marked` is filled in from `marked`.
+pub fn flaky_cases_with_marks(runs: &[LocalRun], window: usize, marked: &[i32]) -> Vec<FlakyCase> {
     let mut newest_first: Vec<&LocalRun> = runs.iter().collect();
     newest_first.sort_by(|a, b| started(b).cmp(&started(a)).then_with(|| b.started_at.cmp(&a.started_at)));
 
@@ -84,18 +92,24 @@ pub fn flaky_cases(runs: &[LocalRun], window: usize) -> Vec<FlakyCase> {
             .collect();
         let judged: Vec<(&LocalRun, &CaseRecord, bool)> =
             seen.iter().filter_map(|(r, c)| passed(c).map(|p| (*r, *c, p))).collect();
-        if !judged.iter().any(|j| j.2) || !judged.iter().any(|j| !j.2) {
+        let alternates = judged.iter().any(|j| j.2) && judged.iter().any(|j| !j.2);
+        let is_marked = marked.contains(&case_id);
+        if !alternates && !is_marked {
             continue;
         }
-        let (fail_run, fail_case, _) = judged.iter().find(|j| !j.2).expect("a failure was found above");
+        let failure = judged.iter().find(|j| !j.2);
+        let last_failed_at = match failure {
+            Some((r, _, _)) => r.started_at.clone(),
+            None => judged.first().map(|j| j.0.started_at.clone()).unwrap_or_else(|| seen[0].0.started_at.clone()),
+        };
         out.push(FlakyCase {
             case_id,
             title: seen[0].1.title.clone(),
             environment,
             pattern: judged.iter().rev().map(|j| j.2).collect(),
-            last_failure: failure_words(fail_case),
-            last_failed_at: fail_run.started_at.clone(),
-            marked: false,
+            last_failure: failure.and_then(|(_, c, _)| failure_words(c)),
+            last_failed_at,
+            marked: is_marked,
         });
     }
     out.sort_by(|a, b| at_ms(&b.last_failed_at).cmp(&at_ms(&a.last_failed_at)).then(a.case_id.cmp(&b.case_id)));

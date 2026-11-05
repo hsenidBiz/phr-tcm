@@ -2,13 +2,23 @@
 // review) count a marked case's failure apart from the failures that make a run read as failed. A local
 // read like the run list, so a plain query: it is changed only by `useSetFlaky`, which refreshes it.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { commands } from "../../bindings";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 
 export const FLAKY_MARKS_KEY = ["autorun-flaky-marks"] as const;
 export const FLAKY_CASES_KEY = ["autorun-flaky-cases"] as const;
+
+/** Refreshes the saved-run list and the two flaky reads that come from the same files: wherever the run
+ * files change, the Flaky cases list is stale too. */
+export function invalidateRuns(queryClient: QueryClient): Promise<unknown> {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["autorun-runs"] }),
+    queryClient.invalidateQueries({ queryKey: FLAKY_CASES_KEY }),
+    queryClient.invalidateQueries({ queryKey: FLAKY_MARKS_KEY }),
+  ]);
+}
 
 const NONE: ReadonlySet<number> = new Set();
 

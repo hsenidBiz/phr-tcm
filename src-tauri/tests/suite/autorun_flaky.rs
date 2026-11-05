@@ -1,7 +1,7 @@
 //! Flaky cases: cases that both passed and failed in their recent runs on one environment, and the
 //! person's "Flaky" mark on a case's script.
 
-use v2_lib::autorun::flaky::{flaky_cases, FLAKY_WINDOW};
+use v2_lib::autorun::flaky::{flaky_cases, flaky_cases_with_marks, FLAKY_WINDOW};
 use v2_lib::autorun::store::{load_script, save_script, save_scripts_atomically, set_flaky};
 use v2_lib::autorun::{CaseRecord, CaseScript, FlakyMark, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
@@ -211,4 +211,24 @@ fn a_script_file_from_before_the_mark_still_loads() {
     let old = serde_json::json!({ "case_id": 3, "title": "Old", "steps": [], "checked": false });
     let s: CaseScript = serde_json::from_value(old).unwrap();
     assert_eq!(s.flaky, None);
+}
+
+#[test]
+fn a_marked_case_that_now_fails_every_run_is_still_listed_so_it_can_be_unmarked() {
+    let runs = vec![one("Passed", 1, "QA"), one("Failed", 2, "QA"), one("Failed", 3, "QA")];
+    let all_fail = vec![one("Failed", 2, "QA"), one("Failed", 3, "QA")];
+    assert!(flaky_cases(&all_fail, FLAKY_WINDOW).is_empty());
+    let got = flaky_cases_with_marks(&all_fail, FLAKY_WINDOW, &[7]);
+    assert_eq!(got.len(), 1);
+    assert!(got[0].marked);
+    assert_eq!(got[0].pattern, vec![false, false]);
+    assert_eq!(got[0].last_failed_at, "3");
+    // An unmarked case that does not alternate stays out; a marked alternating one is marked.
+    assert!(flaky_cases_with_marks(&all_fail, FLAKY_WINDOW, &[8]).is_empty());
+    assert!(flaky_cases_with_marks(&runs, FLAKY_WINDOW, &[7])[0].marked);
+    // Marked and always passing is listed too.
+    let passing = vec![one("Passed", 1, "QA"), one("Passed", 2, "QA")];
+    let got = flaky_cases_with_marks(&passing, FLAKY_WINDOW, &[7]);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].last_failure, None);
 }

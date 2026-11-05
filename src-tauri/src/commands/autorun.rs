@@ -3289,13 +3289,19 @@ pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<()
 #[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_flaky_cases(app: tauri::AppHandle) -> Vec<crate::autorun::flaky::FlakyCase> {
-    flaky_cases_at(&root(&app).unwrap_or_default())
+    match root(&app) {
+        Ok(r) => flaky_cases_at(&r),
+        Err(_) => vec![],
+    }
 }
 
 /// The pure half of [`auto_run_flaky_cases`].
 pub fn flaky_cases_at(root: &std::path::Path) -> Vec<crate::autorun::flaky::FlakyCase> {
-    let found = crate::autorun::flaky::flaky_cases(&store::list_runs(root), crate::autorun::flaky::FLAKY_WINDOW);
-    crate::autorun::flaky::with_marks(found, &store::flaky_marked(root))
+    crate::autorun::flaky::flaky_cases_with_marks(
+        &store::list_runs(root),
+        crate::autorun::flaky::FLAKY_WINDOW,
+        &store::flaky_marked(root),
+    )
 }
 
 /// The ids of every case whose script carries the person's flaky mark: what the run summaries read to count
@@ -3303,7 +3309,10 @@ pub fn flaky_cases_at(root: &std::path::Path) -> Vec<crate::autorun::flaky::Flak
 #[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_flaky_marks(app: tauri::AppHandle) -> Vec<i32> {
-    store::flaky_marked(&root(&app).unwrap_or_default())
+    match root(&app) {
+        Ok(r) => store::flaky_marked(&r),
+        Err(_) => vec![],
+    }
 }
 
 /// A person's Flaky toggle on a case: marks or clears it on the case's script. Changes nothing that is
