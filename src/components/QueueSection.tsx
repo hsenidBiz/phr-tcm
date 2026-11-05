@@ -55,7 +55,7 @@ import { loadNotes, saveNote } from "../lib/caseNotes";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
-import { duplicateWarning, validateCase } from "../lib/validate";
+import { duplicateWarning, qualityWarnings, validateCase } from "../lib/validate";
 import { pagePalette } from "../lib/reportTheme";
 import QueueBulkEditDialog from "./QueueBulkEditDialog";
 import QueueRow from "./QueueRow";
@@ -1535,6 +1535,10 @@ export default function QueueSection({
     [queue, existingCases],
   );
 
+  // Advice only: never reaches hasBlockers. Joined so a row's memo compares
+  // it by value.
+  const qualities = useMemo(() => queue.map((tc) => qualityWarnings(tc).join("\n")), [queue]);
+
   // Row callbacks. All stable: a row is memoised on its props, and a
   // callback that changed identity every render would re-render every
   // row on every render - which is exactly what made a 100-case queue
@@ -1684,6 +1688,7 @@ export default function QueueSection({
         reviewing={reviewing}
         problem={problems[i]}
         duplicate={duplicates[i]}
+        quality={qualities[i]}
         diff={diff}
         diffFailed={diffFailed}
         busy={submit.isPending}

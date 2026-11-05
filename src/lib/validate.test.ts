@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { TestCase } from "../bindings";
-import { duplicateWarning, titleSimilarity, validateCase } from "./validate";
+import { VAGUE_EXPECTED, duplicateWarning, qualityWarnings, titleSimilarity, validateCase } from "./validate";
 
 const ok: TestCase = {
   title: "T",
@@ -79,4 +79,48 @@ test("near-duplicate stays quiet for explicit updates and picks the best match",
   ]);
   // Both clear the bar; the message must name the closer one, not the first.
   expect(best).toMatch(/#11/);
+});
+
+const good: TestCase = { ...ok, steps: [{ action: "Click Save", expected: "The Save button is enabled" }] };
+
+test("quality: a clean case has no warnings", () => {
+  expect(qualityWarnings(good)).toEqual([]);
+});
+
+test("quality: a step with an action but no expected result is named", () => {
+  const tc = {
+    ...good,
+    steps: [good.steps[0], { action: "Click Next", expected: "  " }],
+  };
+  expect(qualityWarnings(tc)).toEqual(["Step 2 has no expected result"]);
+});
+
+test("quality: an empty action is left to validateCase, not double-reported", () => {
+  const tc = { ...good, steps: [{ action: " ", expected: "" }] };
+  expect(qualityWarnings(tc)).toEqual([]);
+  expect(qualityWarnings({ ...good, steps: [{ action: "", expected: "", shared: 7 }] })).toEqual([]);
+});
+
+test("quality: a vague expected result says nothing to check", () => {
+  const tc = { ...good, steps: [good.steps[0], { action: "Save", expected: "Works." }] };
+  expect(qualityWarnings(tc)).toEqual([`Step 2's expected result says nothing to check: "Works."`]);
+  for (const v of VAGUE_EXPECTED) {
+    const w = qualityWarnings({ ...good, steps: [{ action: "Do", expected: ` ${v.toUpperCase()}. ` }] });
+    expect(w).toHaveLength(1);
+  }
+  expect(qualityWarnings({ ...good, steps: [{ action: "Do", expected: "It works and the total updates" }] })).toEqual([]);
+});
+
+test("quality: an earlier state with no preconditions is flagged", () => {
+  const tc = { ...good, steps: [{ action: "Open the record from the above", expected: "Shown" }] };
+  expect(qualityWarnings(tc)).toEqual([
+    "Step 1 refers to an earlier state but the case has no preconditions",
+  ]);
+  expect(qualityWarnings({ ...tc, preconditions: "A record exists" })).toEqual([]);
+  expect(qualityWarnings({ ...good, steps: [{ action: "Open it as above", expected: "Shown" }] })).toHaveLength(1);
+  expect(qualityWarnings({ ...good, steps: [{ action: "Repeat the previous step", expected: "Shown" }] })).toHaveLength(1);
+  // Only step 1 is checked.
+  expect(
+    qualityWarnings({ ...good, steps: [good.steps[0], { action: "Redo the above", expected: "Shown" }] }),
+  ).toEqual([]);
 });

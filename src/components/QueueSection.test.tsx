@@ -803,6 +803,28 @@ test("the duplicate check runs when review opens, not after the final yes", asyn
   await waitFor(() => expect(submits).toBe(1));
 });
 
+/// Quality warnings advise, never block: the row names the step, and the
+/// review still goes ahead.
+test("a case with an empty expected result is warned on its row and still reviewable", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    return undefined;
+  });
+  renderQueue([makeCase({ steps: [{ action: "Open page", expected: "" }] })]);
+
+  const review = screen.getByRole("button", { name: /Review 1 test case/ });
+  expect(review).toBeEnabled();
+  fireEvent.click(review);
+
+  expect(await screen.findByText("Step 1 has no expected result")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Yes — create 1/ })).toBeEnabled();
+});
+
 /// The check that used to guard the last click still does. Moving it
 /// earlier opened a window - the queue can be edited while someone reads a
 /// hundred cases - so the write re-verifies, and stops only for a
