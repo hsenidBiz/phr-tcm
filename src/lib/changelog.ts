@@ -27,6 +27,26 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.4",
+    date: "2026-11-05",
+    items: [
+      "Every search bar takes commas to look for several things at once: \"1234, 5678\" finds both cases, and \"login error, timeout\" finds rows with both login and error as well as rows with timeout.",
+      "The case editors have one Preview button, beside Add Step, that shows the preconditions and every step formatted at once. Attach is now a small paperclip at the end of each step's row, and a step's file list appears only once it has a file.",
+      "Labels across the app read in sentence case instead of capitals, and the queue and upload results mark cases New, Update, Updated, Failed or Unknown.",
+      "Step numbers 10 and above stay on one line in the steps tables of Run Tests and View Test Cases, and the 1 in the notification bell's badge sits in the middle of its circle.",
+      "Auto Run and API Templates no longer show a separate environment pill: the title bar names the environment.",
+      "The Halloween theme is no longer offered in Settings. If you were still using it, the app goes back to Light.",
+      "Assistants can send a one-off request without saving it as a template, give a slow request more time, keep a long value for later requests without it passing through the conversation, and pick one row out of a list or build a base64 body.",
+      "A one-off request that lands on the sign-in page now says it was signed out instead of returning the page, and a request from a page with no security token uses the project's usual token page.",
+      "A template check that fails after it has already changed data now says which changes it made, and the assistant's list of changes can cover several calls and remember which routes only read.",
+      "In discovery an assistant can take a screenshot, pick an option from a drop-down list in one step, and repeat a key press; a step with a misspelt field is refused instead of quietly ignored.",
+      "When an assistant finishes exploring, its browser is closed and the account it used is freed for others; an account in use says who holds it and for how long.",
+      "A test exported to Playwright stops before deleting rows that Auto Run would refuse to delete, with the same reason Auto Run gives, and a discovery try that never checked a delete loop's rows no longer clears an earlier warning about that loop.",
+      "A database query that returns long text says how to read it in pieces instead of cutting it off silently.",
+      "The How To Use screenshots show the current screens, and the Accounts window has a picture of its Proposed tab.",
+    ],
+  },
+  {
     version: "2.4.4-beta.5",
     date: "2026-11-04",
     items: [
