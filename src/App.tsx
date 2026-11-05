@@ -1422,7 +1422,9 @@ export default function App() {
               liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}            />
           ))}
 
-        <div className="relative flex min-w-0 flex-1 flex-col">
+        {/* isolate: the seasonal tree sits at z-index -1 in here, behind
+            the page's own buttons but still above the window background. */}
+        <div className="relative isolate flex min-w-0 flex-1 flex-col">
           {signedIn && (
             <ContextBar
               org={org}

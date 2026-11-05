@@ -270,6 +270,16 @@ test("C2.m3: a present's fall ends fully faded, and presents are off under reduc
   expect(reduce).toMatch(/\.christmas-presents[^{}]*\{[^}]*display: none/);
 });
 
+test("C2.m4: the tree stands bottom-right, behind the page so buttons there sit over it", () => {
+  const tree = rule(".christmas-tree");
+  expect(tree).toContain("right:");
+  expect(tree).toContain("bottom: 0");
+  expect(tree).toContain("z-index: -1");
+  expect(tree).toContain("pointer-events: none");
+  const app = readFileSync(resolve(__dirname, "../App.tsx"), "utf8");
+  expect(app).toMatch(/className="relative isolate flex min-w-0 flex-1 flex-col"/);
+});
+
 test("C2.n: passes keep coming, 45 to 70 seconds apart", () => {
   vi.useFakeTimers();
   const { container, unmount } = render(<ChristmasDecor random={() => 0} />);

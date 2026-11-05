@@ -2085,12 +2085,14 @@ table {
 .christmas-nose {
   fill: var(--color-warning);
 }
-/* The tree stands beside the snowman. */
+/* The tree stands in the bottom-right corner BEHIND the page (z-index -1
+   inside the content column, which isolates it - App.tsx), so buttons and
+   panels there sit over it, never under it. */
 .christmas-tree {
   position: absolute;
-  left: 82px;
+  right: 8px;
   bottom: 0;
-  z-index: 10;
+  z-index: -1;
   pointer-events: none;
 }
 .christmas-trunk {

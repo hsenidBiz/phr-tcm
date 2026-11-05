@@ -5,8 +5,8 @@ import { HitContext, useBriefState, useDecorPresses, useHit, useReducedMotion, u
  * bar's bottom edge, baubles and a sprig of mistletoe hanging under it,
  * Santa's sleigh and two reindeer crossing the top of the window now and
  * then (dropping presents that fade as they fall), and (ChristmasCorner)
- * snow falling over the content area with a snowman and a decorated tree in
- * its bottom-left corner. All colours come
+ * snow falling over the content area with a snowman in its bottom-left
+ * corner and a decorated tree in its bottom-right one, behind the page. All colours come
  * from the theme through the .christmas-* classes in index.css. It is
  * decoration: aria-hidden, takes no height, and takes no click itself
  * (pointer-events none everywhere). A bauble answers a press on the page
@@ -335,7 +335,7 @@ export function ChristmasCorner() {
         <path className="christmas-nose" d="M26 31 l7 1.5 l-7 1.5z" />
       </svg>
       <svg className="christmas-tree" width="66" height="92" viewBox="0 0 60 84" aria-hidden="true">
-        <path className="christmas-drift" d="M0 84 L0 79 Q16 75 32 77 Q48 79 60 82 L60 84z" />
+        <path className="christmas-drift" d="M0 84 L0 82 Q12 79 28 77 Q44 75 60 76 L60 84z" />
         <rect className="christmas-trunk" x="27" y="69" width="6" height="10" rx="1" />
         <path className="christmas-pine" d="M5 72 L30 43 L55 72 Q30 77.5 5 72z" />
         <path className="christmas-pine-light" d="M30 43 L14 63 Q20 66 26 64z" />
