@@ -170,6 +170,7 @@ export const searchSuites: Screen = {
   tips: [
     "The page covers every project of the organization together, unless Treat all projects as one is switched off in Settings. When plans come from more than one project, each project's plans sit under its name, and every button on a suite works in that suite's own project. A project you cannot read, or one beyond the first 100, is left out, and the page says **Showing plans from N of M projects.**",
     "Plans with no suites are not listed.",
+    "**More > Export JSON** saves the test cases of a suite and every suite inside it as a file in the Import Test Cases format. Each case keeps its id, so importing the file again updates those same cases rather than adding copies.",
     "While the app collects the cases for **View**, **Edit cases** or a run, the buttons are greyed out and a note says so.",
   ],
   howTo: [
