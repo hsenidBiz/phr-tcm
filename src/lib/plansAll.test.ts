@@ -13,7 +13,7 @@ vi.mock("../bindings", () => ({
   commands: { listPlansWithSuites: h.list },
 }));
 
-import { fetchPlansAll, MAX_FANOUT_PROJECTS, projectOfPlan } from "./plansAll";
+import { cachedPlansAll, fetchPlansAll, MAX_FANOUT_PROJECTS, projectOfPlan } from "./plansAll";
 
 const plan = (id: number, name = `Plan ${id}`): PlanWithSuites => ({
   plan: { id, name, area_path: "x", root_suite_id: id + 1 },
@@ -236,5 +236,25 @@ describe("projectOfPlan", () => {
     expect(projectOfPlan(all, 20)).toBe("B");
     expect(projectOfPlan(all, 99)).toBeNull();
     expect(projectOfPlan(undefined, 11)).toBeNull();
+  });
+});
+
+describe("cachedPlansAll", () => {
+  test("kept trees come back stale or not, and a project with none is counted out", () => {
+    cacheWrite(cacheKeys.plansSuites("acme", "Web"), [plan(2)]);
+    cacheWrite(cacheKeys.plansSuites("acme", "Payroll"), [plan(1)]);
+    const stored = JSON.parse(localStorage.getItem("tcm-v2-cache:plans-suites:acme/Payroll")!);
+    stored.at = Date.now() - CACHE.structure.staleMs - 60_000;
+    localStorage.setItem("tcm-v2-cache:plans-suites:acme/Payroll", JSON.stringify(stored));
+
+    const kept = cachedPlansAll("acme", ["Web", "Payroll", "Ops"]);
+
+    expect(kept?.groups.map((g) => g.project)).toEqual(["Payroll", "Web"]);
+    expect(kept).toMatchObject({ shown: 2, total: 3 });
+    expect(h.list).not.toHaveBeenCalled();
+  });
+
+  test("nothing kept is null", () => {
+    expect(cachedPlansAll("acme", ["Web"])).toBeNull();
   });
 });

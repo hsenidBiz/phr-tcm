@@ -1063,3 +1063,50 @@ test("projects together: the bar follows one project's walk at a time", async ()
   await send("Web", 41, 90);
   expect(screen.getByText("41 / 90")).toBeInTheDocument();
 });
+
+test("combined Search Suites shows the saved trees at once and swaps in the fresh read when it lands", async () => {
+  // Both projects were read 7 hours ago: past the 6-hour refresh, inside the
+  // week they are kept for.
+  const old = Date.now() - 7 * 60 * 60_000;
+  for (const [project, plan, suites] of [
+    ["Web", WEB_PLAN, WEB_SUITES],
+    ["Payroll", PAY_PLAN, PAY_SUITES],
+  ] as const) {
+    localStorage.setItem(`tcm-v2-cache:plans-suites:acme/${project}`, JSON.stringify({ at: old, data: [{ plan, suites }] }));
+  }
+  const answers: Array<(v: unknown) => void> = [];
+  baseMock((cmd, raw) => {
+    const args = (raw ?? {}) as Record<string, unknown>;
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites")
+      return new Promise((resolve) => {
+        answers.push(() =>
+          resolve(
+            args.project === "Payroll"
+              ? [{ plan: { ...PAY_PLAN, name: "Payslip - Renamed" }, suites: PAY_SUITES }]
+              : [{ plan: WEB_PLAN, suites: WEB_SUITES }],
+          ),
+        );
+      });
+  });
+  renderCombined();
+
+  // Nothing has answered yet, and the saved trees are already there to search.
+  expect(await screen.findByText("Payslip - Test Plan")).toBeInTheDocument();
+  expect(screen.getByText("Auth - Test Plan")).toBeInTheDocument();
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "PBI 77" } });
+  expect(screen.getByText("Payslip - Test Plan")).toBeInTheDocument();
+  expect(screen.queryByText("Auth - Test Plan")).not.toBeInTheDocument();
+
+  // The background read lands one project at a time; the tree updates.
+  await waitFor(() => expect(answers).toHaveLength(1));
+  await act(async () => answers[0](undefined));
+  await waitFor(() => expect(answers).toHaveLength(2));
+  await act(async () => answers[1](undefined));
+  expect(await screen.findByText("Payslip - Renamed")).toBeInTheDocument();
+});
