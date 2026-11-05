@@ -42,6 +42,7 @@ import { cn } from "../lib/cn";
 import { LOG_KIND_CLASS, levelOf, tokenizeLog } from "../lib/logSyntax";
 import {
   ACCENTS,
+  limitedNow,
   visibleThemes,
   getAccent,
   getThemeChoice,
@@ -821,6 +822,7 @@ export default function Settings({
                   />
                 </span>
                 <span className="mt-1 block text-center text-xs text-muted">{t.label}</span>
+                {limitedNow(t) && <span className="block text-center text-[10px] text-faint">Limited time</span>}
               </button>
             ))}
             <button

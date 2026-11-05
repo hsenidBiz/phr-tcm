@@ -424,7 +424,7 @@ export default function App() {
     [],
   );
 
-  // Also hourly, so a window left open past the Halloween week still gets
+  // Also hourly, so a window left open past a season's end still gets
   // its restore without a relaunch.
   useEffect(() => {
     initTheme();

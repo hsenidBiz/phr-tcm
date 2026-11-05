@@ -7,7 +7,7 @@
 
 import { isCaptureMode } from "../dev/capture";
 import { extrasKnown, extrasUnlockedSnapshot, hydrateExtras, subscribeExtras } from "./extras";
-import { runSeason, seasonAccentPicked, seasonThemePicked } from "./season";
+import { christmasOffered, runSeason, seasonAccentPicked, seasonThemePicked } from "./season";
 
 export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled" | "halloween" | "christmas";
 /** What the user picked - "system" follows the OS light/dark preference. */
@@ -17,8 +17,11 @@ export const THEMES: {
   id: ThemeId;
   label: string;
   dark: boolean;
-  /** Held back: not offered, and not worn, until the gate is open. */
+  /** Held back: not offered, and not worn, until the gate is open - or
+   * while `openWhile` says its window is open. */
   gated?: boolean;
+  /** A limited-time window in which a gated theme is offered to everyone. */
+  openWhile?: (now: number) => boolean;
   /** Swatch colors for the Settings preview cards. */
   preview: { bg: string; surface: string; accent: string };
 }[] = [
@@ -28,13 +31,27 @@ export const THEMES: {
   { id: "graphite", label: "Graphite", dark: true, preview: { bg: "#141416", surface: "#1d1d21", accent: "#f59e0b" } },
   { id: "ocean", label: "Ocean", dark: true, preview: { bg: "#071a1f", surface: "#0d262e", accent: "#22d3ee" } },
   { id: "oled", label: "Onyx", dark: true, preview: { bg: "#000000", surface: "#0b0b0d", accent: "#22c55e" } },
-  { id: "halloween", label: "Halloween", dark: true, preview: { bg: "#0b0709", surface: "#17100f", accent: "#f97316" } },
-  { id: "christmas", label: "Christmas", dark: true, gated: true, preview: { bg: "#08120d", surface: "#16261d", accent: "#e23d4b" } },
+  { id: "halloween", label: "Halloween", dark: true, gated: true, preview: { bg: "#0b0709", surface: "#17100f", accent: "#f97316" } },
+  { id: "christmas", label: "Christmas", dark: true, gated: true, openWhile: christmasOffered, preview: { bg: "#08120d", surface: "#16261d", accent: "#e23d4b" } },
 ];
 
+type ThemeDef = (typeof THEMES)[number];
+
+/** True while a theme's limited-time window is open. Never in a docs
+ * screenshot run, so the shots stay the same all year. */
+function windowOpen(t: ThemeDef, now: number): boolean {
+  return !isCaptureMode() && (t.openWhile?.(now) ?? false);
+}
+
+/** True when `t` is offered only because its limited-time window is open
+ * (what the Settings card labels "Limited time"). */
+export function limitedNow(t: ThemeDef, now: number = Date.now()): boolean {
+  return !!t.gated && windowOpen(t, now);
+}
+
 /** The themes the Settings picker offers. */
-export function visibleThemes(gateOpen: boolean) {
-  return THEMES.filter((t) => !t.gated || (gateOpen && !isCaptureMode()));
+export function visibleThemes(gateOpen: boolean, now: number = Date.now()) {
+  return THEMES.filter((t) => !t.gated || (gateOpen && !isCaptureMode()) || windowOpen(t, now));
 }
 
 const ID_KEY = "tcm-v2-theme-id";
@@ -43,13 +60,17 @@ const DARK_PREF_KEY = "tcm-v2-theme-dark"; // last dark theme, for the sun/moon 
 
 const gateClosed = () => extrasKnown() && !extrasUnlockedSnapshot();
 
-export function getThemeChoice(): ThemeChoice {
+/** A gated theme that is not worn: the gate is known closed and no window
+ * is open for it. */
+const heldBack = (t: ThemeDef, now: number) => !!t.gated && !windowOpen(t, now) && gateClosed();
+
+export function getThemeChoice(now: number = Date.now()): ThemeChoice {
   const t = localStorage.getItem(ID_KEY);
   const known = THEMES.find((x) => x.id === t);
   // A held-back theme that is stored reads as Light once the gate is known
   // to be closed; the stored value stays. Until Rust has answered it is
   // shown as stored, so a start does not flash Light first.
-  if (known) return known.gated && gateClosed() ? "light" : known.id;
+  if (known) return heldBack(known, now) ? "light" : known.id;
   // "system" is stored explicitly (see setThemeChoice) so it stays distinct
   // from nobody having chosen anything yet.
   if (t === "system") return "system";
@@ -65,10 +86,10 @@ export function getThemeChoice(): ThemeChoice {
  * the user picked, or Graphite (the app's default dark look). Exported
  * because the browser pages carry a dark scheme too, and it should be the
  * same dark the app would give. */
-export function darkPref(): ThemeId {
+export function darkPref(now: number = Date.now()): ThemeId {
   const t = localStorage.getItem(DARK_PREF_KEY);
   const theme = THEMES.find((x) => x.id === t);
-  return theme?.dark && !(theme.gated && gateClosed()) ? theme.id : "graphite";
+  return theme?.dark && !heldBack(theme, now) ? theme.id : "graphite";
 }
 
 export function resolveThemeId(choice: ThemeChoice = getThemeChoice()): ThemeId {
@@ -91,14 +112,14 @@ export function setThemeChoice(choice: ThemeChoice) {
   // Stored explicitly - including "system" - so a deliberate pick is never
   // indistinguishable from nobody having chosen anything (getThemeChoice's
   // unset default is "light", not "system").
-  seasonThemePicked(choice); // a pick during the Halloween week is never undone
+  seasonThemePicked(choice); // a pick during a season is never undone
   localStorage.setItem(ID_KEY, choice);
   if (choice !== "system" && THEMES.find((x) => x.id === choice)?.dark) {
     localStorage.setItem(DARK_PREF_KEY, choice);
   }
   localStorage.removeItem(LEGACY_KEY);
   applyThemeChoice(choice);
-  applyAccent(getAccent()); // leaving Halloween early puts the accent back
+  applyAccent(getAccent()); // leaving a season early puts the accent back
 }
 
 /* Legacy light/dark helpers - the sun/moon toggle and the Toaster only
@@ -146,11 +167,11 @@ function applyAccent(accent: Accent) {
   else document.documentElement.setAttribute("data-accent", accent);
 }
 
-/** Call on startup, and hourly (a window left open past the Halloween week
+/** Call on startup, and hourly (a window left open past a season's end
  * still gets its restore). `now` is a seam for tests. */
 export function initTheme(now: number = Date.now()) {
   runSeason(now, { gateOpen: extrasUnlockedSnapshot(), gateKnown: extrasKnown() });
-  applyThemeChoice(getThemeChoice());
+  applyThemeChoice(getThemeChoice(now));
   applyAccent(getAccent());
 }
 
