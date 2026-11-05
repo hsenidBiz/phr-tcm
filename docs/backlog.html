@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 4 November 2026: backlog 63, 64 and 71 done, the environment pill removed from Auto Run and API Templates, and every How To Use shot retaken; earlier, after 2.4.1: backlog 77 to 89 built for 2.4.4-beta.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below.</p>
+  <p class="sub">Updated 5 November 2026: stable 2.4.4 shipped (quieter labels, New / Update badges, the Halloween theme no longer offered), then 2.4.5-beta.1 (Run Tests on a folder, copyable ids) and 2.4.5-beta.2 (Raise bug, flaky cases, queue quality warnings, one-list changelog). Earlier, 4 November 2026: backlog 63, 64 and 71 done, the environment pill removed from Auto Run and API Templates, and every How To Use shot retaken; earlier, after 2.4.1: backlog 77 to 89 built for 2.4.4-beta.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -85,6 +85,41 @@
       <li>Open follow-up: record-and-replay of postbacks (turning a person's clicks on a WebForms page into a template; approach 3 of the design). Parked; out of scope for this build.</li>
       <li>Open follow-up, not yet built: a cross-origin SSO redirect on a postback is not yet recognised as signed out (today it fails as "the request did not complete"). Parked.</li>
       <li>Open follow-up: a saved template (a plain POST or a postback) is not checked for a step that deletes, such as a Delete argument or a delete endpoint, against its declared effect. Only one-off requests check this today.</li>
+    </ul>
+  </div>
+
+  <h2>Folder runs, Raise bug, flaky cases and quality warnings (2.4.5-beta.1 and beta.2)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Run Tests on a Test plan folder</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <p>Search Suites, More, Run Tests on a folder that is not a PBI's suite opens the full Run Tests screen on that folder's own cases (not its subfolders'), with history, My order and Spec order, the report and the runner. No suggested order (that lives on a PBI).</p>
+    <ul>
+      <li>Hand check owed on the live org: hSenid QA Test Suit, Widget, Regression: tick three cases, run them, outcomes land on that suite's points; Back returns to the PBI or to Search Suites.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Copyable ids</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <ul>
+      <li>Hand check owed: double-click a case number on the browser page selects only the number; select and copy a work item id on a board card (the card must not drag or open) and in the work item panel's header.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Raise bug from a failed Auto Run case</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <ul>
+      <li>Hand check owed on the live org: Raise bug on a failed case files a Bug linked to the case and the PBI with the failure screenshot attached; on an older run whose screenshots were cleared, the form still opens and says how many are gone.</li>
+      <li>Open, yours to pick: the filed bug number shows only until the review closes (the run record has no field for it).</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Flaky cases</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <ul>
+      <li>Hand check owed: with real run history, the list shows cases that both passed and failed on one environment; Mark flaky moves its failures to "flaky" in Past runs and the review; a marked case that then fails every run stays listed and can be unmarked.</li>
+      <li>Open, yours to pick: the HTML run report and the Test cases tab still count a flaky-marked failure as failed; the review has no Flaky filter.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Queue quality warnings</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <ul>
+      <li>Hand check owed: in review, a case with an empty expected result, an expected result of "Works", or a first step saying "the above" with no preconditions shows the warning on its row, and Upload still works.</li>
     </ul>
   </div>
 
