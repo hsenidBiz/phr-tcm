@@ -277,6 +277,14 @@
   --color-success: #4ade80;
   --color-warning: #fbbf24;
   --color-info: #60a5fa;
+  /* The scenery's own colours (components/ChristmasDecor.tsx). */
+  --christmas-red: #e23d4b;
+  --christmas-pine: #1f6b40;
+  --christmas-pine-light: #2f8f55;
+  --christmas-wood: #9a6237;
+  --christmas-wood-light: #c99a6c;
+  --christmas-wood-dark: #5c3a20;
+  --christmas-skin: #f1c6a3;
 }
 :root[data-theme="ocean"] {
   --color-bg: #071a1f;
@@ -1862,17 +1870,169 @@ table {
 .christmas-sleigh {
   position: fixed;
   left: 0;
-  top: 10px;
+  top: 8px;
   pointer-events: none;
   /* Off the left edge from the first paint; the component parks it the same. */
-  transform: translateX(-90px);
+  transform: translateX(-140px);
   transition-property: transform;
   transition-timing-function: linear;
 }
 .christmas-sleigh svg {
   display: block;
-  fill: var(--color-muted);
-  opacity: 0.8;
+  overflow: visible;
+}
+.christmas-sleigh-body {
+  fill: var(--christmas-red);
+}
+.christmas-sleigh-trim,
+.christmas-runner,
+.christmas-harness,
+.christmas-rein {
+  fill: none;
+  stroke: var(--color-warning);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.christmas-sleigh-trim {
+  stroke-width: 1.2px;
+}
+.christmas-runner {
+  stroke-width: 1.6px;
+}
+.christmas-harness {
+  stroke-width: 1px;
+}
+.christmas-rein {
+  stroke-width: 0.6px;
+  stroke-opacity: 0.8;
+}
+.christmas-gold {
+  fill: var(--color-warning);
+}
+.christmas-sack {
+  fill: var(--christmas-wood-light);
+}
+.christmas-sack-tie {
+  fill: none;
+  stroke: var(--christmas-wood-dark);
+  stroke-width: 1px;
+  stroke-linecap: round;
+}
+.christmas-suit {
+  fill: var(--christmas-red);
+}
+.christmas-suit-arm {
+  fill: none;
+  stroke: var(--christmas-red);
+  stroke-width: 3px;
+  stroke-linecap: round;
+}
+.christmas-trim {
+  fill: none;
+  stroke: var(--color-text);
+  stroke-width: 2px;
+  stroke-linecap: round;
+}
+.christmas-trim-fill {
+  fill: var(--color-text);
+}
+.christmas-mitten {
+  fill: var(--christmas-pine);
+}
+.christmas-skin {
+  fill: var(--christmas-skin);
+}
+.christmas-fur {
+  fill: var(--christmas-wood);
+}
+.christmas-fur-light {
+  fill: var(--christmas-wood-light);
+}
+.christmas-leg,
+.christmas-antler {
+  fill: none;
+  stroke: var(--christmas-wood-dark);
+  stroke-linecap: round;
+}
+.christmas-leg {
+  stroke-width: 1.6px;
+}
+.christmas-antler {
+  stroke-width: 1.1px;
+}
+.christmas-eye,
+.christmas-nose-dark {
+  fill: var(--color-bg);
+}
+.christmas-nose-red {
+  fill: var(--christmas-red);
+}
+/* Presents dropped by the sleigh: a fixed layer at the sleigh's height;
+   each present falls back and down, turns, and fades to nothing. */
+.christmas-presents {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.christmas-present {
+  position: absolute;
+  top: 30px;
+  animation: christmas-present-fall 2.6s ease-in forwards;
+}
+.christmas-present svg {
+  display: block;
+}
+.christmas-paper {
+  fill: currentColor;
+}
+.christmas-ribbon,
+.christmas-bow {
+  fill: var(--color-text);
+}
+/* Mistletoe: hangs under the PBI bar beside the baubles and sways with them. */
+.christmas-mistletoe {
+  position: absolute;
+  top: 6px;
+  transform-origin: top center;
+  animation: christmas-sway 7.4s ease-in-out infinite;
+  animation-delay: -3.1s;
+}
+.christmas-sprig-string {
+  width: 1px;
+  margin: 0 auto;
+  background: var(--color-border-strong);
+}
+.christmas-mistletoe svg {
+  display: block;
+  margin-top: -2px;
+}
+.christmas-stem {
+  fill: none;
+  stroke: var(--christmas-pine);
+  stroke-width: 1.2px;
+  stroke-linecap: round;
+}
+.christmas-leaf {
+  fill: var(--christmas-pine);
+}
+.christmas-leaf-light {
+  fill: var(--christmas-pine-light);
+}
+.christmas-berry {
+  fill: var(--color-text);
+}
+.christmas-bow-red {
+  fill: var(--christmas-red);
+  stroke: var(--christmas-red);
+  stroke-width: 1px;
+  stroke-linecap: round;
+}
+.christmas-bow-knot {
+  fill: var(--christmas-red);
 }
 .christmas-line {
   fill: none;
@@ -1925,6 +2085,70 @@ table {
 .christmas-nose {
   fill: var(--color-warning);
 }
+/* The tree stands beside the snowman. */
+.christmas-tree {
+  position: absolute;
+  left: 82px;
+  bottom: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+.christmas-trunk {
+  fill: var(--christmas-wood-dark);
+}
+.christmas-pine {
+  fill: var(--christmas-pine);
+}
+.christmas-pine-light {
+  fill: var(--christmas-pine-light);
+}
+.christmas-tree-snow {
+  fill: none;
+  stroke: var(--color-text);
+  stroke-opacity: 0.85;
+  stroke-width: 1.4px;
+  stroke-linecap: round;
+}
+.christmas-garland {
+  fill: none;
+  stroke: var(--color-warning);
+  stroke-width: 0.9px;
+  stroke-dasharray: 0.1 2.2;
+  stroke-linecap: round;
+}
+.christmas-ornament {
+  fill: currentColor;
+}
+.christmas-star {
+  fill: var(--color-warning);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: christmas-star-glow 3.2s ease-in-out infinite;
+}
+@keyframes christmas-present-fall {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.75;
+  }
+  to {
+    transform: translate3d(var(--drift, -16px), 140px, 0) rotate(var(--spin, 30deg));
+    opacity: 0;
+  }
+}
+@keyframes christmas-star-glow {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.75;
+  }
+}
 @keyframes christmas-twinkle {
   0%,
   30%,
@@ -1967,10 +2191,14 @@ table {
   .christmas-twinkle,
   .christmas-bauble,
   .christmas-bauble.is-spin .christmas-ball,
-  .christmas-flake {
+  .christmas-flake,
+  .christmas-mistletoe,
+  .christmas-star,
+  .christmas-present {
     animation: none;
   }
-  .christmas-sleigh {
+  .christmas-sleigh,
+  .christmas-presents {
     display: none;
   }
   .christmas-snow {
