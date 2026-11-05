@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.3",
+    date: "2026-11-05",
+    items: [
+      "Opening a long list grows smoothly to its full height, instead of slowing partway and then jumping open.",
+    ],
+  },
+  {
     version: "2.4.5-beta.2",
     date: "2026-11-05",
     items: [
