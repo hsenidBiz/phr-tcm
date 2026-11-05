@@ -618,6 +618,8 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_count_evidence", // local: counts the saved run into the project's quirks file, never ADO
     "auto_run_close_browser",
     "auto_run_list_runs", // read-only: PastRuns' own listing, rendered alongside this screen
+    "auto_run_flaky_marks", // read-only, local: which cases are marked Flaky, for the run summaries
+    "auto_run_flaky_cases", // read-only, local: the Flaky cases list on Past runs, read from the run files
     "auto_run_plan", // read-only: the order and reset points, worked out from local scripts
     "auto_run_waiting_reset", // read-only, local: whether an unattended run is paused at a reset point, to show its panel again
     "auto_run_waiting_network", // read-only, local: whether an unattended run is waiting for the company network, to show its panel again

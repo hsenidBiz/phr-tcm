@@ -27,6 +27,7 @@ pub mod downloads;
 pub mod edits;
 pub mod explore;
 pub mod failures;
+pub mod flaky;
 pub mod floor;
 pub mod forbidden_fixes;
 pub mod guide;
@@ -397,6 +398,11 @@ pub struct CaseScript {
     /// gone when a mark is set again. Every save keeps the one on disk, like the mark.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleared_defect: Option<ClearedDefect>,
+    /// The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+    /// summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
+    /// on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flaky: Option<FlakyMark>,
 }
 
 /// A check a repair gave up, with why: shown to the person on the case. The person's own save in
@@ -490,6 +496,13 @@ pub struct SuspectedDefect {
     /// API-check excerpts get (`defects::check_mark`).
     pub note: String,
     /// Epoch milliseconds as a string, like `LocalRun::started_at`.
+    pub marked_at: String,
+}
+
+/// A case the person marked as flaky, and when.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct FlakyMark {
+    /// Epoch milliseconds as a string, like `SuspectedDefect::marked_at`.
     pub marked_at: String,
 }
 

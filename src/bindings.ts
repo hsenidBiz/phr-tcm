@@ -791,6 +791,12 @@ export const commands = {
 	 *  gone when a mark is set again. Every save keeps the one on disk, like the mark.
 	 */
 	cleared_defect?: ClearedDefect_Serialize | null,
+	/**
+	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+	 *  summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
+	 *  on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
+	 */
+	flaky?: FlakyMark | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	/**
 	 *  Every listed case's script in one call - what the Auto Run screen asks
@@ -805,6 +811,21 @@ export const commands = {
 	 *  mark and nothing else - the script's actions and repair count stay.
 	 */
 	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
+	/**
+	 *  The cases that passed and failed within their recent runs on one environment (`autorun::flaky`), read
+	 *  from the run files on this machine, each with whether the person has marked it flaky.
+	 */
+	autoRunFlakyCases: () => __TAURI_INVOKE<FlakyCase[]>("auto_run_flaky_cases"),
+	/**
+	 *  The ids of every case whose script carries the person's flaky mark: what the run summaries read to count
+	 *  a failure as flaky.
+	 */
+	autoRunFlakyMarks: () => __TAURI_INVOKE<number[]>("auto_run_flaky_marks"),
+	/**
+	 *  A person's Flaky toggle on a case: marks or clears it on the case's script. Changes nothing that is
+	 *  published to Azure DevOps.
+	 */
+	autoRunSetFlaky: (caseId: number, flaky: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_set_flaky", { caseId, flaky })),
 	autoRunLoadDivergences: (organization: string, project: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_load_divergences", { organization, project })),
 	autoRunRuleDivergence: (organization: string, project: string, id: string, ruling: Ruling) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_rule_divergence", { organization, project, id, ruling })),
 	/**
@@ -3706,6 +3727,12 @@ export type CaseScript_Deserialize = {
 	 *  gone when a mark is set again. Every save keeps the one on disk, like the mark.
 	 */
 	cleared_defect?: ClearedDefect_Deserialize | null,
+	/**
+	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+	 *  summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
+	 *  on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
+	 */
+	flaky?: FlakyMark | null,
 };
 
 /**
@@ -3878,6 +3905,12 @@ export type CaseScript_Serialize = {
 	 *  gone when a mark is set again. Every save keeps the one on disk, like the mark.
 	 */
 	cleared_defect?: ClearedDefect_Serialize | null,
+	/**
+	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+	 *  summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
+	 *  on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
+	 */
+	flaky?: FlakyMark | null,
 };
 
 export type CellMatch = "exact" | "contains";
@@ -4846,6 +4879,29 @@ export type FixtureRun = {
 export type FixtureStep = {
 	template: string,
 	params?: { [key in string]: string },
+};
+
+/**  One case that passed and failed within its window of runs on one environment. */
+export type FlakyCase = {
+	case_id: number,
+	/**  The title as the newest of those runs has it. */
+	title: string,
+	/**  The environment the runs were made in; `None` for runs saved before environments existed. */
+	environment: string | null,
+	/**  One entry per run that passed or failed the case, oldest first: true is a pass. */
+	pattern: boolean[],
+	/**  What the newest failure said: the failing action's own words, else the case's note. */
+	last_failure: string | null,
+	/**  Epoch milliseconds as a string (that run's `started_at`). */
+	last_failed_at: string,
+	/**  Whether the person has marked the case flaky. Always false from [`flaky_cases`]; set by the command. */
+	marked: boolean,
+};
+
+/**  A case the person marked as flaky, and when. */
+export type FlakyMark = {
+	/**  Epoch milliseconds as a string, like `SuspectedDefect::marked_at`. */
+	marked_at: string,
 };
 
 export type Flow = Flow_Serialize | Flow_Deserialize;

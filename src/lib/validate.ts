@@ -82,3 +82,53 @@ export function duplicateWarning(tc: TestCase, existing: ExistingCase[]): string
     `If it should update that case, set its TestCaseID - otherwise this will create a near-duplicate.`
   );
 }
+
+/** Expected results that say nothing checkable. Compared against the whole
+ * expected text, trimmed, lower-cased and without a trailing period. */
+export const VAGUE_EXPECTED: readonly string[] = [
+  "works",
+  "it works",
+  "works fine",
+  "works as expected",
+  "as expected",
+  "should work",
+  "verify it works",
+  "ok",
+  "pass",
+  "passed",
+  "success",
+  "successful",
+  "done",
+  "no error",
+  "no errors",
+  "fine",
+];
+
+const EARLIER_STATE = /\b(the above|as above|previous(ly)? (step|case|test)|same as before)\b/i;
+
+/** Quality warnings for a queued case: advice only, never a block. A step
+ * with no action is left to validateCase, and a Shared Steps reference
+ * carries its own steps, so neither is reported here. */
+export function qualityWarnings(tc: TestCase): string[] {
+  const out: string[] = [];
+  tc.steps.forEach((s, i) => {
+    if (s.shared != null || !s.action.trim()) return;
+    const expected = s.expected.trim();
+    const n = i + 1;
+    if (!expected) {
+      out.push(`Step ${n} has no expected result`);
+    } else if (VAGUE_EXPECTED.includes(expected.replace(/\.+$/, "").trim().toLowerCase())) {
+      out.push(`Step ${n}'s expected result says nothing to check: "${expected}"`);
+    }
+  });
+  const first = tc.steps[0];
+  if (
+    first &&
+    first.shared == null &&
+    !tc.preconditions.trim() &&
+    EARLIER_STATE.test(first.action)
+  ) {
+    out.push("Step 1 refers to an earlier state but the case has no preconditions");
+  }
+  return out;
+}

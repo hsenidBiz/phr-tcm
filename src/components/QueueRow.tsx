@@ -45,6 +45,10 @@ export type QueueRowProps = {
   problem: string | null;
   /** Duplicate-title warning, shown in review when there is no problem. */
   duplicate: string | null;
+  /** Quality warnings (advice only), one per line, shown in review when
+   * there is no problem. A joined string so the memoised row compares it
+   * by value. */
+  quality?: string;
   diff: CaseDiff | null;
   diffFailed: boolean;
   /** A submit is running - Edit and Remove are disabled meanwhile. */
@@ -116,6 +120,7 @@ export function QueueRowInner({
   reviewing,
   problem,
   duplicate,
+  quality = "",
   diff,
   diffFailed,
   busy,
@@ -136,6 +141,8 @@ export function QueueRowInner({
   // The row's name is its title and then its status - what the badges and
   // warnings say - so a screen reader hears more than the title alone.
   const id = (part: string) => `${idBase}-${i}-${part}`;
+  const qualityLines = quality ? quality.split("\n") : [];
+  const showQuality = reviewing && !problem && qualityLines.length > 0;
   const status = [
     "title",
     "op",
@@ -144,6 +151,7 @@ export function QueueRowInner({
     failed && "failed",
     diff?.noop && "noop",
     reviewing && (problem || duplicate) && "review",
+    showQuality && "quality",
   ].filter((part): part is string => Boolean(part));
   return (
     // Selected by clicking the row itself, as on Update Test Cases: a row
@@ -271,6 +279,12 @@ export function QueueRowInner({
           {reviewing && !problem && duplicate && (
             <span id={id("review")} className="text-xs text-warning">
               {duplicate}
+            </span>
+          )}
+          {showQuality && (
+            <span id={id("quality")} className="text-xs text-warning" title={qualityLines.join("\n")}>
+              {qualityLines[0]}
+              {qualityLines.length > 1 && ` and ${qualityLines.length - 1} more`}
             </span>
           )}
         </span>

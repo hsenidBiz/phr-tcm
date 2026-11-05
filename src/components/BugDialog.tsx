@@ -20,7 +20,7 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
  * number (a list item's continuation): a fenced query in a step then opens
  * and closes inside that step, and the expected result and the steps after
  * it stay out of the code block. The expected result is a line of its own. */
-function reproStep(n: number, action: string, expected: string): string {
+export function reproStep(n: number, action: string, expected: string): string {
   const marker = `${n}. `;
   const pad = " ".repeat(marker.length);
   const lines = action.split(/\r?\n/);
@@ -42,6 +42,8 @@ export default function BugDialog({
   testCase,
   pbiId,
   screenshots,
+  initialTitle,
+  initialRepro,
   onClose,
   onFiled,
 }: {
@@ -50,6 +52,11 @@ export default function BugDialog({
   testCase: TestCaseFull;
   pbiId: number;
   screenshots: string[];
+  /** A caller that already knows the failure (an Auto Run review) hands in
+   * its own title and repro; the manual runner passes neither and gets the
+   * case's own steps. */
+  initialTitle?: string;
+  initialRepro?: string;
   onClose: () => void;
   onFiled: (bugId: number) => void;
 }) {
@@ -67,8 +74,8 @@ export default function BugDialog({
     ...testCase.steps.map(stepLine),
   ].join("\n");
 
-  const [title, setTitle] = useState(`Bug: ${testCase.title}`);
-  const [repro, setRepro] = useState(defaultRepro);
+  const [title, setTitle] = useState(initialTitle ?? `Bug: ${testCase.title}`);
+  const [repro, setRepro] = useState(initialRepro ?? defaultRepro);
   // Screenshots pasted INTO the dialog (Ctrl+V) - evidence of the bug that
   // was never attached to the run, e.g. a capture sitting on the clipboard.
   const [pasted, setPasted] = useState<ClipboardImage[]>([]);

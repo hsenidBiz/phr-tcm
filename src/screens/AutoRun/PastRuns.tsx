@@ -12,7 +12,10 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
+import FlakyBadge from "./FlakyBadge";
+import FlakyCases from "./FlakyCases";
 import ResultFilterRow from "./ResultFilterRow";
+import { invalidateRuns, useFlakyMarks } from "./flaky";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
@@ -23,6 +26,8 @@ import {
   RESULT_BUCKETS,
   bucketTone,
   countBuckets,
+  countFlaky,
+  isFlakyFailure,
   matchesFilter,
   replayStep,
   type ResultBucket,
@@ -101,6 +106,8 @@ export default function PastRuns({
     retry: false,
   });
   const runCount = runs.data?.length ?? 0;
+  /** Cases the person marked Flaky: their failures are counted apart, so a run does not read as failed for them. */
+  const flakyIds = useFlakyMarks();
   const [clearOpen, setClearOpen] = useState(false);
 
   /** Which runs show: every one, or those with at least one case in a
@@ -110,10 +117,10 @@ export default function PastRuns({
   const allRuns = runs.data ?? [];
   const runsWith: Record<ResultBucket, number> = { Passed: 0, Failed: 0, Blocked: 0, "Not run": 0 };
   for (const run of allRuns) {
-    const counts = countBuckets(run.cases);
+    const counts = countBuckets(run.cases, flakyIds);
     for (const b of RESULT_BUCKETS) if (counts[b] > 0) runsWith[b] += 1;
   }
-  const shownRuns = allRuns.filter((run) => run.cases.some((c) => matchesFilter(c, filter)));
+  const shownRuns = allRuns.filter((run) => run.cases.some((c) => matchesFilter(c, filter, flakyIds)));
 
   /** Housekeeping: wipe every saved run and screenshot on this machine,
    * including runs already sent to Azure DevOps - the confirm dialog says
@@ -123,7 +130,7 @@ export default function PastRuns({
     mutationFn: () => unwrapStr(commands.autoRunClearRuns()),
     onSuccess: async (removed) => {
       setClearOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await invalidateRuns(queryClient);
       toast.success(`${removed} run${removed === 1 ? "" : "s"} removed.`);
     },
     onError: (e) => toast.error(`Could not clear runs: ${e.message}`),
@@ -161,6 +168,7 @@ export default function PastRuns({
         Azure DevOps on a run you have reviewed.
       </p>
       {runCount === 0 && <p className="text-xs text-muted">No runs on this machine yet.</p>}
+      <FlakyCases />
       {runCount > 0 && (
         <ResultFilterRow
           value={filter}
@@ -178,7 +186,8 @@ export default function PastRuns({
           const unattended = run.mode === "unattended";
           const unconfirmed = run.cases.filter((c) => !c.verdict).length;
           const otherPbi = pbiId != null && run.pbi_id !== pbiId;
-          const counts = countBuckets(run.cases);
+          const counts = countBuckets(run.cases, flakyIds);
+          const flakyCount = countFlaky(run.cases, flakyIds);
           return (
             <div key={run.id} className="space-y-1 rounded-md border border-border bg-surface p-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -231,6 +240,11 @@ export default function PastRuns({
                     {counts[b]} {b.toLowerCase()}
                   </span>
                 ))}
+                {flakyCount > 0 && (
+                  <span className="text-warning" title="Failed cases marked as flaky">
+                    {flakyCount} flaky
+                  </span>
+                )}
               </div>
               {(run.network_pauses ?? []).length > 0 && (
                 <p className="text-xs text-warning">
@@ -238,7 +252,7 @@ export default function PastRuns({
                 </p>
               )}
               <ul className="space-y-1">
-                {run.cases.filter((c) => matchesFilter(c, filter)).map((c, i, shown) => {
+                {run.cases.filter((c) => matchesFilter(c, filter, flakyIds)).map((c, i, shown) => {
                   const replayTo = onReplay && !otherPbi ? replayStep(c) : null;
                   const heading = shownBatchHeading(recordedBatches(run), shown, i);
                   return (
@@ -276,6 +290,7 @@ export default function PastRuns({
                           ) : (
                             <span className="text-xs font-medium text-faint">unset</span>
                           )}
+                          {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
                           {replayTo !== null && (
                             <Button
                               size="sm"

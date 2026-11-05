@@ -1083,19 +1083,23 @@ export default function Settings({
           </div>
         ) : (
           <div key={rightPanel} className="t-panel-in space-y-4 rounded-md border border-border p-3">
-          {changelog.slice(0, 1).map((e) => (
-            <ChangelogVersion key={e.version} entry={e} />
-          ))}
-          {/* Earlier versions unfold in place, in a box of their own so a
-              long history scrolls without pushing the panel's own edge
-              off the screen. */}
-          <Collapse open={tiles.expanded} onGrow={tiles.onGrow} onShrink={tiles.onShrink}>
-            <div id="changelog-history" className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
-              {changelog.slice(1).map((e) => (
-                <ChangelogVersion key={e.version} entry={e} />
-              ))}
-            </div>
-          </Collapse>
+          {/* One list that scrolls as a whole once the history is open: the
+              latest version scrolls away with the rest instead of staying
+              pinned above them. The box keeps a long history from pushing
+              the panel's own edge off the screen. */}
+          <div className={cn("space-y-4", tiles.expanded && "max-h-[50vh] overflow-y-auto pr-1")}>
+            {changelog.slice(0, 1).map((e) => (
+              <ChangelogVersion key={e.version} entry={e} />
+            ))}
+            {/* Earlier versions unfold in place, under the latest. */}
+            <Collapse open={tiles.expanded} onGrow={tiles.onGrow} onShrink={tiles.onShrink}>
+              <div id="changelog-history" className="space-y-4">
+                {changelog.slice(1).map((e) => (
+                  <ChangelogVersion key={e.version} entry={e} />
+                ))}
+              </div>
+            </Collapse>
+          </div>
           {changelog.length > 1 && (
             <Button
               size="sm"

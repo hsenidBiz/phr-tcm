@@ -10,8 +10,11 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invalidateRuns } from "./flaky";
 import { toast } from "../../lib/toast";
-import { commands, type LocalRun_Serialize, type PublishResult } from "../../bindings";
+import { commands, type LocalRun_Serialize, type PublishResult, type TestCaseFull } from "../../bindings";
+import BugDialog from "../../components/BugDialog";
+import { sharedStepQueryKey, sharedStepText } from "../../lib/sharedSteps";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -19,7 +22,7 @@ import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
+import { IconBug, IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
@@ -30,7 +33,18 @@ import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import { uncheckedText } from "./unchecked";
-import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
+import { autoRunRepro, failureShotNames } from "./bugRepro";
+import FlakyBadge from "./FlakyBadge";
+import { useFlakyMarks } from "./flaky";
+import {
+  countBuckets,
+  countFlaky,
+  isFlakyFailure,
+  matchesFilter,
+  replayStep,
+  resultBucket,
+  type ResultFilter,
+} from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -184,6 +198,8 @@ export default function RunReview(props: {
   /** Which cases the list shows. Only the LIST: Accept all,
    * Save and Send always act on the whole run. */
   const [filter, setFilter] = useState<ResultFilter>("All");
+  /** Cases the person marked Flaky: a failure of one is counted apart from the failures a run reads as failed. */
+  const flakyIds = useFlakyMarks();
   /** The cases the filter matched WHEN IT WAS PICKED, by id; `null` under
    * All. Frozen on purpose: a reviewer filtering to Failed who marks a
    * false failure Passed must keep that card - to check it, to write its
@@ -194,7 +210,7 @@ export default function RunReview(props: {
   const pickFilter = (f: ResultFilter) => {
     setFilter(f);
     setVisibleIds(
-      f === "All" || !run ? null : new Set(run.cases.filter((c) => matchesFilter(c, f)).map((c) => c.case_id)),
+      f === "All" || !run ? null : new Set(run.cases.filter((c) => matchesFilter(c, f, flakyIds)).map((c) => c.case_id)),
     );
   };
 
@@ -203,6 +219,56 @@ export default function RunReview(props: {
     unwrapStr(commands.autoRunShot(name))
       .then(setShot)
       .catch((e) => toast.error(`Could not open the screenshot: ${e.message ?? e}`));
+
+  /** The bug being raised for a failed case: its body from the same query
+   * the case preview uses, and the failure screenshots as the base64 the bug
+   * attaches. Nothing is filed until the person presses File in the dialog. */
+  const [raising, setRaising] = useState<{
+    caseId: number;
+    title: string;
+    repro: string;
+    shots: string[];
+    testCase: TestCaseFull;
+  } | null>(null);
+  const [raiseBusy, setRaiseBusy] = useState<number | null>(null);
+  /** Bugs filed from this review, per case. Kept for this review session
+   * only: the run record has no field for them. */
+  const [filedBugs, setFiledBugs] = useState<Record<number, number[]>>({});
+  const raiseBug = async (c: LocalRun_Serialize["cases"][number]) => {
+    if (!run) return;
+    setRaiseBusy(c.case_id);
+    try {
+      const found = await queryClient.fetchQuery({
+        queryKey: ["run-case-steps", props.org, c.case_id],
+        queryFn: () => unwrap(commands.testCasesByIds(props.org, [c.case_id], null, null)),
+        staleTime: 5 * 60_000,
+      });
+      const testCase = found[0] as TestCaseFull | undefined;
+      if (!testCase) {
+        toast.error("Could not read the test case to raise a bug.");
+        return;
+      }
+      // A screenshot is pruned over time: keep the ones that still load, and say so once for the rest.
+      const loaded = await Promise.allSettled(
+        failureShotNames(c).map((n) => unwrapStr(commands.autoRunShot(n)).then((u) => u.replace(/^data:[^,]*,/, ""))),
+      );
+      const shots = loaded.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      const missing = loaded.length - shots.length;
+      if (missing > 0) {
+        toast.info(
+          `${missing} screenshot${missing === 1 ? "" : "s"} of this failure ${missing === 1 ? "is" : "are"} no longer on this machine.`,
+        );
+      }
+      const repro = autoRunRepro(c, testCase.steps, run, (s, n) =>
+        `${n}. ${sharedStepText(s.shared!, queryClient.getQueryData<string>(sharedStepQueryKey(props.org, s.shared!)))}`,
+      );
+      setRaising({ caseId: c.case_id, title: c.title, repro, shots, testCase });
+    } catch (e) {
+      toast.error(`Could not raise a bug: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRaiseBusy(null);
+    }
+  };
 
   const [saving, setSaving] = useState(false);
 
@@ -249,7 +315,7 @@ export default function RunReview(props: {
       // What is on disk now matches this screen's own edits - Send is no
       // longer blocked on an unsaved change.
       setBaseline(Object.fromEntries(run.cases.map((c) => [c.case_id, { verdict: c.verdict, note: c.note }])));
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await invalidateRuns(queryClient);
       await queryClient.invalidateQueries({ queryKey: ["autorun-run", runId] });
       toast.success("Review saved.");
     } catch (e) {
@@ -313,7 +379,7 @@ export default function RunReview(props: {
       setRun((prev) =>
         prev ? { ...prev, published: { run_id: r.run_id, web_url: r.web_url, at: String(Date.now()) } } : prev,
       );
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await invalidateRuns(queryClient);
       await queryClient.invalidateQueries({ queryKey: ["autorun-run", runId] });
     } catch (e) {
       // Same shape as every other Azure DevOps failure in this app - see
@@ -370,7 +436,8 @@ export default function RunReview(props: {
   const sendTitle = mismatch ? mismatchSentence(run.pbi_id) : dirty ? "Save the review first" : undefined;
   // Counted off the cases as they stand on screen, so a verdict confirmed
   // here moves its case to its new bucket at once.
-  const counts = countBuckets(run.cases);
+  const counts = countBuckets(run.cases, flakyIds);
+  const flakyCount = countFlaky(run.cases, flakyIds);
   const shown = visibleIds ? run.cases.filter((c) => visibleIds.has(c.case_id)) : run.cases;
   const batches = recordedBatches(run);
 
@@ -389,6 +456,11 @@ export default function RunReview(props: {
       )}
 
       <ResultFilterRow value={filter} onChange={pickFilter} total={run.cases.length} counts={counts} />
+      {flakyCount > 0 && (
+        <p className="text-xs text-warning">
+          {flakyCount} failed case{flakyCount === 1 ? " is" : "s are"} marked as flaky, so {flakyCount === 1 ? "it is" : "they are"} not counted as failed here. Still sent as failed.
+        </p>
+      )}
 
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
@@ -422,6 +494,24 @@ export default function RunReview(props: {
                   <NoticeBadge notice={c.notice} />
                   <ProductBugBadge bugs={c.product_bugs} />
                   <PageErrorsBadge seen={c.page_errors_seen} />
+                  {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
+                  {(filedBugs[c.case_id] ?? []).map((id) => (
+                    <span key={id} className="shrink-0 text-xs text-success">
+                      Bug #{id}
+                    </span>
+                  ))}
+                  {resultBucket(c) === "Failed" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={`Raise bug for case ${c.case_id}`}
+                      disabled={raiseBusy !== null}
+                      onClick={() => void raiseBug(c)}
+                    >
+                      <IconBug aria-hidden />
+                      Raise bug
+                    </Button>
+                  )}
                   {replayTo !== null && (
                     <Button
                       size="sm"
@@ -655,6 +745,23 @@ export default function RunReview(props: {
             </Button>
           </div>
         </Modal>
+      )}
+
+      {raising && (
+        <BugDialog
+          org={props.org}
+          project={props.project}
+          testCase={raising.testCase}
+          pbiId={run.pbi_id}
+          screenshots={raising.shots}
+          initialTitle={`Bug: ${raising.title}`}
+          initialRepro={raising.repro}
+          onClose={() => setRaising(null)}
+          onFiled={(bugId) => {
+            setFiledBugs((x) => ({ ...x, [raising.caseId]: [...(x[raising.caseId] ?? []), bugId] }));
+            setRaising(null);
+          }}
+        />
       )}
 
       {shot && (

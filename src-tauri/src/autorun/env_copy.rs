@@ -957,6 +957,7 @@ pub fn copy_case(
     let mut script = g.script;
     script.suspected_defect = None;
     script.cleared_defect = None;
+    script.flaky = None;
     if let Err(e) = store::save_script(target, &script) {
         if let Some(old) = &g.target_script {
             let _ = store::save_script(target, old);
@@ -1008,6 +1009,7 @@ struct ImportGather {
 fn without_marks(mut s: crate::autorun::CaseScript) -> crate::autorun::CaseScript {
     s.suspected_defect = None;
     s.cleared_defect = None;
+    s.flaky = None;
     s.saved_at = None;
     s
 }

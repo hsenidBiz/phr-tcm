@@ -694,7 +694,7 @@ export const autoRun: Screen = {
       locate: { role: "listitem", name: "Case #5002 Login - wrong password shows an error" },
       name: "Case",
       does:
-        "One case of the run, with what the app proposes and why: **Proposed: Failed**, and the step that failed. A proposal is never a result until you confirm it. **Show steps** lists what each step did, with any screenshot.",
+        "One case of the run, with what the app proposes and why: **Proposed: Failed**, and the step that failed. A proposal is never a result until you confirm it. **Show steps** lists what each step did, with any screenshot. A failed case also has **Raise bug**, which opens the bug form already filled in from the run (the steps up to the failing one, what the page said, and the failure screenshots); nothing is filed until you press **File bug**.",
     },
     {
       id: "review-verdict",
@@ -1051,6 +1051,7 @@ export const autoRun: Screen = {
       steps: [
         "Open **Past runs** and filter by result if you want.",
         "Press **Review** on an unattended run to confirm its results and send them, or **Report** to read the run in your browser.",
+        "When a case has both passed and failed in its recent runs on an environment, **Flaky cases** lists it with how it went run by run and its last failure. Press **Mark flaky** to have Auto Run count its failures as flaky rather than failed; it is still sent to Azure DevOps as failed.",
       ],
     },
   ],
