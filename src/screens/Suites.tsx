@@ -1,6 +1,7 @@
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Copy, ExternalLink, Folder, FolderOpen, FolderTree, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { save } from "@tauri-apps/plugin-dialog";
 import { copyText } from "../lib/clipboard";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "../lib/toast";
@@ -16,11 +17,13 @@ import { loadNotes } from "../lib/caseNotes";
 import { pagePalette } from "../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
+import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { projectOfPlan, type ProjectPlans } from "../lib/plansAll";
 import { noProjectSentence } from "../lib/projectScope";
 import { NO_PROJECTS_SENTENCE, refreshPlansAll, usePlansAll } from "../lib/usePlansAll";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
+import { toTestCase } from "../lib/testCaseConvert";
 import { matchesQuery, searchPlaceholder } from "../lib/search";
 import { outcomeLabel } from "./RunPanel";
 
@@ -316,19 +319,30 @@ export default function Suites({
       const ids = await gatherCaseIds(planId, suiteIds);
       if (ids.length === 0) throw new Error("No test cases under this item.");
       const cases = await unwrap(commands.testCasesByIds(org, ids, null, null));
-      const queue: TestCase[] = cases.map((c) => ({
-        title: c.title,
-        steps: c.steps,
-        tags: c.tags,
-        automation_status: c.automation_status,
-        module_value: c.module_value,
-        preconditions: c.preconditions,
-        update_id: c.id,
-        priority: c.priority,
-      }));
+      const queue: TestCase[] = cases.map(toTestCase);
       await unwrapStr(commands.viewQueueHtml(queue, label, org, loadNotes(org), pagePalette()));
     },
     onError: (e) => toast.error(e.message),
+  });
+
+  // The suite's cases, its subfolders' included, as the Import Test Cases
+  // JSON - ids kept, so importing the file back updates these exact cases
+  // rather than creating copies (the same file View Cases exports).
+  const exportJson = useMutation({
+    mutationFn: async ({ planId, suiteIds, label }: SuiteAction) => {
+      const ids = await gatherCaseIds(planId, suiteIds);
+      if (ids.length === 0) throw new Error("No test cases under this item.");
+      const path = await save({
+        defaultPath: exportPathFor(`${fileNameOf(label)}.json`),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      rememberExportPath(path);
+      const cases = await unwrap(commands.testCasesByIds(org, ids, null, null));
+      await unwrapStr(commands.exportQueueJson(path, cases.map(toTestCase)));
+      toast.success(`Exported ${cases.length} case(s).`);
+    },
+    onError: (e) => toast.error(`Export failed: ${e.message}`),
   });
 
   const edit = useMutation({
@@ -384,7 +398,7 @@ export default function Suites({
   });
 
   const busy =
-    view.isPending || edit.isPending || report.isPending || useAsPbi.isPending;
+    view.isPending || edit.isPending || report.isPending || exportJson.isPending || useAsPbi.isPending;
 
   // Together there is no project to pick: an organization is all it needs.
   if (!org || (!allProjects && !project)) {
@@ -462,6 +476,7 @@ export default function Suites({
               }),
       },
       { label: "Report", onSelect: () => report.mutate({ planId, suiteIds: allIds, label: s.name }) },
+      { label: "Export JSON", onSelect: () => exportJson.mutate({ planId, suiteIds: allIds, label: s.name }) },
     ];
 
     return (
@@ -673,4 +688,10 @@ export default function Suites({
       })}
     </div>
   );
+}
+
+/** A suite's name as a file name: what Windows cannot hold in one dropped,
+ * the spaces left behind closed up. */
+function fileNameOf(name: string): string {
+  return name.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "test-cases";
 }

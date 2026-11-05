@@ -173,7 +173,7 @@ test("a static suite offers no Use as current PBI", async () => {
   const row = (await screen.findByText("Sprint stories")).closest("button")!;
   fireEvent.mouseEnter(within(row).getByRole("button", { name: "More actions for Sprint stories" }));
   const menu = screen.getByRole("menu", { name: "More actions for Sprint stories" });
-  expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report"]);
+  expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report", "Export JSON"]);
 });
 
 test("a folder row carries Manage too - a static suite can hold cases as well as child suites", async () => {
@@ -544,7 +544,7 @@ test("a row shows View and Edit cases, with Manage, Run Tests and Report behind 
   const more = within(row).getByRole("button", { name: "More actions for Sprint stories" });
   fireEvent.mouseEnter(more);
   const menu = screen.getByRole("menu", { name: "More actions for Sprint stories" });
-  expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report"]);
+  expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report", "Export JSON"]);
 });
 
 /// Field report: in a deep tree the guide lines ran through an opened
@@ -1109,4 +1109,53 @@ test("combined Search Suites shows the saved trees at once and swaps in the fres
   await waitFor(() => expect(answers).toHaveLength(2));
   await act(async () => answers[1](undefined));
   expect(await screen.findByText("Payslip - Renamed")).toBeInTheDocument();
+});
+
+test("Export JSON writes a folder's cases, its subfolders' included, in the import format", async () => {
+  const written: Array<{ path: string; queue: Array<{ title: string; update_id: number }> }> = [];
+  let saveAsked: { defaultPath?: string } | null = null;
+  baseMock((cmd, raw) => {
+    const args = (raw ?? {}) as Record<string, unknown>;
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 95, name: "Regression / Web\\UI", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+            { id: 96, name: "Login", suite_type: "staticTestSuite", requirement_id: null, parent_id: 95 },
+          ],
+        },
+      ];
+    if (cmd === "list_test_points") {
+      const tc = args.suiteId === 95 ? 201 : 202;
+      return [{ ...POINT, point_id: tc, test_case_id: tc }];
+    }
+    if (cmd === "test_cases_by_ids")
+      return (args.ids as number[]).map((id) => ({
+        id, title: `Case ${id}`, tags: "", automation_status: "Not Automated",
+        steps: [{ action: "A", expected: "ok" }], step_ids: ["2"], module_value: "", preconditions: "",
+      }));
+    if (cmd === "plugin:dialog|save") {
+      saveAsked = (args.options ?? {}) as { defaultPath?: string };
+      return "C:\\out\\regression.json";
+    }
+    if (cmd === "export_queue_json") {
+      written.push(args as (typeof written)[number]);
+      return null;
+    }
+  });
+  renderSuites();
+  const row = (await screen.findByText("Regression / Web\\UI")).closest("button")!;
+  fireEvent.mouseEnter(within(row).getByRole("button", { name: "More actions for Regression / Web\\UI" }));
+  fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Export JSON" }));
+
+  await vi.waitFor(() => expect(written).toHaveLength(1));
+  expect(written[0].path).toBe("C:\\out\\regression.json");
+  // Ids kept, so importing the file back updates these exact cases.
+  expect(written[0].queue.map((c) => [c.title, c.update_id])).toEqual([
+    ["Case 201", 201],
+    ["Case 202", 202],
+  ]);
+  // The suggested name is the folder's, less what a file name cannot hold.
+  expect(saveAsked!.defaultPath).toBe("Regression Web UI.json");
 });
