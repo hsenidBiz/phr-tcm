@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { commands } from "../bindings";
 import { CACHE, cacheKeys, cacheRemove, persistentQuery } from "./cache";
 import { unwrap } from "./ipc";
-import { fetchPlansAll } from "./plansAll";
+import { cachedPlansAll, fetchPlansAll } from "./plansAll";
 
 /** The combined plans query's key. */
 export const plansAllKey = (org: string) => ["plans-suites-all", org] as const;
@@ -32,6 +32,14 @@ export function usePlansAll(org: string, enabled: boolean) {
     enabled: enabled && Boolean(org),
   });
   const projectNames = useMemo(() => (projectList.data ?? []).map((p) => p.name), [projectList.data]);
+  // The trees kept from the last walk, shown while this one reads again -
+  // a walk of stale projects reads them one by one, and the screen used to
+  // sit empty, with nothing to search, until the last one answered. Read
+  // once per project list, not per render: plan trees are large.
+  const kept = useMemo(
+    () => (enabled && org ? cachedPlansAll(org, projectNames) : null),
+    [enabled, org, projectNames],
+  );
   const plansAll = useQuery({
     queryKey: plansAllKey(org),
     // The query's signal ends a walk that was cancelled (a second Refresh, a
@@ -51,6 +59,9 @@ export function usePlansAll(org: string, enabled: boolean) {
       }
     },
     enabled: enabled && Boolean(org && projectNames.length),
+    // Only until the walk answers; a finished walk's own answer then stays
+    // on screen through the next one, as a query's data does.
+    placeholderData: kept ?? undefined,
     staleTime: CACHE.structure.staleMs,
     gcTime: 60 * 60_000,
     retry: false,

@@ -59,13 +59,7 @@ export async function fetchPlansAll(
 ): Promise<PlansAll> {
   const { signal, force = false } = opts;
   const total = projects.length;
-  const covered = [...projects]
-    .sort((a, b) => {
-      const x = a.toLowerCase();
-      const y = b.toLowerCase();
-      return x < y ? -1 : x > y ? 1 : 0;
-    })
-    .slice(0, MAX_FANOUT_PROJECTS);
+  const covered = coveredProjects(projects);
 
   const groups: ProjectPlans[] = [];
   let shown = 0;
@@ -93,6 +87,36 @@ export async function fetchPlansAll(
     if (plans.length > 0) groups.push({ project, plans });
   }
   return { groups, shown, total };
+}
+
+/** The projects a walk covers: name order, at most MAX_FANOUT_PROJECTS. */
+function coveredProjects(projects: string[]): string[] {
+  return [...projects]
+    .sort((a, b) => {
+      const x = a.toLowerCase();
+      const y = b.toLowerCase();
+      return x < y ? -1 : x > y ? 1 : 0;
+    })
+    .slice(0, MAX_FANOUT_PROJECTS);
+}
+
+/**
+ * What the per-project cache already holds for `projects`, stale or not
+ * (anything inside the structure shelf life), in the walk's own shape - for
+ * the screen to show while the walk reads again. A project with nothing
+ * kept is left out of `shown`, as the walk leaves out one it may not read,
+ * so a partial list still says so. Null when nothing is kept at all.
+ */
+export function cachedPlansAll(org: string, projects: string[]): PlansAll | null {
+  const groups: ProjectPlans[] = [];
+  let shown = 0;
+  for (const project of coveredProjects(projects)) {
+    const seed = cacheEntry<PlanWithSuites[]>(cacheKeys.plansSuites(org, project), CACHE.structure.ttlMs);
+    if (!seed) continue;
+    shown++;
+    if (seed.data.length > 0) groups.push({ project, plans: seed.data });
+  }
+  return shown > 0 ? { groups, shown, total: projects.length } : null;
 }
 
 /** The project that owns a plan, or null when the plan is not in the list
