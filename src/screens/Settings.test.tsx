@@ -119,6 +119,13 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
   expect(screen.queryByText(/^Version \d+\.\d+\.\d+-beta/)).not.toBeInTheDocument();
 
+  // One list scrolls: the latest version scrolls away with the others, it
+  // is not pinned above them.
+  const latest = screen.getByText(`Version ${releases[0].version}`);
+  const box = latest.closest(".overflow-y-auto");
+  expect(box).not.toBeNull();
+  expect(box).toContainElement(screen.getByText("Version 1.9.0"));
+
   const less = screen.getByRole("button", { name: "Show less" });
   expect(less).toHaveAttribute("aria-expanded", "true");
   fireEvent.click(less);
