@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.5",
+    date: "2026-11-05",
+    items: [
+      "Search Suites can export a suite's test cases, including those of the folders inside it, as a JSON file from More > Export JSON. Importing the file again updates those same cases.",
+    ],
+  },
+  {
     version: "2.4.5-beta.4",
     date: "2026-11-05",
     items: [
