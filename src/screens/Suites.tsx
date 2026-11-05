@@ -13,7 +13,6 @@ import { ListToolbar } from "../components/ui/list-toolbar";
 import { PageHeader } from "../components/ui/page-header";
 import { SearchInput } from "../components/ui/search-input";
 import { loadNotes } from "../lib/caseNotes";
-import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
@@ -149,6 +148,7 @@ export default function Suites({
   onEditCases,
   onManageSuite,
   onSetCurrentPbi,
+  onRunFolder,
 }: {
   org: string;
   /** The project the screen works in when the projects are not shown
@@ -171,6 +171,14 @@ export default function Suites({
   /** Make a requirement suite's PBI the app's current PBI, without leaving
    * this screen. */
   onSetCurrentPbi?: (pbi: { id: number; title: string; project: string }) => void;
+  /** Open a static suite (a folder) in Run Tests. `project` is the plan's. */
+  onRunFolder?: (folder: {
+    planId: number;
+    suiteId: number;
+    planName: string;
+    title: string;
+    project: string;
+  }) => void;
 }) {
   const qc = useQueryClient();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
@@ -339,31 +347,6 @@ export default function Suites({
     onError: (e) => toast.error(e.message),
   });
 
-  /** Run a suite that has no PBI behind it (static suites): the runner
-   * gets a suite-scoped session - pbi id 0, the suite's name for a title,
-   * and the suite's cases as ordered caseIds. Requirement suites keep
-   * their richer PBI route via onOpenPbi. */
-  const runSuite = useMutation({
-    mutationFn: async ({ planId, suiteId, label }: { planId: number; suiteId: number; label: string }) => {
-      const owner = projectOf(planId);
-      const pts = await unwrap(commands.listTestPoints(org, owner, planId, suiteId));
-      const ids: number[] = [];
-      for (const p of pts)
-        if (p.test_case_id != null && !ids.includes(p.test_case_id)) ids.push(p.test_case_id);
-      if (ids.length === 0) throw new Error("No test cases under this item.");
-      await openRunnerWindow({
-        org,
-        project: owner,
-        planId,
-        planName: trees.find((t) => t.plan.id === planId)?.plan.name ?? "",
-        suiteId,
-        pbi: { id: 0, title: label, work_item_type: "", project: owner },
-        caseIds: ids,
-      });
-    },
-    onError: (e) => toast.error(`Could not open runner: ${e.message ?? e}`),
-  });
-
   const report = useMutation({
     mutationFn: ({ planId, suiteIds, label }: SuiteAction) =>
       unwrapStr(
@@ -401,7 +384,7 @@ export default function Suites({
   });
 
   const busy =
-    view.isPending || edit.isPending || report.isPending || runSuite.isPending || useAsPbi.isPending;
+    view.isPending || edit.isPending || report.isPending || useAsPbi.isPending;
 
   // Together there is no project to pick: an organization is all it needs.
   if (!org || (!allProjects && !project)) {
@@ -466,9 +449,17 @@ export default function Suites({
         label: "Run Tests",
         onSelect: pbiSuite
           ? () => pbiSuite(pbiOf(), "run")
-          : // Own points only, not descendants: running is a sitting, and a
-            // folder's whole subtree is a report's job.
-            () => runSuite.mutate({ planId, suiteId: s.id, label: s.name }),
+          : // The folder opens in Run Tests with its OWN points only, not
+            // descendants: running is a sitting (one ADO run belongs to one
+            // suite), and a folder's whole subtree is a report's job.
+            () =>
+              onRunFolder?.({
+                planId,
+                suiteId: s.id,
+                planName: trees.find((t) => t.plan.id === planId)?.plan.name ?? "",
+                title: s.name,
+                project: projectOf(planId),
+              }),
       },
       { label: "Report", onSelect: () => report.mutate({ planId, suiteIds: allIds, label: s.name }) },
     ];

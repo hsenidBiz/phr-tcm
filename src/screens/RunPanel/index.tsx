@@ -89,16 +89,30 @@ function pointMatches(p: TestPoint, filterOutcome: string, filterText: string): 
   return true;
 }
 
+/** A Test plan folder (a static suite) run directly, with no PBI behind it:
+ * its plan and suite are known, and its label stands where a PBI's title
+ * would. */
+export type RunFolder = { planId: number; suiteId: number; planName: string; title: string };
+
 export default function RunPanel({
   org,
   project,
-  pbiId,
-  pbiTitle,
+  pbiId = 0,
+  pbiTitle = "",
+  folder,
+  onCloseFolder,
+  closeLabel,
 }: {
   org: string;
   project: string;
-  pbiId: number;
-  pbiTitle: string;
+  pbiId?: number;
+  pbiTitle?: string;
+  /** Run this folder's own cases instead of a PBI's. The suite is handed
+   * in (nothing is resolved or cached under a PBI) and pbiId stays 0. */
+  folder?: RunFolder;
+  /** The way back out of a folder (a button in the header). */
+  onCloseFolder?: () => void;
+  closeLabel?: string;
 }) {
   const qc = useQueryClient();
   const [filterText, setFilterText] = useState("");
@@ -131,16 +145,24 @@ export default function RunPanel({
   // short-circuits to the persisted seed: no matter what triggers a
   // refetch (remount, focus, gc), the network is only hit when no seed
   // exists. Refresh deletes the seed to force a true re-resolve.
+  const isFolder = Boolean(folder);
+  const folderSuite = useMemo(
+    () => (folder ? { plan_id: folder.planId, plan_name: folder.planName, suite_id: folder.suiteId } : undefined),
+    [folder?.planId, folder?.planName, folder?.suiteId], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const suite = useQuery({
-    queryKey: ["suite", org, project, pbiId],
+    queryKey: folderSuite
+      ? ["suite-folder", org, project, folderSuite.plan_id, folderSuite.suite_id]
+      : ["suite", org, project, pbiId],
     queryFn: async () => {
+      if (folderSuite) return folderSuite;
       const seed = readSuiteSeed(org, pbiId);
       if (seed) return seed;
       const s = await unwrap(commands.ensurePbiSuite(org, project, pbiId));
       writeSuiteSeed(org, pbiId, s);
       return s;
     },
-    initialData: () => readSuiteSeed(org, pbiId),
+    initialData: () => folderSuite ?? readSuiteSeed(org, pbiId),
     staleTime: Infinity,
     retry: false,
   });
@@ -153,13 +175,15 @@ export default function RunPanel({
     // Starting on another PBI also drops the last PBI's bar: a suite found
     // from its test cases reports no progress, so nothing else would.
     setScan(null);
+    // A folder has no PBI to search for.
+    if (isFolder) return;
     const un = events.suiteScanProgress.listen((e) => {
       if (e.payload.kind === "suite" && e.payload.pbi_id === pbiId) setScan(e.payload);
     });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, [org, project, pbiId]);
+  }, [org, project, pbiId, isFolder]);
 
   // Live repaint: the runner announces every recorded (or reset) point as
   // the tester clicks Next; patch the cached rows in place so the tint and
@@ -190,7 +214,7 @@ export default function RunPanel({
     // The disk seed makes both of these look fresh even right after an
     // upload or a Suite Management save changed them (design doc §4.4);
     // Refresh must force a real re-read, not just repaint from the seed.
-    qc.invalidateQueries({ queryKey: runOrderQueryOptions(org, project, pbiId).queryKey });
+    if (!folder) qc.invalidateQueries({ queryKey: runOrderQueryOptions(org, project, pbiId).queryKey });
     if (suite.data) {
       qc.invalidateQueries({
         queryKey: suiteCasesKey(org, project, suite.data.plan_id, suite.data.suite_id),
@@ -201,6 +225,8 @@ export default function RunPanel({
   // The full re-resolve (Shift-click, or automatic when the cached suite
   // turns out to be deleted): drop the seed and scan plans from scratch.
   const redetectSuite = () => {
+    // A folder is the suite itself: there is nothing to re-detect.
+    if (folder) return;
     clearSuiteSeed(org, pbiId);
     setScan(null);
     qc.removeQueries({ queryKey: ["suite", org, project, pbiId] });
@@ -267,7 +293,7 @@ export default function RunPanel({
           project,
           suite.data!.plan_id,
           [suite.data!.suite_id],
-          `PBI #${pbiId} — ${pbiTitle}`,
+          folder ? folder.title : `PBI #${pbiId} — ${pbiTitle}`,
           // Read at click time, so the report matches the theme in front
           // of the user rather than whatever was set at startup. Both
           // schemes go along, for the switch in the page's corner.
@@ -331,7 +357,7 @@ export default function RunPanel({
       planId: suite.data!.plan_id,
       planName: suite.data!.plan_name,
       suiteId: suite.data!.suite_id,
-      pbi: { id: pbiId, title: pbiTitle, work_item_type: "", project },
+      pbi: { id: pbiId, title: folder ? folder.title : pbiTitle, work_item_type: "", project },
       caseIds,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
@@ -421,10 +447,16 @@ export default function RunPanel({
   return (
     <section data-tour="run-list" className="space-y-3 rounded-md border border-border bg-surface p-4">
       <PageHeader
-        title={`Run tests for #${pbiId}`}
+        title={folder ? `Run tests for ${folder.title}` : `Run tests for #${pbiId}`}
         info="Outcomes are recorded through the runner window - a step-by-step player with screenshots and bug filing. Click rows to select cases, then run them in the runner."
         actions={
           <>
+            {folder && onCloseFolder && (
+              <Button variant="ghost" size="sm" onClick={onCloseFolder}>
+                <X aria-hidden />
+                {closeLabel ?? "Back"}
+              </Button>
+            )}
             {points.data && points.data.length > 0 && (
               <Button
                 variant="outline"
@@ -461,7 +493,7 @@ export default function RunPanel({
             Plan "{suite.data.plan_name}"
             <button
               aria-label="Refresh outcomes"
-              title="Refresh outcomes (Shift-click: re-detect the test suite)"
+              title={folder ? "Refresh outcomes" : "Refresh outcomes (Shift-click: re-detect the test suite)"}
               className="rounded p-0.5 text-muted hover:text-accent"
               onClick={(e) => (e.shiftKey ? redetectSuite() : refreshPoints())}
             >
@@ -498,7 +530,9 @@ export default function RunPanel({
       )}
       {points.isError && <p className="text-sm text-danger">{points.error.message}</p>}
       {points.data && points.data.length === 0 && (
-        <p className="text-sm text-muted">No test points in this suite yet.</p>
+        <p className="text-sm text-muted">
+          {folder ? "No test cases in this folder." : "No test points in this suite yet."}
+        </p>
       )}
 
       {points.data && points.data.length > 0 && order.note && (

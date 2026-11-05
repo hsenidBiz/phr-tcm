@@ -156,7 +156,7 @@ export const searchSuites: Screen = {
       locate: { role: "menuitem", name: "Run Tests" },
       name: "Run Tests",
       does:
-        "On a Product Backlog Item's suite, opens Run Tests for that Product Backlog Item. On any other suite, opens the runner straight away with the suite's own cases (not those of the suites inside it).",
+        "On a Product Backlog Item's suite, opens Run Tests for that Product Backlog Item. On any other suite, opens Run Tests on that folder, listing the suite's own cases (not those of the suites inside it), so you can tick the ones to run, set their order and open the runner.",
     },
     {
       id: "report",

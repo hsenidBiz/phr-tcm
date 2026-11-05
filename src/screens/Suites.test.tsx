@@ -397,8 +397,8 @@ test("search filters the tree; results start collapsed and open on demand", asyn
 /// viewable but not runnable. The Run chip hands the runner a suite-scoped
 /// session: pbi id 0 (nothing to link), the suite's name as the title, and
 /// the suite's cases as ordered caseIds.
-test("a static suite's Run chip opens a suite-scoped runner session", async () => {
-  baseMock((cmd, args) => {
+test("a static suite's Run Tests opens the Run Tests screen on that folder, not the runner", async () => {
+  baseMock((cmd) => {
     if (cmd === "list_plans_with_suites")
       return [
         {
@@ -414,32 +414,27 @@ test("a static suite's Run chip opens a suite-scoped runner session", async () =
           ],
         },
       ];
-    if (cmd === "list_test_points" && (args as { suiteId: number }).suiteId === 93)
-      return [301, 302].map((id, i) => ({
-        point_id: i + 1,
-        test_case_id: id,
-        test_case_name: `Case ${id}`,
-        config_name: "Windows 10",
-        tester: "",
-        last_outcome: "",
-        last_run_id: null,
-        last_result_id: null,
-      }));
   });
-  renderSuites();
+  const onRunFolder = vi.fn();
+  const onOpenPbi = vi.fn();
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <Suites org="acme" project="Web" allProjects={false} onRunFolder={onRunFolder} onOpenPbi={onOpenPbi} />
+    </QueryClientProvider>,
+  );
   await screen.findByText("Sprint stories");
 
   fireEvent.click(screen.getByRole("button", { name: "More actions for Sprint stories" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Run Tests" }));
-  await vi.waitFor(() => {
-    const raw = localStorage.getItem("tcm-v2-runner-session");
-    expect(raw).toBeTruthy();
+  expect(onRunFolder).toHaveBeenCalledWith({
+    planId: 9,
+    suiteId: 93,
+    planName: "Auth - Test Plan",
+    title: "Sprint stories",
+    project: "Web",
   });
-  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
-  expect(session.pbi).toEqual({ id: 0, title: "Sprint stories", work_item_type: "", project: "Web" });
-  expect(session.caseIds).toEqual([301, 302]);
-  expect(session.planId).toBe(9);
-  expect(session.suiteId).toBe(93);
+  expect(onOpenPbi).not.toHaveBeenCalled();
+  expect(localStorage.getItem("tcm-v2-runner-session")).toBeNull();
 });
 
 test("a suite row copies its Azure DevOps link", async () => {
@@ -796,21 +791,20 @@ test("cases handed to Update Test Cases carry their plan's project", async () =>
   ]);
 });
 
-test("a suite run, a report and its link use the plan's project", async () => {
+test("a folder's Run Tests and a report use the plan's project", async () => {
   const asked = twoProjects((cmd) => {
     if (cmd === "list_test_points") return [POINT];
     if (cmd === "view_execution_report") return "report.html";
   });
-  renderCombined();
+  const onRunFolder = vi.fn();
+  renderCombined({ onRunFolder });
   const more = await screen.findAllByRole("button", { name: "More actions for Login checks" });
 
   fireEvent.click(more[0]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Run Tests" }));
-  await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-runner-session")).toBeTruthy());
-  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
-  expect(session.project).toBe("Payroll");
-  expect(session.pbi.project).toBe("Payroll");
-  expect(session.planId).toBe(12);
+  expect(onRunFolder).toHaveBeenCalledWith(
+    expect.objectContaining({ project: "Payroll", planId: 12, title: "Login checks" }),
+  );
 
   fireEvent.click(more[0]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Report" }));

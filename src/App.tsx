@@ -64,6 +64,7 @@ import { useFieldRefs } from "./hooks/useFieldRefs";
 // when an update has something to show, never at startup.
 import { isBetaVersion, markChangelogSeen, SHOW_CHANGELOG_EVENT, updatedFrom } from "./lib/changelogSeen";
 import type { ChangelogEntry } from "./lib/changelog";
+import type { RunFolderTarget } from "./screens/RunTests";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import RunPill from "./components/RunPill";
 import { clearReviewRequest, useBackgroundRun } from "./lib/backgroundRun";
@@ -272,6 +273,10 @@ export default function App() {
   // ordinary PBI-driven view rather than reopening an old click. It carries
   // its plan's project: Suite Management opens and writes the plan there,
   // which with the projects together is not the effective project.
+  // A Test plan folder opened in Run Tests (from Test plans), so a static
+  // suite runs there like a PBI's does. Picking a PBI, or any direct
+  // navigation, drops it.
+  const [runFolder, setRunFolder] = useState<RunFolderTarget | null>(null);
   const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number; project: string } | null>(
     null,
   );
@@ -580,6 +585,7 @@ export default function App() {
         toast.info(`Home project set to ${p.project}. Change it in Settings.`);
       }
     }
+    if (p) setRunFolder(null);
     setPbiRaw(p);
   };
   // Settings' Home project picker. Moving the home project moves the
@@ -598,6 +604,7 @@ export default function App() {
     setStartOnModules(false);
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
+    setRunFolder(null); // ...and Run Tests to the PBI
   };
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
@@ -1679,7 +1686,19 @@ export default function App() {
                   <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
                 )}
                 {section === "run" && (
-                  <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
+                  <RunTests
+                    org={org}
+                    project={project}
+                    pbi={pbi}
+                    folder={runFolder}
+                    onPickPbi={setPbi}
+                    onCloseFolder={() => {
+                      // Back to the PBI's Run Tests, or to Test plans with
+                      // no PBI to go back to.
+                      if (pbi) setRunFolder(null);
+                      else goToSection("suites");
+                    }}
+                  />
                 )}
                 {section === "suites" && (
                   <Suites
@@ -1694,6 +1713,10 @@ export default function App() {
                       setCaseSelection({ label, caseIds, project: casesProject || project });
                       setSection("edit");
                       setWorkMode(false);
+                    }}
+                    onRunFolder={(f) => {
+                      goToSection("run");
+                      setRunFolder({ ...f, project: f.project || project });
                     }}
                     onManageSuite={(planId, suiteId, planProject) => {
                       setManageFocus({ planId, suiteId, project: planProject || project });
