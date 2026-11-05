@@ -2276,7 +2276,7 @@ test("the tour's queue is populated and the real draft is never touched", async 
     // A batch worth showing: several cases, and at least one update, so
     // the main button has both halves of its wording to say.
     expect(queue.textContent).toMatch(/Review \d+ test cases/);
-    expect(queue.textContent).toContain("UPDATE #");
+    expect(queue.textContent).toContain("Update #");
 
     fireEvent.click(screen.getByText("Skip tour"));
     await screen.findByRole("heading", { name: "Manual Entry" });

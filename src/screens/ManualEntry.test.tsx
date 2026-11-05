@@ -94,7 +94,7 @@ test("manual add, review gate, submit reports results", async () => {
   // badge, the id, and the title as separate parts rather than one
   // run-together line.
   expect(await screen.findByText("1 test case uploaded - 1 created")).toBeInTheDocument();
-  expect(screen.getByText("NEW")).toBeInTheDocument();
+  expect(screen.getByText("New")).toBeInTheDocument();
   expect(screen.getByText("#900")).toBeInTheDocument();
 
   // Clear results returns the screen to normal and removes itself.

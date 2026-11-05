@@ -30,27 +30,37 @@ type Season = {
   startOf?: (key: string) => number;
 };
 
+/** True from 7 December 00:00 through 31 December 23:59:59 local time, every
+ * year. The one source of truth for the Christmas window: the season switch
+ * below and the theme list in theme.ts both read it. */
+export function christmasOffered(now: number): boolean {
+  const d = new Date(now);
+  return d.getMonth() === 11 && d.getDate() >= 7;
+}
+
 const SEASONS: Season[] = [
   {
     // 2026 only, switched before 1 November (local time); a week per machine.
+    // Held back behind the gate now: that date has passed, so this never
+    // fires again, and it can never switch anyone without the gate.
     id: "halloween",
     theme: "halloween",
+    gated: true,
     prefix: SEASON_KEY,
     keyAt: (now) => (now < new Date(2026, 10, 1).getTime() ? SEASON_KEY : null),
     endOf: (_key, rec) => rec.switchedAt + WEEK,
   },
   {
-    // Every year, 18 December to 1 January (local time); the end is fixed.
+    // Every year, 7 December to 1 January (local time), for everyone; the
+    // end is fixed.
     id: "christmas",
     theme: "christmas",
-    gated: true,
     prefix: `${PREFIX}christmas-`,
     keyAt: (now) => {
-      const d = new Date(now);
-      return d.getMonth() === 11 && d.getDate() >= 18 ? `${PREFIX}christmas-${d.getFullYear()}` : null;
+      return christmasOffered(now) ? `${PREFIX}christmas-${new Date(now).getFullYear()}` : null;
     },
     endOf: (key) => new Date(Number(key.slice(key.lastIndexOf("-") + 1)) + 1, 0, 1).getTime(),
-    startOf: (key) => new Date(Number(key.slice(key.lastIndexOf("-") + 1)), 11, 18).getTime(),
+    startOf: (key) => new Date(Number(key.slice(key.lastIndexOf("-") + 1)), 11, 7).getTime(),
   },
 ];
 

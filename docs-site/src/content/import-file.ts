@@ -8,7 +8,7 @@
 // of #5002 whose title changed, and a new case titled like #5001, which the
 // duplicate check stops. Each row's Edit and Remove buttons are named for
 // their case ("Edit <title>", "Remove <title> from the queue"). A row itself
-// is named by its title and then its badges ("<title> NEW"), so routes find
+// is named by its title and then its badges ("<title> New"), so routes find
 // it with a nameRe anchored on the title.
 //
 // Watched files, specs, general comments, change reports and Recent JSON
@@ -257,9 +257,9 @@ export const importFile: Screen = {
       id: "update-badge",
       shot: QUEUE,
       group: "queued-cases",
-      locate: { text: "UPDATE #5002" },
-      name: "NEW or UPDATE",
-      does: "**NEW** means the case will be created. **UPDATE** and a number means it will change that existing test case.",
+      locate: { text: "Update #5002" },
+      name: "New or Update",
+      does: "**New** means the case will be created. **Update** and a number means it will change that existing test case.",
     },
     {
       id: "what-changes",
@@ -698,7 +698,7 @@ export const importFile: Screen = {
       locate: { text: "1 test case uploaded - 1 updated" },
       name: "Results",
       does:
-        "What the upload did, in one line, then every case with its id, marked **NEW**, **UPDATED**, **FAILED** or **UNKNOWN** (it may have been written; see the tips on held cases).",
+        "What the upload did, in one line, then every case with its id, marked **New**, **Updated**, **Failed** or **Unknown** (it may have been written; see the tips on held cases).",
     },
     {
       id: "copy-changes",
@@ -745,7 +745,7 @@ export const importFile: Screen = {
       title: "Use the review page",
       steps: [
         "Press **View in browser**. The page opens in your browser, in the app's theme, with a switch for light and dark.",
-        "Every case is listed with its **NEW** or **UPDATE** mark. Search, and narrow the search to one field (title, ID, prerequisites, steps, tags or module). What it finds is highlighted in each case.",
+        "Every case is listed with its **New** or **Update** mark. Search, and narrow the search to one field (title, ID, prerequisites, steps, tags or module). What it finds is highlighted in each case.",
         "The switches at the end of the search box change how it matches: [[Aa]] matches case, [[ab]] matches whole words only, and [[.*]] searches with a regular expression ([[Alt+C]], [[Alt+W]] and [[Alt+R]] while typing). Put words in quotes to find them together, as written.",
         "Type in the comment box under a case, or in the notes about the whole set. They save by themselves into the file the cases came from.",
         "To have them dealt with, ask your AI assistant: **Address the comments I made for the test cases**. It reads each comment and fixes the cases in the file. The Review page section has every part of the page.",

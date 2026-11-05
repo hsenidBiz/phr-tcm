@@ -19,9 +19,9 @@
     "name": "notification-assigned",
     "shot": "getting-started-bell",
     "before": "import('/src/lib/notifications.ts').then((m) => m.noteAssigned(JSON.parse(localStorage.getItem('tcm-v2-prefs')).org, 'Demo Project', [{ id: 5099, work_item_type: 'Bug', title: 'Session timeout is not enforced' }]))",
-    "locate": { "css": "xpath=//li//span[contains(@class, 'uppercase') and normalize-space(.) = 'Assigned']" }
+    "locate": { "css": "xpath=//li//span[contains(@class, 'rounded') and normalize-space(.) = 'Assigned']" }
   },
-  { "name": "notification-mention", "shot": "getting-started-bell", "locate": { "css": "xpath=//li//span[contains(@class, 'uppercase') and normalize-space(.) = 'Mention']" } },
+  { "name": "notification-mention", "shot": "getting-started-bell", "locate": { "css": "xpath=//li//span[contains(@class, 'rounded') and normalize-space(.) = 'Mention']" } },
   { "name": "kbd", "shot": "getting-started-palette", "locate": { "css": "xpath=//kbd[normalize-space(.) = 'Ctrl']" } },
   { "name": "board-hide-column", "shot": "board-columns", "locate": { "role": "button", "nameRe": "^Hide " } },
   { "name": "board-rail-open", "shot": "board-hidden-column", "locate": { "role": "button", "name": "Open Done" } },

@@ -722,12 +722,12 @@ export default function WorkBoard({
                 className="relative h-11 w-4 self-center rounded border border-accent/60 text-accent transition-colors hover:bg-accent-soft"
                 onClick={() => toggleCol(col)}
               >
-                <span className="label-trim absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold uppercase leading-none tracking-wide">
+                <span className="label-trim absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold leading-none">
                   Open
                 </span>
               </button>
               <span
-                className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-faint"
+                className="whitespace-nowrap text-[10px] font-semibold text-faint"
                 style={{ writingMode: "vertical-rl" }}
               >
                 {col} · {items.length}
@@ -759,7 +759,7 @@ export default function WorkBoard({
                 contentInvisible ? "opacity-0" : "opacity-100",
               )}
             >
-            <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+            <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold text-muted">
               {col} <span className="ml-1 text-faint">{items.length}</span>
               <button
                 aria-label={`Hide ${col}`}
@@ -769,7 +769,7 @@ export default function WorkBoard({
                     : `Hide ${col}`
                 }
                 disabled={hiddenCols.size >= COLUMNS.length - 1}
-                className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
+                className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
                 onClick={() => toggleCol(col)}
               >
                 <span className="label-trim">Hide</span>

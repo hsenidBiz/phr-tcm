@@ -43,7 +43,7 @@ the board's test count.
   case editor and saves back into the queue. A kept id still updates the
   work item on submit.
 - Before you write, the review gate shows a diff for every queued item.
-  Creates carry a NEW badge. Updates show each field old and new, with
+  Creates carry a New badge. Updates show each field old and new, with
   word-level diffs per step. No-op updates are flagged. The diff shows as
   soon as the queue holds an update, before you press Review.
 - Writing takes two steps. The confirm button spells out create X and

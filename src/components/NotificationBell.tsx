@@ -138,7 +138,7 @@ export default function NotificationBell({
           className="t-dropdown absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-surface shadow-2xl"
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">Notifications</span>
+            <span className="text-xs font-semibold text-muted">Notifications</span>
             {items.length > 0 && (
               <button
                 className="text-[11px] text-faint underline-offset-2 hover:text-accent hover:underline"
@@ -161,7 +161,7 @@ export default function NotificationBell({
                     <div className="flex items-center gap-2">
                       <span
                         className={cn(
-                          "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                          "rounded px-1.5 py-0.5 text-[10px] font-semibold",
                           KIND_CLASS[n.kind],
                         )}
                       >

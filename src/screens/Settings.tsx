@@ -42,6 +42,7 @@ import { cn } from "../lib/cn";
 import { LOG_KIND_CLASS, levelOf, tokenizeLog } from "../lib/logSyntax";
 import {
   ACCENTS,
+  limitedNow,
   visibleThemes,
   getAccent,
   getThemeChoice,
@@ -802,7 +803,7 @@ export default function Settings({
               <button
                 key={t.id}
                 aria-label={`Theme ${t.label}`}
-                className={`w-20 rounded-md border-2 p-1 text-left transition-transform hover:scale-105 ${
+                className={`w-20 rounded-md border-2 p-1 text-left transition-colors hover:bg-surface-2 ${
                   choice === t.id ? "border-accent" : "border-border"
                 }`}
                 onClick={() => pick(t.id)}
@@ -821,11 +822,12 @@ export default function Settings({
                   />
                 </span>
                 <span className="mt-1 block text-center text-xs text-muted">{t.label}</span>
+                {limitedNow(t) && <span className="block text-center text-[10px] text-faint">Limited time</span>}
               </button>
             ))}
             <button
               aria-label="Theme System"
-              className={`w-20 rounded-md border-2 p-1 text-left transition-transform hover:scale-105 ${
+              className={`w-20 rounded-md border-2 p-1 text-left transition-colors hover:bg-surface-2 ${
                 choice === "system" ? "border-accent" : "border-border"
               }`}
               onClick={() => pick("system")}
@@ -847,7 +849,7 @@ export default function Settings({
                 key={a}
                 aria-label={`Accent ${ACCENT_TITLE[a]}`}
                 title={ACCENT_TITLE[a]}
-                className="flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110"
+                className="flex h-8 w-8 items-center justify-center rounded-full border-2 transition-opacity hover:opacity-85"
                 style={{
                   backgroundColor: ACCENT_SWATCH[a],
                   borderColor: accent === a ? "var(--color-text)" : "transparent",
@@ -863,7 +865,7 @@ export default function Settings({
                   setAccent(a);
                 }}
               >
-                {accent === a && <span className="text-xs font-bold text-white">✓</span>}
+                {accent === a && <span className="text-xs font-semibold text-white">✓</span>}
                 {a === "default" && accent !== a && (
                   <span className="text-[10px] font-semibold text-on-accent">A</span>
                 )}

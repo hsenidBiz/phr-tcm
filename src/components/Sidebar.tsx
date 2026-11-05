@@ -236,7 +236,7 @@ export default function Sidebar<T extends string = Section>({
             <div
               aria-hidden={collapsed}
               className={cn(
-                "overflow-hidden whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-faint transition-[opacity,max-height] duration-200",
+                "overflow-hidden whitespace-nowrap text-[10px] font-semibold text-faint transition-[opacity,max-height] duration-200",
                 collapsed ? "max-h-0 opacity-0" : "max-h-6 pb-1 opacity-100",
               )}
               style={labelDelay}

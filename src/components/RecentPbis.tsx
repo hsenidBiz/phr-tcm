@@ -29,7 +29,7 @@ export default function RecentPbis({
   const span = spansProjects(recents);
   return (
     <div className="mt-6">
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-faint">
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
         <History size={13} /> Recent PBIs
       </p>
       <div className="flex max-w-3xl flex-col gap-1.5">

@@ -427,7 +427,7 @@ export default function ApiTemplates({
                     title={isFolded(module) ? "Expand group" : "Collapse group"}
                     onClick={() => toggleFolded(foldKey(module))}
                   >
-                    <h2 className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                    <h2 className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
                       {module} ({shownCount(list, moduleFlows)})
                     </h2>
                   </button>

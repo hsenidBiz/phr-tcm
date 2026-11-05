@@ -228,7 +228,7 @@ fn the_draft_page_badges_each_case_new_or_update() {
     assert!(html.contains("op-new"), "a case without an id creates: {html}");
     assert!(html.contains("op-update"), "a case with an id updates");
     // The UPDATE chip sits beside the id it will write over.
-    assert!(html.contains("<span class='chip op-update'>UPDATE</span><span class='wid'>#77</span>"));
+    assert!(html.contains("<span class='chip op-update'>Update</span><span class='wid'>#77</span>"));
 
     // The page of EXISTING cases carries no operation chips.
     let note_ctx = v2_lib::import_parser::NoteCtx {

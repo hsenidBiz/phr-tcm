@@ -251,7 +251,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   // reason rather than one run-together sentence, and the headline counts
   // only what actually reached Azure DevOps.
   expect(await screen.findByText("1 test case uploaded - 1 created, 1 failed")).toBeInTheDocument();
-  expect(screen.getByText("FAILED")).toBeInTheDocument();
+  expect(screen.getByText("Failed")).toBeInTheDocument();
   expect(screen.getByText("boom")).toBeInTheDocument();
   expect(screen.getByText(/2 queued/)).toBeInTheDocument();
 
@@ -268,7 +268,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
       .find((li) => li?.className.includes("rounded-md"));
   const good = queueRow("Good");
   expect(good, "the created case should still be queued").toBeTruthy();
-  expect(good?.textContent).toContain("UPDATE #901");
+  expect(good?.textContent).toContain("Update #901");
   expect(good?.textContent).toContain("UPLOADED");
   const bad = queueRow("Bad");
   expect(bad, "the failed case should still be queued").toBeTruthy();
@@ -281,7 +281,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   await waitFor(() => expect(screen.queryByText("UPLOADED")).not.toBeInTheDocument());
   const rows = [...document.querySelectorAll("[role='row']")];
   expect(rows).toHaveLength(2);
-  expect(rows[0].textContent).toContain("UPDATE #901");
+  expect(rows[0].textContent).toContain("Update #901");
   expect(rows.map((li) => li.className).join(" ")).not.toMatch(/border-danger|border-success/);
 });
 
@@ -1013,7 +1013,7 @@ test("the app's own id write-back after a submit does not re-import the file", a
 
   // Both cases were written and both stay queued, now carrying their ids -
   // and the file must not pour a second copy of them in.
-  await screen.findByText("UPDATE #153450");
+  await screen.findByText("Update #153450");
   await waitFor(() =>
     expect(screen.getAllByText("UPLOADED")).toHaveLength(2),
   );
@@ -1064,7 +1064,7 @@ test("after an upload the rows stay, and a later file edit updates them in place
   const go = await screen.findByRole("button", { name: /Yes — create|Confirm & / });
   await waitFor(() => expect(go).toBeEnabled());
   fireEvent.click(go);
-  await screen.findByText("UPDATE #153450");
+  await screen.findByText("Update #153450");
 
   // Still watched: the file can still be dropped.
   expect(screen.getByRole("button", { name: "Stop watching cases.json" })).toBeInTheDocument();
@@ -1078,7 +1078,7 @@ test("after an upload the rows stay, and a later file edit updates them in place
   await screen.findByText("Brand new, renamed");
   const rows = document.querySelectorAll("[role='row']");
   expect(rows).toHaveLength(1);
-  expect(rows[0].textContent).toContain("UPDATE #153450");
+  expect(rows[0].textContent).toContain("Update #153450");
 });
 
 // ---------------------------------------------------------------------

@@ -1760,11 +1760,11 @@ export default function QueueSection({
             title={folded ? "Expand group" : "Collapse group"}
             onClick={() => toggleFoldedArea(g.key)}
           >
-            <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-              {/* The bucket for cases with no area, in italics, so a real
-                  area that happens to be called "No area" reads apart. */}
+            <span className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
+              {/* The bucket for cases with no area, in the faint colour, so
+                  a real area that happens to be called "No area" reads apart. */}
               <span
-                className={g.key === "" ? "italic text-muted" : undefined}
+                className={g.key === "" ? "text-faint" : undefined}
                 title={g.key === "" ? "Cases with no area" : undefined}
               >
                 {g.name}
@@ -2332,12 +2332,12 @@ export default function QueueSection({
                   )}
                 >
                   {r.action === "created"
-                    ? "NEW"
+                    ? "New"
                     : r.action === "updated"
-                      ? "UPDATED"
+                      ? "Updated"
                       : r.action === "unknown"
-                        ? "UNKNOWN"
-                        : "FAILED"}
+                        ? "Unknown"
+                        : "Failed"}
                 </Badge>
                 {r.id != null && <span className="id-mono shrink-0 text-faint">#{r.id}</span>}
                 <span className="min-w-0 break-words text-text">{r.title}</span>

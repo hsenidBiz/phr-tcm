@@ -661,7 +661,7 @@ export default function RunPanel({
                           title={collapsedGroups.has(name) ? "Expand group" : "Collapse group"}
                           onClick={() => toggleCollapsed(name)}
                         >
-                          <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                          <span className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
                             {name} ({pts.length})
                           </span>
                         </button>

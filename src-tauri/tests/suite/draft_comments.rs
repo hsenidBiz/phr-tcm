@@ -344,7 +344,7 @@ fn cases_are_numbered_from_one_in_page_order() {
     // The number sits beside the operation badge and the work item id,
     // not instead of them.
     assert!(html.contains(
-        "<span class='seq'>1</span><span class='chip op-update'>UPDATE</span><span class='wid'>#42</span>"
+        "<span class='seq'>1</span><span class='chip op-update'>Update</span><span class='wid'>#42</span>"
     ));
 }
 
