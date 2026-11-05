@@ -41,18 +41,50 @@ export function resultBucket(c: { verdict: string; proposed?: string | null }): 
   return word === "Passed" || word === "Failed" || word === "Blocked" ? word : "Not run";
 }
 
-/** How many of `cases` fall in each bucket. */
+/** The ids of the cases the person marked Flaky (`autoRunFlakyMarks`). */
+export type FlakyIds = ReadonlySet<number>;
+
+/**
+ * A Failed case whose script is marked Flaky. It is still a failure (it is sent to Azure DevOps as
+ * failed, and shown as such), but Auto Run counts it apart so a run does not read as failed because of it.
+ */
+export function isFlakyFailure(
+  c: { case_id: number; verdict: string; proposed?: string | null },
+  flaky?: FlakyIds,
+): boolean {
+  return flaky !== undefined && flaky.has(c.case_id) && resultBucket(c) === "Failed";
+}
+
+/** How many of `cases` fall in each bucket. With `flaky`, a flaky failure is counted by `countFlaky`, not as Failed. */
 export function countBuckets(
-  cases: readonly { verdict: string; proposed?: string | null }[],
+  cases: readonly { case_id?: number; verdict: string; proposed?: string | null }[],
+  flaky?: FlakyIds,
 ): Record<ResultBucket, number> {
   const out: Record<ResultBucket, number> = { Passed: 0, Failed: 0, Blocked: 0, "Not run": 0 };
-  for (const c of cases) out[resultBucket(c)] += 1;
+  for (const c of cases) {
+    if (c.case_id !== undefined && isFlakyFailure({ ...c, case_id: c.case_id }, flaky)) continue;
+    out[resultBucket(c)] += 1;
+  }
   return out;
 }
 
-/** Whether a case shows under `filter`. */
-export function matchesFilter(c: { verdict: string; proposed?: string | null }, filter: ResultFilter): boolean {
-  return filter === "All" || resultBucket(c) === filter;
+/** How many of `cases` are flaky failures. */
+export function countFlaky(
+  cases: readonly { case_id: number; verdict: string; proposed?: string | null }[],
+  flaky?: FlakyIds,
+): number {
+  return cases.filter((c) => isFlakyFailure(c, flaky)).length;
+}
+
+/** Whether a case shows under `filter`. A flaky failure shows under All only, not under Failed. */
+export function matchesFilter(
+  c: { case_id?: number; verdict: string; proposed?: string | null },
+  filter: ResultFilter,
+  flaky?: FlakyIds,
+): boolean {
+  if (filter === "All") return true;
+  if (c.case_id !== undefined && isFlakyFailure({ ...c, case_id: c.case_id }, flaky)) return false;
+  return resultBucket(c) === filter;
 }
 
 /**

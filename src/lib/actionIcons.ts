@@ -100,6 +100,8 @@ export {
   // Taking a suspected-defect mark off an Auto Run case after looking into it:
   // a bug with a line through it, since the case itself stays untouched.
   BugOff as IconClearDefect,
+  // Marking an Auto Run case as one that passes and fails on its own (Flaky): a wave, since its results come and go.
+  Waves as IconMarkFlaky,
   // Lifting a hold the user has manually verified is safe to lift - an
   // unlocked padlock, not a check mark, because nothing was confirmed BY
   // this app.

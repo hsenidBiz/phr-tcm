@@ -1,7 +1,7 @@
 //! Scripts and runs on disk, under the app's own data directory.
 
 use super::slots::SlotNo;
-use super::{unchecked, CaseScript, ClearedDefect, LocalRun, StepScript, SuspectedDefect, Unchecked, UncheckedItem};
+use super::{unchecked, CaseScript, ClearedDefect, FlakyMark, LocalRun, StepScript, SuspectedDefect, Unchecked, UncheckedItem};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -258,6 +258,11 @@ fn mark_on_disk(root: &Path, case_id: i32) -> Option<SuspectedDefect> {
 /// The assistant's cleared mark already on disk for this case, kept by every save like the mark itself.
 fn cleared_on_disk(root: &Path, case_id: i32) -> Option<ClearedDefect> {
     load_script(root, case_id).ok().flatten().and_then(|s| s.cleared_defect)
+}
+
+/// The person's flaky mark already on disk for this case, kept by every save like the defect mark.
+fn flaky_on_disk(root: &Path, case_id: i32) -> Option<FlakyMark> {
+    load_script(root, case_id).ok().flatten().and_then(|s| s.flaky)
 }
 
 /// A raw write of one script, exactly as given - the mark included. The
@@ -707,7 +712,7 @@ pub fn save_scripts_checked(
 /// memory only, never stored: equal only within one build of the app.
 pub fn script_version(script: &CaseScript) -> String {
     use std::hash::{Hash, Hasher};
-    let whole = CaseScript { suspected_defect: None, cleared_defect: None, ..script.clone() };
+    let whole = CaseScript { suspected_defect: None, cleared_defect: None, flaky: None, ..script.clone() };
     let json = serde_json::to_string(&whole).unwrap_or_default();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     json.hash(&mut hasher);
@@ -800,6 +805,7 @@ fn write_scripts_held(
         let kept = CaseScript {
             suspected_defect: disk_mark,
             cleared_defect: cleared_on_disk(root, sc.case_id),
+            flaky: flaky_on_disk(root, sc.case_id),
             saved_at: Some(saved_at.clone()),
             ..sc.clone()
         };
@@ -854,6 +860,27 @@ pub fn set_suspected_defect(root: &Path, case_id: i32, mark: Option<SuspectedDef
     }
     script.suspected_defect = mark;
     write_script(root, &script)
+}
+
+/// Set or clear the person's flaky mark on a case's script. Touches nothing else, `saved_at` least of all.
+/// Marking a case with no script is refused; clearing the mark of one is not an error.
+pub fn set_flaky(root: &Path, case_id: i32, mark: Option<FlakyMark>) -> Result<(), String> {
+    let _held = scripts_lock();
+    let Some(mut script) = load_script(root, case_id)? else {
+        return if mark.is_some() { Err(format!("case {case_id} has no script on this machine")) } else { Ok(()) };
+    };
+    if script.flaky == mark {
+        return Ok(());
+    }
+    script.flaky = mark;
+    write_script(root, &script)
+}
+
+/// The ids of the cases whose script carries the flaky mark. A script that does not read has none.
+pub fn flaky_marked(root: &Path) -> Vec<i32> {
+    let mut ids: Vec<i32> = list_scripts(root).into_iter().filter(|s| s.flaky.is_some()).map(|s| s.case_id).collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// Set whether a case's script counts as checked (`proven`). Does nothing for a case with no script

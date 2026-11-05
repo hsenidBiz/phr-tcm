@@ -1164,3 +1164,22 @@ test("Raise bug is offered on a failed case only and opens a filled-in bug", asy
   expect(await within(caseCard(201)).findByText("Bug #777")).toBeTruthy();
   expect(screen.queryByLabelText("Bug title")).toBeNull();
 });
+
+// Flaky: a failed case whose script is marked Flaky is counted apart in the review and tagged.
+test("a flaky-marked failure is tagged and counted as flaky, not failed", async () => {
+  renderReview(RUN, { extra: (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null) });
+
+  const row = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(await within(row).findByText("Flaky")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Failed (0)" })).toBeInTheDocument();
+  expect(screen.getByText(/1 failed case is marked as flaky/)).toBeInTheDocument();
+});
+
+test("an unmarked failure is counted as failed and carries no flaky tag", async () => {
+  renderReview(RUN);
+
+  const row = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(row).queryByText("Flaky")).toBeNull();
+  expect(screen.getByRole("button", { name: "Failed (1)" })).toBeInTheDocument();
+  expect(screen.queryByText(/marked as flaky/)).toBeNull();
+});

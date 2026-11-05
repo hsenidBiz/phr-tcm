@@ -1648,6 +1648,7 @@ pub fn run_fingerprint(script: &CaseScript, before: i32) -> u64 {
     shaped.precondition_repairs = Vec::new();
     shaped.saved_at = None;
     shaped.suspected_defect = None;
+    shaped.flaky = None;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     serde_json::to_string(&shaped).unwrap_or_default().hash(&mut h);
     h.finish()
@@ -1668,6 +1669,7 @@ pub fn settings_fingerprint(script: &CaseScript) -> u64 {
     shaped.precondition_repairs = Vec::new();
     shaped.saved_at = None;
     shaped.suspected_defect = None;
+    shaped.flaky = None;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     serde_json::to_string(&shaped).unwrap_or_default().hash(&mut h);
     h.finish()

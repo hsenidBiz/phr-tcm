@@ -89,6 +89,7 @@ mod autorun_downloads;
 mod autorun_edits;
 mod autorun_explore;
 mod autorun_failures;
+mod autorun_flaky;
 mod autorun_floor;
 mod autorun_forbidden_fixes;
 mod autorun_guide;

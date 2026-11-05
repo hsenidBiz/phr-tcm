@@ -33,7 +33,17 @@ import VerdictPicker from "./VerdictPicker";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import { uncheckedText } from "./unchecked";
 import { autoRunRepro, failureShotNames } from "./bugRepro";
-import { countBuckets, matchesFilter, replayStep, resultBucket, type ResultFilter } from "./verdicts";
+import FlakyBadge from "./FlakyBadge";
+import { useFlakyMarks } from "./flaky";
+import {
+  countBuckets,
+  countFlaky,
+  isFlakyFailure,
+  matchesFilter,
+  replayStep,
+  resultBucket,
+  type ResultFilter,
+} from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -187,6 +197,8 @@ export default function RunReview(props: {
   /** Which cases the list shows. Only the LIST: Accept all,
    * Save and Send always act on the whole run. */
   const [filter, setFilter] = useState<ResultFilter>("All");
+  /** Cases the person marked Flaky: a failure of one is counted apart from the failures a run reads as failed. */
+  const flakyIds = useFlakyMarks();
   /** The cases the filter matched WHEN IT WAS PICKED, by id; `null` under
    * All. Frozen on purpose: a reviewer filtering to Failed who marks a
    * false failure Passed must keep that card - to check it, to write its
@@ -197,7 +209,7 @@ export default function RunReview(props: {
   const pickFilter = (f: ResultFilter) => {
     setFilter(f);
     setVisibleIds(
-      f === "All" || !run ? null : new Set(run.cases.filter((c) => matchesFilter(c, f)).map((c) => c.case_id)),
+      f === "All" || !run ? null : new Set(run.cases.filter((c) => matchesFilter(c, f, flakyIds)).map((c) => c.case_id)),
     );
   };
 
@@ -415,7 +427,8 @@ export default function RunReview(props: {
   const sendTitle = mismatch ? mismatchSentence(run.pbi_id) : dirty ? "Save the review first" : undefined;
   // Counted off the cases as they stand on screen, so a verdict confirmed
   // here moves its case to its new bucket at once.
-  const counts = countBuckets(run.cases);
+  const counts = countBuckets(run.cases, flakyIds);
+  const flakyCount = countFlaky(run.cases, flakyIds);
   const shown = visibleIds ? run.cases.filter((c) => visibleIds.has(c.case_id)) : run.cases;
   const batches = recordedBatches(run);
 
@@ -434,6 +447,11 @@ export default function RunReview(props: {
       )}
 
       <ResultFilterRow value={filter} onChange={pickFilter} total={run.cases.length} counts={counts} />
+      {flakyCount > 0 && (
+        <p className="text-xs text-warning">
+          {flakyCount} failed case{flakyCount === 1 ? " is" : "s are"} marked as flaky, so {flakyCount === 1 ? "it is" : "they are"} not counted as failed here. Still sent as failed.
+        </p>
+      )}
 
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
@@ -467,6 +485,7 @@ export default function RunReview(props: {
                   <NoticeBadge notice={c.notice} />
                   <ProductBugBadge bugs={c.product_bugs} />
                   <PageErrorsBadge seen={c.page_errors_seen} />
+                  {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
                   {(filedBugs[c.case_id] ?? []).map((id) => (
                     <span key={id} className="shrink-0 text-xs text-success">
                       Bug #{id}

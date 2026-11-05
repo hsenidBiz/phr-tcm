@@ -509,3 +509,54 @@ test("a run that paused for the network says so on its row", async () => {
   expect(screen.getByText("2 network pauses")).toBeInTheDocument();
   expect(screen.getAllByText(/network pause/)).toHaveLength(2);
 });
+
+// Flaky: a failed case whose script the person marked Flaky is counted apart, so the run does not read as failed.
+
+const FLAKY_RUN = runOf({
+  cases: [
+    { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Failed" },
+    { case_id: 202, title: "Locked account", verdict: "", note: "", proposed: "Failed" },
+    { case_id: 203, title: "Password reset", verdict: "", note: "", proposed: "Passed" },
+  ],
+});
+
+test("a failure of a flaky-marked case is counted as flaky, not failed", async () => {
+  renderPastRuns([FLAKY_RUN], 7, (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null));
+
+  const results = await screen.findByRole("group", { name: "Results" });
+  await waitFor(() => expect(results).toHaveTextContent("1 flaky"));
+  expect(results).toHaveTextContent("1 failed");
+  expect(results).toHaveTextContent("1 passed");
+  // The case itself is still listed, with a Flaky tag next to its verdict.
+  const row = screen.getByRole("listitem", { name: "Run of Valid login" });
+  expect(within(row).getByText("Flaky")).toBeInTheDocument();
+  expect(within(screen.getByRole("listitem", { name: "Run of Locked account" })).queryByText("Flaky")).toBeNull();
+});
+
+test("a run whose only failure is flaky does not count under the Failed filter", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Failed" },
+          { case_id: 203, title: "Password reset", verdict: "", note: "", proposed: "Passed" },
+        ],
+      }),
+    ],
+    7,
+    (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null),
+  );
+
+  const failedPill = await screen.findByRole("button", { name: /^Failed \(/ });
+  await waitFor(() => expect(failedPill).toHaveAccessibleName("Failed (0)"));
+  expect(screen.getByRole("group", { name: "Results" })).toHaveTextContent("1 flaky");
+  expect(screen.getByRole("group", { name: "Results" })).not.toHaveTextContent("failed");
+});
+
+test("without a mark the same failure counts as failed", async () => {
+  renderPastRuns([FLAKY_RUN], 7);
+
+  const results = await screen.findByRole("group", { name: "Results" });
+  expect(results).toHaveTextContent("2 failed");
+  expect(results).not.toHaveTextContent("flaky");
+});

@@ -3169,6 +3169,7 @@ pub fn save_script_from_editor(
         given_up: Vec::new(),
         unfired_guards: Vec::new(),
         cleared_defect: None,
+        flaky: None,
     });
     let CaseScript {
         // The editor's own.
@@ -3201,6 +3202,8 @@ pub fn save_script_from_editor(
         given_up: _,
         // Kept by the store like the mark.
         cleared_defect: _,
+        // Kept by the store like the mark.
+        flaky: _,
         // The stored script's, for the entries a guard of the editor's script still earns.
         unfired_guards,
         // The stored script's. Only the assistant writes a setup, so the
@@ -3278,6 +3281,47 @@ pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<()
     if store::clear_suspected_defect_any(root, case_id)? {
         crate::applog::info(format!("Auto Run: the suspected defect on case {case_id} was cleared from the app"));
     }
+    Ok(())
+}
+
+/// The cases that passed and failed within their recent runs on one environment (`autorun::flaky`), read
+/// from the run files on this machine, each with whether the person has marked it flaky.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_flaky_cases(app: tauri::AppHandle) -> Vec<crate::autorun::flaky::FlakyCase> {
+    flaky_cases_at(&root(&app).unwrap_or_default())
+}
+
+/// The pure half of [`auto_run_flaky_cases`].
+pub fn flaky_cases_at(root: &std::path::Path) -> Vec<crate::autorun::flaky::FlakyCase> {
+    let found = crate::autorun::flaky::flaky_cases(&store::list_runs(root), crate::autorun::flaky::FLAKY_WINDOW);
+    crate::autorun::flaky::with_marks(found, &store::flaky_marked(root))
+}
+
+/// The ids of every case whose script carries the person's flaky mark: what the run summaries read to count
+/// a failure as flaky.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_flaky_marks(app: tauri::AppHandle) -> Vec<i32> {
+    store::flaky_marked(&root(&app).unwrap_or_default())
+}
+
+/// A person's Flaky toggle on a case: marks or clears it on the case's script. Changes nothing that is
+/// published to Azure DevOps.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_set_flaky(app: tauri::AppHandle, case_id: i32, flaky: bool) -> Result<(), String> {
+    set_flaky(&root(&app)?, case_id, flaky)
+}
+
+/// The pure half of [`auto_run_set_flaky`].
+pub fn set_flaky(root: &std::path::Path, case_id: i32, flaky: bool) -> Result<(), String> {
+    let mark = flaky.then(|| crate::autorun::FlakyMark { marked_at: crate::autorun::sessions::now_ms().to_string() });
+    store::set_flaky(root, case_id, mark)?;
+    crate::applog::info(format!(
+        "Auto Run: case {case_id} was {} flaky from the app",
+        if flaky { "marked" } else { "unmarked as" }
+    ));
     Ok(())
 }
 

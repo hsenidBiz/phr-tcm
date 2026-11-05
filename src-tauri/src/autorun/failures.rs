@@ -506,7 +506,7 @@ pub const RECENT_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// A case's word on itself: the person's verdict, else the machine's
 /// proposal.
-fn outcome_of(case: &CaseRecord) -> &str {
+pub fn outcome_of(case: &CaseRecord) -> &str {
     if case.verdict.is_empty() {
         &case.proposed
     } else {

@@ -42,7 +42,7 @@ fn script(case_id: i32, checked: bool, stamped: bool) -> CaseScript {
         checks: 1,
         given_up: Vec::new(),
         unfired_guards: Vec::new(),
-        cleared_defect: None,
+        cleared_defect: None, flaky: None,
     }
 }
 

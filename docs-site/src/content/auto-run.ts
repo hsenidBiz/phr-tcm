@@ -1051,6 +1051,7 @@ export const autoRun: Screen = {
       steps: [
         "Open **Past runs** and filter by result if you want.",
         "Press **Review** on an unattended run to confirm its results and send them, or **Report** to read the run in your browser.",
+        "When a case has both passed and failed in its recent runs on an environment, **Flaky cases** lists it with how it went run by run and its last failure. Press **Mark flaky** to have Auto Run count its failures as flaky rather than failed; it is still sent to Azure DevOps as failed.",
       ],
     },
   ],
