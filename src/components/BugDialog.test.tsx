@@ -294,3 +294,24 @@ test("a pasted JPEG is added under its own type", async () => {
   expect(thumb).toHaveAttribute("src", `data:image/jpeg;base64,${btoa(String.fromCharCode(...jpeg))}`);
   expect(toastMock.success).toHaveBeenCalledWith("Screenshot added to the bug");
 });
+
+test("a caller's own title and repro replace the default ones", () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <BugDialog
+        org="acme"
+        project="Web"
+        testCase={testCase}
+        pbiId={42}
+        screenshots={[]}
+        initialTitle="Bug: custom"
+        initialRepro="my own repro"
+        onClose={vi.fn()}
+        onFiled={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  expect((screen.getByLabelText("Bug title") as HTMLInputElement).value).toBe("Bug: custom");
+  expect((screen.getByLabelText("Repro steps") as HTMLTextAreaElement).value).toBe("my own repro");
+});

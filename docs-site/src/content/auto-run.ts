@@ -694,7 +694,7 @@ export const autoRun: Screen = {
       locate: { role: "listitem", name: "Case #5002 Login - wrong password shows an error" },
       name: "Case",
       does:
-        "One case of the run, with what the app proposes and why: **Proposed: Failed**, and the step that failed. A proposal is never a result until you confirm it. **Show steps** lists what each step did, with any screenshot.",
+        "One case of the run, with what the app proposes and why: **Proposed: Failed**, and the step that failed. A proposal is never a result until you confirm it. **Show steps** lists what each step did, with any screenshot. A failed case also has **Raise bug**, which opens the bug form already filled in from the run (the steps up to the failing one, what the page said, and the failure screenshots); nothing is filed until you press **File bug**.",
     },
     {
       id: "review-verdict",

@@ -1074,3 +1074,93 @@ test("a clean-up that passed adds no line under the case", async () => {
   await screen.findByText(/proposed: passed/i);
   expect(within(caseCard(202)).queryByText(/^Clean-up:/)).not.toBeInTheDocument();
 });
+
+// Raise bug: a failed case offers the Bug dialog already filled in from the run.
+const BUG_RUN = {
+  id: "run-bug",
+  pbi_id: 42,
+  started_at: "1786000200000",
+  mode: "unattended",
+  environment: "Staging",
+  cases: [
+    {
+      case_id: 201,
+      title: "Valid login",
+      verdict: "",
+      note: "",
+      proposed: "Failed",
+      reason: "step 2 failed",
+      account: "tester1",
+      steps: [
+        { step_number: 1, outcomes: [{ ok: true, detail: "page contains Welcome" }] },
+        {
+          step_number: 2,
+          outcomes: [{ ok: false, detail: 'button "Save" not found', screenshot: "out-201-2.png" }],
+          screenshot: "shot-201-2.png",
+        },
+        { step_number: 3, outcomes: [{ ok: false, detail: "not run: an earlier step of this case failed" }] },
+      ],
+    },
+    {
+      case_id: 202,
+      title: "Locked account",
+      verdict: "",
+      note: "",
+      proposed: "Passed",
+      reason: "ok",
+      steps: [{ step_number: 1, outcomes: [{ ok: true, detail: "fine" }] }],
+    },
+  ],
+};
+
+const BUG_CASE = {
+  id: 201,
+  title: "Valid login",
+  tags: "",
+  automation_status: "Planned",
+  steps: [
+    { action: "Open the page", expected: "It shows" },
+    { action: "Press Save", expected: "Saved" },
+    { action: "Log out afterwards", expected: "Gone" },
+  ],
+  step_ids: ["2", "3", "4"],
+  module_value: "",
+  preconditions: "",
+  steps_xml: "",
+  attachments_read: true,
+  priority: 2,
+};
+
+test("Raise bug is offered on a failed case only and opens a filled-in bug", async () => {
+  let filed: Record<string, unknown> = {};
+  renderReview(BUG_RUN, {
+    extra: (cmd, args) => {
+      if (cmd === "test_cases_by_ids") return [BUG_CASE];
+      if (cmd === "file_bug") {
+        filed = args as Record<string, unknown>;
+        return { id: 777, url: "https://x/bug/777", screenshots_total: 2, screenshots_failed: 0 };
+      }
+      return null;
+    },
+  });
+  await screen.findByText("Valid login");
+  expect(within(caseCard(202)).queryByRole("button", { name: /Raise bug/ })).toBeNull();
+  fireEvent.click(within(caseCard(201)).getByRole("button", { name: /Raise bug/ }));
+
+  const title = (await screen.findByLabelText("Bug title")) as HTMLInputElement;
+  expect(title.value).toBe("Bug: Valid login");
+  const repro = (screen.getByLabelText("Repro steps") as HTMLTextAreaElement).value;
+  expect(repro).toContain("1. Open the page");
+  expect(repro).toContain("2. Press Save");
+  expect(repro).toContain('button "Save" not found');
+  expect(repro).toContain("Staging");
+  expect(repro).toContain("tester1");
+  expect(repro).not.toContain("Log out afterwards");
+
+  fireEvent.click(screen.getByRole("button", { name: /File bug/ }));
+  await waitFor(() => expect(filed.testCaseId).toBe(201));
+  expect(filed.pbiId).toBe(42);
+  expect(filed.screenshotsB64).toEqual(["shot-201-2.png", "out-201-2.png"]);
+  expect(await within(caseCard(201)).findByText("Bug #777")).toBeTruthy();
+  expect(screen.queryByLabelText("Bug title")).toBeNull();
+});

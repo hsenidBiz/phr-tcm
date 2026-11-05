@@ -11,7 +11,9 @@ import { Fragment, useEffect, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "../../lib/toast";
-import { commands, type LocalRun_Serialize, type PublishResult } from "../../bindings";
+import { commands, type LocalRun_Serialize, type PublishResult, type TestCaseFull } from "../../bindings";
+import BugDialog from "../../components/BugDialog";
+import { sharedStepQueryKey, sharedStepText } from "../../lib/sharedSteps";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -19,7 +21,7 @@ import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
+import { IconBug, IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
@@ -30,7 +32,8 @@ import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import { uncheckedText } from "./unchecked";
-import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
+import { autoRunRepro, failureShotNames } from "./bugRepro";
+import { countBuckets, matchesFilter, replayStep, resultBucket, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -203,6 +206,48 @@ export default function RunReview(props: {
     unwrapStr(commands.autoRunShot(name))
       .then(setShot)
       .catch((e) => toast.error(`Could not open the screenshot: ${e.message ?? e}`));
+
+  /** The bug being raised for a failed case: its body from the same query
+   * the case preview uses, and the failure screenshots as the base64 the bug
+   * attaches. Nothing is filed until the person presses File in the dialog. */
+  const [raising, setRaising] = useState<{
+    caseId: number;
+    title: string;
+    repro: string;
+    shots: string[];
+    testCase: TestCaseFull;
+  } | null>(null);
+  const [raiseBusy, setRaiseBusy] = useState<number | null>(null);
+  /** Bugs filed from this review, per case. Kept for this review session
+   * only: the run record has no field for them. */
+  const [filedBugs, setFiledBugs] = useState<Record<number, number[]>>({});
+  const raiseBug = async (c: LocalRun_Serialize["cases"][number]) => {
+    if (!run) return;
+    setRaiseBusy(c.case_id);
+    try {
+      const found = await queryClient.fetchQuery({
+        queryKey: ["run-case-steps", props.org, c.case_id],
+        queryFn: () => unwrap(commands.testCasesByIds(props.org, [c.case_id], null, null)),
+        staleTime: 5 * 60_000,
+      });
+      const testCase = found[0] as TestCaseFull | undefined;
+      if (!testCase) {
+        toast.error("Could not read the test case to raise a bug.");
+        return;
+      }
+      const shots = await Promise.all(
+        failureShotNames(c).map((n) => unwrapStr(commands.autoRunShot(n)).then((u) => u.replace(/^data:[^,]*,/, ""))),
+      );
+      const repro = autoRunRepro(c, testCase.steps, run, (s, n) =>
+        `${n}. ${sharedStepText(s.shared!, queryClient.getQueryData<string>(sharedStepQueryKey(props.org, s.shared!)))}`,
+      );
+      setRaising({ caseId: c.case_id, title: c.title, repro, shots, testCase });
+    } catch (e) {
+      toast.error(`Could not raise a bug: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRaiseBusy(null);
+    }
+  };
 
   const [saving, setSaving] = useState(false);
 
@@ -422,6 +467,23 @@ export default function RunReview(props: {
                   <NoticeBadge notice={c.notice} />
                   <ProductBugBadge bugs={c.product_bugs} />
                   <PageErrorsBadge seen={c.page_errors_seen} />
+                  {(filedBugs[c.case_id] ?? []).map((id) => (
+                    <span key={id} className="shrink-0 text-xs text-success">
+                      Bug #{id}
+                    </span>
+                  ))}
+                  {resultBucket(c) === "Failed" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={`Raise bug for case ${c.case_id}`}
+                      disabled={raiseBusy !== null}
+                      onClick={() => void raiseBug(c)}
+                    >
+                      <IconBug aria-hidden />
+                      Raise bug
+                    </Button>
+                  )}
                   {replayTo !== null && (
                     <Button
                       size="sm"
@@ -655,6 +717,23 @@ export default function RunReview(props: {
             </Button>
           </div>
         </Modal>
+      )}
+
+      {raising && (
+        <BugDialog
+          org={props.org}
+          project={props.project}
+          testCase={raising.testCase}
+          pbiId={run.pbi_id}
+          screenshots={raising.shots}
+          initialTitle={`Bug: ${raising.title}`}
+          initialRepro={raising.repro}
+          onClose={() => setRaising(null)}
+          onFiled={(bugId) => {
+            setFiledBugs((x) => ({ ...x, [raising.caseId]: [...(x[raising.caseId] ?? []), bugId] }));
+            setRaising(null);
+          }}
+        />
       )}
 
       {shot && (
