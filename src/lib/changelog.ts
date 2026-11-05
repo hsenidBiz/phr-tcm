@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.1",
+    date: "2026-11-05",
+    items: [
+      "A Test plan folder that is not a Product Backlog Item's suite opens in Run Tests from More > Run Tests on Search Suites: tick the cases you want, set their order and run them in the runner, with the same history and report as a PBI's cases.",
+      "Double-clicking a case number on the browser page selects just the number, and the work item number on a board card and in the work item panel can be selected and copied.",
+    ],
+  },
+  {
     version: "2.4.4",
     date: "2026-11-05",
     items: [
