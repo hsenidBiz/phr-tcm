@@ -1382,3 +1382,88 @@ test("an outcome recorded in the runner repaints its row without fetching the po
   expect(cell("Invalid login")).toHaveTextContent("Passed");
   expect(pointFetches).toBe(fetchedBefore);
 });
+
+/// A Test plan folder (a static suite) as the target: no PBI behind it, so
+/// the suite is the one handed in and the runner/report carry pbi id 0.
+test("a folder target lists its own points, never resolves a PBI suite, and runs the ticked cases", async () => {
+  const asked: { cmd: string; args: Record<string, unknown> }[] = [];
+  mockIPC((cmd, args) => {
+    asked.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "view_execution_report":
+        return "report.html";
+      case "list_test_points":
+        return [
+          { point_id: 1, test_case_id: 301, test_case_name: "Widget opens", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+          { point_id: 2, test_case_id: 302, test_case_name: "Widget closes", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+          { point_id: 3, test_case_id: 303, test_case_name: "Widget resizes", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+        ];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPanel
+        org="acme"
+        project="Web"
+        folder={{ planId: 9, suiteId: 93, planName: "Auth - Test Plan", title: "Regression" }}
+        onCloseFolder={onClose}
+        closeLabel="Back to PBI #42"
+      />
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText("Widget opens")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Regression/ })).toBeInTheDocument();
+  expect(screen.getByText(/Auth - Test Plan/)).toBeInTheDocument();
+  expect(asked.some((a) => a.cmd === "ensure_pbi_suite")).toBe(false);
+  expect(asked.some((a) => a.cmd === "get_run_order")).toBe(false);
+  expect(asked.find((a) => a.cmd === "list_test_points")?.args).toMatchObject({
+    project: "Web",
+    planId: 9,
+    suiteId: 93,
+  });
+
+  fireEvent.click(screen.getByText("Widget opens"));
+  fireEvent.click(screen.getByText("Widget resizes"));
+  fireEvent.click(screen.getByRole("button", { name: "Execution report" }));
+  await waitFor(() => expect(asked.some((a) => a.cmd === "view_execution_report")).toBe(true));
+  expect(asked.find((a) => a.cmd === "view_execution_report")?.args).toMatchObject({
+    planId: 9,
+    suiteIds: [93],
+    title: "Regression",
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Run 2 in runner" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-runner-session")).toBeTruthy());
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.pbi).toMatchObject({ id: 0, title: "Regression" });
+  expect(session.caseIds).toEqual([301, 303]);
+  expect(session.planId).toBe(9);
+  expect(session.suiteId).toBe(93);
+
+  fireEvent.click(screen.getByRole("button", { name: "Back to PBI #42" }));
+  expect(onClose).toHaveBeenCalled();
+});
+
+test("a folder with no cases of its own says so", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_points") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPanel org="acme" project="Web" folder={{ planId: 9, suiteId: 93, planName: "P", title: "Empty" }} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText("No test cases in this folder.")).toBeInTheDocument();
+});

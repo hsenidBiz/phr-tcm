@@ -229,6 +229,9 @@ fn the_draft_page_badges_each_case_new_or_update() {
     assert!(html.contains("op-update"), "a case with an id updates");
     // The UPDATE chip sits beside the id it will write over.
     assert!(html.contains("<span class='chip op-update'>Update</span><span class='wid'>#77</span>"));
+    // A space after the id: double-clicking the number selects the number
+    // alone, not the number and the first word of the title.
+    assert!(html.contains("<span class='wid'>#77</span> <span class='title'>"), "{html}");
 
     // The page of EXISTING cases carries no operation chips.
     let note_ctx = v2_lib::import_parser::NoteCtx {

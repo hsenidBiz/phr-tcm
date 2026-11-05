@@ -341,7 +341,9 @@ export default function WorkItemDrawer({
           className="flex select-none items-center justify-between border-b border-border px-5 py-3"
         >
           <span data-tauri-drag-region={false} className="text-sm font-semibold text-text">
-            <span className="id-mono text-faint">#{itemId}</span>{" "}
+            {/* The header is select-none for dragging; the id opts back in
+                so it can be copied. */}
+            <span className="id-mono select-text text-faint">#{itemId}</span>{" "}
             {detail.data?.work_item_type}
           </span>
           <span className="flex items-center gap-1">

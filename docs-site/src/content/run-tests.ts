@@ -46,7 +46,8 @@ export const runTests: Screen = {
   group: "Running tests",
   summary:
     "Run the Product Backlog Item's test cases and record the results in Azure DevOps. Pick the cases, choose the order to run them in, " +
-    "then step through them in the runner: a small window that stays beside whatever you are testing.",
+    "then step through them in the runner: a small window that stays beside whatever you are testing. " +
+    "A folder of test cases that is not a Product Backlog Item's suite opens here too, from **More > Run Tests** on the Search Suites page, with the same list, order and results (its own cases, not those of the folders inside it).",
   shots: [
     { id: LIST, route: [NAV], alt: "Run Tests listing the PBI's test cases with their last outcomes" },
     { id: SELECTED, route: [NAV, ...PICK_TWO], alt: "Two test cases selected, ready to run" },

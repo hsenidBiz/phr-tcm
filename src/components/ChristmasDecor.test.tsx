@@ -57,6 +57,14 @@ test("C2.a: it appears only on the Christmas theme, follows the theme live, and 
   expect(container.querySelectorAll(".christmas-flake")).toHaveLength(20);
   expect(container.querySelectorAll(".christmas-sleigh")).toHaveLength(1);
   expect(container.querySelectorAll(".christmas-snowman")).toHaveLength(1);
+  expect(container.querySelectorAll(".christmas-tree")).toHaveLength(1);
+  expect(container.querySelectorAll(".christmas-mistletoe")).toHaveLength(1);
+  expect(container.querySelectorAll(".christmas-presents")).toHaveLength(1);
+  // The sleigh is drawn in colour: Santa, two reindeer, a sack.
+  const sleigh = container.querySelector(".christmas-sleigh")!;
+  expect(sleigh.querySelectorAll(".christmas-reindeer")).toHaveLength(2);
+  expect(sleigh.querySelector(".christmas-santa")).not.toBeNull();
+  expect(sleigh.querySelector(".christmas-sack")).not.toBeNull();
   await act(async () => root.setAttribute("data-theme", "ocean"));
   await waitFor(() => expect(container.innerHTML).toBe(""));
 });
@@ -229,7 +237,47 @@ test("C2.m: the sleigh crosses left to right now and then, and is rescheduled", 
   const m = sleigh.style.transform.match(/translateX\((-?[\d.]+)px\)/)!;
   expect(Number(m[1])).toBeGreaterThan(window.innerWidth - 1);
   expect(parseFloat(sleigh.style.transitionDuration)).toBeGreaterThan(5);
-  expect(vi.getTimerCount()).toBe(1);
+  // The next rest, plus the present drops while it crosses.
+  expect(vi.getTimerCount()).toBeGreaterThanOrEqual(1);
+});
+
+test("C2.m2: presents drop from behind the sleigh during a pass, fade, and are gone after it", () => {
+  vi.useFakeTimers();
+  const { container, unmount } = render(<ChristmasDecor random={sequence()} />);
+  const layer = container.querySelector<HTMLElement>(".christmas-presents")!;
+  expect(layer.children).toHaveLength(0);
+  // The first pass starts between 8 and 20 s; a few seconds in, presents fall.
+  act(() => void vi.advanceTimersByTime(15_000));
+  const dropped = [...layer.querySelectorAll<HTMLElement>(".christmas-present")];
+  expect(dropped.length).toBeGreaterThan(0);
+  expect(dropped.length).toBeLessThanOrEqual(10);
+  for (const p of dropped) {
+    expect(p.getAttribute("class")).toMatch(/christmas-tone-[0-3]/);
+    expect(p.style.left).toMatch(/px$/);
+  }
+  // Long after the pass ends, every present has faded out and been removed.
+  act(() => void vi.advanceTimersByTime(40_000));
+  expect(layer.querySelectorAll(".christmas-present")).toHaveLength(0);
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("C2.m3: a present's fall ends fully faded, and presents are off under reduced motion", () => {
+  expect(rule(".christmas-present")).toContain("animation:");
+  expect(rule(".christmas-presents")).toContain("pointer-events: none");
+  expect(frames("christmas-present-fall")).toMatch(/to \{[^}]*opacity: 0/);
+  const reduce = block.match(/@media \(prefers-reduced-motion: reduce\) \{(?:[^{}]|\{[^{}]*\})*\}/)?.[0] ?? "";
+  expect(reduce).toMatch(/\.christmas-presents[^{}]*\{[^}]*display: none/);
+});
+
+test("C2.m4: the tree stands bottom-right, behind the page so buttons there sit over it", () => {
+  const tree = rule(".christmas-tree");
+  expect(tree).toContain("right:");
+  expect(tree).toContain("bottom: 0");
+  expect(tree).toContain("z-index: -1");
+  expect(tree).toContain("pointer-events: none");
+  const app = readFileSync(resolve(__dirname, "../App.tsx"), "utf8");
+  expect(app).toMatch(/className="relative isolate flex min-w-0 flex-1 flex-col"/);
 });
 
 test("C2.n: passes keep coming, 45 to 70 seconds apart", () => {

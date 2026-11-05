@@ -430,7 +430,9 @@ pub fn export_queue_page_in(
         block.push(format!("<div class='case' data-key='{key}'>"));
         let wid = tc
             .update_id
-            .map(|id| format!("<span class='wid'>#{id}</span>"))
+            // The trailing space is a word break: without it a double-click
+            // on the number also selects the title's first word.
+            .map(|id| format!("<span class='wid'>#{id}</span> "))
             .unwrap_or_default();
         // What importing this case will DO - the same UPDATE/NEW badge the
         // queue rows carry, so a reviewer reading the page knows which

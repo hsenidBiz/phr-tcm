@@ -89,9 +89,17 @@ const Card = memo(function Card({
 }) {
   const stale = staleDays(item.changed_date);
   const isStale = stale >= STALE_DAYS && item.column !== "Done";
+  // While the id is pressed the card is no drag source, so the press can
+  // select the id's text for copying; it is one again when the press ends,
+  // wherever that is.
+  const [pressingId, setPressingId] = useState(false);
+  const pressId = useCallback(() => {
+    setPressingId(true);
+    window.addEventListener("pointerup", () => setPressingId(false), { once: true });
+  }, []);
   return (
     <div
-      draggable
+      draggable={!pressingId}
       onDragStart={() => onDragStart(item)}
       onClick={() => onOpen(item)}
       title={isStale ? `No changes in ${stale} days` : undefined}
@@ -106,7 +114,15 @@ const Card = memo(function Card({
           {item.work_item_type}
         </Badge>
         {showProject && <ProjectChip project={item.project} />}
-        <span className="id-mono text-xs text-faint">#{item.id}</span>
+        {/* Selectable, and a click on it does not open the drawer: the
+            first click of a double-click would. */}
+        <span
+          className="id-mono cursor-text select-text text-xs text-faint"
+          onPointerDown={pressId}
+          onClick={(e) => e.stopPropagation()}
+        >
+          #{item.id}
+        </span>
         {item.assigned_to && (
           <span className="ml-auto truncate text-[10px] text-faint">{item.assigned_to}</span>
         )}

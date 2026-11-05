@@ -218,6 +218,32 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
   ]);
 });
 
+/// The id on a card can be selected and copied: pressing on it stops the
+/// card being a drag source until the press ends, and a click on it does
+/// not open the drawer (the first click of a double-click would).
+test("a card's id is selectable: no drag while pressed, no drawer on click", async () => {
+  const opened: string[] = [];
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+    if (cmd === "work_item_detail") opened.push(cmd);
+    return null;
+  });
+  renderBoard();
+  const id = await screen.findByText("#11");
+  expect(id).toHaveClass("select-text");
+  const card = id.closest("[draggable]")!;
+  expect(card).toHaveAttribute("draggable", "true");
+  fireEvent.pointerDown(id);
+  expect(card).toHaveAttribute("draggable", "false");
+  fireEvent.click(id);
+  fireEvent.pointerUp(window);
+  expect(card).toHaveAttribute("draggable", "true");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(opened).toEqual([]);
+  expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+});
+
 test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", async () => {
   let patched: { patches?: Array<{ reference_name: string; value: string }> } = {};
   mockIPC((cmd, args) => {

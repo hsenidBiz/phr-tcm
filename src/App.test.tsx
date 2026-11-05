@@ -1184,6 +1184,42 @@ test("turning the switch on keeps the cases handed over when the project stays",
   expect(screen.getByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
 });
 
+/// A static suite's Run Tests opens Run Tests on that folder (no PBI needed);
+/// its x goes back to the PBI's Run Tests, or to Test plans with none.
+async function openFolderInRunTests(prefs: Record<string, unknown>) {
+  savedPrefs({ section: "suites", ...prefs });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "ensure_pbi_suite") return { plan_id: 8, plan_name: "PBI plan", suite_id: 81 };
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj\Auth", root_suite_id: 90 },
+          suites: [{ id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null }],
+        },
+      ];
+    if (cmd === "list_test_points") return [];
+  });
+  renderApp();
+  await screen.findByText("Regression");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for Regression" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Run Tests" }));
+  expect(await screen.findByRole("heading", { name: "Run tests for Regression" })).toBeInTheDocument();
+}
+
+test("a folder's Run Tests goes back to the PBI's Run Tests", async () => {
+  await openFolderInRunTests({ pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" } });
+  fireEvent.click(screen.getByRole("button", { name: "Back to PBI #42" }));
+  expect(await screen.findByRole("heading", { name: "Run tests for #42" })).toBeInTheDocument();
+});
+
+test("a folder's Run Tests with no PBI goes back to Test plans", async () => {
+  await openFolderInRunTests({});
+  fireEvent.click(screen.getByRole("button", { name: "Back to Test plans" }));
+  expect(await screen.findByRole("heading", { name: "Search Suites" })).toBeInTheDocument();
+});
+
 test("a PBI of the same project keeps the cases handed over from Search Suites", async () => {
   await handSuiteCasesToEdit([{ ...PAYROLL_PBI, project: "Web" }]);
   // The effective project is the home project (Web) before and after.
