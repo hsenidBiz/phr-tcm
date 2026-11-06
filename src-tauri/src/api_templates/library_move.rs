@@ -65,16 +65,30 @@ pub fn fold_in(shared: &Path, now_ms: u64) -> Result<Option<MoveReport>, String>
 
 /// `fold_in` for a caller that already holds the lock for writing.
 pub fn fold_in_held(
-    _held: &RwLockWriteGuard<'static, ()>,
+    held: &RwLockWriteGuard<'static, ()>,
     shared: &Path,
     now_ms: u64,
 ) -> Result<Option<MoveReport>, String> {
-    let mut total = finish_marked(shared)?;
+    fold_in_with(held, shared, now_ms, &mut |a, b| std::fs::rename(a, b))
+}
+
+/// What moves a folder into place; tests make it fail.
+pub type Rename<'a> = &'a mut dyn FnMut(&Path, &Path) -> std::io::Result<()>;
+
+/// `fold_in_held` with the folder move passed in (the seam the tests use to
+/// make a rename fail).
+pub fn fold_in_with(
+    _held: &RwLockWriteGuard<'static, ()>,
+    shared: &Path,
+    now_ms: u64,
+    rename: Rename,
+) -> Result<Option<MoveReport>, String> {
+    let mut total = finish_marked(shared, &mut *rename)?;
     let Some(plan) = plan(shared)? else { return Ok(total) };
     let ms = free_stamp(shared, now_ms);
     let staging = shared.join(format!("{STAGING_PREFIX}{ms}"));
     build(shared, &staging, &plan)?;
-    finish(shared, &staging)?;
+    finish(shared, &staging, &mut *rename)?;
     let report = plan.report;
     let t = total.get_or_insert_with(MoveReport::default);
     t.moved += report.moved;
@@ -394,6 +408,13 @@ fn pick_winner<'a>(members: &[&'a Candidate]) -> Option<&'a Candidate> {
 /// Keeps a loser: its file goes under `removed-api/<ms>/<holder>/...`. A
 /// library loser also leaves the library.
 fn set_aside(plan: &mut Plan, c: &Candidate) {
+    if c.def.is_none() {
+        crate::applog::warn(format!(
+            "Auto Run: the {} definition '{}' could not be read and was kept aside",
+            c.kind.folder().trim_end_matches('s'),
+            c.id
+        ));
+    }
     let rel = PathBuf::from(c.holder.label()).join(c.kind.folder()).join(&c.slug).join(format!("{}.json", c.id));
     plan.asides.push((c.path.clone(), rel));
     if c.holder == Holder::Library {
@@ -422,7 +443,13 @@ fn confirm(
             let Some(win) = winning_hash.get(key) else { continue };
             let Some(c) = members.iter().find(|c| c.holder == Holder::Env(env_id.clone())) else { continue };
             let Some(def) = c.def.as_ref().filter(|d| d.hash() == *win) else { continue };
-            let runs = read_runs(root, c.kind, &c.slug, &c.id);
+            // A history another environment holds byte for byte was copied
+            // along with the data, not earned here: it confirms nothing.
+            let runs = if copied_history(&found.envs, env_id, c.kind, &c.slug, &c.id) {
+                vec![]
+            } else {
+                read_runs(root, c.kind, &c.slug, &c.id)
+            };
             let entry = match def {
                 Def::Template(t) => template_entry(t, &runs, names.get(env_id).map(String::as_str), win),
                 Def::Fixture(f) => fixture_entry(f, &runs, win, |tid| {
@@ -441,6 +468,17 @@ fn confirm(
             };
         }
     }
+}
+
+fn history_bytes(root: &Path, kind: ApiKind, slug: &str, id: &str) -> Option<Vec<u8>> {
+    std::fs::read(root.join(kind.folder()).join(slug).join(format!("{id}.runs.json"))).ok()
+}
+
+/// Whether another environment's history of the item is identical to this one's.
+fn copied_history(envs: &[(String, PathBuf)], env_id: &str, kind: ApiKind, slug: &str, id: &str) -> bool {
+    let Some((_, root)) = envs.iter().find(|(e, _)| e == env_id) else { return false };
+    let Some(mine) = history_bytes(root, kind, slug, id) else { return false };
+    envs.iter().any(|(e, r)| e != env_id && history_bytes(r, kind, slug, id).is_some_and(|b| b == mine))
 }
 
 fn template_entry(t: &ApiTemplate, runs: &[Value], env_name: Option<&str>, hash: &str) -> Option<ItemState> {
@@ -548,11 +586,11 @@ fn existing_state(env_root: &Path, slug: &str) -> EnvApiState {
         .unwrap_or_default()
 }
 
-fn rename(from: &Path, to: &Path) -> Result<(), String> {
+fn rename(from: &Path, to: &Path, mover: Rename) -> Result<(), String> {
     crate::ai_tools::rename_retrying_waits(
         from,
         to,
-        &mut |a, b| std::fs::rename(a, b),
+        &mut *mover,
         &mut std::thread::sleep,
         &roots::MIGRATION_RENAME_WAITS_MS,
     )
@@ -561,7 +599,7 @@ fn rename(from: &Path, to: &Path) -> Result<(), String> {
 /// Settles every staging folder a cut-short start left: a marked one is
 /// finished, an unmarked one (or a mark with no folder) is deleted.
 /// Returns what the finished ones had done.
-fn finish_marked(shared: &Path) -> Result<Option<MoveReport>, String> {
+fn finish_marked(shared: &Path, rename: Rename) -> Result<Option<MoveReport>, String> {
     let Ok(entries) = std::fs::read_dir(shared) else { return Ok(None) };
     let mut marked: Vec<PathBuf> = vec![];
     for entry in entries.flatten() {
@@ -590,7 +628,7 @@ fn finish_marked(shared: &Path) -> Result<Option<MoveReport>, String> {
             .split_whitespace()
             .filter_map(|n| n.parse().ok())
             .collect();
-        finish(shared, &staging)?;
+        finish(shared, &staging, &mut *rename)?;
         let t = total.get_or_insert_with(MoveReport::default);
         if let [moved, conflicts, kept_aside] = nums[..] {
             t.moved += moved;
@@ -601,16 +639,35 @@ fn finish_marked(shared: &Path) -> Result<Option<MoveReport>, String> {
     Ok(total)
 }
 
-/// Runs the steps after the mark. Every step is safe to run again.
-fn finish(shared: &Path, staging: &Path) -> Result<(), String> {
+/// Runs the steps after the mark. Every step is safe to run again, and no
+/// step ever deletes a library: the one it replaces ends up kept aside.
+fn finish(shared: &Path, staging: &Path, mover: Rename) -> Result<(), String> {
+    let removed = staging.join("removed");
     // (a) the new library replaces the old one.
     let new_library = staging.join("library");
+    let live = shared.join(LIBRARY_DIR);
+    let old = staging.join("library-old");
     if new_library.is_dir() {
-        let live = shared.join(LIBRARY_DIR);
-        if live.exists() {
-            rename(&live, &staging.join("library-old"))?;
+        if live.exists() && old.exists() {
+            // A earlier try already set the original aside, so what is live
+            // now was made since: it is data, not something to overwrite.
+            std::fs::create_dir_all(&removed).map_err(io)?;
+            rename(&live, &removed.join("library-live"), &mut *mover)?;
+        } else if live.exists() {
+            rename(&live, &old, &mut *mover)?;
         }
-        rename(&new_library, &live)?;
+        if let Err(e) = rename(&new_library, &live, &mut *mover) {
+            // Never leave the app without a library: put the original back.
+            if old.exists() && !live.exists() {
+                let _ = rename(&old, &live, &mut *mover);
+            }
+            return Err(e);
+        }
+    }
+    // The library it replaced waits with the other kept versions.
+    if old.is_dir() && live.exists() {
+        std::fs::create_dir_all(&removed).map_err(io)?;
+        rename(&old, &removed.join("library-old"), &mut *mover)?;
     }
     // (b) each environment's confirmations.
     let states = staging.join("state");
@@ -631,11 +688,10 @@ fn finish(shared: &Path, staging: &Path) -> Result<(), String> {
         }
     }
     // (c) the losers wait for 30 days.
-    let removed = staging.join("removed");
     if removed.is_dir() {
         let ms = staging.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_prefix(STAGING_PREFIX)).unwrap_or("0");
         std::fs::create_dir_all(shared.join(REMOVED_API_DIR)).map_err(io)?;
-        rename(&removed, &shared.join(REMOVED_API_DIR).join(ms))?;
+        rename(&removed, &shared.join(REMOVED_API_DIR).join(ms), &mut *mover)?;
     }
     // (d) the copies the environments held.
     delete_sources(shared, staging)?;

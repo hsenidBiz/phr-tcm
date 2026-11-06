@@ -9,7 +9,7 @@ use v2_lib::api_templates::fixture::{Fixture, FixtureStep};
 use v2_lib::api_templates::flow::Flow;
 use v2_lib::api_templates::here::{fixture_here, load_state, template_here, EnvApiState, Here};
 use v2_lib::api_templates::library::{template_hash, ApiKind, REMOVED_API_DIR};
-use v2_lib::api_templates::library_move::{fold_in, move_log_line, MoveReport, STAGING_PREFIX};
+use v2_lib::api_templates::library_move::{fold_in, fold_in_with, move_log_line, MoveReport, STAGING_PREFIX};
 use v2_lib::api_templates::{fixture_store, flow_store, store, ApiTemplate, Proven};
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::autorun::{env_copy, roots};
@@ -280,10 +280,10 @@ fn a_fixture_is_confirmed_only_where_it_built_with_the_winning_templates() {
     let v1 = proven(&template("t", "Old title"), "2026-10-01 09:00:00", Some("QA"));
     let v2 = proven(&template("t", "New title"), "2026-11-01 09:00:00", Some("Staging"));
     let fx = fixture("f", &["t"]);
-    for (env, tpl) in [(A, &v1), (B, &v2)] {
+    for (env, tpl, ran) in [(A, &v1, "2026-11-02 09:00:00"), (B, &v2, "2026-11-03 09:00:00")] {
         put_template(shared, &env_holder(env), tpl);
         put_fixture(shared, &env_holder(env), &fx);
-        put_runs(shared, &env_holder(env), ApiKind::Fixtures, "f", json!([fixture_run("2026-11-02 09:00:00", true)]));
+        put_runs(shared, &env_holder(env), ApiKind::Fixtures, "f", json!([fixture_run(ran, true)]));
     }
 
     fold_in(shared, NOW).unwrap().unwrap();
@@ -545,4 +545,130 @@ fn the_move_log_line_names_no_path() {
         line,
         "Auto Run: API templates, flows and fixtures are now shared by every environment (12 moved, 1 kept aside for 30 days)"
     );
+}
+
+// ---- histories that were copied, not earned ----------------------------------
+
+#[test]
+fn a_history_copied_byte_for_byte_confirms_nothing_but_each_own_history_does() {
+    let proved = proven(&template("t", "Add cycle"), "2026-10-05 09:00:00", None);
+    let copied = json!([run_line("2026-10-08 09:00:00", "run", true)]);
+
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    for env in [A, B] {
+        put_template(shared, &env_holder(env), &proved);
+        put_runs(shared, &env_holder(env), ApiKind::Templates, "t", copied.clone());
+    }
+    fold_in(shared, NOW).unwrap().unwrap();
+    assert_eq!(here_of(shared, A, &proved), Here::Unconfirmed);
+    assert_eq!(here_of(shared, B, &proved), Here::Unconfirmed);
+
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    for (env, at) in [(A, "2026-10-08 09:00:00"), (B, "2026-10-09 09:00:00")] {
+        put_template(shared, &env_holder(env), &proved);
+        put_runs(shared, &env_holder(env), ApiKind::Templates, "t", json!([run_line(at, "run", true)]));
+    }
+    fold_in(shared, NOW).unwrap().unwrap();
+    assert!(is_confirmed(&here_of(shared, A, &proved)));
+    assert!(is_confirmed(&here_of(shared, B, &proved)));
+}
+
+// ---- a rename that fails ------------------------------------------------------
+
+fn name_of(p: &Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// A fold whose folder moves fail where `fails(from, to)` says so.
+fn fold_failing(shared: &Path, fails: impl Fn(&Path, &Path) -> bool) -> Result<Option<MoveReport>, String> {
+    let held = roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+    fold_in_with(&held, shared, NOW, &mut |a, b| {
+        if fails(a, b) {
+            Err(std::io::Error::other("held by another program"))
+        } else {
+            std::fs::rename(a, b)
+        }
+    })
+}
+
+fn library_file(shared: &Path, id: &str) -> PathBuf {
+    shared.join("api-library/templates").join(slug()).join(format!("{id}.json"))
+}
+
+/// A library holding `old`, and environment A holding the proven template `t`.
+fn library_and_one_env() -> (tempfile::TempDir, ApiTemplate) {
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    put(&library_file(shared, "old"), &serde_json::to_string_pretty(&template("old", "Old")).unwrap());
+    let tpl = proven(&template("t", "Add cycle"), "2026-10-05 09:00:00", Some("QA"));
+    put_template(shared, &env_holder(A), &tpl);
+    (t, tpl)
+}
+
+#[test]
+fn when_the_old_library_cannot_be_set_aside_what_is_saved_meanwhile_is_kept_and_the_next_start_finishes() {
+    let (t, tpl) = library_and_one_env();
+    let shared = t.path();
+
+    let failed = fold_failing(shared, |_, to| name_of(to) == "library-old");
+
+    assert!(failed.is_err());
+    assert!(library_file(shared, "old").is_file(), "the live library is untouched");
+    assert!(kind_dir(shared, &env_holder(A), ApiKind::Templates).join("t.json").is_file(), "nothing was deleted");
+    // The app carries on and saves into the live library.
+    put(&library_file(shared, "late"), "{}");
+
+    let report = fold_in(shared, NOW + 1).unwrap().unwrap();
+
+    assert_eq!(report.moved, 1);
+    assert_eq!(library_template(shared, "t").unwrap(), tpl);
+    assert!(library_file(shared, "old").is_file());
+    assert!(aside_dir(shared, NOW).join("library-old/templates").join(slug()).join("late.json").is_file(), "the meanwhile save is kept aside");
+    assert!(!kind_dir(shared, &env_holder(A), ApiKind::Templates).join("t.json").exists());
+    assert!(staging_entries(shared).is_empty());
+}
+
+#[test]
+fn when_the_new_library_cannot_be_put_in_place_the_old_one_is_put_back_and_the_next_start_finishes() {
+    let (t, tpl) = library_and_one_env();
+    let shared = t.path();
+
+    let failed = fold_failing(shared, |from, _| name_of(from) == "library");
+
+    assert!(failed.is_err());
+    assert!(library_file(shared, "old").is_file(), "the app still has its library");
+    assert!(!library_file(shared, "t").exists());
+
+    let report = fold_in(shared, NOW + 1).unwrap().unwrap();
+
+    assert_eq!(report.moved, 1);
+    assert_eq!(library_template(shared, "t").unwrap(), tpl);
+    assert!(library_file(shared, "old").is_file(), "the old content is in the new library");
+    assert!(aside_dir(shared, NOW).join("library-old/templates").join(slug()).join("old.json").is_file());
+    assert!(staging_entries(shared).is_empty());
+}
+
+#[test]
+fn when_the_old_library_cannot_even_be_put_back_nothing_wedges_and_nothing_is_lost() {
+    let (t, tpl) = library_and_one_env();
+    let shared = t.path();
+
+    let failed = fold_failing(shared, |from, to| name_of(from) == "library" || (name_of(from) == "library-old" && name_of(to) == "api-library"));
+
+    assert!(failed.is_err());
+    assert!(!shared.join("api-library").exists(), "the session has no library");
+    // The first save of the session makes a new one.
+    put(&library_file(shared, "late"), "{}");
+
+    let report = fold_in(shared, NOW + 1).unwrap().unwrap();
+
+    assert_eq!(report.moved, 1);
+    assert_eq!(library_template(shared, "t").unwrap(), tpl);
+    assert!(library_file(shared, "old").is_file());
+    assert!(aside_dir(shared, NOW).join("library-live/templates").join(slug()).join("late.json").is_file(), "the session's own library is kept aside");
+    assert!(aside_dir(shared, NOW).join("library-old/templates").join(slug()).join("old.json").is_file());
+    assert!(staging_entries(shared).is_empty());
+    assert_eq!(fold_in(shared, NOW + 2).unwrap(), None);
 }
