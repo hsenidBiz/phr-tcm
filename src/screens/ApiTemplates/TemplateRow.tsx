@@ -7,6 +7,7 @@ import { Collapse } from "../../components/ui/collapse";
 import { IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/history";
+import HereBadge, { UNCONFIRMED_HINT, failedHint } from "./HereBadge";
 
 /** The effect badge's tokens: what a run does to the application's data. */
 export const EFFECT_TONE: Record<Effect, string> = {
@@ -130,11 +131,6 @@ export function runMode(r: RunRecord): "prove" | "run" {
   return r.mode === "prove" ? "prove" : "run";
 }
 
-/** Said wherever a template with no proof is shown: only an import saves
- * one without it, and runs of it are allowed. */
-export const UNPROVEN_HINT =
-  "Imported - not proven on this site. Prove it here before relying on it; its run history may be from the version it replaced.";
-
 /** Said beside a delete template that names no kind of thing it deletes. */
 export const NEEDS_KIND_HINT =
   "Saved before Clean up existed. Your assistant names the kind of thing it deletes the next time it proves this template. Until then Clean up cannot use it.";
@@ -231,11 +227,7 @@ export default function TemplateRow({
         <span className="min-w-[16rem] flex-1 basis-64 text-sm font-medium break-words text-text">{t.title}</span>
         {/* Before the effect and the last run, so a run of the version an
             import replaced is never read as this one's proof. */}
-        {!t.proven && (
-          <Badge className="bg-warning/15 text-warning" title={UNPROVEN_HINT}>
-            Unproven
-          </Badge>
-        )}
+        <HereBadge here={saved.here} />
         <EffectBadge effect={t.effect} />
         {/* A delete template saved before Clean up existed names no kind. */}
         {t.effect === "delete" && !t.deletes_kind && (
@@ -355,11 +347,11 @@ export default function TemplateRow({
             </section>
           )}
 
-          {!t.proven && (
+          {saved.here.state !== "confirmed" && (
             <section className="space-y-1">
-              <h3 className="font-semibold text-muted">Not proven</h3>
-              <p data-testid="template-proof" className="text-warning">
-                {UNPROVEN_HINT}
+              <h3 className="font-semibold text-muted">Not confirmed here</h3>
+              <p data-testid="template-here" className={saved.here.state === "failed" ? "text-danger" : "text-warning"}>
+                {saved.here.state === "failed" ? failedHint(saved.here.failure) : UNCONFIRMED_HINT}
               </p>
             </section>
           )}
@@ -382,8 +374,8 @@ export default function TemplateRow({
           <section className="space-y-1">
             <h3 className="font-semibold text-muted">Runs</h3>
             {!lastRun && <p className="text-faint">{t.proven ? "Not run since it was proven." : "Not run yet."}</p>}
-            {!t.proven && saved.runs.length > 0 && (
-              <p className="text-warning">These lines may be from the version an import replaced, not this one.</p>
+            {saved.here.state === "unconfirmed" && saved.runs.length > 0 && (
+              <p className="text-warning">These runs may be from an earlier version.</p>
             )}
             {saved.runs.length > 0 && (
               <ol aria-label="Runs" className="space-y-1">

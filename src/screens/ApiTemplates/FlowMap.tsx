@@ -1,12 +1,12 @@
 import { useId, useMemo } from "react";
-import type { Effect, Flow, SavedTemplate } from "../../bindings";
+import type { Effect, Flow, Here, SavedTemplate } from "../../bindings";
 import { PanZoomControls, PanZoomViewport, usePanZoom } from "../../components/PanZoom";
 import { Button } from "../../components/ui/button";
 import { IconOpenInBrowser, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { GEOMETRY, edgePath, layoutFlow, type Placed } from "../../lib/flowLayout";
-import { Badge } from "../../components/ui/badge";
-import { EffectBadge, UNPROVEN_HINT, dayMonth, stampDate } from "./TemplateRow";
+import HereBadge from "./HereBadge";
+import { EffectBadge, dayMonth, stampDate } from "./TemplateRow";
 
 /** The arrow's head at `to`'s left-middle; edges arrive horizontally. */
 function arrowHead(to: Placed): string {
@@ -50,12 +50,15 @@ const PULSE_STAGGER = 0.18;
  */
 export default function FlowMap({
   flow,
+  here,
   templates,
   onOpenTemplate,
   onView,
   onRemove,
 }: {
   flow: Flow;
+  /** Whether the flow has worked on the active environment. */
+  here: Here;
   /** The saved templates whose `stage` names this flow. */
   templates: SavedTemplate[];
   onOpenTemplate: (id: string) => void;
@@ -66,14 +69,15 @@ export default function FlowMap({
   const headingId = useId();
 
   const byStage = useMemo(() => {
-    const m = new Map<string, SavedTemplate["template"][]>();
-    for (const { template: t } of templates) {
+    const m = new Map<string, SavedTemplate[]>();
+    for (const saved of templates) {
+      const t = saved.template;
       if (!t.stage) continue;
       const list = m.get(t.stage.id) ?? [];
-      list.push(t);
+      list.push(saved);
       m.set(t.stage.id, list);
     }
-    for (const list of m.values()) list.sort((a, b) => a.title.localeCompare(b.title));
+    for (const list of m.values()) list.sort((a, b) => a.template.title.localeCompare(b.template.title));
     return m;
   }, [templates]);
 
@@ -95,6 +99,7 @@ export default function FlowMap({
         <h3 id={headingId} className="text-sm font-semibold text-text">
           {flow.title}
         </h3>
+        <HereBadge here={here} />
         <span className="text-xs text-muted">{flow.module}</span>
         <span className="text-xs text-muted">Tracks {flow.subject.name}</span>
         {flow.saved && (
@@ -132,7 +137,7 @@ export default function FlowMap({
             const a = placed.get(from);
             const b = placed.get(to);
             if (!a || !b) return null;
-            const tone = edgeTone(byStage.get(to) ?? []);
+            const tone = edgeTone((byStage.get(to) ?? []).map((x) => x.template));
             return (
               <g
                 key={`${from}->${to}`}
@@ -184,7 +189,7 @@ export default function FlowMap({
                 <p className="flex h-6 items-center text-xs text-faint">No template yet</p>
               ) : (
                 <ul>
-                  {list.map((t) => (
+                  {list.map(({ template: t, here: tHere }) => (
                     <li key={t.id}>
                       <button
                         title={`Show ${t.title} below`}
@@ -192,11 +197,7 @@ export default function FlowMap({
                         onClick={() => onOpenTemplate(t.id)}
                       >
                         <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                        {!t.proven && (
-                          <Badge className="bg-warning/15 text-warning" title={UNPROVEN_HINT}>
-                            Unproven
-                          </Badge>
-                        )}
+                        <HereBadge here={tHere} />
                         <EffectBadge effect={t.effect} />
                       </button>
                     </li>
@@ -211,7 +212,11 @@ export default function FlowMap({
       <ol aria-label={`Stages of ${flow.title}`} className="sr-only">
         {flow.stages.map((s) => {
           const requires = (s.requires ?? []).map((r) => titleOf.get(r) ?? r);
-          const performers = (byStage.get(s.id) ?? []).map((t) => (t.proven ? t.title : `${t.title} (unproven)`));
+          const performers = (byStage.get(s.id) ?? []).map(({ template: t, here: tHere }) =>
+            tHere.state === "confirmed"
+              ? t.title
+              : `${t.title} (${tHere.state === "failed" ? "failed here" : "unconfirmed here"})`,
+          );
           return (
             <li key={s.id}>
               {`${s.title}. Requires: ${requires.length > 0 ? requires.join(", ") : "nothing"}. ${

@@ -100,7 +100,7 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
             </Select>
           </label>
           <p className="text-xs text-muted">
-            Scripts, areas, components, quirks and the sign-in recording come across. API templates are shared by every environment, and accounts are never copied.
+            Scripts, areas, components, quirks and the sign-in recording come across. Accounts are not copied. API templates, flows and fixtures are already shared by every environment.
           </p>
           <div aria-live="polite">
             {replaces && (

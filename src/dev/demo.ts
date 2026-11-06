@@ -30,6 +30,7 @@ import {
   type ProposedAccount,
   type Quirk_Serialize,
   type RunOutcome,
+  type Here,
   type SavedFixture,
   type SavedTemplate_Serialize,
   type SetupView,
@@ -789,6 +790,18 @@ let apiTemplates: SavedTemplate_Serialize[] = [
 
 /** The sample fixtures: drafts the templates above build for a script's
  * setup: two built (one of them twice), and one never run. */
+/** A flow is confirmed when every template on its stages is. */
+function demoFlowHere(): Record<string, Here> {
+  return Object.fromEntries(
+    apiFlows.map((f) => {
+      const on = apiTemplates.filter((t) => t.template.stage?.flow === f.id);
+      const ok = on.length > 0 && on.every((t) => t.here.state === "confirmed");
+      const here: Here = ok ? { state: "confirmed", last_failure: null } : { state: "unconfirmed" };
+      return [f.id, here];
+    }),
+  );
+}
+
 let apiFixtures: SavedFixture[] = [
   {
     fixture: {
@@ -1888,7 +1901,7 @@ function applyPatches() {
       return ok(null);
     },
     testFilesOpenFolder: () => err("Demo mode: there is no test files folder in sample data"),
-    apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows, flow_here: {} }),
+    apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows, flow_here: demoFlowHere() }),
     apiTemplatesRemove: (_o: string, _p: string, id: string) => {
       apiTemplates = apiTemplates.filter((t) => t.template.id !== id);
       return ok(null);

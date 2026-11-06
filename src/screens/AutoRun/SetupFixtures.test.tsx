@@ -28,10 +28,13 @@ function stamp(hoursAgo: number): string {
   return new Date(Date.now() - hoursAgo * 3_600_000).toISOString().slice(0, 19).replace("T", " ");
 }
 
-function fixture(id: string, runs: { at: string; ok: boolean }[]) {
+const CONFIRMED = { state: "confirmed", last_failure: null };
+
+function fixture(id: string, runs: { at: string; ok: boolean }[], here: unknown = CONFIRMED) {
   return {
     fixture: { id, name: id, account: "a", steps: [], outputs: {}, creates: [] },
     runs,
+    here,
   };
 }
 
@@ -106,6 +109,26 @@ test("a fixture whose last run failed makes the row need a look and the panel ne
   expect(line.querySelector("[data-status-dot]")).toHaveAttribute("data-status-dot", "warning");
   expect(line).toHaveTextContent(", needs a look");
   expect(within(panel()).getByText("Needs attention")).toBeInTheDocument();
+});
+
+test("the setup panel counts fixtures failed here and points to the assistant", async () => {
+  const failure = { at: "2026-11-06 10:00:00", step: null, detail: null };
+  mount([
+    fixture("a", [{ at: stamp(2), ok: true }]),
+    // Its last run failed too, but it is counted once, as failed here.
+    fixture("b", [{ at: stamp(1), ok: false }], { state: "failed", failure }),
+  ]);
+  const line = (await within(summary()).findByText("2 fixtures, 1 failed here")).closest("li")!;
+  expect(line.querySelector("[data-status-dot]")).toHaveAttribute("data-status-dot", "warning");
+  expect(within(panel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(panel()).toHaveTextContent("1 fixture failed here - ask the assistant");
+  expect(panel()).not.toHaveTextContent("1 fixture failed,");
+});
+
+test("an unconfirmed fixture alone raises nothing", async () => {
+  mount([fixture("a", [{ at: stamp(2), ok: true }], { state: "unconfirmed" })]);
+  expect(await within(summary()).findByText("1 fixture, last run 2 hours ago")).toBeInTheDocument();
+  expect(within(panel()).queryByText("Needs attention")).not.toBeInTheDocument();
 });
 
 test("Open takes the person to the Fixtures", async () => {

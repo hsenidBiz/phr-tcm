@@ -15,9 +15,10 @@
 use std::collections::HashMap;
 
 use crate::api_templates::flow::{Flow, Stage};
+use crate::api_templates::here::Here;
 use crate::api_templates::store::SavedTemplate;
 use crate::api_templates::{ApiTemplate, Effect};
-use crate::html_escape::esc;
+use crate::html_escape::{esc, esc_attr};
 use crate::webtheme::PagePalette;
 
 /// A column's width, and the gaps between columns and between the boxes
@@ -135,19 +136,47 @@ fn col_of<'a>(
 }
 
 /// The templates that perform each stage of this flow, by title.
-fn by_stage<'a>(flow: &Flow, templates: &'a [SavedTemplate]) -> HashMap<String, Vec<&'a ApiTemplate>> {
-    let mut m: HashMap<String, Vec<&ApiTemplate>> = HashMap::new();
+fn by_stage<'a>(flow: &Flow, templates: &'a [SavedTemplate]) -> HashMap<String, Vec<&'a SavedTemplate>> {
+    let mut m: HashMap<String, Vec<&SavedTemplate>> = HashMap::new();
     for s in templates {
         if let Some(r) = &s.template.stage {
             if r.flow == flow.id {
-                m.entry(r.id.clone()).or_default().push(&s.template);
+                m.entry(r.id.clone()).or_default().push(s);
             }
         }
     }
     for list in m.values_mut() {
-        list.sort_by(|a, b| a.title.cmp(&b.title));
+        list.sort_by(|a, b| a.template.title.cmp(&b.template.title));
     }
     m
+}
+
+/// The mark a template carries on this environment, as the app's own
+/// screens word it; a confirmed one carries none.
+fn here_mark(here: &Here) -> Option<&'static str> {
+    match here {
+        Here::Confirmed { .. } => None,
+        Here::Unconfirmed => Some("unconfirmed here"),
+        Here::Failed { .. } => Some("failed here"),
+    }
+}
+
+fn here_hint(here: &Here) -> String {
+    match here {
+        Here::Confirmed { .. } => String::new(),
+        Here::Unconfirmed => "Not confirmed on this environment yet. Ask the assistant to try it here before relying on it.".into(),
+        Here::Failed { failure } => {
+            let mut s = "Failed on this environment".to_string();
+            if let Some(step) = &failure.step {
+                s.push_str(&format!(" at {step}"));
+            }
+            if let Some(detail) = &failure.detail {
+                s.push_str(&format!(": {detail}"));
+            }
+            s.push_str(". Ask the assistant to make it work here.");
+            s
+        }
+    }
 }
 
 fn effect_word(e: &Effect) -> &'static str {
@@ -168,7 +197,11 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
     let tone: HashMap<&str, Tone> = flow
         .stages
         .iter()
-        .map(|s| (s.id.as_str(), tone_of(on.get(&s.id).map(Vec::as_slice).unwrap_or(&[]))))
+        .map(|s| {
+            let templates: Vec<&ApiTemplate> =
+                on.get(&s.id).map(|l| l.iter().map(|t| &t.template).collect()).unwrap_or_default();
+            (s.id.as_str(), tone_of(&templates))
+        })
         .collect();
     let title_of: HashMap<&str, &str> = flow.stages.iter().map(|s| (s.id.as_str(), s.title.as_str())).collect();
 
@@ -222,15 +255,14 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
             "<li class='none'>No template yet</li>".to_string()
         } else {
             list.iter()
-                .map(|tpl| {
-                    // Only an import saves a template without its proof.
-                    let unproven = if tpl.proven.is_none() {
-                        "<span class='fx' title='Imported - not proven on this site. Prove it here before relying on it.'>unproven</span>"
-                    } else {
-                        ""
+                .map(|saved| {
+                    let tpl = &saved.template;
+                    let mark = match here_mark(&saved.here) {
+                        Some(word) => format!("<span class='fx' title='{}'>{word}</span>", esc_attr(&here_hint(&saved.here))),
+                        None => String::new(),
                     };
                     format!(
-                        "<li><span class='name'>{}</span>{unproven}<span class='fx'>{}</span></li>",
+                        "<li><span class='name'>{}</span>{mark}<span class='fx'>{}</span></li>",
                         esc(&tpl.title),
                         effect_word(&tpl.effect)
                     )
@@ -260,7 +292,10 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
                 .get(&s.id)
                 .map(|l| {
                     l.iter()
-                        .map(|t| if t.proven.is_some() { t.title.clone() } else { format!("{} (unproven)", t.title) })
+                        .map(|t| match here_mark(&t.here) {
+                            None => t.template.title.clone(),
+                            Some(word) => format!("{} ({word})", t.template.title),
+                        })
                         .collect()
                 })
                 .unwrap_or_default();

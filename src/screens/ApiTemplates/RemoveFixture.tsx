@@ -44,8 +44,8 @@ export default function RemoveFixture({
         Remove {fixture.name}?
       </h2>
       <p className="text-xs text-muted">
-        It is removed from this machine with its run history. What it already made stays in the
-        application and in the record of test-made drafts. A script that uses it cannot run until it is
+        It is removed for every environment, with this environment's run history. What it already
+        made stays in the application and in the record of test-made drafts. A script that uses it cannot run until it is
         saved again. There is no undo.
       </p>
       <div className="flex justify-end gap-2">
