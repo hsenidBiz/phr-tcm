@@ -1365,6 +1365,31 @@ fn a_per_environment_backup_from_before_the_library_folds_in_on_restore() {
 }
 
 #[test]
+fn a_per_environment_backup_from_before_the_library_folds_its_flows_in_too() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("env-flows");
+    let a = dst.join("autorun");
+    let flow = serde_json::json!({
+        "id": "f", "title": "Cycle", "module": "PMS",
+        "subject": { "name": "cycleId", "type": "number" },
+        "stages": [{ "id": "setup", "title": "Setup", "creates": true, "check": "SELECT 1 WHERE id = {{cycleId}}" }]
+    });
+    let files = vec![
+        entry("autorun/environments.json", &env_json(ENV_A, None)),
+        entry(&format!("autorun/envs/{ENV_A}/flows/{}/f.json", api_slug()), &flow.to_string()),
+        entry(&format!("autorun/envs/{ENV_B}/scripts/case-9.json"), "b"),
+    ];
+    v2_lib::backup::restore_files_with(&dst, &files, true).unwrap();
+
+    assert!(a.join("api-library").join("flows").join(api_slug()).join("f.json").is_file(), "the flow reached the library");
+    for id in [ENV_A, ENV_B] {
+        assert!(read(&a, &format!("envs/{id}/flows/{}/f.json", api_slug())).is_none(), "{id} keeps no flow");
+    }
+    assert!(no_staging_left(&a, ".import-"));
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
 fn a_flat_original_is_any_per_environment_or_legacy_api_folder() {
     // `flows` is a legacy API folder, not a per-environment item.
     for item in ["scripts", "templates", "fixtures", "flows", "api-state"] {
