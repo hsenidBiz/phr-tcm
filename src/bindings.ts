@@ -3358,7 +3358,11 @@ export type CaseCopyPlan = {
 	 *  its components too) that the target has no account for.
 	 */
 	missing_accounts: string[],
-	/**  Fixture and flow ids the script names that the target lacks. Not copied. */
+	/**
+	 *  Fixture and flow ids the script names that no saved definition has.
+	 *  Definitions are shared by every environment, so a fixture or flow
+	 *  that exists is never named here. Not copied.
+	 */
 	missing_api: string[],
 };
 
