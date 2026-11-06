@@ -42,7 +42,7 @@ type Row = { kind: "click" | "field"; readable: string; password: boolean };
 type Phase =
   | { kind: "before" }
   | { kind: "starting" }
-  | { kind: "recording"; rows: Row[]; notes: string[]; picking: boolean; marker: string }
+  | { kind: "recording"; rows: Row[]; notes: string[]; picking: boolean; marker: string; markerInMenu: boolean }
   | { kind: "finishing" }
   | { kind: "review"; draft: SignInDraftView; roles: FieldChoice[]; failure: string }
   | { kind: "checking"; draft: SignInDraftView; roles: FieldChoice[] }
@@ -146,7 +146,7 @@ export default function RecordSignInDialog({
           const row: Row = { kind: p.kind, readable: p.readable, password: p.kind === "field" && p.password };
           return { ...cur, rows: [...cur.rows, row] };
         }
-        if (p.kind === "marker") return { ...cur, marker: p.readable, picking: false };
+        if (p.kind === "marker") return { ...cur, marker: p.readable, markerInMenu: !!p.in_menu, picking: false };
         if (p.kind === "unreadable") return { ...cur, notes: [...cur.notes, p.detail] };
         if (p.kind === "closed") {
           return { kind: "failed", why: "The recording browser was closed. Nothing was saved." };
@@ -211,7 +211,7 @@ export default function RecordSignInDialog({
         setPhase({ kind: "failed", why: r.error });
         return;
       }
-      setPhase({ kind: "recording", rows: [], notes: [], picking: false, marker: "" });
+      setPhase({ kind: "recording", rows: [], notes: [], picking: false, marker: "", markerInMenu: false });
     } catch (e) {
       if (cancelAsked.current) {
         cancelledStart();
@@ -420,13 +420,19 @@ export default function RecordSignInDialog({
             <p className="text-xs text-text">
               <span className="text-muted">Signed-in check: </span>
               {phase.marker}
+              {phase.markerInMenu && " (inside a menu)"}
             </p>
           )}
           {phase.picking && (
-            <p className="text-xs text-accent">
-              Now click Sign out, or something every signed-in account sees - not your own name. That
-              click is not carried out.
-            </p>
+            <>
+              <p className="text-xs text-accent">
+                Now show us how you sign out: open the menu and click Sign out (it won't actually sign
+                you out).
+              </p>
+              <p className="text-xs text-accent">
+                Hold Shift as you click to open a menu without picking it.
+              </p>
+            </>
           )}
           <div className="flex flex-wrap justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={cancelRecording}>
@@ -563,6 +569,7 @@ function Review({
       <p className="text-xs text-text">
         <span className="text-muted">Signed-in check: </span>
         {draft.marker || "none picked"}
+        {draft.marker && draft.marker_in_menu && " (inside a menu)"}
       </p>
       {account}
       {checking && (
