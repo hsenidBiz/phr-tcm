@@ -139,6 +139,13 @@ fn swap_in(
         if roots::exists(&to)? {
             for m in kept_in_place(&to, &from) {
                 if std::fs::symlink_metadata(&m.to).is_ok() {
+                    // The API folders also hold the definitions an older
+                    // backup brought (for the library fold): the live
+                    // histories join them file by file.
+                    let name = m.to.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    if roots::LEGACY_API_ITEMS.contains(&name) {
+                        merge_missing(&m.from, &m.to, &mut *rename, waits_ms)?;
+                    }
                     continue;
                 }
                 if let Some(parent) = m.to.parent() {
@@ -161,6 +168,22 @@ fn swap_in(
         }
         std::fs::create_dir_all(&envs_dir).map_err(|e| e.to_string())?;
         rename_with(&from, &to, &mut *rename, waits_ms)?;
+    }
+    Ok(())
+}
+
+/// Moves every file under `from` that `to` does not have into `to`, folder
+/// by folder. Moves, never deletes; run again after a stop it moves only what
+/// is still there.
+fn merge_missing(from: &Path, to: &Path, rename: Rename, waits_ms: &[u64]) -> Result<(), String> {
+    for entry in std::fs::read_dir(from).map_err(|e| e.to_string())?.flatten() {
+        let dest = to.join(entry.file_name());
+        let src = entry.path();
+        if std::fs::symlink_metadata(&dest).is_err() {
+            rename_with(&src, &dest, &mut *rename, waits_ms)?;
+        } else if src.is_dir() && dest.is_dir() {
+            merge_missing(&src, &dest, &mut *rename, waits_ms)?;
+        }
     }
     Ok(())
 }

@@ -1270,12 +1270,25 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
 /// (once). A failure is logged without a path and never fails start-up: the
 /// next start tries again.
 fn fold_api_library(shared: &Path) {
+    fold_api_library_logged(None, shared);
+}
+
+/// Folds (taking the switch lock for writing unless the caller `held` it)
+/// and logs the outcome. A failure never reaches the caller: the definitions
+/// stay where they were and the next start tries again. The log names no
+/// path.
+pub(crate) fn fold_api_library_logged(held: Option<&std::sync::RwLockWriteGuard<'static, ()>>, shared: &Path) {
+    use crate::api_templates::library_move as lm;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    match crate::api_templates::library_move::fold_in(shared, now_ms) {
-        Ok(Some(report)) => crate::applog::info(crate::api_templates::library_move::move_log_line(&report)),
+    let folded = match held {
+        Some(h) => lm::fold_in_held(h, shared, now_ms),
+        None => lm::fold_in(shared, now_ms),
+    };
+    match folded {
+        Ok(Some(report)) => crate::applog::info(lm::move_log_line(&report)),
         Ok(None) => {}
         Err(e) => crate::applog::warn(format!(
             "Auto Run: the API templates, flows and fixtures could not be moved into the shared library yet ({}); the next start tries again",

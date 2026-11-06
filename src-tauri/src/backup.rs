@@ -472,9 +472,20 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// meanwhile. Unsafe paths are refused one by one (the rest still land);
 /// returns how many files were written. See [`restore_files_held`].
 pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, String> {
+    restore_files_with(data_dir, files, fold_allowed())
+}
+
+/// Whether this build may fold API definitions into the shared library (the
+/// start-up fold's gate: a development build shares the installed app's data).
+fn fold_allowed() -> bool {
+    crate::autorun::roots::migration_allowed(cfg!(debug_assertions), std::env::var("TCM_MIGRATE_ENVS").ok().as_deref())
+}
+
+/// [`restore_files`] with the fold's permission passed in (the seam the tests use).
+pub fn restore_files_with(data_dir: &Path, files: &[BackupFile], fold_allowed: bool) -> Result<u32, String> {
     let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
     let held = crate::autorun::roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
-    restore_files_held(&held, data_dir, files)
+    restore_files_held_with(&held, data_dir, files, fold_allowed)
 }
 
 /// [`restore_files`] for a caller that already holds the switch lock for
@@ -496,6 +507,16 @@ pub fn restore_files_held(
     held: &std::sync::RwLockWriteGuard<'static, ()>,
     data_dir: &Path,
     files: &[BackupFile],
+) -> Result<u32, String> {
+    restore_files_held_with(held, data_dir, files, fold_allowed())
+}
+
+/// [`restore_files_held`] with the fold's permission passed in.
+pub fn restore_files_held_with(
+    held: &std::sync::RwLockWriteGuard<'static, ()>,
+    data_dir: &Path,
+    files: &[BackupFile],
+    fold_allowed: bool,
 ) -> Result<u32, String> {
     use crate::autorun::{backup_import, roots};
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -546,6 +567,20 @@ pub fn restore_files_held(
     };
     // A pre-update backup that replaces nothing (history alone) is not applied.
     let drop_flat = plan.pre_update && ids.is_empty();
+    if plan.pre_update {
+        let histories = entries
+            .iter()
+            .filter(|(f, _)| {
+                let seg = raw_segments(&f.path);
+                seg.len() >= 3
+                    && roots::LEGACY_API_ITEMS.iter().any(|i| seg[1].eq_ignore_ascii_case(i))
+                    && seg[seg.len() - 1].to_ascii_lowercase().ends_with(".runs.json")
+            })
+            .count();
+        if histories > 0 {
+            crate::applog::info(format!("Backup import: {histories} API run histories in this older backup were not applied"));
+        }
+    }
     let mut restored = 0u32;
     let mut staged_applied = 0u32;
     // `envs/` appeared in the middle of a session that reads the flat folder.
@@ -734,7 +769,11 @@ pub fn restore_files_held(
         // A backup made before the shared library brings its API definitions
         // inside the environment folders just put in place: fold them in by
         // the one-time fold's rules. Never fails the import.
-        fold_api_library(held, &autorun, now);
+        if fold_allowed {
+            roots::fold_api_library_logged(Some(held), &autorun);
+        } else {
+            crate::applog::info("Backup import: the API definitions wait in the environments' folders; the shared library takes them in at a start that may update the data");
+        }
     } else if let Some((list, has_environments)) = &deferred_accounts {
         restore_legacy_accounts(&autorun, list, *has_environments)?;
     }
@@ -769,17 +808,6 @@ pub fn restore_files_held(
         return Err(backup_import::IMPORT_UNFINISHED.to_string());
     }
     Ok(restored)
-}
-
-/// Folds the API definitions an import left in the environment folders into
-/// the shared library. Logged without a path, never fatal.
-fn fold_api_library(held: &std::sync::RwLockWriteGuard<'static, ()>, autorun: &Path, now: u64) {
-    use crate::api_templates::library_move;
-    match library_move::fold_in_held(held, autorun, now) {
-        Ok(Some(report)) => crate::applog::info(library_move::move_log_line(&report)),
-        Ok(None) => {}
-        Err(_) => crate::applog::warn("Backup import: the API definitions could not be folded into the shared library"),
-    }
 }
 
 /// Copies the Playwright export records of environment `from` into

@@ -1326,7 +1326,7 @@ fn a_pre_update_backup_with_only_templates_is_app_data_and_folds_into_the_librar
         entry(&format!("autorun/flows/{}/f.json", api_slug()), &flow.to_string()),
     ];
     assert!(v2_lib::backup::is_pre_update(&files));
-    restore_files(&dst, &files).unwrap();
+    v2_lib::backup::restore_files_with(&dst, &files, true).unwrap();
 
     assert!(library_file(&a, "t").is_file(), "the flat backup's template reached the library");
     assert!(a.join("api-library").join("flows").join(api_slug()).join("f.json").is_file(), "so did its flow");
@@ -1353,7 +1353,7 @@ fn a_per_environment_backup_from_before_the_library_folds_in_on_restore() {
         entry(&format!("autorun/envs/{ENV_A}/templates/{}/t.runs.json", api_slug()), &api_runs_text()),
         entry(&format!("autorun/envs/{ENV_B}/scripts/case-9.json"), "b"),
     ];
-    restore_files(&dst, &files).unwrap();
+    v2_lib::backup::restore_files_with(&dst, &files, true).unwrap();
 
     assert!(library_file(&a, "t").is_file(), "the definition reached the library");
     assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/t.json", api_slug())).is_none(), "the env keeps no definition");
@@ -1377,4 +1377,48 @@ fn a_flat_original_is_any_per_environment_or_legacy_api_folder() {
     }
     let files = vec![entry("autorun/flows/p/x.json", "{}")];
     assert!(v2_lib::backup::is_pre_update(&files), "a flows entry alone marks a pre-update backup");
+}
+
+fn flat_api_backup() -> Vec<BackupFile> {
+    vec![
+        entry("autorun/environments.json", &env_json(ENV_A, None)),
+        entry(&format!("autorun/templates/{}/t.json", api_slug()), &api_template_text("t")),
+        entry(&format!("autorun/templates/{}/t.runs.json", api_slug()), &api_runs_text()),
+    ]
+}
+
+#[test]
+fn a_flat_restore_keeps_every_environments_api_histories_and_fills_the_library() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("flat-keeps-histories");
+    let a = dst.join("autorun");
+    for id in [ENV_A, ENV_B] {
+        put(&a, &format!("envs/{id}/templates/{}/live.runs.json", api_slug()), "[]");
+        put(&a, &format!("envs/{id}/fixtures/{}/fx.runs.json", api_slug()), "[]");
+    }
+    v2_lib::backup::restore_files_with(&dst, &flat_api_backup(), true).unwrap();
+
+    for id in [ENV_A, ENV_B] {
+        assert!(read(&a, &format!("envs/{id}/templates/{}/live.runs.json", api_slug())).is_some(), "{id} template history");
+        assert!(read(&a, &format!("envs/{id}/fixtures/{}/fx.runs.json", api_slug())).is_some(), "{id} fixture history");
+    }
+    assert!(library_file(&a, "t").is_file(), "the backup's definition is in the library");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn when_the_fold_is_not_allowed_the_definitions_wait_for_the_next_one() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("fold-not-allowed");
+    let a = dst.join("autorun");
+    put(&a, &format!("envs/{ENV_A}/templates/{}/live.runs.json", api_slug()), "[]");
+    v2_lib::backup::restore_files_with(&dst, &flat_api_backup(), false).unwrap();
+
+    assert!(!library_file(&a, "t").exists(), "nothing folded");
+    assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/t.json", api_slug())).is_some(), "the definition waits in the environment");
+    assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/live.runs.json", api_slug())).is_some(), "the history stayed");
+    // The next allowed fold takes it in.
+    assert!(v2_lib::api_templates::library_move::fold_in(&a, 1_800_000_000_000).unwrap().is_some());
+    assert!(library_file(&a, "t").is_file());
+    let _ = std::fs::remove_dir_all(&dst);
 }
