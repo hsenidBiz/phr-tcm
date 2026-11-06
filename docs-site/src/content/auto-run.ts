@@ -39,7 +39,7 @@ const NAV: Step = { nav: "Auto Run" };
 
 /** Said under both ways of running: a setup that cannot start blocks the case. */
 const BLOCKED_BY_SETUP =
-  "A case whose script has a setup runs that setup first, every time, before it signs in. The case is **Blocked** when the setup fails, or when a fixture it needs has never been built: build it on the API Templates tab, under **Fixtures**.";
+  "A case whose script has a setup runs that setup first, every time, before it signs in. The case is **Blocked** when the setup fails, or when a fixture it needs has never been built: build it on the API Templates tab, under **Fixtures**. If the setup's fixture has not worked on this environment yet, the case says so: ask the assistant to make it work here.";
 const READY: Step = { waitFor: { role: "checkbox", name: "Select #5001" } };
 /** Opens #5003's script, which opens on the script in sentences. */
 const TO_SCRIPT: Step[] = [
@@ -200,7 +200,7 @@ export const autoRun: Screen = {
         "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
         "With API templates switched on there is a **Fixtures** line too: how many fixtures you have and when one last ran. **Open** beside it takes you to the Fixtures tab of the API Templates screen. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
-        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. It does so when a fixture failed on its last run, too.",
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. It does so when a fixture failed on its last run here, too.",
     },
     {
       id: "setup-details",
@@ -973,7 +973,7 @@ export const autoRun: Screen = {
     "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
-    "Each environment keeps its own scripts, areas, components, quirks, saved setups and run history, because each can run a different version of the app. What you see in Auto Run is the active environment's, and it changes when you switch environment. To bring another environment's in, use **Copy Auto Run data…** in Edit environments on the AI Bridge tab, or copy one case from its script.",
+    "Each environment keeps its own scripts, areas, components, quirks, saved setups and run history, because each can run a different version of the app. API templates, flows and fixtures are shared by every environment. What you see in Auto Run is the active environment's, and it changes when you switch environment. To bring another environment's in, use **Copy Auto Run data…** in Edit environments on the AI Bridge tab, or copy one case from its script.",
     "**Check sign-in**, in the Accounts window, tries the accounts you tick (**Select all** ticks every one), one after another, each in its own hidden browser. Leave **Walk to** on **Sign-in only** to see whether each login gets in, or pick an area to see whether it reaches that area or where it stopped. Each line says what happened, an account that is expired or already signed in elsewhere is named as such, and **Cancel** stops the check. It cannot run while a run, a replay or a discovery is going. What it learns is kept for a week and moves the accounts that reached the area to the top of the assistant's proposals.",
     "When the environment has a **Password expiry query**, the run window warns, before you start, about any account the run would use whose password has expired or is due within a week. A sign-in that is sent to the site's password reset page fails as \"password expired\" rather than as a missing page.",
     "Auto Run works in your home project (Settings, under General), because its scripts, areas, runs and test files belong to one project. That holds with **Treat all projects as one** on or off; with it off the home project is the project you pick in the bar. When you send a reviewed run, the results go to the project of the Product Backlog Item the cases belong to.",

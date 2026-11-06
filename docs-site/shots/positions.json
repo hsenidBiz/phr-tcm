@@ -529,10 +529,10 @@
         "w": 96,
         "h": 29
       },
-      "unproven": {
-        "x": 1145,
+      "unconfirmed-here": {
+        "x": 1108,
         "y": 463,
-        "w": 44,
+        "w": 81,
         "h": 15
       },
       "writes-switch": {

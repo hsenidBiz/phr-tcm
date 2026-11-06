@@ -128,7 +128,7 @@ export const apiTemplates: Screen = {
       locate: { role: "button", name: "Import" },
       name: "Import",
       does:
-        "Adds the templates and flows from a file someone exported, after a warning. One with the same id as yours replaces it. Imported templates are marked **Unproven** until they are proven on your site.",
+        "Adds the templates and flows from a file someone exported, after a warning. One with the same id as yours replaces it. Imported templates that are new or changed are marked **Unconfirmed here** on every environment.",
     },
     {
       id: "tab-templates",
@@ -202,13 +202,13 @@ export const apiTemplates: Screen = {
       does: "The stage of a flow the template performs. A stage whose flow is no longer saved is marked, and the template cannot run until the flow is saved again.",
     },
     {
-      id: "unproven",
+      id: "unconfirmed-here",
       shot: LIST,
       group: "templates",
-      locate: { text: "Unproven" },
-      name: "Unproven",
+      locate: { text: "Unconfirmed here" },
+      name: "Unconfirmed here",
       does:
-        "An imported template that has not been proven on your site yet. It can run, but ask the assistant to prove it before relying on it; the runs it lists may be from the version it replaced.",
+        "Not confirmed on this environment yet. It can run; ask the assistant to try it here before relying on it.",
     },
     {
       id: "remove",
@@ -446,7 +446,7 @@ export const apiTemplates: Screen = {
   tips: [
     "This screen only shows templates and removes them. Building, proving and running them is your assistant's work, through the app's AI tools on the AI Bridge tab.",
     "Proving or running a template writes real test data to your site, so it is allowed only while **API templates** is switched on, on the AI Bridge tab.",
-    "Templates, fixtures and flows are kept on this computer, per project and per environment: the list shows the active environment's, and **Copy Auto Run data…** in Edit environments on the AI Bridge tab brings another environment's in. Use **Export** and **Import** to share them with your team.",
+    "Templates, fixtures and flows are kept on this computer, per project, and shared by every environment. Each one is confirmed separately on each environment: **Unconfirmed here** means it has not worked on the active environment yet, **Failed here** that it failed there. Use **Export** and **Import** to share them with your team.",
     "With **Treat all projects as one** on, API Templates works in your home project (Settings, under General), and its templates and flows belong to that project.",
   ],
   howTo: [
@@ -465,7 +465,7 @@ export const apiTemplates: Screen = {
         "Press **>** beside the template to open its details.",
         "Read **Proven**: when it last worked on your site and what it created.",
         "Read **Runs** for any failure since, with the step it failed at and why.",
-        "An **Unproven** template came from an import: ask the assistant to prove it on your site.",
+        "A template marked **Unconfirmed here** or **Failed here** has not worked on this environment: ask the assistant to make it work here.",
       ],
     },
     {
