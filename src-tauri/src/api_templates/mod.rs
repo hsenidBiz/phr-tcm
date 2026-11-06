@@ -21,6 +21,7 @@ pub mod guide;
 pub mod held;
 pub mod here;
 pub mod library;
+pub mod library_move;
 pub mod one_off;
 pub mod postback;
 pub mod runner;

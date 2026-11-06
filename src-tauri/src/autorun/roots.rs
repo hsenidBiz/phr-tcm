@@ -56,7 +56,7 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 15] = [
 pub const BY_RUN: [&str; 4] = ["runs", "reports", "downloads", "shots"];
 
 /// The top-level items every environment shares; they stay in the shared root.
-pub const SHARED_ITEMS: [&str; 10] = [
+pub const SHARED_ITEMS: [&str; 12] = [
     "environments.json",
     "accounts",
     "sessions",
@@ -67,6 +67,8 @@ pub const SHARED_ITEMS: [&str; 10] = [
     "last-browser.txt",
     "accounts.json",
     MIGRATION_NOTE_FILE,
+    "api-library",
+    "removed-api",
 ];
 
 /// `projects/<anything>.pwexport.json`: the Playwright export record, which
@@ -385,6 +387,7 @@ pub fn is_on_screen(changed: &Path) -> bool {
             changed.starts_with(&shared)
                 && !changed.starts_with(shared.join(ENVS_DIR))
                 && !changed.starts_with(shared.join(REMOVED_DIR))
+                && !changed.starts_with(shared.join(crate::api_templates::library::REMOVED_API_DIR))
         }
         // No environment is chosen yet: nothing is on screen to be wrong.
         None => true,
@@ -643,6 +646,17 @@ pub fn purge_removed(shared: &Path, now_ms: u64) -> usize {
                 continue;
             }
             if let Some((_, ms)) = e.file_name().to_str().and_then(parse_key) {
+                purge(e.path(), ms);
+            }
+        }
+    }
+    // Versions the API library fold kept aside: `removed-api/<ms>`.
+    if let Ok(entries) = std::fs::read_dir(shared.join(crate::api_templates::library::REMOVED_API_DIR)) {
+        for e in entries.flatten() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            if let Some(ms) = e.file_name().to_str().and_then(|n| n.parse::<u64>().ok()) {
                 purge(e.path(), ms);
             }
         }
@@ -1220,8 +1234,29 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
         // copy still owes data.
         out.settled_copies = super::backup_import::recover(shared) + super::env_copy::recover(shared);
         retry_seed(shared);
+        if allowed {
+            fold_api_library(shared);
+        }
     }
     out
+}
+
+/// The API definitions every environment held move into the shared library
+/// (once). A failure is logged without a path and never fails start-up: the
+/// next start tries again.
+fn fold_api_library(shared: &Path) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    match crate::api_templates::library_move::fold_in(shared, now_ms) {
+        Ok(Some(report)) => crate::applog::info(crate::api_templates::library_move::move_log_line(&report)),
+        Ok(None) => {}
+        Err(e) => crate::applog::warn(format!(
+            "Auto Run: the API templates, flows and fixtures could not be moved into the shared library yet ({}); the next start tries again",
+            if path_free(&e) { e.as_str() } else { "a file could not be moved" }
+        )),
+    }
 }
 
 /// Hands the seed to the first environment made after the update: renames
