@@ -6,12 +6,16 @@ import type { ComponentProps } from "react";
 import { toast } from "../lib/toast";
 import { setTourRunning } from "../tour/tourState";
 import PrPanel from "./PrPanel";
+import ProjectChip from "../components/ProjectChip";
 
 // The panel's "that pull request is not here" notices are toasts; assert on
 // the mock the way every other screen's tests do.
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
+
+const h = vi.hoisted(() => ({ copyText: vi.fn(() => Promise.resolve()) }));
+vi.mock("../lib/clipboard", () => ({ copyText: h.copyText }));
 
 afterEach(() => {
   clearMocks();
@@ -268,6 +272,32 @@ test("a row expands to description and named reviewer votes", async () => {
   expect(screen.getByText(/— approved/)).toBeInTheDocument();
   // The external-link control sits on the row for the browser hop.
   expect(screen.getByRole("button", { name: "Open !4 in Azure DevOps" })).toBeInTheDocument();
+});
+
+test("Copy link copies the pull request's link without opening the row", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(7)] };
+    if (cmd === "list_repos") return [];
+  });
+  renderPanel();
+  const row = (await screen.findByText("!7")).closest("[aria-expanded]")!;
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy link to !7" }));
+
+  await waitFor(() => expect(h.copyText).toHaveBeenCalledWith("https://example.invalid/pr"));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Link copied."));
+  expect(row).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a project chip in running heading text stays one pill", () => {
+  render(
+    <h2>
+      Completed on web <ProjectChip project="HRM" />
+    </h2>,
+  );
+  // Its label is a block; only an inline-block chip keeps it in one piece
+  // inside a heading's text (jsdom does no layout, so the class is the check).
+  expect(screen.getByTitle("Project: HRM")).toHaveClass("inline-block");
 });
 
 test("expanding a PR shows its linked work items as DevOps-style chips", async () => {
