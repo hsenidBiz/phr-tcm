@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/button";
 import { IconOpenInBrowser, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { GEOMETRY, edgePath, layoutFlow, type Placed } from "../../lib/flowLayout";
-import HereBadge from "./HereBadge";
+import HereBadge, { HereDot } from "./HereBadge";
 import { EffectBadge, dayMonth, stampDate } from "./TemplateRow";
 
 /** The arrow's head at `to`'s left-middle; edges arrive horizontally. */
@@ -197,7 +197,7 @@ export default function FlowMap({
                         onClick={() => onOpenTemplate(t.id)}
                       >
                         <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                        <HereBadge here={tHere} />
+                        <HereDot here={tHere} />
                         <EffectBadge effect={t.effect} />
                       </button>
                     </li>

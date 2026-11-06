@@ -1234,9 +1234,11 @@ test("a flow shows Unconfirmed here until every template on it is confirmed", as
   await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
-  expect(within(flow).getAllByText("Unconfirmed here").length).toBeGreaterThanOrEqual(2);
+  // The flow carries the worded badge; a stage row only a compact mark.
+  expect(within(flow).getAllByText("Unconfirmed here")).toHaveLength(1);
   const stage = within(flow).getByRole("group", { name: "Evaluation rules" });
-  expect(within(stage).getByText("Unconfirmed here").parentElement!).toHaveAttribute("title", expect.stringContaining("Not confirmed"));
+  expect(within(stage).queryByText("Unconfirmed here")).not.toBeInTheDocument();
+  expect(within(stage).getByRole("img", { name: "Unconfirmed here" })).toHaveAttribute("title", expect.stringContaining("Not confirmed"));
   const list = within(flow).getByRole("list", { name: "Stages of Performance cycle wizard" });
   expect(list).toHaveTextContent("Evaluation rules. Requires: Cycle setup. Templates: Save the rules (unconfirmed here).");
 });

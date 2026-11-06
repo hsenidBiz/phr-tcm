@@ -30,3 +30,22 @@ export default function HereBadge({ here }: { here: Here }) {
     </Badge>
   );
 }
+
+/**
+ * The same state as a small dot, for where a worded badge would take the
+ * room of a title (a template inside a flow-map stage). Its words are its
+ * tooltip and its accessible name; a confirmed item shows nothing.
+ */
+export function HereDot({ here }: { here: Here }) {
+  if (here.state === "confirmed") return null;
+  const failed = here.state === "failed";
+  const label = failed ? "Failed here" : "Unconfirmed here";
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={failed ? failedHint(here.failure) : UNCONFIRMED_HINT}
+      className={`size-2 shrink-0 rounded-full ${failed ? "bg-danger" : "bg-warning"}`}
+    />
+  );
+}
