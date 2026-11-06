@@ -153,8 +153,26 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
     assert_eq!(LISTENER_JS.matches("preventDefault").count(), 1);
     assert_eq!(LISTENER_JS.matches("stopImmediatePropagation").count(), 1);
     assert_eq!(LISTENER_JS.matches("hush(e)").count(), 2);
-    assert!(LISTENER_JS.contains("if (e.isTrusted && window.__tcmRecPick) hush(e);"));
-    let pick = LISTENER_JS.find("if (window.__tcmRecPick) {").expect("pick mode");
+    assert!(LISTENER_JS.contains("if (e.isTrusted && window.__tcmRecPick && !letThrough(e)) hush(e);"));
+    assert!(LISTENER_JS.contains("if (letThrough(e)) { opened = true; return; }"), "a menu or Shift click is let through");
+    assert!(LISTENER_JS.contains("e.shiftKey ||"));
+    assert!(LISTENER_JS.contains("up <= 3"), "the opener is looked for up to 3 levels up");
+    for attr in [
+        "[aria-haspopup]:not([aria-haspopup=\"false\"])",
+        "[aria-expanded]",
+        "[data-toggle=\"dropdown\"]",
+        "[data-bs-toggle=\"dropdown\"]",
+    ] {
+        assert!(LISTENER_JS.contains(attr), "{attr} opens a menu");
+    }
+    assert!(LISTENER_JS.contains("if (n.matches(IN_MENU)) return false;"), "an item inside an open menu is not its opener");
+    assert!(LISTENER_JS.contains("clicked('marker', el, opened || !!el.closest(IN_MENU));
+      opened = false;"));
+    assert!(LISTENER_JS.contains("menu: !!menu,"));
+    let pick = LISTENER_JS.find("window.__tcmRecPick = false;
+      hush(e);").expect("pick mode");
+    assert_eq!(LISTENER_JS.matches("window.__tcmRecPick = false;
+      hush(e);").count(), 1);
     let stop = LISTENER_JS[pick..].find("hush(e)").unwrap();
     assert!(stop < 80, "only the picked click is stopped");
     for ev in ["pointerdown", "mousedown", "pointerup", "mouseup"] {

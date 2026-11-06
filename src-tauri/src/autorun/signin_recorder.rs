@@ -8,7 +8,9 @@
 //! username, the password, or a fixed text); Enter in a field, as the
 //! click on its form's sign-in button that Enter stands for; and, while
 //! pick mode is on, the one click that says "signed in" - that click is
-//! not carried out.
+//! not carried out. A click that opens a menu, or one made with Shift
+//! held, is carried out and not picked, so the menu holding Sign out can
+//! be opened first.
 //!
 //! Which locator to build is decided by plain functions, tested without a
 //! browser. Nothing here saves anything: the command saves a recipe only
@@ -76,7 +78,7 @@ pub const LISTENER_JS: &str = r#"(() => {
     e.preventDefault();
     e.stopImmediatePropagation();
   };
-  const clicked = (ev, el) => {
+  const clicked = (ev, el, menu) => {
     const near = el.closest('a,button,summary,[role]') || el;
     // A click on, or around, anything a person can type into is QUIET: no
     // words from the page at all, and Rust names it only from a node with
@@ -88,6 +90,7 @@ pub const LISTENER_JS: &str = r#"(() => {
       ev: ev,
       i: hold(el),
       quiet: quiet,
+      menu: !!menu,
       tag: near.tagName.toLowerCase(),
       role: near.getAttribute('role') || '',
       label: clean(near.getAttribute('aria-label')),
@@ -150,10 +153,30 @@ pub const LISTENER_JS: &str = r#"(() => {
     window.addEventListener('keydown', afterPage);
     setTimeout(decide, 0);
   }, true);
+  // While picking, a click that opens a menu - or any click with Shift
+  // held - is carried out, and is neither recorded nor picked: the person
+  // can open the menu that holds Sign out.
+  const OPENER = '[aria-haspopup]:not([aria-haspopup="false"]),[aria-expanded],[data-toggle="dropdown"],[data-bs-toggle="dropdown"]';
+  const IN_MENU = '[role="menu"],.dropdown-menu';
+  const opensMenu = (el) => {
+    for (let n = el, up = 0; n && up <= 3; n = n.parentElement, up++) {
+      if (n.matches(IN_MENU)) return false;
+      if (n.matches(OPENER)) return true;
+    }
+    return false;
+  };
+  const letThrough = (e) => {
+    const el = elementOf(e.target);
+    return e.shiftKey || (!!el && opensMenu(el));
+  };
+  // A click was let through since the last pick: what is picked next was
+  // reached through a menu.
+  let opened = false;
   // While pick mode is on, the press and release of the picked click are
-  // stopped too: a menu or Sign out wired to them would act otherwise.
+  // stopped too: a menu or Sign out wired to them would act otherwise. A
+  // press that belongs to a let-through click is left alone.
   const pressWhilePicking = (e) => {
-    if (e.isTrusted && window.__tcmRecPick) hush(e);
+    if (e.isTrusted && window.__tcmRecPick && !letThrough(e)) hush(e);
   };
   for (const kind of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
     document.addEventListener(kind, pressWhilePicking, true);
@@ -166,9 +189,11 @@ pub const LISTENER_JS: &str = r#"(() => {
     enterButton = null;
     if (fromEnter) return;
     if (window.__tcmRecPick) {
+      if (letThrough(e)) { opened = true; return; }
       window.__tcmRecPick = false;
       hush(e);
-      clicked('marker', el);
+      clicked('marker', el, opened || !!el.closest(IN_MENU));
+      opened = false;
       return;
     }
     if (entryOf(el)) return;
