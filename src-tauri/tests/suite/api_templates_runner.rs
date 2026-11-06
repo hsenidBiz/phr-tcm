@@ -1360,6 +1360,140 @@ mod through_the_bridge {
         assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
     }
 
+    fn saved_here(root: &std::path::Path) -> v2_lib::api_templates::here::Here {
+        store::list(root, ORG, PROJECT).unwrap().into_iter().find(|s| s.template.id == ID).unwrap().here
+    }
+
+    async fn run_saved_template(browsers: FakeBrowsers) -> u16 {
+        let body = json!({ "id": ID, "account": "admin", "values": { "cycleName": "FY27" } });
+        api_template_run(&ctx(), &body.to_string(), |_| browsers, no_db, &quick()).await.0
+    }
+
+    #[tokio::test]
+    async fn a_run_of_an_unconfirmed_template_that_works_confirms_it_here() {
+        use v2_lib::api_templates::here::Here;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert_eq!(run_saved_template(browsers).await, 200);
+        assert_eq!(saved_here(root.path()), Here::Confirmed { last_failure: None });
+    }
+
+    #[tokio::test]
+    async fn a_failing_run_marks_an_unconfirmed_template_failed_here_with_the_step() {
+        use v2_lib::api_templates::here::Here;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        assert_eq!(run_saved_template(browsers).await, 502);
+        match saved_here(root.path()) {
+            Here::Failed { failure } => {
+                assert_eq!(failure.step.as_deref(), Some("Evaluation rules"));
+                assert!(failure.detail.unwrap_or_default().contains("Evaluation rules"));
+            }
+            other => panic!("expected Failed here, got {other:?}"),
+        }
+    }
+
+    fn no_browser() -> FakeBrowsers {
+        FakeBrowsers { next: None, opened: 0, closed: 0, last: None }
+    }
+
+    async fn run_saved_waiting(browsers: FakeBrowsers, lease_wait_ms: u64) -> u16 {
+        let body = json!({ "id": ID, "account": "admin", "values": { "cycleName": "FY27" } });
+        let timing = v2_lib::browser::timing::Timing { lease_wait_ms, ..quick() };
+        api_template_run(&ctx(), &body.to_string(), |_| browsers, no_db, &timing).await.0
+    }
+
+    #[tokio::test]
+    async fn a_run_that_never_reached_the_site_records_nothing_for_an_unconfirmed_template() {
+        use v2_lib::api_templates::here::Here;
+        use v2_lib::autorun::lease::{self, Holder};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _l = crate::serial::account_leases();
+        let _changed = changes();
+        let Rig { root, browsers, .. } = rig(vec![], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+
+        // The browser does not open.
+        drop(browsers);
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert!(!v2_lib::api_templates::library::state_path(root.path(), ORG, PROJECT).exists());
+
+        // The account is in use and the wait ends.
+        let env = env_of_root(root.path());
+        let _case = lease::try_acquire(&env, "admin", Holder::Case { run: "run-x".into() }).unwrap();
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert!(!v2_lib::api_templates::library::state_path(root.path(), ORG, PROJECT).exists());
+    }
+
+    #[tokio::test]
+    async fn a_run_that_never_reached_the_site_adds_no_strike_to_a_confirmed_template() {
+        use v2_lib::api_templates::here::Here;
+        use v2_lib::autorun::lease::{self, Holder};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _l = crate::serial::account_leases();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        assert_eq!(run_saved_template(browsers).await, 200);
+        assert_eq!(saved_here(root.path()), Here::Confirmed { last_failure: None });
+
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        let env = env_of_root(root.path());
+        let _case = lease::try_acquire(&env, "admin", Holder::Case { run: "run-x".into() }).unwrap();
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        assert_eq!(saved_here(root.path()), Here::Confirmed { last_failure: None }, "no strike for runs that never signed in");
+    }
+
+    #[tokio::test]
+    async fn a_failed_prove_of_a_different_draft_leaves_the_saved_templates_state_alone() {
+        use v2_lib::api_templates::here::Here;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        let mut draft = template();
+        draft.title = "A different title".into();
+        let call = body(json!({ "template": draft, "replace": true, "why": "testing" }));
+        let (status, out) = api_template_prove(&ctx(), &call, |_| browsers, no_db, &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert!(!v2_lib::api_templates::library::state_path(root.path(), ORG, PROJECT).exists());
+    }
+
     /// A setup running this template: case 81, never approved.
     fn setup_running_it(root: &std::path::Path) {
         use v2_lib::api_templates::fixture::{Fixture, FixtureStep};
@@ -2444,7 +2578,11 @@ mod test_files {
 
 /// The environment `r`'s root signs in to.
 fn env_of(r: &Rig) -> String {
-    v2_lib::environments::active_id(r.root.path()).unwrap()
+    env_of_root(r.root.path())
+}
+
+fn env_of_root(root: &std::path::Path) -> String {
+    v2_lib::environments::active_id(root).unwrap()
 }
 
 async fn run_waiting(r: &mut Rig, wait_ms: u64) -> RunReport {

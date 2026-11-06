@@ -46,10 +46,17 @@ pub const DAMAGED: &str = "that API templates export is damaged: it has no list 
 pub const NOTHING_IN_IT: &str = "that file has no templates or flows in it";
 pub const NOTHING_TO_EXPORT: &str = "there are no templates or flows to export in this project";
 
-/// What `list_api_templates` says beside a template with no `proven` - one
-/// that arrived through an import. Runs of it are allowed; this is how the
-/// assistant knows it has not been proven here.
-pub const UNPROVEN_FOR_ASSISTANT: &str = "imported from another machine and not proven on this site - prove it here (prove_api_template with replace: true and a why) before relying on it; its last_run may be from the version it replaced";
+/// What the assistant's listings say beside a template or fixture that has
+/// not been confirmed on the active environment (an imported or changed
+/// one, or one first met on an environment it has not run on).
+pub const UNPROVEN_FOR_ASSISTANT: &str = "not confirmed on this environment yet - try it here first (run_api_template, or run_api_fixture for a fixture); if it fails, work out the version that works here and prove it with replace: true and a why, which replaces it for every environment";
+
+/// Beside an item that failed on the active environment.
+pub const FAILED_HERE_FOR_ASSISTANT: &str = "failed on this environment - work out the version that works here and prove it with replace: true and a why (this replaces it for every environment); if you cannot find one, leave it alone and do not try it again in this job";
+
+/// Beside a confirmed item whose last run here failed: one more try before
+/// the item counts as failed here.
+pub const LAST_RUN_FAILED_HERE: &str = "confirmed here, but its last run here failed - try it once more; only if that also fails, work out the version that works here";
 
 /// The file as it is written.
 #[derive(Debug, Serialize)]
@@ -95,6 +102,9 @@ pub struct TemplatesImportNote {
 pub struct TemplatesImportResult {
     pub added: Vec<String>,
     pub replaced: Vec<String>,
+    /// Titles of templates identical to the saved ones: nothing was written,
+    /// so their proof and every confirmation stay.
+    pub unchanged: Vec<String>,
     pub skipped: Vec<TemplatesImportSkip>,
     pub notes: Vec<TemplatesImportNote>,
 }

@@ -39,7 +39,7 @@ import {
 import { useDiscoveryActive } from "../../lib/discoveryActive";
 import { useModule } from "../../lib/modules";
 import { plural } from "../../lib/plural";
-import { FIXTURES_KEY, fixturesLastRuns } from "../ApiTemplates/FixturesTab";
+import { FIXTURES_KEY, fixturesHereCounts, fixturesLastRuns } from "../ApiTemplates/FixturesTab";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
@@ -114,6 +114,7 @@ export function useAutoRunSetup({
     enabled: fixturesOn && setupReady,
     retry: false,
   });
+  const fixturesFailedHere = fixtures.isSuccess ? fixturesHereCounts(fixtures.data ?? []).failedHere : 0;
   const fixturesFailed = fixtures.isSuccess ? fixturesLastRuns(fixtures.data ?? []).failed : 0;
 
   const saved = recipe.data;
@@ -190,6 +191,9 @@ export function useAutoRunSetup({
     ...(accounts.isError ? ["accounts could not be read"] : []),
     ...(readiness.missingTestFiles.length > 0
       ? [`${plural(readiness.missingTestFiles.length, "test file")} missing`]
+      : []),
+    ...(fixturesFailedHere > 0
+      ? [`${plural(fixturesFailedHere, "fixture")} failed here - ask the assistant`]
       : []),
     ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),
   ];
@@ -334,6 +338,8 @@ function fixturesLine(list: SavedFixture[]): [Status, string] {
   if (list.length === 0) return ["quiet", "No fixtures yet"];
   const count = plural(list.length, "fixture");
   const { failed, when } = fixturesLastRuns(list);
+  const { failedHere } = fixturesHereCounts(list);
+  if (failedHere > 0) return ["warning", `${count}, ${failedHere} failed here`];
   if (failed > 0) {
     return ["warning", `${count}, ${failed} failed on ${failed === 1 ? "its" : "their"} last run`];
   }

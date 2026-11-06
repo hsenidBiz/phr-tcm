@@ -62,8 +62,8 @@ pub fn civil(days: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-fn now_parts() -> (i64, u32, u32, u32, u32, u32) {
-    let secs = SystemTime::now()
+fn parts_of(t: SystemTime) -> (i64, u32, u32, u32, u32, u32) {
+    let secs = t
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
@@ -73,10 +73,20 @@ fn now_parts() -> (i64, u32, u32, u32, u32, u32) {
     (y, m, d, (rem / 3600) as u32, ((rem % 3600) / 60) as u32, (rem % 60) as u32)
 }
 
+fn now_parts() -> (i64, u32, u32, u32, u32, u32) {
+    parts_of(SystemTime::now())
+}
+
 /// UTC "YYYY-MM-DD HH:MM:SS". Public because backup export stamps its
 /// `exported_at` with the same clock the log lines use.
 pub fn stamp() -> String {
-    let (y, mo, d, h, mi, s) = now_parts();
+    stamp_of(SystemTime::now())
+}
+
+/// `t` in the form of `stamp` (UTC "YYYY-MM-DD HH:MM:SS"), so a file's
+/// modification time compares as a string with the stamps the app wrote.
+pub fn stamp_of(t: SystemTime) -> String {
+    let (y, mo, d, h, mi, s) = parts_of(t);
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 

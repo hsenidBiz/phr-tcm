@@ -6,6 +6,7 @@ use v2_lib::autorun::env_copy::{
     copy_choices, copy_environment, copy_environment_with, is_empty_env, recover, source_root, COPY_FAILED,
     COPY_NEEDS_CONFIRM, COPY_NOTHING_TO_COPY, COPY_ONTO_ITSELF, COPY_SOURCE_MISSING,
 };
+use v2_lib::autorun::accounts::{self, Account};
 use v2_lib::autorun::roots::{self, REMOVED_DIR};
 use v2_lib::commands::environments::SWITCH_TEMPLATE_RUNNING;
 use v2_lib::environments::{self, EnvFile, Environment};
@@ -83,10 +84,10 @@ fn copy_into_an_empty_environment_brings_every_script_and_area() {
     let (ra, rb) = (roots::env_root(t.path(), &a), roots::env_root(t.path(), &b));
     assert!(is_empty_env(&rb));
     let done = copy_environment(t.path(), &ra, &b, "B", false, NOW).unwrap();
-    assert_eq!((done.items, done.kept_aside), (3, false));
+    assert_eq!((done.items, done.kept_aside), (2, false));
     assert_eq!(read(&rb, "scripts/case-1.json").as_deref(), Some("A-script"));
     assert_eq!(read(&rb, "projects/p.nav.json").as_deref(), Some("A-nav"));
-    assert_eq!(read(&rb, "templates/t.json").as_deref(), Some("A-template"));
+    assert_eq!(read(&rb, "templates/t.json"), None, "an API definition is not copied");
     assert_eq!(read(&ra, "scripts/case-1.json").as_deref(), Some("A-script"), "the source is untouched");
     assert!(roots::removed_folders(t.path(), NOW).is_empty(), "nothing was replaced");
     assert!(no_staging_left(t.path()), "the staging folder is gone");
@@ -109,6 +110,97 @@ fn copy_never_brings_history_or_export_records() {
         assert!(read(&rb, gone).is_none(), "{gone} must not be copied");
     }
     assert_eq!(read(&rb, "projects/p.nav.json").as_deref(), Some("A-nav"));
+}
+
+#[test]
+fn copy_never_brings_api_templates_fixtures_or_flows() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    let ra = roots::env_root(t.path(), &a);
+    put(&ra, "templates/s/t.json", "A-def");
+    put(&ra, "fixtures/s/f.json", "A-fixture");
+    put(&ra, "flows/s/f.json", "A-flow");
+    put(&ra, "api-state/s.json", "A-state");
+    copy_environment(t.path(), &ra, &b, "B", false, NOW).unwrap();
+    let rb = roots::env_root(t.path(), &b);
+    for gone in ["templates/s/t.json", "fixtures/s/f.json", "flows/s/f.json", "api-state/s.json"] {
+        assert_eq!(read(&rb, gone), None, "{gone} must not be copied");
+    }
+}
+
+#[test]
+fn copy_keeps_the_targets_api_state_and_run_histories() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    let (ra, rb) = (roots::env_root(t.path(), &a), roots::env_root(t.path(), &b));
+    put(&ra, "api-state/s.json", "A-state");
+    put(&ra, "templates/s/t.runs.json", "A-runs");
+    put(&rb, "scripts/case-9.json", "B-script");
+    put(&rb, "api-state/s.json", "B-state");
+    put(&rb, "templates/s/t.runs.json", "B-runs");
+    put(&rb, "fixtures/s/f.runs.json", "B-fixture-runs");
+    copy_environment(t.path(), &ra, &b, "B", true, NOW).unwrap();
+    assert_eq!(read(&rb, "scripts/case-1.json").as_deref(), Some("A-script"));
+    assert_eq!(read(&rb, "api-state/s.json").as_deref(), Some("B-state"));
+    assert_eq!(read(&rb, "templates/s/t.runs.json").as_deref(), Some("B-runs"));
+    assert_eq!(read(&rb, "fixtures/s/f.runs.json").as_deref(), Some("B-fixture-runs"));
+}
+
+fn acct(key: &str) -> Account {
+    Account { key: key.into(), label: format!("{key} label"), username: format!("{key}-user"), password: "pw".into() }
+}
+
+fn keys(list: &[Account]) -> Vec<&str> {
+    list.iter().map(|a| a.key.as_str()).collect()
+}
+
+#[test]
+fn copy_leaves_accounts_untouched() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    accounts::save_accounts_for(t.path(), &a, &[acct("admin-a")]).unwrap();
+    accounts::save_accounts_for(t.path(), &b, &[acct("admin-b")]).unwrap();
+    let ra = roots::env_root(t.path(), &a);
+    copy_environment(t.path(), &ra, &b, "B", true, NOW).unwrap();
+    let after_b = accounts::load_accounts_for(t.path(), &b).unwrap();
+    assert_eq!(keys(&after_b), ["admin-b"]);
+    assert!(!keys(&after_b).contains(&"admin-a"), "the source's account must not appear under the target");
+    assert_eq!(keys(&accounts::load_accounts_for(t.path(), &a).unwrap()), ["admin-a"]);
+    // A target with no accounts of its own still gets none from the source.
+    copy_environment(t.path(), &ra, &c,  "C", false, NOW).unwrap();
+    assert!(accounts::load_accounts_for(t.path(), &c).unwrap().is_empty());
+}
+
+#[test]
+fn a_source_with_only_api_data_has_nothing_to_copy() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    let ra = roots::env_root(t.path(), &a);
+    put(&ra, "templates/s/t.json", "A-def");
+    put(&ra, "api-state/s.json", "A-state");
+    assert_eq!(copy_environment(t.path(), &ra, &b, "B", false, NOW).unwrap_err(), COPY_NOTHING_TO_COPY);
+}
+
+#[test]
+fn a_target_with_only_api_data_counts_as_empty() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    let rb = roots::env_root(t.path(), &b);
+    put(&rb, "templates/s/t.json", "B-def");
+    put(&rb, "templates/s/t.runs.json", "B-runs");
+    put(&rb, "api-state/s.json", "B-state");
+    assert!(is_empty_env(&rb));
+    copy_environment(t.path(), &roots::env_root(t.path(), &a), &b, "B", false, NOW).unwrap();
+    assert_eq!(read(&rb, "api-state/s.json").as_deref(), Some("B-state"));
 }
 
 #[test]
@@ -138,7 +230,7 @@ fn replacing_keeps_the_old_contents_aside_and_the_targets_history() {
     put(&rb, "runs/run-1.json", "B-run");
     put(&rb, "projects/p.pwexport.json", "B-export");
     let done = copy_environment(t.path(), &roots::env_root(t.path(), &a), &b, "B", true, NOW).unwrap();
-    assert_eq!((done.items, done.kept_aside), (3, true));
+    assert_eq!((done.items, done.kept_aside), (2, true));
     assert_eq!(read(&rb, "scripts/case-1.json").as_deref(), Some("A-script"));
     assert!(read(&rb, "scripts/case-9.json").is_none(), "the old script is replaced");
     assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("B-run"), "history stays");
@@ -268,7 +360,7 @@ fn the_command_is_refused_while_a_template_runs() {
     drop(claim);
     let (done, active) =
         tauri::async_runtime::block_on(v2_lib::commands::env_copy::copy_with(t.path(), &b, &a, false)).unwrap();
-    assert_eq!((done.items, active), (3, false));
+    assert_eq!((done.items, active), (2, false));
     let again = tauri::async_runtime::block_on(v2_lib::commands::env_copy::copy_with(t.path(), &b, &b, true));
     assert_eq!(again.unwrap_err(), COPY_ONTO_ITSELF);
 }
@@ -814,6 +906,28 @@ mod one_case {
         assert!(setups::find_setup(&file, "Rating scale").is_some());
         let tree = setups::find_setup(&file, "Tree").unwrap();
         assert_eq!(tree.find.database.as_ref().unwrap().sql, other, "the target's own is kept");
+    }
+
+    #[test]
+    fn a_shared_fixture_and_flow_are_not_named_as_missing_on_the_target() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        let mut s = script(7, None, uses("X"));
+        s.setup = serde_json::from_value(json!({ "fixture": "fx-1" })).unwrap();
+        s.preconditions = serde_json::from_value(json!([{ "flow": "pms-performance-cycle", "stage": "s", "value": null }])).unwrap();
+        store::save_script(&p.a, &s).unwrap();
+        // The definitions live in the shared library, which both
+        // environments read; only the source environment's root is used to
+        // put them there.
+        let fixtures = v2_lib::api_templates::fixture_store::fixtures_dir(&p.a, ORG, PROJECT);
+        std::fs::create_dir_all(&fixtures).unwrap();
+        std::fs::write(fixtures.join("fx-1.json"), r#"{"id":"fx-1","name":"F","account":"admin","steps":[]}"#).unwrap();
+        let flows = v2_lib::api_templates::flow_store::flows_dir(&p.a, ORG, PROJECT);
+        std::fs::create_dir_all(&flows).unwrap();
+        std::fs::write(flows.join("pms-performance-cycle.json"), crate::common::cycle_flow_json().to_string()).unwrap();
+
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert!(plan.missing_api.is_empty(), "shared definitions exist for the target too: {:?}", plan.missing_api);
     }
 
     #[test]

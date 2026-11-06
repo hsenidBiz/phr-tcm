@@ -560,6 +560,23 @@ async fn run_saved(
     run_saved_in(browser, &ctx(true), r.root.path(), req, &quick(), RUN_LIMIT, &QUICK_PAUSES).await
 }
 
+/// The explore session's run of a saved template confirms it on this
+/// environment, as the usual run does.
+#[tokio::test]
+async fn a_saved_template_run_in_your_explore_session_confirms_it_here() {
+    use v2_lib::api_templates::here::Here;
+    let _locks = locks();
+    let both = answer(200, json!({ "success": true, "cycleId": 274 }));
+    let mut r = rig(vec![both.clone(), both], None);
+    let (mut browser, _session) = exploring_session(&mut r).await;
+    let req = saved_run(&r, "admin", false);
+    let here = |r: &Rig| store::list(r.root.path(), ORG, PROJECT).unwrap().remove(0).here;
+    assert_eq!(here(&r), Here::Unconfirmed);
+    let (status, _) = run_saved(&mut browser, &r, &req).await.expect("the session ran it");
+    assert_eq!(status, 200);
+    assert_eq!(here(&r), Here::Confirmed { last_failure: None });
+}
+
 #[tokio::test]
 async fn a_saved_template_runs_in_your_explore_session_when_it_holds_the_account() {
     let _locks = locks();

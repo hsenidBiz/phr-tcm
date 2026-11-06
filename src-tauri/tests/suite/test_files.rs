@@ -892,7 +892,8 @@ fn an_import_notes_a_template_whose_test_file_is_not_here_and_carries_no_bytes()
     // A file with uploads in it says version 2, and this app reads it back.
     assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["version"], 2);
     let again = v2_lib::commands::api_templates::import_at(true, root.path(), ORG, PROJECT, &out).unwrap();
-    assert_eq!(again.replaced.len(), 2, "{again:?}");
+    assert_eq!(again.unchanged.len(), 2, "{again:?}");
+    assert!(again.replaced.is_empty(), "{again:?}");
 }
 
 #[test]

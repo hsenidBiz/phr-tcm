@@ -1498,6 +1498,38 @@ fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value
     v
 }
 
+/// The one word for a state on the active environment.
+fn here_word(here: &crate::api_templates::here::Here) -> &'static str {
+    use crate::api_templates::here::Here;
+    match here {
+        Here::Confirmed { .. } => "confirmed",
+        Here::Unconfirmed => "unconfirmed",
+        Here::Failed { .. } => "failed",
+    }
+}
+
+/// The keys every template and fixture row carries for its state on the
+/// active environment: `here`, `here_note` (null when confirmed with no
+/// strike), and `failed_here` or `last_failure_here` with the step and
+/// detail of the failure.
+fn put_here(row: &mut serde_json::Value, here: &crate::api_templates::here::Here) {
+    use crate::api_templates::here::Here;
+    use crate::api_templates::share::{FAILED_HERE_FOR_ASSISTANT, LAST_RUN_FAILED_HERE, UNPROVEN_FOR_ASSISTANT};
+    let note = match here {
+        Here::Confirmed { last_failure: None } => None,
+        Here::Confirmed { last_failure: Some(_) } => Some(LAST_RUN_FAILED_HERE),
+        Here::Unconfirmed => Some(UNPROVEN_FOR_ASSISTANT),
+        Here::Failed { .. } => Some(FAILED_HERE_FOR_ASSISTANT),
+    };
+    row["here"] = serde_json::json!(here_word(here));
+    row["here_note"] = serde_json::json!(note);
+    match here {
+        Here::Failed { failure } => row["failed_here"] = serde_json::json!(failure),
+        Here::Confirmed { last_failure: Some(failure) } => row["last_failure_here"] = serde_json::json!(failure),
+        _ => {}
+    }
+}
+
 /// The saved templates for this project, filtered and paged.
 ///
 /// Arguments, all optional, from the query: `module` (a case-insensitive
@@ -1511,8 +1543,9 @@ fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value
 ///
 /// A filtered result of at most `limit` templates comes back in full:
 /// what each one takes and gives back, the flow stage it performs,
-/// whether it is proven on this site (an imported one is not - `unproven`
-/// says what to do about it), its newest run (null before its first - the
+/// whether it is confirmed, unconfirmed or failed on the active
+/// environment (`here`, with `here_note` saying what to do about it; `proven`
+/// is whether it was ever proven on any environment), its newest run (null before its first - the
 /// prove that saved it is history, not a run), every flow with its stages
 /// and the templates on each, and the project's Test files. A larger one
 /// is a compact index: per template the id, title, module, effect, proven
@@ -1618,8 +1651,10 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
         let flow_rows: Vec<serde_json::Value> = flows
             .iter()
             .map(|f| {
+                // Never "failed": a flow is confirmed or not (Ruling 8).
+                let here = here_word(&crate::api_templates::here::flow_here(f, &saved));
                 if !full {
-                    return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
+                    return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len(), "here": here });
                 }
                 let stages: Vec<serde_json::Value> = f
                     .stages
@@ -1642,6 +1677,7 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                     "title": f.title,
                     "module": f.module,
                     "subject": f.subject,
+                    "here": here,
                     "stages": stages,
                 })
             })
@@ -1651,7 +1687,7 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             .map(|s| {
                 let t = &s.template;
                 if !full {
-                    return serde_json::json!({
+                    let mut row = serde_json::json!({
                         "id": t.id,
                         "title": t.title,
                         "module": t.module,
@@ -1659,8 +1695,12 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                         "proven": t.proven.is_some(),
                         "stage": t.stage,
                     });
+                    // The index carries the state, not the sentence: the
+                    // note below says it once.
+                    row["here"] = serde_json::json!(here_word(&s.here));
+                    return row;
                 }
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "id": t.id,
                     "title": t.title,
                     "module": t.module,
@@ -1668,12 +1708,13 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                     "params": t.params,
                     "outputs": t.outputs,
                     "stage": t.stage,
-                    // An imported template arrives unproven (api_templates::share):
-                    // runs of it are allowed, so the assistant is told plainly.
+                    // Proven on SOME environment (the fixture save gate); `here`
+                    // is the state on the active one.
                     "proven": t.proven.is_some(),
-                    "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
                     "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN).map(last_run_cut),
-                })
+                });
+                put_here(&mut row, &s.here);
+                row
             })
             .collect();
         let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
@@ -1698,12 +1739,18 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             let mut note = format!(
                 "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
             );
-            // The full answer says it on each unproven row; the index says it
-            // once.
-            if page.iter().any(|s| s.template.proven.is_none()) {
+            // The full answer says it on each row; the index says it once.
+            use crate::api_templates::here::Here;
+            if page.iter().any(|s| matches!(s.here, Here::Unconfirmed)) {
                 note.push_str(&format!(
-                    " A template whose proven is false was {}.",
+                    " A template whose here is unconfirmed is {}.",
                     crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+                ));
+            }
+            if page.iter().any(|s| matches!(s.here, Here::Failed { .. })) {
+                note.push_str(&format!(
+                    " A template whose here is failed is {}.",
+                    crate::api_templates::share::FAILED_HERE_FOR_ASSISTANT
                 ));
             }
             answer["note"] = serde_json::json!(note);
@@ -2206,6 +2253,10 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
         Err(e) => crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}")),
     }
 
+    if matches!(req.mode, crate::api_templates::runner::Mode::Run) {
+        note_assistant_template_run(root, org, project, &req.template, report);
+    }
+
     // Each POST step that was sent, by its path with the values and what the
     // run captured filled in.
     let sent = sent_posts(&req.template, report, &vars);
@@ -2219,6 +2270,27 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
         v["record_change"] = serde_json::json!(RUN_REMINDER);
     }
     Some((if report.ok { 200 } else { 502 }, v.to_string()))
+}
+
+/// What the assistant's run of a template says about it on this environment:
+/// confirmed when it worked, otherwise the failure (the retry rule decides
+/// whether a confirmed one flips). Lands only when the template that ran is
+/// the saved one.
+fn note_assistant_template_run(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    ran: &crate::api_templates::ApiTemplate,
+    report: &crate::api_templates::runner::RunReport,
+) {
+    use crate::api_templates::here::{note_template_run, HereFailure, TrySource};
+    // A run that never reached the site (no account lease, no browser) says
+    // nothing about the template here.
+    if report.unreached {
+        return;
+    }
+    let failure = HereFailure { at: crate::applog::stamp(), step: report.failed.clone(), detail: Some(report.message()) };
+    note_template_run(root, org, project, ran, report.ok, Some(failure), TrySource::Assistant);
 }
 
 /// `POST /api-template-run` with the caller's own browser (`n`, when it has
@@ -2440,7 +2512,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
             via: None,
         };
         let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
-        match store::save(root, org, project, &t) {
+        match store::save_proven(root, org, project, &t) {
             Ok(()) => {
                 changed = true;
                 if existing.is_some() && *replace {
@@ -2461,6 +2533,12 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     // id the saved template is still the one proven before - so it gets
     // no line: the assistant already has the failure, and a red "last
     // run" on a template that never ran would be a lie.
+    // A run of the saved version confirms it here or records its failure; a
+    // failed prove only lands when the draft is the saved copy. A prove that
+    // saved is already confirmed by `save_proven`.
+    if matches!(req.mode, Mode::Run) || (matches!(req.mode, Mode::Prove { .. }) && !report.ok) {
+        note_assistant_template_run(root, org, project, &req.template, &report);
+    }
     let saved_by_this_prove = changed;
     if matches!(req.mode, Mode::Run) || saved_by_this_prove {
         let record = RunRecord {
@@ -2587,7 +2665,7 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     };
     let in_full = |s: &crate::api_templates::fixture_store::SavedFixture| {
         let f = &s.fixture;
-        serde_json::json!({
+        let mut row = serde_json::json!({
             "id": f.id,
             "name": f.name,
             "account": f.account,
@@ -2596,7 +2674,9 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             "creates": f.creates,
             "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
             "last_run": s.runs.first(),
-        })
+        });
+        put_here(&mut row, &s.here);
+        row
     };
     if let Some(id) = q(target, "id").map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
         return match saved.iter().find(|s| s.fixture.id == id) {
@@ -2632,13 +2712,15 @@ fn fixture_index(saved: &[crate::api_templates::fixture_store::SavedFixture], ov
                 }
                 v
             });
-            serde_json::json!({
+            let mut row = serde_json::json!({
                 "id": f.id,
                 "name": f.name,
                 "outputs": f.outputs.keys().collect::<Vec<_>>(),
                 "creates": f.creates.iter().map(|c| serde_json::json!({ "kind": c.kind, "name": c.name })).collect::<Vec<_>>(),
                 "last_run": last,
-            })
+            });
+            put_here(&mut row, &s.here);
+            row
         })
         .collect();
     let note = over.unwrap_or_else(|| FIXTURES_IN_SHORT.to_string());
@@ -2725,7 +2807,8 @@ pub async fn api_fixture_run<B: crate::autorun::replay::Browsers>(
     };
     let mut browsers = open(which);
     let may_run = || assistant_may_still_write(ctx, &root);
-    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing, may_run).await {
+    let source = crate::api_templates::here::TrySource::Assistant;
+    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing, may_run, source).await {
         Ok(r) => r,
         Err(NotRun::Busy) => return (409, API_TEMPLATE_BUSY.to_string()),
         Err(NotRun::Refused(why)) => return (400, why),
@@ -8534,7 +8617,7 @@ fn save_or_match_one_off(
                 (t.title, t.module, t.description, t.sources) = (old.title, old.module, old.description, old.sources);
                 if crate::api_templates::check(&t).is_empty() {
                     t.proven = Some(explore_proof(root, org, project, account, report));
-                    if let Err(e) = store::save(root, org, project, &t) {
+                    if let Err(e) = store::save_proven(root, org, project, &t) {
                         crate::applog::warn(format!("Auto Run explore session: the template could not be replaced: {e}"));
                         return could_not();
                     }
@@ -8571,7 +8654,7 @@ fn save_or_match_one_off(
         return could_not();
     }
     t.proven = Some(explore_proof(root, org, project, account, report));
-    if let Err(e) = store::save(root, org, project, &t) {
+    if let Err(e) = store::save_proven(root, org, project, &t) {
         crate::applog::warn(format!("Auto Run explore session: the template could not be saved: {e}"));
         return could_not();
     }

@@ -67,11 +67,20 @@ test("copies into an empty environment without asking, sending replace=false", a
   expect(toast.success).toHaveBeenCalledWith("Copied Auto Run data into QA");
 });
 
+test("the copy dialog says accounts are not copied and the API library is shared", async () => {
+  mount({ target_empty: true, sources: SOURCES });
+  expect(
+    await screen.findByText(
+      "Scripts, areas, components, quirks and the sign-in recording come across. Accounts are not copied. API templates, flows and fixtures are already shared by every environment.",
+    ),
+  ).toBeInTheDocument();
+});
+
 test("asks before replacing a non-empty environment and sends replace=true", async () => {
   const { calls, onClose } = mount({ target_empty: false, sources: SOURCES });
   expect(
     await screen.findByText(
-      "This replaces QA's scripts, areas, components, quirks and API templates with Default's. QA's current ones are kept for 30 days and can be copied back from this list.",
+      "This replaces QA's scripts, areas, components and quirks with Default's. QA's current ones are kept for 30 days and can be copied back from this list.",
     ),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();

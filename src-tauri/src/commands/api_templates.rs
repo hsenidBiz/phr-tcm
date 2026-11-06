@@ -10,6 +10,7 @@ use crate::api_templates::fixture_run::{self, FixtureReport};
 use crate::api_templates::fixture_store::{self, SavedFixture};
 use crate::api_templates::flow::Flow;
 use crate::api_templates::flow_store;
+use crate::api_templates::library;
 use crate::api_templates::share::{self, TemplatesExportResult, TemplatesImportNote, TemplatesImportResult, TemplatesImportSkip};
 use crate::api_templates::store::{self, SavedTemplate};
 use crate::autorun::recipe::{load_effective_recipe_if_any, origin_of};
@@ -36,6 +37,8 @@ pub struct TemplatesOverview {
     pub origin: Option<String>,
     pub templates: Vec<SavedTemplate>,
     pub flows: Vec<Flow>,
+    /// Each flow's state on the active environment, by flow id.
+    pub flow_here: std::collections::BTreeMap<String, crate::api_templates::here::Here>,
 }
 
 #[tauri::command(async)]
@@ -61,7 +64,8 @@ pub fn overview_at(root: &std::path::Path, organization: &str, project: &str) ->
         crate::applog::warn(format!("api template flows could not be listed: {e}"));
         Vec::new()
     });
-    Ok(TemplatesOverview { origin, templates, flows })
+    let flow_here = flows.iter().map(|f| (f.id.clone(), crate::api_templates::here::flow_here(f, &templates))).collect();
+    Ok(TemplatesOverview { origin, templates, flows, flow_here })
 }
 
 #[tauri::command]
@@ -111,7 +115,8 @@ pub async fn api_fixture_run(
         crate::commands::autorun_replay::RealBrowsers::new(crate::browser::launch::Browser::Edge, false);
     let timing = crate::commands::autorun_replay::replay_timing(false);
     // The person's own run: nothing to look at again.
-    fixture_run::run_saved(&mut browsers, &root, &organization, &project, &id, &timing, || Ok(()))
+    let source = crate::api_templates::here::TrySource::Plain;
+    fixture_run::run_saved(&mut browsers, &root, &organization, &project, &id, &timing, || Ok(()), source)
         .await
         .map_err(|e| e.to_string())
 }
@@ -294,8 +299,9 @@ pub fn export_at(
 /// past that, each entry stands alone - an invalid one is a skip line and
 /// the rest still land. Flows are written before templates, so a
 /// template's stage resolves against the flows just imported. A same-id
-/// entry is written over the saved one - a template arrives unproven, a
-/// flow without its sample - and a template's run history is left as it
+/// entry is written over the saved one - a template arrives unproven (and so
+/// unconfirmed everywhere), a flow without its sample - except a template
+/// identical to the saved one, which writes nothing and is listed `unchanged` - and a template's run history is left as it
 /// is: it is a record of runs that happened here.
 pub fn import_at(
     offered: bool,
@@ -352,10 +358,18 @@ pub fn import_at(
         }
     }
     for t in &plan.templates {
-        let existed = !matches!(store::load(root, organization, project, &t.id), Ok(None));
-        match store::save(root, organization, project, t) {
+        let saved = store::load(root, organization, project, &t.id);
+        let existed = !matches!(saved, Ok(None));
+        // The same content as the saved copy: nothing is written, so its
+        // proof and every environment's confirmation stay. `store::save`,
+        // never `save_proven`: anything written here confirms nothing.
+        let identical = matches!(&saved, Ok(Some(s)) if library::template_hash(s) == library::template_hash(t));
+        let write = if identical { Ok(()) } else { store::save(root, organization, project, t) };
+        match write {
             Ok(()) => {
-                if existed {
+                if identical {
+                    result.unchanged.push(t.title.clone());
+                } else if existed {
                     result.replaced.push(t.title.clone());
                 } else {
                     result.added.push(t.title.clone());
@@ -405,9 +419,10 @@ pub fn import_at(
         }
     }
     crate::applog::info(format!(
-        "api templates imported from {name}: {} added, {} replaced, {} skipped, {} with a note",
+        "api templates imported from {name}: {} added, {} replaced, {} unchanged, {} skipped, {} with a note",
         result.added.len(),
         result.replaced.len(),
+        result.unchanged.len(),
         result.skipped.len(),
         result.notes.len()
     ));

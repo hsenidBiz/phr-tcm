@@ -129,10 +129,20 @@ with every problem listed together:
 - `antiforgery.page`: a page that renders a form. It is opened once per run
   and its `__RequestVerificationToken` is sent with every step.
 - `proven` is written by the app from the proving run. Never send one.
-- A template `list_api_templates` shows with `proven: false` was imported
-  from another machine and has never been proven on this site. Prove it here
-  (`prove_api_template` with `replace: true` and a `why`) before relying on
-  it; its `last_run` may be from the version it replaced.
+- Templates, fixtures and flows are shared by every environment; whether one
+  has worked is kept per environment. `list_api_templates` gives each
+  template and fixture a `here`: `"confirmed"`, `"unconfirmed"` or
+  `"failed"` on the active environment, with a `here_note` saying what to do.
+  An item shown as `here: "unconfirmed"` is worth trying first (run it). If
+  it fails, work out the version that works here and save it (prove it with
+  `replace: true` and a `why`): that replaces it for every environment. If
+  you cannot find one, leave it: it stays failed here and is not retried in
+  this job. `here: "failed"` means exactly that, with `failed_here` giving
+  the step and detail. A confirmed item that fails stays confirmed: it is
+  shown with `last_failure_here`, and you try it once more; only if that
+  second try of the same version also fails does it become failed here.
+  `proven: false` means it has never been proven on any environment, and a
+  fixture cannot use it yet.
 
 ## Placeholders
 
@@ -421,6 +431,11 @@ list of saved templates run one after another in one browser, signed in
 once as the fixture's account. Build a fixture from proven templates: a
 step whose template is not proven is refused, and so is a template that
 deletes - a fixture never deletes.
+
+A fixture has a `here` too, with the same rule as a template: an unconfirmed
+fixture is worth building first; if it fails, work out the version that
+works here and save it, which replaces it for every environment; if none can
+be found, leave it - it stays failed here and is not retried in this job.
 
     {
       "id": "pms-draft-cycle",

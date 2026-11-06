@@ -2,8 +2,11 @@
 //! action: from another environment, or from a removed one still kept.
 //!
 //! Only what describes the app is copied (`PER_ENV_ITEMS` marked
-//! `CopyTo::Every`): scripts, areas, components, quirks, API templates. Run
-//! history and the Playwright export record are the target's own and stay
+//! `CopyTo::Every`): scripts, areas, components, quirks. API templates,
+//! fixtures and flows are one shared library, so a copy carries none of
+//! them and keeps the target's own confirmation state and run histories.
+//! Accounts are never read or written here: the target keeps its own.
+//! Run history and the Playwright export record are the target's own and stay
 //! where they are. What the copy replaces is kept in the removed area for 30
 //! days, which also lists it as a source.
 //!
@@ -27,7 +30,7 @@ pub const COPY_UNKNOWN_TARGET: &str = "that environment is not there any more";
 pub const COPY_SOURCE_MISSING: &str = "that source has no Auto Run folder to copy from";
 /// Said when the source holds nothing a copy would bring: copying it would
 /// only empty the target.
-pub const COPY_NOTHING_TO_COPY: &str = "that source has no scripts, areas or templates to copy";
+pub const COPY_NOTHING_TO_COPY: &str = "that source has no scripts, areas, components or quirks to copy";
 /// Said when the copy stopped part-way; the log says why.
 pub const COPY_FAILED: &str = "the copy did not finish - see Settings > Logs";
 
@@ -269,8 +272,8 @@ fn clear_staging(staging: &Path, target_id: &str, source: &Path, all_back: bool)
     }
 }
 
-/// Copies `source`'s scripts, areas, components, quirks and API templates
-/// into environment `target_id`, keeping the target's run history and
+/// Copies `source`'s scripts, areas, components and quirks (no API
+/// definitions, no accounts) into environment `target_id`, keeping the target's run history and
 /// export record where they are. A target that already holds data needs
 /// `replace`; what it held is kept in the removed area as `target_name`.
 /// Waits for the writes in flight (the switch lock) and refuses while
@@ -633,7 +636,9 @@ pub struct CaseCopyPlan {
     /// Account keys the script signs in as (its own and each `sign_in`, in
     /// its components too) that the target has no account for.
     pub missing_accounts: Vec<String>,
-    /// Fixture and flow ids the script names that the target lacks. Not copied.
+    /// Fixture and flow ids the script names that no saved definition has.
+    /// Definitions are shared by every environment, so a fixture or flow
+    /// that exists is never named here. Not copied.
     pub missing_api: Vec<String>,
 }
 

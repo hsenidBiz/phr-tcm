@@ -79,8 +79,12 @@ fn the_pinned_lists_are_what_the_plan_says() {
     let every: Vec<&str> = roots::PER_ENV_ITEMS.iter().filter(|(_, c)| *c == CopyTo::Every).map(|(n, _)| *n).collect();
     let active_only: Vec<&str> =
         roots::PER_ENV_ITEMS.iter().filter(|(_, c)| *c == CopyTo::ActiveOnly).map(|(n, _)| *n).collect();
-    assert_eq!(every, ["scripts", "deleted-scripts", "orders", "projects", "templates", "fixtures", "flows"]);
-    assert_eq!(active_only, ["runs", "shots", "downloads", "reports", "replays", "explore", "captures"]);
+    assert_eq!(every, ["scripts", "deleted-scripts", "orders", "projects"]);
+    assert_eq!(
+        active_only,
+        ["templates", "fixtures", "runs", "shots", "downloads", "reports", "replays", "explore", "captures", "api-state"]
+    );
+    assert_eq!(roots::LEGACY_API_ITEMS, ["templates", "fixtures", "flows"]);
     assert!(roots::is_export_record(Path::new("projects/acme-hr.pwexport.json")));
     assert!(!roots::is_export_record(Path::new("projects/acme-hr.nav.json")));
     assert!(!roots::is_export_record(Path::new("projects/sub/acme-hr.pwexport.json")));
@@ -172,15 +176,29 @@ fn per_environment_stores_write_under_the_environment_root() {
     inside(v2_lib::autorun::divergences::path(&e, ORG, PROJECT), "divergences");
     inside(v2_lib::autorun::mapping_summary::summary_path(&e, ORG, PROJECT), "mapping");
     inside(v2_lib::pw_export::mapping::path(&e, ORG, PROJECT), "pwexport");
-    inside(v2_lib::api_templates::store::templates_dir(&e, ORG, PROJECT), "templates");
-    inside(v2_lib::api_templates::fixture_store::fixtures_dir(&e, ORG, PROJECT), "fixtures");
-    inside(v2_lib::api_templates::flow_store::flows_dir(&e, ORG, PROJECT), "flows");
+    inside(v2_lib::api_templates::store::template_runs_dir(&e, ORG, PROJECT), "templates");
+    inside(v2_lib::api_templates::fixture_store::fixture_runs_dir(&e, ORG, PROJECT), "fixtures");
+    inside(v2_lib::api_templates::library::state_path(&e, ORG, PROJECT), "api-state");
     inside(v2_lib::autorun::explore::session_path(&e, "s1"), "explore");
     inside(v2_lib::autorun::capture_tools::capture_file(&e, "c1"), "captures");
     inside(v2_lib::autorun::replay_record::dir(&e), "replays");
     inside(store::reports_dir(&e), "reports");
     inside(store::shot_path(&e, "a.png"), "shots");
     inside(store::downloads_dir(&e, "run-1"), "downloads");
+}
+
+#[test]
+fn api_definitions_live_under_the_shared_library_even_when_given_an_environment_root() {
+    let t = tempfile::tempdir().unwrap();
+    let e = roots::env_root(t.path(), A);
+    let library = t.path().join("api-library");
+    for dir in [
+        v2_lib::api_templates::store::templates_dir(&e, ORG, PROJECT),
+        v2_lib::api_templates::fixture_store::fixtures_dir(&e, ORG, PROJECT),
+        v2_lib::api_templates::flow_store::flows_dir(&e, ORG, PROJECT),
+    ] {
+        assert!(dir.starts_with(&library), "{}", dir.display());
+    }
 }
 
 #[test]
@@ -354,7 +372,7 @@ fn every_root_join_in_src_is_classified() {
 }
 
 #[test]
-fn cleanup_preview_in_another_environment_uses_its_templates() {
+fn cleanup_preview_in_another_environment_uses_the_shared_templates() {
     let _lock = crate::serial::autorun();
     let _restore = Restore;
     let t = tempfile::tempdir().unwrap();
@@ -371,7 +389,7 @@ fn cleanup_preview_in_another_environment_uses_its_templates() {
     std::fs::create_dir_all(&a_root).unwrap();
     std::fs::create_dir_all(&b_root).unwrap();
 
-    // A proven delete template saved only in Staging's folder.
+    // A proven delete template saved from Staging; the library is shared.
     let mut template: ApiTemplate = serde_json::from_value(serde_json::json!({
         "id": "remove-cycle", "title": "Delete a draft", "module": "PMS", "effect": "delete",
         "description": "d", "sources": ["x:1"], "antiforgery": { "page": PAGE },
@@ -411,10 +429,14 @@ fn cleanup_preview_in_another_environment_uses_its_templates() {
         older_than_days: 7,
     };
     let now = "2026-10-06T12:00:00Z".parse().unwrap();
-    // The active environment's root is A's; Staging's templates still count.
+    // The active environment's root is A's; the shared templates still count.
     let lines = v2_lib::autorun::cleanup::preview(&a_root, ORG, PROJECT, &query, now).unwrap();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].deletable, "{lines:?}");
+    // Saved from Staging, found from either environment.
+    for root in [&a_root, &b_root] {
+        assert!(template_store::load(root, ORG, PROJECT, "remove-cycle").unwrap().is_some());
+    }
 }
 
 #[test]

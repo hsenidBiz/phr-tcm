@@ -440,6 +440,7 @@ export default function ApiTemplates({
                       <FlowMap
                         key={f.id}
                         flow={f}
+                        here={overview.data?.flow_here[f.id] ?? { state: "unconfirmed" }}
                         templates={onFlow(f.id)}
                         onOpenTemplate={openFromMap}
                         onView={() => {

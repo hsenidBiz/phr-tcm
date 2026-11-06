@@ -1449,7 +1449,10 @@ The setup runs that fixture on every run of the case, after the
 preconditions and before the case's browser signs in, so the case starts
 from a fresh draft of its own. Its outputs reach the steps as
 `{{setup.<output>}}`. A setup that fails Blocks the case with
-`setup failed: ` and the fixture's own sentence.
+`setup failed: ` and the fixture's own sentence. A fixture that has not yet worked on
+this environment says `setup failed: this fixture has not worked on this environment yet`
+instead; it is an API item to make work here (list_api_templates shows its state on
+this environment), not a fault in the case.
 
 Use a setup only when the case needs its own fresh draft, for example
 because it changes or uses up the draft. Otherwise use a shared

@@ -103,12 +103,26 @@ const OVERVIEW = {
 
 type Handler = (cmd: string, args: unknown) => unknown;
 
+const CONFIRMED = { state: "confirmed", last_failure: null };
+
+/** What the Rust side sends: every template carries its state here and every
+ * flow has an entry. A mock that names none gets Confirmed. */
+function withHere(overview: unknown) {
+  const o = overview as { templates?: Record<string, unknown>[]; flows?: { id: string }[]; flow_here?: unknown };
+  return {
+    ...o,
+    templates: (o.templates ?? []).map((t) => ({ here: CONFIRMED, ...t })),
+    flow_here: o.flow_here ?? Object.fromEntries((o.flows ?? []).map((f) => [f.id, CONFIRMED])),
+  };
+}
+
 function mockOverview(overview: unknown, extra: Handler = () => undefined) {
+  const filled = withHere(overview);
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC(
     (cmd, args) => {
       calls.push({ cmd, args });
-      if (cmd === "api_templates_overview") return overview;
+      if (cmd === "api_templates_overview") return filled;
       return extra(cmd, args);
     },
     { shouldMockEvents: true },
@@ -371,7 +385,7 @@ test("Remove asks first, names the template and its effect, then removes it", as
   expect(within(dialog).getByRole("heading", { name: "Remove Create a draft performance cycle?" })).toBeInTheDocument();
   expect(dialog).toHaveTextContent("This template creates data.");
   expect(dialog).toHaveTextContent(
-    "It is removed from this machine with its run history. There is no undo; the assistant can prove it again.",
+    "It is removed for every environment, with this environment's run history. There is no undo; the assistant can prove it again.",
   );
 
   // Keep: nothing is removed.
@@ -412,7 +426,7 @@ test("the remove dialog names the effect of an edit and a delete template", asyn
 test("the list refreshes when the change event arrives", async () => {
   // The answer changes mid-test, as it does when a prove saves a new one.
   let overview: unknown = { origin: OVERVIEW.origin, templates: [OVERVIEW.templates[0]] };
-  mockIPC((cmd) => (cmd === "api_templates_overview" ? overview : undefined), { shouldMockEvents: true });
+  mockIPC((cmd) => (cmd === "api_templates_overview" ? withHere(overview) : undefined), { shouldMockEvents: true });
   renderScreen();
 
   await screen.findByText("Create a draft performance cycle");
@@ -713,6 +727,7 @@ test("Remove flow asks first, says the templates stay, then removes it and reloa
   expect(dialog).toHaveTextContent(
     "2 templates perform its stages; they stay, and are refused until a flow with their stage is saved again.",
   );
+  expect(dialog).toHaveTextContent("It is removed for every environment.");
 
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
   await waitFor(() => expect(calls.filter((c) => c.cmd === "api_templates_remove_flow")).toHaveLength(1));
@@ -1021,6 +1036,7 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
       return {
         added: ["Performance cycle wizard (flow)", "Remove a goal"],
         replaced: ["Create a draft performance cycle"],
+        unchanged: [],
         skipped: [{ id: "Bad Id", reason: "this template's id is not valid" }],
         notes: [{ id: "goals-remove-goal", title: "Remove a goal", note: "its flow goals is not in the file" }],
       };
@@ -1034,7 +1050,7 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
   fireEvent.click(screen.getByRole("button", { name: "Import" }));
   let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
   expect(dialog).toHaveTextContent(
-    "Templates and flows with the same id as ones saved here are replaced, and arrive unproven - prove them on your site before relying on them.",
+    "Templates and flows with the same id as ones saved here are replaced, and arrive unconfirmed on every environment - ask the assistant to confirm them before relying on them.",
   );
   expect(dialog).not.toHaveTextContent("Downloads");
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -1068,6 +1084,40 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
+test("an import says how many were already here and kept their confirmations", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
+    if (cmd === "api_templates_import")
+      return { added: ["Remove a goal"], replaced: [], unchanged: ["Create a draft performance cycle"], skipped: [], notes: [] };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  dialog = await screen.findByRole("dialog", { name: "Imported shared.json" });
+  expect(dialog).toHaveTextContent("1 unchanged: already here, confirmations kept");
+});
+
+test("the import warning says new or changed items arrive unconfirmed on every environment", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
+    if (cmd === "api_templates_import")
+      return { added: ["Remove a goal"], replaced: [], unchanged: [], skipped: [], notes: [] };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  dialog = await screen.findByRole("dialog", { name: "Imported shared.json" });
+  expect(dialog).toHaveTextContent(
+    "Anything new or changed arrives unconfirmed on every environment - ask the assistant to confirm it before relying on it.",
+  );
+});
+
 test("removing a template says it was removed, and nothing about setups", async () => {
   mockOverview(OVERVIEW, (cmd) => (cmd === "api_templates_remove" ? null : undefined));
   renderScreen();
@@ -1082,7 +1132,7 @@ test("an import that replaced a template lists it, and nothing about approving s
   mockOverview(OVERVIEW, (cmd) => {
     if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
     if (cmd === "api_templates_import")
-      return { added: [], replaced: ["Create a draft performance cycle"], skipped: [], notes: [] };
+      return { added: [], replaced: ["Create a draft performance cycle"], unchanged: [], skipped: [], notes: [] };
     return undefined;
   });
   renderScreen();
@@ -1109,54 +1159,97 @@ test("an import the file refuses says why and closes", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
-test("an imported template is marked Unproven and never claims a proof or this version's history", async () => {
-  // Replaced by an import: no proof, but the runs of the version it replaced.
+const UNCONFIRMED = { state: "unconfirmed" };
+const FAILED = { state: "failed", failure: { at: "2026-11-06 10:00:00", step: "2", detail: "HTTP 500" } };
+
+test("an unconfirmed template is marked Unconfirmed here and a confirmed one shows no mark", async () => {
   const oldRuns = [{ at: "2026-09-28 11:30:00", mode: "run", account: "hr.admin", ok: true, outputs: {} }];
   mockOverview({
     origin: OVERVIEW.origin,
     templates: [
-      { template: template({ proven: null }), runs: oldRuns },
-      { template: template({ id: "goals-remove-goal", title: "Remove a goal", proven: null }), runs: [] },
+      { template: template(), runs: oldRuns, here: UNCONFIRMED },
+      { template: template({ id: "goals-remove-goal", title: "Remove a goal", proven: null }), runs: [], here: UNCONFIRMED },
       OVERVIEW.templates[1],
     ],
   });
   renderScreen();
 
-  const replaced = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
-  const pill = within(replaced).getByText("Unproven").parentElement!;
-  expect(pill).toHaveAttribute("title", expect.stringContaining("Prove it here before relying on it"));
-  fireEvent.click(within(replaced).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
-  let details = within(replaced).getByTestId("template-details");
-  expect(within(details).getByTestId("template-proof")).toHaveTextContent("not proven on this site");
-  expect(details).toHaveTextContent("These lines may be from the version an import replaced, not this one.");
+  const unconfirmed = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  const pill = within(unconfirmed).getByText("Unconfirmed here").parentElement!;
+  expect(pill).toHaveAttribute("title", expect.stringContaining("Ask the assistant to try it here"));
+  expect(within(unconfirmed).queryByText("Unproven")).not.toBeInTheDocument();
 
-  // Imported fresh: no history, and nothing said about a proof.
-  const fresh = screen.getByRole("listitem", { name: "Remove a goal" });
-  expect(within(fresh).getByText("Unproven")).toBeInTheDocument();
-  fireEvent.click(within(fresh).getByRole("button", { name: "Show details of Remove a goal" }));
-  details = within(fresh).getByTestId("template-details");
-  expect(details).toHaveTextContent("Not run yet.");
-  expect(details).not.toHaveTextContent("since it was proven");
-
-  // A proven one has no pill.
-  const proven = screen.getByRole("listitem", { name: "Publish a performance cycle" });
-  expect(within(proven).queryByText("Unproven")).not.toBeInTheDocument();
+  const confirmed = screen.getByRole("listitem", { name: "Publish a performance cycle" });
+  expect(within(confirmed).queryByText("Unconfirmed here")).not.toBeInTheDocument();
+  expect(within(confirmed).queryByText("Failed here")).not.toBeInTheDocument();
 });
 
-test("the flow map marks an unproven template on its stage, in the drawing and in words", async () => {
+test("the details say Not confirmed here and never claim this version's runs", async () => {
+  const oldRuns = [{ at: "2026-09-28 11:30:00", mode: "run", account: "hr.admin", ok: true, outputs: {} }];
+  mockOverview({
+    origin: OVERVIEW.origin,
+    templates: [
+      { template: template(), runs: oldRuns, here: UNCONFIRMED },
+      { template: template({ id: "goals-remove-goal", title: "Remove a goal" }), runs: [], here: CONFIRMED },
+    ],
+  });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const details = within(row).getByTestId("template-details");
+  expect(within(details).getByRole("heading", { name: "Not confirmed here" })).toBeInTheDocument();
+  expect(within(details).getByTestId("template-here")).toHaveTextContent("Not confirmed on this environment yet.");
+  expect(details).toHaveTextContent("These runs may be from an earlier version.");
+  // The proof of the version stays as it was.
+  expect(within(details).getByTestId("template-proof")).toHaveTextContent("hr.admin");
+
+  const other = screen.getByRole("listitem", { name: "Remove a goal" });
+  fireEvent.click(within(other).getByRole("button", { name: "Show details of Remove a goal" }));
+  expect(within(other).queryByRole("heading", { name: "Not confirmed here" })).not.toBeInTheDocument();
+});
+
+test("a template that failed here says where it failed in its mark's title", async () => {
+  mockOverview({ origin: OVERVIEW.origin, templates: [{ template: template(), runs: [], here: FAILED }] });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  expect(within(row).getByText("Failed here").parentElement!).toHaveAttribute(
+    "title",
+    "Failed on this environment at 2: HTTP 500. Ask the assistant to make it work here.",
+  );
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  expect(within(row).getByTestId("template-here")).toHaveTextContent("at 2: HTTP 500");
+  expect(within(row).queryByText("These runs may be from an earlier version.")).not.toBeInTheDocument();
+});
+
+test("a flow shows Unconfirmed here until every template on it is confirmed", async () => {
   const [rules, reviewer] = FLOW_OVERVIEW.templates;
   mockOverview({
     ...FLOW_OVERVIEW,
-    templates: [{ ...rules, template: { ...rules.template, proven: null } }, reviewer],
+    templates: [{ ...rules, here: UNCONFIRMED }, reviewer],
+    flow_here: { [FLOW_OVERVIEW.flows[0].id]: UNCONFIRMED },
   });
   renderScreen();
   await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  // The flow carries the worded badge; a stage row only a compact mark.
+  expect(within(flow).getAllByText("Unconfirmed here")).toHaveLength(1);
   const stage = within(flow).getByRole("group", { name: "Evaluation rules" });
-  expect(within(stage).getByText("Unproven").parentElement!).toHaveAttribute("title", expect.stringContaining("not proven on this site"));
+  expect(within(stage).queryByText("Unconfirmed here")).not.toBeInTheDocument();
+  expect(within(stage).getByRole("img", { name: "Unconfirmed here" })).toHaveAttribute("title", expect.stringContaining("Not confirmed"));
   const list = within(flow).getByRole("list", { name: "Stages of Performance cycle wizard" });
-  expect(list).toHaveTextContent("Evaluation rules. Requires: Cycle setup. Templates: Save the rules (unproven).");
+  expect(list).toHaveTextContent("Evaluation rules. Requires: Cycle setup. Templates: Save the rules (unconfirmed here).");
+});
+
+test("a confirmed flow shows no mark", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+  await showFlows();
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  expect(within(flow).queryByText("Unconfirmed here")).not.toBeInTheDocument();
+  expect(within(flow).queryByText("Failed here")).not.toBeInTheDocument();
 });
 
 test("a delete template saved before Clean up names no kind, and its row says so without looking broken", async () => {

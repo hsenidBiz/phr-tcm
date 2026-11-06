@@ -32,14 +32,20 @@ pub enum CopyTo {
 
 /// The top-level items that belong to one environment, and how an
 /// environment copy treats each.
+///
+/// The API definitions (templates, fixtures, flows) live in the shared
+/// library, not here: `templates` and `fixtures` stay in the list only
+/// because they still hold this environment's run histories, which a copy
+/// leaves behind and keeps in place. `flows` is not listed
+/// ([`LEGACY_API_ITEMS`]). Accounts are not listed either: a copy never
+/// touches them.
 pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("scripts", CopyTo::Every),
     ("deleted-scripts", CopyTo::Every),
     ("orders", CopyTo::Every),
     ("projects", CopyTo::Every),
-    ("templates", CopyTo::Every),
-    ("fixtures", CopyTo::Every),
-    ("flows", CopyTo::Every),
+    ("templates", CopyTo::ActiveOnly),
+    ("fixtures", CopyTo::ActiveOnly),
     ("runs", CopyTo::ActiveOnly),
     ("shots", CopyTo::ActiveOnly),
     ("downloads", CopyTo::ActiveOnly),
@@ -47,7 +53,27 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("replays", CopyTo::ActiveOnly),
     ("explore", CopyTo::ActiveOnly),
     ("captures", CopyTo::ActiveOnly),
+    ("api-state", CopyTo::ActiveOnly),
 ];
+
+/// The API definition folders the flat layout kept at the top of the Auto
+/// Run folder. The one-time environment update still carries a never-migrated
+/// flat folder's `flows` into the active environment (where the library fold
+/// finds them); a copy never does.
+pub const LEGACY_API_ITEMS: [&str; 3] = ["templates", "fixtures", "flows"];
+
+/// Every top-level name the flat layout could hold for one environment:
+/// [`PER_ENV_ITEMS`] plus the legacy `flows` folder.
+pub(crate) fn flat_item_names() -> impl Iterator<Item = &'static str> {
+    PER_ENV_ITEMS.iter().map(|(n, _)| *n).chain(LEGACY_API_ITEMS.iter().copied().filter(|n| !PER_ENV_ITEMS.iter().any(|(m, _)| m == n)))
+}
+
+/// A file name that is an API definition (`<id>.json`), not the run history
+/// beside it (`<id>.runs.json`).
+pub(crate) fn is_api_definition_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".json") && !n.ends_with(".runs.json")
+}
 
 /// The items the update places by the run that made them: a run, its report,
 /// its downloads and the screenshots it names go to the environment the run
@@ -55,7 +81,7 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
 pub const BY_RUN: [&str; 4] = ["runs", "reports", "downloads", "shots"];
 
 /// The top-level items every environment shares; they stay in the shared root.
-pub const SHARED_ITEMS: [&str; 10] = [
+pub const SHARED_ITEMS: [&str; 12] = [
     "environments.json",
     "accounts",
     "sessions",
@@ -66,6 +92,8 @@ pub const SHARED_ITEMS: [&str; 10] = [
     "last-browser.txt",
     "accounts.json",
     MIGRATION_NOTE_FILE,
+    "api-library",
+    "removed-api",
 ];
 
 /// `projects/<anything>.pwexport.json`: the Playwright export record, which
@@ -384,6 +412,7 @@ pub fn is_on_screen(changed: &Path) -> bool {
             changed.starts_with(&shared)
                 && !changed.starts_with(shared.join(ENVS_DIR))
                 && !changed.starts_with(shared.join(REMOVED_DIR))
+                && !changed.starts_with(shared.join(crate::api_templates::library::REMOVED_API_DIR))
         }
         // No environment is chosen yet: nothing is on screen to be wrong.
         None => true,
@@ -642,6 +671,17 @@ pub fn purge_removed(shared: &Path, now_ms: u64) -> usize {
                 continue;
             }
             if let Some((_, ms)) = e.file_name().to_str().and_then(parse_key) {
+                purge(e.path(), ms);
+            }
+        }
+    }
+    // Versions the API library fold kept aside: `removed-api/<ms>`.
+    if let Ok(entries) = std::fs::read_dir(shared.join(crate::api_templates::library::REMOVED_API_DIR)) {
+        for e in entries.flatten() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            if let Some(ms) = e.file_name().to_str().and_then(|n| n.parse::<u64>().ok()) {
                 purge(e.path(), ms);
             }
         }
@@ -914,7 +954,7 @@ pub fn fan_out(
     let placement = place_runs(flat, envs, &active)?;
     let into = |id: &str, name: &str| envs_dir.join(id).join(name);
     let mut items = 0;
-    for (name, _) in PER_ENV_ITEMS {
+    for name in flat_item_names() {
         let from = flat.join(name);
         if !exists(&from)? {
             continue;
@@ -1035,7 +1075,7 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
         return Ok(Some(report));
     }
     let mut any = false;
-    for (name, _) in PER_ENV_ITEMS {
+    for name in flat_item_names() {
         any |= exists(&shared.join(name))?;
     }
     if !any {
@@ -1113,7 +1153,7 @@ fn newest_flat_change(shared: &Path) -> Option<std::time::SystemTime> {
         }
     }
     let mut newest = None;
-    for (name, _) in PER_ENV_ITEMS {
+    for name in flat_item_names() {
         walk(&shared.join(name), &mut newest);
     }
     newest
@@ -1219,8 +1259,42 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
         // copy still owes data.
         out.settled_copies = super::backup_import::recover(shared) + super::env_copy::recover(shared);
         retry_seed(shared);
+        if allowed {
+            fold_api_library(shared);
+        }
     }
     out
+}
+
+/// The API definitions every environment held move into the shared library
+/// (once). A failure is logged without a path and never fails start-up: the
+/// next start tries again.
+fn fold_api_library(shared: &Path) {
+    fold_api_library_logged(None, shared);
+}
+
+/// Folds (taking the switch lock for writing unless the caller `held` it)
+/// and logs the outcome. A failure never reaches the caller: the definitions
+/// stay where they were and the next start tries again. The log names no
+/// path.
+pub(crate) fn fold_api_library_logged(held: Option<&std::sync::RwLockWriteGuard<'static, ()>>, shared: &Path) {
+    use crate::api_templates::library_move as lm;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let folded = match held {
+        Some(h) => lm::fold_in_held(h, shared, now_ms),
+        None => lm::fold_in(shared, now_ms),
+    };
+    match folded {
+        Ok(Some(report)) => crate::applog::info(lm::move_log_line(&report)),
+        Ok(None) => {}
+        Err(e) => crate::applog::warn(format!(
+            "Auto Run: the API templates, flows and fixtures could not be moved into the shared library yet ({}); the next start tries again",
+            if path_free(&e) { e.as_str() } else { "a file could not be moved" }
+        )),
+    }
 }
 
 /// Hands the seed to the first environment made after the update: renames

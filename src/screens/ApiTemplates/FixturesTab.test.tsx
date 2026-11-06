@@ -28,7 +28,11 @@ const fixture = (id: string, name: string) => ({
 
 const OK_RUN = { at: "2026-10-05 09:00:00", ok: true, outputs: { cycle_id: "272", name: "AUTOTEST A" } };
 
-type Saved = { fixture: ReturnType<typeof fixture>; runs: unknown[] };
+type Here = { state: "confirmed"; last_failure: null } | { state: "unconfirmed" } | { state: "failed"; failure: unknown };
+const CONFIRMED: Here = { state: "confirmed", last_failure: null };
+
+/** `here` is what Rust sends with every fixture; a mock that names none is Confirmed. */
+type Saved = { fixture: ReturnType<typeof fixture>; runs: unknown[]; here?: Here };
 
 /** The tab over a store of fixtures `saved`; `run` answers api_fixture_run
  * and may change `saved`, as the Rust side saves a history. */
@@ -38,8 +42,8 @@ function mount(saved: Saved[], run: (id: string) => unknown = () => undefined) {
     (cmd, args) => {
       const a = (args ?? {}) as Record<string, unknown>;
       calls.push({ cmd, args: a });
-      if (cmd === "api_templates_overview") return { origin: null, templates: [], flows: [] };
-      if (cmd === "api_fixtures_list") return saved;
+      if (cmd === "api_templates_overview") return { origin: null, templates: [], flows: [], flow_here: {} };
+      if (cmd === "api_fixtures_list") return saved.map((s) => ({ here: CONFIRMED, ...s }));
       if (cmd === "api_fixture_run") return run(a.id as string);
       if (cmd === "api_fixture_remove") {
         const i = saved.findIndex((s) => s.fixture.id === a.id);
@@ -111,8 +115,8 @@ test("while one fixture runs its button is busy and the others are off", async (
   ];
   mockIPC(
     (cmd, args) => {
-      if (cmd === "api_templates_overview") return { origin: null, templates: [], flows: [] };
-      if (cmd === "api_fixtures_list") return saved;
+      if (cmd === "api_templates_overview") return { origin: null, templates: [], flows: [], flow_here: {} };
+      if (cmd === "api_fixtures_list") return saved.map((s) => ({ here: CONFIRMED, ...s }));
       if (cmd === "api_fixture_run") {
         void args;
         return new Promise((resolve) => {
@@ -173,6 +177,53 @@ test("warnings from a run, such as the prefix warning, show in the row", async (
   const row = await screen.findByRole("listitem", { name: "Draft cycle" });
   fireEvent.click(within(row).getByRole("button", { name: "Rebuild Draft cycle" }));
   expect(await within(row).findByText("step 1: the name does not start with AUTOTEST")).toBeInTheDocument();
+});
+
+test("a fixture that failed here is marked Failed here, an unconfirmed one Unconfirmed here, a confirmed one nothing", async () => {
+  mount([
+    {
+      fixture: fixture("a", "Alpha"),
+      runs: [],
+      here: { state: "failed", failure: { at: "2026-11-06 10:00:00", step: "pms-open-cycle", detail: "HTTP 500" } },
+    },
+    { fixture: fixture("b", "Beta"), runs: [], here: { state: "unconfirmed" } },
+    { fixture: fixture("c", "Gamma"), runs: [OK_RUN] },
+  ]);
+  await openTab();
+  const alpha = await screen.findByRole("listitem", { name: "Alpha" });
+  expect(within(alpha).getByText("Failed here").parentElement!).toHaveAttribute(
+    "title",
+    "Failed on this environment at pms-open-cycle: HTTP 500. Ask the assistant to make it work here.",
+  );
+  expect(within(screen.getByRole("listitem", { name: "Beta" })).getByText("Unconfirmed here")).toBeInTheDocument();
+  const gamma = screen.getByRole("listitem", { name: "Gamma" });
+  expect(within(gamma).queryByText(/here$/)).not.toBeInTheDocument();
+});
+
+test("removing a fixture says it goes for every environment", async () => {
+  mount([{ fixture: fixture("a", "Alpha"), runs: [OK_RUN] }]);
+  await openTab();
+  await screen.findByRole("listitem", { name: "Alpha" });
+  fireEvent.click(screen.getByRole("button", { name: "Remove Alpha" }));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "It is removed for every environment, with this environment's run history.",
+  );
+});
+
+test("fixturesHereCounts counts unconfirmed and failed ones, and last-run failures leave failed-here ones out", async () => {
+  const { fixturesHereCounts, fixturesLastRuns } = await import("./FixturesTab");
+  const mk = (here: Here, ok: boolean) => ({
+    fixture: fixture("x", "X"),
+    runs: [{ at: "2026-10-05 09:00:00", ok, outputs: {} }],
+    here,
+  });
+  const list = [
+    mk({ state: "failed", failure: {} }, false),
+    mk({ state: "unconfirmed" }, true),
+    mk(CONFIRMED, false),
+  ] as never;
+  expect(fixturesHereCounts(list)).toEqual({ unconfirmed: 1, failedHere: 1 });
+  expect(fixturesLastRuns(list).failed).toBe(1);
 });
 
 test("Remove asks first, then removes the fixture and its row goes", async () => {

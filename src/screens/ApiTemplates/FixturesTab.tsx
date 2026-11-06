@@ -7,6 +7,7 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/history";
 import { unwrapStr } from "../../lib/ipc";
 import { logUi } from "../../lib/uiLog";
+import HereBadge from "./HereBadge";
 import RemoveFixture from "./RemoveFixture";
 import { stampDate } from "./TemplateRow";
 
@@ -25,11 +26,24 @@ function currentOutputs(runs: FixtureRun[]): [string, string][] {
   return Object.entries(built?.outputs ?? {}).map(([k, v]) => [k, valueText(v)]);
 }
 
+/** How many fixtures have not worked on the active environment yet, and how
+ * many failed there. */
+export function fixturesHereCounts(list: SavedFixture[]): { unconfirmed: number; failedHere: number } {
+  return {
+    unconfirmed: list.filter((f) => f.here.state === "unconfirmed").length,
+    failedHere: list.filter((f) => f.here.state === "failed").length,
+  };
+}
+
 /** How the saved fixtures last went, for a summary: how many failed on
  * their last run (the newest, which is first), and how long ago the newest
- * of those last runs was - `null` when none has ever run. */
+ * of those last runs was - `null` when none has ever run. A fixture that
+ * is Failed here is counted by `fixturesHereCounts`, not here. */
 export function fixturesLastRuns(list: SavedFixture[]): { failed: number; when: string | null } {
-  const lasts = list.map((f) => f.runs[0]).filter((r): r is FixtureRun => r !== undefined);
+  const lasts = list
+    .filter((f) => f.here.state !== "failed")
+    .map((f) => f.runs[0])
+    .filter((r): r is FixtureRun => r !== undefined);
   const newest = lasts
     .map((r) => stampDate(r.at))
     .filter((d): d is Date => d !== null)
@@ -128,7 +142,7 @@ export default function FixturesTab({
       )}
       {list.length > 0 && (
         <ul className="space-y-1">
-          {list.map(({ fixture: f, runs }) => {
+          {list.map(({ fixture: f, runs, here }) => {
             const outputs = currentOutputs(runs);
             const built = runs.some((r) => r.ok);
             const busy = runningId === f.id;
@@ -141,6 +155,7 @@ export default function FixturesTab({
               >
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="min-w-0 flex-1 break-words text-sm font-medium text-text">{f.name}</span>
+                  <HereBadge here={here} />
                   <span className="text-xs text-muted">{`Runs as ${f.account}`}</span>
                   <LastRun run={runs[0]} />
                   <Button

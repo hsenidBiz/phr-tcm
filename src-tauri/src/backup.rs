@@ -74,8 +74,14 @@ fn excluded(rel: &str) -> bool {
         return false;
     }
     match seg.get(1).map(String::as_str) {
-        Some("removed-envs") => true,
-        Some(n) if n.starts_with(".envs-staging-") || n.starts_with(".import-") => true,
+        Some("removed-envs") | Some("removed-api") => true,
+        Some(n)
+            if n.starts_with(".envs-staging-")
+                || n.starts_with(".import-")
+                || n.starts_with(crate::api_templates::library_move::STAGING_PREFIX) =>
+        {
+            true
+        }
         Some("envs") => {
             seg.get(2).is_some_and(|n| n.starts_with(".copying-") || n.starts_with(".seed-replaced-"))
                 || seg.get(3).map(String::as_str) == Some("shots")
@@ -89,7 +95,9 @@ fn excluded(rel: &str) -> bool {
 fn is_flat_original(rel: &str) -> bool {
     let seg = raw_segments(rel);
     seg.first().is_some_and(|s| s.eq_ignore_ascii_case("autorun"))
-        && seg.get(1).is_some_and(|n| crate::autorun::roots::PER_ENV_ITEMS.iter().any(|(item, _)| n.eq_ignore_ascii_case(item)))
+        && seg.get(1).is_some_and(|n| {
+            crate::autorun::roots::flat_item_names().any(|item| n.eq_ignore_ascii_case(item))
+        })
 }
 
 /// `autorun/envs/...`.
@@ -308,14 +316,19 @@ pub fn is_pre_update(files: &[BackupFile]) -> bool {
 pub const BAD_ENV_LIST: &str = "the list of environments in this backup cannot be read - nothing was imported";
 
 /// An entry of a pre-update backup in an item the update copies into every
-/// environment (scripts, areas, templates and so on), not an export record.
+/// environment (scripts, areas and so on), not an export record - or an API
+/// definition file (never its history) under one of the legacy API folders,
+/// which the library fold takes in after the import.
 fn is_app_item(rel: &str) -> bool {
     use crate::autorun::roots::{self, CopyTo, PER_ENV_ITEMS};
     let seg = raw_segments(rel);
-    seg.len() >= 3
-        && seg[0].eq_ignore_ascii_case("autorun")
-        && PER_ENV_ITEMS.iter().any(|(item, how)| *how == CopyTo::Every && seg[1].eq_ignore_ascii_case(item))
-        && !roots::is_export_record(&seg[1..].iter().collect::<PathBuf>())
+    if seg.len() < 3 || !seg[0].eq_ignore_ascii_case("autorun") {
+        return false;
+    }
+    let definition = roots::LEGACY_API_ITEMS.iter().any(|item| seg[1].eq_ignore_ascii_case(item))
+        && roots::is_api_definition_name(seg[seg.len() - 1]);
+    let every = PER_ENV_ITEMS.iter().any(|(item, how)| *how == CopyTo::Every && seg[1].eq_ignore_ascii_case(item));
+    (definition || every) && !roots::is_export_record(&seg[1..].iter().collect::<PathBuf>())
 }
 
 /// What an import does to the environments' folders. The one place that
@@ -459,9 +472,20 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// meanwhile. Unsafe paths are refused one by one (the rest still land);
 /// returns how many files were written. See [`restore_files_held`].
 pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, String> {
+    restore_files_with(data_dir, files, fold_allowed())
+}
+
+/// Whether this build may fold API definitions into the shared library (the
+/// start-up fold's gate: a development build shares the installed app's data).
+fn fold_allowed() -> bool {
+    crate::autorun::roots::migration_allowed(cfg!(debug_assertions), std::env::var("TCM_MIGRATE_ENVS").ok().as_deref())
+}
+
+/// [`restore_files`] with the fold's permission passed in (the seam the tests use).
+pub fn restore_files_with(data_dir: &Path, files: &[BackupFile], fold_allowed: bool) -> Result<u32, String> {
     let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
     let held = crate::autorun::roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
-    restore_files_held(&held, data_dir, files)
+    restore_files_held_with(&held, data_dir, files, fold_allowed)
 }
 
 /// [`restore_files`] for a caller that already holds the switch lock for
@@ -483,6 +507,16 @@ pub fn restore_files_held(
     held: &std::sync::RwLockWriteGuard<'static, ()>,
     data_dir: &Path,
     files: &[BackupFile],
+) -> Result<u32, String> {
+    restore_files_held_with(held, data_dir, files, fold_allowed())
+}
+
+/// [`restore_files_held`] with the fold's permission passed in.
+pub fn restore_files_held_with(
+    held: &std::sync::RwLockWriteGuard<'static, ()>,
+    data_dir: &Path,
+    files: &[BackupFile],
+    fold_allowed: bool,
 ) -> Result<u32, String> {
     use crate::autorun::{backup_import, roots};
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -533,6 +567,20 @@ pub fn restore_files_held(
     };
     // A pre-update backup that replaces nothing (history alone) is not applied.
     let drop_flat = plan.pre_update && ids.is_empty();
+    if plan.pre_update {
+        let histories = entries
+            .iter()
+            .filter(|(f, _)| {
+                let seg = raw_segments(&f.path);
+                seg.len() >= 3
+                    && roots::LEGACY_API_ITEMS.iter().any(|i| seg[1].eq_ignore_ascii_case(i))
+                    && seg[seg.len() - 1].to_ascii_lowercase().ends_with(".runs.json")
+            })
+            .count();
+        if histories > 0 {
+            crate::applog::info(format!("Backup import: {histories} API run histories in this older backup were not applied"));
+        }
+    }
     let mut restored = 0u32;
     let mut staged_applied = 0u32;
     // `envs/` appeared in the middle of a session that reads the flat folder.
@@ -718,6 +766,14 @@ pub fn restore_files_held(
         }
         committed?;
         restored += staged_applied;
+        // A backup made before the shared library brings its API definitions
+        // inside the environment folders just put in place: fold them in by
+        // the one-time fold's rules. Never fails the import.
+        if fold_allowed {
+            roots::fold_api_library_logged(Some(held), &autorun);
+        } else {
+            crate::applog::info("Backup import: the API definitions wait in the environments' folders; the shared library takes them in at a start that may update the data");
+        }
     } else if let Some((list, has_environments)) = &deferred_accounts {
         restore_legacy_accounts(&autorun, list, *has_environments)?;
     }

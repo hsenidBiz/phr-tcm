@@ -3246,6 +3246,7 @@ mod api_template_routes {
         assert!(guide.contains("admin"), "names the account key: {guide}");
         assert!(guide.contains("https://hr.example.internal"), "names the recipe's origin: {guide}");
         assert!(guide.contains("`proven: false`"), "says what an unproven template means: {guide}");
+        assert!(guide.contains("replaces it for every environment") && guide.contains("not retried in this job"), "{guide}");
         assert!(!guide.contains(crate::common::PASSWORD), "never a password");
 
         let (status, list) = route(&ctx(), None, "GET", "/api-templates", "", "1.0.0").await;
@@ -3278,6 +3279,206 @@ mod api_template_routes {
         }
     }
 
+    fn here_failure(step: &str, detail: &str) -> v2_lib::api_templates::here::HereFailure {
+        v2_lib::api_templates::here::HereFailure {
+            at: "2026-11-06 09:00:00".into(),
+            step: Some(step.into()),
+            detail: Some(detail.into()),
+        }
+    }
+
+    /// A template with `id` saved under `root`, proven when `proven`.
+    fn save_template_as(root: &std::path::Path, id: &str, proven: bool) -> v2_lib::api_templates::ApiTemplate {
+        let c = ctx();
+        let mut raw = draft();
+        raw["id"] = json!(id);
+        let mut t: v2_lib::api_templates::ApiTemplate = serde_json::from_value(raw).unwrap();
+        if proven {
+            t.proven = Some(
+                serde_json::from_value(
+                    json!({ "at": "2026-09-28 09:00:00", "origin": "https://hr.example.internal", "account": "admin", "outputs": {} }),
+                )
+                .unwrap(),
+            );
+        }
+        if proven {
+            v2_lib::api_templates::store::save_proven(root, &c.org, &c.project, &t).unwrap();
+        } else {
+            v2_lib::api_templates::store::save(root, &c.org, &c.project, &t).unwrap();
+        }
+        t
+    }
+
+    async fn answer_at(path: &str) -> serde_json::Value {
+        let (status, body) = route(&ctx(), None, "GET", path, "", "1.0.0").await;
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str(&body).unwrap()
+    }
+
+    fn row_of<'a>(rows: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+        rows.as_array().unwrap().iter().find(|r| r["id"] == id).unwrap_or_else(|| panic!("no row {id}: {rows}"))
+    }
+
+    #[tokio::test]
+    async fn list_api_templates_reports_each_templates_state_on_the_active_environment() {
+        use v2_lib::api_templates::{here, share};
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        save_template_as(dir.path(), "confirmed-one", true);
+        save_template_as(dir.path(), "unconfirmed-one", false);
+        let failed = save_template_as(dir.path(), "failed-one", false);
+        here::record_template_failure(dir.path(), &c.org, &c.project, &failed, here_failure("2", "HTTP 500"), here::TrySource::Plain)
+            .unwrap();
+
+        let rows = answer_at("/api-templates").await["templates"].clone();
+        let (cr, ur, fr) = (row_of(&rows, "confirmed-one"), row_of(&rows, "unconfirmed-one"), row_of(&rows, "failed-one"));
+        assert_eq!(cr["here"], "confirmed");
+        assert!(cr["here_note"].is_null(), "{cr}");
+        assert_eq!(ur["here"], "unconfirmed");
+        assert_eq!(ur["here_note"], share::UNPROVEN_FOR_ASSISTANT);
+        assert_eq!(fr["here"], "failed");
+        assert_eq!(fr["here_note"], share::FAILED_HERE_FOR_ASSISTANT);
+        assert_eq!(fr["failed_here"]["step"], "2");
+        assert_eq!(fr["failed_here"]["detail"], "HTTP 500");
+        assert!(ur.get("unproven").is_none(), "{ur}");
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_template_whose_last_run_failed_says_to_try_it_once_more() {
+        use v2_lib::api_templates::{here, share};
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let t = save_template_as(dir.path(), "struck-one", true);
+        here::record_template_failure(dir.path(), &c.org, &c.project, &t, here_failure("1", "HTTP 503"), here::TrySource::Plain)
+            .unwrap();
+
+        let rows = answer_at("/api-templates").await["templates"].clone();
+        let row = row_of(&rows, "struck-one");
+        assert_eq!(row["here"], "confirmed", "{row}");
+        assert_eq!(row["here_note"], share::LAST_RUN_FAILED_HERE);
+        assert_eq!(row["last_failure_here"]["detail"], "HTTP 503");
+        assert!(row.get("failed_here").is_none(), "{row}");
+    }
+
+    #[tokio::test]
+    async fn the_same_template_reads_differently_on_another_environment() {
+        use v2_lib::autorun::roots;
+        let _root = crate::serial::autorun();
+        let shared = tempfile::tempdir().unwrap();
+        let (a, b) = (roots::env_root(shared.path(), "env-0000000a"), roots::env_root(shared.path(), "env-0000000b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        v2_lib::autorun::store::set_root(a.clone());
+        save_template_as(&a, "shared-one", true);
+
+        let rows = answer_at("/api-templates").await["templates"].clone();
+        assert_eq!(row_of(&rows, "shared-one")["here"], "confirmed");
+        v2_lib::autorun::store::set_root(b.clone());
+        let rows = answer_at("/api-templates").await["templates"].clone();
+        let row = row_of(&rows, "shared-one");
+        assert_eq!(row["here"], "unconfirmed", "{row}");
+        assert_eq!(row["proven"], true, "proven somewhere, not confirmed here: {row}");
+    }
+
+    #[tokio::test]
+    async fn the_fixture_listing_reports_its_state_here() {
+        use v2_lib::api_templates::{fixture_store, here, share};
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let folder = fixture_store::fixtures_dir(dir.path(), &c.org, &c.project);
+        std::fs::create_dir_all(&folder).unwrap();
+        for id in ["fx-new", "fx-bad"] {
+            std::fs::write(folder.join(format!("{id}.json")), format!(r#"{{"id":"{id}","name":"F","account":"admin","steps":[]}}"#))
+                .unwrap();
+        }
+        let bad = fixture_store::load(dir.path(), &c.org, &c.project, "fx-bad").unwrap().unwrap();
+        here::record_fixture_failure(dir.path(), &c.org, &c.project, &bad, &[], here_failure("step 2", "HTTP 500"), here::TrySource::Plain)
+            .unwrap();
+
+        let index = answer_at("/api-template-fixtures").await["fixtures"].clone();
+        assert_eq!(row_of(&index, "fx-new")["here"], "unconfirmed");
+        assert_eq!(row_of(&index, "fx-new")["here_note"], share::UNPROVEN_FOR_ASSISTANT);
+        assert_eq!(row_of(&index, "fx-bad")["here"], "failed");
+        assert_eq!(row_of(&index, "fx-bad")["failed_here"]["step"], "step 2");
+
+        let one = answer_at("/api-template-fixtures?id=fx-bad").await["fixture"].clone();
+        assert_eq!(one["here"], "failed", "{one}");
+        assert_eq!(one["here_note"], share::FAILED_HERE_FOR_ASSISTANT);
+        assert_eq!(one["failed_here"]["detail"], "HTTP 500");
+    }
+
+    #[tokio::test]
+    async fn the_index_says_the_unconfirmed_and_failed_sentences_once() {
+        use v2_lib::api_templates::{here, share};
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        for n in 0..30 {
+            save_template_as(dir.path(), &format!("idx-{n:02}"), n > 1);
+        }
+        let failed = save_template_as(dir.path(), "idx-00", false);
+        here::record_template_failure(dir.path(), &c.org, &c.project, &failed, here_failure("1", "no"), here::TrySource::Plain)
+            .unwrap();
+
+        let v = answer_at("/api-templates").await;
+        let note = v["note"].as_str().unwrap();
+        assert_eq!(note.matches(share::UNPROVEN_FOR_ASSISTANT).count(), 1, "{note}");
+        assert_eq!(note.matches(share::FAILED_HERE_FOR_ASSISTANT).count(), 1, "{note}");
+        assert!(v["templates"].as_array().unwrap().iter().all(|r| r.get("here_note").is_none()), "said once, not per row");
+        assert_eq!(row_of(&v["templates"], "idx-00")["here"], "failed");
+        assert_eq!(row_of(&v["templates"], "idx-01")["here"], "unconfirmed");
+    }
+
+    #[tokio::test]
+    async fn a_flow_reads_confirmed_only_when_every_template_on_it_is_confirmed_here() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &flow).unwrap();
+        let flow_here = |v: &serde_json::Value| v["flows"][0]["here"].clone();
+
+        let ok = crate::common::saved_on_stage("on-setup", "Setup", "setup");
+        v2_lib::api_templates::store::save_proven(dir.path(), &c.org, &c.project, &ok).unwrap();
+        assert_eq!(flow_here(&answer_at("/api-templates").await), "confirmed");
+        assert_eq!(flow_here(&answer_at("/api-templates?id=on-setup").await), "confirmed", "the full row too");
+
+        let mut loose = crate::common::saved_on_stage("on-rules", "Rules", "rules");
+        loose.proven = None;
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &loose).unwrap();
+        assert_eq!(flow_here(&answer_at("/api-templates").await), "unconfirmed");
+    }
+
+    #[test]
+    fn the_guide_says_try_then_rediscover_then_leave_alone() {
+        let g = v2_lib::api_templates::guide::text(&[], None);
+        assert!(g.contains("replaces it for every environment"), "{g}");
+        assert!(g.contains("not retried in this job"), "{g}");
+        assert!(g.contains("here: \"unconfirmed\""), "{g}");
+        assert!(g.contains("stays confirmed") && g.contains("second try"), "the retry rule in plain words: {g}");
+    }
+
+    #[test]
+    fn the_tool_descriptions_say_the_rule() {
+        let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
+        let resp =
+            v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &crate::common::dev_app(&stub)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        let tools = v["result"]["tools"].as_array().unwrap();
+        let description = |name: &str| {
+            tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}"))["description"].as_str().unwrap().to_string()
+        };
+        assert!(description("list_api_templates").contains("confirmed, unconfirmed or failed on the active environment"));
+        for name in ["list_api_templates", "prove_api_template", "run_api_template", "run_api_fixture"] {
+            assert!(description(name).contains("every environment"), "{name}");
+        }
+        assert!(!description("list_api_templates").contains("proven on this site"));
+    }
+
+
     /// The list is one row per saved template, with the newest run - or
     /// null when it has never run since it was proven.
     #[tokio::test]
@@ -3307,18 +3508,20 @@ mod api_template_routes {
         // Saved without proof - as an import saves one - it says so, and
         // what to do about it.
         assert_eq!(row["proven"], false, "{row}");
-        assert_eq!(row["unproven"], v2_lib::api_templates::share::UNPROVEN_FOR_ASSISTANT, "{row}");
-        assert!(row["unproven"].as_str().unwrap().contains("prove it here"), "{row}");
+        assert_eq!(row["here"], "unconfirmed", "{row}");
+        assert_eq!(row["here_note"], v2_lib::api_templates::share::UNPROVEN_FOR_ASSISTANT, "{row}");
+        assert!(row.get("unproven").is_none(), "{row}");
         let proven = v2_lib::api_templates::ApiTemplate {
             proven: Some(serde_json::from_value(json!({ "at": "2026-09-28 09:00:00", "origin": "https://hr.example.internal",
                                                           "account": "admin", "outputs": {} })).unwrap()),
             ..t.clone()
         };
-        save(dir.path(), &c.org, &c.project, &proven).unwrap();
+        v2_lib::api_templates::store::save_proven(dir.path(), &c.org, &c.project, &proven).unwrap();
         let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
         let v: serde_json::Value = serde_json::from_str(&list).unwrap();
         assert_eq!(v["templates"][0]["proven"], true, "{v}");
-        assert_eq!(v["templates"][0]["unproven"], serde_json::Value::Null, "{v}");
+        assert_eq!(v["templates"][0]["here"], "confirmed", "{v}");
+        assert_eq!(v["templates"][0]["here_note"], serde_json::Value::Null, "{v}");
 
         let at = |s: &str, mode: &str| RunRecord {
             at: s.into(),
@@ -3915,11 +4118,11 @@ mod api_template_routes {
         assert!(f.get("stages").is_none(), "{f}");
         // The fixture's templates are unproven, so the index says once - not
         // per row - what that means for relying on them.
-        assert!(rows.iter().all(|r| r["proven"] == false) && rows.iter().all(|r| r.get("unproven").is_none()));
+        assert!(rows.iter().all(|r| r["proven"] == false) && rows.iter().all(|r| r["here"] == "unconfirmed" && r.get("here_note").is_none()));
         assert_eq!(
             v["note"],
             format!(
-                "This is the index of 301 templates. Narrow it with module, search or flow until at most 25 match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most 100). A template whose proven is false was {}.",
+                "This is the index of 301 templates. Narrow it with module, search or flow until at most 25 match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most 100). A template whose here is unconfirmed is {}.",
                 v2_lib::api_templates::share::UNPROVEN_FOR_ASSISTANT
             )
         );

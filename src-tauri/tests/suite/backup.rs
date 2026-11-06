@@ -1225,3 +1225,225 @@ fn shared_files_are_written_through_a_rename_and_leave_no_temp_file() {
     assert!(v2_lib::autorun::backup_import::IMPORT_UNFINISHED.contains("restart the app now"));
     let _ = std::fs::remove_dir_all(&dst);
 }
+
+// ---- the shared API library in backups ---------------------------------
+
+const API_ORG: &str = "Org";
+const API_PROJECT: &str = "Proj";
+
+fn api_slug() -> String {
+    v2_lib::autorun::recipe::project_slug(API_ORG, API_PROJECT)
+}
+
+/// A template proven on "Alpha" (ENV_A's name), as a file's text.
+fn api_template_text(id: &str) -> String {
+    let mut t: v2_lib::api_templates::ApiTemplate = serde_json::from_value(serde_json::json!({
+        "id": id, "title": "Add cycle", "module": "PMS", "effect": "create", "description": "d",
+        "sources": ["x:1"], "antiforgery": { "page": "/hr/x" },
+        "params": [{ "name": "cycleName", "type": "string", "required": true }],
+        "steps": [{ "name": "Save", "method": "POST", "path": "/hr/save",
+                    "form": { "CycleName": "{{cycleName}}" }, "expect": { "status": 200 },
+                    "capture": { "cycleId": "$.cycleId" } }],
+        "outputs": ["cycleId"]
+    }))
+    .unwrap();
+    t.proven = Some(v2_lib::api_templates::Proven {
+        at: "2026-10-05 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "admin".into(),
+        outputs: BTreeMap::new(),
+        environment: Some("Alpha".into()),
+        via: None,
+    });
+    serde_json::to_string_pretty(&t).unwrap()
+}
+
+fn api_runs_text() -> String {
+    serde_json::json!([{ "at": "2026-10-05 09:00:00", "mode": "prove", "account": "admin", "ok": true, "outputs": {} }]).to_string()
+}
+
+fn library_file(autorun: &std::path::Path, id: &str) -> PathBuf {
+    autorun.join("api-library").join("templates").join(api_slug()).join(format!("{id}.json"))
+}
+
+#[test]
+fn a_backup_includes_the_shared_api_library() {
+    let src = updated_machine("carry-library");
+    let a = src.join("autorun");
+    put(&a, &format!("api-library/templates/{}/t.json", api_slug()), "{}");
+    let (files, _) = collect_files(&src);
+    let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+    assert!(paths.contains(&format!("autorun/api-library/templates/{}/t.json", api_slug()).as_str()), "{paths:?}");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn a_backup_leaves_out_kept_api_losers_and_library_staging() {
+    let src = updated_machine("skip-api-aside");
+    let a = src.join("autorun");
+    let staging = v2_lib::api_templates::library_move::STAGING_PREFIX;
+    put(&a, "removed-api/1/library/templates/x/t.json", "{}");
+    put(&a, &format!("{staging}1/library/templates/x/t.json"), "{}");
+    put(&a, &format!("{staging}1.complete"), "");
+    let (files, _) = collect_files(&src);
+    let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+    assert!(!paths.iter().any(|p| p.contains("removed-api") || p.contains(".api-library-staging-")), "{paths:?}");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn restoring_a_new_backup_restores_the_library() {
+    let _lock = crate::serial::autorun();
+    let src = updated_machine("library-src");
+    put(&src.join("autorun"), &format!("api-library/templates/{}/t.json", api_slug()), &api_template_text("t"));
+    let (collected, _) = collect_files(&src);
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files: Vec<BackupFile> = collected.iter().map(|(p, b)| BackupFile { path: p.clone(), b64: b64.encode(b) }).collect();
+
+    let dst = updated_machine("library-dst");
+    let a = dst.join("autorun");
+    assert!(!library_file(&a, "t").exists());
+    restore_files(&dst, &files).unwrap();
+    assert!(library_file(&a, "t").is_file(), "the library came back with the backup");
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn a_pre_update_backup_with_only_templates_is_app_data_and_folds_into_the_library() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("flat-templates");
+    let a = dst.join("autorun");
+    let flow = serde_json::json!({
+        "id": "f", "title": "Cycle", "module": "PMS",
+        "subject": { "name": "cycleId", "type": "number" },
+        "stages": [{ "id": "setup", "title": "Setup", "creates": true, "check": "SELECT 1 WHERE id = {{cycleId}}" }]
+    });
+    let files = vec![
+        entry("autorun/environments.json", &env_json(ENV_A, None)),
+        entry(&format!("autorun/templates/{}/t.json", api_slug()), &api_template_text("t")),
+        entry(&format!("autorun/templates/{}/t.runs.json", api_slug()), &api_runs_text()),
+        entry(&format!("autorun/flows/{}/f.json", api_slug()), &flow.to_string()),
+    ];
+    assert!(v2_lib::backup::is_pre_update(&files));
+    v2_lib::backup::restore_files_with(&dst, &files, true).unwrap();
+
+    assert!(library_file(&a, "t").is_file(), "the flat backup's template reached the library");
+    assert!(a.join("api-library").join("flows").join(api_slug()).join("f.json").is_file(), "so did its flow");
+    for id in [ENV_A, ENV_B] {
+        assert!(read(&a, &format!("envs/{id}/templates/{}/t.json", api_slug())).is_none(), "{id} keeps no definition");
+        assert!(read(&a, &format!("envs/{id}/flows/{}/f.json", api_slug())).is_none(), "{id} keeps no flow");
+        assert!(read(&a, &format!("envs/{id}/templates/{}/t.runs.json", api_slug())).is_none(), "a flat history is not applied");
+    }
+    assert!(!a.join("templates").exists() && !a.join("flows").exists(), "nothing lands at the flat path");
+    assert!(no_staging_left(&a, ".import-"));
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn a_per_environment_backup_from_before_the_library_folds_in_on_restore() {
+    use v2_lib::api_templates::here::{load_state, template_here, Here};
+    use v2_lib::autorun::roots::env_root;
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("env-templates");
+    let a = dst.join("autorun");
+    let files = vec![
+        entry("autorun/environments.json", &env_json(ENV_A, None)),
+        entry(&format!("autorun/envs/{ENV_A}/templates/{}/t.json", api_slug()), &api_template_text("t")),
+        entry(&format!("autorun/envs/{ENV_A}/templates/{}/t.runs.json", api_slug()), &api_runs_text()),
+        entry(&format!("autorun/envs/{ENV_B}/scripts/case-9.json"), "b"),
+    ];
+    v2_lib::backup::restore_files_with(&dst, &files, true).unwrap();
+
+    assert!(library_file(&a, "t").is_file(), "the definition reached the library");
+    assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/t.json", api_slug())).is_none(), "the env keeps no definition");
+    assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/t.runs.json", api_slug())).is_some(), "its history stays");
+    let t = v2_lib::api_templates::store::load(&env_root(&a, ENV_A), API_ORG, API_PROJECT, "t").unwrap().unwrap();
+    let here = template_here(&load_state(&env_root(&a, ENV_A), API_ORG, API_PROJECT), &t);
+    assert!(matches!(here, Here::Confirmed { .. }), "its history says it worked on that environment: {here:?}");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn a_per_environment_backup_from_before_the_library_folds_its_flows_in_too() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("env-flows");
+    let a = dst.join("autorun");
+    let flow = serde_json::json!({
+        "id": "f", "title": "Cycle", "module": "PMS",
+        "subject": { "name": "cycleId", "type": "number" },
+        "stages": [{ "id": "setup", "title": "Setup", "creates": true, "check": "SELECT 1 WHERE id = {{cycleId}}" }]
+    });
+    let files = vec![
+        entry("autorun/environments.json", &env_json(ENV_A, None)),
+        entry(&format!("autorun/envs/{ENV_A}/flows/{}/f.json", api_slug()), &flow.to_string()),
+        entry(&format!("autorun/envs/{ENV_B}/scripts/case-9.json"), "b"),
+    ];
+    v2_lib::backup::restore_files_with(&dst, &files, true).unwrap();
+
+    assert!(a.join("api-library").join("flows").join(api_slug()).join("f.json").is_file(), "the flow reached the library");
+    for id in [ENV_A, ENV_B] {
+        assert!(read(&a, &format!("envs/{id}/flows/{}/f.json", api_slug())).is_none(), "{id} keeps no flow");
+    }
+    assert!(no_staging_left(&a, ".import-"));
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn a_flat_original_is_any_per_environment_or_legacy_api_folder() {
+    // `flows` is a legacy API folder, not a per-environment item.
+    for item in ["scripts", "templates", "fixtures", "flows", "api-state"] {
+        let root = tmpdir("flat-original");
+        put(&root.join("autorun"), &format!("envs/{ENV_A}/scripts/s.json"), "x");
+        put(&root.join("autorun"), &format!("{item}/p/x.json"), "flat");
+        let (files, _) = collect_files(&root);
+        assert!(!files.iter().any(|(p, _)| p == &format!("autorun/{item}/p/x.json")), "{item} travelled flat: {files:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    let files = vec![entry("autorun/flows/p/x.json", "{}")];
+    assert!(v2_lib::backup::is_pre_update(&files), "a flows entry alone marks a pre-update backup");
+}
+
+fn flat_api_backup() -> Vec<BackupFile> {
+    vec![
+        entry("autorun/environments.json", &env_json(ENV_A, None)),
+        entry(&format!("autorun/templates/{}/t.json", api_slug()), &api_template_text("t")),
+        entry(&format!("autorun/templates/{}/t.runs.json", api_slug()), &api_runs_text()),
+    ]
+}
+
+#[test]
+fn a_flat_restore_keeps_every_environments_api_histories_and_fills_the_library() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("flat-keeps-histories");
+    let a = dst.join("autorun");
+    for id in [ENV_A, ENV_B] {
+        put(&a, &format!("envs/{id}/templates/{}/live.runs.json", api_slug()), "[]");
+        put(&a, &format!("envs/{id}/fixtures/{}/fx.runs.json", api_slug()), "[]");
+    }
+    v2_lib::backup::restore_files_with(&dst, &flat_api_backup(), true).unwrap();
+
+    for id in [ENV_A, ENV_B] {
+        assert!(read(&a, &format!("envs/{id}/templates/{}/live.runs.json", api_slug())).is_some(), "{id} template history");
+        assert!(read(&a, &format!("envs/{id}/fixtures/{}/fx.runs.json", api_slug())).is_some(), "{id} fixture history");
+    }
+    assert!(library_file(&a, "t").is_file(), "the backup's definition is in the library");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn when_the_fold_is_not_allowed_the_definitions_wait_for_the_next_one() {
+    let _lock = crate::serial::autorun();
+    let dst = updated_machine("fold-not-allowed");
+    let a = dst.join("autorun");
+    put(&a, &format!("envs/{ENV_A}/templates/{}/live.runs.json", api_slug()), "[]");
+    v2_lib::backup::restore_files_with(&dst, &flat_api_backup(), false).unwrap();
+
+    assert!(!library_file(&a, "t").exists(), "nothing folded");
+    assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/t.json", api_slug())).is_some(), "the definition waits in the environment");
+    assert!(read(&a, &format!("envs/{ENV_A}/templates/{}/live.runs.json", api_slug())).is_some(), "the history stayed");
+    // The next allowed fold takes it in.
+    assert!(v2_lib::api_templates::library_move::fold_in(&a, 1_800_000_000_000).unwrap().is_some());
+    assert!(library_file(&a, "t").is_file());
+    let _ = std::fs::remove_dir_all(&dst);
+}

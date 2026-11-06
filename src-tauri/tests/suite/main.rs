@@ -42,6 +42,8 @@ mod all_projects_pbis;
 mod all_projects_prs;
 mod allow_rules;
 mod api_fixtures;
+mod api_library;
+mod api_library_move;
 mod api_postback;
 mod api_postback_live;
 mod api_postback_runner;

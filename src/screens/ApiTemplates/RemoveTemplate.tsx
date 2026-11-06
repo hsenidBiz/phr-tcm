@@ -54,8 +54,8 @@ export default function RemoveTemplate({
         Remove {template.title}?
       </h2>
       <p className="text-xs text-muted">
-        {EFFECT_SENTENCE[template.effect]} It is removed from this machine with its run history. There is
-        no undo; the assistant can prove it again.
+        {EFFECT_SENTENCE[template.effect]} It is removed for every environment, with this environment's run
+        history. There is no undo; the assistant can prove it again.
       </p>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={onClose}>

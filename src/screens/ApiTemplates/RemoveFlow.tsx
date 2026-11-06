@@ -54,7 +54,7 @@ export default function RemoveFlow({
         Remove {flow.title}?
       </h2>
       <p className="text-xs text-muted">
-        {templatesSentence(templates)} The flow is removed from this machine. There is no undo; the assistant
+        {templatesSentence(templates)} It is removed for every environment. There is no undo; the assistant
         can save it again.
       </p>
       <div className="flex justify-end gap-2">

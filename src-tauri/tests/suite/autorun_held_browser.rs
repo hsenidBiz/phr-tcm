@@ -859,7 +859,7 @@ async fn release_refuses_while_a_fixture_cleanup_or_setup_run_holds_its_browser(
     };
     let fixture = include_str!("../../src/api_templates/fixture_run.rs");
     let run_saved = body_of(fixture, "pub async fn run_saved");
-    assert!(before(run_saved, "claim()", "run_fixture("), "a fixture run opens its browser unclaimed");
+    assert!(before(run_saved, "claim()", "run_fixture_for("), "a fixture run opens its browser unclaimed");
     let commands = include_str!("../../src/commands/api_templates.rs");
     let cleanup = body_of(commands, "pub async fn auto_run_cleanup_run");
     assert!(before(cleanup, "runner::claim()", "run_cleanup("), "a cleanup run opens its browser unclaimed");

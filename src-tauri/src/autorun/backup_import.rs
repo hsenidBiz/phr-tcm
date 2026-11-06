@@ -139,6 +139,13 @@ fn swap_in(
         if roots::exists(&to)? {
             for m in kept_in_place(&to, &from) {
                 if std::fs::symlink_metadata(&m.to).is_ok() {
+                    // The API folders also hold the definitions an older
+                    // backup brought (for the library fold): the live
+                    // histories join them file by file.
+                    let name = m.to.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    if roots::LEGACY_API_ITEMS.contains(&name) {
+                        merge_missing(&m.from, &m.to, &mut *rename, waits_ms)?;
+                    }
                     continue;
                 }
                 if let Some(parent) = m.to.parent() {
@@ -165,9 +172,27 @@ fn swap_in(
     Ok(())
 }
 
+/// Moves every file under `from` that `to` does not have into `to`, folder
+/// by folder. Moves, never deletes; run again after a stop it moves only what
+/// is still there.
+fn merge_missing(from: &Path, to: &Path, rename: Rename, waits_ms: &[u64]) -> Result<(), String> {
+    for entry in std::fs::read_dir(from).map_err(|e| e.to_string())?.flatten() {
+        let dest = to.join(entry.file_name());
+        let src = entry.path();
+        if std::fs::symlink_metadata(&dest).is_err() {
+            rename_with(&src, &dest, &mut *rename, waits_ms)?;
+        } else if src.is_dir() && dest.is_dir() {
+            merge_missing(&src, &dest, &mut *rename, waits_ms)?;
+        }
+    }
+    Ok(())
+}
+
 /// Builds the per-environment folders from the backup's flat files (under
 /// `flat_dir(staging)`): the app-describing items, every environment alike,
-/// never the history or the export records.
+/// never the history or the export records. The API definition files (never
+/// their histories) are copied in too, so the library fold that follows the
+/// commit finds them.
 fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
     let flat = flat_dir(staging);
     let built = staging.join(BUILT);
@@ -184,6 +209,16 @@ fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
             roots::copy_tree(&flat.join(name), &built.join(id).join(name), Path::new(name), false, &|rel| {
                 roots::is_export_record(rel)
             })?;
+        }
+    }
+    for name in roots::LEGACY_API_ITEMS {
+        if !roots::exists(&flat.join(name))? {
+            continue;
+        }
+        items += 1;
+        for id in ids {
+            let only_definitions = |rel: &Path| !rel.file_name().and_then(|n| n.to_str()).is_some_and(roots::is_api_definition_name);
+            roots::copy_tree(&flat.join(name), &built.join(id).join(name), Path::new(name), false, &only_definitions)?;
         }
     }
     Ok(items)

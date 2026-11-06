@@ -380,11 +380,11 @@ fn a_template_saved_before_flows_still_reads() {
 }
 
 #[test]
-fn flows_live_beside_templates() {
+fn flows_live_in_the_shared_library_beside_templates() {
     let root = std::path::Path::new("data-root");
     let slug = store::templates_dir(root, "Org", "Proj").file_name().unwrap().to_owned();
     let dir = flow_store::flows_dir(root, "Org", "Proj");
-    assert_eq!(dir, root.join("flows").join(slug));
+    assert_eq!(dir, root.join("api-library").join("flows").join(slug));
 }
 
 #[test]
@@ -540,7 +540,7 @@ mod gate_tests {
         );
         t.id = id.into();
         t.title = title.into();
-        SavedTemplate { template: t, runs: vec![] }
+        SavedTemplate { template: t, runs: vec![], here: v2_lib::api_templates::here::Here::Unconfirmed }
     }
 
     fn done(marker: &str) -> (String, Result<bool, String>) {
@@ -902,6 +902,7 @@ mod gate_tests {
 mod page_tests {
     use v2_lib::api_templates::flow::Flow;
     use v2_lib::api_templates::flow_page::{columns, page_html, tone_of, Tone};
+    use v2_lib::api_templates::here::{Here, HereFailure};
     use v2_lib::api_templates::store::SavedTemplate;
     use v2_lib::api_templates::{ApiTemplate, Effect};
     use v2_lib::webtheme::PagePalette;
@@ -912,7 +913,7 @@ mod page_tests {
 
     fn on(id: &str, title: &str, effect: Effect, stage: &str) -> SavedTemplate {
         let t = ApiTemplate { effect, ..crate::common::saved_on_stage(id, title, stage) };
-        SavedTemplate { template: t, runs: vec![] }
+        SavedTemplate { template: t, runs: vec![], here: Here::Confirmed { last_failure: None } }
     }
 
     #[test]
@@ -985,15 +986,27 @@ mod page_tests {
     }
 
     #[test]
-    fn an_unproven_template_is_marked_on_the_page() {
-        let mut imported = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
-        imported.template.proven = None;
-        let html = page_html(&flow(), &[imported], &PagePalette::default());
-        assert!(html.contains("Save the rules</span><span class='fx' title='Imported - not proven on this site."), "{html}");
-        assert!(html.contains("Templates: Save the rules (unproven).</li>"), "{html}");
+    fn the_flow_page_marks_templates_unconfirmed_or_failed_here() {
+        let mut unconfirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        unconfirmed.here = Here::Unconfirmed;
+        let html = page_html(&flow(), &[unconfirmed], &PagePalette::default());
+        assert!(html.contains("Save the rules</span><span class='fx' title='Not confirmed on this environment yet."), "{html}");
+        assert!(html.contains(">unconfirmed here</span>"), "{html}");
+        assert!(html.contains("Templates: Save the rules (unconfirmed here).</li>"), "{html}");
 
-        let proven = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
-        assert!(!page_html(&flow(), &[proven], &PagePalette::default()).contains("unproven"));
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed {
+            failure: HereFailure { at: "2026-11-06 10:00:00".into(), step: Some("2".into()), detail: Some("HTTP 500".into()) },
+        };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains("Failed on this environment at 2: HTTP 500. Ask the assistant to make it work here."), "{html}");
+        assert!(html.contains(">failed here</span>"), "{html}");
+        assert!(html.contains("Templates: Save the rules (failed here).</li>"), "{html}");
+        assert!(!html.to_lowercase().contains("unproven"), "{html}");
+
+        let confirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        let html = page_html(&flow(), &[confirmed], &PagePalette::default());
+        assert!(!html.contains("unconfirmed here") && !html.contains("failed here"), "{html}");
     }
 
     #[test]

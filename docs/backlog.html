@@ -46,6 +46,13 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
+    <div class="head"><span class="title">Shared API library (2.4.5-beta.7) and sign-in check in a menu</span><span class="status todo">Next</span></div>
+    <ul>
+      <li>Shared API library shipped in 2.4.5-beta.7: templates, flows and fixtures are one library for every environment, each marked Unconfirmed here / Failed here per environment. Hand checks owed on a live org: a fresh environment runs a shared fixture as a setup and gets the "has not worked on this environment yet" Blocked sentence; the assistant replaces a template from a second environment and the first then reads Unconfirmed here; the one-time move on the installed app keeps every template, fixture and flow; restoring an older backup keeps run histories; the retaken API Templates and Search Suites More shots look right.</li>
+      <li>Sign-in check inside a menu (agreed 6 Nov 2026, plan ready): while picking the signed-in check, menu-opening clicks and Shift-clicks are carried out and not recorded; a check picked inside a menu passes when present even with the menu closed. For the hSenid HRM legacy site the check today is the menu toggle button; with this change, Logout in the name menu.</li>
+    </ul>
+  </div>
+  <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
       <li>Faster suite lookup: shipped in 2.3.1-beta.18. Hand checks owed on a live org before 2.4.0: Run Tests finds a real PBI's suite quickly (the suites-by-test-case answer has requirement suites and names their project), a PBI with requirement suites in two plans picks your area's plan, and "Reading a large plan (page N)" shows on plan 55291 when the full walk runs.</li>
