@@ -158,20 +158,45 @@ pub const LISTENER_JS: &str = r#"(() => {
   // can open the menu that holds Sign out.
   const OPENER = '[aria-haspopup]:not([aria-haspopup="false"]),[aria-expanded="false"],[data-toggle="dropdown"],[data-bs-toggle="dropdown"]';
   const IN_MENU = '[role="menu"],.dropdown-menu';
-  const opensMenu = (el) => {
+  // A list or menu container. The climb for an opener never crosses one: an
+  // item inside a submenu (a Sign out) is not taken for the toggle of the
+  // element that merely holds its list. The element clicked can still be an
+  // opener itself (a submenu's own toggle).
+  const BOX = 'ul,ol,[role="menubar"],[role="group"],[role="listbox"],[role="menu"],.dropdown-menu';
+  // Once the check is picked, the menu is usually still open, and the click
+  // that closes it is on an opener that now says it is open.
+  const OPEN = '[aria-expanded="true"]';
+  const opensMenu = (el, closing) => {
     for (let n = el, up = 0; n && up <= 3; n = n.parentElement, up++) {
       if (n.matches(IN_MENU)) return false;
-      if (n.matches(OPENER)) return true;
+      const opener = n.matches(OPENER) || (!!closing && n.matches(OPEN));
+      if (n === el) {
+        if (opener) return true;
+        if (n.matches(BOX)) return false;
+      } else {
+        if (n.matches(BOX)) return false;
+        if (opener) return true;
+      }
     }
     return false;
   };
-  const letThrough = (e) => {
+  const letThrough = (e, closing) => {
     const el = elementOf(e.target);
-    return e.shiftKey || (!!el && opensMenu(el));
+    return e.shiftKey || (!!el && opensMenu(el, closing));
   };
   // A click was let through since the last pick: what is picked next was
   // reached through a menu.
   let opened = false;
+  // The check has been picked: clicks that open or close a menu are still
+  // carried out and not recorded, as the person closes the menu they used.
+  let picked = false;
+  // The list or menu container the last in-menu pick sat in: a pick again
+  // inside it, while it still shows, is in the menu too.
+  let pickBox = null;
+  const inOpenMenu = (el) => {
+    if (el.closest(IN_MENU)) return true;
+    return !!pickBox && pickBox.contains(el) && pickBox.getClientRects().length > 0;
+  };
   // Decided on the press, from the press's own target and Shift state, and
   // kept for the release and the click that belong to it.
   let press = null;
@@ -204,10 +229,14 @@ pub const LISTENER_JS: &str = r#"(() => {
       if (decided === null ? letThrough(e) : decided) { opened = true; return; }
       window.__tcmRecPick = false;
       hush(e);
-      clicked('marker', el, opened || !!el.closest(IN_MENU));
+      const inMenu = opened || inOpenMenu(el);
+      clicked('marker', el, inMenu);
+      pickBox = inMenu ? el.closest(BOX) : null;
       opened = false;
+      picked = true;
       return;
     }
+    if (picked && letThrough(e, true)) return;
     if (entryOf(el)) return;
     const label = el.closest('label');
     if (label && label.control && label.control !== el && !label.control.contains(el)) return;

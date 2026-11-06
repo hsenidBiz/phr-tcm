@@ -170,8 +170,21 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
         assert!(LISTENER_JS.contains(attr), "{attr} opens a menu");
     }
     assert!(LISTENER_JS.contains("if (n.matches(IN_MENU)) return false;"), "an item inside an open menu is not its opener");
-    assert!(LISTENER_JS.contains("clicked('marker', el, opened || !!el.closest(IN_MENU));
-      opened = false;"));
+    assert!(
+        LISTENER_JS.contains("const inMenu = opened || inOpenMenu(el);
+      clicked('marker', el, inMenu);"),
+        "a pick again inside the open menu is in the menu"
+    );
+    assert!(
+        LISTENER_JS.contains(r#"const BOX = 'ul,ol,[role="menubar"],[role="group"],[role="listbox"],[role="menu"],.dropdown-menu';"#),
+        "the climb stops at a list or menu container"
+    );
+    assert!(
+        LISTENER_JS.contains("if (n.matches(BOX)) return false;
+        if (opener) return true;"),
+        "an opener above a container is not reached from inside it"
+    );
+    assert!(LISTENER_JS.contains("if (picked && letThrough(e, true)) return;"), "after the pick, menu clicks are still not recorded");
     assert!(LISTENER_JS.contains("menu: !!menu,"));
     let pick = LISTENER_JS.find("window.__tcmRecPick = false;
       hush(e);").expect("pick mode");

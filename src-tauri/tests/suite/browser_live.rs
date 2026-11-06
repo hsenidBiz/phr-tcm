@@ -1686,6 +1686,7 @@ async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_close
 <p id="h" style="display:none">Help</p>
 <a href="#" id="kbout" onclick="document.body.dataset.kb='1'; return false">Quit</a>
 <div id="panel" aria-expanded="true"><a href="#" id="panelout" onmousedown="document.body.dataset.down=(document.body.dataset.down||'')+'panel,'" onclick="document.body.dataset.panelout='1'; return false">Log off</a></div>
+<ul id="asp"><li aria-haspopup="true"><a href="#" id="aspname">Pat Doe</a><ul class="level2"><li><a href="#" id="aspout" onclick="document.body.dataset.asp='1'; return false">Leave site</a></li></ul></li></ul>
 </body></html>"##;
     let mut live = open().await;
     let root = tempfile::tempdir().unwrap();
@@ -1777,6 +1778,20 @@ async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_close
     let _ = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
     page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
 
+    // asp:Menu-style markup: the item sits in a list that sits in an
+    // `<li aria-haspopup>`. It is a pick, not the opener's let-through, and
+    // it is not carried out.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#aspout" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let asp = page::eval_value(&mut live.cdp, "document.body.dataset.asp || ''").await.unwrap();
+    assert_eq!(asp, json!(""), "Sign out inside an asp:Menu item was carried out");
+    let pick_asp = AtomicBool::new(true);
+    let nested = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick_asp, &mut |_| {}).await;
+    assert!(nested.steps.is_empty(), "{:?}", nested.steps);
+    let nested_marker = nested.marker.expect("the nested Sign out was not picked");
+    assert!(nested_marker.describe().contains("Leave site"), "{}", nested_marker.describe());
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
+
     // The click on Sign out is the pick, and Sign out is not carried out.
     must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#m a" } })).await);
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1788,6 +1803,19 @@ async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_close
     let marker = got.marker.expect("the pick was not reported");
     assert!(marker.describe().contains("text \"Sign out\""), "{}", marker.describe());
     assert!(got.marker_in_menu, "the pick came from inside a menu");
+
+    // The menu is still open: the click that closes it, on its opener, is
+    // carried out and not recorded as a step. An ordinary click still is.
+    let before = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#me" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    assert_ne!(before, after, "the closing click was not carried out");
+    let closing = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    assert!(closing.steps.is_empty(), "the click that closes the menu was recorded: {:?}", closing.steps);
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#plain" } })).await);
+    let ordinary = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    assert_eq!(ordinary.steps.len(), 1, "an ordinary click after the pick is still recorded: {:?}", ordinary.steps);
 
     // With the menu closed again the check is in the page, not on show.
     must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
