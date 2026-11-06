@@ -1651,7 +1651,7 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     assert!(!pick.load(Ordering::SeqCst));
     drop(live);
 
-    let draft = Draft { organization: "acme".into(), project: "Web".into(), start_url: start, steps, marker: Some(marker) };
+    let draft = Draft { organization: "acme".into(), project: "Web".into(), start_url: start, steps, marker: Some(marker), marker_in_menu: third.marker_in_menu };
     let fields = [FieldChoice { role: FieldRole::Username, text: String::new() }, FieldChoice { role: FieldRole::Password, text: String::new() }];
     let recipe = draft.recipe(&fields, None).expect("the recording made no recipe");
     let before = app.logins.load(Ordering::SeqCst);

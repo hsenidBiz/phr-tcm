@@ -35,6 +35,7 @@ const DRAFT: SignInDraftView = {
     { kind: "click", readable: 'button "Sign in"', password: false },
   ],
   marker: 'link "Kim"',
+  marker_in_menu: false,
 };
 
 type Handler = (cmd: string, args: Record<string, unknown>) => unknown;
@@ -459,7 +460,7 @@ test("a recording left open from before can be cancelled when the dialog opens",
 test("what the dialog is sent carries no typed value", () => {
   const eventKeys: (keyof RecordingEvent)[] = ["kind", "index", "readable", "detail", "password"];
   const stepKeys: (keyof DraftStepView)[] = ["kind", "readable", "password"];
-  const draftKeys: (keyof SignInDraftView)[] = ["steps", "marker"];
+  const draftKeys: (keyof SignInDraftView)[] = ["steps", "marker", "marker_in_menu"];
   expect(Object.keys(step("field", 1, 'textbox "Email"')).sort()).toEqual([...eventKeys].sort());
   expect(Object.keys(DRAFT.steps[0]).sort()).toEqual([...stepKeys].sort());
   expect(Object.keys(DRAFT).sort()).toEqual([...draftKeys].sort());

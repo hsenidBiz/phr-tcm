@@ -129,7 +129,7 @@ pub(crate) const CONTAINERS: [&str; 16] = [
 ];
 
 pub(crate) const MAX_CLIMB: usize = 6;
-const MAX_HINT_TEXT: usize = 80;
+pub const MAX_HINT_TEXT: usize = 80;
 const POLL: Duration = Duration::from_millis(250);
 
 pub const UNREADABLE: &str = "that click could not be named - click the words of the menu entry itself";

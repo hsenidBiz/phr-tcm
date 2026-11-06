@@ -238,6 +238,9 @@ pub struct FieldPayload {
 pub struct SignInClick {
     #[serde(default)]
     pub quiet: bool,
+    /// Only on a marker report: the pick was inside a menu.
+    #[serde(default)]
+    pub menu: bool,
     #[serde(flatten)]
     pub click: ClickPayload,
 }
@@ -272,6 +275,8 @@ pub struct Captured {
     pub steps: Vec<Step>,
     /// The signed-in check, once one was picked. A later pick replaces it.
     pub marker: Option<Target>,
+    /// The picked check was inside a menu. Follows the last pick.
+    pub marker_in_menu: bool,
     pub ended: Ended,
 }
 
@@ -280,7 +285,7 @@ pub struct Captured {
 pub enum Seen<'a> {
     /// A step was added; its 1-based position.
     Step(u32, &'a Step),
-    Marker(&'a Target),
+    Marker(&'a Target, bool),
     Unreadable(&'a str),
 }
 
@@ -433,6 +438,31 @@ pub async fn locate_click<D: Driver>(d: &mut D, reported: &SignInClick) -> Resul
     }
 }
 
+/// A check picked inside a menu is named by its words: a closed menu is
+/// out of the accessibility tree, so a role locator would never be found
+/// at replay. `None` for a quiet pick or words that are empty or too long.
+pub fn menu_marker_from_hints(reported: &SignInClick) -> Option<Target> {
+    if reported.quiet {
+        return None;
+    }
+    let text = collapse(&reported.click.hints.text);
+    if text.is_empty() || text.chars().count() > recorder::MAX_HINT_TEXT {
+        return None;
+    }
+    Some(Target::One(LocatorStep { text: Some(text), exact: true, ..LocatorStep::default() }))
+}
+
+/// The locator for a picked check: its words when it was inside a menu
+/// and has some, else what `locate_click` gives.
+pub async fn locate_marker<D: Driver>(d: &mut D, reported: &SignInClick) -> Result<Target, ()> {
+    if reported.menu {
+        if let Some(t) = menu_marker_from_hints(reported) {
+            return Ok(t);
+        }
+    }
+    locate_click(d, reported).await
+}
+
 pub fn field_locator_from_hints(h: &FieldHints) -> Option<Target> {
     field_css(h).map(|css| Target::One(LocatorStep { css: Some(css), ..LocatorStep::default() }))
 }
@@ -521,9 +551,10 @@ pub async fn capture<D: Driver>(
 ) -> Captured {
     let mut steps: Vec<Step> = vec![];
     let mut marker: Option<Target> = None;
+    let mut marker_in_menu = false;
     loop {
         if cancel.load(Ordering::SeqCst) {
-            return Captured { steps, marker, ended: Ended::Cancelled };
+            return Captured { steps, marker, marker_in_menu, ended: Ended::Cancelled };
         }
         match next_report(d, POLL).await {
             Ok(Some(report)) => {
@@ -546,10 +577,11 @@ pub async fn capture<D: Driver>(
                     Report::Marker(click) => {
                         pick.store(false, Ordering::SeqCst);
                         let _ = page::eval_value(d, PICK_OFF_JS).await;
-                        match locate_click(d, &click).await {
+                        match locate_marker(d, &click).await {
                             Ok(t) => {
                                 marker = Some(t);
-                                on(Seen::Marker(marker.as_ref().expect("just set")));
+                                marker_in_menu = click.menu;
+                                on(Seen::Marker(marker.as_ref().expect("just set"), marker_in_menu));
                             }
                             Err(_) => on(Seen::Unreadable(UNREADABLE_MARKER)),
                         }
@@ -559,13 +591,13 @@ pub async fn capture<D: Driver>(
                 continue;
             }
             Err(CdpError::Closed) | Err(CdpError::Transport(_)) => {
-                return Captured { steps, marker, ended: Ended::Closed };
+                return Captured { steps, marker, marker_in_menu, ended: Ended::Closed };
             }
             Ok(None) => {}
             Err(_) => tokio::time::sleep(POLL).await,
         }
         if stop.load(Ordering::SeqCst) {
-            return Captured { steps, marker, ended: Ended::Stopped { href: String::new() } };
+            return Captured { steps, marker, marker_in_menu, ended: Ended::Stopped { href: String::new() } };
         }
         if pick.load(Ordering::SeqCst) {
             // Best effort: a page between documents refuses, and the next
@@ -576,7 +608,7 @@ pub async fn capture<D: Driver>(
 }
 
 /// A finished recording's steps and marker, or why there are none.
-pub fn finish(captured: Captured) -> Result<(Vec<Step>, Option<Target>), String> {
+pub fn finish(captured: Captured) -> Result<(Vec<Step>, Option<Target>, bool), String> {
     match captured.ended {
         Ended::Cancelled => Err(recorder::CANCELLED.to_string()),
         Ended::Closed => Err(recorder::BROWSER_CLOSED.to_string()),
@@ -584,7 +616,7 @@ pub fn finish(captured: Captured) -> Result<(Vec<Step>, Option<Target>), String>
             if captured.steps.is_empty() {
                 return Err(NO_STEPS.to_string());
             }
-            Ok((captured.steps, captured.marker))
+            Ok((captured.steps, captured.marker, captured.marker_in_menu))
         }
     }
 }
@@ -622,6 +654,8 @@ pub struct SignInDraftView {
     pub steps: Vec<DraftStepView>,
     /// The signed-in check in words; empty when none was picked.
     pub marker: String,
+    /// The check was picked inside a menu. True only with a marker.
+    pub marker_in_menu: bool,
 }
 
 /// A finished recording, kept in memory between Finish and a save that
@@ -633,6 +667,7 @@ pub struct Draft {
     pub start_url: String,
     pub steps: Vec<Step>,
     pub marker: Option<Target>,
+    pub marker_in_menu: bool,
 }
 
 pub fn step_view(step: &Step) -> DraftStepView {
@@ -649,6 +684,7 @@ impl Draft {
         SignInDraftView {
             steps: self.steps.iter().map(step_view).collect(),
             marker: self.marker.as_ref().map(Target::describe).unwrap_or_default(),
+            marker_in_menu: self.marker.is_some() && self.marker_in_menu,
         }
     }
 
@@ -709,7 +745,7 @@ impl Draft {
             close_when_shown: existing.map(|r| r.close_when_shown.clone()).unwrap_or_default(),
             wait_while_shown: existing.map(|r| r.wait_while_shown.clone()).unwrap_or_default(),
             signed_in,
-            signed_in_in_menu: false,
+            signed_in_in_menu: self.marker_in_menu,
             allowed_origins: existing.map(|r| r.allowed_origins.clone()).unwrap_or_default(),
             session_minutes: existing.map(|r| r.session_minutes).unwrap_or(480),
         };
