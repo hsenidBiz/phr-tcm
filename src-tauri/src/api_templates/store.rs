@@ -1,18 +1,24 @@
 //! Where API templates and their run history are kept - see design doc
 //! "API templates" §4 (storage) and §5.6 (results/run history).
 //!
-//! Layout, under the Auto Run data root:
+//! Layout:
 //!
 //! ```text
-//! templates/<project_slug>/<id>.json       the template (see mod.rs)
-//! templates/<project_slug>/<id>.runs.json  its run history, newest first
+//! <shared>/api-library/templates/<project_slug>/<id>.json  the template (see mod.rs)
+//! <env>/templates/<project_slug>/<id>.runs.json            its run history on that
+//!                                                          environment, newest first
 //! ```
+//!
+//! Definitions are shared by every environment (`library`); only the run
+//! history stays with the environment that ran it. What has worked on this
+//! environment is `here`.
 //!
 //! `<project_slug>` is `autorun::recipe::project_slug`, the same slug the
 //! sign-in recipe and quirks files use for this org/project pair.
 
+use super::here::{self, Here};
+use super::library::{history_dir, library_dir, ApiKind};
 use super::{valid_id, ApiTemplate};
-use crate::autorun::recipe::project_slug;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -22,8 +28,14 @@ use std::path::{Path, PathBuf};
 /// are no longer worth the read - see constraints.md.
 pub(super) const MAX_RUNS: usize = 20;
 
+/// The shared folder holding this project's template definitions.
 pub fn templates_dir(root: &Path, org: &str, project: &str) -> PathBuf {
-    root.join("templates").join(project_slug(org, project))
+    library_dir(root, ApiKind::Templates, org, project)
+}
+
+/// This environment's template run histories.
+pub fn template_runs_dir(root: &Path, org: &str, project: &str) -> PathBuf {
+    history_dir(root, ApiKind::Templates, org, project)
 }
 
 fn template_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
@@ -31,7 +43,7 @@ fn template_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
 }
 
 fn runs_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
-    templates_dir(root, org, project).join(format!("{id}.runs.json"))
+    template_runs_dir(root, org, project).join(format!("{id}.runs.json"))
 }
 
 fn invalid_id(id: &str) -> String {
@@ -79,6 +91,8 @@ pub struct RunRecord {
 pub struct SavedTemplate {
     pub template: ApiTemplate,
     pub runs: Vec<RunRecord>,
+    /// Whether it has worked on the active environment.
+    pub here: Here,
 }
 
 /// Reads one template's saved run history, newest first. A missing file
@@ -112,9 +126,11 @@ pub fn load(root: &Path, org: &str, project: &str, id: &str) -> Result<Option<Ap
     }
 }
 
-/// Writes a template, atomically, replacing whatever was saved under the
-/// same id. Refuses before touching the disk if `t.id` is not a valid
-/// filename component.
+/// Writes a template's definition, atomically, replacing whatever was
+/// saved under the same id, for every environment. Refuses before touching
+/// the disk if `t.id` is not a valid filename component. It confirms
+/// nothing here: a changed definition reads as unconfirmed everywhere until
+/// something proves it (`save_proven`).
 pub fn save(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Result<(), String> {
     if !valid_id(&t.id) {
         return Err(invalid_id(&t.id));
@@ -125,11 +141,31 @@ pub fn save(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Result<()
     crate::autorun::roots::write_file(root, &template_path(root, org, project, &t.id), &json)
 }
 
+/// `save` for a template that was proven on THIS environment a moment ago
+/// (a successful prove, an explore-session save): it also confirms the
+/// template here and moves this environment's fixture confirmations on to
+/// the new version. A save that merely keeps a proof from elsewhere must
+/// use `save`. A state write that fails is logged and does not fail the
+/// save: the safe direction is "Unconfirmed".
+pub fn save_proven(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Result<(), String> {
+    let before = load(root, org, project, &t.id).ok().flatten();
+    save(root, org, project, t)?;
+    if let Err(e) = here::after_template_saved(root, org, project, before.as_ref(), t) {
+        crate::applog::warn(format!(
+            "api template {}: it was saved but could not be marked confirmed here ({})",
+            t.id,
+            if crate::autorun::roots::path_free(&e) { e.as_str() } else { "state not written" }
+        ));
+    }
+    Ok(())
+}
+
 /// Every saved template for this project, with its run history, sorted by
 /// `module` then `title`. A template file that no longer parses is skipped
 /// and logged - never fatal to the rest of the list, since one bad file
 /// must not hide every other template from the tab.
 pub fn list(root: &Path, org: &str, project: &str) -> Result<Vec<SavedTemplate>, String> {
+    let state = here::load_state(root, org, project);
     let dir = templates_dir(root, org, project);
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -165,7 +201,8 @@ pub fn list(root: &Path, org: &str, project: &str) -> Result<Vec<SavedTemplate>,
             crate::applog::warn(format!("api template {id}'s run history does not parse, treated as empty: {e}"));
             vec![]
         });
-        out.push(SavedTemplate { template, runs });
+        let here = here::template_here(&state, &template);
+        out.push(SavedTemplate { template, runs, here });
     }
 
     out.sort_by(|a, b| {
@@ -175,9 +212,10 @@ pub fn list(root: &Path, org: &str, project: &str) -> Result<Vec<SavedTemplate>,
     Ok(out)
 }
 
-/// Deletes a template and its run history. A template that was never
-/// saved (or history that was never written) is not an error - `remove`
-/// only guarantees neither is there afterwards.
+/// Deletes a template (for every environment), this environment's run
+/// history and its state entry. A template that was never saved (or
+/// history that was never written) is not an error - `remove` only
+/// guarantees neither is there afterwards.
 pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), String> {
     if !valid_id(id) {
         return Err(invalid_id(id));
@@ -188,6 +226,9 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
         }
+    }
+    if here::forget(root, org, project, ApiKind::Templates, id).is_err() {
+        crate::applog::warn(format!("api template {id} was removed but its confirmation state could not be cleared"));
     }
     Ok(())
 }
@@ -212,7 +253,7 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: RunRecord)
     let mut runs = load_runs(root, org, project, id)?;
     runs.insert(0, r);
     runs.truncate(MAX_RUNS);
-    let dir = templates_dir(root, org, project);
+    let dir = template_runs_dir(root, org, project);
     crate::autorun::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&runs).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &runs_path(root, org, project, id), &json)

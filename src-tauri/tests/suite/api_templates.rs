@@ -610,8 +610,9 @@ fn a_history_written_without_modes_loads_as_runs() {
         { "at": "2026-09-28 10:00:00", "account": "hr.admin", "ok": false,
           "failed_step": "Evaluation rules", "detail": "400", "outputs": {} }
     ]);
-    let file = store::templates_dir(dir.path(), "Org", "Proj").join(format!("{}.runs.json", t.id));
-    std::fs::write(&file, old.to_string()).unwrap();
+    let runs_dir = store::template_runs_dir(dir.path(), "Org", "Proj");
+    std::fs::create_dir_all(&runs_dir).unwrap();
+    std::fs::write(runs_dir.join(format!("{}.runs.json", t.id)), old.to_string()).unwrap();
     let runs = &store::list(dir.path(), "Org", "Proj").unwrap()[0].runs;
     assert_eq!(runs.len(), 2, "{runs:?}");
     assert!(runs.iter().all(|r| r.mode == "run"), "{runs:?}");
@@ -634,8 +635,9 @@ fn remove_takes_the_template_and_its_history() {
     store::remove(dir.path(), "Org", "Proj", &t.id).unwrap();
     assert_eq!(store::load(dir.path(), "Org", "Proj", &t.id).unwrap(), None);
     let tdir = store::templates_dir(dir.path(), "Org", "Proj");
+    let rdir = store::template_runs_dir(dir.path(), "Org", "Proj");
     assert!(!tdir.join(format!("{}.json", t.id)).exists());
-    assert!(!tdir.join(format!("{}.runs.json", t.id)).exists());
+    assert!(!rdir.join(format!("{}.runs.json", t.id)).exists());
 
     // Missing id is not an error.
     store::remove(dir.path(), "Org", "Proj", "nope-nothing-here").unwrap();

@@ -5030,6 +5030,14 @@ export type HealthIssue =
 /**  No `qa-options.json` at the clone's root: the runner uses its defaults. */
 "NoQaOptions";
 
+export type Here = { state: "confirmed"; last_failure: HereFailure | null } | { state: "unconfirmed" } | { state: "failed"; failure: HereFailure };
+
+export type HereFailure = {
+	at: string,
+	step: string | null,
+	detail: string | null,
+};
+
 /**
  *  Checks on the HTML a postback answers with. Each entry is text on the
  *  page or - when it starts `#`, `.` or `[`, or holds a `>` - a selector;
@@ -7391,6 +7399,8 @@ export type RunStarted = {
 export type SavedFixture = {
 	fixture: Fixture,
 	runs: FixtureRun[],
+	/**  Whether it has worked on the active environment. */
+	here: Here,
 };
 
 /**  A template together with its run history, as the tab lists it. */
@@ -7400,12 +7410,16 @@ export type SavedTemplate = SavedTemplate_Serialize | SavedTemplate_Deserialize;
 export type SavedTemplate_Deserialize = {
 	template: ApiTemplate_Deserialize,
 	runs: RunRecord[],
+	/**  Whether it has worked on the active environment. */
+	here: Here,
 };
 
 /**  A template together with its run history, as the tab lists it. */
 export type SavedTemplate_Serialize = {
 	template: ApiTemplate_Serialize,
 	runs: RunRecord[],
+	/**  Whether it has worked on the active environment. */
+	here: Here,
 };
 
 /**
@@ -8271,6 +8285,8 @@ export type TemplatesOverview_Deserialize = {
 	origin: string | null,
 	templates: SavedTemplate_Deserialize[],
 	flows: Flow_Deserialize[],
+	/**  Each flow's state on the active environment, by flow id. */
+	flow_here: { [key in string]: Here },
 };
 
 /**
@@ -8283,6 +8299,8 @@ export type TemplatesOverview_Serialize = {
 	origin: string | null,
 	templates: SavedTemplate_Serialize[],
 	flows: Flow_Serialize[],
+	/**  Each flow's state on the active environment, by flow id. */
+	flow_here: { [key in string]: Here },
 };
 
 export type TestCase = TestCase_Serialize | TestCase_Deserialize;

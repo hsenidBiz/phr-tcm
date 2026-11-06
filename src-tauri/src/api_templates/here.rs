@@ -10,6 +10,7 @@
 use super::fixture::Fixture;
 use super::flow::Flow;
 use super::library::{fixture_hash, state_path, template_hash, ApiKind};
+use super::store::SavedTemplate;
 use super::ApiTemplate;
 use crate::autorun::roots;
 use serde::{Deserialize, Serialize};
@@ -140,14 +141,14 @@ pub fn fixture_here(state: &EnvApiState, f: &Fixture, templates: &dyn Fn(&str) -
 }
 
 /// A flow is Confirmed when at least one of the given templates performs
-/// one of its stages and every such template is Confirmed; otherwise
+/// one of its stages and every such template is Confirmed here; otherwise
 /// Unconfirmed. It is never Failed here.
-pub fn flow_here(flow: &Flow, templates: &[&ApiTemplate], here_of: &dyn Fn(&ApiTemplate) -> Here) -> Here {
-    let on_flow: Vec<&&ApiTemplate> = templates
+pub fn flow_here(flow: &Flow, templates: &[SavedTemplate]) -> Here {
+    let mut on_flow = templates
         .iter()
-        .filter(|t| t.stage.as_ref().is_some_and(|r| r.flow == flow.id && flow.stages.iter().any(|s| s.id == r.id)))
-        .collect();
-    if !on_flow.is_empty() && on_flow.iter().all(|t| matches!(here_of(t), Here::Confirmed { .. })) {
+        .filter(|t| t.template.stage.as_ref().is_some_and(|r| r.flow == flow.id && flow.stages.iter().any(|s| s.id == r.id)))
+        .peekable();
+    if on_flow.peek().is_some() && on_flow.all(|t| matches!(t.here, Here::Confirmed { .. })) {
         Here::Confirmed { last_failure: None }
     } else {
         Here::Unconfirmed

@@ -2440,7 +2440,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
             via: None,
         };
         let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
-        match store::save(root, org, project, &t) {
+        match store::save_proven(root, org, project, &t) {
             Ok(()) => {
                 changed = true;
                 if existing.is_some() && *replace {
@@ -8534,7 +8534,7 @@ fn save_or_match_one_off(
                 (t.title, t.module, t.description, t.sources) = (old.title, old.module, old.description, old.sources);
                 if crate::api_templates::check(&t).is_empty() {
                     t.proven = Some(explore_proof(root, org, project, account, report));
-                    if let Err(e) = store::save(root, org, project, &t) {
+                    if let Err(e) = store::save_proven(root, org, project, &t) {
                         crate::applog::warn(format!("Auto Run explore session: the template could not be replaced: {e}"));
                         return could_not();
                     }
@@ -8571,7 +8571,7 @@ fn save_or_match_one_off(
         return could_not();
     }
     t.proven = Some(explore_proof(root, org, project, account, report));
-    if let Err(e) = store::save(root, org, project, &t) {
+    if let Err(e) = store::save_proven(root, org, project, &t) {
         crate::applog::warn(format!("Auto Run explore session: the template could not be saved: {e}"));
         return could_not();
     }

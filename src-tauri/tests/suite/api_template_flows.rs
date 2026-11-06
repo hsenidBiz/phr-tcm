@@ -380,11 +380,11 @@ fn a_template_saved_before_flows_still_reads() {
 }
 
 #[test]
-fn flows_live_beside_templates() {
+fn flows_live_in_the_shared_library_beside_templates() {
     let root = std::path::Path::new("data-root");
     let slug = store::templates_dir(root, "Org", "Proj").file_name().unwrap().to_owned();
     let dir = flow_store::flows_dir(root, "Org", "Proj");
-    assert_eq!(dir, root.join("flows").join(slug));
+    assert_eq!(dir, root.join("api-library").join("flows").join(slug));
 }
 
 #[test]
@@ -540,7 +540,7 @@ mod gate_tests {
         );
         t.id = id.into();
         t.title = title.into();
-        SavedTemplate { template: t, runs: vec![] }
+        SavedTemplate { template: t, runs: vec![], here: v2_lib::api_templates::here::Here::Unconfirmed }
     }
 
     fn done(marker: &str) -> (String, Result<bool, String>) {
@@ -912,7 +912,7 @@ mod page_tests {
 
     fn on(id: &str, title: &str, effect: Effect, stage: &str) -> SavedTemplate {
         let t = ApiTemplate { effect, ..crate::common::saved_on_stage(id, title, stage) };
-        SavedTemplate { template: t, runs: vec![] }
+        SavedTemplate { template: t, runs: vec![], here: v2_lib::api_templates::here::Here::Unconfirmed }
     }
 
     #[test]

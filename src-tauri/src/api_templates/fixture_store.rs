@@ -1,23 +1,31 @@
-//! Where fixtures and their run history are kept, beside the templates:
+//! Where fixtures and their run history are kept:
 //!
 //! ```text
-//! fixtures/<project_slug>/<id>.json       the fixture (see fixture.rs)
-//! fixtures/<project_slug>/<id>.runs.json  its run history, newest first
+//! <shared>/api-library/fixtures/<project_slug>/<id>.json  the fixture (see fixture.rs)
+//! <env>/fixtures/<project_slug>/<id>.runs.json            its run history on that
+//!                                                         environment, newest first
 //! ```
 //!
 //! `<project_slug>` is the slug templates use (`autorun::recipe::project_slug`).
 
 use super::fixture::{validate, Fixture, FixtureRun};
 use super::store::MAX_RUNS;
+use super::here::{self, Here};
+use super::library::{history_dir, library_dir, ApiKind};
 use super::{store as template_store, valid_id};
-use crate::autorun::recipe::project_slug;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// The shared folder holding this project's fixture definitions.
 pub fn fixtures_dir(root: &Path, org: &str, project: &str) -> PathBuf {
-    root.join("fixtures").join(project_slug(org, project))
+    library_dir(root, ApiKind::Fixtures, org, project)
+}
+
+/// This environment's fixture run histories.
+pub fn fixture_runs_dir(root: &Path, org: &str, project: &str) -> PathBuf {
+    history_dir(root, ApiKind::Fixtures, org, project)
 }
 
 fn fixture_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
@@ -25,7 +33,7 @@ fn fixture_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
 }
 
 fn runs_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
-    fixtures_dir(root, org, project).join(format!("{id}.runs.json"))
+    fixture_runs_dir(root, org, project).join(format!("{id}.runs.json"))
 }
 
 /// The fixture id an explore session's creates are recorded under
@@ -45,6 +53,8 @@ fn invalid_id(id: &str) -> String {
 pub struct SavedFixture {
     pub fixture: Fixture,
     pub runs: Vec<FixtureRun>,
+    /// Whether it has worked on the active environment.
+    pub here: Here,
 }
 
 fn load_runs(root: &Path, org: &str, project: &str, id: &str) -> Result<Vec<FixtureRun>, String> {
@@ -100,6 +110,11 @@ pub fn save(root: &Path, org: &str, project: &str, f: &Fixture) -> Result<(), Ve
 /// Every saved fixture for this project with its history, sorted by name.
 /// A file that does not parse is skipped and logged.
 pub fn list(root: &Path, org: &str, project: &str) -> Result<Vec<SavedFixture>, String> {
+    let state = here::load_state(root, org, project);
+    // One read of the templates serves every fixture's lookup.
+    let templates: Vec<_> =
+        template_store::list(root, org, project).unwrap_or_default().into_iter().map(|s| s.template).collect();
+    let lookup = |id: &str| templates.iter().find(|t| t.id == id).cloned();
     let entries = match std::fs::read_dir(fixtures_dir(root, org, project)) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
@@ -132,7 +147,8 @@ pub fn list(root: &Path, org: &str, project: &str) -> Result<Vec<SavedFixture>, 
             crate::applog::warn(format!("fixture {id}'s run history does not parse, treated as empty: {e}"));
             vec![]
         });
-        out.push(SavedFixture { fixture, runs });
+        let here = here::fixture_here(&state, &fixture, &lookup);
+        out.push(SavedFixture { fixture, runs, here });
     }
     out.sort_by(|a, b| {
         (a.fixture.name.as_str(), a.fixture.id.as_str()).cmp(&(b.fixture.name.as_str(), b.fixture.id.as_str()))
@@ -159,7 +175,7 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: FixtureRun
     let mut runs = load_runs(root, org, project, id)?;
     runs.insert(0, r);
     runs.truncate(MAX_RUNS);
-    crate::autorun::roots::create_dir_all(root, fixtures_dir(root, org, project)).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, fixture_runs_dir(root, org, project)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&runs).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &runs_path(root, org, project, id), &json)
 }
@@ -184,6 +200,9 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
         }
+    }
+    if here::forget(root, org, project, ApiKind::Fixtures, id).is_err() {
+        crate::applog::warn(format!("fixture {id} was removed but its confirmation state could not be cleared"));
     }
     Ok(())
 }

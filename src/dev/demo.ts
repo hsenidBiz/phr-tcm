@@ -649,6 +649,7 @@ let apiTemplates: SavedTemplate_Serialize[] = [
       { at: "2026-10-01 08:15:00", mode: "run", account: "portal.admin", ok: true, outputs: { user_id: 3122 } },
       { at: "2026-09-29 09:40:00", mode: "prove", account: "portal.admin", ok: true, outputs: { user_id: 3107 } },
     ],
+    here: { state: "confirmed", last_failure: null },
   },
   {
     template: {
@@ -680,6 +681,7 @@ let apiTemplates: SavedTemplate_Serialize[] = [
       { at: "2026-10-01 08:16:00", mode: "run", account: "portal.admin", ok: true },
       { at: "2026-09-29 09:52:00", mode: "prove", account: "portal.admin", ok: true },
     ],
+    here: { state: "confirmed", last_failure: null },
   },
   {
     template: {
@@ -707,6 +709,7 @@ let apiTemplates: SavedTemplate_Serialize[] = [
       proven: null,
     },
     runs: [],
+    here: { state: "unconfirmed" },
   },
   {
     template: {
@@ -748,6 +751,7 @@ let apiTemplates: SavedTemplate_Serialize[] = [
       },
       { at: "2026-09-26 15:20:00", mode: "prove", account: "portal.admin", ok: true },
     ],
+    here: { state: "confirmed", last_failure: null },
   },
   {
     template: {
@@ -779,6 +783,7 @@ let apiTemplates: SavedTemplate_Serialize[] = [
       proven: PROVEN("2026-09-30 10:45:00", { address_id: 88 }),
     },
     runs: [{ at: "2026-09-30 10:45:00", mode: "prove", account: "portal.admin", ok: true, outputs: { address_id: 88 } }],
+    here: { state: "confirmed", last_failure: null },
   },
 ];
 
@@ -801,6 +806,7 @@ let apiFixtures: SavedFixture[] = [
       { at: "2026-10-03 09:12:00", ok: true, outputs: { user_id: 3131 } },
       { at: "2026-09-27 16:40:00", ok: true, outputs: { user_id: 3122 } },
     ],
+    here: { state: "confirmed", last_failure: null },
   },
   {
     fixture: {
@@ -818,6 +824,7 @@ let apiFixtures: SavedFixture[] = [
       ],
     },
     runs: [{ at: "2026-09-25 10:30:00", ok: true, outputs: { user_id: 3110, address_id: 88 } }],
+    here: { state: "confirmed", last_failure: null },
   },
   {
     fixture: {
@@ -829,6 +836,7 @@ let apiFixtures: SavedFixture[] = [
       creates: [{ kind: "user", id: "{{user_id}}", name: "AUTOTEST session user" }],
     },
     runs: [],
+    here: { state: "confirmed", last_failure: null },
   },
 ];
 
@@ -1880,7 +1888,7 @@ function applyPatches() {
       return ok(null);
     },
     testFilesOpenFolder: () => err("Demo mode: there is no test files folder in sample data"),
-    apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows }),
+    apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows, flow_here: {} }),
     apiTemplatesRemove: (_o: string, _p: string, id: string) => {
       apiTemplates = apiTemplates.filter((t) => t.template.id !== id);
       return ok(null);

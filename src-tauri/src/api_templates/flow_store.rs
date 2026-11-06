@@ -1,9 +1,9 @@
 //! Where API template flows are kept - see design doc "API template flows".
 //!
-//! Layout, under the Auto Run data root:
+//! Layout:
 //!
 //! ```text
-//! flows/<project_slug>/<id>.json    the flow (see flow.rs)
+//! <shared>/api-library/flows/<project_slug>/<id>.json    the flow (see flow.rs)
 //! ```
 //!
 //! `<project_slug>` is the same `autorun::recipe::project_slug` that
@@ -13,11 +13,11 @@
 
 use super::flow::Flow;
 use super::valid_id;
-use crate::autorun::recipe::project_slug;
+use super::library::{library_dir, ApiKind};
 use std::path::{Path, PathBuf};
 
 pub fn flows_dir(root: &Path, org: &str, project: &str) -> PathBuf {
-    root.join("flows").join(project_slug(org, project))
+    library_dir(root, ApiKind::Flows, org, project)
 }
 
 fn flow_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {

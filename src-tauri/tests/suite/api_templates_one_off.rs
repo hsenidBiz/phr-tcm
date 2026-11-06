@@ -141,7 +141,7 @@ fn proven() -> v2_lib::api_templates::Proven {
 }
 
 fn kept(t: ApiTemplate) -> v2_lib::api_templates::store::SavedTemplate {
-    v2_lib::api_templates::store::SavedTemplate { template: t, runs: Vec::new() }
+    v2_lib::api_templates::store::SavedTemplate { template: t, runs: Vec::new(), here: v2_lib::api_templates::here::Here::Unconfirmed }
 }
 
 /// I4: only a proven template is ever matched.
@@ -480,7 +480,7 @@ fn on_page(id: &str, page: &str) -> v2_lib::api_templates::store::SavedTemplate 
     let mut t = saved("read", json!({ "name": "r", "method": "GET", "path": "/hr/x" }));
     t.id = id.to_string();
     t.antiforgery.page = page.to_string();
-    v2_lib::api_templates::store::SavedTemplate { template: t, runs: vec![] }
+    v2_lib::api_templates::store::SavedTemplate { template: t, runs: vec![], here: v2_lib::api_templates::here::Here::Unconfirmed }
 }
 
 #[test]

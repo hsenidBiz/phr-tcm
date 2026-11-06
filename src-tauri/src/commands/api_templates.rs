@@ -36,6 +36,8 @@ pub struct TemplatesOverview {
     pub origin: Option<String>,
     pub templates: Vec<SavedTemplate>,
     pub flows: Vec<Flow>,
+    /// Each flow's state on the active environment, by flow id.
+    pub flow_here: std::collections::BTreeMap<String, crate::api_templates::here::Here>,
 }
 
 #[tauri::command(async)]
@@ -61,7 +63,8 @@ pub fn overview_at(root: &std::path::Path, organization: &str, project: &str) ->
         crate::applog::warn(format!("api template flows could not be listed: {e}"));
         Vec::new()
     });
-    Ok(TemplatesOverview { origin, templates, flows })
+    let flow_here = flows.iter().map(|f| (f.id.clone(), crate::api_templates::here::flow_here(f, &templates))).collect();
+    Ok(TemplatesOverview { origin, templates, flows, flow_here })
 }
 
 #[tauri::command]
