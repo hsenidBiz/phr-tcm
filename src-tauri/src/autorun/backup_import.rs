@@ -167,7 +167,9 @@ fn swap_in(
 
 /// Builds the per-environment folders from the backup's flat files (under
 /// `flat_dir(staging)`): the app-describing items, every environment alike,
-/// never the history or the export records.
+/// never the history or the export records. The API definition files (never
+/// their histories) are copied in too, so the library fold that follows the
+/// commit finds them.
 fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
     let flat = flat_dir(staging);
     let built = staging.join(BUILT);
@@ -184,6 +186,16 @@ fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
             roots::copy_tree(&flat.join(name), &built.join(id).join(name), Path::new(name), false, &|rel| {
                 roots::is_export_record(rel)
             })?;
+        }
+    }
+    for name in roots::LEGACY_API_ITEMS {
+        if !roots::exists(&flat.join(name))? {
+            continue;
+        }
+        items += 1;
+        for id in ids {
+            let only_definitions = |rel: &Path| !rel.file_name().and_then(|n| n.to_str()).is_some_and(roots::is_api_definition_name);
+            roots::copy_tree(&flat.join(name), &built.join(id).join(name), Path::new(name), false, &only_definitions)?;
         }
     }
     Ok(items)

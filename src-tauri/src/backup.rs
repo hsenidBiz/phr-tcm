@@ -74,8 +74,14 @@ fn excluded(rel: &str) -> bool {
         return false;
     }
     match seg.get(1).map(String::as_str) {
-        Some("removed-envs") => true,
-        Some(n) if n.starts_with(".envs-staging-") || n.starts_with(".import-") => true,
+        Some("removed-envs") | Some("removed-api") => true,
+        Some(n)
+            if n.starts_with(".envs-staging-")
+                || n.starts_with(".import-")
+                || n.starts_with(crate::api_templates::library_move::STAGING_PREFIX) =>
+        {
+            true
+        }
         Some("envs") => {
             seg.get(2).is_some_and(|n| n.starts_with(".copying-") || n.starts_with(".seed-replaced-"))
                 || seg.get(3).map(String::as_str) == Some("shots")
@@ -90,8 +96,7 @@ fn is_flat_original(rel: &str) -> bool {
     let seg = raw_segments(rel);
     seg.first().is_some_and(|s| s.eq_ignore_ascii_case("autorun"))
         && seg.get(1).is_some_and(|n| {
-            crate::autorun::roots::PER_ENV_ITEMS.iter().any(|(item, _)| n.eq_ignore_ascii_case(item))
-                || crate::autorun::roots::LEGACY_API_ITEMS.iter().any(|item| n.eq_ignore_ascii_case(item))
+            crate::autorun::roots::flat_item_names().any(|item| n.eq_ignore_ascii_case(item))
         })
 }
 
@@ -311,14 +316,19 @@ pub fn is_pre_update(files: &[BackupFile]) -> bool {
 pub const BAD_ENV_LIST: &str = "the list of environments in this backup cannot be read - nothing was imported";
 
 /// An entry of a pre-update backup in an item the update copies into every
-/// environment (scripts, areas, templates and so on), not an export record.
+/// environment (scripts, areas and so on), not an export record - or an API
+/// definition file (never its history) under one of the legacy API folders,
+/// which the library fold takes in after the import.
 fn is_app_item(rel: &str) -> bool {
     use crate::autorun::roots::{self, CopyTo, PER_ENV_ITEMS};
     let seg = raw_segments(rel);
-    seg.len() >= 3
-        && seg[0].eq_ignore_ascii_case("autorun")
-        && PER_ENV_ITEMS.iter().any(|(item, how)| *how == CopyTo::Every && seg[1].eq_ignore_ascii_case(item))
-        && !roots::is_export_record(&seg[1..].iter().collect::<PathBuf>())
+    if seg.len() < 3 || !seg[0].eq_ignore_ascii_case("autorun") {
+        return false;
+    }
+    let definition = roots::LEGACY_API_ITEMS.iter().any(|item| seg[1].eq_ignore_ascii_case(item))
+        && roots::is_api_definition_name(seg[seg.len() - 1]);
+    let every = PER_ENV_ITEMS.iter().any(|(item, how)| *how == CopyTo::Every && seg[1].eq_ignore_ascii_case(item));
+    (definition || every) && !roots::is_export_record(&seg[1..].iter().collect::<PathBuf>())
 }
 
 /// What an import does to the environments' folders. The one place that
@@ -721,6 +731,10 @@ pub fn restore_files_held(
         }
         committed?;
         restored += staged_applied;
+        // A backup made before the shared library brings its API definitions
+        // inside the environment folders just put in place: fold them in by
+        // the one-time fold's rules. Never fails the import.
+        fold_api_library(held, &autorun, now);
     } else if let Some((list, has_environments)) = &deferred_accounts {
         restore_legacy_accounts(&autorun, list, *has_environments)?;
     }
@@ -755,6 +769,17 @@ pub fn restore_files_held(
         return Err(backup_import::IMPORT_UNFINISHED.to_string());
     }
     Ok(restored)
+}
+
+/// Folds the API definitions an import left in the environment folders into
+/// the shared library. Logged without a path, never fatal.
+fn fold_api_library(held: &std::sync::RwLockWriteGuard<'static, ()>, autorun: &Path, now: u64) {
+    use crate::api_templates::library_move;
+    match library_move::fold_in_held(held, autorun, now) {
+        Ok(Some(report)) => crate::applog::info(library_move::move_log_line(&report)),
+        Ok(None) => {}
+        Err(_) => crate::applog::warn("Backup import: the API definitions could not be folded into the shared library"),
+    }
 }
 
 /// Copies the Playwright export records of environment `from` into

@@ -64,8 +64,15 @@ pub const LEGACY_API_ITEMS: [&str; 3] = ["templates", "fixtures", "flows"];
 
 /// Every top-level name the flat layout could hold for one environment:
 /// [`PER_ENV_ITEMS`] plus the legacy `flows` folder.
-fn flat_item_names() -> impl Iterator<Item = &'static str> {
+pub(crate) fn flat_item_names() -> impl Iterator<Item = &'static str> {
     PER_ENV_ITEMS.iter().map(|(n, _)| *n).chain(LEGACY_API_ITEMS.iter().copied().filter(|n| !PER_ENV_ITEMS.iter().any(|(m, _)| m == n)))
+}
+
+/// A file name that is an API definition (`<id>.json`), not the run history
+/// beside it (`<id>.runs.json`).
+pub(crate) fn is_api_definition_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".json") && !n.ends_with(".runs.json")
 }
 
 /// The items the update places by the run that made them: a run, its report,
