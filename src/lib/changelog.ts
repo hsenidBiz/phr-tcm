@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.7",
+    date: "2026-11-06",
+    items: [
+      "API templates, flows and fixtures are now shared by every environment. Each one is marked Unconfirmed here until it has worked on the environment you are on, and Failed here when it has not; the assistant tries what is there first and finds a working version when it fails.",
+      "Copying Auto Run data from another environment no longer brings API templates, flows or fixtures, since every environment shares them, and it never copies accounts.",
+      "Backups include the shared API library, and restoring an older backup adds its templates, flows and fixtures to it.",
+    ],
+  },
+  {
     version: "2.4.5-beta.6",
     date: "2026-11-06",
     items: [
