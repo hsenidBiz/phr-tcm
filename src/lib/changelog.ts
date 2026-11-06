@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.8",
+    date: "2026-11-06",
+    items: [
+      "Recording a sign-in now asks you to show how you sign out. If Sign out is inside a menu, such as the one under your name, open the menu and click it; the click does not sign you out, and opening the menu is not recorded. Hold Shift as you click to open a menu the app does not recognise.",
+    ],
+  },
+  {
     version: "2.4.5-beta.7",
     date: "2026-11-06",
     items: [
