@@ -8,13 +8,14 @@ use v2_lib::autorun::nav::{
     area_changed, area_taken_meanwhile, check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module,
     guide_section, is_setup_problem, load_nav, module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path,
     put_path_if, remove_path, route_for, same_page, save_nav, set_direct_urls, view, AreaExpect, AssistantRepair, MadeBy, ModulePath,
-    NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
+    Home, NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::autorun::area_repair::{check_reason, put_old_path_back, save_repair, MAX_REASON};
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::browser::actions::HIGHLIGHT_JS;
+use v2_lib::browser::expect::Check;
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::{HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
@@ -1647,4 +1648,13 @@ fn a_repair_is_saved_only_to_the_area_as_the_trips_found_it() {
     assert_eq!(note.previous_clicks, tried.clicks);
     assert_eq!(note.previous_arrived, "/hr/leave/apply");
     assert!(find_area(&nav, "Payroll").is_some(), "another area was lost");
+}
+
+#[test]
+fn home_carries_the_recipes_in_menu_check() {
+    let mut r = common::menu_recipe();
+    assert!(matches!(Home::of(&r).signed_in_check(), Check::Visible));
+    r.signed_in_in_menu = true;
+    assert!(Home::of(&r).signed_in_in_menu);
+    assert!(matches!(Home::of(&r).signed_in_check(), Check::Present));
 }

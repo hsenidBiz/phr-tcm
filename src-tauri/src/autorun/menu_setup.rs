@@ -183,7 +183,7 @@ async fn change_and_close<D: Driver>(
             _ => break,
         }
     }
-    let marker = expect(d, &home.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let marker = expect(d, &home.signed_in, home.signed_in_check(), timing.nav_ms, timing.poll_ms).await;
     if !marker.ok {
         return Err("the page did not show it was signed in after the preferences were changed".to_string());
     }

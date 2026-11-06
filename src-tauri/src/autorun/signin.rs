@@ -250,7 +250,7 @@ pub async fn already_signed_in_why<D: Driver>(
     if session_refused(d).await.is_some() {
         return Err(NotSignedIn::SessionRefused);
     }
-    let seen = expect(d, &recipe.signed_in, Check::Visible, look_ms, timing.poll_ms).await.ok;
+    let seen = expect(d, &recipe.signed_in, recipe.signed_in_check(), look_ms, timing.poll_ms).await.ok;
     if seen {
         // Signed in, on the application's own page.
         d.confirm_capture_site();
@@ -1101,7 +1101,7 @@ async fn sign_in_core<D: Driver>(
                 // the marker is never even asked for once the navigate
                 // itself has already failed.
                 let marker = if arrived.ok && refused.is_none() {
-                    Some(expect(d, &recipe.signed_in, Check::Visible, timing.expect_ms, timing.poll_ms).await)
+                    Some(expect(d, &recipe.signed_in, recipe.signed_in_check(), timing.expect_ms, timing.poll_ms).await)
                 } else {
                     None
                 };
@@ -1180,7 +1180,7 @@ async fn sign_in_core<D: Driver>(
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
-    let mut marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let mut marker = expect(d, &recipe.signed_in, recipe.signed_in_check(), timing.nav_ms, timing.poll_ms).await;
     let mut retried = false;
     let mut form_still_there = false;
     // The reset page is no slow site and no wrong password: said as what it
@@ -1220,7 +1220,7 @@ async fn sign_in_core<D: Driver>(
             // end: the marker is still waited for, and the failure below
             // names where the page is.
             run.keep(again);
-            marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+            marker = expect(d, &recipe.signed_in, recipe.signed_in_check(), timing.nav_ms, timing.poll_ms).await;
         }
     }
     if !marker.ok && !marker.harness && session_refused(d).await.is_some() {

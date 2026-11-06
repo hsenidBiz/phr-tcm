@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::accounts::session_path;
-use v2_lib::autorun::recipe::save_recipe;
+use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::sessions::{now_ms, save_session};
 use v2_lib::autorun::signin::{already_signed_in, prepare, redact, sign_in, SESSION_REFUSED_JS};
 use v2_lib::browser::cdp::CdpError;
@@ -1219,4 +1219,18 @@ async fn a_stop_during_a_pending_password_sign_ins_wait_ends_it_at_once() {
     assert!(!out.ok);
     assert!(out.detail.contains(SIGN_IN_STOPPED), "{}", out.detail);
     assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+}
+
+#[tokio::test]
+async fn a_check_inside_a_menu_signs_in_when_it_is_on_the_page_but_not_visible() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = common::stateful_app_marker_hidden();
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(!out.ok, "a visible check still needs it visible: {}", out.detail);
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = common::stateful_app_marker_hidden();
+    let in_menu = SignInRecipe { signed_in_in_menu: true, ..recipe() };
+    let out = sign_in(&mut d, dir.path(), &in_menu, &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
 }

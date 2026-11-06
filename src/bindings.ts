@@ -1004,8 +1004,17 @@ export const commands = {
 	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
 	 */
 	wait_while_shown?: LoadingIndicator_Serialize[],
-	/**  Exactly one visible match of this means "signed in". */
+	/**
+	 *  Exactly one visible match of this means "signed in" - or, with
+	 *  `signed_in_in_menu`, at least one match on the page.
+	 */
 	signed_in: Target_Serialize,
+	/**
+	 *  The signed-in check was picked inside a menu that is closed at rest:
+	 *  a sign-in asks that it is on the page, not that it is visible. Off
+	 *  for every recipe saved before this existed.
+	 */
+	signed_in_in_menu?: boolean,
 	/**
 	 *  The page a login whose password has expired is sent to, when the site
 	 *  has one: a sign-in that ends there fails as "password expired".
@@ -7612,8 +7621,17 @@ export type SignInRecipe_Deserialize = {
 	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
 	 */
 	wait_while_shown?: LoadingIndicator_Deserialize[],
-	/**  Exactly one visible match of this means "signed in". */
+	/**
+	 *  Exactly one visible match of this means "signed in" - or, with
+	 *  `signed_in_in_menu`, at least one match on the page.
+	 */
 	signed_in: Target_Deserialize,
+	/**
+	 *  The signed-in check was picked inside a menu that is closed at rest:
+	 *  a sign-in asks that it is on the page, not that it is visible. Off
+	 *  for every recipe saved before this existed.
+	 */
+	signed_in_in_menu?: boolean,
 	/**
 	 *  The page a login whose password has expired is sent to, when the site
 	 *  has one: a sign-in that ends there fails as "password expired".
@@ -7672,8 +7690,17 @@ export type SignInRecipe_Serialize = {
 	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
 	 */
 	wait_while_shown?: LoadingIndicator_Serialize[],
-	/**  Exactly one visible match of this means "signed in". */
+	/**
+	 *  Exactly one visible match of this means "signed in" - or, with
+	 *  `signed_in_in_menu`, at least one match on the page.
+	 */
 	signed_in: Target_Serialize,
+	/**
+	 *  The signed-in check was picked inside a menu that is closed at rest:
+	 *  a sign-in asks that it is on the page, not that it is visible. Off
+	 *  for every recipe saved before this existed.
+	 */
+	signed_in_in_menu?: boolean,
 	/**
 	 *  The page a login whose password has expired is sent to, when the site
 	 *  has one: a sign-in that ends there fails as "password expired".
