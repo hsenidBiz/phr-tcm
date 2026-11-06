@@ -2284,6 +2284,11 @@ fn note_assistant_template_run(
     report: &crate::api_templates::runner::RunReport,
 ) {
     use crate::api_templates::here::{note_template_run, HereFailure, TrySource};
+    // A run that never reached the site (no account lease, no browser) says
+    // nothing about the template here.
+    if report.unreached {
+        return;
+    }
     let failure = HereFailure { at: crate::applog::stamp(), step: report.failed.clone(), detail: Some(report.message()) };
     note_template_run(root, org, project, ran, report.ok, Some(failure), TrySource::Assistant);
 }

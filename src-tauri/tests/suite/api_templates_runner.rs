@@ -1410,6 +1410,68 @@ mod through_the_bridge {
         }
     }
 
+    fn no_browser() -> FakeBrowsers {
+        FakeBrowsers { next: None, opened: 0, closed: 0, last: None }
+    }
+
+    async fn run_saved_waiting(browsers: FakeBrowsers, lease_wait_ms: u64) -> u16 {
+        let body = json!({ "id": ID, "account": "admin", "values": { "cycleName": "FY27" } });
+        let timing = v2_lib::browser::timing::Timing { lease_wait_ms, ..quick() };
+        api_template_run(&ctx(), &body.to_string(), |_| browsers, no_db, &timing).await.0
+    }
+
+    #[tokio::test]
+    async fn a_run_that_never_reached_the_site_records_nothing_for_an_unconfirmed_template() {
+        use v2_lib::api_templates::here::Here;
+        use v2_lib::autorun::lease::{self, Holder};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _l = crate::serial::account_leases();
+        let _changed = changes();
+        let Rig { root, browsers, .. } = rig(vec![], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+
+        // The browser does not open.
+        drop(browsers);
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert!(!v2_lib::api_templates::library::state_path(root.path(), ORG, PROJECT).exists());
+
+        // The account is in use and the wait ends.
+        let env = env_of_root(root.path());
+        let _case = lease::try_acquire(&env, "admin", Holder::Case { run: "run-x".into() }).unwrap();
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert!(!v2_lib::api_templates::library::state_path(root.path(), ORG, PROJECT).exists());
+    }
+
+    #[tokio::test]
+    async fn a_run_that_never_reached_the_site_adds_no_strike_to_a_confirmed_template() {
+        use v2_lib::api_templates::here::Here;
+        use v2_lib::autorun::lease::{self, Holder};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _l = crate::serial::account_leases();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        assert_eq!(run_saved_template(browsers).await, 200);
+        assert_eq!(saved_here(root.path()), Here::Confirmed { last_failure: None });
+
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        let env = env_of_root(root.path());
+        let _case = lease::try_acquire(&env, "admin", Holder::Case { run: "run-x".into() }).unwrap();
+        assert_eq!(run_saved_waiting(no_browser(), 100).await, 502);
+        assert_eq!(saved_here(root.path()), Here::Confirmed { last_failure: None }, "no strike for runs that never signed in");
+    }
+
     #[tokio::test]
     async fn a_failed_prove_of_a_different_draft_leaves_the_saved_templates_state_alone() {
         use v2_lib::api_templates::here::Here;
@@ -2516,7 +2578,11 @@ mod test_files {
 
 /// The environment `r`'s root signs in to.
 fn env_of(r: &Rig) -> String {
-    v2_lib::environments::active_id(r.root.path()).unwrap()
+    env_of_root(r.root.path())
+}
+
+fn env_of_root(root: &std::path::Path) -> String {
+    v2_lib::environments::active_id(root).unwrap()
 }
 
 async fn run_waiting(r: &mut Rig, wait_ms: u64) -> RunReport {

@@ -307,6 +307,12 @@ pub struct RunReport {
     /// The name of whatever stopped the run (a step's name, or one of the
     /// `StepReport` names for the parts before the steps).
     pub failed: Option<String>,
+    /// The run stopped before it signed in (no account lease, no browser):
+    /// it never reached the site, so it says nothing about the template
+    /// there. Not part of the report anyone sees or the bindings.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub unreached: bool,
 }
 
 /// A JSON value as a sentence shows it: a string without its quotes.
@@ -922,7 +928,7 @@ fn finish(req: &RunRequest, progress: Progress) -> RunReport {
         (None, false) => "failed".to_string(),
     };
     applog::info(format!("api template {}: {} {verdict}, {} steps", t.id, req.mode.label(), progress.sent));
-    RunReport { ok, template: t.id.clone(), outputs, created: progress.created, steps: progress.steps, failed: progress.failed }
+    RunReport { ok, template: t.id.clone(), outputs, created: progress.created, steps: progress.steps, failed: progress.failed, unreached: false }
 }
 
 /// The account's lease, in the active environment, before any browser
@@ -962,7 +968,7 @@ pub(crate) fn stopped_before_sign_in(req: &RunRequest, browser: bool, why: Strin
         progress.at(SIGN_IN, None);
         progress.fail(None, why);
     }
-    finish(req, progress)
+    RunReport { unreached: true, ..finish(req, progress) }
 }
 
 /// What one sign-in leaves for every template run after it in the same
