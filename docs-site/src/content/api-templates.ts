@@ -463,7 +463,7 @@ export const apiTemplates: Screen = {
       title: "Check a template before relying on it",
       steps: [
         "Press **>** beside the template to open its details.",
-        "Read **Proven**: when it last worked on your site and what it created.",
+        "Read **Proven**: when it last worked and what it created. That proof may have come from another environment; each environment confirms a template separately, so a template with no **Unconfirmed here** or **Failed here** mark has worked on this one.",
         "Read **Runs** for any failure since, with the step it failed at and why.",
         "A template marked **Unconfirmed here** or **Failed here** has not worked on this environment: ask the assistant to make it work here.",
       ],
