@@ -325,6 +325,9 @@ pub struct RecordingEvent {
     /// A "field" that is a password field. Says which field, never what
     /// was typed into it.
     pub password: bool,
+    /// A "marker" picked inside a menu.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub in_menu: bool,
 }
 
 /// Emitted when an assistant's prove or run of an API template changed

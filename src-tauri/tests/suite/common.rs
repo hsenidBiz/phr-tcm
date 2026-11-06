@@ -983,6 +983,17 @@ pub struct StatefulApp {
 }
 
 pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>) -> (ScriptedDriver, StatefulApp) {
+    stateful_app_with(cookie_is_good, broken_selector, false)
+}
+
+/// `stateful_app(false, None)`, except that `#marker`, once signed in, is
+/// found only by a lookup that includes hidden elements (a check kept
+/// inside a closed menu).
+pub fn stateful_app_marker_hidden() -> (ScriptedDriver, StatefulApp) {
+    stateful_app_with(false, None, true)
+}
+
+fn stateful_app_with(cookie_is_good: bool, broken_selector: Option<&'static str>, marker_hidden: bool) -> (ScriptedDriver, StatefulApp) {
     let state = StatefulApp {
         signed_in: Arc::new(AtomicBool::new(false)),
         typed_password: Arc::new(AtomicBool::new(false)),
@@ -992,6 +1003,7 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
     let (signed_in, typed, restored, clicks) =
         (state.signed_in.clone(), state.typed_password.clone(), state.restored.clone(), state.clicks.clone());
     let mut last_selector = String::new();
+    let mut last_visible_only = true;
     let ready = json!({ "visible": true, "onscreen": true, "enabled": true, "editable": true, "hit": true,
         "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0], "stable": true });
     let mut d = ScriptedDriver::new(move |method, params| {
@@ -1021,12 +1033,13 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
             "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                last_visible_only = params["arguments"][1]["value"].as_bool().unwrap_or(true);
                 json!({ "result": { "objectId": "arr" } })
             }
             "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
             "Runtime.getProperties" => {
                 let there = match last_selector.as_str() {
-                    "#marker" => signed_in.load(Ordering::SeqCst),
+                    "#marker" => signed_in.load(Ordering::SeqCst) && !(marker_hidden && last_visible_only),
                     "#other-session" => false,
                     s if Some(s) == broken_selector => false,
                     _ => true,

@@ -326,8 +326,14 @@ pub struct SignInRecipe {
     /// (`loading::wait_out`) - so no script needs a long first-step wait.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wait_while_shown: Vec<LoadingIndicator>,
-    /// Exactly one visible match of this means "signed in".
+    /// Exactly one visible match of this means "signed in" - or, with
+    /// `signed_in_in_menu`, at least one match on the page.
     pub signed_in: Target,
+    /// The signed-in check was picked inside a menu that is closed at rest:
+    /// a sign-in asks that it is on the page, not that it is visible. Off
+    /// for every recipe saved before this existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub signed_in_in_menu: bool,
     /// The page a login whose password has expired is sent to, when the site
     /// has one: a sign-in that ends there fails as "password expired".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -582,7 +588,22 @@ pub fn check_start_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// How a signed-in check is asked: on the page for one kept inside a menu,
+/// visible for every other.
+pub fn signed_in_check(in_menu: bool) -> crate::browser::expect::Check<'static> {
+    if in_menu {
+        crate::browser::expect::Check::Present
+    } else {
+        crate::browser::expect::Check::Visible
+    }
+}
+
 impl SignInRecipe {
+    /// How this recipe's `signed_in` is checked on every replay.
+    pub fn signed_in_check(&self) -> crate::browser::expect::Check<'static> {
+        signed_in_check(self.signed_in_in_menu)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         check_start_url(&self.start_url)?;
         if self.steps.is_empty() {

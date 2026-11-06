@@ -8906,7 +8906,7 @@ async fn fresh_home_for_area<D: crate::browser::cdp::Driver>(
         && crate::browser::expect::expect(
             d,
             &home.signed_in,
-            crate::browser::expect::Check::Visible,
+            home.signed_in_check(),
             timing.nav_ms,
             timing.poll_ms,
         )

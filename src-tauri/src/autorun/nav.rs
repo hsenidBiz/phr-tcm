@@ -701,6 +701,8 @@ pub struct Home {
     pub start_url: String,
     pub origins: Vec<String>,
     pub signed_in: Target,
+    /// The marker is kept inside a menu, so it is asked present, not visible.
+    pub signed_in_in_menu: bool,
     pub after_sign_in: Vec<RecipeStep>,
     /// The recipe's menu preferences, which `go_to_module` sets after a
     /// sign-in (`menu_setup`).
@@ -716,10 +718,16 @@ impl Home {
             start_url: recipe.start_url.clone(),
             origins: recipe.origins(),
             signed_in: recipe.signed_in.clone(),
+            signed_in_in_menu: recipe.signed_in_in_menu,
             after_sign_in: recipe.after_sign_in.clone(),
             menu_preferences: recipe.menu_preferences.clone(),
             modes: recipe.modes.clone(),
         }
+    }
+
+    /// How `signed_in` is checked: present for one kept inside a menu.
+    pub fn signed_in_check(&self) -> Check<'static> {
+        super::recipe::signed_in_check(self.signed_in_in_menu)
     }
 }
 
@@ -860,7 +868,7 @@ pub async fn load_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Ac
     if home.after_sign_in.is_empty() {
         return ActionOutcome::passed("went to the home page");
     }
-    let marker = expect(d, &home.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let marker = expect(d, &home.signed_in, home.signed_in_check(), timing.nav_ms, timing.poll_ms).await;
     if marker.ok {
         // Signed in, on the application's own page.
         d.confirm_capture_site();

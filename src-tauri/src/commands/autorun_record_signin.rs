@@ -126,7 +126,7 @@ pub async fn open_the_recording(
 }
 
 fn event(kind: &str, index: u32, readable: String, detail: String, password: bool) -> RecordingEvent {
-    RecordingEvent { kind: kind.into(), index, readable, detail, password }
+    RecordingEvent { kind: kind.into(), index, readable, detail, password, in_menu: false }
 }
 
 /// The recording itself, once its browser is listening: every step, the
@@ -145,7 +145,7 @@ pub async fn listen<D: Driver>(
             Seen::Step(n, Step::Field { target, password }) => {
                 event("field", n, target.describe(), String::new(), *password)
             }
-            Seen::Marker(t) => event("marker", 0, t.describe(), String::new(), false),
+            Seen::Marker(t, in_menu) => RecordingEvent { in_menu, ..event("marker", 0, t.describe(), String::new(), false) },
             Seen::Unreadable(why) => event("unreadable", 0, String::new(), why.to_string(), false),
         })
     })
@@ -170,6 +170,7 @@ pub async fn check_sign_in<D: Driver>(
     lease: &mut Held,
 ) -> Result<(), String> {
     lease.hold(root, &who.key).await?;
+    rec::refuse_check_on_start_page(d, recipe, timing).await?;
     let out = sign_in_fresh(d, root, recipe, who, timing).await;
     if out.ok {
         return Ok(());
@@ -266,9 +267,9 @@ pub async fn auto_run_record_sign_in_stop() -> Result<SignInDraftView, String> {
         crate::applog::warn(format!("sign-in recording: the recorder stopped unexpectedly: {e}"));
         RECORDER_FELL_OVER.to_string()
     })?;
-    let (steps, marker) = rec::finish(captured)?;
+    let (steps, marker, marker_in_menu) = rec::finish(captured)?;
     let draft =
-        Draft { organization: about.organization, project: about.project, start_url: about.start_url, steps, marker };
+        Draft { organization: about.organization, project: about.project, start_url: about.start_url, steps, marker, marker_in_menu };
     let view = draft.view();
     crate::applog::info(format!(
         "Auto-run sign-in recorded ({} steps, {})",

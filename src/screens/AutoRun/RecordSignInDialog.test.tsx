@@ -35,6 +35,7 @@ const DRAFT: SignInDraftView = {
     { kind: "click", readable: 'button "Sign in"', password: false },
   ],
   marker: 'link "Kim"',
+  marker_in_menu: false,
 };
 
 type Handler = (cmd: string, args: Record<string, unknown>) => unknown;
@@ -186,18 +187,18 @@ test("Finish waits for the signed-in check, which I'm signed in asks for and Pic
 
   fireEvent.click(screen.getByRole("button", { name: "I'm signed in" }));
   expect(
-    await screen.findByText(/Now click Sign out, or something every signed-in account sees - not your own name/),
+    await screen.findByText(/Now show us how you sign out: open the menu and click Sign out/),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
 
   await send(step("marker", 0, 'link "Kim"'));
   expect(screen.getByText('link "Kim"')).toBeInTheDocument();
-  expect(screen.queryByText(/Now click Sign out/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Now show us how you sign out/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled();
 
   fireEvent.click(screen.getByRole("button", { name: "Pick again" }));
   // Pick mode is on again, and the dialog says so while the old check stays.
-  expect(await screen.findByText(/Now click Sign out/)).toBeInTheDocument();
+  expect(await screen.findByText(/Now show us how you sign out/)).toBeInTheDocument();
   expect(screen.getByText('link "Kim"')).toBeInTheDocument();
   await send(step("marker", 0, 'button "Sign out"'));
   expect(screen.getByText('button "Sign out"')).toBeInTheDocument();
@@ -459,7 +460,7 @@ test("a recording left open from before can be cancelled when the dialog opens",
 test("what the dialog is sent carries no typed value", () => {
   const eventKeys: (keyof RecordingEvent)[] = ["kind", "index", "readable", "detail", "password"];
   const stepKeys: (keyof DraftStepView)[] = ["kind", "readable", "password"];
-  const draftKeys: (keyof SignInDraftView)[] = ["steps", "marker"];
+  const draftKeys: (keyof SignInDraftView)[] = ["steps", "marker", "marker_in_menu"];
   expect(Object.keys(step("field", 1, 'textbox "Email"')).sort()).toEqual([...eventKeys].sort());
   expect(Object.keys(DRAFT.steps[0]).sort()).toEqual([...stepKeys].sort());
   expect(Object.keys(DRAFT).sort()).toEqual([...draftKeys].sort());
@@ -499,4 +500,23 @@ test("the checking account can be changed in the review, and not while the check
     resolveSave?.({ saved: false, failure: "the check did not sign in - nothing was saved: x" });
   });
   expect(await screen.findByRole("combobox", { name: "Check with account" })).toBeEnabled();
+});
+
+test("a check picked inside a menu says so, live and in the review, and the hint offers Shift", async () => {
+  mount(recorder(undefined, (cmd) => (cmd === "auto_run_record_sign_in_stop" ? { ...DRAFT, marker: 'text "Sign out"', marker_in_menu: true } : undefined)), { recipe: RECIPE });
+  await startRecording();
+  fireEvent.click(screen.getByRole("button", { name: "I'm signed in" }));
+  expect(await screen.findByText("Now show us how you sign out: open the menu and click Sign out (it won't actually sign you out).")).toBeInTheDocument();
+  expect(await screen.findByText("Hold Shift as you click to open a menu without picking it.")).toBeInTheDocument();
+  await send({ ...step("marker", 0, 'text "Sign out"'), in_menu: true });
+  expect(screen.getByText(/text "Sign out" \(inside a menu\)/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+  await screen.findByRole("button", { name: "Check and save" });
+  expect(screen.getByText(/text "Sign out" \(inside a menu\)/)).toBeInTheDocument();
+});
+
+test("a check picked in plain view carries no menu note", async () => {
+  mount(recorder(), { recipe: RECIPE });
+  await toReview();
+  expect(screen.queryByText(/inside a menu/)).not.toBeInTheDocument();
 });

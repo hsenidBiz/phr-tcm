@@ -16,7 +16,7 @@ use v2_lib::autorun::sessions::{now_ms, save_session};
 use v2_lib::autorun::signin_recorder::{
     arm, capture, check_failure, check_marker_for, quiet_candidate, quiet_locator_from_ax, quiet_locator_from_hints,
     HAS_FIELD_INSIDE_JS, MARKER_NAMES_ACCOUNT, UNREADABLE_MARKER, css_escape, css_string, field_css, field_locator_from_ax, field_locator_from_hints,
-    finish, next_report, Captured, Draft, FieldChoice, FieldHints, FieldRole, Report, Seen, Step, BINDING,
+    finish, menu_marker_from_hints, next_report, Captured, SignInClick, Draft, FieldChoice, FieldHints, FieldRole, Report, Seen, Step, BINDING,
     CHECK_BROWSER_SILENT, CHECK_START_DID_NOT_OPEN, LISTENER_JS, NO_MARKER, NO_STEPS, NO_SUBMIT, PICK_OFF_JS,
     PICK_ON_JS, UNREADABLE_CLICK, UNREADABLE_FIELD,
 };
@@ -153,8 +153,43 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
     assert_eq!(LISTENER_JS.matches("preventDefault").count(), 1);
     assert_eq!(LISTENER_JS.matches("stopImmediatePropagation").count(), 1);
     assert_eq!(LISTENER_JS.matches("hush(e)").count(), 2);
-    assert!(LISTENER_JS.contains("if (e.isTrusted && window.__tcmRecPick) hush(e);"));
-    let pick = LISTENER_JS.find("if (window.__tcmRecPick) {").expect("pick mode");
+    assert!(LISTENER_JS.contains("if (!(press === null ? letThrough(e) : press)) hush(e);"), "release follows the press");
+    assert!(LISTENER_JS.contains("press = letThrough(e);"), "the press decides");
+    assert!(LISTENER_JS.contains("const decided = e.detail > 0 ? press : null;
+    press = null;"), "the click ends it; a keyboard click ignores it");
+    assert!(LISTENER_JS.contains("['contextmenu', 'dragstart']") && LISTENER_JS.contains("{ press = null; }"), "a press that never clicks is forgotten");
+    assert!(LISTENER_JS.contains("if (decided === null ? letThrough(e) : decided) { opened = true; return; }"), "a menu or Shift click is let through");
+    assert!(LISTENER_JS.contains("e.shiftKey ||"));
+    assert!(LISTENER_JS.contains("up <= 3"), "the opener is looked for up to 3 levels up");
+    for attr in [
+        "[aria-haspopup]:not([aria-haspopup=\"false\"])",
+        "[aria-expanded=\"false\"]",
+        "[data-toggle=\"dropdown\"]",
+        "[data-bs-toggle=\"dropdown\"]",
+    ] {
+        assert!(LISTENER_JS.contains(attr), "{attr} opens a menu");
+    }
+    assert!(LISTENER_JS.contains("if (n.matches(IN_MENU)) return false;"), "an item inside an open menu is not its opener");
+    assert!(
+        LISTENER_JS.contains("const inMenu = opened || inOpenMenu(el);
+      clicked('marker', el, inMenu);"),
+        "a pick again inside the open menu is in the menu"
+    );
+    assert!(
+        LISTENER_JS.contains(r#"const BOX = 'ul,ol,[role="menubar"],[role="group"],[role="listbox"],[role="menu"],.dropdown-menu';"#),
+        "the climb stops at a list or menu container"
+    );
+    assert!(
+        LISTENER_JS.contains("if (n.matches(BOX)) return false;
+        if (opener) return true;"),
+        "an opener above a container is not reached from inside it"
+    );
+    assert!(LISTENER_JS.contains("if (picked && letThrough(e, true)) return;"), "after the pick, menu clicks are still not recorded");
+    assert!(LISTENER_JS.contains("menu: !!menu,"));
+    let pick = LISTENER_JS.find("window.__tcmRecPick = false;
+      hush(e);").expect("pick mode");
+    assert_eq!(LISTENER_JS.matches("window.__tcmRecPick = false;
+      hush(e);").count(), 1);
     let stop = LISTENER_JS[pick..].find("hush(e)").unwrap();
     assert!(stop < 80, "only the picked click is stopped");
     for ev in ["pointerdown", "mousedown", "pointerup", "mouseup"] {
@@ -269,7 +304,7 @@ async fn a_recording_keeps_fields_and_clicks_in_order_and_the_picked_check() {
         seen.push(match s {
             Seen::Step(n, Step::Click(t)) => format!("{n} click {}", t.describe()),
             Seen::Step(n, Step::Field { target, password }) => format!("{n} field {} {password}", target.describe()),
-            Seen::Marker(t) => format!("marker {}", t.describe()),
+            Seen::Marker(t, _) => format!("marker {}", t.describe()),
             Seen::Unreadable(why) => why.to_string(),
         })
     })
@@ -297,8 +332,75 @@ async fn a_recording_keeps_fields_and_clicks_in_order_and_the_picked_check() {
     );
     assert!(!pick.load(Ordering::SeqCst), "a marker ends pick mode");
     assert!(evals.lock().unwrap().contains(&PICK_OFF_JS.to_string()), "and turns it off on the page");
-    let (steps, marker) = finish(captured).unwrap();
+    let (steps, marker, _) = finish(captured).unwrap();
     assert_eq!((steps.len(), marker.is_some()), (3, true));
+}
+
+fn menu_report(i: u32, text: &str) -> Event {
+    report(json!({ "ev": "marker", "doc": "d1", "i": i, "menu": true, "tag": "a", "role": "", "label": "", "text": text }))
+}
+
+#[test]
+fn a_check_picked_inside_a_menu_is_found_by_its_words() {
+    let c: SignInClick = serde_json::from_value(json!({ "doc": "d1", "i": 0, "menu": true, "tag": "a", "role": "menuitem", "label": "", "text": " Sign 
+ out " })).unwrap();
+    assert!(c.menu);
+    assert_eq!(menu_marker_from_hints(&c), Some(Target::One(LocatorStep { text: Some("Sign out".into()), exact: true, ..LocatorStep::default() })));
+    let quiet = SignInClick { quiet: true, ..c.clone() };
+    assert_eq!(menu_marker_from_hints(&quiet), None);
+    let long = serde_json::from_value::<SignInClick>(json!({ "doc": "d1", "i": 0, "menu": true, "text": "x".repeat(81) })).unwrap();
+    assert_eq!(menu_marker_from_hints(&long), None);
+    let old: SignInClick = serde_json::from_value(json!({ "doc": "d1", "i": 0, "text": "Sign out" })).unwrap();
+    assert!(!old.menu, "a report without the flag is a plain pick");
+}
+
+#[tokio::test]
+async fn a_check_inside_a_menu_reaches_the_draft_the_view_the_event_and_the_recipe() {
+    // held element 0 is in the tree as button "Sign out": the in-menu pick
+    // must still be named by its words, not by the tree.
+    let mut d = page_with(vec![Some(tree(0, "button", "Sign out"))], no_evals());
+    d.events.push_back(field_report(1, false, "user")); // a step, so finish succeeds
+    d.events.push_back(menu_report(0, "Sign out"));
+    let mut heard: Vec<RecordingEvent> = vec![];
+    let captured = listen(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(true), &mut |e| heard.push(e)).await;
+    let words = Target::One(LocatorStep { text: Some("Sign out".into()), exact: true, ..LocatorStep::default() });
+    assert_eq!(captured.marker, Some(words.clone()));
+    assert!(captured.marker_in_menu);
+    let marker_event = heard.iter().find(|e| e.kind == "marker").unwrap();
+    assert!(marker_event.in_menu && marker_event.readable == "text \"Sign out\"");
+    assert_eq!(serde_json::to_value(&heard[0]).unwrap().get("in_menu"), None, "only a marker carries it");
+    let (steps, marker, in_menu) = finish(captured).unwrap();
+    let draft = Draft { organization: "acme".into(), project: "Web".into(), start_url: "https://hr.example.internal/".into(), steps, marker, marker_in_menu: in_menu };
+    assert!(draft.view().marker_in_menu);
+    let recipe = draft.recipe(&[choice(FieldRole::Username, "")], None).unwrap();
+    assert!(recipe.signed_in_in_menu);
+    assert_eq!(recipe.signed_in, words);
+}
+
+#[tokio::test]
+async fn the_last_pick_decides_whether_the_check_is_inside_a_menu() {
+    let mut d = page_with(vec![None, None], no_evals());
+    d.events.push_back(menu_report(0, "Sign out"));
+    d.events.push_back(click_report("marker", 1, "Home"));
+    let captured = capture(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(true), &mut |_| {}).await;
+    assert_eq!(captured.marker.as_ref().map(Target::describe), Some("text \"Home\"".to_string()));
+    assert!(!captured.marker_in_menu);
+}
+
+#[tokio::test]
+async fn a_wordless_check_inside_a_menu_falls_back_to_the_tree_and_keeps_the_flag() {
+    let mut d = page_with(vec![Some(tree(0, "menuitem", "Sign out"))], no_evals());
+    d.events.push_back(menu_report(0, ""));
+    let captured = capture(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(true), &mut |_| {}).await;
+    assert_eq!(captured.marker, Some(exact_role("menuitem", "Sign out")));
+    assert!(captured.marker_in_menu);
+}
+
+#[test]
+fn a_check_inside_a_menu_that_names_the_account_is_still_refused() {
+    let c: SignInClick = serde_json::from_value(json!({ "doc": "d1", "i": 0, "menu": true, "text": "kim" })).unwrap();
+    let marker = menu_marker_from_hints(&c).unwrap();
+    assert_eq!(check_marker_for(&marker, &account()).unwrap_err(), MARKER_NAMES_ACCOUNT);
 }
 
 #[tokio::test]
@@ -361,7 +463,7 @@ async fn a_closed_browser_or_a_cancel_ends_the_recording_with_nothing() {
     let mut d = page_with(vec![], no_evals());
     d.events.push_back(click_report("click", 0, "Next"));
     let captured = capture(&mut d, &AtomicBool::new(false), &AtomicBool::new(true), &AtomicBool::new(false), &mut |_| {}).await;
-    assert_eq!(captured, Captured { steps: vec![], marker: None, ended: Ended::Cancelled });
+    assert_eq!(captured, Captured { steps: vec![], marker: None, marker_in_menu: false, ended: Ended::Cancelled });
     assert_eq!(finish(captured).unwrap_err(), CANCELLED);
 }
 
@@ -405,6 +507,7 @@ fn draft() -> Draft {
             Step::Click(css("#go")),
         ],
         marker: Some(css("#marker")),
+        marker_in_menu: false,
     }
 }
 
@@ -427,6 +530,8 @@ fn click(target: Target) -> RecipeStep {
 #[test]
 fn a_draft_becomes_a_recipe_with_placeholders_fixed_text_and_the_default_settings() {
     let recipe = draft().recipe(&roles(), None).unwrap();
+    assert!(!draft().view().marker_in_menu);
+    assert!(!Draft { marker: None, marker_in_menu: true, ..draft() }.view().marker_in_menu);
     assert_eq!(
         recipe,
         SignInRecipe {
@@ -445,6 +550,7 @@ fn a_draft_becomes_a_recipe_with_placeholders_fixed_text_and_the_default_setting
             close_when_shown: vec![],
             wait_while_shown: vec![],
             signed_in: css("#marker"),
+            signed_in_in_menu: false,
             allowed_origins: vec![],
             session_minutes: 480,
         }
@@ -555,6 +661,7 @@ fn recorded_recipe() -> SignInRecipe {
             Step::Click(css("#go")),
         ],
         marker: Some(css("#marker")),
+        marker_in_menu: false,
     };
     d.recipe(&[choice(FieldRole::Username, ""), choice(FieldRole::Password, "")], None).unwrap()
 }
@@ -587,6 +694,43 @@ async fn a_check_whose_step_finds_nothing_says_which_step_and_never_the_password
     let err = check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup()).await.unwrap_err();
     assert!(err.starts_with("the check did not sign in - nothing was saved: sign-in stopped at step 2"), "{err}");
     assert!(!err.contains(PASSWORD) && !err.contains("://"), "{err}");
+}
+
+/// A check kept inside a menu that is already in the sign-in page's own
+/// document would read a wrong password as signed in: refused, with the
+/// sentence, before any step runs. One that is not there is accepted.
+#[tokio::test]
+async fn a_check_inside_a_menu_that_is_already_on_the_sign_in_page_is_refused() {
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
+    let in_menu = SignInRecipe { signed_in_in_menu: true, ..recorded_recipe() };
+
+    // The page holds the (hidden) check before anybody has signed in.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = common::stateful_app_marker_hidden();
+    state.signed_in.store(true, Ordering::SeqCst);
+    let err = check_sign_in(&mut d, dir.path(), &in_menu, &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup())
+        .await
+        .unwrap_err();
+    assert_eq!(err, v2_lib::autorun::signin_recorder::CHECK_ON_SIGN_IN_PAGE);
+    assert!(!err.contains("://") && !err.contains("/#"), "{err}");
+    assert!(!state.typed_password.load(Ordering::SeqCst), "no step ran");
+    assert!(d.calls_to("Input.insertText").is_empty(), "nothing was typed");
+
+    // It appears only once signed in: accepted.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = common::stateful_app_marker_hidden();
+    check_sign_in(&mut d, dir.path(), &in_menu, &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup())
+        .await
+        .unwrap();
+
+    // A visible check is not looked for there: the same page is not refused.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    state.signed_in.store(true, Ordering::SeqCst);
+    check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup())
+        .await
+        .unwrap();
 }
 
 // ---- the kept draft, and the recorder's one slot ---------------------------
@@ -663,7 +807,7 @@ async fn the_draft_is_kept_per_project_and_a_sign_in_recording_shares_the_record
             }
             drop(claim);
             let d = draft();
-            Captured { steps: d.steps, marker: d.marker, ended: Ended::Stopped { href: String::new() } }
+            Captured { steps: d.steps, marker: d.marker, marker_in_menu: d.marker_in_menu, ended: Ended::Stopped { href: String::new() } }
         })
     })
     .await
@@ -711,7 +855,7 @@ fn fake_recording(
             }
             drop(browser);
             drop(claim);
-            Captured { steps: vec![], marker: None, ended: Ended::Cancelled }
+            Captured { steps: vec![], marker: None, marker_in_menu: false, ended: Ended::Cancelled }
         })
     }
 }
@@ -731,7 +875,7 @@ fn fake_recording_seeing_pick(
             }
             drop(browser);
             drop(claim);
-            Captured { steps: vec![], marker: None, ended: Ended::Cancelled }
+            Captured { steps: vec![], marker: None, marker_in_menu: false, ended: Ended::Cancelled }
         })
     }
 }
@@ -838,6 +982,7 @@ fn stateful_draft() -> Draft {
             Step::Click(css("#go")),
         ],
         marker: Some(css("#marker")),
+        marker_in_menu: false,
     }
 }
 

@@ -1004,8 +1004,17 @@ export const commands = {
 	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
 	 */
 	wait_while_shown?: LoadingIndicator_Serialize[],
-	/**  Exactly one visible match of this means "signed in". */
+	/**
+	 *  Exactly one visible match of this means "signed in" - or, with
+	 *  `signed_in_in_menu`, at least one match on the page.
+	 */
 	signed_in: Target_Serialize,
+	/**
+	 *  The signed-in check was picked inside a menu that is closed at rest:
+	 *  a sign-in asks that it is on the page, not that it is visible. Off
+	 *  for every recipe saved before this existed.
+	 */
+	signed_in_in_menu?: boolean,
 	/**
 	 *  The page a login whose password has expired is sent to, when the site
 	 *  has one: a sign-in that ends there fails as "password expired".
@@ -1871,7 +1880,7 @@ export const events = {
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	pwDone: makeEvent<PwDone>("pw-done"),
 	pwOutput: makeEvent<PwOutput>("pw-output"),
-	recordingEvent: makeEvent<RecordingEvent>("recording-event"),
+	recordingEvent: makeEvent<RecordingEvent_Deserialize>("recording-event"),
 	replayProgress: makeEvent<ReplayProgress>("replay-progress"),
 	runOrderNotSaved: makeEvent<RunOrderNotSaved>("run-order-not-saved"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
@@ -6699,7 +6708,17 @@ export type ReconciledCase = {
  *  away. Carries locator words only, never a login and never anything
  *  typed.
  */
-export type RecordingEvent = {
+export type RecordingEvent = RecordingEvent_Serialize | RecordingEvent_Deserialize;
+
+/**
+ *  Emitted while a module path or a sign-in is being recorded: one per
+ *  captured click, one per text field typed into (a sign-in only), one
+ *  when the signed-in check is picked (a sign-in only), one per click or
+ *  field that could not be named, and one if the recording browser went
+ *  away. Carries locator words only, never a login and never anything
+ *  typed.
+ */
+export type RecordingEvent_Deserialize = {
 	/**  "click", "field", "marker", "unreadable" or "closed" */
 	kind: string,
 	/**
@@ -6719,6 +6738,40 @@ export type RecordingEvent = {
 	 *  was typed into it.
 	 */
 	password: boolean,
+	/**  A "marker" picked inside a menu. */
+	in_menu: boolean,
+};
+
+/**
+ *  Emitted while a module path or a sign-in is being recorded: one per
+ *  captured click, one per text field typed into (a sign-in only), one
+ *  when the signed-in check is picked (a sign-in only), one per click or
+ *  field that could not be named, and one if the recording browser went
+ *  away. Carries locator words only, never a login and never anything
+ *  typed.
+ */
+export type RecordingEvent_Serialize = {
+	/**  "click", "field", "marker", "unreadable" or "closed" */
+	kind: string,
+	/**
+	 *  1-based position of a captured step ("click" or "field"); 0
+	 *  otherwise.
+	 */
+	index: number,
+	/**
+	 *  The step in words (`link "Leave"`, `textbox "Email"`), for "click",
+	 *  "field" and "marker".
+	 */
+	readable: string,
+	/**  Why, for "unreadable" and "closed". */
+	detail: string,
+	/**
+	 *  A "field" that is a password field. Says which field, never what
+	 *  was typed into it.
+	 */
+	password: boolean,
+	/**  A "marker" picked inside a menu. */
+	in_menu?: boolean,
 };
 
 /**  A request the application refused. */
@@ -7546,6 +7599,8 @@ export type SignInDraftView = {
 	steps: DraftStepView[],
 	/**  The signed-in check in words; empty when none was picked. */
 	marker: string,
+	/**  The check was picked inside a menu. True only with a marker. */
+	marker_in_menu: boolean,
 };
 
 export type SignInOutcome = SignInOutcome_Serialize | SignInOutcome_Deserialize;
@@ -7612,8 +7667,17 @@ export type SignInRecipe_Deserialize = {
 	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
 	 */
 	wait_while_shown?: LoadingIndicator_Deserialize[],
-	/**  Exactly one visible match of this means "signed in". */
+	/**
+	 *  Exactly one visible match of this means "signed in" - or, with
+	 *  `signed_in_in_menu`, at least one match on the page.
+	 */
 	signed_in: Target_Deserialize,
+	/**
+	 *  The signed-in check was picked inside a menu that is closed at rest:
+	 *  a sign-in asks that it is on the page, not that it is visible. Off
+	 *  for every recipe saved before this existed.
+	 */
+	signed_in_in_menu?: boolean,
 	/**
 	 *  The page a login whose password has expired is sent to, when the site
 	 *  has one: a sign-in that ends there fails as "password expired".
@@ -7672,8 +7736,17 @@ export type SignInRecipe_Serialize = {
 	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
 	 */
 	wait_while_shown?: LoadingIndicator_Serialize[],
-	/**  Exactly one visible match of this means "signed in". */
+	/**
+	 *  Exactly one visible match of this means "signed in" - or, with
+	 *  `signed_in_in_menu`, at least one match on the page.
+	 */
 	signed_in: Target_Serialize,
+	/**
+	 *  The signed-in check was picked inside a menu that is closed at rest:
+	 *  a sign-in asks that it is on the page, not that it is visible. Off
+	 *  for every recipe saved before this existed.
+	 */
+	signed_in_in_menu?: boolean,
 	/**
 	 *  The page a login whose password has expired is sent to, when the site
 	 *  has one: a sign-in that ends there fails as "password expired".

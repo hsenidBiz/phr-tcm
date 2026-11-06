@@ -323,9 +323,9 @@ pub async fn listen<D: Driver>(
         tell(match seen {
             Ok(t) => {
                 index += 1;
-                RecordingEvent { kind: "click".into(), index, readable: t.describe(), detail: String::new(), password: false }
+                RecordingEvent { kind: "click".into(), index, readable: t.describe(), detail: String::new(), password: false, in_menu: false }
             }
-            Err(why) => RecordingEvent { kind: "unreadable".into(), index: 0, readable: String::new(), detail: why.to_string(), password: false },
+            Err(why) => RecordingEvent { kind: "unreadable".into(), index: 0, readable: String::new(), detail: why.to_string(), password: false, in_menu: false },
         })
     })
     .await;
@@ -337,6 +337,7 @@ pub async fn listen<D: Driver>(
             readable: String::new(),
             detail: recorder::BROWSER_CLOSED.to_string(),
             password: false,
+            in_menu: false,
         });
         return (captured, None);
     }

@@ -6,6 +6,7 @@ use v2_lib::autorun::recipe::{
     for_account, has_placeholder, load_recipe, origin_of, project_slug, save_recipe, RecipeStep, SignInRecipe,
 };
 use v2_lib::browser::actions::Action;
+use v2_lib::browser::expect::Check;
 
 fn recipe(v: serde_json::Value) -> SignInRecipe {
     serde_json::from_value(v).expect("the test wrote an unparseable recipe")
@@ -538,4 +539,18 @@ fn a_recipe_holding_a_when_hidden_is_refused() {
     let mut in_then = sample();
     in_then["steps"][3]["then"] = json!([hidden]);
     assert!(refusal(in_then).contains(RECIPE_NO_WHEN_HIDDEN));
+}
+
+#[test]
+fn a_recipe_without_the_in_menu_flag_loads_and_is_written_without_it() {
+    let r = recipe(sample());
+    assert!(!r.signed_in_in_menu);
+    assert!(serde_json::to_value(&r).unwrap().get("signed_in_in_menu").is_none());
+    assert!(matches!(r.signed_in_check(), Check::Visible));
+    let mut v = sample();
+    v["signed_in_in_menu"] = json!(true);
+    let r = recipe(v);
+    assert!(r.signed_in_in_menu);
+    assert_eq!(serde_json::to_value(&r).unwrap()["signed_in_in_menu"], json!(true));
+    assert!(matches!(r.signed_in_check(), Check::Present));
 }

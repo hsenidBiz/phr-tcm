@@ -31,6 +31,7 @@ use v2_lib::autorun::signin::sign_in;
 use v2_lib::autorun::{sessions, store, CaseScript, LocalRun, StepScript};
 use v2_lib::browser::actions::{execute_in, execute_with, Action, ActionOutcome, HIGHLIGHT_JS, Policy};
 use v2_lib::browser::cdp::Cdp;
+use v2_lib::browser::expect::{expect, Check};
 use v2_lib::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
 use v2_lib::browser::locator::{resolve, Target};
 use v2_lib::browser::page;
@@ -1651,7 +1652,7 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     assert!(!pick.load(Ordering::SeqCst));
     drop(live);
 
-    let draft = Draft { organization: "acme".into(), project: "Web".into(), start_url: start, steps, marker: Some(marker) };
+    let draft = Draft { organization: "acme".into(), project: "Web".into(), start_url: start, steps, marker: Some(marker), marker_in_menu: third.marker_in_menu };
     let fields = [FieldChoice { role: FieldRole::Username, text: String::new() }, FieldChoice { role: FieldRole::Password, text: String::new() }];
     let recipe = draft.recipe(&fields, None).expect("the recording made no recipe");
     let before = app.logins.load(Ordering::SeqCst);
@@ -1669,6 +1670,157 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
         .unwrap_err();
     assert!(err.starts_with("the recorded steps ran, but the signed-in check never appeared"), "{err}");
     assert!(!err.contains("nope") && !err.contains("://"), "{err}");
+}
+
+/// Picking the signed-in check inside a menu, against real Edge: while
+/// picking, a click that opens a menu and a Shift click are carried out and
+/// not picked, the click on Sign out is picked and not carried out, and the
+/// check - found again with the menu closed - is present but not visible.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_closed() {
+    const PAGE: &str = r##"<!doctype html><html><body>
+<button id="me" aria-haspopup="menu" onmousedown="document.body.dataset.down=(document.body.dataset.down||'')+'me,'" onclick="document.getElementById('m').style.display='block'">Kim Lee</button>
+<ul id="m" role="menu" style="display:none"><li><a href="#" role="menuitem" onclick="document.body.dataset.out='1'; return false">Sign out</a></li></ul>
+<div id="plain" onclick="document.getElementById('h').style.display='block'">Account</div>
+<p id="h" style="display:none">Help</p>
+<a href="#" id="kbout" onclick="document.body.dataset.kb='1'; return false">Quit</a>
+<div id="panel" aria-expanded="true"><a href="#" id="panelout" onmousedown="document.body.dataset.down=(document.body.dataset.down||'')+'panel,'" onclick="document.body.dataset.panelout='1'; return false">Log off</a></div>
+<ul id="asp"><li aria-haspopup="true"><a href="#" id="aspname">Pat Doe</a><ul class="level2"><li><a href="#" id="aspout" onclick="document.body.dataset.asp='1'; return false">Leave site</a></li></ul></li></ul>
+</body></html>"##;
+    let mut live = open().await;
+    let root = tempfile::tempdir().unwrap();
+    let page = root.path().join("menu.html");
+    std::fs::write(&page, PAGE).unwrap();
+    let url = format!(
+        "file:///{}",
+        page.display().to_string().replace('\\', "/").trim_start_matches('/').replace(' ', "%20")
+    );
+    signin_recorder::prepare(&mut live.cdp, &url, &timing()).await.expect("the recording could not start");
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode");
+
+    // A click on the menu's button opens it.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#me" } })).await);
+    let shown = "getComputedStyle(document.getElementById('m')).display === 'block'";
+    assert_eq!(page::eval_value(&mut live.cdp, shown).await.unwrap(), json!(true), "the menu did not open");
+
+    // A Shift press and release on a plain element is carried out too.
+    let at = page::eval_value(
+        &mut live.cdp,
+        "(() => { const r = document.getElementById('plain').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()",
+    )
+    .await
+    .unwrap();
+    let (x, y) = (at[0].as_f64().unwrap(), at[1].as_f64().unwrap());
+    for kind in ["mousePressed", "mouseReleased"] {
+        live.cdp
+            .call(
+                "Input.dispatchMouseEvent",
+                json!({ "type": kind, "x": x, "y": y, "button": "left", "clickCount": 1, "modifiers": 8 }),
+            )
+            .await
+            .expect("the mouse did not go in");
+    }
+    let help = "getComputedStyle(document.getElementById('h')).display === 'block'";
+    assert_eq!(page::eval_value(&mut live.cdp, help).await.unwrap(), json!(true), "the Shift click was not carried out");
+
+    // The press on the menu's button reached the page; Sign out inside an
+    // already open panel is a pick, not a let-through: its press is stopped,
+    // its click is not carried out, and the marker arrives.
+    let down = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    assert_eq!(down, json!("me,"), "the menu button's press was stopped");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#panelout" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let down = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    assert_eq!(down, json!("me,"), "the open panel's press was let through");
+    let panel = page::eval_value(&mut live.cdp, "document.body.dataset.panelout || ''").await.unwrap();
+    assert_eq!(panel, json!(""), "Sign out in an open panel was carried out");
+    let (stop, cancel, pick) = (AtomicBool::new(true), AtomicBool::new(false), AtomicBool::new(true));
+    let no_pick = AtomicBool::new(false);
+    let first = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
+    // (Its menu flag is on: the menu was opened before it, by design.)
+    assert!(first.steps.is_empty() && first.marker.is_some(), "{first:?}");
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
+
+    // A press left unreleased on the menu button must not let a later
+    // keyboard Enter on a link through: Enter is a pick.
+    let me = page::eval_value(
+        &mut live.cdp,
+        "(() => { const r = document.getElementById('me').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()",
+    )
+    .await
+    .unwrap();
+    let (mx, my) = (me[0].as_f64().unwrap(), me[1].as_f64().unwrap());
+    live.cdp
+        .call("Input.dispatchMouseEvent", json!({ "type": "mousePressed", "x": mx, "y": my, "button": "left", "clickCount": 1 }))
+        .await
+        .expect("the mouse did not go in");
+    page::eval_value(&mut live.cdp, "document.getElementById('kbout').focus(); 1").await.unwrap();
+    for kind in ["keyDown", "keyUp"] {
+        live.cdp
+            .call(
+                "Input.dispatchKeyEvent",
+                json!({ "type": kind, "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13, "text": "\r" }),
+            )
+            .await
+            .expect("the key did not go in");
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let kb = page::eval_value(&mut live.cdp, "document.body.dataset.kb || ''").await.unwrap();
+    assert_eq!(kb, json!(""), "Enter on a link was carried out after a stale press");
+    let second = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
+    assert!(second.steps.is_empty() && second.marker.is_some(), "{second:?}");
+    live.cdp
+        .call("Input.dispatchMouseEvent", json!({ "type": "mouseReleased", "x": mx, "y": my, "button": "left", "clickCount": 1 }))
+        .await
+        .expect("the mouse did not go in");
+    // The released press is an ordinary click now; drain it.
+    let _ = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
+
+    // asp:Menu-style markup: the item sits in a list that sits in an
+    // `<li aria-haspopup>`. It is a pick, not the opener's let-through, and
+    // it is not carried out.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#aspout" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let asp = page::eval_value(&mut live.cdp, "document.body.dataset.asp || ''").await.unwrap();
+    assert_eq!(asp, json!(""), "Sign out inside an asp:Menu item was carried out");
+    let pick_asp = AtomicBool::new(true);
+    let nested = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick_asp, &mut |_| {}).await;
+    assert!(nested.steps.is_empty(), "{:?}", nested.steps);
+    let nested_marker = nested.marker.expect("the nested Sign out was not picked");
+    assert!(nested_marker.describe().contains("Leave site"), "{}", nested_marker.describe());
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
+
+    // The click on Sign out is the pick, and Sign out is not carried out.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#m a" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let out = page::eval_value(&mut live.cdp, "document.body.dataset.out || ''").await.unwrap();
+    assert_eq!(out, json!(""), "the picked click was carried out");
+    let pick = AtomicBool::new(true);
+    let got = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
+    assert!(got.steps.is_empty(), "{:?}", got.steps);
+    let marker = got.marker.expect("the pick was not reported");
+    assert!(marker.describe().contains("text \"Sign out\""), "{}", marker.describe());
+    assert!(got.marker_in_menu, "the pick came from inside a menu");
+
+    // The menu is still open: the click that closes it, on its opener, is
+    // carried out and not recorded as a step. An ordinary click still is.
+    let before = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#me" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    assert_ne!(before, after, "the closing click was not carried out");
+    let closing = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    assert!(closing.steps.is_empty(), "the click that closes the menu was recorded: {:?}", closing.steps);
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#plain" } })).await);
+    let ordinary = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    assert_eq!(ordinary.steps.len(), 1, "an ordinary click after the pick is still recorded: {:?}", ordinary.steps);
+
+    // With the menu closed again the check is in the page, not on show.
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    assert!(expect(&mut live.cdp, &marker, Check::Present, 2000, 50).await.ok, "the closed menu's check was not found");
+    assert!(!expect(&mut live.cdp, &marker, Check::Visible, 500, 50).await.ok, "a closed menu's check showed");
 }
 
 /// `upload` against the real thing: a test file put into a plain file
