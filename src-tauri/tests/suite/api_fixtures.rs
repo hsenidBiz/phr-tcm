@@ -1787,6 +1787,7 @@ mod running {
 
     #[tokio::test]
     async fn a_busy_or_refused_run_records_nothing_here() {
+        let _slot = crate::serial::api_template_run();
         let _act = crate::serial::activity_log();
         let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
@@ -1807,6 +1808,37 @@ mod running {
         // (Removing the template wrote an empty state file; the run added nothing to it.)
         let state = load_state(r.root.path(), ORG, PROJECT);
         assert!(state.fixtures.is_empty() && state.templates.is_empty());
+    }
+
+    /// A lease that is refused, or a browser that will not open, never
+    /// reached the site: the fixture is not marked Failed here for it.
+    #[tokio::test]
+    async fn a_lease_or_browser_failure_before_the_site_records_nothing_here() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
+        // No browser to open.
+        r.browsers.next = None;
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert!(!state_path(r.root.path(), ORG, PROJECT).exists());
+        // The account's lease is held elsewhere.
+        r.browsers.next = Some(r.another_page());
+        let env = v2_lib::environments::active(r.root.path()).unwrap().id;
+        let _held_lease = v2_lib::autorun::lease::acquire(
+            &env,
+            "admin",
+            v2_lib::autorun::lease::Holder::Browser { slot: 0 },
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert!(!state_path(r.root.path(), ORG, PROJECT).exists());
+        assert_eq!(fixture_here(&r), Here::Unconfirmed);
     }
 
     #[tokio::test]

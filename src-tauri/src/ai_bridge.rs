@@ -2225,10 +2225,6 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
     Some((if report.ok { 200 } else { 502 }, v.to_string()))
 }
 
-/// `POST /api-template-run` with the caller's own browser (`n`, when it has
-/// one): the explore session's browser when it can run the template
-/// (`run_saved_in`), and `None` when the usual run should go ahead - at once
-/// for a caller with no browser.
 /// What the assistant's run of a template says about it on this environment:
 /// confirmed when it worked, otherwise the failure (the retry rule decides
 /// whether a confirmed one flips). Lands only when the template that ran is
@@ -2245,6 +2241,10 @@ fn note_assistant_template_run(
     note_template_run(root, org, project, ran, report.ok, Some(failure), TrySource::Assistant);
 }
 
+/// `POST /api-template-run` with the caller's own browser (`n`, when it has
+/// one): the explore session's browser when it can run the template
+/// (`run_saved_in`), and `None` when the usual run should go ahead - at once
+/// for a caller with no browser.
 async fn run_saved_in_session(ctx: &BridgeContext, n: Option<SlotNo>, body: &str) -> Option<(u16, String)> {
     let n = n?;
     if !ctx.api_writes || unattended_run_is_using_the_browser().is_some() {

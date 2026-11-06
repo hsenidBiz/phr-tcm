@@ -402,6 +402,8 @@ async fn run_steps<B: Browsers>(
             let report = stopped_before_sign_in(&first, false, why);
             ran.failed = Some((Some(1), format!("step 1: {}", report.message())));
             ran.steps.push(report);
+            // Never reached the site: says nothing about the fixture here.
+            ran.refused = true;
             return ran;
         }
     };
@@ -411,6 +413,8 @@ async fn run_steps<B: Browsers>(
             let report = stopped_before_sign_in(&first, true, why);
             ran.failed = Some((Some(1), format!("step 1: {}", report.message())));
             ran.steps.push(report);
+            // Never reached the site: says nothing about the fixture here.
+            ran.refused = true;
             return ran;
         }
     };
