@@ -696,6 +696,43 @@ async fn a_check_whose_step_finds_nothing_says_which_step_and_never_the_password
     assert!(!err.contains(PASSWORD) && !err.contains("://"), "{err}");
 }
 
+/// A check kept inside a menu that is already in the sign-in page's own
+/// document would read a wrong password as signed in: refused, with the
+/// sentence, before any step runs. One that is not there is accepted.
+#[tokio::test]
+async fn a_check_inside_a_menu_that_is_already_on_the_sign_in_page_is_refused() {
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
+    let in_menu = SignInRecipe { signed_in_in_menu: true, ..recorded_recipe() };
+
+    // The page holds the (hidden) check before anybody has signed in.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = common::stateful_app_marker_hidden();
+    state.signed_in.store(true, Ordering::SeqCst);
+    let err = check_sign_in(&mut d, dir.path(), &in_menu, &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup())
+        .await
+        .unwrap_err();
+    assert_eq!(err, v2_lib::autorun::signin_recorder::CHECK_ON_SIGN_IN_PAGE);
+    assert!(!err.contains("://") && !err.contains("/#"), "{err}");
+    assert!(!state.typed_password.load(Ordering::SeqCst), "no step ran");
+    assert!(d.calls_to("Input.insertText").is_empty(), "nothing was typed");
+
+    // It appears only once signed in: accepted.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = common::stateful_app_marker_hidden();
+    check_sign_in(&mut d, dir.path(), &in_menu, &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup())
+        .await
+        .unwrap();
+
+    // A visible check is not looked for there: the same page is not refused.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    state.signed_in.store(true, Ordering::SeqCst);
+    check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup())
+        .await
+        .unwrap();
+}
+
 // ---- the kept draft, and the recorder's one slot ---------------------------
 
 /// Everything that touches the process-wide draft or the recorder's slot,

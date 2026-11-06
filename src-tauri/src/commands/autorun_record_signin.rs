@@ -170,6 +170,7 @@ pub async fn check_sign_in<D: Driver>(
     lease: &mut Held,
 ) -> Result<(), String> {
     lease.hold(root, &who.key).await?;
+    rec::refuse_check_on_start_page(d, recipe, timing).await?;
     let out = sign_in_fresh(d, root, recipe, who, timing).await;
     if out.ok {
         return Ok(());

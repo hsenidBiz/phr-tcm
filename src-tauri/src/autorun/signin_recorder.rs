@@ -567,6 +567,31 @@ pub async fn prepare<D: Driver>(d: &mut D, start_url: &str, timing: &Timing) -> 
     Ok(())
 }
 
+pub const CHECK_ON_SIGN_IN_PAGE: &str = "the signed-in check is already on the sign-in page, so it cannot tell a signed-in page from the sign-in page - show how you sign out from a different menu item";
+
+/// Before a recipe whose check is kept inside a menu is tried: the check is
+/// looked for on the sign-in page itself, with nobody signed in. A match
+/// there (a menu a shared page hides but still holds) would read a wrong
+/// password as signed in, so the recipe is refused with a sentence. A recipe
+/// whose check must be visible needs no such look.
+pub async fn refuse_check_on_start_page<D: Driver>(d: &mut D, recipe: &SignInRecipe, timing: &Timing) -> Result<(), String> {
+    if !recipe.signed_in_in_menu {
+        return Ok(());
+    }
+    let go = Action::Navigate { url: recipe.start_url.clone() };
+    let out = execute_in(d, &go, timing, &Policy::only(recipe.origins())).await;
+    if !out.ok {
+        // The sign-in's own run reports a start page that will not open.
+        crate::applog::warn(format!("sign-in recording: the start page did not open for the first look: {}", out.detail));
+        return Ok(());
+    }
+    let look = timing.expect_ms.min(1500);
+    if crate::browser::expect::expect(d, &recipe.signed_in, recipe.signed_in_check(), look, timing.poll_ms).await.ok {
+        return Err(CHECK_ON_SIGN_IN_PAGE.to_string());
+    }
+    Ok(())
+}
+
 pub const WOULD_NOT_LISTEN: &str =
     "the browser would not report what you do - try again, and see Settings, Logs if it keeps happening";
 pub const START_DID_NOT_OPEN: &str =
