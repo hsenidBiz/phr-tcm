@@ -95,6 +95,9 @@ pub struct TemplatesImportNote {
 pub struct TemplatesImportResult {
     pub added: Vec<String>,
     pub replaced: Vec<String>,
+    /// Titles of templates identical to the saved ones: nothing was written,
+    /// so their proof and every confirmation stay.
+    pub unchanged: Vec<String>,
     pub skipped: Vec<TemplatesImportSkip>,
     pub notes: Vec<TemplatesImportNote>,
 }

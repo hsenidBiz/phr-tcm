@@ -1021,6 +1021,7 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
       return {
         added: ["Performance cycle wizard (flow)", "Remove a goal"],
         replaced: ["Create a draft performance cycle"],
+        unchanged: [],
         skipped: [{ id: "Bad Id", reason: "this template's id is not valid" }],
         notes: [{ id: "goals-remove-goal", title: "Remove a goal", note: "its flow goals is not in the file" }],
       };
@@ -1034,7 +1035,7 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
   fireEvent.click(screen.getByRole("button", { name: "Import" }));
   let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
   expect(dialog).toHaveTextContent(
-    "Templates and flows with the same id as ones saved here are replaced, and arrive unproven - prove them on your site before relying on them.",
+    "Templates and flows with the same id as ones saved here are replaced, and arrive unconfirmed on every environment - ask the assistant to confirm them before relying on them.",
   );
   expect(dialog).not.toHaveTextContent("Downloads");
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -1068,6 +1069,40 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
+test("an import says how many were already here and kept their confirmations", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
+    if (cmd === "api_templates_import")
+      return { added: ["Remove a goal"], replaced: [], unchanged: ["Create a draft performance cycle"], skipped: [], notes: [] };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  dialog = await screen.findByRole("dialog", { name: "Imported shared.json" });
+  expect(dialog).toHaveTextContent("1 unchanged: already here, confirmations kept");
+});
+
+test("the import warning says new or changed items arrive unconfirmed on every environment", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
+    if (cmd === "api_templates_import")
+      return { added: ["Remove a goal"], replaced: [], unchanged: [], skipped: [], notes: [] };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  dialog = await screen.findByRole("dialog", { name: "Imported shared.json" });
+  expect(dialog).toHaveTextContent(
+    "Anything new or changed arrives unconfirmed on every environment - ask the assistant to confirm it before relying on it.",
+  );
+});
+
 test("removing a template says it was removed, and nothing about setups", async () => {
   mockOverview(OVERVIEW, (cmd) => (cmd === "api_templates_remove" ? null : undefined));
   renderScreen();
@@ -1082,7 +1117,7 @@ test("an import that replaced a template lists it, and nothing about approving s
   mockOverview(OVERVIEW, (cmd) => {
     if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
     if (cmd === "api_templates_import")
-      return { added: [], replaced: ["Create a draft performance cycle"], skipped: [], notes: [] };
+      return { added: [], replaced: ["Create a draft performance cycle"], unchanged: [], skipped: [], notes: [] };
     return undefined;
   });
   renderScreen();

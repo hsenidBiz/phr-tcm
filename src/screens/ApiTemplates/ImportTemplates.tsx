@@ -34,8 +34,12 @@ function Result({ result }: { result: TemplatesImportResult }) {
         <p className="text-xs text-muted">Nothing was imported.</p>
       ) : (
         <p className="text-xs text-muted">
-          Everything imported arrives unproven - prove it on your site before relying on it.
+          Anything new or changed arrives unconfirmed on every environment - ask the assistant to confirm it before
+          relying on it.
         </p>
+      )}
+      {result.unchanged.length > 0 && (
+        <p className="text-xs text-muted">{result.unchanged.length} unchanged: already here, confirmations kept</p>
       )}
       <ResultList title="Added" lines={result.added} />
       <ResultList title="Replaced" lines={result.replaced} />
@@ -55,7 +59,7 @@ function Result({ result }: { result: TemplatesImportResult }) {
 
 /**
  * Importing a file of API templates and flows: a warning first - a same-id
- * one is replaced and arrives unproven - then what was added, replaced and
+ * one is replaced and arrives unconfirmed - then what was added, replaced and
  * skipped. `onImported` runs as soon as the files are written, so the tab
  * reads its lists again behind the result.
  */
@@ -104,8 +108,8 @@ export default function ImportTemplates({
       ) : (
         <>
           <p className="text-xs text-muted">
-            Templates and flows with the same id as ones saved here are replaced, and arrive unproven - prove them
-            on your site before relying on them.
+            Templates and flows with the same id as ones saved here are replaced, and arrive unconfirmed on every
+            environment - ask the assistant to confirm them before relying on them.
           </p>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" disabled={run.isPending} onClick={onClose}>

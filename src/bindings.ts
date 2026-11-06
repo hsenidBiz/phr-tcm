@@ -8257,6 +8257,11 @@ export type TemplatesImportNote = {
 export type TemplatesImportResult = {
 	added: string[],
 	replaced: string[],
+	/**
+	 *  Titles of templates identical to the saved ones: nothing was written,
+	 *  so their proof and every confirmation stay.
+	 */
+	unchanged: string[],
 	skipped: TemplatesImportSkip[],
 	notes: TemplatesImportNote[],
 };

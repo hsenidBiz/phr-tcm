@@ -315,7 +315,8 @@ fn a_template_whose_flow_is_nowhere_still_imports_with_a_note() {
     flow_store::save(root.path(), ORG, TO, &Flow { id: "missing-flow".into(), ..flow() }).unwrap();
     let again = import_at(true, root.path(), ORG, TO, &path).unwrap();
     assert!(again.notes.is_empty(), "{:?}", again.notes);
-    assert_eq!(again.replaced, vec!["Create a draft performance cycle"]);
+    assert_eq!(again.unchanged, vec!["Create a draft performance cycle"], "the same content writes nothing");
+    assert!(again.replaced.is_empty());
 }
 
 #[test]
@@ -451,4 +452,106 @@ fn replacing_a_flow_names_the_saved_templates_it_no_longer_fits() {
     assert_eq!((note.id.as_str(), note.title.as_str()), ("pms-publish-cycle", "Publish a cycle"));
     assert!(note.note.contains("replaced its flow pms-performance-cycle"), "{}", note.note);
     assert!(note.note.contains("publish"), "{}", note.note);
+}
+
+// ---- Import keeps what is identical; export carries no state -----------
+
+use v2_lib::api_templates::here::{confirm_template, load_state, template_here, Here};
+use v2_lib::autorun::roots;
+
+/// Two environment roots under one shared folder, both writable for the test.
+struct Envs {
+    _shared: tempfile::TempDir,
+    qa: PathBuf,
+    staging: PathBuf,
+    _allowed: Vec<roots::AllowedTarget>,
+}
+
+fn envs() -> Envs {
+    let shared = tempfile::tempdir().unwrap();
+    let make = |id: &str| roots::env_root(shared.path(), id);
+    let (qa, staging) = (make("env-0000000a"), make("env-0000000b"));
+    let allowed = [&qa, &staging]
+        .iter()
+        .map(|r| {
+            std::fs::create_dir_all(r).unwrap();
+            roots::allow_writes_to(r)
+        })
+        .collect();
+    Envs { _shared: shared, qa, staging, _allowed: allowed }
+}
+
+fn here_of(root: &Path, id: &str) -> Here {
+    let t = store::load(root, ORG, TO, id).unwrap().unwrap();
+    template_here(&load_state(root, ORG, TO), &t)
+}
+
+fn confirmed_everywhere(e: &Envs) {
+    store::save(&e.qa, ORG, TO, &ApiTemplate { proven: Some(proven()), ..template() }).unwrap();
+    confirm_template(&e.qa, ORG, TO, &template()).unwrap();
+    confirm_template(&e.staging, ORG, TO, &template()).unwrap();
+    assert!(matches!(here_of(&e.qa, &template().id), Here::Confirmed { .. }));
+    assert!(matches!(here_of(&e.staging, &template().id), Here::Confirmed { .. }));
+}
+
+#[test]
+fn importing_an_identical_template_keeps_its_proof_and_confirmations() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let dir = tempfile::tempdir().unwrap();
+    confirmed_everywhere(&e);
+    let path = share_file(dir.path(), vec![template_json()], vec![]);
+
+    let result = import_at(true, &e.qa, ORG, TO, &path).unwrap();
+    assert_eq!(result.unchanged, vec!["Create a draft performance cycle"]);
+    assert!(result.added.is_empty() && result.replaced.is_empty(), "{result:?}");
+    assert!(store::load(&e.qa, ORG, TO, &template().id).unwrap().unwrap().proven.is_some(), "its proof stays");
+    assert!(matches!(here_of(&e.qa, &template().id), Here::Confirmed { .. }));
+    assert!(matches!(here_of(&e.staging, &template().id), Here::Confirmed { .. }));
+}
+
+#[test]
+fn importing_a_changed_template_is_unconfirmed_on_every_environment() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let dir = tempfile::tempdir().unwrap();
+    confirmed_everywhere(&e);
+    let mut changed = template_json();
+    changed["description"] = json!("A different description.");
+    let path = share_file(dir.path(), vec![changed], vec![]);
+
+    let result = import_at(true, &e.qa, ORG, TO, &path).unwrap();
+    assert_eq!(result.replaced, vec!["Create a draft performance cycle"]);
+    assert!(result.unchanged.is_empty());
+    assert_eq!(store::load(&e.qa, ORG, TO, &template().id).unwrap().unwrap().proven, None);
+    assert_eq!(here_of(&e.qa, &template().id), Here::Unconfirmed);
+    assert_eq!(here_of(&e.staging, &template().id), Here::Unconfirmed);
+}
+
+#[test]
+fn importing_a_new_template_is_unconfirmed_here() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let dir = tempfile::tempdir().unwrap();
+    let path = share_file(dir.path(), vec![template_json()], vec![]);
+
+    let result = import_at(true, &e.qa, ORG, TO, &path).unwrap();
+    assert_eq!(result.added, vec!["Create a draft performance cycle"]);
+    assert!(result.unchanged.is_empty());
+    assert_eq!(here_of(&e.qa, &template().id), Here::Unconfirmed);
+    assert_eq!(here_of(&e.staging, &template().id), Here::Unconfirmed);
+}
+
+#[test]
+fn an_export_carries_no_confirmation_state() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let out = tempfile::tempdir().unwrap();
+    confirmed_everywhere(&e);
+    let path = out.path().join("share.json");
+    export_at(true, &e.qa, ORG, TO, &path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    for key in ["\"here\"", "\"proven\"", "\"confirmed_at\"", "\"failed_here\"", "\"here_note\""] {
+        assert!(!text.contains(key), "{key} in the export: {text}");
+    }
 }
