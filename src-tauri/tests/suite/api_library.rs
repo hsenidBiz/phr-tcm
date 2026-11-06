@@ -9,7 +9,7 @@ use v2_lib::api_templates::fixture::{Fixture, FixtureStep};
 use v2_lib::api_templates::flow::{Flow, StageRef};
 use v2_lib::api_templates::here::{
     after_template_saved, confirm_fixture, confirm_template, fixture_here, flow_here, forget, load_state,
-    record_fixture_failure, record_template_failure, template_here, Here, HereFailure, TrySource,
+    note_fixture_run, note_template_run, record_fixture_failure, record_template_failure, template_here, Here, HereFailure, TrySource,
 };
 use v2_lib::api_templates::library::{
     flow_hash, history_dir, library_dir, state_path, template_hash, ApiKind, REMOVED_API_DIR,
@@ -551,4 +551,48 @@ fn the_overview_reports_each_flows_state_here() {
     assert_eq!(overview.flow_here[&fl.id], Here::Confirmed { last_failure: None });
     let elsewhere = v2_lib::commands::api_templates::overview_at(&e.prod, ORG, PROJECT).unwrap();
     assert_eq!(elsewhere.flow_here[&fl.id], Here::Unconfirmed, "confirmation is per environment");
+}
+
+#[test]
+fn a_run_of_a_draft_that_differs_from_the_saved_copy_records_nothing() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let saved = proven(template("t1", "/hr/a"));
+    store::save(&e.qa, ORG, PROJECT, &saved).unwrap();
+    let changed = template("t1", "/hr/changed");
+    note_template_run(&e.qa, ORG, PROJECT, &changed, false, Some(fail("1", "HTTP 500")), TrySource::Assistant);
+    note_template_run(&e.qa, ORG, PROJECT, &changed, true, None, TrySource::Assistant);
+    assert_eq!(here_of(&e.qa, &saved), Here::Unconfirmed);
+    assert!(!state_path(&e.qa, ORG, PROJECT).exists());
+}
+
+#[test]
+fn a_successful_run_of_the_saved_version_confirms_it() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let saved = proven(template("t1", "/hr/a"));
+    store::save(&e.qa, ORG, PROJECT, &saved).unwrap();
+    assert_eq!(template_here_in(&e.qa, "t1"), Here::Unconfirmed);
+    note_template_run(&e.qa, ORG, PROJECT, &saved, true, None, TrySource::Assistant);
+    assert_eq!(template_here_in(&e.qa, "t1"), Here::Confirmed { last_failure: None });
+    assert_eq!(template_here_in(&e.staging, "t1"), Here::Unconfirmed, "confirmation is per environment");
+}
+
+#[test]
+fn a_fixture_note_with_no_ran_templates_reads_them_from_the_store() {
+    let _lock = crate::serial::autorun();
+    let e = envs();
+    let (t1, t2) = (proven(template("t1", "/hr/a")), proven(template("t2", "/hr/b")));
+    store::save(&e.qa, ORG, PROJECT, &t1).unwrap();
+    store::save(&e.qa, ORG, PROJECT, &t2).unwrap();
+    let f = fixture("f", &["t1", "t2"]);
+    put_fixture(&e.qa, &f);
+    note_fixture_run(&e.qa, ORG, PROJECT, &f, &[], true, None, TrySource::Plain);
+    assert_eq!(fixture_here_in(&e.qa, "f"), Here::Confirmed { last_failure: None });
+    assert_eq!(template_here_in(&e.qa, "t2"), Here::Confirmed { last_failure: None });
+    // A failure with the full set reads back Failed, not Unconfirmed.
+    let g = fixture("g", &["t1", "t2"]);
+    put_fixture(&e.qa, &g);
+    note_fixture_run(&e.qa, ORG, PROJECT, &g, &[], false, Some(fail("step 2", "HTTP 500")), TrySource::Plain);
+    assert!(matches!(fixture_here_in(&e.qa, "g"), Here::Failed { failure } if failure.step.as_deref() == Some("step 2")));
 }

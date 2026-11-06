@@ -266,6 +266,81 @@ pub fn after_template_saved(
     })
 }
 
+/// A template run on this environment, recorded against the saved copy of
+/// the same content: a run of anything else (an edited draft, a template
+/// that is not saved) says nothing about the saved one and records nothing.
+/// Logs, never fails.
+pub fn note_template_run(
+    root: &Path,
+    org: &str,
+    project: &str,
+    ran: &ApiTemplate,
+    ok: bool,
+    failure: Option<HereFailure>,
+    source: TrySource,
+) {
+    let saved = match super::store::load(root, org, project, &ran.id) {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return,
+        Err(e) => {
+            crate::applog::warn(format!("template {}: its state here could not be updated, the saved copy did not read: {e}", ran.id));
+            return;
+        }
+    };
+    if template_hash(&saved) != template_hash(ran) {
+        return;
+    }
+    let done = match (ok, failure) {
+        (true, _) => confirm_template(root, org, project, &saved),
+        (false, Some(failure)) => record_template_failure(root, org, project, &saved, failure, source),
+        (false, None) => return,
+    };
+    if let Err(e) = done {
+        crate::applog::warn(format!("template {}: its state here could not be written: {e}", ran.id));
+    }
+}
+
+/// A fixture run on this environment. `ran` is the FULL set of templates its
+/// steps used (an empty one is read from the store): a partial set would
+/// make the entry read back as Unconfirmed. Logs, never fails.
+#[allow(clippy::too_many_arguments)]
+pub fn note_fixture_run(
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    ran: &[ApiTemplate],
+    ok: bool,
+    failure: Option<HereFailure>,
+    source: TrySource,
+) {
+    let from_store;
+    let templates = if ran.is_empty() {
+        from_store = f
+            .steps
+            .iter()
+            .map(|s| super::store::load(root, org, project, &s.template).ok().flatten())
+            .collect::<Option<Vec<ApiTemplate>>>();
+        match &from_store {
+            Some(t) => t.as_slice(),
+            None => {
+                crate::applog::warn(format!("fixture {}: its state here was not updated, a step's template is not saved", f.id));
+                return;
+            }
+        }
+    } else {
+        ran
+    };
+    let done = match (ok, failure) {
+        (true, _) => confirm_fixture(root, org, project, f, templates),
+        (false, Some(failure)) => record_fixture_failure(root, org, project, f, templates, failure, source),
+        (false, None) => return,
+    };
+    if let Err(e) = done {
+        crate::applog::warn(format!("fixture {}: its state here could not be written: {e}", f.id));
+    }
+}
+
 /// Drops this environment's entry for a removed item. Flows keep none.
 pub fn forget(root: &Path, org: &str, project: &str, kind: ApiKind, id: &str) -> Result<(), String> {
     let drop_from = |s: &mut EnvApiState| match kind {

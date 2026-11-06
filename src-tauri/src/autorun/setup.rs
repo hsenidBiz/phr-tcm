@@ -21,6 +21,7 @@
 //! fixture ids and names, output names and the runner's own sentences.
 
 use super::replay::Browsers;
+use crate::api_templates::here::{self, Here, HereFailure, TrySource};
 use super::{CaseScript, Setup, StepScript};
 use crate::api_templates::fixture::Fixture;
 use crate::api_templates::fixture_run::{self, no_such_fixture, run_fixture_for, Clock};
@@ -42,6 +43,27 @@ pub fn not_built(name: &str) -> String {
 /// fixture's own failure sentence after it.
 pub fn setup_failed(why: &str) -> String {
     format!("setup failed: {why}")
+}
+
+/// What the Blocked sentence says of a setup fixture that has not worked on
+/// this environment yet.
+pub const NOT_WORKED_HERE: &str = "this fixture has not worked on this environment yet";
+
+/// The Blocked sentence for a setup whose fixture is not confirmed on this
+/// environment and failed: it points at the assistant, which can make it
+/// work here.
+pub fn setup_not_worked_here(why: &str) -> String {
+    format!("setup failed: {NOT_WORKED_HERE} - ask the assistant to make it work here ({why})")
+}
+
+/// The Blocked sentence for a failed setup fixture: today's sentence when
+/// the fixture was confirmed here before the setup ran, the not-worked-here
+/// one when it was not.
+fn setup_blocked(before: &Here, why: &str) -> String {
+    match before {
+        Here::Confirmed { .. } => setup_failed(why),
+        Here::Unconfirmed | Here::Failed { .. } => setup_not_worked_here(why),
+    }
 }
 
 /// The Blocked sentence for a step that still holds a `{{setup.<output>}}`
@@ -414,7 +436,15 @@ where
         // The templates read with the fixture, never read again: what runs
         // is exactly what was checked.
         let f = &now.fixture;
-        fixture_run::ready_to_run(root, org, project, f, Some(&now.templates)).map_err(|why| setup_failed(&why))?;
+        let state = here::load_state(root, org, project);
+        let before = here::fixture_here(&state, f, &|id| now.templates.iter().flatten().find(|t| t.id == id).cloned());
+        if let Err(refused) = fixture_run::ready_to_run(root, org, project, f, Some(&now.templates)) {
+            if refused.counts {
+                let failure = HereFailure { at: crate::applog::stamp(), step: None, detail: Some(refused.why.clone()) };
+                here::note_fixture_run(root, org, project, f, &refused.templates, false, Some(failure), TrySource::Plain);
+            }
+            return Err(setup_blocked(&before, &refused.why));
+        }
         if cancel.load(Ordering::SeqCst) {
             return Err(setup_failed(fixture_run::RUN_STOPPED));
         }
@@ -432,11 +462,15 @@ where
             Some(id),
             Some(&now.templates),
             Some(cancel),
+            TrySource::Plain,
         )
         .await;
         if !report.ok {
             crate::applog::info(format!("case {id}: setup fixture {} failed, {} made", f.id, report.made.len()));
-            return Err(setup_failed(&report.message()));
+            if report.failed.as_deref() == Some(fixture_run::RUN_STOPPED) {
+                return Err(setup_failed(&report.message()));
+            }
+            return Err(setup_blocked(&before, &report.message()));
         }
         crate::applog::info(format!("case {id}: setup fixture {} ran, {} made", f.id, report.made.len()));
         setup_outputs = report.outputs;

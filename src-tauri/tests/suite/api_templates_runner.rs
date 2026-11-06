@@ -1360,6 +1360,78 @@ mod through_the_bridge {
         assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
     }
 
+    fn saved_here(root: &std::path::Path) -> v2_lib::api_templates::here::Here {
+        store::list(root, ORG, PROJECT).unwrap().into_iter().find(|s| s.template.id == ID).unwrap().here
+    }
+
+    async fn run_saved_template(browsers: FakeBrowsers) -> u16 {
+        let body = json!({ "id": ID, "account": "admin", "values": { "cycleName": "FY27" } });
+        api_template_run(&ctx(), &body.to_string(), |_| browsers, no_db, &quick()).await.0
+    }
+
+    #[tokio::test]
+    async fn a_run_of_an_unconfirmed_template_that_works_confirms_it_here() {
+        use v2_lib::api_templates::here::Here;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert_eq!(run_saved_template(browsers).await, 200);
+        assert_eq!(saved_here(root.path()), Here::Confirmed { last_failure: None });
+    }
+
+    #[tokio::test]
+    async fn a_failing_run_marks_an_unconfirmed_template_failed_here_with_the_step() {
+        use v2_lib::api_templates::here::Here;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        assert_eq!(run_saved_template(browsers).await, 502);
+        match saved_here(root.path()) {
+            Here::Failed { failure } => {
+                assert_eq!(failure.step.as_deref(), Some("Evaluation rules"));
+                assert!(failure.detail.unwrap_or_default().contains("Evaluation rules"));
+            }
+            other => panic!("expected Failed here, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_prove_of_a_different_draft_leaves_the_saved_templates_state_alone() {
+        use v2_lib::api_templates::here::Here;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        let mut draft = template();
+        draft.title = "A different title".into();
+        let call = body(json!({ "template": draft, "replace": true, "why": "testing" }));
+        let (status, out) = api_template_prove(&ctx(), &call, |_| browsers, no_db, &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        assert_eq!(saved_here(root.path()), Here::Unconfirmed);
+        assert!(!v2_lib::api_templates::library::state_path(root.path(), ORG, PROJECT).exists());
+    }
+
     /// A setup running this template: case 81, never approved.
     fn setup_running_it(root: &std::path::Path) {
         use v2_lib::api_templates::fixture::{Fixture, FixtureStep};

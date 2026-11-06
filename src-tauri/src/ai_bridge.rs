@@ -2206,6 +2206,10 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
         Err(e) => crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}")),
     }
 
+    if matches!(req.mode, crate::api_templates::runner::Mode::Run) {
+        note_assistant_template_run(root, org, project, &req.template, report);
+    }
+
     // Each POST step that was sent, by its path with the values and what the
     // run captured filled in.
     let sent = sent_posts(&req.template, report, &vars);
@@ -2225,6 +2229,22 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
 /// one): the explore session's browser when it can run the template
 /// (`run_saved_in`), and `None` when the usual run should go ahead - at once
 /// for a caller with no browser.
+/// What the assistant's run of a template says about it on this environment:
+/// confirmed when it worked, otherwise the failure (the retry rule decides
+/// whether a confirmed one flips). Lands only when the template that ran is
+/// the saved one.
+fn note_assistant_template_run(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    ran: &crate::api_templates::ApiTemplate,
+    report: &crate::api_templates::runner::RunReport,
+) {
+    use crate::api_templates::here::{note_template_run, HereFailure, TrySource};
+    let failure = HereFailure { at: crate::applog::stamp(), step: report.failed.clone(), detail: Some(report.message()) };
+    note_template_run(root, org, project, ran, report.ok, Some(failure), TrySource::Assistant);
+}
+
 async fn run_saved_in_session(ctx: &BridgeContext, n: Option<SlotNo>, body: &str) -> Option<(u16, String)> {
     let n = n?;
     if !ctx.api_writes || unattended_run_is_using_the_browser().is_some() {
@@ -2461,6 +2481,12 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     // id the saved template is still the one proven before - so it gets
     // no line: the assistant already has the failure, and a red "last
     // run" on a template that never ran would be a lie.
+    // A run of the saved version confirms it here or records its failure; a
+    // failed prove only lands when the draft is the saved copy. A prove that
+    // saved is already confirmed by `save_proven`.
+    if matches!(req.mode, Mode::Run) || (matches!(req.mode, Mode::Prove { .. }) && !report.ok) {
+        note_assistant_template_run(root, org, project, &req.template, &report);
+    }
     let saved_by_this_prove = changed;
     if matches!(req.mode, Mode::Run) || saved_by_this_prove {
         let record = RunRecord {
@@ -2725,7 +2751,8 @@ pub async fn api_fixture_run<B: crate::autorun::replay::Browsers>(
     };
     let mut browsers = open(which);
     let may_run = || assistant_may_still_write(ctx, &root);
-    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing, may_run).await {
+    let source = crate::api_templates::here::TrySource::Assistant;
+    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing, may_run, source).await {
         Ok(r) => r,
         Err(NotRun::Busy) => return (409, API_TEMPLATE_BUSY.to_string()),
         Err(NotRun::Refused(why)) => return (400, why),

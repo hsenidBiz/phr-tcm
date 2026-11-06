@@ -22,6 +22,7 @@
 use super::exec;
 use super::fixture::{sent_ref, validate, Fixture, FixtureRun};
 use super::fixture_store;
+use super::here::{self, HereFailure, TrySource};
 use super::runner::{
     account_lease, claim, open_session, preflight, run_in_session, stopped_before_sign_in, Mode, RunReport, RunRequest,
     API_TEMPLATE_BUSY, RETRY_PAUSES, RUN_LIMIT,
@@ -262,13 +263,32 @@ struct Start {
     first: RunRequest,
 }
 
+/// A run that could not start. `counts` is whether it says anything about
+/// whether the fixture works on this environment: a step-1 preflight (a
+/// missing account) does; a fixture that does not validate, a template that
+/// is gone or never proven, or a placeholder with no value does not.
+/// `templates` is the fixture's full set of step templates when `counts`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refused {
+    pub step: Option<usize>,
+    pub why: String,
+    pub counts: bool,
+    pub templates: Vec<ApiTemplate>,
+}
+
+impl Refused {
+    fn uncounted(step: Option<usize>, why: String) -> Self {
+        Refused { step, why, counts: false, templates: vec![] }
+    }
+}
+
 /// The checks before the lease and the browser. A template may have been
 /// replaced, re-proven as a delete, or removed since the fixture was
 /// saved; with `fixed`, the templates are the ones given (a setup's, as
 /// they were read with its fixture), never read from disk again. Step 1's values
 /// can only use the prefix and the clock, so it is checked here too, and
 /// nothing is opened for a run that cannot start. `Err` is the step (if
-/// one) and the sentence.
+/// one), the sentence and whether it counts against the fixture.
 fn start(
     root: &Path,
     org: &str,
@@ -277,44 +297,51 @@ fn start(
     prefix: &str,
     clock: &Clock,
     fixed: Option<&[Option<ApiTemplate>]>,
-) -> Result<Start, (Option<usize>, String)> {
+) -> Result<Start, Refused> {
     let lookup = |id: &str| match fixed {
         Some(given) => given.iter().flatten().find(|t| t.id == id).cloned(),
         None => template_store::load(root, org, project, id).ok().flatten(),
     };
     let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
-    validate(f, &lookup, &flows).map_err(|problems| (None, problems.join("; ")))?;
+    validate(f, &lookup, &flows).map_err(|problems| Refused::uncounted(None, problems.join("; ")))?;
     let mut templates = Vec::with_capacity(f.steps.len());
     for (i, step) in f.steps.iter().enumerate() {
         match lookup(&step.template) {
             Some(t) => templates.push(t),
             // `validate` has just found it; gone in between is "not proven".
-            None => return Err((Some(i + 1), format!("step {}: template {} is not proven", i + 1, step.template))),
+            None => {
+                return Err(Refused::uncounted(Some(i + 1), format!("step {}: template {} is not proven", i + 1, step.template)))
+            }
         }
     }
     let vars = BTreeMap::from([("prefix".to_string(), Value::String(prefix.to_string()))]);
     let first = step_request(1, org, project, &f.account, &templates[0], &f.steps[0].params, &vars, clock)
-        .map_err(|why| (Some(1), why))?;
-    preflight(root, &first, None).map_err(|problems| (Some(1), format!("step 1: {}", problems.join("; "))))?;
+        .map_err(|why| Refused::uncounted(Some(1), why))?;
+    preflight(root, &first, None).map_err(|problems| Refused {
+        step: Some(1),
+        why: format!("step 1: {}", problems.join("; ")),
+        counts: true,
+        templates: templates.clone(),
+    })?;
     Ok(Start { templates, first })
 }
 
 /// Whether `f` would start now - the checks a run makes before its lease
 /// and its browser (`start`), with `fixed` templates as `run_fixture_for`
 /// takes them - without starting it. `Err` is the sentence the run would
-/// stop with.
+/// stop with, and whether it counts against the fixture (`Refused`).
 pub fn ready_to_run(
     root: &Path,
     org: &str,
     project: &str,
     f: &Fixture,
     fixed: Option<&[Option<ApiTemplate>]>,
-) -> Result<(), String> {
+) -> Result<(), Refused> {
     let env = crate::environments::active(root).map_err(|e| {
         applog::warn(format!("fixture {}: the active environment could not be read: {e}", f.id));
-        "the active environment could not be read - see Settings, Logs".to_string()
+        Refused::uncounted(None, "the active environment could not be read - see Settings, Logs".to_string())
     })?;
-    start(root, org, project, f, &env.test_prefix, &Clock::now_local(), fixed).map(|_| ()).map_err(|(_, why)| why)
+    start(root, org, project, f, &env.test_prefix, &Clock::now_local(), fixed).map(|_| ())
 }
 
 /// What the steps did: each step's report, why the run stopped (with the
@@ -324,6 +351,12 @@ struct Ran {
     steps: Vec<RunReport>,
     failed: Option<(Option<usize>, String)>,
     vars: BTreeMap<String, Value>,
+    /// The templates the steps use, in step order: the full set once the
+    /// run could start, empty before that.
+    templates: Vec<ApiTemplate>,
+    /// The run was refused before it ran and says nothing about whether the
+    /// fixture works here: no state is recorded for it.
+    refused: bool,
 }
 
 /// Every step of `f`, in one browser signed in once. `prefix` stands for
@@ -343,17 +376,20 @@ async fn run_steps<B: Browsers>(
     fixed: Option<&[Option<ApiTemplate>]>,
     cancel: Option<&AtomicBool>,
 ) -> Ran {
-    let mut ran = Ran { steps: vec![], failed: None, vars: BTreeMap::new() };
+    let mut ran = Ran { steps: vec![], failed: None, vars: BTreeMap::new(), templates: vec![], refused: false };
     ran.vars.insert("prefix".to_string(), Value::String(prefix.to_string()));
     let stopped = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
 
     let Start { templates, first } = match start(root, org, project, f, prefix, clock, fixed) {
         Ok(s) => s,
-        Err(failed) => {
-            ran.failed = Some(failed);
+        Err(refusal) => {
+            ran.failed = Some((refusal.step, refusal.why));
+            ran.refused = !refusal.counts;
+            ran.templates = refusal.templates;
             return ran;
         }
     };
+    ran.templates = templates.clone();
     if stopped() {
         ran.failed = Some((Some(1), RUN_STOPPED.to_string()));
         return ran;
@@ -476,7 +512,8 @@ pub async fn run_fixture_within<B: Browsers>(
     retry_pauses: &[Duration],
     clock: Clock,
 ) -> FixtureReport {
-    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None, None, None).await
+    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None, None, None, TrySource::Plain)
+        .await
 }
 
 /// `run_fixture_within` for case `case_id`'s setup (`autorun::setup`):
@@ -485,7 +522,9 @@ pub async fn run_fixture_within<B: Browsers>(
 /// not saved) rather than reading them from disk again, so a setup runs
 /// exactly what was read when its case started. `cancel` stops the run
 /// between template steps with `RUN_STOPPED`; what it made by then is
-/// still recorded.
+/// still recorded. A run that started and was not stopped confirms the
+/// fixture here or records its failure (`here::note_fixture_run`); `source`
+/// is who ran it (the retry rule).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_fixture_for<B: Browsers>(
     browsers: &mut B,
@@ -500,6 +539,7 @@ pub async fn run_fixture_for<B: Browsers>(
     case_id: Option<i32>,
     fixed: Option<&[Option<ApiTemplate>]>,
     cancel: Option<&AtomicBool>,
+    source: TrySource,
 ) -> FixtureReport {
     let at = applog::stamp();
     let created_at = applog::iso_stamp();
@@ -589,12 +629,17 @@ pub async fn run_fixture_for<B: Browsers>(
         warnings.push("what this run made could not be recorded as test-made - see Settings, Logs".to_string());
     }
 
+    let (refused, templates) = (ran.refused, ran.templates);
     let (failed_step, failed) = match ran.failed {
         Some((step, why)) => (step, Some(why)),
         None => (None, None),
     };
     let report = FixtureReport { ok, outputs, made, steps: ran.steps, failed, warnings };
     append(root, org, project, f, &at, &report, failed_step);
+    if !refused && report.failed.as_deref() != Some(RUN_STOPPED) {
+        let failure = HereFailure { at: at.clone(), step: failed_step.map(|n| format!("step {n}")), detail: report.failed.clone() };
+        here::note_fixture_run(root, org, project, f, &templates, report.ok, Some(failure), source);
+    }
     match failed_step {
         _ if report.ok => applog::info(format!(
             "fixture {}: run {run_id} ok, {} steps, {} made",
@@ -654,6 +699,7 @@ pub async fn run_saved<B: Browsers>(
     id: &str,
     timing: &Timing,
     may_run: impl FnOnce() -> Result<(), String>,
+    source: TrySource,
 ) -> Result<FixtureReport, NotRun> {
     let Some(_claim) = claim() else {
         return Err(NotRun::Busy);
@@ -662,5 +708,20 @@ pub async fn run_saved<B: Browsers>(
     let f = fixture_store::load(root, org, project, id)
         .map_err(NotRun::Refused)?
         .ok_or_else(|| NotRun::Refused(no_such_fixture(id)))?;
-    Ok(run_fixture(browsers, root, org, project, &f, timing).await)
+    Ok(run_fixture_for(
+        browsers,
+        root,
+        org,
+        project,
+        &f,
+        timing,
+        RUN_LIMIT,
+        &RETRY_PAUSES,
+        Clock::now_local(),
+        None,
+        None,
+        None,
+        source,
+    )
+    .await)
 }

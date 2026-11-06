@@ -1694,6 +1694,150 @@ mod running {
         assert!(v["fixtures"][0]["steps"].is_array(), "{out}");
         assert_eq!(v["fixtures"][0]["last_run"], Value::Null);
     }
+
+    use v2_lib::api_templates::fixture_run::{run_fixture_for, run_saved, NotRun, RUN_STOPPED};
+    use v2_lib::api_templates::here::{load_state, Here, TrySource};
+    use v2_lib::api_templates::library::state_path;
+    use v2_lib::api_templates::runner::claim;
+
+    fn fixture_here(r: &Rig) -> Here {
+        fixture_store::list(r.root.path(), ORG, PROJECT).unwrap().remove(0).here
+    }
+
+    fn template_here(r: &Rig, id: &str) -> Here {
+        store::list(r.root.path(), ORG, PROJECT).unwrap().into_iter().find(|s| s.template.id == id).unwrap().here
+    }
+
+    /// A run of `f` from `source`, with a fresh browser on the same page.
+    async fn run_from(r: &mut Rig, f: &Fixture, source: TrySource, cancel: Option<&std::sync::atomic::AtomicBool>) -> FixtureReport {
+        r.browsers.next = Some(r.another_page());
+        run_fixture_for(
+            &mut r.browsers,
+            r.root.path(),
+            ORG,
+            PROJECT,
+            f,
+            &quick(),
+            RUN_LIMIT,
+            &QUICK_PAUSES,
+            CLOCK,
+            None,
+            None,
+            cancel,
+            source,
+        )
+        .await
+    }
+
+    /// Plenty of 500s for a run that fails at its first step, retries included.
+    fn failures(r: &Rig) {
+        r.script.lock().unwrap().responses.extend((0..12).map(|_| answer(500, json!({ "error": "no" }))));
+    }
+
+    #[tokio::test]
+    async fn a_built_fixture_is_confirmed_here_with_the_templates_it_ran() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        assert_eq!(fixture_here(&r), Here::Unconfirmed);
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(fixture_here(&r), Here::Confirmed { last_failure: None });
+        assert_eq!(template_here(&r, "make-cycle"), Here::Confirmed { last_failure: None });
+        assert_eq!(template_here(&r, "add-suite"), Here::Confirmed { last_failure: None });
+    }
+
+    #[tokio::test]
+    async fn a_failed_build_marks_only_the_fixture_failed_here_with_its_step() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(500, json!({ "error": "no" }))], &f, &[make_cycle(), add_suite()]);
+        failures(&r);
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        // The full set of step templates was recorded, so it reads back Failed.
+        match fixture_here(&r) {
+            Here::Failed { failure } => {
+                assert_eq!(failure.step.as_deref(), Some("step 2"));
+                assert_eq!(failure.detail, report.failed);
+            }
+            other => panic!("expected Failed here, got {other:?}"),
+        }
+        assert_eq!(template_here(&r, "make-cycle"), Here::Unconfirmed);
+        assert_eq!(template_here(&r, "add-suite"), Here::Unconfirmed);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_fixture_run_records_nothing_here() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        let report = run_from(&mut r, &f, TrySource::Assistant, Some(&stop)).await;
+        assert_eq!(report.failed.as_deref(), Some(RUN_STOPPED));
+        assert!(!state_path(r.root.path(), ORG, PROJECT).exists());
+        assert_eq!(fixture_here(&r), Here::Unconfirmed);
+    }
+
+    #[tokio::test]
+    async fn a_busy_or_refused_run_records_nothing_here() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
+        {
+            let _slot = claim().expect("the slot is free");
+            let got = run_saved(&mut r.browsers, r.root.path(), ORG, PROJECT, &f.id, &quick(), || Ok(()), TrySource::Assistant).await;
+            assert!(matches!(got, Err(NotRun::Busy)));
+        }
+        let got = run_saved(&mut r.browsers, r.root.path(), ORG, PROJECT, "nope", &quick(), || Ok(()), TrySource::Assistant).await;
+        assert!(matches!(got, Err(NotRun::Refused(_))));
+        assert!(!state_path(r.root.path(), ORG, PROJECT).exists());
+        // A template that is gone refuses inside the run and records nothing either.
+        store::remove(r.root.path(), ORG, PROJECT, "add-suite").unwrap();
+        let report = run_from(&mut r, &f, TrySource::Assistant, None).await;
+        assert!(!report.ok);
+        // (Removing the template wrote an empty state file; the run added nothing to it.)
+        let state = load_state(r.root.path(), ORG, PROJECT);
+        assert!(state.fixtures.is_empty() && state.templates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_persons_rebuild_never_flips_a_confirmed_fixture() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        assert!(run(&mut r, &f).await.ok);
+        failures(&r);
+        for _ in 0..2 {
+            assert!(!run_from(&mut r, &f, TrySource::Plain, None).await.ok);
+        }
+        assert!(matches!(fixture_here(&r), Here::Confirmed { last_failure: Some(_) }));
+    }
+
+    #[tokio::test]
+    async fn the_assistants_retry_flips_a_confirmed_fixture_after_a_failure() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let _leases = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        assert!(run(&mut r, &f).await.ok);
+        failures(&r);
+        assert!(!run_from(&mut r, &f, TrySource::Plain, None).await.ok);
+        assert!(matches!(fixture_here(&r), Here::Confirmed { last_failure: Some(_) }));
+        assert!(!run_from(&mut r, &f, TrySource::Assistant, None).await.ok);
+        assert!(matches!(fixture_here(&r), Here::Failed { .. }));
+    }
 }
 
 /// Review Focus 5: no bridge route and no MCP tool writes the record of

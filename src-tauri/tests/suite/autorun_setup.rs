@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use v2_lib::api_templates::fixture::{Creates, Fixture, FixtureRun, FixtureStep};
 use v2_lib::api_templates::fixture_run::Clock;
+use v2_lib::api_templates::here::{confirm_fixture, Here};
 use v2_lib::api_templates::runner::RUN_LIMIT;
 use v2_lib::api_templates::{fixture_store, store as template_store, ApiTemplate, Proven};
 use v2_lib::autorun::accounts::{save_accounts, Account};
@@ -26,7 +27,7 @@ use v2_lib::autorun::preconditions::{NoDb, PreconditionDb};
 use v2_lib::autorun::replay::{run_cases, Browsers, CaseToRun};
 use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest, ReplayState};
 use v2_lib::autorun::setup::{
-    self, check_saved, not_built, prepare_case, prepare_case_within, resolve, FixtureValues,
+    self, check_saved, not_built, prepare_case, prepare_case_within, resolve, FixtureValues, NOT_WORKED_HERE,
 };
 use v2_lib::autorun::{store, test_made, CaseScript, LocalRun, Setup};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
@@ -521,6 +522,8 @@ async fn a_retry_whose_setup_fails_says_the_setup_failed() {
 
     let case = &run.cases[0];
     let first = case.retried.clone().expect("the first try's sentence is kept");
+    // The first go's setup worked, so the fixture is confirmed here and the
+    // second go's failure keeps today's sentence.
     let not_started = format!("{first}{RETRY_NOT_STARTED}setup failed: step 1: ");
     assert!(case.reason.starts_with(&not_started), "{}", case.reason);
     assert!(case.reason.ends_with(')'), "{}", case.reason);
@@ -551,7 +554,7 @@ async fn a_failed_setup_blocks_with_the_fixtures_sentence() {
     )
     .await;
     let why = got.unwrap_err();
-    assert!(why.starts_with("setup failed: step 1: "), "{why}");
+    assert!(why.starts_with("setup failed: ") && why.contains("(step 1: "), "{why}");
     assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
     let env = v2_lib::environments::active_id(r.root.path()).unwrap();
     assert!(!lease::is_held(&env, ACCOUNT));
@@ -1076,7 +1079,7 @@ async fn the_supervised_browser_question_is_answered_during_a_setup() {
     assert!(!open);
     // Nobody stopped it: the hanging step ran into its limit.
     let why = blocked.unwrap();
-    assert!(why.starts_with("setup failed: step 1: "), "{why}");
+    assert!(why.starts_with("setup failed: ") && why.contains("(step 1: "), "{why}");
 }
 
 /// Changing a fixture a setup runs answers with what was saved and nothing
@@ -1178,4 +1181,88 @@ fn an_import_that_changes_a_template_says_nothing_about_approvals() {
     assert_eq!(result.replaced, vec!["Make a cycle"]);
     let shown = serde_json::to_value(&result).unwrap();
     assert!(shown.get("reapproval").is_none(), "{shown}");
+}
+
+/// `prepare_case_within` for case `case_id`'s script with the quick pauses.
+async fn prepare(r: &mut Rig, sc: &CaseScript) -> Result<v2_lib::autorun::setup::Prepared, String> {
+    prepare_case_within(
+        &mut r.browsers,
+        r.root.path(),
+        ORG,
+        PROJECT,
+        sc,
+        &quick(),
+        &NO_STOP,
+        |_| std::future::ready(()),
+        RUN_LIMIT,
+        &QUICK_PAUSES,
+        CLOCK,
+    )
+    .await
+}
+
+fn own_here(r: &Rig) -> Here {
+    fixture_store::list(r.root.path(), ORG, PROJECT).unwrap().into_iter().find(|s| s.fixture.id == "own").unwrap().here
+}
+
+fn setup_script(case_id: i32) -> CaseScript {
+    script(case_id, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]))
+}
+
+#[tokio::test]
+async fn an_unconfirmed_setup_fixture_that_fails_blocks_with_not_worked_here_yet() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![answer(500, json!({ "error": "no" }))]);
+    let err = prepare(&mut r, &setup_script(30)).await.unwrap_err();
+    assert!(err.contains("this fixture has not worked on this environment yet"), "{err}");
+    assert!(err.contains(NOT_WORKED_HERE) && err.starts_with("setup failed: "), "{err}");
+    assert!(matches!(own_here(&r), Here::Failed { .. }), "the failure is recorded");
+}
+
+#[tokio::test]
+async fn a_confirmed_setup_fixture_that_fails_blocks_with_todays_sentence() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![answer(500, json!({ "error": "no" }))]);
+    confirm_fixture(r.root.path(), ORG, PROJECT, &fixture("own"), &[make_cycle()]).unwrap();
+    assert_eq!(own_here(&r), Here::Confirmed { last_failure: None });
+    let err = prepare(&mut r, &setup_script(31)).await.unwrap_err();
+    assert!(err.starts_with("setup failed: ") && !err.contains(NOT_WORKED_HERE), "{err}");
+    assert!(matches!(own_here(&r), Here::Confirmed { last_failure: Some(_) }), "a plain run only records the strike");
+}
+
+#[tokio::test]
+async fn a_setup_with_no_account_here_counts_as_a_failure_of_the_fixture() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![]);
+    let mut ghost = fixture("own");
+    ghost.account = "ghost".into();
+    fixture_store::save(r.root.path(), ORG, PROJECT, &ghost).unwrap();
+    let err = prepare(&mut r, &setup_script(32)).await.unwrap_err();
+    assert!(err.contains(NOT_WORKED_HERE), "{err}");
+    assert_eq!(r.browsers.opened, 0, "nothing opened");
+    assert!(matches!(own_here(&r), Here::Failed { .. }), "{:?}", own_here(&r));
+}
+
+#[tokio::test]
+async fn an_unconfirmed_setup_fixture_that_works_becomes_confirmed() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![the_cycle()]);
+    assert_eq!(own_here(&r), Here::Unconfirmed);
+    prepare(&mut r, &setup_script(33)).await.expect("the setup ran");
+    assert_eq!(own_here(&r), Here::Confirmed { last_failure: None });
+}
+
+#[tokio::test]
+async fn a_plain_setup_run_never_rewrites_the_fixture() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![answer(500, json!({ "error": "no" }))]);
+    let file = fixture_store::fixtures_dir(r.root.path(), ORG, PROJECT).join("own.json");
+    let before = std::fs::read(&file).unwrap();
+    prepare(&mut r, &setup_script(34)).await.unwrap_err();
+    assert_eq!(std::fs::read(&file).unwrap(), before);
 }
