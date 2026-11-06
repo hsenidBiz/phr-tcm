@@ -155,8 +155,9 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
     assert_eq!(LISTENER_JS.matches("hush(e)").count(), 2);
     assert!(LISTENER_JS.contains("if (!(press === null ? letThrough(e) : press)) hush(e);"), "release follows the press");
     assert!(LISTENER_JS.contains("press = letThrough(e);"), "the press decides");
-    assert!(LISTENER_JS.contains("const decided = press;
-    press = null;"), "the click ends it");
+    assert!(LISTENER_JS.contains("const decided = e.detail > 0 ? press : null;
+    press = null;"), "the click ends it; a keyboard click ignores it");
+    assert!(LISTENER_JS.contains("['contextmenu', 'dragstart']") && LISTENER_JS.contains("{ press = null; }"), "a press that never clicks is forgotten");
     assert!(LISTENER_JS.contains("if (decided === null ? letThrough(e) : decided) { opened = true; return; }"), "a menu or Shift click is let through");
     assert!(LISTENER_JS.contains("e.shiftKey ||"));
     assert!(LISTENER_JS.contains("up <= 3"), "the opener is looked for up to 3 levels up");

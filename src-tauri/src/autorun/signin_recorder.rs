@@ -186,9 +186,14 @@ pub const LISTENER_JS: &str = r#"(() => {
   for (const kind of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
     document.addEventListener(kind, pressWhilePicking, true);
   }
+  for (const kind of ['contextmenu', 'dragstart']) {
+    document.addEventListener(kind, () => { press = null; }, true);
+  }
   document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
-    const decided = press;
+    // A keyboard click (detail 0) has no press of its own: a press left
+    // over from a pointer that never clicked must not decide it.
+    const decided = e.detail > 0 ? press : null;
     press = null;
     const el = elementOf(e.target);
     if (!el) return;

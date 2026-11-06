@@ -1684,6 +1684,7 @@ async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_close
 <ul id="m" role="menu" style="display:none"><li><a href="#" role="menuitem" onclick="document.body.dataset.out='1'; return false">Sign out</a></li></ul>
 <div id="plain" onclick="document.getElementById('h').style.display='block'">Account</div>
 <p id="h" style="display:none">Help</p>
+<a href="#" id="kbout" onclick="document.body.dataset.kb='1'; return false">Quit</a>
 <div id="panel" aria-expanded="true"><a href="#" id="panelout" onmousedown="document.body.dataset.down=(document.body.dataset.down||'')+'panel,'" onclick="document.body.dataset.panelout='1'; return false">Log off</a></div>
 </body></html>"##;
     let mut live = open().await;
@@ -1734,9 +1735,46 @@ async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_close
     let panel = page::eval_value(&mut live.cdp, "document.body.dataset.panelout || ''").await.unwrap();
     assert_eq!(panel, json!(""), "Sign out in an open panel was carried out");
     let (stop, cancel, pick) = (AtomicBool::new(true), AtomicBool::new(false), AtomicBool::new(true));
+    let no_pick = AtomicBool::new(false);
     let first = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
     // (Its menu flag is on: the menu was opened before it, by design.)
     assert!(first.steps.is_empty() && first.marker.is_some(), "{first:?}");
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
+
+    // A press left unreleased on the menu button must not let a later
+    // keyboard Enter on a link through: Enter is a pick.
+    let me = page::eval_value(
+        &mut live.cdp,
+        "(() => { const r = document.getElementById('me').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()",
+    )
+    .await
+    .unwrap();
+    let (mx, my) = (me[0].as_f64().unwrap(), me[1].as_f64().unwrap());
+    live.cdp
+        .call("Input.dispatchMouseEvent", json!({ "type": "mousePressed", "x": mx, "y": my, "button": "left", "clickCount": 1 }))
+        .await
+        .expect("the mouse did not go in");
+    page::eval_value(&mut live.cdp, "document.getElementById('kbout').focus(); 1").await.unwrap();
+    for kind in ["keyDown", "keyUp"] {
+        live.cdp
+            .call(
+                "Input.dispatchKeyEvent",
+                json!({ "type": kind, "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13, "text": "\r" }),
+            )
+            .await
+            .expect("the key did not go in");
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let kb = page::eval_value(&mut live.cdp, "document.body.dataset.kb || ''").await.unwrap();
+    assert_eq!(kb, json!(""), "Enter on a link was carried out after a stale press");
+    let second = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
+    assert!(second.steps.is_empty() && second.marker.is_some(), "{second:?}");
+    live.cdp
+        .call("Input.dispatchMouseEvent", json!({ "type": "mouseReleased", "x": mx, "y": my, "button": "left", "clickCount": 1 }))
+        .await
+        .expect("the mouse did not go in");
+    // The released press is an ordinary click now; drain it.
+    let _ = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
     page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
 
     // The click on Sign out is the pick, and Sign out is not carried out.
