@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5-beta.6",
+    date: "2026-11-06",
+    items: [
+      "Pull requests have a Copy link button beside Open in Azure DevOps, as work items do.",
+      "The project name beside a pull request group's heading shows as one pill again, instead of breaking into pieces.",
+    ],
+  },
+  {
     version: "2.4.5-beta.5",
     date: "2026-11-05",
     items: [

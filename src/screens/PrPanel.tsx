@@ -11,10 +11,12 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { copyText } from "../lib/clipboard";
 import {
   Bug,
   ChevronDown,
   ChevronRight,
+  Copy,
   ExternalLink,
   GitBranch,
   RefreshCw,
@@ -612,6 +614,20 @@ function PrRow({
           }}
         >
           <ExternalLink size={13} />
+        </span>
+        <span
+          role="button"
+          aria-label={`Copy link to !${pr.id}`}
+          title="Copy link"
+          className="mt-0.5 shrink-0 rounded p-1 text-muted hover:text-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            copyText(pr.web_url)
+              .then(() => toast.success("Link copied."))
+              .catch(() => toast.error("Could not copy to clipboard."));
+          }}
+        >
+          <Copy size={13} />
         </span>
       </button>
 
