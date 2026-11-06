@@ -281,6 +281,9 @@ struct Plan {
 struct Candidates {
     all: Vec<Candidate>,
     envs: Vec<(String, PathBuf)>,
+    /// Folders under `removed-envs`: they confirm nothing, but their run
+    /// histories show which lines were copied from them.
+    removed: Vec<(String, PathBuf)>,
 }
 
 fn gather(shared: &Path) -> Result<Candidates, String> {
@@ -311,7 +314,7 @@ fn gather(shared: &Path) -> Result<Candidates, String> {
         scan(&lib.join(kind.folder()), &Holder::Library, kind, None, &mut library)?;
     }
     all.extend(library.into_iter().filter(|c| touched.contains(&group_key(c))));
-    Ok(Candidates { all, envs })
+    Ok(Candidates { all, envs, removed })
 }
 
 fn group_key(c: &Candidate) -> GroupKey {
@@ -443,13 +446,9 @@ fn confirm(
             let Some(win) = winning_hash.get(key) else { continue };
             let Some(c) = members.iter().find(|c| c.holder == Holder::Env(env_id.clone())) else { continue };
             let Some(def) = c.def.as_ref().filter(|d| d.hash() == *win) else { continue };
-            // A history another environment holds byte for byte was copied
+            // A line another holder's history carries verbatim was copied
             // along with the data, not earned here: it confirms nothing.
-            let runs = if copied_history(&found.envs, env_id, c.kind, &c.slug, &c.id) {
-                vec![]
-            } else {
-                read_runs(root, c.kind, &c.slug, &c.id)
-            };
+            let runs = earned_runs(found, env_id, root, c.kind, &c.slug, &c.id);
             let entry = match def {
                 Def::Template(t) => template_entry(t, &runs, names.get(env_id).map(String::as_str), win),
                 Def::Fixture(f) => fixture_entry(f, &runs, win, |tid| {
@@ -470,15 +469,24 @@ fn confirm(
     }
 }
 
-fn history_bytes(root: &Path, kind: ApiKind, slug: &str, id: &str) -> Option<Vec<u8>> {
-    std::fs::read(root.join(kind.folder()).join(slug).join(format!("{id}.runs.json"))).ok()
-}
-
-/// Whether another environment's history of the item is identical to this one's.
-fn copied_history(envs: &[(String, PathBuf)], env_id: &str, kind: ApiKind, slug: &str, id: &str) -> bool {
-    let Some((_, root)) = envs.iter().find(|(e, _)| e == env_id) else { return false };
-    let Some(mine) = history_bytes(root, kind, slug, id) else { return false };
-    envs.iter().any(|(e, r)| e != env_id && history_bytes(r, kind, slug, id).is_some_and(|b| b == mine))
+/// This environment's history of the item without the lines any other
+/// holder (a live environment or a removed folder) also carries verbatim.
+/// Copy Auto Run data used to copy histories along with the definitions,
+/// and stamps are second-resolution with mode, account and outputs in each
+/// line, so an equal line is a copy and not a second run.
+fn earned_runs(found: &Candidates, env_id: &str, root: &Path, kind: ApiKind, slug: &str, id: &str) -> Vec<Value> {
+    let mine = read_runs(root, kind, slug, id);
+    if mine.is_empty() {
+        return mine;
+    }
+    let others: Vec<Value> = found
+        .envs
+        .iter()
+        .filter(|(e, _)| e != env_id)
+        .chain(found.removed.iter())
+        .flat_map(|(_, r)| read_runs(r, kind, slug, id))
+        .collect();
+    mine.into_iter().filter(|line| !others.contains(line)).collect()
 }
 
 fn template_entry(t: &ApiTemplate, runs: &[Value], env_name: Option<&str>, hash: &str) -> Option<ItemState> {

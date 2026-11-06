@@ -575,6 +575,78 @@ fn a_history_copied_byte_for_byte_confirms_nothing_but_each_own_history_does() {
     assert!(is_confirmed(&here_of(shared, B, &proved)));
 }
 
+#[test]
+fn a_copy_whose_source_ran_again_afterwards_confirms_nowhere_from_the_shared_lines() {
+    let proved = proven(&template("t", "Add cycle"), "2026-10-05 09:00:00", None);
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    let copied = run_line("2026-10-08 09:00:00", "run", true);
+    put_template(shared, &env_holder(A), &proved);
+    put_template(shared, &env_holder(B), &proved);
+    // B holds what Copy Auto Run copied from A; A then ran once more.
+    put_runs(shared, &env_holder(B), ApiKind::Templates, "t", json!([copied.clone()]));
+    put_runs(shared, &env_holder(A), ApiKind::Templates, "t", json!([copied, run_line("2026-10-09 09:00:00", "run", false)]));
+
+    fold_in(shared, NOW).unwrap().unwrap();
+
+    assert_eq!(here_of(shared, B, &proved), Here::Unconfirmed, "a copied line is not a run here");
+    assert_eq!(here_of(shared, A, &proved), Here::Unconfirmed, "nor there: it was shared, and its own newer run failed");
+}
+
+#[test]
+fn a_copy_taken_from_an_environment_that_was_since_removed_confirms_nothing() {
+    let proved = proven(&template("t", "Add cycle"), "2026-10-05 09:00:00", None);
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    let removed = "removed-envs/env-0000000c-1799000000000";
+    let copied = json!([run_line("2026-10-08 09:00:00", "run", true)]);
+    put_template(shared, &env_holder(B), &proved);
+    put_runs(shared, &env_holder(B), ApiKind::Templates, "t", copied.clone());
+    put_template(shared, removed, &proved);
+    put_runs(shared, removed, ApiKind::Templates, "t", copied);
+
+    fold_in(shared, NOW).unwrap().unwrap();
+
+    assert_eq!(here_of(shared, B, &proved), Here::Unconfirmed);
+}
+
+#[test]
+fn a_copied_fixture_history_confirms_on_neither_environment() {
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    let tpl = proven(&template("t", "Add cycle"), "2026-10-01 09:00:00", Some("QA"));
+    let fx = fixture("f", &["t"]);
+    for env in [A, B] {
+        put_template(shared, &env_holder(env), &tpl);
+        put_fixture(shared, &env_holder(env), &fx);
+        put_runs(shared, &env_holder(env), ApiKind::Fixtures, "f", json!([fixture_run("2026-11-02 09:00:00", true)]));
+    }
+
+    fold_in(shared, NOW).unwrap().unwrap();
+
+    let lookup = |id: &str| library_template(shared, id);
+    let state = |env| load_state(&env_root(env, shared), ORG, PROJECT);
+    assert_eq!(fixture_here(&state(A), &fx, &lookup), Here::Unconfirmed);
+    assert_eq!(fixture_here(&state(B), &fx, &lookup), Here::Unconfirmed);
+}
+
+#[test]
+fn lines_unique_to_an_environment_still_confirm_it_beside_shared_ones() {
+    let proved = proven(&template("t", "Add cycle"), "2026-10-05 09:00:00", None);
+    let t = shared_with_two_envs();
+    let shared = t.path();
+    let shared_line = run_line("2026-10-08 09:00:00", "run", true);
+    for (env, own) in [(A, "2026-10-09 09:00:00"), (B, "2026-10-10 09:00:00")] {
+        put_template(shared, &env_holder(env), &proved);
+        put_runs(shared, &env_holder(env), ApiKind::Templates, "t", json!([shared_line.clone(), run_line(own, "run", true)]));
+    }
+
+    fold_in(shared, NOW).unwrap().unwrap();
+
+    assert!(is_confirmed(&here_of(shared, A, &proved)), "its own later run");
+    assert!(is_confirmed(&here_of(shared, B, &proved)), "its own later run");
+}
+
 // ---- a rename that fails ------------------------------------------------------
 
 fn name_of(p: &Path) -> String {
