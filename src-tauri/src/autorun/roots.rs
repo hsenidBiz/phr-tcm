@@ -32,7 +32,7 @@ pub enum CopyTo {
 
 /// The top-level items that belong to one environment, and how an
 /// environment copy treats each.
-pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
+pub const PER_ENV_ITEMS: [(&str, CopyTo); 15] = [
     ("scripts", CopyTo::Every),
     ("deleted-scripts", CopyTo::Every),
     ("orders", CopyTo::Every),
@@ -47,6 +47,7 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("replays", CopyTo::ActiveOnly),
     ("explore", CopyTo::ActiveOnly),
     ("captures", CopyTo::ActiveOnly),
+    ("api-state", CopyTo::ActiveOnly),
 ];
 
 /// The items the update places by the run that made them: a run, its report,
