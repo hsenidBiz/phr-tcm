@@ -909,6 +909,28 @@ mod one_case {
     }
 
     #[test]
+    fn a_shared_fixture_and_flow_are_not_named_as_missing_on_the_target() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        let mut s = script(7, None, uses("X"));
+        s.setup = serde_json::from_value(json!({ "fixture": "fx-1" })).unwrap();
+        s.preconditions = serde_json::from_value(json!([{ "flow": "pms-performance-cycle", "stage": "s", "value": null }])).unwrap();
+        store::save_script(&p.a, &s).unwrap();
+        // The definitions live in the shared library, which both
+        // environments read; only the source environment's root is used to
+        // put them there.
+        let fixtures = v2_lib::api_templates::fixture_store::fixtures_dir(&p.a, ORG, PROJECT);
+        std::fs::create_dir_all(&fixtures).unwrap();
+        std::fs::write(fixtures.join("fx-1.json"), r#"{"id":"fx-1","name":"F","account":"admin","steps":[]}"#).unwrap();
+        let flows = v2_lib::api_templates::flow_store::flows_dir(&p.a, ORG, PROJECT);
+        std::fs::create_dir_all(&flows).unwrap();
+        std::fs::write(flows.join("pms-performance-cycle.json"), crate::common::cycle_flow_json().to_string()).unwrap();
+
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert!(plan.missing_api.is_empty(), "shared definitions exist for the target too: {:?}", plan.missing_api);
+    }
+
+    #[test]
     fn a_missing_account_and_missing_api_data_are_named_not_blocking() {
         let _lock = crate::serial::autorun();
         let p = pair();

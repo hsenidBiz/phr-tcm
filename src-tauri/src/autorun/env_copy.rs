@@ -636,7 +636,9 @@ pub struct CaseCopyPlan {
     /// Account keys the script signs in as (its own and each `sign_in`, in
     /// its components too) that the target has no account for.
     pub missing_accounts: Vec<String>,
-    /// Fixture and flow ids the script names that the target lacks. Not copied.
+    /// Fixture and flow ids the script names that no saved definition has.
+    /// Definitions are shared by every environment, so a fixture or flow
+    /// that exists is never named here. Not copied.
     pub missing_api: Vec<String>,
 }
 

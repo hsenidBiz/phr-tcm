@@ -1498,6 +1498,28 @@ fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value
     v
 }
 
+/// The keys every template and fixture row carries for its state on the
+/// active environment: `here`, `here_note` (null when confirmed with no
+/// strike), and `failed_here` or `last_failure_here` with the step and
+/// detail of the failure.
+fn put_here(row: &mut serde_json::Value, here: &crate::api_templates::here::Here) {
+    use crate::api_templates::here::Here;
+    use crate::api_templates::share::{FAILED_HERE_FOR_ASSISTANT, LAST_RUN_FAILED_HERE, UNPROVEN_FOR_ASSISTANT};
+    let (state, note) = match here {
+        Here::Confirmed { last_failure: None } => ("confirmed", None),
+        Here::Confirmed { last_failure: Some(_) } => ("confirmed", Some(LAST_RUN_FAILED_HERE)),
+        Here::Unconfirmed => ("unconfirmed", Some(UNPROVEN_FOR_ASSISTANT)),
+        Here::Failed { .. } => ("failed", Some(FAILED_HERE_FOR_ASSISTANT)),
+    };
+    row["here"] = serde_json::json!(state);
+    row["here_note"] = serde_json::json!(note);
+    match here {
+        Here::Failed { failure } => row["failed_here"] = serde_json::json!(failure),
+        Here::Confirmed { last_failure: Some(failure) } => row["last_failure_here"] = serde_json::json!(failure),
+        _ => {}
+    }
+}
+
 /// The saved templates for this project, filtered and paged.
 ///
 /// Arguments, all optional, from the query: `module` (a case-insensitive
@@ -1511,8 +1533,9 @@ fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value
 ///
 /// A filtered result of at most `limit` templates comes back in full:
 /// what each one takes and gives back, the flow stage it performs,
-/// whether it is proven on this site (an imported one is not - `unproven`
-/// says what to do about it), its newest run (null before its first - the
+/// whether it is confirmed, unconfirmed or failed on the active
+/// environment (`here`, with `here_note` saying what to do about it; `proven`
+/// is whether it was ever proven on any environment), its newest run (null before its first - the
 /// prove that saved it is history, not a run), every flow with its stages
 /// and the templates on each, and the project's Test files. A larger one
 /// is a compact index: per template the id, title, module, effect, proven
@@ -1651,7 +1674,7 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             .map(|s| {
                 let t = &s.template;
                 if !full {
-                    return serde_json::json!({
+                    let mut row = serde_json::json!({
                         "id": t.id,
                         "title": t.title,
                         "module": t.module,
@@ -1659,8 +1682,16 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                         "proven": t.proven.is_some(),
                         "stage": t.stage,
                     });
+                    // The index carries the state, not the sentence: the
+                    // note below says it once.
+                    row["here"] = serde_json::json!(match &s.here {
+                        crate::api_templates::here::Here::Confirmed { .. } => "confirmed",
+                        crate::api_templates::here::Here::Unconfirmed => "unconfirmed",
+                        crate::api_templates::here::Here::Failed { .. } => "failed",
+                    });
+                    return row;
                 }
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "id": t.id,
                     "title": t.title,
                     "module": t.module,
@@ -1668,12 +1699,13 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                     "params": t.params,
                     "outputs": t.outputs,
                     "stage": t.stage,
-                    // An imported template arrives unproven (api_templates::share):
-                    // runs of it are allowed, so the assistant is told plainly.
+                    // Proven on SOME environment (the fixture save gate); `here`
+                    // is the state on the active one.
                     "proven": t.proven.is_some(),
-                    "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
                     "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN).map(last_run_cut),
-                })
+                });
+                put_here(&mut row, &s.here);
+                row
             })
             .collect();
         let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
@@ -1698,12 +1730,18 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             let mut note = format!(
                 "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
             );
-            // The full answer says it on each unproven row; the index says it
-            // once.
-            if page.iter().any(|s| s.template.proven.is_none()) {
+            // The full answer says it on each row; the index says it once.
+            use crate::api_templates::here::Here;
+            if page.iter().any(|s| matches!(s.here, Here::Unconfirmed)) {
                 note.push_str(&format!(
-                    " A template whose proven is false was {}.",
+                    " A template whose here is unconfirmed is {}.",
                     crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+                ));
+            }
+            if page.iter().any(|s| matches!(s.here, Here::Failed { .. })) {
+                note.push_str(&format!(
+                    " A template whose here is failed is {}.",
+                    crate::api_templates::share::FAILED_HERE_FOR_ASSISTANT
                 ));
             }
             answer["note"] = serde_json::json!(note);
@@ -2613,7 +2651,7 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     };
     let in_full = |s: &crate::api_templates::fixture_store::SavedFixture| {
         let f = &s.fixture;
-        serde_json::json!({
+        let mut row = serde_json::json!({
             "id": f.id,
             "name": f.name,
             "account": f.account,
@@ -2622,7 +2660,9 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             "creates": f.creates,
             "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
             "last_run": s.runs.first(),
-        })
+        });
+        put_here(&mut row, &s.here);
+        row
     };
     if let Some(id) = q(target, "id").map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
         return match saved.iter().find(|s| s.fixture.id == id) {
@@ -2658,13 +2698,15 @@ fn fixture_index(saved: &[crate::api_templates::fixture_store::SavedFixture], ov
                 }
                 v
             });
-            serde_json::json!({
+            let mut row = serde_json::json!({
                 "id": f.id,
                 "name": f.name,
                 "outputs": f.outputs.keys().collect::<Vec<_>>(),
                 "creates": f.creates.iter().map(|c| serde_json::json!({ "kind": c.kind, "name": c.name })).collect::<Vec<_>>(),
                 "last_run": last,
-            })
+            });
+            put_here(&mut row, &s.here);
+            row
         })
         .collect();
     let note = over.unwrap_or_else(|| FIXTURES_IN_SHORT.to_string());
