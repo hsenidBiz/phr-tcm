@@ -3432,6 +3432,26 @@ mod api_template_routes {
         assert_eq!(row_of(&v["templates"], "idx-01")["here"], "unconfirmed");
     }
 
+    #[tokio::test]
+    async fn a_flow_reads_confirmed_only_when_every_template_on_it_is_confirmed_here() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &flow).unwrap();
+        let flow_here = |v: &serde_json::Value| v["flows"][0]["here"].clone();
+
+        let ok = crate::common::saved_on_stage("on-setup", "Setup", "setup");
+        v2_lib::api_templates::store::save_proven(dir.path(), &c.org, &c.project, &ok).unwrap();
+        assert_eq!(flow_here(&answer_at("/api-templates").await), "confirmed");
+        assert_eq!(flow_here(&answer_at("/api-templates?id=on-setup").await), "confirmed", "the full row too");
+
+        let mut loose = crate::common::saved_on_stage("on-rules", "Rules", "rules");
+        loose.proven = None;
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &loose).unwrap();
+        assert_eq!(flow_here(&answer_at("/api-templates").await), "unconfirmed");
+    }
+
     #[test]
     fn the_guide_says_try_then_rediscover_then_leave_alone() {
         let g = v2_lib::api_templates::guide::text(&[], None);

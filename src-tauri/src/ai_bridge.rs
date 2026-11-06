@@ -1498,6 +1498,16 @@ fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value
     v
 }
 
+/// The one word for a state on the active environment.
+fn here_word(here: &crate::api_templates::here::Here) -> &'static str {
+    use crate::api_templates::here::Here;
+    match here {
+        Here::Confirmed { .. } => "confirmed",
+        Here::Unconfirmed => "unconfirmed",
+        Here::Failed { .. } => "failed",
+    }
+}
+
 /// The keys every template and fixture row carries for its state on the
 /// active environment: `here`, `here_note` (null when confirmed with no
 /// strike), and `failed_here` or `last_failure_here` with the step and
@@ -1505,13 +1515,13 @@ fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value
 fn put_here(row: &mut serde_json::Value, here: &crate::api_templates::here::Here) {
     use crate::api_templates::here::Here;
     use crate::api_templates::share::{FAILED_HERE_FOR_ASSISTANT, LAST_RUN_FAILED_HERE, UNPROVEN_FOR_ASSISTANT};
-    let (state, note) = match here {
-        Here::Confirmed { last_failure: None } => ("confirmed", None),
-        Here::Confirmed { last_failure: Some(_) } => ("confirmed", Some(LAST_RUN_FAILED_HERE)),
-        Here::Unconfirmed => ("unconfirmed", Some(UNPROVEN_FOR_ASSISTANT)),
-        Here::Failed { .. } => ("failed", Some(FAILED_HERE_FOR_ASSISTANT)),
+    let note = match here {
+        Here::Confirmed { last_failure: None } => None,
+        Here::Confirmed { last_failure: Some(_) } => Some(LAST_RUN_FAILED_HERE),
+        Here::Unconfirmed => Some(UNPROVEN_FOR_ASSISTANT),
+        Here::Failed { .. } => Some(FAILED_HERE_FOR_ASSISTANT),
     };
-    row["here"] = serde_json::json!(state);
+    row["here"] = serde_json::json!(here_word(here));
     row["here_note"] = serde_json::json!(note);
     match here {
         Here::Failed { failure } => row["failed_here"] = serde_json::json!(failure),
@@ -1641,8 +1651,10 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
         let flow_rows: Vec<serde_json::Value> = flows
             .iter()
             .map(|f| {
+                // Never "failed": a flow is confirmed or not (Ruling 8).
+                let here = here_word(&crate::api_templates::here::flow_here(f, &saved));
                 if !full {
-                    return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
+                    return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len(), "here": here });
                 }
                 let stages: Vec<serde_json::Value> = f
                     .stages
@@ -1665,6 +1677,7 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                     "title": f.title,
                     "module": f.module,
                     "subject": f.subject,
+                    "here": here,
                     "stages": stages,
                 })
             })
@@ -1684,11 +1697,7 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
                     });
                     // The index carries the state, not the sentence: the
                     // note below says it once.
-                    row["here"] = serde_json::json!(match &s.here {
-                        crate::api_templates::here::Here::Confirmed { .. } => "confirmed",
-                        crate::api_templates::here::Here::Unconfirmed => "unconfirmed",
-                        crate::api_templates::here::Here::Failed { .. } => "failed",
-                    });
+                    row["here"] = serde_json::json!(here_word(&s.here));
                     return row;
                 }
                 let mut row = serde_json::json!({
