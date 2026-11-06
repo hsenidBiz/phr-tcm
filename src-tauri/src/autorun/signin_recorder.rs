@@ -156,7 +156,7 @@ pub const LISTENER_JS: &str = r#"(() => {
   // While picking, a click that opens a menu - or any click with Shift
   // held - is carried out, and is neither recorded nor picked: the person
   // can open the menu that holds Sign out.
-  const OPENER = '[aria-haspopup]:not([aria-haspopup="false"]),[aria-expanded],[data-toggle="dropdown"],[data-bs-toggle="dropdown"]';
+  const OPENER = '[aria-haspopup]:not([aria-haspopup="false"]),[aria-expanded="false"],[data-toggle="dropdown"],[data-bs-toggle="dropdown"]';
   const IN_MENU = '[role="menu"],.dropdown-menu';
   const opensMenu = (el) => {
     for (let n = el, up = 0; n && up <= 3; n = n.parentElement, up++) {
@@ -172,24 +172,31 @@ pub const LISTENER_JS: &str = r#"(() => {
   // A click was let through since the last pick: what is picked next was
   // reached through a menu.
   let opened = false;
+  // Decided on the press, from the press's own target and Shift state, and
+  // kept for the release and the click that belong to it.
+  let press = null;
   // While pick mode is on, the press and release of the picked click are
   // stopped too: a menu or Sign out wired to them would act otherwise. A
   // press that belongs to a let-through click is left alone.
   const pressWhilePicking = (e) => {
-    if (e.isTrusted && window.__tcmRecPick && !letThrough(e)) hush(e);
+    if (!e.isTrusted || !window.__tcmRecPick) return;
+    if (e.type === 'pointerdown' || e.type === 'mousedown') press = letThrough(e);
+    if (!(press === null ? letThrough(e) : press)) hush(e);
   };
   for (const kind of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
     document.addEventListener(kind, pressWhilePicking, true);
   }
   document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
+    const decided = press;
+    press = null;
     const el = elementOf(e.target);
     if (!el) return;
     const fromEnter = enterButton && Date.now() - enterAt < 2000 && (el === enterButton || enterButton.contains(el));
     enterButton = null;
     if (fromEnter) return;
     if (window.__tcmRecPick) {
-      if (letThrough(e)) { opened = true; return; }
+      if (decided === null ? letThrough(e) : decided) { opened = true; return; }
       window.__tcmRecPick = false;
       hush(e);
       clicked('marker', el, opened || !!el.closest(IN_MENU));

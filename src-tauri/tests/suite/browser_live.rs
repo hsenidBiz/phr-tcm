@@ -1680,10 +1680,11 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
 #[ignore = "starts a real headless Edge"]
 async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_closed() {
     const PAGE: &str = r##"<!doctype html><html><body>
-<button id="me" aria-haspopup="menu" onclick="document.getElementById('m').style.display='block'">Kim Lee</button>
+<button id="me" aria-haspopup="menu" onmousedown="document.body.dataset.down=(document.body.dataset.down||'')+'me,'" onclick="document.getElementById('m').style.display='block'">Kim Lee</button>
 <ul id="m" role="menu" style="display:none"><li><a href="#" role="menuitem" onclick="document.body.dataset.out='1'; return false">Sign out</a></li></ul>
 <div id="plain" onclick="document.getElementById('h').style.display='block'">Account</div>
 <p id="h" style="display:none">Help</p>
+<div id="panel" aria-expanded="true"><a href="#" id="panelout" onmousedown="document.body.dataset.down=(document.body.dataset.down||'')+'panel,'" onclick="document.body.dataset.panelout='1'; return false">Log off</a></div>
 </body></html>"##;
     let mut live = open().await;
     let root = tempfile::tempdir().unwrap();
@@ -1721,12 +1722,29 @@ async fn a_menu_opened_while_picking_is_carried_out_and_its_check_is_found_close
     let help = "getComputedStyle(document.getElementById('h')).display === 'block'";
     assert_eq!(page::eval_value(&mut live.cdp, help).await.unwrap(), json!(true), "the Shift click was not carried out");
 
+    // The press on the menu's button reached the page; Sign out inside an
+    // already open panel is a pick, not a let-through: its press is stopped,
+    // its click is not carried out, and the marker arrives.
+    let down = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    assert_eq!(down, json!("me,"), "the menu button's press was stopped");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#panelout" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let down = page::eval_value(&mut live.cdp, "document.body.dataset.down || ''").await.unwrap();
+    assert_eq!(down, json!("me,"), "the open panel's press was let through");
+    let panel = page::eval_value(&mut live.cdp, "document.body.dataset.panelout || ''").await.unwrap();
+    assert_eq!(panel, json!(""), "Sign out in an open panel was carried out");
+    let (stop, cancel, pick) = (AtomicBool::new(true), AtomicBool::new(false), AtomicBool::new(true));
+    let first = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
+    // (Its menu flag is on: the menu was opened before it, by design.)
+    assert!(first.steps.is_empty() && first.marker.is_some(), "{first:?}");
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode again");
+
     // The click on Sign out is the pick, and Sign out is not carried out.
     must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#m a" } })).await);
     tokio::time::sleep(Duration::from_millis(500)).await;
     let out = page::eval_value(&mut live.cdp, "document.body.dataset.out || ''").await.unwrap();
     assert_eq!(out, json!(""), "the picked click was carried out");
-    let (stop, cancel, pick) = (AtomicBool::new(true), AtomicBool::new(false), AtomicBool::new(true));
+    let pick = AtomicBool::new(true);
     let got = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
     assert!(got.steps.is_empty(), "{:?}", got.steps);
     let marker = got.marker.expect("the pick was not reported");

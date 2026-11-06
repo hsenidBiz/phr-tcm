@@ -153,13 +153,16 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
     assert_eq!(LISTENER_JS.matches("preventDefault").count(), 1);
     assert_eq!(LISTENER_JS.matches("stopImmediatePropagation").count(), 1);
     assert_eq!(LISTENER_JS.matches("hush(e)").count(), 2);
-    assert!(LISTENER_JS.contains("if (e.isTrusted && window.__tcmRecPick && !letThrough(e)) hush(e);"));
-    assert!(LISTENER_JS.contains("if (letThrough(e)) { opened = true; return; }"), "a menu or Shift click is let through");
+    assert!(LISTENER_JS.contains("if (!(press === null ? letThrough(e) : press)) hush(e);"), "release follows the press");
+    assert!(LISTENER_JS.contains("press = letThrough(e);"), "the press decides");
+    assert!(LISTENER_JS.contains("const decided = press;
+    press = null;"), "the click ends it");
+    assert!(LISTENER_JS.contains("if (decided === null ? letThrough(e) : decided) { opened = true; return; }"), "a menu or Shift click is let through");
     assert!(LISTENER_JS.contains("e.shiftKey ||"));
     assert!(LISTENER_JS.contains("up <= 3"), "the opener is looked for up to 3 levels up");
     for attr in [
         "[aria-haspopup]:not([aria-haspopup=\"false\"])",
-        "[aria-expanded]",
+        "[aria-expanded=\"false\"]",
         "[data-toggle=\"dropdown\"]",
         "[data-bs-toggle=\"dropdown\"]",
     ] {
