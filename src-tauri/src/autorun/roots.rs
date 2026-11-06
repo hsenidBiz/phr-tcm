@@ -32,14 +32,20 @@ pub enum CopyTo {
 
 /// The top-level items that belong to one environment, and how an
 /// environment copy treats each.
-pub const PER_ENV_ITEMS: [(&str, CopyTo); 15] = [
+///
+/// The API definitions (templates, fixtures, flows) live in the shared
+/// library, not here: `templates` and `fixtures` stay in the list only
+/// because they still hold this environment's run histories, which a copy
+/// leaves behind and keeps in place. `flows` is not listed
+/// ([`LEGACY_API_ITEMS`]). Accounts are not listed either: a copy never
+/// touches them.
+pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("scripts", CopyTo::Every),
     ("deleted-scripts", CopyTo::Every),
     ("orders", CopyTo::Every),
     ("projects", CopyTo::Every),
-    ("templates", CopyTo::Every),
-    ("fixtures", CopyTo::Every),
-    ("flows", CopyTo::Every),
+    ("templates", CopyTo::ActiveOnly),
+    ("fixtures", CopyTo::ActiveOnly),
     ("runs", CopyTo::ActiveOnly),
     ("shots", CopyTo::ActiveOnly),
     ("downloads", CopyTo::ActiveOnly),
@@ -49,6 +55,18 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 15] = [
     ("captures", CopyTo::ActiveOnly),
     ("api-state", CopyTo::ActiveOnly),
 ];
+
+/// The API definition folders the flat layout kept at the top of the Auto
+/// Run folder. The one-time environment update still carries a never-migrated
+/// flat folder's `flows` into the active environment (where the library fold
+/// finds them); a copy never does.
+pub const LEGACY_API_ITEMS: [&str; 3] = ["templates", "fixtures", "flows"];
+
+/// Every top-level name the flat layout could hold for one environment:
+/// [`PER_ENV_ITEMS`] plus the legacy `flows` folder.
+fn flat_item_names() -> impl Iterator<Item = &'static str> {
+    PER_ENV_ITEMS.iter().map(|(n, _)| *n).chain(LEGACY_API_ITEMS.iter().copied().filter(|n| !PER_ENV_ITEMS.iter().any(|(m, _)| m == n)))
+}
 
 /// The items the update places by the run that made them: a run, its report,
 /// its downloads and the screenshots it names go to the environment the run
@@ -929,7 +947,7 @@ pub fn fan_out(
     let placement = place_runs(flat, envs, &active)?;
     let into = |id: &str, name: &str| envs_dir.join(id).join(name);
     let mut items = 0;
-    for (name, _) in PER_ENV_ITEMS {
+    for name in flat_item_names() {
         let from = flat.join(name);
         if !exists(&from)? {
             continue;
@@ -1050,7 +1068,7 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
         return Ok(Some(report));
     }
     let mut any = false;
-    for (name, _) in PER_ENV_ITEMS {
+    for name in flat_item_names() {
         any |= exists(&shared.join(name))?;
     }
     if !any {
@@ -1128,7 +1146,7 @@ fn newest_flat_change(shared: &Path) -> Option<std::time::SystemTime> {
         }
     }
     let mut newest = None;
-    for (name, _) in PER_ENV_ITEMS {
+    for name in flat_item_names() {
         walk(&shared.join(name), &mut newest);
     }
     newest

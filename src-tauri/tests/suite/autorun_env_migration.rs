@@ -58,12 +58,13 @@ fn migration_puts_every_item_only_in_the_active_environment() {
     put(t.path(), "projects/p.nav.json", "N");
     put(t.path(), "fixtures/f.json", "F");
     put(t.path(), "templates/t.json", "T");
+    put(t.path(), "flows/f.json", "FL");
     let r = roots::migrate_once(t.path()).unwrap().unwrap();
     assert_eq!(r.environments, 2);
-    assert_eq!(r.items, 4);
+    assert_eq!(r.items, 5);
     assert_eq!(r.scripts, 1);
     assert_eq!(r.active_name, "One");
-    for rel in ["scripts/case-1.json", "projects/p.nav.json", "fixtures/f.json", "templates/t.json"] {
+    for rel in ["scripts/case-1.json", "projects/p.nav.json", "fixtures/f.json", "templates/t.json", "flows/f.json"] {
         assert!(at(t.path(), A, rel).is_file(), "{rel} is missing from the active environment");
         assert!(!at(t.path(), B, rel).exists(), "{rel} reached the other environment");
     }

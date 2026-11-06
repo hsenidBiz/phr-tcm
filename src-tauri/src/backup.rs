@@ -89,7 +89,10 @@ fn excluded(rel: &str) -> bool {
 fn is_flat_original(rel: &str) -> bool {
     let seg = raw_segments(rel);
     seg.first().is_some_and(|s| s.eq_ignore_ascii_case("autorun"))
-        && seg.get(1).is_some_and(|n| crate::autorun::roots::PER_ENV_ITEMS.iter().any(|(item, _)| n.eq_ignore_ascii_case(item)))
+        && seg.get(1).is_some_and(|n| {
+            crate::autorun::roots::PER_ENV_ITEMS.iter().any(|(item, _)| n.eq_ignore_ascii_case(item))
+                || crate::autorun::roots::LEGACY_API_ITEMS.iter().any(|item| n.eq_ignore_ascii_case(item))
+        })
 }
 
 /// `autorun/envs/...`.

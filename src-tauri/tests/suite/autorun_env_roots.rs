@@ -79,8 +79,12 @@ fn the_pinned_lists_are_what_the_plan_says() {
     let every: Vec<&str> = roots::PER_ENV_ITEMS.iter().filter(|(_, c)| *c == CopyTo::Every).map(|(n, _)| *n).collect();
     let active_only: Vec<&str> =
         roots::PER_ENV_ITEMS.iter().filter(|(_, c)| *c == CopyTo::ActiveOnly).map(|(n, _)| *n).collect();
-    assert_eq!(every, ["scripts", "deleted-scripts", "orders", "projects", "templates", "fixtures", "flows"]);
-    assert_eq!(active_only, ["runs", "shots", "downloads", "reports", "replays", "explore", "captures", "api-state"]);
+    assert_eq!(every, ["scripts", "deleted-scripts", "orders", "projects"]);
+    assert_eq!(
+        active_only,
+        ["templates", "fixtures", "runs", "shots", "downloads", "reports", "replays", "explore", "captures", "api-state"]
+    );
+    assert_eq!(roots::LEGACY_API_ITEMS, ["templates", "fixtures", "flows"]);
     assert!(roots::is_export_record(Path::new("projects/acme-hr.pwexport.json")));
     assert!(!roots::is_export_record(Path::new("projects/acme-hr.nav.json")));
     assert!(!roots::is_export_record(Path::new("projects/sub/acme-hr.pwexport.json")));

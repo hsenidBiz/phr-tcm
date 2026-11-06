@@ -71,7 +71,7 @@ test("asks before replacing a non-empty environment and sends replace=true", asy
   const { calls, onClose } = mount({ target_empty: false, sources: SOURCES });
   expect(
     await screen.findByText(
-      "This replaces QA's scripts, areas, components, quirks and API templates with Default's. QA's current ones are kept for 30 days and can be copied back from this list.",
+      "This replaces QA's scripts, areas, components and quirks with Default's. QA's current ones are kept for 30 days and can be copied back from this list.",
     ),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
