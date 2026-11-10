@@ -21,5 +21,11 @@ export default defineConfig({
     // The Rust tests' fixture clone of the team's Playwright repo holds
     // `.spec.ts` files that are Playwright tests, not vitest ones.
     exclude: [...configDefaults.exclude, "**/.claude/**", "src-tauri/tests/fixtures/**"],
+    // Node 25+ has its own global `localStorage` (Web Storage), which is
+    // undefined without --localstorage-file and hides jsdom's: on Node 26
+    // over half the suite failed at `localStorage.clear()`. Switched off in
+    // the test workers so jsdom's storage is the one the tests see. An
+    // older Node accepts the flag too.
+    execArgv: ["--no-experimental-webstorage"],
   },
 });
