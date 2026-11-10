@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.3",
+    date: "2026-11-11",
+    items: [
+      "Moving to another screen and back keeps what you had: Manual Entry keeps your unsaved case (per organization and PBI, even after a restart), and View, Update and Run Tests keep their search, filter and selection.",
+      "Long lists in Run Tests, View and Update draw only the rows on screen, so suites with thousands of cases scroll and select quickly. Arrow keys move through the rows, and lists show a placeholder while they load.",
+      "Reading from Azure DevOps is faster and steadier: a busy or failed read is tried again after a short wait, several reads run at once, and the pace setting now slows only writes.",
+      "If an update cannot read the case's current steps just before upload, it stops and asks first. Upload anyway sends the steps as plain text, so their formatting is lost.",
+      "Saved data from Azure DevOps now has much more room, so large plans no longer crowd out other saved data, and you see a warning if your queue cannot be saved.",
+      "The log file has a size limit, expired saved data is cleared, and the log notes how long each start-up step took.",
+    ],
+  },
+  {
     version: "2.4.6-beta.2",
     date: "2026-11-10",
     items: [
