@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, events, type SuiteScanProgress, type TestPoint } from "../../bindings";
@@ -115,20 +116,24 @@ export default function RunPanel({
   closeLabel?: string;
 }) {
   const qc = useQueryClient();
-  const [filterText, setFilterText] = useState("");
-  const [filterOutcome, setFilterOutcome] = useState("");
-  const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
+  // Filters, selection and open rows survive a tab change (lib/screenState).
+  const keyOf = useScreenKeys(
+    `run:${org}/${project}/${folder ? `folder:${folder.planId}/${folder.suiteId}` : pbiId}`,
+  );
+  const [filterText, setFilterText] = useScreenState(keyOf("filter"), "");
+  const [filterOutcome, setFilterOutcome] = useScreenState(keyOf("outcome"), "");
+  const [selected, setSelected] = useScreenSet<number>(keyOf("selected")); // test case ids
   const [scan, setScan] = useState<SuiteScanProgress | null>(null);
   const [groupMode, setGroupModeState] = useState<GroupMode>(() => loadGroupMode());
   const setGroupMode = (mode: GroupMode) => {
     setGroupModeState(mode);
     saveGroupMode(mode);
   };
-  const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
+  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null); // shift-range start
   // Open previews, PLURAL (point ids) - same model as View Test Cases:
   // several can be open for comparison, an open one survives its group
   // being collapsed, and the sticky Close all clears the lot.
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useScreenSet<number>(keyOf("expanded"));
   const toggleExpanded = (pointId: number) =>
     setExpanded((s) => {
       const next = new Set(s);
@@ -269,6 +274,7 @@ export default function RunPanel({
     () => [...new Set((points.data ?? []).flatMap((p) => (p.test_case_id == null ? [] : [p.test_case_id])))].sort((a, b) => a - b),
     [points.data],
   );
+  usePruneSelection(points.data ? historyCaseIds : undefined, setSelected);
   const history = useQuery({
     queryKey: ["run-history", org, project, suite.data?.plan_id, suite.data?.suite_id, historyCaseIds.join(",")],
     ...persistentQuery({

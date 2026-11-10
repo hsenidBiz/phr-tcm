@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { resetScreenStateForTests } from "./lib/screenState";
 
 // vitest runs without injected globals, so RTL's automatic cleanup never
 // registers - without this, each test's DOM leaks into the next.
@@ -11,6 +12,9 @@ configure({ defaultIgnore: "script, style, [data-exit-ghost], [data-exit-ghost] 
 
 afterEach(() => {
   cleanup();
+  // Screen state (lib/screenState) is module scope by design, so it would
+  // carry one test's search text and selection into the next.
+  resetScreenStateForTests();
   // A dialog unmounted by that cleanup leaves its fading copy in the page
   // for the length of the close animation (lib/exitGhost) - on a real
   // timer, which the next test would otherwise find by text.

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type TestCaseFull } from "../../bindings";
@@ -119,14 +120,18 @@ export default function ExistingCases({
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
-  const [openId, setOpenId] = useState<number | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [anchor, setAnchor] = useState<number | null>(null);
+  // Search, the open case and selection survive a tab change (lib/screenState).
+  const keyOf = useScreenKeys(
+    `edit:${org}/${project}/${pbiId != null ? pbiId : `cases:${(caseIds ?? []).join(",")}`}`,
+  );
+  const [openId, setOpenId] = useScreenState<number | null>(keyOf("open"), null);
+  const [selected, setSelected] = useScreenSet<number>(keyOf("selected"));
+  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [relinkOpen, setRelinkOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useScreenState(keyOf("search"), "");
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
@@ -174,6 +179,8 @@ export default function ExistingCases({
   });
 
   const list = cases.data ?? [];
+  const loadedIds = useMemo(() => cases.data?.map((c) => c.id), [cases.data]);
+  usePruneSelection(loadedIds, setSelected);
   const settled = useSettled(list.length > 0);
   // Switching Group by title is one motion, not a regroup then an unfold
   // per open group (components/ui/collapse.tsx).

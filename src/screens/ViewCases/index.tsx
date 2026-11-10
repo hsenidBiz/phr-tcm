@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
@@ -128,13 +129,15 @@ export default function ViewCases({
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
-  const [search, setSearch] = useState("");
+  // Search, open details and selection survive a tab change (lib/screenState).
+  const keyOf = useScreenKeys(pbi ? `view:${org}/${project}/${pbi.id}` : null);
+  const [search, setSearch] = useScreenState(keyOf("search"), "");
   // Open detail views, PLURAL: comparing two cases side by side is the
   // normal reason to expand a second one, and "Close all" only means
   // something once several can be open. An open detail also survives its
   // GROUP being collapsed - collapsing tidies the list away, and the case
   // someone is actively reading is not list, it is their work.
-  const [openIds, setOpenIds] = useState<Set<number>>(new Set());
+  const [openIds, setOpenIds] = useScreenSet<number>(keyOf("open"));
   const toggleOpen = (id: number) =>
     setOpenIds((s) => {
       const next = new Set(s);
@@ -143,8 +146,8 @@ export default function ViewCases({
       return next;
     });
   const [commentCase, setCommentCase] = useState<TestCaseFull | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [anchor, setAnchor] = useState<number | null>(null);
+  const [selected, setSelected] = useScreenSet<number>(keyOf("selected"));
+  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null);
   const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(org));
   // Whether the browser report has been opened - see the re-export effect.
   const [reportOpen, setReportOpen] = useState(false);
@@ -181,6 +184,8 @@ export default function ViewCases({
   });
 
   const list = cases.data ?? [];
+  const loadedIds = useMemo(() => cases.data?.map((c) => c.id), [cases.data]);
+  usePruneSelection(loadedIds, setSelected);
   const settled = useSettled(list.length > 0);
   // Switching Group by title is one motion, not a regroup then an unfold
   // per open group (components/ui/collapse.tsx).
