@@ -878,3 +878,40 @@ async fn a_check_that_signs_in_closes_the_problem() {
     assert!(text.contains("\"signed_in\":true"), "{text}");
     assert!(!signin_attempts::is_open(dir.path(), "sup"), "the problem stayed open after a sign-in");
 }
+
+#[tokio::test]
+async fn a_busy_check_and_a_capped_second_account_spend_nothing() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    accounts(dir.path(), &["sup", "admin"]);
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    let none: Option<&Answers> = None;
+    let mut fake = Fake::new(gone);
+    let both = json!({ "accounts": ["sup", "admin"] }).to_string();
+    {
+        let _claim = OneAtATime::claim().expect("no run is going");
+        let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &both).await;
+        assert_eq!(status, 409, "{text}");
+    }
+    // "sup" is still on its first attempt: take two more to find out.
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    assert_eq!(signin_attempts::take(dir.path(), "sup").unwrap(), 3, "a busy check spent an attempt");
+    signin_attempts::close(dir.path(), "sup");
+
+    // The second account is at the cap: the first is not counted either.
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    for _ in 0..3 {
+        signin_attempts::take(dir.path(), "admin").unwrap();
+    }
+    let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &both).await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(text, signin_attempts::attempts_used("admin"));
+    assert_eq!(fake.opened, 0);
+    assert_eq!(signin_attempts::take(dir.path(), "sup").unwrap(), 2, "the first account was counted before the refusal");
+    signin_attempts::close(dir.path(), "sup");
+    signin_attempts::close(dir.path(), "admin");
+}

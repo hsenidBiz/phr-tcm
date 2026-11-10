@@ -56,6 +56,12 @@ pub fn take_if_open(root: &Path, key: &str) -> Result<bool, String> {
     }
 }
 
+/// What `take_if_open` would answer, without counting: the sentence when a
+/// problem is open and all its attempts are used.
+pub fn would_refuse(root: &Path, key: &str) -> Option<String> {
+    held().get(&marker(root, key)).filter(|used| **used >= MOST_SIGN_IN_ATTEMPTS).map(|_| attempts_used(key))
+}
+
 /// Has a sign-in problem been opened for this account?
 pub fn is_open(root: &Path, key: &str) -> bool {
     held().contains_key(&marker(root, key))

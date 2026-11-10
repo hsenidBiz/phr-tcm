@@ -12515,9 +12515,18 @@ pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::aut
         Err(e) => return (500, e),
     };
     let queries = (env.password_expiry_query.as_str(), env.active_session_query.as_str());
-    // A check that follows a proposal's trials is one more attempt at that
-    // sign-in problem; one with no problem open counts for nothing. Said
-    // before any browser opens.
+    // A check that never starts spends nothing: busy is said first, then
+    // every account's cap before any is counted. Counting is per call, not
+    // per account's browser: an account the precheck then skips (expired
+    // password, session held elsewhere) still spends the attempt.
+    if let Some(busy) = crate::commands::autorun_check_signin::refusal() {
+        return (409, busy);
+    }
+    for key in &keys {
+        if let Some(why) = crate::autorun::signin_attempts::would_refuse(root, key) {
+            return (409, why);
+        }
+    }
     for key in &keys {
         if let Err(why) = crate::autorun::signin_attempts::take_if_open(root, key) {
             return (409, why);

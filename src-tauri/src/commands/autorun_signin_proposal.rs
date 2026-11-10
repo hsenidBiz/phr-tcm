@@ -140,6 +140,40 @@ fn saved_account(root: &Path, key: &str) -> Result<Account, (u16, String)> {
     }
 }
 
+const TRIAL_OFF_SITE: &str = "the proposed sign-in starts on a site this environment does not use - nothing was tried";
+const TRIAL_NO_BASIS: &str = "set this environment's address or record a sign-in first - a trial never signs in on a site the app has not been given";
+const BROWSER_WOULD_NOT_OPEN: &str = "the browser would not open - see Settings, Logs for the details";
+
+/// The recipe a trial signs in with, and the draft laid over the saved one.
+/// A trial types a stored password, so it only goes to a site the app was
+/// given: the environment's own address and allowed sites when it has an
+/// address, else the SAVED recipe's. The draft's allowed sites are never used.
+fn trial_recipe(
+    root: &Path,
+    org: &str,
+    project: &str,
+    draft: &SignInRecipe,
+    env: &crate::environments::Environment,
+) -> Result<(SignInRecipe, SignInRecipe, Option<SignInRecipe>), (u16, String)> {
+    let saved = load_recipe(root, org, project).map_err(|e| (500, e))?;
+    let merged = sp::merge(draft, saved.as_ref());
+    if env.start_url.trim().is_empty() {
+        let Some(saved) = &saved else { return Err((400, TRIAL_NO_BASIS.to_string())) };
+        let allowed = saved.origins();
+        if !crate::autorun::recipe::origin_of(&merged.start_url).is_some_and(|o| allowed.contains(&o)) {
+            return Err((400, TRIAL_OFF_SITE.to_string()));
+        }
+    }
+    merged.validate().map_err(|why| (400, why))?;
+    let to_save = for_saving(root, org, project, merged.clone()).map_err(|e| (500, e))?;
+    let mut effective = effective_recipe(&to_save, env);
+    if env.start_url.trim().is_empty() {
+        // `merge` keeps the saved sites; with no saved recipe there is no way here.
+        effective.allowed_origins = saved.as_ref().map(|s| s.allowed_origins.clone()).unwrap_or_default();
+    }
+    Ok((merged, effective, saved))
+}
+
 /// Why a trial did not sign in, in words with no address in them.
 fn trial_failure(detail: &str, harness: bool, who: &Account) -> String {
     if harness {
@@ -189,7 +223,10 @@ pub async fn inspect_in<B: Browsers>(
             if let Err(why) = draft.validate() {
                 return (400, why);
             }
-            Some((who, effective_recipe(draft, &env)))
+            match trial_recipe(root, org, project, draft, &env) {
+                Ok((_, effective, _)) => Some((who, effective)),
+                Err(refused) => return refused,
+            }
         }
         None => None,
     };
@@ -217,7 +254,10 @@ pub async fn inspect_in<B: Browsers>(
     }
     let mut d = match browsers.open().await {
         Ok(d) => d,
-        Err(why) => return (422, account.as_ref().map_or(why.clone(), |(who, _)| redact(&why, who))),
+        Err(why) => {
+            crate::applog::warn(format!("inspect_sign_in_page: the browser would not open: {why}"));
+            return (422, BROWSER_WOULD_NOT_OPEN.to_string());
+        }
     };
     let answer = match (&account, &open_at) {
         (Some((who, effective)), _) => {
@@ -251,7 +291,10 @@ async fn read_the_page<D: Driver>(d: &mut D, sign_in: Option<String>) -> (u16, S
             }
             (200, v.to_string())
         }
-        Err(why) => (422, why),
+        Err(why) => (422, match sign_in {
+            Some(words) => format!("{words} - {why}"),
+            None => why,
+        }),
     }
 }
 
@@ -285,21 +328,13 @@ pub async fn propose_in<B: Browsers>(
         Ok(e) => e,
         Err(e) => return (500, e),
     };
-    let saved = match load_recipe(root, org, project) {
-        Ok(s) => s,
-        Err(e) => return (500, e),
+    let (merged, effective, saved) = match trial_recipe(root, org, project, &asked.recipe, &env) {
+        Ok(t) => t,
+        Err(refused) => return refused,
     };
-    let merged = sp::merge(&asked.recipe, saved.as_ref());
-    if let Err(why) = merged.validate() {
-        return (400, why);
-    }
     if let Err(why) = check_marker_for(&merged.signed_in, &who) {
         return (400, why);
     }
-    let effective = match for_saving(root, org, project, merged.clone()) {
-        Ok(r) => effective_recipe(&r, &env),
-        Err(e) => return (500, e),
-    };
     // Taken before the trial: what the proposal was made against.
     let hash = match sp::saved_hash(root, org, project) {
         Ok(h) => h,
@@ -318,7 +353,10 @@ pub async fn propose_in<B: Browsers>(
     }
     let mut d = match browsers.open().await {
         Ok(d) => d,
-        Err(why) => return (422, format!("{NOTHING_PROPOSED_PREFIX}: {}", redact(&why, &who))),
+        Err(why) => {
+            crate::applog::warn(format!("propose_sign_in_recipe: the browser would not open: {why}"));
+            return (422, format!("{NOTHING_PROPOSED_PREFIX}: {BROWSER_WOULD_NOT_OPEN}"));
+        }
     };
     let tried = async {
         if let Err(why) = refuse_check_on_start_page(&mut d, &effective, timing).await {

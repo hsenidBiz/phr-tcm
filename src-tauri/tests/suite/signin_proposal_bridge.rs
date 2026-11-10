@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::autorun::accounts::{load_accounts, save_accounts, Account};
-use v2_lib::autorun::recipe::load_recipe;
+use v2_lib::autorun::recipe::{load_recipe, save_recipe, SignInRecipe};
 use v2_lib::autorun::replay::Browsers;
 use v2_lib::autorun::signin_attempts;
 use v2_lib::autorun::signin_inspect::INSPECT_JS;
@@ -53,7 +53,15 @@ fn sup() -> Account {
 /// A data folder whose active environment is a test environment with the
 /// reset switch on, has `start_url` as its address and holds the account `sup`.
 fn root(start_url: &str) -> tempfile::TempDir {
+    // A trial only goes to a site the app was given: the address, or a saved recipe's.
+    root_with(start_url, start_url.is_empty().then(recipe))
+}
+
+fn root_with(start_url: &str, saved: Option<SignInRecipe>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
+    if let Some(r) = saved {
+        save_recipe(dir.path(), ORG, PROJECT, &r).unwrap();
+    }
     let mut e = load_or_init(dir.path(), Some("dev-read")).unwrap().environments[0].clone();
     e.test_environment = true;
     e.start_url = start_url.to_string();
@@ -211,7 +219,8 @@ async fn a_proposal_that_signs_in_is_stored_and_says_so() {
     let env = active(dir.path()).unwrap();
     let kept = load(dir.path(), &env.id, ORG, PROJECT).unwrap().expect("the proposal was not kept");
     assert_eq!(kept.account, "sup");
-    assert!(load_recipe(dir.path(), ORG, PROJECT).unwrap().is_none(), "a proposal saved the recipe");
+    let saved = load_recipe(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    assert_eq!(serde_json::to_value(&saved).unwrap(), good(), "a proposal changed the saved recipe");
     assert_eq!(fake.closed.len(), 1);
     assert!(signin_attempts::is_open(dir.path(), "sup"));
     signin_attempts::close(dir.path(), "sup");
@@ -350,5 +359,90 @@ async fn an_unsaved_account_and_a_spent_account_are_refused_before_a_browser_ope
     assert_eq!(status, 409, "{text}");
     assert_eq!(text, signin_attempts::attempts_used("sup"));
     assert_eq!(fake.opened, 0);
+    signin_attempts::close(dir.path(), "sup");
+}
+
+fn elsewhere() -> Value {
+    let mut v = good();
+    v["start_url"] = json!("https://evil.example.test/");
+    v["steps"] = json!([{ "kind": "navigate", "url": "https://evil.example.test/login" }]);
+    v
+}
+
+fn saved_on_another_site() -> SignInRecipe {
+    let mut v = good();
+    v["start_url"] = json!("https://hr.example.test/");
+    serde_json::from_value(v).unwrap()
+}
+
+#[tokio::test]
+async fn a_trial_never_goes_to_a_site_the_app_was_not_given() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    // A saved recipe elsewhere: a draft on a third host is refused, and so is
+    // one that names its own allowed sites to get there.
+    let dir = root_with("", Some(saved_on_another_site()));
+    let mut fake = Fake::new(signs_in);
+    let mut wide = elsewhere();
+    wide["allowed_origins"] = json!(["https://evil.example.test"]);
+    for draft in [elsewhere(), wide] {
+        let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(draft.clone()), &quick()).await;
+        assert_eq!(status, 400, "{text}");
+        assert!(text.contains("does not use") && !text.contains("evil"), "{text}");
+        let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &body(draft), &quick()).await;
+        assert_eq!(status, 400, "{text}");
+        assert!(!text.contains("evil"), "{text}");
+    }
+    assert_eq!(fake.opened, 0);
+    assert!(!signin_attempts::is_open(dir.path(), "sup"), "a refused trial spent an attempt");
+
+    // Neither an address nor a saved recipe: nothing to go on.
+    let bare = root_with("", None);
+    for text in [
+        propose_in(&mut fake, bare.path(), ORG, PROJECT, &body(good()), &quick()).await,
+        inspect_in(&mut fake, bare.path(), ORG, PROJECT, &body(good()), &quick()).await,
+    ] {
+        assert_eq!(text.0, 400, "{}", text.1);
+        assert!(text.1.contains("a trial never signs in"), "{}", text.1);
+    }
+    assert_eq!(fake.opened, 0);
+    assert!(!signin_attempts::is_open(bare.path(), "sup"));
+}
+
+#[tokio::test]
+async fn an_inspect_with_an_account_at_the_cap_is_refused_before_a_browser_opens() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    for _ in 0..3 {
+        signin_attempts::take(dir.path(), "sup").unwrap();
+    }
+    let mut fake = Fake::new(signs_in);
+    let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(text, signin_attempts::attempts_used("sup"));
+    assert_eq!(fake.opened, 0);
+    signin_attempts::close(dir.path(), "sup");
+}
+
+#[tokio::test]
+async fn a_failed_trial_and_an_unreadable_page_still_say_why_the_trial_failed() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    // Nothing answers the page reader: the answer is not 200 but carries the trial's words.
+    let mut fake = Fake::new(|| stateful_app(false, Some("#go")).0.answering_first(|m, p| {
+        (m == "Runtime.evaluate" && p["expression"] == INSPECT_JS).then(|| Ok(json!({ "result": { "value": "nope" } })))
+    }));
+    let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
+    assert_eq!(status, 422, "{text}");
+    assert!(text.contains("could not be read") && text.contains("sign-in"), "{text}");
+    no_password_or_host(&text);
     signin_attempts::close(dir.path(), "sup");
 }
