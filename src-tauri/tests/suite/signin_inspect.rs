@@ -8,6 +8,7 @@ use v2_lib::autorun::signin_inspect::{
     action_locator, control_locator, read_sign_in_page, reset_fields_showing, RawAction, RawControl, CHANGE_PASSWORD_HINT, INSPECT_JS,
     PASSWORD_FIELDS_JS,
 };
+use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::locator::Target;
 
 /// A driver whose page is at `href`, titled `title`, and answers the inspect
@@ -50,6 +51,51 @@ async fn inspect_answer_carries_no_value_even_when_the_page_sends_one() {
     let view = read_sign_in_page(&mut d).await.unwrap();
     assert_eq!(view.controls.len(), 1);
     assert!(!serde_json::to_string(&view).unwrap().contains("s3cret-typed"));
+}
+
+fn action(text: &str) -> Value {
+    json!({ "kind": "button", "text": text, "id": "" })
+}
+
+#[tokio::test]
+async fn forty_one_actions_are_cut_to_forty() {
+    let many: Vec<Value> = (0..41).map(|i| action(&format!("b{i}"))).collect();
+    let mut d = page_reading("https://hr.example.internal/login", json!({ "controls": [], "actions": many }));
+    let view = read_sign_in_page(&mut d).await.unwrap();
+    assert!(view.actions.len() == 40 && view.cut);
+}
+
+#[tokio::test]
+async fn an_action_with_no_id_and_no_text_is_left_out() {
+    let acts = json!([action(""), action("Sign in")]);
+    let mut d = page_reading("https://hr.example.internal/login", json!({ "controls": [], "actions": acts }));
+    let view = read_sign_in_page(&mut d).await.unwrap();
+    assert_eq!(view.actions.len(), 1);
+    assert_eq!(view.actions[0].text, "Sign in");
+}
+
+#[tokio::test]
+async fn a_failed_read_names_no_address() {
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({}))).answering_first(|m, p| {
+        (m == "Runtime.evaluate" && p["expression"] == INSPECT_JS)
+            .then(|| Err(CdpError::Transport("connect ws://127.0.0.1:9333/devtools failed".into())))
+    });
+    let err = read_sign_in_page(&mut d).await.unwrap_err();
+    assert!(!err.contains("ws://") && !err.contains("127.0.0.1"), "{err}");
+}
+
+#[tokio::test]
+async fn an_answer_that_is_not_controls_and_actions_is_an_error() {
+    for bad in [json!(null), json!({ "controls": [] }), json!("text")] {
+        let mut d = page_reading("https://hr.example.internal/login", bad);
+        assert!(read_sign_in_page(&mut d).await.is_err());
+    }
+}
+
+#[test]
+fn a_labelled_select_is_a_combobox() {
+    let c = control_locator(&RawControl { tag: "select".into(), label: "Language".into(), ..Default::default() });
+    assert_eq!(target_json(&c), json!({ "role": "combobox", "name": "Language", "exact": true }));
 }
 
 #[test]

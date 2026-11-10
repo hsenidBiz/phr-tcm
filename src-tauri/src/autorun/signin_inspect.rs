@@ -132,21 +132,19 @@ pub fn control_locator(c: &RawControl) -> Target {
         return css_target(&css);
     }
     if !c.label.trim().is_empty() {
-        return super::recorder::exact_role("textbox", &c.label);
+        return super::recorder::exact_role(&role_of(c), &c.label);
     }
     css_target(if c.tag.trim().is_empty() { "input" } else { c.tag.trim() })
 }
 
 /// How a recipe step would point at this button or link: its id, else its
-/// role and caption.
+/// role and caption. One with neither has no locator and is left out of the
+/// page view.
 pub fn action_locator(a: &RawAction) -> Target {
     if !a.id.trim().is_empty() {
         return css_target(&format!("#{}", css_escape(&a.id)));
     }
     let kind = if a.kind.is_empty() { "button" } else { a.kind.as_str() };
-    if a.text.trim().is_empty() {
-        return css_target(if kind == "link" { "a" } else { "button" });
-    }
     super::recorder::exact_role(kind, &a.text)
 }
 
@@ -165,9 +163,23 @@ async fn eval_string<D: Driver>(d: &mut D, expression: &str) -> String {
 /// query), its title and each visible control and action with a locator a
 /// recipe step could use. Never a value.
 pub async fn read_sign_in_page<D: Driver>(d: &mut D) -> Result<SignInPageView, String> {
-    let read = crate::browser::page::eval_value(d, INSPECT_JS).await.map_err(|e| e.to_string())?;
-    let controls: Vec<RawControl> = serde_json::from_value(read["controls"].clone()).unwrap_or_default();
-    let actions: Vec<RawAction> = serde_json::from_value(read["actions"].clone()).unwrap_or_default();
+    let unreadable = || "the page could not be read - try again".to_string();
+    let read = match crate::browser::page::eval_value(d, INSPECT_JS).await {
+        Ok(v) => v,
+        Err(e) => {
+            crate::applog::warn(format!("reading the sign-in page failed: {e}"));
+            return Err(unreadable());
+        }
+    };
+    let (Ok(controls), Ok(actions)) = (
+        serde_json::from_value::<Vec<RawControl>>(read["controls"].clone()),
+        serde_json::from_value::<Vec<RawAction>>(read["actions"].clone()),
+    ) else {
+        crate::applog::warn("reading the sign-in page: the answer was not controls and actions");
+        return Err(unreadable());
+    };
+    // A button or link with no id and no caption cannot be pointed at.
+    let actions: Vec<RawAction> = actions.into_iter().filter(|a| !(a.id.trim().is_empty() && a.text.trim().is_empty())).collect();
     let href = eval_string(d, "location.href").await;
     let title = eval_string(d, "document.title").await;
     let title: String = title.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
