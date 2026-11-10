@@ -1292,7 +1292,9 @@ rule, see the hard stops below.
 2. Call `inspect_sign_in_page`. With no `account` it opens the sign-in
    address in a browser of its own and lists each visible field, button and
    link with a `locator` a recipe step can use as it is; it never shows what
-   is typed in a field, and it never signs in.
+   is typed in a field, and it never signs in. For a sign-in over two pages
+   (the signed-in check never appeared after the first page), call it with
+   `account` and a draft `recipe` instead, to read the page after it.
 3. Build a recipe from what it listed: `start_url`, `steps`, `signed_in`
    (and `signed_in_in_menu` when the check sits in a menu).
 4. Call `propose_sign_in_recipe` with that recipe and a saved account, a
@@ -1306,8 +1308,10 @@ rule, see the hard stops below.
    under the Sign-in row, "Proposed by the assistant": Approve or Reject),
    and wait for their reply. Nothing is saved before then.
 6. When they have approved it, call `check_autorun_sign_in` for the account,
-   then call `start_autorun_discovery` again at the same area. "Carry on"
-   means a fresh discovery session, not a resumed one.
+   then call `start_autorun_discovery` again with the same arguments as
+   before (the area, or mapping and modules, or explore). "Carry on" means a
+   fresh discovery session, not a resumed one. Check the account the job
+   runs as, and the trial account too if its problem is still open.
 
 **A change-password page the recipe does not describe.** A check that ends
 on one says it "stopped on a change-password page the sign-in recipe does
@@ -1329,7 +1333,8 @@ showed a change-password page this sign-in does not describe". Then:
    environment with that switch on. A trial never sends the change-password
    form, so the reset happens the next time an expired password is met.
 4. Sign in again (`check_autorun_sign_in`, then a fresh
-   `start_autorun_discovery`). The reset runs and Accounts are updated; you
+   `start_autorun_discovery` with the same arguments as before: the area,
+   or mapping and modules, or explore). The reset runs and Accounts are updated; you
    never see a password.
 
 **Limits.**
@@ -1338,8 +1343,9 @@ showed a change-password page this sign-in does not describe". Then:
 - At most 3 sign-in attempts per account for one sign-in problem. Inspecting
   with an account, each proposal's trial and each `check_autorun_sign_in`
   made while the problem is open all count. Inspecting without an account
-  never signs in and counts nothing; a call refused before a browser opens
-  spends nothing; a check that signs the account in closes the problem.
+  never signs in and counts nothing; an account the check skips (expired
+  password, session held elsewhere) still counts; a call refused before a
+  browser opens spends nothing; a check that signs the account in closes the problem.
 - Report to the person and stop, never retrying in a loop, on: a rejected
   proposal, a second failed trial, a wrong password, a locked account, a
   captcha, a one-time code, or a page that needs more than one form.
@@ -3040,7 +3046,7 @@ Classify each failure before you change anything: the locator, timing, the envir
 
 - At most 3 fix-run cycles per case: a fix, then a replay or run of it.
 - Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
-- Stop at once on a missing precondition or a product defect: a real bug must surface as a failure. On a login page, follow the guide's "When the sign-in page does not fit".
+- Stop at once on a missing precondition or a product defect: a real bug must surface as a failure. On a failed sign-in, follow the guide's "When the sign-in page does not fit".
 - A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
 - A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never changes a check's value away from the case; the save refuses both otherwise.
 

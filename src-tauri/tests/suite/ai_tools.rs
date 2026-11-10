@@ -2655,5 +2655,11 @@ fn agent_rules_name_the_sign_in_rule() {
         assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{name}");
     }
     let healer = include_str!("../../src/autorun/roles/healer.md");
+    let stop = healer.lines().find(|l| l.contains("under a STOP line")).expect("healer STOP line");
+    assert!(stop.contains("When the sign-in page does not fit"), "{stop}");
+    let heal = COMMANDS.iter().find(|c| c.stem == "heal").unwrap().body.join(" ");
+    let heal = heal.split_whitespace().collect::<Vec<_>>().join(" ");
+    let at = heal.find("2. A case whose failure is one of the `STOP:` lines").expect("heal step 2");
+    assert!(heal[at..at + 900].contains("When the sign-in page does not fit"), "{heal}");
     assert!(!healer.contains("Stop at once on a login page"), "healer still stops on a login page outright");
 }
