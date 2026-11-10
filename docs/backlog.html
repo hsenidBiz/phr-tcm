@@ -46,6 +46,14 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
+    <div class="head"><span class="title">Assistant-built sign-in and expired-password reset (2.4.6-beta.2)</span><span class="status todo">Next</span></div>
+    <ul>
+      <li>Built 10 Nov 2026: the assistant inspects a sign-in or change-password page, proposes a recipe it has tried with a saved account, and you approve or reject it under the Sign-in row in Auto Run, Setup; discover and every live-app command recover through this instead of stopping. Trials only sign in on the environment's address or the saved recipe's sites; with neither, propose is refused (record a sign-in or set the address first).</li>
+      <li>Hand checks owed on a live site: on hSenid HRM legacy, let an account expire (or use one that is) with Reset expired passwords on for a test environment; run discovery; the assistant should reach changepassword.aspx, propose the change-password part, the notice offers the tick box; approve; the next sign-in resets the password and Accounts shows the new one. Also: a deliberately wrong recipe makes discovery propose a replacement; Reject leaves the old recipe; three failed attempts stop the assistant.</li>
+      <li>Parked follow-ups: a project still on the built-in sign-in cannot propose a change-password part on its own (needs a recorded sign-in first); approve says "not saved" if removing the proposal fails after saving; the notice matches one Rust sentence by hand; no in-app sign of a running trial; a draft that types fixed text into a password field during a trial is not refused yet.</li>
+    </ul>
+  </div>
+  <div class="item">
     <div class="head"><span class="title">Shared API library (2.4.5-beta.7) and sign-in check in a menu</span><span class="status todo">Next</span></div>
     <ul>
       <li>Shared API library shipped in 2.4.5-beta.7: templates, flows and fixtures are one library for every environment, each marked Unconfirmed here / Failed here per environment. Hand checks owed on a live org: a fresh environment runs a shared fixture as a setup and gets the "has not worked on this environment yet" Blocked sentence; the assistant replaces a template from a second environment and the first then reads Unconfirmed here; the one-time move on the installed app keeps every template, fixture and flow; restoring an older backup keeps run histories; the retaken API Templates and Search Suites More shots look right.</li>

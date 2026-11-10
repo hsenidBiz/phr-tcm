@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.2",
+    date: "2026-11-10",
+    items: [
+      "Your assistant can work out a sign-in page it does not know: it reads the page's fields and buttons (never what is typed in them), tries a sign-in with one of your accounts, and leaves a Proposed by the assistant note under the Sign-in row in Auto Run, Setup. Approve saves it as this environment's sign-in; Reject drops it. Nothing is saved until you approve.",
+      "When a sign-in lands on a change-password page the sign-in does not describe, the assistant can propose that page's part too. Once approved, on a test environment with Reset expired passwords on (the note can turn it on), the next sign-in resets the password and saves the new one in Accounts.",
+      "Discovery and the assistant's other jobs in the app no longer stop at a sign-in page that does not fit: they propose a fix and wait for your approval. A trial sign-in only signs in on this environment's own site or the saved sign-in's site, never sends a change-password form, and an account gets at most three tries per problem.",
+      "A change-password page with no field for the current password is supported.",
+    ],
+  },
+  {
     version: "2.4.6-beta.1",
     date: "2026-11-10",
     items: [
