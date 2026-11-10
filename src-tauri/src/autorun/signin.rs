@@ -592,7 +592,13 @@ async fn fill_reset_form<D: Driver>(
     };
     let secrets = [account.password.as_str(), RESET_PASSWORDS[0], RESET_PASSWORDS[1]];
     let fill = |selector: &Target, value: &str| Action::Fill { selector: selector.clone(), value: value.to_string() };
-    for action in [fill(&page.field, &account.password), fill(&new_field, new), fill(&confirm_field, new)] {
+    let mut actions = Vec::with_capacity(3);
+    if !page.no_current_password {
+        actions.push(fill(&page.field, &account.password));
+    }
+    actions.push(fill(&new_field, new));
+    actions.push(fill(&confirm_field, new));
+    for action in actions {
         let out = execute_in(d, &action, timing, &policy.as_runner()).await;
         if !out.ok {
             return Err(short_reason(&out.detail, &secrets));

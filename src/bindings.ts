@@ -5752,7 +5752,9 @@ export type PasswordResetPage_Deserialize = {
 	path_contains: string,
 	/**
 	 *  A field only that page has - recognised by it, not by the wording.
-	 *  It is also the page's current password field, which a reset fills.
+	 *  It is also the page's current password field, which a reset fills -
+	 *  unless `no_current_password` is set, when it only recognises the page
+	 *  (often the new password field itself) and is never filled.
 	 */
 	field: Target_Deserialize,
 	/**
@@ -5767,6 +5769,11 @@ export type PasswordResetPage_Deserialize = {
 	 *  out, the built-in `#btnsubmit`.
 	 */
 	submit?: Target_Deserialize | null,
+	/**
+	 *  The page has no current password field (a forced change after a
+	 *  reset): `field` is never filled and `new` must be named.
+	 */
+	no_current_password?: boolean,
 };
 
 /**
@@ -5780,7 +5787,9 @@ export type PasswordResetPage_Serialize = {
 	path_contains: string,
 	/**
 	 *  A field only that page has - recognised by it, not by the wording.
-	 *  It is also the page's current password field, which a reset fills.
+	 *  It is also the page's current password field, which a reset fills -
+	 *  unless `no_current_password` is set, when it only recognises the page
+	 *  (often the new password field itself) and is never filled.
 	 */
 	field: Target_Serialize,
 	/**
@@ -5795,6 +5804,11 @@ export type PasswordResetPage_Serialize = {
 	 *  out, the built-in `#btnsubmit`.
 	 */
 	submit?: Target_Serialize | null,
+	/**
+	 *  The page has no current password field (a forced change after a
+	 *  reset): `field` is never filled and `new` must be named.
+	 */
+	no_current_password?: boolean,
 };
 
 /**

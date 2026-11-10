@@ -3,7 +3,8 @@
 use serde_json::json;
 use v2_lib::autorun::accounts::Account;
 use v2_lib::autorun::recipe::{
-    for_account, has_placeholder, load_recipe, origin_of, project_slug, save_recipe, RecipeStep, SignInRecipe,
+    for_account, has_placeholder, load_recipe, origin_of, project_slug, save_recipe, PasswordResetPage, RecipeStep,
+    SignInRecipe,
 };
 use v2_lib::browser::actions::Action;
 use v2_lib::browser::expect::Check;
@@ -553,4 +554,23 @@ fn a_recipe_without_the_in_menu_flag_loads_and_is_written_without_it() {
     assert!(r.signed_in_in_menu);
     assert_eq!(serde_json::to_value(&r).unwrap()["signed_in_in_menu"], json!(true));
     assert!(matches!(r.signed_in_check(), Check::Present));
+}
+
+#[test]
+fn a_reset_page_without_a_current_field_needs_its_new_field() {
+    let mut r = recipe(sample());
+    r.password_reset = Some(
+        serde_json::from_value(json!({ "path_contains": "/account/change", "field": { "css": "#newPwd" }, "no_current_password": true }))
+            .unwrap(),
+    );
+    assert_eq!(
+        r.validate().unwrap_err(),
+        "password_reset: a page with no current password field names its new password field (new)"
+    );
+    r.password_reset.as_mut().unwrap().new = Some(serde_json::from_value(json!({ "css": "#newPwd" })).unwrap());
+    assert!(r.validate().is_ok());
+    // Old files read unchanged and write without the flag.
+    let old: PasswordResetPage = serde_json::from_value(json!({ "path_contains": "/x", "field": { "css": "#o" } })).unwrap();
+    assert!(!old.no_current_password);
+    assert!(!serde_json::to_string(&old).unwrap().contains("no_current_password"));
 }

@@ -133,7 +133,9 @@ pub struct PasswordResetPage {
     /// Part of the page's PATH (case ignored): `/security/PasswordReset`.
     pub path_contains: String,
     /// A field only that page has - recognised by it, not by the wording.
-    /// It is also the page's current password field, which a reset fills.
+    /// It is also the page's current password field, which a reset fills -
+    /// unless `no_current_password` is set, when it only recognises the page
+    /// (often the new password field itself) and is never filled.
     pub field: Target,
     /// The new password field a reset fills; left out, the built-in
     /// `#txtNewPassword`.
@@ -146,6 +148,10 @@ pub struct PasswordResetPage {
     /// out, the built-in `#btnsubmit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submit: Option<Target>,
+    /// The page has no current password field (a forced change after a
+    /// reset): `field` is never filled and `new` must be named.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_current_password: bool,
 }
 
 /// A loading indicator the runner waits out by itself
@@ -623,6 +629,9 @@ impl SignInRecipe {
                 return Err("password_reset: path_contains is part of the page's path, for example /security/PasswordReset".to_string());
             }
             page.field.validate().map_err(|e| format!("password_reset: {e}"))?;
+            if page.no_current_password && page.new.is_none() {
+                return Err("password_reset: a page with no current password field names its new password field (new)".to_string());
+            }
             for t in [&page.new, &page.confirm, &page.submit].into_iter().flatten() {
                 t.validate().map_err(|e| format!("password_reset: {e}"))?;
             }

@@ -876,6 +876,28 @@ async fn reset_on_test_environment_saves_new_password_and_signs_in() {
 }
 
 #[tokio::test]
+async fn a_reset_without_a_current_field_types_only_the_new_password() {
+    let _log = crate::serial::log_tail();
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let mut v = serde_json::to_value(recipe_at_login()).unwrap();
+    v["password_reset"] = json!({
+        "path_contains": "/security/PasswordReset",
+        "field": { "css": "#txtNewPassword" },
+        "new": { "css": "#txtNewPassword" },
+        "no_current_password": true
+    });
+    let recipe: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(v).unwrap();
+    let out = sign_in(&mut d, dir.path(), &recipe, &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(app.typed_into("#txtOldPassword").is_empty());
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123"]);
+    assert_eq!(app.typed_into("#txtConfirmPassword"), ["Abc@123"]);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(account_file_password(dir.path()), "Abc@123");
+}
+
+#[tokio::test]
 async fn the_alternate_is_used_when_the_current_password_is_the_first() {
     let dir = reset_root(true, true);
     let mut acct = reset_account();
