@@ -160,9 +160,26 @@ impl AdoClient {
             builds.extend(ci);
         }
 
-        for b in &mut builds {
-            b.stages = self.build_stages(org, project, b.id).await.unwrap_or_default();
-            b.deployments = self.build_deployments(org, project, b.id).await.unwrap_or_default();
+        // Stages and deployments of each build, READ_CONCURRENCY builds at a
+        // time (two requests per build, one after the other, before).
+        {
+            use futures::stream::{self, StreamExt};
+            let ids: Vec<i32> = builds.iter().map(|b| b.id).collect();
+            let extras: Vec<_> = stream::iter(ids)
+                .map(|id| async move {
+                    let (stages, deployments) = futures::join!(
+                        self.build_stages(org, project, id),
+                        self.build_deployments(org, project, id)
+                    );
+                    (stages.unwrap_or_default(), deployments.unwrap_or_default())
+                })
+                .buffered(crate::ado::READ_CONCURRENCY)
+                .collect()
+                .await;
+            for (b, (stages, deployments)) in builds.iter_mut().zip(extras) {
+                b.stages = stages;
+                b.deployments = deployments;
+            }
         }
         builds.sort_by(|a, b| b.started.cmp(&a.started));
         Ok(builds)
@@ -359,14 +376,17 @@ impl AdoClient {
         project: &str,
         build_ids: &[i32],
     ) -> Result<Vec<BuildDeployments>, AdoError> {
-        let mut out = vec![];
-        for &id in build_ids {
-            out.push(BuildDeployments {
-                build_id: id,
-                deployments: self.build_deployments(org, project, id).await.unwrap_or_default(),
-            });
-        }
-        Ok(out)
+        use futures::stream::{self, StreamExt};
+        Ok(stream::iter(build_ids.to_vec())
+            .map(|id| async move {
+                BuildDeployments {
+                    build_id: id,
+                    deployments: self.build_deployments(org, project, id).await.unwrap_or_default(),
+                }
+            })
+            .buffered(crate::ado::READ_CONCURRENCY)
+            .collect()
+            .await)
     }
 
     /// Classic releases that consumed this build as their artifact, with

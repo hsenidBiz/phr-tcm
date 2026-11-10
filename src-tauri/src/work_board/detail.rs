@@ -3,6 +3,11 @@
 use super::{InlineImage, WorkComment, WorkItemDetail};
 use crate::ado::{AdoClient, AdoError};
 
+/// The largest single inline picture sent to the webview.
+pub const INLINE_IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// The most picture bytes one answer carries, all pictures together.
+pub const INLINE_IMAGES_TOTAL_BYTES: usize = 24 * 1024 * 1024;
+
 impl AdoClient {
     /// One work item, fully loaded for the detail drawer. Read only.
     pub async fn get_work_item_detail(
@@ -188,7 +193,10 @@ impl AdoClient {
     /// they use different ones.
     async fn collect_attachment_images_capped(&self, texts: &[&str], limit: usize) -> Vec<InlineImage> {
         use base64::Engine;
-        let html_re = regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
+        use futures::stream::{self, StreamExt};
+        // Compiled once for the process, not on every call.
+        static HTML_RE: std::sync::LazyLock<regex::Regex> =
+            std::sync::LazyLock::new(|| regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap());
         // Markdown URL syntax allows one level of balanced parentheses
         // inside the plain (non angle-bracket) form - a pasted attachment
         // name survives ADO's own encoding as
@@ -200,16 +208,20 @@ impl AdoClient {
         // case to guard against with a length cap - one was tried here and
         // rejected by the compiler for blowing up the compiled program
         // size instead.
-        let md_re = regex::Regex::new(r#"!\[[^\]]*\]\(((?:[^()\s]|\([^()\s]*\))+)\)"#).unwrap();
+        static MD_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r#"!\[[^\]]*\]\(((?:[^()\s]|\([^()\s]*\))+)\)"#).unwrap()
+        });
+        // First the list of distinct images, in the order the text names
+        // them, up to `limit`.
         let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for text in texts {
+        let mut wanted: Vec<(String, String)> = Vec::new();
+        'texts: for text in texts {
             if !text.contains("<img") && !text.contains("![") {
                 continue;
             }
-            for cap in html_re.captures_iter(text).chain(md_re.captures_iter(text)) {
-                if out.len() >= limit {
-                    return out;
+            for cap in HTML_RE.captures_iter(text).chain(MD_RE.captures_iter(text)) {
+                if wanted.len() >= limit {
+                    break 'texts;
                 }
                 // The src sits in an HTML attribute, so & is entity-encoded
                 // there; markdown never entity-encodes, so this is a no-op
@@ -221,40 +233,64 @@ impl AdoClient {
                 if !seen.insert(url.clone()) {
                     continue;
                 }
-                // Through the transport, like every other request: paced,
-                // and with a log line, which is what "log every request"
-                // has to mean for the one the user is looking for. Every
-                // failure here used to be a bare `continue`, so a picture
-                // that would not load left no trace anywhere - the field
-                // just showed a broken image and the log had nothing to
-                // say about it.
-                let bytes = match self.get_bytes(download).await {
-                    Ok(b) => b,
-                    Err(e) => {
-                        crate::applog::warn(format!("inline image {url} could not be fetched: {e}"));
-                        continue;
-                    }
-                };
-                // The bytes carry their own type; ADO serves these as
-                // octet-stream, so sniff rather than trust a header we no
-                // longer see. PNG and GIF are unambiguous, JPEG starts FFD8.
-                let mime = sniff_image_mime(&bytes).to_string();
-                if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
-                    crate::applog::warn(format!(
-                        "inline image {url} skipped at {} bytes",
-                        bytes.len()
-                    ));
-                    continue; // keep the broken link rather than a 10MB blob
-                }
-                out.push(InlineImage {
-                    url,
-                    data: format!(
-                        "data:{};base64,{}",
-                        mime,
-                        base64::engine::general_purpose::STANDARD.encode(&bytes)
-                    ),
-                });
+                wanted.push((url, download));
             }
+        }
+        // Then the downloads, READ_CONCURRENCY at a time (they went one
+        // after the other: a comment history with 30 pictures was 30 round
+        // trips), answers kept in the text's order. Through the transport,
+        // like every other request: paced, logged, retried as a read. A
+        // picture that would not load leaves a log line, not just a broken
+        // image.
+        let fetched: Vec<_> = stream::iter(wanted)
+            .map(|(url, download)| async move {
+                let answer = self.get_bytes(download).await;
+                (url, answer)
+            })
+            .buffered(crate::ado::READ_CONCURRENCY)
+            .collect()
+            .await;
+        let mut out = Vec::new();
+        let mut total = 0usize;
+        for (url, answer) in fetched {
+            let bytes = match answer {
+                Ok(b) => b,
+                Err(e) => {
+                    crate::applog::warn(format!("inline image {url} could not be fetched: {e}"));
+                    continue;
+                }
+            };
+            // The bytes carry their own type; ADO serves these as
+            // octet-stream, so sniff rather than trust a header we no
+            // longer see. PNG and GIF are unambiguous, JPEG starts FFD8.
+            let mime = sniff_image_mime(&bytes).to_string();
+            if bytes.is_empty() || bytes.len() > INLINE_IMAGE_MAX_BYTES {
+                crate::applog::warn(format!(
+                    "inline image {url} skipped at {} bytes",
+                    bytes.len()
+                ));
+                continue; // keep the broken link rather than a 10MB blob
+            }
+            // The pictures cross to the webview as base64 text in one
+            // answer, a third larger than the bytes. One answer is kept
+            // under a total, so a long history full of screenshots cannot
+            // send hundreds of megabytes through IPC at once; the rest show
+            // as "Image unavailable" and the log says why.
+            if total + bytes.len() > INLINE_IMAGES_TOTAL_BYTES {
+                crate::applog::warn(format!(
+                    "inline image {url} skipped: this answer already carries {total} bytes of pictures"
+                ));
+                continue;
+            }
+            total += bytes.len();
+            out.push(InlineImage {
+                url,
+                data: format!(
+                    "data:{};base64,{}",
+                    mime,
+                    base64::engine::general_purpose::STANDARD.encode(&bytes)
+                ),
+            });
         }
         out
     }

@@ -340,13 +340,17 @@ pub async fn view_execution_report(
     let client = ado::AdoClient::new(token);
 
     // Points per suite (deduped across a folder's overlapping suites).
+    // READ_CONCURRENCY suites at a time, answers in the suites' order.
+    use futures::stream::{self, StreamExt, TryStreamExt};
+    let per_suite: Vec<Vec<ado_testplan::TestPoint>> = stream::iter(suite_ids.iter().copied())
+        .map(|sid| client.get_test_points(&organization, &project, plan_id, sid, &[]))
+        .buffered(ado::READ_CONCURRENCY)
+        .try_collect()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut points: Vec<ado_testplan::TestPoint> = vec![];
     let mut seen = std::collections::HashSet::new();
-    for sid in &suite_ids {
-        let pts = client
-            .get_test_points(&organization, &project, plan_id, *sid, &[])
-            .await
-            .map_err(|e| e.to_string())?;
+    for pts in per_suite {
         for p in pts {
             if seen.insert(p.point_id) {
                 points.push(p);
@@ -358,18 +362,23 @@ pub async fn view_execution_report(
     let points = report::filter_points_to_cases(points, case_ids.as_deref());
 
     // Failure details (comment + linked bugs) for failed points only.
+    let failed: Vec<(i32, i32, i32)> = points
+        .iter()
+        .filter(|p| p.last_outcome.eq_ignore_ascii_case("failed"))
+        .filter_map(|p| Some((p.point_id, p.last_run_id?, p.last_result_id?)))
+        .collect();
+    let infos: Vec<_> = stream::iter(failed)
+        .map(|(point, run, res)| {
+            let (client, organization, project) = (&client, &organization, &project);
+            async move { (point, client.get_result_report_info(organization, project, run, res).await) }
+        })
+        .buffered(ado::READ_CONCURRENCY)
+        .collect()
+        .await;
     let mut failures = std::collections::HashMap::new();
-    for p in &points {
-        if !p.last_outcome.eq_ignore_ascii_case("failed") {
-            continue;
-        }
-        if let (Some(run), Some(res)) = (p.last_run_id, p.last_result_id) {
-            if let Ok((comment, bug_ids)) = client
-                .get_result_report_info(&organization, &project, run, res)
-                .await
-            {
-                failures.insert(p.point_id, report::FailureInfo { comment, bug_ids });
-            }
+    for (point, info) in infos {
+        if let Ok((comment, bug_ids)) = info {
+            failures.insert(point, report::FailureInfo { comment, bug_ids });
         }
     }
 

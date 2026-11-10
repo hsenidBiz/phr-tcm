@@ -233,6 +233,11 @@ pub(crate) fn tc_ids_i32(ids: &[i64]) -> Vec<i32> {
 }
 
 /// How long connecting may take before a request gives up.
+/// How many requests one read sends at the same time (chunked reads, per
+/// item lookups). Every request still goes through the pacer and any hold
+/// Azure DevOps asked for.
+pub const READ_CONCURRENCY: usize = 4;
+
 pub const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// How long any one request may take, start to last byte.
 pub const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);

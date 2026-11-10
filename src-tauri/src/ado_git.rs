@@ -543,21 +543,30 @@ impl AdoClient {
     /// board has always made), else through the pull request's own.
     async fn links_of(&self, org: &str, prs: Vec<LinkedPr>, read_project: Option<&str>) -> Vec<PrLink> {
         let mut links = vec![];
-        for pr in prs {
-            let read_in = read_project.unwrap_or(&pr.project);
-            let scope = if read_in.is_empty() {
-                org.to_string()
-            } else {
-                format!("{org}/{read_in}")
-            };
-            let url = format!(
-                "{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.1",
-                self.base_url,
-                scope,
-                urlencoding::encode(&pr.repo_id),
-                pr.id
-            );
-            let Ok(data) = self.get_json(url).await else { continue };
+        // One request per pull request, READ_CONCURRENCY at a time (they
+        // were read one after the other: every active PR plus 25 finished
+        // ones on each board load).
+        let urls: Vec<String> = prs
+            .iter()
+            .map(|pr| {
+                let read_in = read_project.unwrap_or(&pr.project);
+                let scope = if read_in.is_empty() {
+                    org.to_string()
+                } else {
+                    format!("{org}/{read_in}")
+                };
+                format!(
+                    "{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.1",
+                    self.base_url,
+                    scope,
+                    urlencoding::encode(&pr.repo_id),
+                    pr.id
+                )
+            })
+            .collect();
+        let answers = self.get_json_each(urls).await;
+        for (pr, answer) in prs.into_iter().zip(answers) {
+            let Ok(data) = answer else { continue };
             for r in values_of(&data) {
                 // ResourceRef ids arrive as strings.
                 let Some(wi) = r["id"].as_str().and_then(|s| s.parse::<i32>().ok()) else {
@@ -623,12 +632,19 @@ impl AdoClient {
         let mut seen_types = std::collections::HashSet::new();
         let raw: Vec<serde_json::Value> =
             fetched["value"].as_array().cloned().unwrap_or_default();
-        for w in &raw {
-            let wtype = w["fields"]["System.WorkItemType"].as_str().unwrap_or_default().to_string();
-            if wtype.is_empty() || !seen_types.insert(wtype.clone()) {
-                continue;
-            }
-            if let Ok(states) = self.get_work_item_states(org, project, &wtype).await {
+        let types: Vec<String> = raw
+            .iter()
+            .map(|w| w["fields"]["System.WorkItemType"].as_str().unwrap_or_default().to_string())
+            .filter(|t| !t.is_empty() && seen_types.insert(t.clone()))
+            .collect();
+        use futures::stream::{self, StreamExt};
+        let answers: Vec<_> = stream::iter(types.clone())
+            .map(|t| async move { self.get_work_item_states(org, project, &t).await })
+            .buffered(crate::ado::READ_CONCURRENCY)
+            .collect()
+            .await;
+        for (wtype, answer) in types.iter().zip(answers) {
+            if let Ok(states) = answer {
                 for s in states {
                     colors.insert((wtype.clone(), s.name), s.color);
                 }

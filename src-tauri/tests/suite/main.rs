@@ -24,6 +24,7 @@ mod serial_order;
 mod action_help;
 mod activity_log;
 mod ado;
+mod ado_retry;
 mod ado_boards;
 mod ado_case_meta;
 mod ado_git;

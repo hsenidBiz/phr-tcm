@@ -75,29 +75,51 @@ impl AdoClient {
         project: &str,
         steps: &[Step],
     ) -> Result<Vec<Uploaded>, String> {
-        let mut done: Vec<Uploaded> = Vec::new();
-        for att in steps.iter().flat_map(|s| s.attachments.iter()) {
-            let Some(path) = att.path.as_deref() else { continue };
-            let (name, bytes) = read_step_file(path)?;
-            let url = match self.upload_wi_attachment(organization, project, &name, bytes).await {
-                Ok(u) if !u.is_empty() => u,
-                Ok(_) => {
-                    crate::applog::warn("attachment upload returned no url");
-                    return Err(format!("\"{name}\" could not be uploaded to Azure DevOps."));
-                }
-                Err(e) => {
-                    // The raw body (an on-prem server can answer with a whole
-                    // HTML page) goes to the log, never to the person.
-                    crate::applog::warn(&format!("attachment upload failed for \"{name}\": {e} {}", e.user_text()));
-                    return Err(upload_failed_sentence(&name, &e));
-                }
-            };
-            let Some(guid) = attachment_guid(&url) else {
+        use futures::stream::{self, StreamExt, TryStreamExt};
+        let paths: Vec<String> = steps
+            .iter()
+            .flat_map(|s| s.attachments.iter())
+            .filter_map(|a| a.path.clone())
+            .collect();
+        // READ_CONCURRENCY uploads at a time, kept in the steps' order; the
+        // first failure stops the rest. Each upload is its own blob, so
+        // the order they land in does not matter to Azure DevOps.
+        stream::iter(paths)
+            .map(|path| async move { self.upload_one_step_file(organization, project, path).await })
+            .buffered(super::READ_CONCURRENCY)
+            .try_collect()
+            .await
+    }
+
+    /// One step file: read off the async runtime, uploaded, its blob guid
+    /// taken from the answer.
+    async fn upload_one_step_file(
+        &self,
+        organization: &str,
+        project: &str,
+        path: String,
+    ) -> Result<Uploaded, String> {
+        let read_path = path.clone();
+        let (name, bytes) = tokio::task::spawn_blocking(move || read_step_file(&read_path))
+            .await
+            .map_err(|_| "A step file could not be read, so it was not attached.".to_string())??;
+        let url = match self.upload_wi_attachment(organization, project, &name, bytes).await {
+            Ok(u) if !u.is_empty() => u,
+            Ok(_) => {
+                crate::applog::warn("attachment upload returned no url");
                 return Err(format!("\"{name}\" could not be uploaded to Azure DevOps."));
-            };
-            done.push(Uploaded { path: path.to_string(), guid, url, name });
-        }
-        Ok(done)
+            }
+            Err(e) => {
+                // The raw body (an on-prem server can answer with a whole
+                // HTML page) goes to the log, never to the person.
+                crate::applog::warn(&format!("attachment upload failed for \"{name}\": {e} {}", e.user_text()));
+                return Err(upload_failed_sentence(&name, &e));
+            }
+        };
+        let Some(guid) = attachment_guid(&url) else {
+            return Err(format!("\"{name}\" could not be uploaded to Azure DevOps."));
+        };
+        Ok(Uploaded { path, guid, url, name })
     }
 }
 

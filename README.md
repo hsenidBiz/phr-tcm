@@ -258,8 +258,10 @@ are enforced in code and by tests.
   bindings.
 - Confirm before every write. A review gate precedes any create or update.
   Reads happen freely.
-- Rate-limited writes. A pacer keeps requests within the budget you set,
-  and the app slows down whenever Azure DevOps asks.
+- Rate-limited writes. A pacer spaces writes to the budget you set, and
+  every request, reads included, slows down whenever Azure DevOps asks.
+  A read that fails on a dropped connection, a 500/502/503/504 or a short
+  429 is tried again (three tries in all); a write is never sent twice.
 - Blank fields never wipe data. An update skips fields left blank.
 - Comments and reviewer notes stay in the app and in your files. The app
   never sends them to Azure DevOps.

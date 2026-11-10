@@ -387,20 +387,23 @@ impl AdoClient {
 
         let mut values: Vec<String> = vec![];
         let mut seen = std::collections::HashSet::new();
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
-                self.base_url,
-                organization,
-                ids_csv,
-                urlencoding::encode(field_ref)
-            );
-            let fetched = self.get_json(url).await?;
+        let urls: Vec<String> = ids.chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                    self.base_url,
+                    organization,
+                    ids_csv,
+                    urlencoding::encode(field_ref)
+                )
+            })
+            .collect();
+        for fetched in self.get_json_all(urls).await? {
             for wi in fetched["value"].as_array().cloned().unwrap_or_default() {
                 if let Some(v) = wi["fields"][field_ref].as_str() {
                     let t = v.trim();
@@ -461,17 +464,20 @@ impl AdoClient {
         }
 
         let mut cases = Vec::with_capacity(tc_ids.len());
-        for chunk in tc_ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.Title,System.Tags,Microsoft.VSTS.TCM.AutomationStatus&api-version=7.1",
-                self.base_url, percent_encode_segment(organization), ids_csv
-            );
-            let fetched = self.get_json(url).await?;
+        let urls: Vec<String> = tc_ids.chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.Title,System.Tags,Microsoft.VSTS.TCM.AutomationStatus&api-version=7.1",
+                    self.base_url, percent_encode_segment(organization), ids_csv
+                )
+            })
+            .collect();
+        for fetched in self.get_json_all(urls).await? {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let fields = &w["fields"];
                 cases.push(TestCaseSummary {
@@ -500,13 +506,16 @@ impl AdoClient {
         unique.sort_unstable();
         unique.dedup();
         let mut tags = std::collections::HashMap::with_capacity(unique.len());
-        for chunk in unique.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Tags&api-version=7.1",
-                self.base_url, percent_encode_segment(organization), ids_csv
-            );
-            let fetched = self.get_json(url).await?;
+        let urls: Vec<String> = unique.chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                let ids_csv = chunk.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields=System.Tags&api-version=7.1",
+                    self.base_url, percent_encode_segment(organization), ids_csv
+                )
+            })
+            .collect();
+        for fetched in self.get_json_all(urls).await? {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 if let Some(id) = w["id"].as_i64() {
                     tags.insert(
@@ -560,15 +569,18 @@ impl AdoClient {
         }
         let wanted: std::collections::HashSet<&str> = titles.iter().map(|t| t.trim()).collect();
         let mut found: Vec<(i32, String)> = vec![];
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Title&api-version=7.1",
-                self.base_url,
-                percent_encode_segment(organization),
-                ids_csv
-            );
-            let fetched = self.get_json(url).await?;
+        let urls: Vec<String> = ids.chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                let ids_csv = chunk.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields=System.Title&api-version=7.1",
+                    self.base_url,
+                    percent_encode_segment(organization),
+                    ids_csv
+                )
+            })
+            .collect();
+        for fetched in self.get_json_all(urls).await? {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let Some(id) = w["id"].as_i64() else { continue };
                 let title = w["fields"]["System.Title"].as_str().unwrap_or_default().to_string();
@@ -1257,20 +1269,23 @@ impl AdoClient {
         }
 
         let mut cases = Vec::with_capacity(ids.len());
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
-                self.base_url,
-                organization,
-                ids_csv,
-                field_list.join(",")
-            );
-            let fetched = self.get_json(url).await?;
+        let urls: Vec<String> = ids.chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                    self.base_url,
+                    organization,
+                    ids_csv,
+                    field_list.join(",")
+                )
+            })
+            .collect();
+        for fetched in self.get_json_all(urls).await? {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let f = &w["fields"];
                 let str_of = |key: &str| f[key].as_str().unwrap_or_default().to_string();
@@ -1316,15 +1331,18 @@ impl AdoClient {
         ids: &[i32],
     ) -> Result<Vec<CaseText>, AdoError> {
         let mut out = Vec::with_capacity(ids.len());
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.TeamProject,Microsoft.VSTS.TCM.Steps&errorPolicy=omit&api-version=7.1",
-                self.base_url,
-                percent_encode_segment(organization),
-                ids_csv
-            );
-            let fetched = self.get_json(url).await?;
+        let urls: Vec<String> = ids.chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                let ids_csv = chunk.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.TeamProject,Microsoft.VSTS.TCM.Steps&errorPolicy=omit&api-version=7.1",
+                    self.base_url,
+                    percent_encode_segment(organization),
+                    ids_csv
+                )
+            })
+            .collect();
+        for fetched in self.get_json_all(urls).await? {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let Some(id) = w["id"].as_i64() else { continue };
                 let f = &w["fields"];
@@ -1349,17 +1367,32 @@ impl AdoClient {
         ids: &[i32],
     ) -> Result<Vec<super::CaseMeta>, AdoError> {
         let mut out = Vec::with_capacity(ids.len());
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let url = format!(
-                "{}/{}/_apis/wit/workitemsbatch?api-version=7.1",
-                self.base_url,
-                percent_encode_segment(organization)
-            );
-            let body = serde_json::json!({
-                "ids": chunk,
-                "fields": ["System.Id", "System.State", "System.AreaPath", "System.IterationPath"],
-            });
-            let fetched = self.post_json(url, &body).await?;
+        use futures::stream::{self, StreamExt, TryStreamExt};
+        let url = format!(
+            "{}/{}/_apis/wit/workitemsbatch?api-version=7.1",
+            self.base_url,
+            percent_encode_segment(organization)
+        );
+        // Owned bodies, built first: a closure over borrowed chunks is not
+        // general enough for the Send check on the command futures.
+        let bodies: Vec<serde_json::Value> = ids
+            .chunks(Self::WORKITEM_BATCH_SIZE)
+            .map(|chunk| {
+                serde_json::json!({
+                    "ids": chunk,
+                    "fields": ["System.Id", "System.State", "System.AreaPath", "System.IterationPath"],
+                })
+            })
+            .collect();
+        let pages: Vec<serde_json::Value> = stream::iter(bodies)
+            .map(|body| {
+                let url = url.clone();
+                async move { self.post_json_query(url, &body).await }
+            })
+            .buffered(super::READ_CONCURRENCY)
+            .try_collect()
+            .await?;
+        for fetched in pages {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let f = &w["fields"];
                 let str_of = |key: &str| f[key].as_str().unwrap_or_default().to_string();

@@ -255,15 +255,21 @@ impl AdoClient {
     pub async fn list_team_members(&self, org: &str, project: &str) -> Result<Vec<Member>, AdoError> {
         let teams = self.list_teams(org, project).await?;
         let mut by_unique: std::collections::HashMap<String, Member> = Default::default();
-        for team in teams {
-            let url = format!(
-                "{}/{}/_apis/projects/{}/teams/{}/members?api-version=7.1",
-                self.base_url,
-                org,
-                urlencoding::encode(project),
-                team.id
-            );
-            let Ok(data) = self.get_json(url).await else { continue };
+        // One request per team, READ_CONCURRENCY at a time.
+        let urls: Vec<String> = teams
+            .iter()
+            .map(|team| {
+                format!(
+                    "{}/{}/_apis/projects/{}/teams/{}/members?api-version=7.1",
+                    self.base_url,
+                    org,
+                    urlencoding::encode(project),
+                    team.id
+                )
+            })
+            .collect();
+        for answer in self.get_json_each(urls).await {
+            let Ok(data) = answer else { continue };
             for m in data["value"].as_array().cloned().unwrap_or_default() {
                 let identity = &m["identity"];
                 let unique = identity["uniqueName"].as_str().unwrap_or_default().to_string();
@@ -332,17 +338,24 @@ impl AdoClient {
         ids: &[i32],
     ) -> HashMap<i32, (String, String)> {
         let mut out = HashMap::new();
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/{}/_apis/wit/workitems?ids={}&fields={}&errorPolicy=omit&api-version=7.1",
-                self.base_url, org, project, ids_csv, TITLE_FIELDS
-            );
-            match self.get_json(url).await {
+        let chunks: Vec<&[i32]> = ids.chunks(Self::WORKITEM_BATCH_SIZE).collect();
+        let urls: Vec<String> = chunks
+            .iter()
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/{}/_apis/wit/workitems?ids={}&fields={}&errorPolicy=omit&api-version=7.1",
+                    self.base_url, org, project, ids_csv, TITLE_FIELDS
+                )
+            })
+            .collect();
+        let answers = self.get_json_each(urls).await;
+        for (chunk, answer) in chunks.iter().zip(answers) {
+            match answer {
                 Ok(data) => {
                     for w in data["value"].as_array().cloned().unwrap_or_default() {
                         // An omitted id is a null entry: nothing to read.
@@ -376,17 +389,24 @@ impl AdoClient {
         ids: &[i32],
     ) -> HashMap<i32, (String, String, String)> {
         let mut out = HashMap::new();
-        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields={},System.TeamProject&errorPolicy=omit&api-version=7.1",
-                self.base_url, org, ids_csv, TITLE_FIELDS
-            );
-            match self.get_json(url).await {
+        let chunks: Vec<&[i32]> = ids.chunks(Self::WORKITEM_BATCH_SIZE).collect();
+        let urls: Vec<String> = chunks
+            .iter()
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields={},System.TeamProject&errorPolicy=omit&api-version=7.1",
+                    self.base_url, org, ids_csv, TITLE_FIELDS
+                )
+            })
+            .collect();
+        let answers = self.get_json_each(urls).await;
+        for (chunk, answer) in chunks.iter().zip(answers) {
+            match answer {
                 Ok(data) => {
                     for w in data["value"].as_array().cloned().unwrap_or_default() {
                         let Some(id) = w["id"].as_i64() else { continue };
@@ -477,17 +497,20 @@ impl AdoClient {
         };
 
         let mut raw_items: Vec<serde_json::Value> = vec![];
-        for chunk in ids.chunks(200) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
-                self.base_url, org, ids_csv, BOARD_FIELDS_ALL
-            );
-            let data = self.get_json(url).await?;
+        let urls: Vec<String> = ids.chunks(200)
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                    self.base_url, org, ids_csv, BOARD_FIELDS_ALL
+                )
+            })
+            .collect();
+        for data in self.get_json_all(urls).await? {
             raw_items.extend(data["value"].as_array().cloned().unwrap_or_default());
         }
 
@@ -677,17 +700,20 @@ impl AdoClient {
             .await?;
 
         let mut raw_items: Vec<serde_json::Value> = vec![];
-        for chunk in ids.chunks(200) {
-            let ids_csv = chunk
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let url = format!(
-                "{}/{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
-                self.base_url, org, project, ids_csv, BOARD_FIELDS
-            );
-            let data = self.get_json(url).await?;
+        let urls: Vec<String> = ids.chunks(200)
+            .map(|chunk| {
+                let ids_csv = chunk
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}/{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                    self.base_url, org, project, ids_csv, BOARD_FIELDS
+                )
+            })
+            .collect();
+        for data in self.get_json_all(urls).await? {
             raw_items.extend(data["value"].as_array().cloned().unwrap_or_default());
         }
 

@@ -178,7 +178,7 @@ async fn a_shorter_delay_inside_an_existing_hold_does_not_extend_it() {
     throttle::note_server_delay(1); // shorter - must be a no-op
 
     let started = std::time::Instant::now();
-    throttle::pace().await; // at level "full" this only waits out the hold
+    throttle::pace(false).await; // at level "full" this only waits out the hold
     let waited = started.elapsed();
     assert!(
         waited >= std::time::Duration::from_millis(1_700),
