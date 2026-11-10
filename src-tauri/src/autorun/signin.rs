@@ -510,17 +510,23 @@ impl Run<'_> {
 /// recorded without one. Its fields the recipe leaves out are the built-in
 /// ones.
 pub(crate) fn reset_page(recipe: &SignInRecipe) -> Option<super::recipe::PasswordResetPage> {
-    let mut page = match &recipe.password_reset {
+    let page = match &recipe.password_reset {
         Some(page) => page.clone(),
         None => super::recipe::builtin_recipe().password_reset?,
     };
-    // PeoplesHR's own fields: `#txtNewPassword`, `#txtConfirmPassword` and
-    // the submit input `#btnsubmit` - never `#btnreset`, which clears the form.
+    Some(with_builtin_fields(page))
+}
+
+/// `page` with the built-in new password field, confirmation field and
+/// submit button filled in wherever it names none: PeoplesHR's own
+/// `#txtNewPassword`, `#txtConfirmPassword` and the submit input
+/// `#btnsubmit` - never `#btnreset`, which clears the form.
+pub(crate) fn with_builtin_fields(mut page: super::recipe::PasswordResetPage) -> super::recipe::PasswordResetPage {
     let css = |c: &str| -> Option<Target> { serde_json::from_value(serde_json::json!({ "css": c })).ok() };
     page.new = page.new.or_else(|| css("#txtNewPassword"));
     page.confirm = page.confirm.or_else(|| css("#txtConfirmPassword"));
     page.submit = page.submit.or_else(|| css("#btnsubmit"));
-    Some(page)
+    page
 }
 
 /// The environment the app may reset an expired password in: the active
