@@ -3,7 +3,7 @@ import { EASE, type FoldMotion } from "../ui/collapse";
 import { reducedMotion } from "../../lib/exitGhost";
 import { parseEasing } from "../../lib/cubicBezier";
 import { useMediaQuery } from "../../lib/useMediaQuery";
-import { driftFrames, planClose, planOpen, type TileMove, type TileTiming } from "./tileSchedule";
+import { driftFrames, growEdge, planClose, planOpen, type TileMove, type TileTiming } from "./tileSchedule";
 
 /**
  * Where the Settings cards sit, and the motion that moves them.
@@ -106,6 +106,16 @@ function topDown(ids: readonly string[], rects: Map<string, DOMRect>): string[] 
     if (!ra || !rb) return 0;
     return ra.top - rb.top || ra.left - rb.left;
   });
+}
+
+/** The box between `el` and `panel` that scrolls vertically (the open
+ * history's 50vh box), or null when nothing in between scrolls. */
+function scrollerOf(el: HTMLElement, panel: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p && p !== panel; p = p.parentElement) {
+    const y = getComputedStyle(p).overflowY;
+    if (y === "auto" || y === "scroll") return p;
+  }
+  return null;
 }
 
 /** Every card's place on screen, by id. */
@@ -372,12 +382,15 @@ export function useTileLayout({
       if (p?.kind !== "open" || !root || !panel || !column || !box) return 0;
       const moves = journeys(root, p.rects, p.moving);
       if (!moves) return 0;
-      const full = panel.getBoundingClientRect().bottom;
-      // The panel's foot with the history mounted but not grown yet (its
-      // margin is there from the first frame).
-      const base = full - box.getBoundingClientRect().height;
-      const ease = parseEasing(grow.easing);
-      const edge = (t: number) => (t < 0 ? base : t < grow.ms ? base + grow.span * ease(t / grow.ms) : full);
+      const sc = scrollerOf(box, panel);
+      const edge = growEdge({
+        full: panel.getBoundingClientRect().bottom,
+        boxHeight: box.getBoundingClientRect().height,
+        span: grow.span,
+        ms: grow.ms,
+        ease: parseEasing(grow.easing),
+        scroller: sc ? { clientHeight: sc.clientHeight, scrollHeight: sc.scrollHeight } : null,
+      });
       const plan = planOpen(moves, column.getBoundingClientRect().left, edge, grow.ms, TIMING);
       opened.current = { starts: plan.starts, end: plan.fold + grow.ms };
       return plan.fold;

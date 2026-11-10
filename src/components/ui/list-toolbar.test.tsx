@@ -80,6 +80,35 @@ test("the border shows only while the toolbar is stuck, and goes again at the to
   }
 });
 
+// Stuck, the bar reaches the scroller's sides, and on a display scaled to
+// 125% or 150% the card's 0.67px border rounds that reach a third of a pixel
+// past them. Watched against the scroller's exact box it was then never
+// wholly inside again, so it never reported coming back: Run Tests showed the
+// stuck, edge-to-edge bar at rest under the plan line (owner, 2026-11-10).
+test("the stuck check leaves the sides some slack, so a sub-pixel reach cannot keep it stuck", () => {
+  let options: IntersectionObserverInit | undefined;
+  const Real = globalThis.IntersectionObserver;
+  globalThis.IntersectionObserver = class {
+    constructor(_cb: IntersectionObserverCallback, o?: IntersectionObserverInit) {
+      options = o;
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+  try {
+    render(<ListToolbar search={<input aria-label="Find" />} />);
+    expect(options?.threshold).toEqual([1]);
+    // No slack above or below - that is the edge the check is about.
+    expect(options?.rootMargin).toBe("0px 2px");
+  } finally {
+    globalThis.IntersectionObserver = Real;
+  }
+});
+
 test("fullWidth={false}: stuck, it stays in its column as a box bordered all round", () => {
   let fire: (top: number, ratio: number) => void = () => {};
   const Real = globalThis.IntersectionObserver;

@@ -5,6 +5,7 @@ import {
   clearTime,
   driftFrames,
   enterTime,
+  growEdge,
   planClose,
   planOpen,
   tileAt,
@@ -124,6 +125,42 @@ describe("opening", () => {
     const backUp = up.map((m) => ({ from: m.to, to: m.from, width: m.width }));
     const shrinking = (t: number) => (closeEdge(t) > 480.5 ? closeEdge(t) : -Infinity);
     expect(firstCrossing(backUp, shrinking, planClose(backUp, COL, closeEdge, shrinkMs, timing), 2000)).toBeNull();
+  });
+
+  // The open history scrolls in a box capped at 50vh, so the panel's edge
+  // stops at the cap long before the fold's own grow (its on-screen part,
+  // 688px here) ends. Measured on a 2100x950 window: the box holds 24,000px
+  // of history under 300px of latest entry, and shows 475px of it.
+  const capped = { full: 480, boxHeight: 24000, span: 688, ms: foldMs(688), ease: tall };
+  const scroller = { clientHeight: 475, scrollHeight: 24300 };
+
+  test("a capped history's edge starts at the panel's foot and stops at the cap", () => {
+    const edge = growEdge({ ...capped, scroller });
+    // 480 - 475 + 300: the panel as it was, before any history shows.
+    expect(edge(-1)).toBe(305);
+    expect(edge(0)).toBe(305);
+    expect(edge(capped.ms)).toBe(480);
+    // At the cap well before the grow ends - 175px of fold fills it.
+    const reached = Array.from({ length: capped.ms }, (_, t) => t).find((t) => edge(t) >= 480)!;
+    expect(reached).toBeLessThan(capped.ms / 2);
+    for (let t = 0; t < capped.ms; t += 5) expect(edge(t)).toBeLessThanOrEqual(480);
+  });
+
+  test("without a scroll box the edge is the fold's own grow, as before", () => {
+    const edge = growEdge({ full: 946, boxHeight: 450, span: 450, ms: growMs, ease: tall });
+    for (const t of [-1, 0, growMs / 3, growMs / 2, growMs]) expect(edge(t)).toBeCloseTo(openEdge(t), 6);
+  });
+
+  test("a second stack under a capped history leaves before the panel reaches it", () => {
+    // Two stacks under the panel (a wide window): Updates at the column's
+    // left, AI tools beside it, both right under the panel's foot.
+    const two: TileMove[] = [
+      { from: { left: COL, top: 319 }, to: { left: 272, top: 1142 }, width: W },
+      { from: { left: COL + W + 16, top: 319 }, to: { left: 272, top: 870 }, width: W },
+    ];
+    const edge = growEdge({ ...capped, scroller });
+    const { fold, starts } = planOpen(two, COL, edge, capped.ms, timing);
+    expect(firstCrossing(two, (t) => edge(t - fold), starts, 3000)).toBeNull();
   });
 
   test("when the panel never reaches the cards, it grows at once and they keep the stagger", () => {

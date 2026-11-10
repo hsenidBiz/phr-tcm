@@ -77,6 +77,40 @@ export function enterTime(m: TileMove, colLeft: number, t: TileTiming): number {
 }
 
 /**
+ * The panel's bottom edge while the history grows, t measured from the
+ * grow's start: `full` is the panel's bottom with the history at its full
+ * height (what is laid out when the grow is planned), `boxHeight` the
+ * history's own full height, and the fold's visible edge travels `span` px
+ * over `ms` on `ease` (Collapse's FoldMotion).
+ *
+ * With `scroller` - the box the history scrolls in, which caps the panel
+ * (Settings: 50vh) - the panel only grows until that box is full: the
+ * history above the cap pushes nothing down. Without it, the panel grows
+ * with the fold all the way. Planning from the uncapped height put the edge
+ * thousands of px above the panel's real foot, so the cards beside Updates
+ * left long after the panel had grown over them (2026-11-10).
+ */
+export function growEdge(g: {
+  full: number;
+  boxHeight: number;
+  span: number;
+  ms: number;
+  ease: Easing;
+  scroller?: { clientHeight: number; scrollHeight: number } | null;
+}): (t: number) => number {
+  const grown = (t: number) => (t < 0 ? 0 : t < g.ms ? g.span * g.ease(t / g.ms) : Infinity);
+  if (!g.scroller) {
+    const base = g.full - g.boxHeight;
+    return (t) => (t >= g.ms ? g.full : base + grown(t));
+  }
+  const { clientHeight, scrollHeight } = g.scroller;
+  // What the scroll box holds besides the history (the latest entry).
+  const rest = scrollHeight - g.boxHeight;
+  const top = g.full - clientHeight;
+  return (t) => (t >= g.ms ? g.full : top + Math.min(clientHeight, rest + grown(t)));
+}
+
+/**
  * Opening: the cards leave the right column top-down and the panel grows
  * into the space they leave. `edge(t)` is the panel's bottom with t
  * measured from the moment its grow starts (t < 0: not grown yet), and it
