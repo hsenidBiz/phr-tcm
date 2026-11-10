@@ -241,6 +241,7 @@ mod run_order;
 mod save_guard;
 mod saved_session;
 mod seen_check;
+mod signin_attempts;
 mod signin_inspect;
 mod spec_pane;
 mod speccov;

@@ -78,6 +78,7 @@ pub mod setup_run;
 pub mod setups;
 pub mod sign_in_check;
 pub mod signin;
+pub mod signin_attempts;
 pub mod signin_inspect;
 pub mod signin_recorder;
 pub mod slots;
