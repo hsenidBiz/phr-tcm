@@ -124,7 +124,8 @@ fn a_new_proposal_replaces_the_earlier_one() {
     let path = proposal_path(dir.path(), &env.id, ORG, PROJECT);
     assert!(path.starts_with(shared_of(dir.path()).join("proposals")));
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    assert!(name.starts_with(&format!("signin-{}-", env.id)) && name.ends_with(".json"), "{name}");
+    let slug = v2_lib::autorun::recipe::project_slug(ORG, PROJECT);
+    assert_eq!(name, format!("signin-{}-{slug}.json", env.id));
 
     clear(dir.path(), &env.id, ORG, PROJECT).unwrap();
     assert_eq!(load(dir.path(), &env.id, ORG, PROJECT).unwrap(), None);
@@ -201,6 +202,18 @@ fn approve_turns_the_switch_on_only_on_a_test_environment() {
     let dir = root("", true, false);
     propose(dir.path(), with_reset(basic("https://a.example.test", "#go")));
     approve_with(dir.path(), ORG, PROJECT, false).unwrap();
+    assert!(!active(dir.path()).unwrap().reset_expired_passwords);
+}
+
+#[test]
+fn a_switch_that_cannot_be_turned_on_still_saves_and_clears() {
+    use v2_lib::commands::autorun_signin_proposal::{approve_turning_on, SWITCH_NOT_TURNED_ON};
+    let dir = root("", true, false);
+    propose(dir.path(), with_reset(basic("https://a.example.test", "#go")));
+    let err = approve_turning_on(dir.path(), ORG, PROJECT, true, |_| Err("disk said /secret/path".to_string())).unwrap_err();
+    assert_eq!(err, SWITCH_NOT_TURNED_ON);
+    assert!(load_recipe(dir.path(), ORG, PROJECT).unwrap().is_some());
+    assert!(proposal_view_with(dir.path(), ORG, PROJECT).unwrap().is_none());
     assert!(!active(dir.path()).unwrap().reset_expired_passwords);
 }
 

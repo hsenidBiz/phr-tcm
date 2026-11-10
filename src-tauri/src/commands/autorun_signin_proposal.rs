@@ -14,7 +14,22 @@ pub fn proposal_view_with(root: &Path, org: &str, project: &str) -> Result<Optio
     Ok(sp::load(root, &env.id, org, project)?.map(|p| sp::view(&p, &env)))
 }
 
+pub const SWITCH_NOT_TURNED_ON: &str = "the sign-in was saved, but Reset expired passwords could not be turned on - turn it on in the Environments dialog";
+
 pub fn approve_with(root: &Path, org: &str, project: &str, turn_on_reset: bool) -> Result<(), String> {
+    approve_turning_on(root, org, project, turn_on_reset, |id| {
+        crate::environments::set_reset_expired_passwords(root, id, true).map(|_| ())
+    })
+}
+
+/// `approve_with`, with the switch's write passed in so a failure of it can be tried.
+pub fn approve_turning_on(
+    root: &Path,
+    org: &str,
+    project: &str,
+    turn_on_reset: bool,
+    turn_on: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
     let env = crate::environments::active(root)?;
     let p = sp::load(root, &env.id, org, project)?.ok_or_else(|| NOTHING_PROPOSED.to_string())?;
     if sp::saved_hash(root, org, project)? != p.saved_hash {
@@ -25,11 +40,13 @@ pub fn approve_with(root: &Path, org: &str, project: &str, turn_on_reset: bool) 
     }
     p.recipe.validate()?;
     save_recipe(root, org, project, &for_saving(root, org, project, p.recipe.clone())?)?;
-    if turn_on_reset && p.recipe.password_reset.is_some() {
-        crate::environments::set_reset_expired_passwords(root, &env.id, true)?;
-    }
+    let switch = if turn_on_reset && p.recipe.password_reset.is_some() { turn_on(&env.id) } else { Ok(()) };
     sp::clear(root, &env.id, org, project)?;
     crate::applog::info("Auto-run sign-in recipe approved from the assistant's proposal");
+    if let Err(e) = switch {
+        crate::applog::warn(format!("Auto-run: Reset expired passwords could not be turned on after approval: {e}"));
+        return Err(SWITCH_NOT_TURNED_ON.to_string());
+    }
     Ok(())
 }
 
