@@ -186,7 +186,7 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - Your replays, discovery and resets share your browser and its sign-in. Other assistants may be working at the same
   time, each in a browser of its own. `end_autorun_discovery` frees it; `keep_browser: true` keeps it for your next replay or discovery; a replay to a failing step ends your own
   discovery first, keeping what it mapped. When the sign-in fails, the session expires or you reach a cap, stop and
-  report to the person; never try again in a loop. Name the `case_id` on every discovery call for a `no_save` case.
+  report to the person; never try again in a loop (a sign-in page that does not fit has its own rule: "When the sign-in page does not fit"). Name the `case_id` on every discovery call for a `no_save` case.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use its
   `release: true` only for a broken browser (frozen, wrong account,
   session gone), never between replays. Never ask the person to restart the app.
@@ -1275,6 +1275,83 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   copy a password into a script or a template. If a case needs an account
   you cannot find, say so and ask which one to use.
 
+## When the sign-in page does not fit
+
+This is the one rule for every live-app job (discovery, mapping, exploring,
+scripting and repairing) when the project's sign-in recipe does not match
+the site's sign-in page. You can inspect the page and propose a better
+recipe; nothing is saved until the person approves it in TCM.
+
+A sign-in page does not fit when a sign-in step failed, or the signed-in
+check never appeared and the sign-in form is not still showing. A form that
+is still showing is a wrong password or a locked account: that is not this
+rule, see the hard stops below.
+
+1. Call `end_autorun_discovery`, so the browser is free (the new tools are
+   refused while the Auto Run browser is busy, as `check_autorun_sign_in` is).
+2. Call `inspect_sign_in_page`. With no `account` it opens the sign-in
+   address in a browser of its own and lists each visible field, button and
+   link with a `locator` a recipe step can use as it is; it never shows what
+   is typed in a field, and it never signs in. For a sign-in over two pages
+   (the signed-in check never appeared after the first page), call it with
+   `account` and a draft `recipe` instead, to read the page after it.
+3. Build a recipe from what it listed: `start_url`, `steps`, `signed_in`
+   (and `signed_in_in_menu` when the check sits in a menu).
+4. Call `propose_sign_in_recipe` with that recipe and a saved account, a
+   different one from the account that failed when one exists. It tries the
+   recipe once in a fresh browser and keeps it only if that signs in. A
+   trial only signs in on the environment's own address or allowed sites, or
+   on the saved recipe's sites. With neither (no address on the environment
+   and no recorded sign-in) the proposal is refused: ask the person to set
+   the environment's address or to record a sign-in, then stop.
+5. Tell the person in chat to approve the proposal in TCM (Auto Run, Setup,
+   under the Sign-in row, "Proposed by the assistant": Approve or Reject),
+   and wait for their reply. Nothing is saved before then.
+6. When they have approved it, call `check_autorun_sign_in` for the account,
+   then call `start_autorun_discovery` again with the same arguments as
+   before (the area, or mapping and modules, or explore). "Carry on" means a
+   fresh discovery session, not a resumed one. Check the account the job
+   runs as, and the trial account too if its problem is still open.
+
+**A change-password page the recipe does not describe.** A check that ends
+on one says it "stopped on a change-password page the sign-in recipe does
+not describe", and the raw detail starts "password expired - the site
+showed a change-password page this sign-in does not describe". Then:
+
+1. Call `inspect_sign_in_page` with just `account`. It signs in with the
+   saved sign-in as that account, stops where the sign-in stopped and reads
+   that page. Two or more visible password fields come with a hint saying so.
+2. Call `propose_sign_in_recipe` with `password_reset` and `account`, and no
+   `recipe`: the part is put on the saved sign-in, which is kept as it is.
+   (A whole `recipe` that stops on the page the part describes is kept the
+   same way: only its `password_reset` is taken.) The part supports one page only: an optional current-password
+   field (set `no_current_password` to true when the page has none), the new
+   password, its confirmation and a submit button. A page needing more (a
+   username, two steps, a confirmation to dismiss) is reported to the person
+   and you stop.
+3. Ask the person to approve it in TCM (Auto Run, Setup, Sign-in row). On a
+   test environment the approval has a tick box, "Also turn on Reset expired
+   passwords"; ask them to tick it, because the reset runs only on a test
+   environment with that switch on. A trial never sends the change-password
+   form, so the reset happens the next time an expired password is met.
+4. Sign in again (`check_autorun_sign_in`, then a fresh
+   `start_autorun_discovery` with the same arguments as before: the area,
+   or mapping and modules, or explore). The reset runs and Accounts are updated; you
+   never see a password.
+
+**Limits.**
+
+- Make at most 2 proposals per sign-in problem in one session.
+- At most 3 sign-in attempts per account for one sign-in problem. Inspecting
+  with an account, each proposal's trial and each `check_autorun_sign_in`
+  made while the problem is open all count. Inspecting without an account
+  never signs in and counts nothing; an account the check skips (expired
+  password, session held elsewhere) still counts; a call refused before a
+  browser opens spends nothing; a check that signs the account in closes the problem.
+- Report to the person and stop, never retrying in a loop, on: a rejected
+  proposal, a second failed trial, a wrong password, a locked account, a
+  captcha, a one-time code, or a page that needs more than one form.
+
 ## Scripts that must not save
 
 Some cases work on a shared draft - a cycle, a form or a record other
@@ -1945,7 +2022,7 @@ You open and drive a browser of your own to find what a script needs:
   browser stays where it stopped, the discovery goes on, and the answer
   says `at_area: false` with the reason in `area_walk`. An `area` that is
   not saved starts at home and files what you see under that name.
-  If the sign-in fails, report it and stop; never try again in a loop. It
+  If the sign-in fails, follow "When the sign-in page does not fit" below; never try again in a loop. It
   is refused while a run, a replay or the person's own browser holds the
   Auto Run browser. Pass `case_id` with the case you explore for: when
   its script is marked `no_save` (or you pass `no_save: true`), every
@@ -2059,7 +2136,8 @@ frees it; `keep_browser: true` keeps it for your next replay or discovery.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
-loop.
+loop. A sign-in page that does not fit the recipe is the one exception to
+stopping at once: follow "When the sign-in page does not fit".
 
 What the app sees on a live page is kept in this project's map, area by
 area: while you explore, in the person's browser, and in replays. A save
@@ -2824,7 +2902,7 @@ the answer says so; start a new one to explore again.
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:
 
-- `STOP: the sign-in failed - fix the account or the recipe in the app, not the script`
+- `STOP: the sign-in failed - fix the account or the recipe in the app, not the script` (for the recipe, the guide's "When the sign-in page does not fit" applies: propose a recipe, never edit the script)
 - `STOP: the browser stopped answering - rerun before changing anything`
 - `STOP: the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script`
 - `STOP: the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script`
@@ -2970,7 +3048,7 @@ Classify each failure before you change anything: the locator, timing, the envir
 
 - At most 3 fix-run cycles per case: a fix, then a replay or run of it.
 - Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
-- Stop at once on a login page, a missing precondition or a product defect: a real bug must surface as a failure.
+- Stop at once on a missing precondition or a product defect: a real bug must surface as a failure.
 - A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
 - A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never changes a check's value away from the case; the save refuses both otherwise.
 

@@ -823,6 +823,10 @@ pub async fn route_as(
         // and walked as far as an area. Uses no slot: the person's Auto Run
         // browser and the assistant's own are left alone.
         ("POST", "/autorun-check-sign-in") => autorun_check_sign_in(ctx, body).await,
+        // Look at a sign-in page, and propose a recipe that signed in on a
+        // trial: kept for the person to approve, never saved from here.
+        ("POST", "/autorun-inspect-sign-in") => autorun_sign_in_proposal(ctx, body, false).await,
+        ("POST", "/autorun-propose-sign-in") => autorun_sign_in_proposal(ctx, body, true).await,
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
@@ -12481,7 +12485,13 @@ pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::aut
             ),
         );
     };
-    let keys: Vec<String> = named_keys.iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
+    let mut keys: Vec<String> = Vec::new();
+    for k in named_keys.iter().map(|k| k.trim()).filter(|k| !k.is_empty()) {
+        // An account named twice is checked, and counted, once.
+        if !keys.iter().any(|seen| seen == k) {
+            keys.push(k.to_string());
+        }
+    }
     if keys.is_empty() {
         return (400, format!("`accounts` names no account. Expected {CHECK_SIGN_IN_SHAPE}."));
     }
@@ -12511,6 +12521,23 @@ pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::aut
         Err(e) => return (500, e),
     };
     let queries = (env.password_expiry_query.as_str(), env.active_session_query.as_str());
+    // A check that never starts spends nothing: busy is said first, then
+    // every account's cap before any is counted. Counting is per call, not
+    // per account's browser: an account the precheck then skips (expired
+    // password, session held elsewhere) still spends the attempt.
+    if let Some(busy) = crate::commands::autorun_check_signin::refusal() {
+        return (409, busy);
+    }
+    for key in &keys {
+        if let Some(why) = crate::autorun::signin_attempts::would_refuse(root, key) {
+            return (409, why);
+        }
+    }
+    for key in &keys {
+        if let Err(why) = crate::autorun::signin_attempts::take_if_open(root, key) {
+            return (409, why);
+        }
+    }
     let done = crate::commands::autorun_check_signin::check_with(
         browsers, rows, queries, root, organization, project, &keys, area.as_deref(),
     )
@@ -12526,6 +12553,10 @@ pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::aut
                     v
                 })
                 .collect();
+            // An account that signed in ends its sign-in problem.
+            for c in list.iter().filter(|c| c.signed_in) {
+                crate::autorun::signin_attempts::close(root, &c.account);
+            }
             (200, serde_json::json!({ "checked": checked }).to_string())
         }
     }
@@ -12549,6 +12580,25 @@ async fn autorun_check_sign_in(ctx: &BridgeContext, body: &str) -> (u16, String)
         false,
     );
     check_sign_in_in(&mut browsers, rows.as_ref(), &root, &ctx.org, &ctx.project, body).await
+}
+
+/// `POST /autorun-inspect-sign-in` and `POST /autorun-propose-sign-in` in the
+/// app: real browsers (headless, the one last chosen).
+async fn autorun_sign_in_proposal(ctx: &BridgeContext, body: &str, propose: bool) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let mut browsers = crate::commands::autorun_replay::RealBrowsers::new(
+        crate::browser::launch::Browser::from_name(&crate::autorun::store::last_browser(&root)),
+        false,
+    );
+    let timing = crate::browser::timing::Timing::supervised();
+    if propose {
+        crate::commands::autorun_signin_proposal::propose_in(&mut browsers, &root, &ctx.org, &ctx.project, body, &timing).await
+    } else {
+        crate::commands::autorun_signin_proposal::inspect_in(&mut browsers, &root, &ctx.org, &ctx.project, body, &timing).await
+    }
 }
 
 /// The marks of the logins an assistant proposes, from the environment's

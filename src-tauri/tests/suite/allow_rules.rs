@@ -149,6 +149,7 @@ fn the_lists_are_the_owners_less_the_retired_names() {
             "mcp__tcm__end_autorun_discovery",
             "mcp__tcm__get_autorun_page",
             "mcp__tcm__get_kept_actions",
+            "mcp__tcm__inspect_sign_in_page",
             "mcp__tcm__list_setups",
             "mcp__tcm__prove_api_template",
             "mcp__tcm__reset_autorun_browser",

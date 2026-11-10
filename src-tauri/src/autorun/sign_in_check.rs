@@ -30,7 +30,7 @@ use super::nav::{self, Route, TripFrom};
 use super::password_expiry::{card_words, check_users, CheckFailed, Expiry, EXPIRED_MARK};
 use super::replay::Browsers;
 use super::setup_find::RowSource;
-use super::signin::{is_password_expired, is_reset_unconfirmed, redact, sign_in_leased, where_it_stands};
+use super::signin::{is_password_expired, CHANGE_PASSWORD_UNKNOWN, is_reset_unconfirmed, redact, sign_in_leased, where_it_stands};
 use crate::browser::cdp::Driver;
 use crate::browser::timing::Timing;
 use std::collections::BTreeMap;
@@ -169,6 +169,9 @@ pub fn summary(c: &SignInCheck) -> String {
         }
         if is_reset_unconfirmed(&why) {
             return "the password may have been reset - check Accounts".to_string();
+        }
+        if why.starts_with(CHANGE_PASSWORD_UNKNOWN) {
+            return "stopped on a change-password page the sign-in recipe does not describe".to_string();
         }
         if is_password_expired(&why) {
             return "stopped on the password reset page".to_string();

@@ -62,6 +62,7 @@ pub enum AutorunDataKind {
     Quirks,
     TestFiles,
     Proposals,
+    SignInProposal,
 }
 
 /// Emitted after a successful write to that data, whoever made it, so the

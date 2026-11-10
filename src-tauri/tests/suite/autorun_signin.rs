@@ -670,6 +670,65 @@ async fn another_page_without_the_reset_field_is_not_password_expired() {
     assert!(out.detail.starts_with(MARKER_NEVER_APPEARED), "{}", out.detail);
 }
 
+// ------------------------------------------ a change-password page the recipe does not describe
+
+use v2_lib::autorun::signin::{CHANGE_PASSWORD_UNKNOWN, RESET_SWITCH_HINT};
+use v2_lib::autorun::signin_inspect::PASSWORD_FIELDS_JS;
+
+const CHANGE_URL: &str = "https://hr.example.internal/account/ChangePassword";
+
+/// A recipe whose reset page is somewhere the browser never is.
+fn recipe_elsewhere(wait: bool) -> v2_lib::autorun::recipe::SignInRecipe {
+    let mut v = serde_json::to_value(reset_recipe(wait)).unwrap();
+    v["password_reset"] = json!({ "path_contains": "/nowhere", "field": { "css": "#nothing" } });
+    serde_json::from_value(v).unwrap()
+}
+
+/// `cold_app` whose page shows `fields` visible password fields.
+fn app_with_password_fields(href: &'static str, title: &'static str, form_stays: bool, fields: u64) -> ScriptedDriver {
+    let (d, _state) = cold_app(href, title, form_stays, true);
+    d.answering_first(move |m, p| (m == "Runtime.evaluate" && p["expression"] == PASSWORD_FIELDS_JS).then(|| Ok(json!({ "result": { "value": fields } }))))
+}
+
+#[tokio::test]
+async fn an_unknown_change_password_page_is_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = app_with_password_fields(CHANGE_URL, "Change password", false, 2);
+    let out = sign_in(&mut d, dir.path(), &recipe_elsewhere(false), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(CHANGE_PASSWORD_UNKNOWN), "{}", out.detail);
+    assert!(is_password_expired(&out.detail));
+    assert!(out.detail.contains("/account/ChangePassword"), "{}", out.detail);
+    assert!(out.detail.contains(RESET_SWITCH_HINT), "{}", out.detail);
+    assert!(!out.wrong_password);
+    assert_eq!(typed_count(&d), 1);
+    no_password_anywhere(&out);
+
+    // With resets on, the hint to turn them on is not said.
+    let dir = reset_root(true, true);
+    let mut d = app_with_password_fields(CHANGE_URL, "Change password", false, 2);
+    let out = sign_in(&mut d, dir.path(), &recipe_elsewhere(false), &account(), &quick()).await;
+    assert!(out.detail.starts_with(CHANGE_PASSWORD_UNKNOWN), "{}", out.detail);
+    assert!(!out.detail.contains(RESET_SWITCH_HINT), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn one_password_field_is_not_a_change_password_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = app_with_password_fields(LOGIN_URL, "Sign in", true, 1);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.detail.starts_with(MARKER_NEVER_APPEARED), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_wait_step_that_stops_on_an_unknown_change_password_page_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = app_with_password_fields(CHANGE_URL, "Change password", false, 2);
+    let out = sign_in(&mut d, dir.path(), &recipe_elsewhere(true), &account(), &quick()).await;
+    assert!(out.detail.starts_with(CHANGE_PASSWORD_UNKNOWN), "{}", out.detail);
+    assert!(!out.detail.contains("sign-in stopped at step"), "{}", out.detail);
+}
+
 #[test]
 fn the_built_in_recipe_knows_the_reset_page() {
     let page = v2_lib::autorun::recipe::builtin_recipe().password_reset.expect("the built-in recipe names the reset page");
@@ -873,6 +932,90 @@ async fn reset_on_test_environment_saves_new_password_and_signs_in() {
     assert!(log.iter().any(|l| l.message.contains("the expired password of automation51 was reset")));
     assert!(!log.iter().any(|l| l.message.contains("Abc@123") || l.message.contains(PASSWORD)));
     assert!(!out.detail.contains("Abc@123"));
+}
+
+#[tokio::test]
+async fn a_reset_without_a_current_field_types_only_the_new_password() {
+    let _log = crate::serial::log_tail();
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let mut v = serde_json::to_value(recipe_at_login()).unwrap();
+    v["password_reset"] = json!({
+        "path_contains": "/security/PasswordReset",
+        "field": { "css": "#txtNewPassword" },
+        "new": { "css": "#txtNewPassword" },
+        "no_current_password": true
+    });
+    let recipe: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(v).unwrap();
+    let out = sign_in(&mut d, dir.path(), &recipe, &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(app.typed_into("#txtOldPassword").is_empty());
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123"]);
+    assert_eq!(app.typed_into("#txtConfirmPassword"), ["Abc@123"]);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(account_file_password(dir.path()), "Abc@123");
+}
+
+#[tokio::test]
+async fn a_trial_on_the_reset_page_never_sends_the_form() {
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &reset_recipe(false), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 0);
+    assert!(app.typed_into("#txtNewPassword").is_empty());
+    assert!(pending_of(dir.path()).is_none());
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_trial_that_signs_in_saves_no_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(!session_path(dir.path(), &account().key).unwrap().exists(), "a trial kept its session");
+    // The control: the same app and recipe through the normal sign-in do keep one.
+    let other = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    let out = sign_in(&mut d, other.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(session_path(other.path(), &account().key).unwrap().exists(), "the normal sign-in saved no session");
+}
+
+/// A trial leaves the account's stored session as it found it, even when the
+/// site refuses the session the trial's own fresh sign-in made.
+#[tokio::test]
+async fn a_trial_never_forgets_a_stored_session_when_the_site_refuses_its_own() {
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    for refused_marker in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        save_session(dir.path(), "admin", &saved).unwrap();
+        let (mut d, _state) = if refused_marker {
+            let (d, state) = cold_app(LOGIN_URL, "Home", false, false);
+            (d.answering_first(|m, p| (m == "Runtime.evaluate" && p["expression"] == SESSION_REFUSED_JS).then(|| Ok(json!({ "result": { "value": "tampered" } })))), state)
+        } else {
+            refusing_app()
+        };
+        let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+        assert!(!out.ok);
+        assert_eq!(out.detail, v2_lib::autorun::signin::session_refused_again("admin"), "{}", out.detail);
+        assert!(session_path(dir.path(), "admin").unwrap().exists(), "a trial deleted the stored session (marker path: {refused_marker})");
+    }
+}
+
+#[tokio::test]
+async fn a_trial_ignores_a_held_password() {
+    let dir = reset_root(true, true);
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &env_id, KEY, "Abc@123").unwrap();
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &reset_recipe(false), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(app.count_of("Abc@123"), 0, "a trial typed the held password");
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
 }
 
 #[tokio::test]

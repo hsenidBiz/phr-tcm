@@ -584,6 +584,8 @@ fn each_tool_belongs_to_its_module() {
             "propose_accounts",
             "get_accounts",
             "check_autorun_sign_in",
+            "inspect_sign_in_page",
+            "propose_sign_in_recipe",
             "save_test_file",
             "get_autorun_network_wait",
             "search_autorun_requests",
@@ -815,7 +817,7 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     for bound in [
         "at most 3 fix-run cycles",
         "stop at cycle 2 when the failure is identical to cycle 1's",
-        "stop at once on a login page, a missing precondition or a product defect",
+        "stop at once on a missing precondition or a product defect",
         "a real bug must surface as a failure",
         "2 green of 3 is a flake, not a fix",
         "report_case_divergence",
@@ -1940,7 +1942,7 @@ fn the_gen_tests_command_scripts_a_batch_within_the_bounds() {
         "under 300 words",
         "at most 3 fix-run cycles",
         "stop at cycle 2 when the failure is identical to cycle 1's",
-        "stop at once on a login page, a missing precondition or a product defect",
+        "stop at once on a missing precondition or a product defect",
         "a pass after a change that changed nothing is run 2 more times",
         "2 green of 3 is a flake, not a fix",
         "publish only a cycle the run created, and only when a case needs it published",
@@ -2615,4 +2617,50 @@ fn the_commands_do_not_treat_the_browser_as_the_only_one() {
         let all = flat_of(stem);
         assert!(!all.contains('\u{2014}') && !all.contains('\u{2013}'), "{stem}");
     }
+}
+
+/// Every live-app command points at the guide's one sign-in rule instead of
+/// stopping on the first failed sign-in, and the two new tools are on the
+/// allow-lists (the read-only inspect one is pre-approved; propose is not).
+#[test]
+fn live_app_commands_point_to_the_sign_in_rule() {
+    let body_of = |stem: &str| COMMANDS.iter().find(|c| c.stem == stem).unwrap_or_else(|| panic!("no {stem} command")).body.join("\n");
+    for stem in ["discover", "map-menus", "explore", "gen-tests", "heal"] {
+        let flat = body_of(stem).split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("When the sign-in page does not fit"), "{stem}: {flat}");
+        assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'), "{stem}");
+    }
+    let setup = body_of("setup");
+    assert!(setup.contains("propose_sign_in_recipe") && setup.contains("Record sign-in"), "{setup}");
+    let map = body_of("map-menus").split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(map.contains("wrong password, a locked account, a captcha or a one-time code"), "{map}");
+    for tool in ["inspect_sign_in_page", "propose_sign_in_recipe"] {
+        assert_eq!(v2_lib::ai_tools::AUTORUN_TOOLS.iter().filter(|t| **t == tool).count(), 1, "{tool}");
+    }
+    assert!(v2_lib::ai_tools::CLAUDE_AUTORUN_RULES.contains(&"mcp__tcm__inspect_sign_in_page"));
+    assert!(v2_lib::ai_tools::CURSOR_AUTORUN_ENTRIES.contains(&"tcm:inspect_sign_in_page"));
+    assert!(!v2_lib::ai_tools::CLAUDE_AUTORUN_RULES.iter().any(|r| r.contains("propose_sign_in_recipe")));
+    assert!(!v2_lib::ai_tools::CURSOR_AUTORUN_ENTRIES.iter().any(|r| r.contains("propose_sign_in_recipe")));
+}
+
+/// The role files the assistants read carry the same pointer.
+#[test]
+fn agent_rules_name_the_sign_in_rule() {
+    for (name, text) in [
+        ("writer", include_str!("../../src/autorun/roles/writer.md")),
+        ("explorer", include_str!("../../src/autorun/roles/explorer.md")),
+        ("healer", include_str!("../../src/autorun/roles/healer.md")),
+    ] {
+        assert!(text.contains("When the sign-in page does not fit"), "{name}");
+        assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{name}");
+    }
+    let healer = include_str!("../../src/autorun/roles/healer.md");
+    let stop = healer.lines().find(|l| l.contains("under a STOP line")).expect("healer STOP line");
+    assert!(stop.contains("When the sign-in page does not fit"), "{stop}");
+    let heal = COMMANDS.iter().find(|c| c.stem == "heal").unwrap().body.join(" ");
+    let heal = heal.split_whitespace().collect::<Vec<_>>().join(" ");
+    let at = heal.find("For the sign-in lines").expect("heal step 2 sign-in sentence");
+    assert!(heal[at..at + 200].contains("When the sign-in page does not fit"), "{heal}");
+    assert!(heal[..at].contains("put the old path back in Auto Run, Areas."), "the sign-in sentence follows the area exception: {heal}");
+    assert!(!healer.contains("Stop at once on a login page"), "healer still stops on a login page outright");
 }

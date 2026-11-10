@@ -628,6 +628,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_expiring_accounts", // read-only: the expiry query for the run window's password warning, never ADO
     "auto_run_load_run", // read-only: the review dialog loading its own run
     "auto_run_load_recipe", // read-only, local: the Setup card and header's site address
+    "auto_run_sign_in_proposal", // read-only, local: the assistant's pending sign-in proposal under the Sign-in row; never ADO
     "auto_run_load_nav", // read-only, local: the Setup card's module path count
     "auto_run_load_map", // read-only, local: the Setup card's Discovery line
     "auto_run_load_components", // read-only, local: the Setup card's Components line

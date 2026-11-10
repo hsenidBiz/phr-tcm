@@ -326,7 +326,7 @@ pub async fn auto_run_record_sign_in_save(
 /// So in that case the project's existing address and allowed sites stay as
 /// they are and only what was recorded is saved. With no address on the
 /// environment, or no recipe yet, the recorded address is saved.
-fn for_saving(root: &Path, organization: &str, project: &str, recorded: SignInRecipe) -> Result<SignInRecipe, String> {
+pub(crate) fn for_saving(root: &Path, organization: &str, project: &str, recorded: SignInRecipe) -> Result<SignInRecipe, String> {
     if crate::environments::active(root)?.start_url.trim().is_empty() {
         return Ok(recorded);
     }
@@ -383,6 +383,8 @@ where
     }
     save_recipe(root, organization, project, &for_saving(root, organization, project, recipe.clone())?)?;
     forget_draft();
+    // A saved sign-in ends the assistant's sign-in problem for this account.
+    crate::autorun::signin_attempts::close(root, &who.key);
     crate::applog::info(format!("Auto-run sign-in recipe recorded and saved ({} steps)", recipe.steps.len()));
     Ok(())
 }

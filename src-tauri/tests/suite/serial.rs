@@ -230,3 +230,13 @@ pub fn page_menu() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The assistant's sign-in attempt counts (`autorun::signin_attempts`): one
+/// count per account per sign-in problem, process-wide. Taken by every test
+/// that takes, closes or empties them, so one test's count never meets
+/// another's. Taken LAST: a test that holds another lock (`autorun()`,
+/// `held_browsers()`, `account_leases()`) takes this one after it, never before.
+pub fn sign_in_attempts() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
