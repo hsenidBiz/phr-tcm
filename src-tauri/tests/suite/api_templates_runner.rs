@@ -2115,6 +2115,11 @@ async fn a_path_that_already_carries_a_cookie_is_not_adapted_away_from_it() {
 #[tokio::test]
 async fn a_browser_that_will_not_list_its_cookies_sends_paths_as_written() {
     let _log = crate::serial::log_tail();
+    // It runs a template, so its activity records must land in a folder of
+    // its own and not in another test's while that one reads them.
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
     let mut r = rig(
         vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
         None,
