@@ -1318,11 +1318,13 @@ on one says it "stopped on a change-password page the sign-in recipe does
 not describe", and the raw detail starts "password expired - the site
 showed a change-password page this sign-in does not describe". Then:
 
-1. Call `inspect_sign_in_page` with `account` and the saved `recipe`. It
-   signs in as that account, stops where the sign-in stopped and reads that
-   page. Two or more visible password fields come with a hint saying so.
-2. Call `propose_sign_in_recipe` with the recipe and a `password_reset`
-   part. The part supports one page only: an optional current-password
+1. Call `inspect_sign_in_page` with just `account`. It signs in with the
+   saved sign-in as that account, stops where the sign-in stopped and reads
+   that page. Two or more visible password fields come with a hint saying so.
+2. Call `propose_sign_in_recipe` with `password_reset` and `account`, and no
+   `recipe`: the part is put on the saved sign-in, which is kept as it is.
+   (A whole `recipe` that stops on the page the part describes is kept the
+   same way: only its `password_reset` is taken.) The part supports one page only: an optional current-password
    field (set `no_current_password` to true when the page has none), the new
    password, its confirmation and a submit button. A page needing more (a
    username, two steps, a confirmation to dismiss) is reported to the person

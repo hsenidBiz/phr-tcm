@@ -2874,6 +2874,8 @@ fn the_sign_in_rule_is_shared_and_no_longer_just_stops() {
         "does not describe",
         "Also turn on Reset expired passwords",
         "no_current_password",
+        "Call `inspect_sign_in_page` with just `account`",
+        "with `password_reset` and `account`, and no `recipe`",
         "Proposed by the assistant",
         "captcha",
         "one-time code",

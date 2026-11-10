@@ -3632,7 +3632,9 @@ fn the_sign_in_proposal_tools_are_listed_and_reach_their_routes() {
         t["inputSchema"]["required"].as_array().map(|a| a.iter().map(|r| r.as_str().unwrap().to_string()).collect()).unwrap_or_default()
     };
     assert!(required("inspect_sign_in_page").is_empty());
-    assert_eq!(required("propose_sign_in_recipe"), ["recipe", "account"]);
+    assert_eq!(required("propose_sign_in_recipe"), ["account"], "recipe or password_reset, exactly one, is the Rust side's to check");
+    let props = tools.iter().find(|t| t["name"] == "propose_sign_in_recipe").unwrap()["inputSchema"]["properties"].clone();
+    assert!(props["recipe"].is_object() && props["password_reset"].is_object());
     // With Auto Run off the two are gone.
     let off = listed_names(&stub(200, r#"{"disabled":[],"modules":["writing_style"]}"#));
     for (name, _) in cases {

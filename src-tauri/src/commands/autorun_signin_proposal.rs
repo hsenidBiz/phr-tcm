@@ -9,7 +9,7 @@ use super::autorun_check_signin::{claim_check_browser, refusal};
 use super::autorun_record_signin::for_saving;
 use crate::autorun::accounts::{find_account, Account};
 use crate::autorun::lease::Held;
-use crate::autorun::recipe::{effective_recipe, load_effective_recipe_if_any, load_recipe, save_recipe, SignInRecipe, NO_SITE_ADDRESS};
+use crate::autorun::recipe::{builtin_recipe, effective_recipe, PasswordResetPage, load_effective_recipe_if_any, load_recipe, save_recipe, SignInRecipe, NO_SITE_ADDRESS};
 use crate::autorun::replay::Browsers;
 use crate::autorun::signin::{is_password_expired, redact, reset_page, sign_in_trial};
 use crate::autorun::signin_attempts;
@@ -22,6 +22,7 @@ use crate::browser::timing::Timing;
 use std::path::Path;
 
 const OFF_SITE_PROPOSAL: &str = "the proposed sign-in goes to a site this environment does not use, so it was not saved - reject it";
+const APPROVAL_NOT_SAVED: &str = "the sign-in could not be saved - see Settings, Logs for the details";
 const NOTHING_PROPOSED: &str = "there is no proposed sign-in to approve";
 
 pub fn proposal_view_with(root: &Path, org: &str, project: &str) -> Result<Option<SignInProposalView>, String> {
@@ -66,9 +67,17 @@ pub fn approve_turning_on(
         return Err(sp::RESET_SWITCH_NOT_TEST.to_string());
     }
     p.recipe.validate()?;
-    save_recipe(root, org, project, &to_save)?;
+    if let Err(e) = save_recipe(root, org, project, &to_save) {
+        crate::applog::warn(format!("Auto-run: the approved sign-in could not be saved: {e}"));
+        return Err(APPROVAL_NOT_SAVED.to_string());
+    }
+    // The sign-in problem the assistant was working on is over once its fix is saved.
+    signin_attempts::close(root, &p.account);
     let switch = if turn_on_reset && p.recipe.password_reset.is_some() { turn_on(&env.id) } else { Ok(()) };
-    sp::clear(root, &env.id, org, project)?;
+    if let Err(e) = sp::clear(root, &env.id, org, project) {
+        crate::applog::warn(format!("Auto-run: the approved proposal could not be cleared: {e}"));
+        return Err(APPROVAL_NOT_SAVED.to_string());
+    }
     crate::applog::info("Auto-run sign-in recipe approved from the assistant's proposal");
     if let Err(e) = switch {
         crate::applog::warn(format!("Auto-run: Reset expired passwords could not be turned on after approval: {e}"));
@@ -116,10 +125,13 @@ pub fn auto_run_reject_sign_in_proposal(
 // ---- The assistant's tools ------------------------------------------------------
 
 pub const INSPECT_SHAPE: &str =
-    "{ \"account\"?: <a saved account key>, \"recipe\"?: <a draft sign-in recipe> } - both or neither";
-pub const PROPOSE_SHAPE: &str = "{ \"recipe\": <the whole sign-in recipe>, \"account\": <a saved account key> }";
+    "{ \"account\"?: <a saved account key>, \"recipe\"?: <a draft sign-in recipe> } - recipe needs account";
+pub const PROPOSE_SHAPE: &str = "{ \"recipe\": <the whole sign-in recipe> OR \"password_reset\": <the change-password part>, \"account\": <a saved account key> } - exactly one of recipe and password_reset";
 
-const INSPECT_ONE_OF: &str = "inspect_sign_in_page takes an account and a recipe together (the page is then read after a trial sign-in with that recipe) or neither (the sign-in page alone is opened, nobody is signed in)";
+const INSPECT_NEEDS_ACCOUNT: &str = "inspect_sign_in_page takes a recipe only together with an account (the page is read after a trial sign-in with that recipe); an account alone tries the saved sign-in, and neither opens the sign-in page without signing in";
+const PROPOSE_ONE_OF: &str = "propose_sign_in_recipe takes either a recipe (the whole sign-in) or a password_reset part (laid over the saved sign-in), never both and never neither";
+const RESET_NEEDS_SAVED: &str = "there is no saved sign-in to put a change-password part on - record a sign-in first";
+const RESET_PAGE_NO_SIGN_IN: &str = "the trial reached the change-password page but never signed in, and there is no saved sign-in to keep - record a sign-in first";
 const PROPOSAL_NOT_KEPT: &str = "the proposal could not be kept - see Settings, Logs for the details";
 const NOTHING_PROPOSED_PREFIX: &str = "the trial did not sign in - nothing was proposed";
 
@@ -135,7 +147,10 @@ struct InspectBody {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProposeBody {
-    recipe: SignInRecipe,
+    #[serde(default)]
+    recipe: Option<SignInRecipe>,
+    #[serde(default)]
+    password_reset: Option<PasswordResetPage>,
     account: String,
 }
 
@@ -143,6 +158,21 @@ struct ProposeBody {
 /// quote what the body held, so they are never passed on.
 fn not_readable(tool: &str, shape: &str) -> (u16, String) {
     (400, format!("that is not what {tool} reads. Expected {shape}."))
+}
+
+/// The sign-in an account-only inspect runs: the saved recipe, else the
+/// built-in one at the environment's own address; with neither, nothing to go on.
+fn saved_basis(
+    root: &Path,
+    org: &str,
+    project: &str,
+    env: &crate::environments::Environment,
+) -> Result<SignInRecipe, (u16, String)> {
+    match load_recipe(root, org, project).map_err(|e| (500, e))? {
+        Some(saved) => Ok(saved),
+        None if env.start_url.trim().is_empty() => Err((400, TRIAL_NO_BASIS.to_string())),
+        None => Ok(SignInRecipe { start_url: env.start_url.trim().to_string(), ..builtin_recipe() }),
+    }
 }
 
 fn saved_account(root: &Path, key: &str) -> Result<Account, (u16, String)> {
@@ -220,8 +250,8 @@ pub async fn inspect_in<B: Browsers>(
     let key = asked.account.as_deref().map(str::trim).filter(|k| !k.is_empty()).map(str::to_string);
     let trial = match (key, asked.recipe) {
         (None, None) => None,
-        (Some(key), Some(draft)) => Some((key, draft)),
-        _ => return (400, format!("{INSPECT_ONE_OF}. Expected {INSPECT_SHAPE}.")),
+        (Some(key), draft) => Some((key, draft)),
+        (None, Some(_)) => return (400, format!("{INSPECT_NEEDS_ACCOUNT}. Expected {INSPECT_SHAPE}.")),
     };
     let env = match crate::environments::active(root) {
         Ok(e) => e,
@@ -233,10 +263,18 @@ pub async fn inspect_in<B: Browsers>(
                 Ok(a) => a,
                 Err(refused) => return refused,
             };
+            let draft = match draft {
+                Some(d) => d.clone(),
+                // An account alone runs the sign-in the project already has.
+                None => match saved_basis(root, org, project, &env) {
+                    Ok(d) => d,
+                    Err(refused) => return refused,
+                },
+            };
             if let Err(why) = draft.validate() {
                 return (400, why);
             }
-            match trial_recipe(root, org, project, draft, &env) {
+            match trial_recipe(root, org, project, &draft, &env) {
                 Ok((_, effective, _)) => Some((who, effective)),
                 Err(refused) => return refused,
             }
@@ -261,7 +299,7 @@ pub async fn inspect_in<B: Browsers>(
         if let Err(why) = lease.hold(root, &who.key).await {
             return (409, redact(&why, who));
         }
-        if let Err(why) = signin_attempts::take(root, &who.key) {
+        if let Some(why) = signin_attempts::would_refuse(root, &who.key) {
             return (409, why);
         }
     }
@@ -272,6 +310,13 @@ pub async fn inspect_in<B: Browsers>(
             return (422, BROWSER_WOULD_NOT_OPEN.to_string());
         }
     };
+    // Counted once the browser is open: one that will not open spends nothing.
+    if let Some((who, _)) = &account {
+        if let Err(why) = signin_attempts::take(root, &who.key) {
+            browsers.close(d).await;
+            return (409, why);
+        }
+    }
     let answer = match (&account, &open_at) {
         (Some((who, effective)), _) => {
             let out = sign_in_trial(&mut d, root, effective, who, timing).await;
@@ -334,14 +379,23 @@ pub async fn propose_in<B: Browsers>(
         Ok(a) => a,
         Err(refused) => return refused,
     };
-    if let Err(why) = asked.recipe.validate() {
-        return (400, why);
-    }
     let env = match crate::environments::active(root) {
         Ok(e) => e,
         Err(e) => return (500, e),
     };
-    let (mut merged, effective, saved) = match trial_recipe(root, org, project, &asked.recipe, &env) {
+    let draft = match (asked.recipe, asked.password_reset) {
+        (Some(recipe), None) => recipe,
+        (None, Some(part)) => match load_recipe(root, org, project) {
+            Ok(Some(saved)) => SignInRecipe { password_reset: Some(part), ..saved },
+            Ok(None) => return (400, RESET_NEEDS_SAVED.to_string()),
+            Err(e) => return (500, e),
+        },
+        _ => return (400, format!("{PROPOSE_ONE_OF}. Expected {PROPOSE_SHAPE}.")),
+    };
+    if let Err(why) = draft.validate() {
+        return (400, why);
+    }
+    let (mut merged, effective, saved) = match trial_recipe(root, org, project, &draft, &env) {
         Ok(t) => t,
         Err(refused) => return refused,
     };
@@ -361,7 +415,7 @@ pub async fn propose_in<B: Browsers>(
     if let Err(why) = lease.hold(root, &who.key).await {
         return (409, redact(&why, &who));
     }
-    if let Err(why) = signin_attempts::take(root, &who.key) {
+    if let Some(why) = signin_attempts::would_refuse(root, &who.key) {
         return (409, why);
     }
     let mut d = match browsers.open().await {
@@ -371,6 +425,11 @@ pub async fn propose_in<B: Browsers>(
             return (422, format!("{NOTHING_PROPOSED_PREFIX}: {BROWSER_WOULD_NOT_OPEN}"));
         }
     };
+    // Counted once the browser is open: one that will not open spends nothing.
+    if let Err(why) = signin_attempts::take(root, &who.key) {
+        browsers.close(d).await;
+        return (409, why);
+    }
     let tried = async {
         if let Err(why) = refuse_check_on_start_page(&mut d, &effective, timing).await {
             return Err(format!("nothing was proposed: {why}"));
@@ -399,6 +458,13 @@ pub async fn propose_in<B: Browsers>(
         Ok(found) => found,
         Err(said) => return (422, said),
     };
+    if reset_found {
+        // The trial stopped on the described change-password page without
+        // signing in: the draft's steps were not shown to work, so only the
+        // change-password part is taken and the saved sign-in is kept.
+        let Some(s) = &saved else { return (422, RESET_PAGE_NO_SIGN_IN.to_string()) };
+        merged = SignInRecipe { password_reset: merged.password_reset.clone(), ..s.clone() };
+    }
     if !env.start_url.trim().is_empty() {
         // The stored recipe must say where the trial signed in, never where
         // the draft pointed: the saved recipe's site, else the environment's.

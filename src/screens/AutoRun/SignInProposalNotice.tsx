@@ -15,6 +15,9 @@ import { IconClear, IconConfirm } from "../../lib/actionIcons";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+// The one failure after which the sign-in IS saved (and the proposal gone).
+const SAVED_BUT_SWITCH_STAYED_OFF = "the sign-in was saved, but Reset expired passwords could not be turned on";
+
 export default function SignInProposalNotice({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   const proposalKey = ["autorun-sign-in-proposal", org, project];
@@ -50,7 +53,13 @@ export default function SignInProposalNotice({ org, project }: { org: string; pr
       await settle(turnOnReset);
       setTurnOnReset(false);
     } catch (e) {
-      toast.error(message(e));
+      const said = message(e);
+      toast.error(said);
+      // Saved all the same: show what is saved now, not the proposal.
+      if (said.startsWith(SAVED_BUT_SWITCH_STAYED_OFF)) {
+        await settle(true);
+        setTurnOnReset(false);
+      }
     } finally {
       setBusy(false);
     }

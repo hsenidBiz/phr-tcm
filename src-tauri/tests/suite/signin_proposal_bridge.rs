@@ -174,19 +174,44 @@ async fn inspect_with_an_account_tries_the_draft_counts_it_and_reads_where_it_en
 }
 
 #[tokio::test]
-async fn inspect_takes_both_or_neither() {
+async fn inspect_takes_a_recipe_only_together_with_an_account() {
     let _a = crate::serial::autorun();
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
-    for one in [json!({ "account": "sup" }), json!({ "recipe": good() })] {
-        let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &one.to_string(), &quick()).await;
-        assert_eq!(status, 400, "{text}");
-        assert!(text.contains("both or neither"), "{text}");
-    }
+    let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &json!({ "recipe": good() }).to_string(), &quick()).await;
+    assert_eq!(status, 400, "{text}");
+    assert!(text.contains("recipe needs account"), "{text}");
     assert_eq!(fake.opened, 0);
+}
+
+#[tokio::test]
+async fn inspect_with_an_account_alone_runs_the_saved_sign_in_and_reads_where_it_lands() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    let mut fake = Fake::new(signs_in);
+    let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &json!({ "account": "sup" }).to_string(), &quick()).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["page"]["path"], "/home");
+    assert!(v["sign_in"].as_str().unwrap().contains("signed in"), "{text}");
+    no_password_or_host(&text);
+    let typed = fake.closed[0].calls_to("Input.insertText");
+    assert!(typed.iter().any(|c| c["text"] == PASSWORD), "the saved sign-in was not run");
+    assert!(signin_attempts::is_open(dir.path(), "sup"));
+    signin_attempts::close(dir.path(), "sup");
+
+    // Nothing saved and no address: nothing to sign in with.
+    let bare = root_with("", None);
+    let (status, text) = inspect_in(&mut fake, bare.path(), ORG, PROJECT, &json!({ "account": "sup" }).to_string(), &quick()).await;
+    assert_eq!(status, 400, "{text}");
+    assert!(text.contains("a trial never signs in"), "{text}");
+    assert!(!signin_attempts::is_open(bare.path(), "sup"));
 }
 
 #[tokio::test]
@@ -541,4 +566,149 @@ fn off_site_start() -> Value {
     let mut v = good();
     v["start_url"] = json!("https://evil.example.test/");
     v
+}
+
+fn reset_part() -> Value {
+    json!({ "path_contains": "/security/PasswordReset", "field": { "css": "#txtOldPassword" } })
+}
+
+#[tokio::test]
+async fn a_full_draft_that_only_reaches_the_reset_page_keeps_the_saved_sign_in() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    let submits = Arc::new(AtomicUsize::new(0));
+    let seen = submits.clone();
+    let mut fake = Fake::new(move || on_the_reset_page(seen.clone()));
+    let mut draft = good();
+    draft["password_reset"] = reset_part();
+    draft["signed_in_in_menu"] = json!(true);
+    draft["steps"] = Value::Array(draft["steps"].as_array().unwrap()[..3].to_vec());
+    let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(draft), &quick()).await;
+    assert_eq!(status, 200, "{text}");
+    let env = active(dir.path()).unwrap();
+    let kept = load(dir.path(), &env.id, ORG, PROJECT).unwrap().expect("the proposal was not kept");
+    let saved = load_recipe(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    assert_eq!(kept.recipe.steps, saved.steps, "the draft's steps replaced the saved ones");
+    assert_eq!(kept.recipe.signed_in_in_menu, saved.signed_in_in_menu, "the draft's check replaced the saved one");
+    assert_eq!(kept.recipe.start_url, saved.start_url);
+    assert_eq!(kept.recipe.password_reset, serde_json::from_value(reset_part()).ok());
+    assert_eq!(kept.changes, vec!["change-password part".to_string()], "{:?}", kept.changes);
+    signin_attempts::close(dir.path(), "sup");
+}
+
+#[tokio::test]
+async fn a_full_draft_that_only_reaches_the_reset_page_with_nothing_saved_is_refused() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root_with(HOME, None);
+    let submits = Arc::new(AtomicUsize::new(0));
+    let seen = submits.clone();
+    let mut fake = Fake::new(move || on_the_reset_page(seen.clone()));
+    let mut draft = good();
+    draft["password_reset"] = reset_part();
+    let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(draft), &quick()).await;
+    assert_eq!(status, 422, "{text}");
+    assert!(text.contains("never signed in") && text.contains("record a sign-in first"), "{text}");
+    no_password_or_host(&text);
+    let env = active(dir.path()).unwrap();
+    assert!(!proposal_path(dir.path(), &env.id, ORG, PROJECT).exists(), "a sign-in that never signed in was kept");
+    signin_attempts::close(dir.path(), "sup");
+}
+
+#[tokio::test]
+async fn a_reset_part_alone_is_laid_over_the_saved_sign_in() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    let submits = Arc::new(AtomicUsize::new(0));
+    let seen = submits.clone();
+    let mut fake = Fake::new(move || on_the_reset_page(seen.clone()));
+    let asked = json!({ "password_reset": reset_part(), "account": "sup" }).to_string();
+    let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &asked, &quick()).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v["summary"].as_str().unwrap().ends_with(RESET_PART_WORDS), "{text}");
+    assert_eq!(submits.load(Ordering::SeqCst), 0, "the change-password form was sent");
+    let env = active(dir.path()).unwrap();
+    let kept = load(dir.path(), &env.id, ORG, PROJECT).unwrap().expect("the proposal was not kept");
+    let saved = load_recipe(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    assert_eq!(kept.recipe.steps, saved.steps);
+    assert_eq!(kept.recipe.signed_in, saved.signed_in);
+    assert!(kept.recipe.password_reset.is_some());
+    signin_attempts::close(dir.path(), "sup");
+
+    // With nothing saved there is no sign-in to put it on.
+    let bare = root_with(HOME, None);
+    let (status, text) = propose_in(&mut fake, bare.path(), ORG, PROJECT, &asked, &quick()).await;
+    assert_eq!(status, 400, "{text}");
+    assert!(text.contains("record a sign-in first"), "{text}");
+    assert!(!signin_attempts::is_open(bare.path(), "sup"));
+}
+
+#[tokio::test]
+async fn a_proposal_gives_a_recipe_or_a_reset_part_never_both_or_neither() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    let mut fake = Fake::new(signs_in);
+    for asked in [
+        json!({ "recipe": good(), "password_reset": reset_part(), "account": "sup" }),
+        json!({ "account": "sup" }),
+    ] {
+        let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &asked.to_string(), &quick()).await;
+        assert_eq!(status, 400, "{text}");
+        assert!(text.contains("never both"), "{text}");
+    }
+    assert_eq!(fake.opened, 0);
+    assert!(!signin_attempts::is_open(dir.path(), "sup"));
+}
+
+/// A browser that will not open.
+struct Broken;
+
+impl Browsers for Broken {
+    type D = ScriptedDriver;
+    async fn open(&mut self) -> Result<ScriptedDriver, String> {
+        Err("no browser".to_string())
+    }
+    async fn close(&mut self, _d: ScriptedDriver) {}
+}
+
+#[tokio::test]
+async fn a_browser_that_will_not_open_spends_no_attempt() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    let (status, text) = propose_in(&mut Broken, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
+    assert_eq!(status, 422, "{text}");
+    let asked = json!({ "account": "sup" }).to_string();
+    let (status, text) = inspect_in(&mut Broken, dir.path(), ORG, PROJECT, &asked, &quick()).await;
+    assert_eq!(status, 422, "{text}");
+    assert!(!signin_attempts::is_open(dir.path(), "sup"), "an attempt was spent with no browser");
+}
+
+#[tokio::test]
+async fn approving_a_proposal_closes_the_accounts_sign_in_problem() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root("");
+    let mut fake = Fake::new(signs_in);
+    let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(signin_attempts::is_open(dir.path(), "sup"));
+    v2_lib::commands::autorun_signin_proposal::approve_with(dir.path(), ORG, PROJECT, false).unwrap();
+    assert!(!signin_attempts::is_open(dir.path(), "sup"), "the problem stayed open after approval");
 }

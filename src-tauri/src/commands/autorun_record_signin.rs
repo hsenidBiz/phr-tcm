@@ -383,6 +383,8 @@ where
     }
     save_recipe(root, organization, project, &for_saving(root, organization, project, recipe.clone())?)?;
     forget_draft();
+    // A saved sign-in ends the assistant's sign-in problem for this account.
+    crate::autorun::signin_attempts::close(root, &who.key);
     crate::applog::info(format!("Auto-run sign-in recipe recorded and saved ({} steps)", recipe.steps.len()));
     Ok(())
 }

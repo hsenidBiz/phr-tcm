@@ -123,6 +123,17 @@ test("a stale Approve shows its sentence in a toast and keeps the notice", async
   expect(screen.getByText("Proposed by the assistant")).toBeInTheDocument();
 });
 
+test("an Approve that saved but could not turn the switch on shows its toast and reads the proposal again", async () => {
+  const calls = mount({ ...VIEW, offer_reset_switch: true }, () => {
+    throw "the sign-in was saved, but Reset expired passwords could not be turned on - turn it on in the Environments dialog";
+  });
+  await screen.findByText("Proposed by the assistant");
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("could not be turned on")));
+  // Saved all the same: the proposal and recipe are read again.
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "auto_run_sign_in_proposal").length).toBeGreaterThan(1));
+});
+
 test("Reject failing shows its toast and keeps the notice", async () => {
   mount(VIEW, undefined, () => {
     throw "the proposal could not be cleared";
