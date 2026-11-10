@@ -13,6 +13,7 @@ pub mod autorun_divergence;
 pub mod autorun_publish;
 pub mod autorun_record;
 pub mod autorun_record_signin;
+pub mod autorun_signin_proposal;
 pub mod autorun_replay;
 pub mod autorun_setup;
 pub mod autorun_slots;

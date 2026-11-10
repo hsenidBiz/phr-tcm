@@ -1239,6 +1239,19 @@ export const commands = {
 	 *  and be saved again without recording again.
 	 */
 	autoRunRecordSignInSave: (organization: string, project: string, account: string, browserName: string, fields: FieldChoice[]) => typedError<SignInSaveResult, string>(__TAURI_INVOKE("auto_run_record_sign_in_save", { organization, project, account, browserName, fields })),
+	autoRunSignInProposal: (organization: string, project: string) => typedError<{
+	/**  A path only, or "this environment's address". */
+	address: string,
+	steps: string[],
+	signed_in: string,
+	signed_in_in_menu: boolean,
+	password_reset: string | null,
+	account: string,
+	changes: string[],
+	offer_reset_switch: boolean,
+} | null, string>(__TAURI_INVOKE("auto_run_sign_in_proposal", { organization, project })),
+	autoRunApproveSignInProposal: (organization: string, project: string, turnOnReset: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_approve_sign_in_proposal", { organization, project, turnOnReset })),
+	autoRunRejectSignInProposal: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_reject_sign_in_proposal", { organization, project })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -3038,7 +3051,7 @@ export type AutorunDataChanged = {
  *  Which of the data an assistant adds through the AI bridge changed. The
  *  Auto Run screen reads each kind from its own queries.
  */
-export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals";
+export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Run browser: while
@@ -7633,6 +7646,19 @@ export type SignInOutcome_Serialize = {
 	/**  True when no form was touched: the saved session was still good. */
 	used_saved_session: boolean,
 	steps: ActionOutcome_Serialize[],
+};
+
+/**  What the review shows. No host, no query, no typed text. */
+export type SignInProposalView = {
+	/**  A path only, or "this environment's address". */
+	address: string,
+	steps: string[],
+	signed_in: string,
+	signed_in_in_menu: boolean,
+	password_reset: string | null,
+	account: string,
+	changes: string[],
+	offer_reset_switch: boolean,
 };
 
 export type SignInRecipe = SignInRecipe_Serialize | SignInRecipe_Deserialize;

@@ -326,7 +326,7 @@ pub async fn auto_run_record_sign_in_save(
 /// So in that case the project's existing address and allowed sites stay as
 /// they are and only what was recorded is saved. With no address on the
 /// environment, or no recipe yet, the recorded address is saved.
-fn for_saving(root: &Path, organization: &str, project: &str, recorded: SignInRecipe) -> Result<SignInRecipe, String> {
+pub(crate) fn for_saving(root: &Path, organization: &str, project: &str, recorded: SignInRecipe) -> Result<SignInRecipe, String> {
     if crate::environments::active(root)?.start_url.trim().is_empty() {
         return Ok(recorded);
     }

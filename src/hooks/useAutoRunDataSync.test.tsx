@@ -97,7 +97,7 @@ test("a burst of fixture events reads the fixtures once", async () => {
 });
 
 test("every kind of data has its query key", () => {
-  const kinds: AutorunDataKind[] = ["areas", "components", "map", "mappingSummary", "quirks", "testFiles", "proposals"];
+  const kinds: AutorunDataKind[] = ["areas", "components", "map", "mappingSummary", "quirks", "testFiles", "proposals", "signInProposal"];
   for (const k of kinds) expect(DATA_KIND_KEYS[k].length).toBeGreaterThan(0);
   expect(Object.keys(DATA_KIND_KEYS).sort()).toEqual([...kinds].sort());
 });
