@@ -898,6 +898,41 @@ async fn a_reset_without_a_current_field_types_only_the_new_password() {
 }
 
 #[tokio::test]
+async fn a_trial_on_the_reset_page_never_sends_the_form() {
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &reset_recipe(false), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 0);
+    assert!(app.typed_into("#txtNewPassword").is_empty());
+    assert!(pending_of(dir.path()).is_none());
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_trial_that_signs_in_saves_no_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(!session_path(dir.path(), &account().key).unwrap().exists(), "a trial kept its session");
+}
+
+#[tokio::test]
+async fn a_trial_ignores_a_held_password() {
+    let dir = reset_root(true, true);
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &env_id, KEY, "Abc@123").unwrap();
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &reset_recipe(false), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(app.count_of("Abc@123"), 0, "a trial typed the held password");
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
 async fn the_alternate_is_used_when_the_current_password_is_the_first() {
     let dir = reset_root(true, true);
     let mut acct = reset_account();

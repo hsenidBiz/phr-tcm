@@ -491,7 +491,7 @@ impl Run<'_> {
 /// The reset page's words: the recipe's, or the built-in one for a recipe
 /// recorded without one. Its fields the recipe leaves out are the built-in
 /// ones.
-fn reset_page(recipe: &SignInRecipe) -> Option<super::recipe::PasswordResetPage> {
+pub(crate) fn reset_page(recipe: &SignInRecipe) -> Option<super::recipe::PasswordResetPage> {
     let mut page = match &recipe.password_reset {
         Some(page) => page.clone(),
         None => super::recipe::builtin_recipe().password_reset?,
@@ -630,6 +630,18 @@ async fn send_reset<D: Driver>(
     Ok(left_reset_page(d, page, timing).await)
 }
 
+/// Which sign-in `sign_in_core` is making. `First` may reset an expired
+/// password; `AfterReset` is the one that follows a reset (or a held password)
+/// and cannot; `Trial` tries a recipe the assistant proposed: it never sends
+/// the change-password form, never keeps a session and never touches a held
+/// password.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    First,
+    AfterReset,
+    Trial,
+}
+
 /// `expired_at_reset_page` on the heap, built in a frame of its own: the
 /// future is large (it holds a whole form fill), and building it inside
 /// `sign_in_core` would put room for all of it in every poll of every
@@ -646,9 +658,9 @@ fn expired_boxed<'a, D: Driver>(
     timing: &'a Timing,
     policy: &'a Policy,
     browser: &'a str,
-    may_reset: bool,
+    attempt: Attempt,
 ) -> impl std::future::Future<Output = SignInOutcome> + 'a {
-    Box::pin(expired_at_reset_page(run, d, root, recipe, account, timing, policy, browser, may_reset))
+    Box::pin(expired_at_reset_page(run, d, root, recipe, account, timing, policy, browser, attempt))
 }
 
 /// The unconfirmed-reset stop: the site may now expect the held password.
@@ -658,7 +670,7 @@ fn maybe_reset(why: &str) -> String {
 
 /// The sign-in ended on the site's password reset page. On a test
 /// environment with "Reset expired passwords" on, and only in the first
-/// sign-in (`may_reset`), the app resets the password. The new password is
+/// sign-in (`Attempt::First`), the app resets the password. The new password is
 /// written down BEFORE the form is sent, so that nothing that happens after
 /// (a cancel, a browser that dies, a slow redirect) can lose it. It becomes
 /// the account's only when a sign-in with it reaches the signed-in marker
@@ -674,12 +686,16 @@ async fn expired_at_reset_page<D: Driver>(
     timing: &Timing,
     policy: &Policy,
     browser: &str,
-    may_reset: bool,
+    attempt: Attempt,
 ) -> SignInOutcome {
+    // A trial never sends the change-password form, wherever it is.
+    if attempt == Attempt::Trial {
+        return run.password_expired(d, !reset_enabled(root)).await;
+    }
     let Some(env_id) = reset_environment(root) else {
         return run.password_expired(d, true).await;
     };
-    if !may_reset {
+    if attempt != Attempt::First {
         let said = format!("{PASSWORD_RESET_FAILED}the site sent the account to its reset page again, so it was not tried a second time");
         return run.done(false, said, false, false);
     }
@@ -720,7 +736,7 @@ async fn expired_at_reset_page<D: Driver>(
     drop(run);
     let renewed = Account { password: new.to_string(), ..account.clone() };
     // Once: the sign-in that follows cannot reset again.
-    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false, None)).await;
+    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, Attempt::AfterReset, None)).await;
     confirm_pending(root, &env_id, account, new, out)
 }
 
@@ -778,7 +794,7 @@ async fn try_pending<D: Driver>(
         return None;
     }
     let renewed = Account { password: pending.clone(), ..account.clone() };
-    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false, cancel)).await;
+    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, Attempt::AfterReset, cancel)).await;
     if out.ok || out.harness {
         return Some(confirm_pending(root, &env_id, account, &pending, out));
     }
@@ -935,6 +951,25 @@ pub async fn sign_in_fresh<D: Driver>(
     sign_in_with(d, root, recipe, account, timing, false, UNNAMED_BROWSER, None).await
 }
 
+/// A trial of a proposed recipe: signs in with no saved session, never resets
+/// an expired password (it stops at the reset page, as a switched-off reset
+/// does), never saves the session it makes and leaves a held password alone.
+pub async fn sign_in_trial<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+) -> SignInOutcome {
+    let errors_before = d.page_error_book().map(|b| b.len());
+    let out = sign_in_core(d, root, recipe, account, timing, false, UNNAMED_BROWSER, Attempt::Trial, None).await;
+    if let (Some(n), Some(book)) = (errors_before, d.page_error_book()) {
+        book.drop_after(n);
+    }
+    d.hold_saves(false);
+    out
+}
+
 /// A no-save case's guard is held from the moment the sign-in has arrived
 /// on its start page (`open_start`) until it ends, on every path out: from
 /// there on the sign-in is the runner's own, and what it sends (a login
@@ -1044,11 +1079,12 @@ async fn sign_in_held<D: Driver>(
     if let Some(done) = try_pending_boxed(d, root, recipe, account, timing, browser, cancel).await {
         return done;
     }
-    sign_in_core(d, root, recipe, account, timing, try_saved_session, browser, true, cancel).await
+    sign_in_core(d, root, recipe, account, timing, try_saved_session, browser, Attempt::First, cancel).await
 }
 
-/// `sign_in_held`; `may_reset` is whether an expired password may be reset
-/// in this sign-in (never in the one that follows a reset).
+/// `sign_in_held`; `attempt` says whether an expired password may be reset
+/// in this sign-in (`First` only: never in the one that follows a reset, and
+/// never in a trial) and whether the session it makes is kept.
 #[allow(clippy::too_many_arguments)]
 async fn sign_in_core<D: Driver>(
     d: &mut D,
@@ -1058,7 +1094,7 @@ async fn sign_in_core<D: Driver>(
     timing: &Timing,
     try_saved_session: bool,
     browser: &str,
-    may_reset: bool,
+    attempt: Attempt,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SignInOutcome {
     let origins = recipe.origins();
@@ -1181,7 +1217,7 @@ async fn sign_in_core<D: Driver>(
         // The recipe's own wait for the signed-in marker is the step that
         // stops on a login sent to the reset page.
         if !harness_failure && on_reset_page(d, recipe, timing).await {
-            return expired_boxed(run, d, root, recipe, account, timing, &policy, browser, may_reset).await;
+            return expired_boxed(run, d, root, recipe, account, timing, &policy, browser, attempt).await;
         }
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
@@ -1192,7 +1228,7 @@ async fn sign_in_core<D: Driver>(
     // The reset page is no slow site and no wrong password: said as what it
     // is, before anything is tried again.
     if !marker.ok && !marker.harness && on_reset_page(d, recipe, timing).await {
-        return expired_boxed(run, d, root, recipe, account, timing, &policy, browser, may_reset).await;
+        return expired_boxed(run, d, root, recipe, account, timing, &policy, browser, attempt).await;
     }
     if !marker.ok && !marker.harness && session_refused(d).await.is_none() {
         if login_form_showing(d, &recipe.steps, timing).await {
@@ -1278,7 +1314,7 @@ async fn sign_in_core<D: Driver>(
     // marker showed, every after_sign_in step finished, the page is not a
     // refusal, and the captured cookies are whole (`session_complete`). A
     // session caught partway would be refused on every restore.
-    if after.is_ok() {
+    if after.is_ok() && attempt != Attempt::Trial {
         if let Ok(captured) = session::capture(d, &origins, now_ms()).await {
             if session_complete(&captured) {
                 let _ = save_session(root, &account.key, &captured);
