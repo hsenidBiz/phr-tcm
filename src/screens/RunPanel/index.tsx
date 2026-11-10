@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { ListSkeleton } from "../../components/ui/list-skeleton";
+import { useRowKeys } from "../../lib/useRowKeys";
 import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
@@ -419,6 +421,18 @@ export default function RunPanel({
   toggleRef.current = toggleExpanded;
   const onToggleExpanded = useCallback((pointId: number) => toggleRef.current(pointId), []);
 
+  // Arrow keys and Space (backlog A1.8), by point, in the order the rows
+  // are on screen (a folded group's rows left out unless held open).
+  const shownPoints = sections.flatMap(({ name, pts }) => visibleRows(name, pts));
+  const navIds = shownPoints.map((p) => p.point_id);
+  const rowKeys = useRowKeys({
+    order: navIds,
+    onSelect: (pointId, keys) => {
+      const p = shownPoints.find((x) => x.point_id === pointId);
+      if (p) handleRowClick(p, keys as unknown as MouseEvent);
+    },
+  });
+
   /** Every case the list is currently showing (the filter applies; a
    * collapsed group's cases still count - collapsing hides rows, it does
    * not unpick them). */
@@ -539,7 +553,7 @@ export default function RunPanel({
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
       {points.isFetching && suite.data && !points.data && (
-        <p className="text-sm text-muted">Loading test points</p>
+        <ListSkeleton label="Loading test points" rows={6} />
       )}
       {points.isError && <p className="text-sm text-danger">{points.error.message}</p>}
       {points.data && points.data.length === 0 && (
@@ -650,7 +664,7 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
-        <div>
+        <div {...rowKeys.listProps}>
           {/* One table per group, so a group can fold as one box - a run of
               table rows cannot be wrapped. Every table is fixed-layout with
               the same column widths (RunCols), so the columns line up down
@@ -731,6 +745,8 @@ export default function RunPanel({
                   outcomeColor={outcomeColor}
                   onRowClick={onRowClick}
                   onToggleExpanded={onToggleExpanded}
+                  tabKey={rowKeys.tabKey}
+                  onRowFocus={rowKeys.onRowFocus}
                 />
                 </table>
                 </Collapse>

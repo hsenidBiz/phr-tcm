@@ -37,6 +37,8 @@ function Harness() {
         outcomeColor={TINT}
         onRowClick={onClick(setSelected)}
         onToggleExpanded={noop}
+        tabKey={null}
+        onRowFocus={noop}
       />
     </table>
   );

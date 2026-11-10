@@ -1480,3 +1480,33 @@ test("a folder with no cases of its own says so", async () => {
   );
   expect(await screen.findByText("No test cases in this folder.")).toBeInTheDocument();
 });
+
+/// Backlog A1.8: arrow keys and Space in Run Tests, as in the queue.
+test("arrow keys move through the rows and Space selects one", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const row = (name: string) => screen.getByText(name).closest<HTMLElement>("[data-row-key]")!;
+  row("Valid login").focus();
+  fireEvent.keyDown(row("Valid login"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Invalid login"));
+  fireEvent.keyDown(row("Invalid login"), { key: " " });
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+  fireEvent.keyDown(row("Invalid login"), { key: "ArrowUp", shiftKey: true });
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+});
+
+/// Backlog A1.8: while the points load, the table keeps its shape with
+/// skeleton rows, and a screen reader hears what is loading.
+test("loading test points shows skeleton rows with a status", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "ensure_pbi_suite") return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+    if (cmd === "list_test_points") return new Promise(() => {});
+    if (cmd === "run_history") return [];
+  });
+  renderPanel();
+  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("Loading test points");
+  expect(screen.getAllByTestId("skeleton").length).toBeGreaterThanOrEqual(6);
+});

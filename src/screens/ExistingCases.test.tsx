@@ -491,3 +491,19 @@ test("the search is the wide first item of one toolbar, with Group by title as a
     screen.getByRole("button", { name: "Refresh" }),
   );
 });
+
+/// Backlog A1.8: arrow keys and Space in Update Test Cases, as in the queue.
+test("arrow keys move through the cases and Space selects one", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase, secondCase];
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+  const row = (title: string) => screen.getByText(title).closest<HTMLElement>("[data-row-key]")!;
+  row("Valid login").focus();
+  fireEvent.keyDown(row("Valid login"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Invalid login"));
+  fireEvent.keyDown(row("Invalid login"), { key: " " });
+  expect(screen.getAllByText("1 selected").length).toBeGreaterThan(0);
+});

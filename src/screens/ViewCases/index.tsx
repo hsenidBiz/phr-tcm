@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useRowKeys } from "../../lib/useRowKeys";
 import { WindowedList } from "../../components/ui/windowed-list";
 import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
@@ -63,6 +64,8 @@ const ViewRow = memo(function ViewRow({
   onSaveNote,
   index,
   measure,
+  tabbable = false,
+  onRowFocus,
 }: {
   c: TestCaseFull;
   selected: boolean;
@@ -71,6 +74,9 @@ const ViewRow = memo(function ViewRow({
   /** Position in the list and the window's measure ref (WindowedList). */
   index?: number;
   measure?: (el: Element | null) => void;
+  /** In the Tab order (useRowKeys' roving tabindex). */
+  tabbable?: boolean;
+  onRowFocus?: (id: number) => void;
   onCardClick: (c: TestCaseFull, e: MouseEvent) => void;
   onToggleOpen: (id: number) => void;
   onComment: (c: TestCaseFull) => void;
@@ -80,6 +86,9 @@ const ViewRow = memo(function ViewRow({
     <li
       ref={measure}
       data-index={index}
+      data-row-key={c.id}
+      tabIndex={tabbable ? 0 : -1}
+      onFocus={(e) => e.target === e.currentTarget && onRowFocus?.(c.id)}
       className={cn(
         "cv-row cursor-pointer select-none rounded-md border transition-colors",
         selected ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong",
@@ -246,6 +255,24 @@ export default function ViewCases({
     }
     setAnchor(c.id);
   };
+
+  // Arrow keys and Space (backlog A1.8), in the order the rows are on
+  // screen: a folded group's rows are left out unless held open.
+  const navIds = useMemo(
+    () =>
+      ordered.flatMap(({ group, items }) =>
+        (group && collapsedGroups.has(group) ? items.filter((c) => openIds.has(c.id)) : items).map((c) => c.id),
+      ),
+    [ordered, collapsedGroups, openIds],
+  );
+  const byId = useMemo(() => new Map(flat.map((c) => [c.id, c])), [flat]);
+  const rowKeys = useRowKeys({
+    order: navIds,
+    onSelect: (id, keys) => {
+      const c = byId.get(id);
+      if (c) handleCardClick(c, keys as unknown as MouseEvent);
+    },
+  });
 
   /** The rows' handlers, made once: each reaches this render's state
    * through `rowLatest`, so a row (memo) is not drawn again for new
@@ -463,7 +490,7 @@ export default function ViewCases({
         <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
-      <div ref={regroup.ref} className="space-y-2">
+      <div ref={regroup.ref} className="space-y-2" {...rowKeys.listProps}>
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
@@ -532,6 +559,8 @@ export default function ViewCases({
                       c={c}
                       index={i}
                       measure={measure}
+                      tabbable={rowKeys.tabKey === c.id}
+                      onRowFocus={rowKeys.onRowFocus}
                       selected={selected.has(c.id)}
                       open={openIds.has(c.id)}
                       note={notes[String(c.id)] ?? ""}

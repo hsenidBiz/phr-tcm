@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyText } from "../lib/clipboard";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { ListSkeleton } from "../components/ui/list-skeleton";
 import { toast } from "../lib/toast";
 import { commands, events, type SuiteRef, type SuiteScanProgress, type TestCase } from "../bindings";
 import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu";
@@ -89,11 +90,7 @@ function SuitePoints({
 
   const inset = { marginLeft: indent };
   if (points.isLoading)
-    return (
-      <p className="text-sm text-muted" style={inset}>
-        Loading test points
-      </p>
-    );
+    return <ListSkeleton label="Loading test points" rows={3} rowClassName="h-6" style={inset} />;
   if (points.isError)
     return (
       <p className="text-sm text-danger" style={inset}>
@@ -649,6 +646,10 @@ export default function Suites({
           done={scan?.pages ? undefined : scan?.done}
           total={scan?.pages ? undefined : scan?.total}
         />
+      )}
+      {/* The tree's shape under the first scan's bar (the bar says what loads). */}
+      {(allProjects ? !loaded && !listError && (fetching || projectNames.length > 0) : fetching && !loaded) && (
+        <ListSkeleton rows={6} />
       )}
       {allProjects && scanNote && <p className="text-xs text-muted">{scanNote}</p>}
       {listError && <p className="text-sm text-danger">{listError.message}</p>}

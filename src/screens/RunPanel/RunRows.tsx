@@ -37,6 +37,9 @@ type RowProps = {
   onRowClick: (p: TestPoint, e: MouseEvent) => void;
   onToggleExpanded: (pointId: number) => void;
   measure: (el: Element | null) => void;
+  /** In the Tab order (useRowKeys' roving tabindex). */
+  tabbable: boolean;
+  onRowFocus: (pointId: number) => void;
 };
 
 const RunRow = memo(function RunRow({
@@ -52,10 +55,15 @@ const RunRow = memo(function RunRow({
   onRowClick,
   onToggleExpanded,
   measure,
+  tabbable,
+  onRowFocus,
 }: RowProps) {
   return (
     <tbody ref={measure} data-index={index}>
       <tr
+        data-row-key={p.point_id}
+        tabIndex={tabbable ? 0 : -1}
+        onFocus={(e) => e.target === e.currentTarget && onRowFocus(p.point_id)}
         className={cn(
           "cursor-pointer select-none border-b border-border/50 transition-colors",
           selected ? "bg-accent-soft" : (rowTint[p.last_outcome.toLowerCase()] ?? ""),
@@ -110,6 +118,8 @@ export function RunRows({
   outcomeColor,
   onRowClick,
   onToggleExpanded,
+  tabKey,
+  onRowFocus,
 }: {
   rows: TestPoint[];
   selected: Set<number>;
@@ -121,6 +131,8 @@ export function RunRows({
   outcomeColor: Record<string, string>;
   onRowClick: (p: TestPoint, e: MouseEvent) => void;
   onToggleExpanded: (pointId: number) => void;
+  tabKey: number | null;
+  onRowFocus: (pointId: number) => void;
 }) {
   // Expanded rows stay rendered: closing them is the reader's choice.
   const pinned = rows.flatMap((p, i) => (expanded.has(p.point_id) ? [i] : []));
@@ -155,6 +167,8 @@ export function RunRows({
               onRowClick={onRowClick}
               onToggleExpanded={onToggleExpanded}
               measure={win.measure}
+              tabbable={tabKey === p.point_id}
+              onRowFocus={onRowFocus}
             />
           </Fragment>
         );
