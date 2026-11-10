@@ -489,3 +489,56 @@ fn a_planted_off_site_proposal_is_refused_on_approval_and_kept() {
     assert!(load_recipe(dir.path(), ORG, PROJECT).unwrap().is_none(), "an off-site recipe was saved");
     assert!(proposal_path(dir.path(), &env.id, ORG, PROJECT).exists(), "the proposal was dropped");
 }
+
+#[tokio::test]
+async fn clearing_the_address_before_approval_cannot_make_the_drafts_site_the_recipe() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root_with(HOME, Some(recipe()));
+    let mut fake = Fake::new(signs_in);
+    let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(off_site_start()), &quick()).await;
+    assert_eq!(status, 200, "{text}");
+    let env = active(dir.path()).unwrap();
+    let kept = load(dir.path(), &env.id, ORG, PROJECT).unwrap().unwrap();
+    assert_eq!(kept.recipe.start_url, HOME, "the stored proposal carries the draft's site");
+    // The owner clears the address; the proposal was not made for that.
+    let mut cleared = env.clone();
+    cleared.start_url = String::new();
+    save_env_with(dir.path(), cleared, || vec!["dev-read".to_string()]).unwrap();
+    let mut planted = kept.clone();
+    planted.recipe.start_url = "https://evil.example.test/".to_string();
+    v2_lib::autorun::signin_proposal::save(dir.path(), &env.id, ORG, PROJECT, &planted).unwrap();
+    let why = v2_lib::commands::autorun_signin_proposal::approve_with(dir.path(), ORG, PROJECT, false).unwrap_err();
+    assert!(!why.contains("evil"), "{why}");
+    let saved = load_recipe(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    assert_eq!(serde_json::to_value(&saved).unwrap(), good(), "the saved recipe changed");
+    assert!(proposal_path(dir.path(), &env.id, ORG, PROJECT).exists());
+    signin_attempts::close(dir.path(), "sup");
+}
+
+#[test]
+fn approval_with_no_address_and_nothing_saved_is_refused() {
+    let dir = root_with("", None);
+    let env = active(dir.path()).unwrap();
+    let r: SignInRecipe = serde_json::from_value(good()).unwrap();
+    let stored = v2_lib::autorun::signin_proposal::StoredSignInProposal {
+        summary: v2_lib::autorun::signin_proposal::summary(&r),
+        recipe: r,
+        account: "sup".into(),
+        proposed_ms: 1.0,
+        saved_hash: String::new(),
+        changes: vec![],
+    };
+    v2_lib::autorun::signin_proposal::save(dir.path(), &env.id, ORG, PROJECT, &stored).unwrap();
+    assert!(v2_lib::commands::autorun_signin_proposal::approve_with(dir.path(), ORG, PROJECT, false).is_err());
+    assert!(load_recipe(dir.path(), ORG, PROJECT).unwrap().is_none());
+    assert!(proposal_path(dir.path(), &env.id, ORG, PROJECT).exists());
+}
+
+fn off_site_start() -> Value {
+    let mut v = good();
+    v["start_url"] = json!("https://evil.example.test/");
+    v
+}

@@ -50,19 +50,23 @@ pub fn approve_turning_on(
     if sp::saved_hash(root, org, project)? != p.saved_hash {
         return Err(sp::PROPOSAL_STALE.to_string());
     }
-    if load_recipe(root, org, project)?.is_none() {
-        // Nothing saved to keep the address of: the recipe may only go where this environment does.
-        let mut allowed: Vec<String> = crate::autorun::recipe::origin_of(&env.start_url).into_iter().collect();
-        allowed.extend(env.allowed_origins.iter().filter_map(|o| crate::autorun::recipe::origin_of(o)));
-        if !p.recipe.origins().iter().all(|o| allowed.contains(o)) {
-            return Err(OFF_SITE_PROPOSAL.to_string());
-        }
+    // The recipe about to be saved may only go where this environment does
+    // (its own address and allowed sites) or where the saved recipe already
+    // goes: whatever the environment looked like when it was proposed.
+    let to_save = for_saving(root, org, project, p.recipe.clone())?;
+    let mut allowed: Vec<String> = crate::autorun::recipe::origin_of(&env.start_url).into_iter().collect();
+    allowed.extend(env.allowed_origins.iter().filter_map(|o| crate::autorun::recipe::origin_of(o)));
+    if let Some(saved) = load_recipe(root, org, project)? {
+        allowed.extend(saved.origins());
+    }
+    if !to_save.origins().iter().all(|o| allowed.contains(o)) {
+        return Err(OFF_SITE_PROPOSAL.to_string());
     }
     if turn_on_reset && !env.test_environment {
         return Err(sp::RESET_SWITCH_NOT_TEST.to_string());
     }
     p.recipe.validate()?;
-    save_recipe(root, org, project, &for_saving(root, org, project, p.recipe.clone())?)?;
+    save_recipe(root, org, project, &to_save)?;
     let switch = if turn_on_reset && p.recipe.password_reset.is_some() { turn_on(&env.id) } else { Ok(()) };
     sp::clear(root, &env.id, org, project)?;
     crate::applog::info("Auto-run sign-in recipe approved from the assistant's proposal");
@@ -395,11 +399,19 @@ pub async fn propose_in<B: Browsers>(
         Ok(found) => found,
         Err(said) => return (422, said),
     };
-    if saved.is_none() && !env.start_url.trim().is_empty() {
-        // Approval would save this as the project's recipe: it must say where
-        // the trial signed in (the environment's own site), not where the draft did.
-        merged.start_url = env.start_url.trim().to_string();
-        merged.allowed_origins = env.allowed_origins.clone();
+    if !env.start_url.trim().is_empty() {
+        // The stored recipe must say where the trial signed in, never where
+        // the draft pointed: the saved recipe's site, else the environment's.
+        match &saved {
+            Some(s) => {
+                merged.start_url = s.start_url.clone();
+                merged.allowed_origins = s.allowed_origins.clone();
+            }
+            None => {
+                merged.start_url = env.start_url.trim().to_string();
+                merged.allowed_origins = env.allowed_origins.clone();
+            }
+        }
     }
     let mut said = sp::summary(&merged);
     if reset_found {
