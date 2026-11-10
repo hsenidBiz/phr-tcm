@@ -10,7 +10,7 @@ const row = (overrides: Partial<TestPoint> = {}): TestPoint => ({
   tester: "Avin",
   last_outcome: "",
   last_run_id: null,
-  last_result_id: null,
+  last_result_id: null, tags: "",
   ...overrides,
 });
 

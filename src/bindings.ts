@@ -8782,6 +8782,11 @@ export type TestPoint = {
 	last_outcome: string,
 	last_run_id: number | null,
 	last_result_id: number | null,
+	/**
+	 *  The test case's tags as Azure DevOps holds them, `; `-separated;
+	 *  empty when unknown.
+	 */
+	tags: string,
 };
 
 /**  The clone's tests, in the tree's order. */

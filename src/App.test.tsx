@@ -1141,7 +1141,7 @@ async function handSuiteCasesToEdit(search: unknown[], prefs: Record<string, unk
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     if (cmd === "search_pbis_all") return search;
@@ -1268,7 +1268,7 @@ test("handed-over cases from another project are edited in their own project", a
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     }
@@ -1332,7 +1332,7 @@ test("a suite managed from another project's plan is opened in its own project",
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
   });
@@ -2524,7 +2524,7 @@ test("the tour gives the Search Suites handoff back", async () => {
               tester: "",
               last_outcome: "",
               last_run_id: null,
-              last_result_id: null,
+              last_result_id: null, tags: "",
             },
           ]
         : [];

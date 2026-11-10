@@ -56,6 +56,7 @@ function mockAll() {
             last_outcome: "failed",
             last_run_id: 3,
             last_result_id: 30,
+            tags: "Smoke; Regression",
           },
           {
             point_id: 8,
@@ -66,6 +67,7 @@ function mockAll() {
             last_outcome: "",
             last_run_id: null,
             last_result_id: null,
+            tags: "",
           },
         ];
     }
@@ -77,7 +79,7 @@ test("the search finds a point by its outcome word and two words narrow", async 
   renderPanel();
   await screen.findByText("Valid login");
   const box = screen.getByLabelText("Filter points");
-  expect(box).toHaveAttribute("placeholder", "Search by name, id, outcome, tester…");
+  expect(box).toHaveAttribute("placeholder", "Search by name, id, tag, outcome…");
 
   fireEvent.change(box, { target: { value: "failed" } });
   expect(screen.getByText("Valid login")).toBeInTheDocument();
@@ -92,6 +94,17 @@ test("the search finds a point by its outcome word and two words narrow", async 
   expect(screen.getByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Invalid login")).toBeInTheDocument();
   fireEvent.change(box, { target: { value: "windows failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+});
+
+test("the search finds a point by one of its tags", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const box = screen.getByLabelText("Filter points");
+
+  fireEvent.change(box, { target: { value: "regression" } });
   expect(screen.getByText("Valid login")).toBeInTheDocument();
   expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
 });

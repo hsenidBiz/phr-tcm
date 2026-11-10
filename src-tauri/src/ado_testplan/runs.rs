@@ -75,6 +75,7 @@ impl AdoClient {
                     },
                     last_run_id: p["results"]["lastTestRunId"].as_i64().map(|i| i as i32),
                     last_result_id: p["results"]["lastResultId"].as_i64().map(|i| i as i32),
+                    tags: String::new(),
                 });
             }
             pages += 1;

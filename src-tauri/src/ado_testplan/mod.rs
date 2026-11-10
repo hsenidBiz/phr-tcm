@@ -155,6 +155,9 @@ pub struct TestPoint {
     pub last_outcome: String,
     pub last_run_id: Option<i32>,
     pub last_result_id: Option<i32>,
+    /// The test case's tags as Azure DevOps holds them, `; `-separated;
+    /// empty when unknown.
+    pub tags: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]

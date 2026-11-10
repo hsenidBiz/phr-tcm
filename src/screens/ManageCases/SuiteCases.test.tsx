@@ -22,7 +22,7 @@ afterEach(() => {
 
 const point = (id: number, name: string, config = "Windows 10") => ({
   point_id: id * 10, test_case_id: id, test_case_name: name, config_name: config,
-  tester: "", last_outcome: "none", last_run_id: null, last_result_id: null,
+  tester: "", last_outcome: "none", last_run_id: null, last_result_id: null, tags: "",
 });
 
 function Harness({ onToggle }: { onToggle?: (cases: SuiteCase[], on: boolean) => void }) {

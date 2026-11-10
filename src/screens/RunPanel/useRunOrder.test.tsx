@@ -27,6 +27,7 @@ const point = (point_id: number, test_case_id: number, test_case_name: string): 
   last_outcome: "",
   last_run_id: null,
   last_result_id: null,
+  tags: "",
 });
 
 // Constants, so the hook's memos see the same arrays on every render.

@@ -11,6 +11,7 @@ fn opening_dark(dark: ReportPalette) -> PagePalette {
 fn point(id: i32, name: &str, outcome: &str) -> TestPoint {
     TestPoint {
         point_id: id,
+        tags: String::new(),
         test_case_id: Some(200 + id),
         test_case_name: name.into(),
         config_name: "W10".into(),

@@ -1209,7 +1209,7 @@ function applyPatches() {
           tester: "Demo User",
           last_outcome: st.outcome,
           last_run_id: st.runId,
-          last_result_id: st.runId != null ? st.runId + 100 : null,
+          last_result_id: st.runId != null ? st.runId + 100 : null, tags: "",
         };
       });
       return ok(points);
