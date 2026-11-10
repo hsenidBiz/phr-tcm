@@ -24,7 +24,7 @@ let onScreen = true;
 // <Toaster/> is mounted in these tests, so the real module has nothing to
 // render them into.
 vi.mock("../lib/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
 }));
 
 afterEach(() => {
@@ -2831,4 +2831,31 @@ test("the plain-steps sentence is word for word the one Rust answers", () => {
     "The current steps of the cases this upload updates could not be read, so nothing was sent. " +
       "If you upload anyway, their steps are written as plain text and any formatting or pictures in them are lost.",
   );
+});
+
+/// Review finding: the "Upload anyway" toast stays until dismissed, so it
+/// must not outlive the queue it was given for - leaving the screen (or the
+/// queue changing) closes it, and its action is then never run.
+test("the Upload anyway toast closes when the queue screen goes away", async () => {
+  const warning = vi.spyOn(toast, "warning").mockReturnValue("plain-steps-toast");
+  const dismiss = vi.spyOn(toast, "dismiss");
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") throw PLAIN_STEPS_REFUSAL;
+    return undefined;
+  });
+  const view = renderQueue([makeCase({ title: "Brand new" })]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(warning).toHaveBeenCalledWith(PLAIN_STEPS_REFUSAL, expect.anything()));
+
+  view.unmount();
+  expect(dismiss).toHaveBeenCalledWith("plain-steps-toast");
 });

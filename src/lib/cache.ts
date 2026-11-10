@@ -209,6 +209,13 @@ function legacyEntry(key: string): Entry<unknown> | undefined {
 
 let ready: Promise<void> | null = null;
 
+/** While `initCache` reads the disk: a wipe or a removal made meanwhile must
+ * not be undone by the older disk copy it then loads (an account switch
+ * when IndexedDB is slower than main.tsx's 1.5 s wait). */
+let loading = false;
+let wipedDuringLoad = false;
+const removedDuringLoad = new Set<string>();
+
 /**
  * Load the cache into memory. main.tsx awaits this before the first render,
  * so the first queries can seed from it. Never rejects; with no IndexedDB
@@ -216,15 +223,24 @@ let ready: Promise<void> | null = null;
  */
 export function initCache(): Promise<void> {
   ready ??= (async () => {
+    loading = true;
     migrateLegacy();
     db = await openDb();
     if (db) {
-      for (const [key, entry] of await readAll(db)) {
-        // A write made while this was loading is newer than the disk.
-        if (!isEntry(entry) || memory.has(key)) continue;
-        memory.set(key, entry);
+      const disk = await readAll(db);
+      // A wipe while loading: the disk holds what was wiped.
+      if (!wipedDuringLoad) {
+        for (const [key, entry] of disk) {
+          // A write or a removal made while this was loading is newer than
+          // the disk.
+          if (!isEntry(entry) || memory.has(key) || removedDuringLoad.has(key)) continue;
+          memory.set(key, entry);
+        }
       }
     }
+    loading = false;
+    wipedDuringLoad = false;
+    removedDuringLoad.clear();
     pruneAll();
     scheduleFlush();
   })();
@@ -241,10 +257,30 @@ function scheduleFlush(): void {
 function flush(): void {
   flushTimer = null;
   if (!db || (!wipePending && pending.size === 0)) return;
+  if (wipePending) {
+    // The wipe goes in a transaction of its own, and is tried again until it
+    // lands: a lost clear() would load the previous account's entries at the
+    // next launch, under the new owner. Nothing else is written before it.
+    const store = db;
+    try {
+      const tx = store.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).clear();
+      tx.onabort = tx.onerror = () => {
+        // Every entry held now is written again after the retried clear.
+        wipePending = true;
+        for (const [key, entry] of memory) pending.set(key, entry);
+        scheduleFlush();
+      };
+      wipePending = false;
+    } catch {
+      scheduleFlush();
+      return;
+    }
+  }
+  if (pending.size === 0) return;
   try {
     const tx = db.transaction(STORE, "readwrite");
     const os = tx.objectStore(STORE);
-    if (wipePending) os.clear();
     for (const [key, entry] of pending) {
       if (entry) os.put(entry, key);
       else os.delete(key);
@@ -252,7 +288,6 @@ function flush(): void {
   } catch {
     // quota or a closed database - memory still serves this session
   }
-  wipePending = false;
   pending.clear();
 }
 
@@ -269,6 +304,7 @@ function drop(key: string): void {
 }
 
 function wipe(): void {
+  if (loading) wipedDuringLoad = true;
   memory.clear();
   pending.clear();
   wipePending = true;
@@ -343,7 +379,9 @@ export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
 /** Remove one entry. Not gated by `off()`: removing is always safe, tour
  * or demo mode or not. */
 export function cacheRemove(key: string): void {
-  if (memory.has(key)) drop(key);
+  // Also while loading, when memory may not have it yet but the disk does.
+  if (loading) removedDuringLoad.add(key);
+  if (memory.has(key) || loading) drop(key);
 }
 
 export function cacheWrite<T>(key: string, data: T): void {
@@ -429,6 +467,9 @@ export function resetCacheForTests(): void {
   memory.clear();
   pending.clear();
   wipePending = false;
+  loading = false;
+  wipedDuringLoad = false;
+  removedDuringLoad.clear();
   db?.close();
   db = null;
   ready = null;

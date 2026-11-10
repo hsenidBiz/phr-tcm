@@ -553,7 +553,9 @@ const RETRY_429_MAX_SECS: u32 = 10;
 
 fn status_is_transient(status: u16, resp: &reqwest::Response) -> bool {
     match status {
-        500 | 502 | 503 | 504 => true,
+        // A 5xx that asks for a long wait is not retried either: the hold
+        // it sets still applies, and two of them hung a read a minute.
+        500 | 502 | 503 | 504 => server_delay(resp).is_none_or(|secs| secs <= u64::from(RETRY_429_MAX_SECS)),
         429 => retry_after(resp) <= RETRY_429_MAX_SECS,
         _ => false,
     }

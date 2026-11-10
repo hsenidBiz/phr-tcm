@@ -340,6 +340,60 @@ describe("IndexedDB", () => {
     expect(cacheRead("old", Infinity)).toBe("moved");
   });
 
+  test("a wipe made while the cache loads is not undone by the disk", async () => {
+    await initCache();
+    claimCacheFor("first@example.com");
+    cacheWrite("k", "first account's");
+    await flushCacheForTests();
+    resetCacheForTests();
+    const loading = initCache();
+    claimCacheFor("second@example.com");
+    await loading;
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("a remove made while the cache loads is not undone by the disk", async () => {
+    await initCache();
+    cacheWrite("k", 1);
+    await flushCacheForTests();
+    resetCacheForTests();
+    const loading = initCache();
+    cacheRemove("k");
+    await loading;
+    expect(cacheRead("k", Infinity)).toBeNull();
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("a wipe whose database write fails is tried again, so the old account never reloads", async () => {
+    await initCache();
+    claimCacheFor("first@example.com");
+    cacheWrite("k", "first account's");
+    await flushCacheForTests();
+    const real = IDBObjectStore.prototype.clear;
+    let failed = false;
+    IDBObjectStore.prototype.clear = function (this: IDBObjectStore) {
+      if (!failed) {
+        failed = true;
+        throw new DOMException("quota", "QuotaExceededError");
+      }
+      return real.call(this);
+    };
+    try {
+      claimCacheFor("second@example.com");
+      await flushCacheForTests(); // the clear fails here
+      cacheWrite("other", 1);
+      await flushCacheForTests(); // and is tried again with the next write
+    } finally {
+      IDBObjectStore.prototype.clear = real;
+    }
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
   test("a write made while the cache loads is not overwritten by the disk", async () => {
     await initCache();
     cacheWrite("k", "old");

@@ -677,6 +677,16 @@ export default function QueueSection({
   // that one) tells Rust the person accepted plain-text steps.
   const allowPlainNext = useRef(false);
   const lastPreExisting = useRef<number[]>([]);
+  // The "Upload anyway" toast stays until dismissed, so it must not outlive
+  // what it was offered for: leaving the screen, or a change to the queue,
+  // the PBI or the organization, closes it (its action then never runs).
+  const plainToast = useRef<string | null>(null);
+  useEffect(() => {
+    return () => {
+      if (plainToast.current != null) toast.dismiss(plainToast.current);
+      plainToast.current = null;
+    };
+  }, [org, pbiId, queue]);
   const submit = useMutation({
     /** `preExisting`: the ids of the PBI's test cases before this upload. */
     mutationFn: async (preExisting: number[] = []) => {
@@ -867,11 +877,12 @@ export default function QueueSection({
       // Nothing was sent: the current steps of the updates could not be
       // read. The person decides whether plain-text steps are acceptable.
       if (e.message === PLAIN_STEPS_REFUSAL) {
-        toast.warning(PLAIN_STEPS_REFUSAL, {
+        plainToast.current = toast.warning(PLAIN_STEPS_REFUSAL, {
           duration: Infinity,
           action: {
             label: "Upload anyway",
             onClick: () => {
+              plainToast.current = null;
               allowPlainNext.current = true;
               submit.mutate(lastPreExisting.current);
             },

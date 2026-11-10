@@ -173,3 +173,21 @@ async fn the_pacer_still_spaces_writes() {
         started.elapsed()
     );
 }
+
+/// Review finding: a 503 that asks for a long wait is not retried either -
+/// the hold it sets still applies, but two of them made a read hang about a
+/// minute, the hang the 429 cap exists to prevent.
+#[tokio::test]
+async fn a_5xx_asking_for_a_long_wait_is_not_retried() {
+    let _g = gate();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503).insert_header("Retry-After", "25"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let started = std::time::Instant::now();
+    assert!(client.get_projects("o").await.is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+}
