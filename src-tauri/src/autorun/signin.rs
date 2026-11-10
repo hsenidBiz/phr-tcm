@@ -1267,7 +1267,9 @@ async fn sign_in_core<D: Driver>(
     }
     if !marker.ok && !marker.harness && session_refused(d).await.is_some() {
         // Refused again, with a session made just now: not the password.
-        forget_session(root, &account.key);
+        if attempt != Attempt::Trial {
+            forget_session(root, &account.key);
+        }
         return run.done(false, session_refused_again(&account.key), false, false);
     }
     if marker.ok {
@@ -1305,7 +1307,9 @@ async fn sign_in_core<D: Driver>(
 
     // Refused even now, after a fresh sign-in: said plainly, never saved.
     if session_refused(d).await.is_some() {
-        forget_session(root, &account.key);
+        if attempt != Attempt::Trial {
+            forget_session(root, &account.key);
+        }
         return run.done(false, session_refused_again(&account.key), false, false);
     }
 

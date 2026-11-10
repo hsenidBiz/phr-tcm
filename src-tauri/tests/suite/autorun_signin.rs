@@ -917,6 +917,33 @@ async fn a_trial_that_signs_in_saves_no_session() {
     let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert!(!session_path(dir.path(), &account().key).unwrap().exists(), "a trial kept its session");
+    // The control: the same app and recipe through the normal sign-in do keep one.
+    let other = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    let out = sign_in(&mut d, other.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(session_path(other.path(), &account().key).unwrap().exists(), "the normal sign-in saved no session");
+}
+
+/// A trial leaves the account's stored session as it found it, even when the
+/// site refuses the session the trial's own fresh sign-in made.
+#[tokio::test]
+async fn a_trial_never_forgets_a_stored_session_when_the_site_refuses_its_own() {
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    for refused_marker in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        save_session(dir.path(), "admin", &saved).unwrap();
+        let (mut d, _state) = if refused_marker {
+            let (d, state) = cold_app(LOGIN_URL, "Home", false, false);
+            (d.answering_first(|m, p| (m == "Runtime.evaluate" && p["expression"] == SESSION_REFUSED_JS).then(|| Ok(json!({ "result": { "value": "tampered" } })))), state)
+        } else {
+            refusing_app()
+        };
+        let out = v2_lib::autorun::signin::sign_in_trial(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+        assert!(!out.ok);
+        assert_eq!(out.detail, v2_lib::autorun::signin::session_refused_again("admin"), "{}", out.detail);
+        assert!(session_path(dir.path(), "admin").unwrap().exists(), "a trial deleted the stored session (marker path: {refused_marker})");
+    }
 }
 
 #[tokio::test]
