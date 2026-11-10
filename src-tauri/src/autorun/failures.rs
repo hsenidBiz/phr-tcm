@@ -61,6 +61,12 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
                     .to_string(),
             );
         }
+        if step0.outcomes.last().is_some_and(|o| !o.ok && o.detail.starts_with(super::signin::CHANGE_PASSWORD_UNKNOWN)) {
+            return Some(
+                "the account's password has expired - the site showed a change-password page the sign-in recipe does not describe; the account needs a password reset (or another account) and the recipe needs that page described, not a script change"
+                    .to_string(),
+            );
+        }
         if step0.outcomes.last().is_some_and(|o| !o.ok && super::signin::is_password_expired(&o.detail)) {
             return Some(
                 "the account's password has expired - the site sent it to its password reset page; the account needs a password reset (or another account), not a script change"

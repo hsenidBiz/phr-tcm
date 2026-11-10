@@ -155,6 +155,22 @@ fn summary_password_reset_page() {
 }
 
 #[test]
+fn summary_names_a_change_password_page_the_recipe_does_not_describe() {
+    let c = SignInCheck {
+        account: "a".into(),
+        signed_in: false,
+        landed: None,
+        stopped: Some(format!("{} - the browser ended on /account/ChangePassword", v2_lib::autorun::signin::CHANGE_PASSWORD_UNKNOWN)),
+        password_due: None,
+        note: None,
+        area: None,
+    };
+    let said = summary(&c);
+    assert!(said.contains("does not describe"), "{said}");
+    assert_ne!(said, "stopped on the password reset page");
+}
+
+#[test]
 fn summary_names_a_failed_sign_in_and_one_not_tried() {
     let failed = SignInCheck {
         signed_in: false,

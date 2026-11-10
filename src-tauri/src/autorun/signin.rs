@@ -483,22 +483,21 @@ impl Run<'_> {
 
     /// The sign-in ended on a change-password page the recipe does not
     /// describe (`CHANGE_PASSWORD_UNKNOWN`), with where the browser is.
-    async fn change_password_unknown<D: Driver>(mut self, d: &mut D, hint: bool) -> SignInOutcome {
-        let mut said = match self.land(d, true).await {
-            Some(w) => format!("{CHANGE_PASSWORD_UNKNOWN} - {w}"),
-            None => CHANGE_PASSWORD_UNKNOWN.to_string(),
-        };
-        if hint {
-            said.push_str(&format!(" - {RESET_SWITCH_HINT}"));
-        }
-        self.done(false, said, false, false)
+    async fn change_password_unknown<D: Driver>(self, d: &mut D, hint: bool) -> SignInOutcome {
+        self.ended_on(d, hint, CHANGE_PASSWORD_UNKNOWN).await
     }
 
     /// The sign-in ended on the site's password reset page.
-    async fn password_expired<D: Driver>(mut self, d: &mut D, hint: bool) -> SignInOutcome {
+    async fn password_expired<D: Driver>(self, d: &mut D, hint: bool) -> SignInOutcome {
+        self.ended_on(d, hint, PASSWORD_EXPIRED).await
+    }
+
+    /// An expired-password stop: `prefix`, where the browser is, and with
+    /// `hint` the way to let the app reset it.
+    async fn ended_on<D: Driver>(mut self, d: &mut D, hint: bool, prefix: &str) -> SignInOutcome {
         let mut said = match self.land(d, true).await {
-            Some(w) => format!("{PASSWORD_EXPIRED} - {w}"),
-            None => PASSWORD_EXPIRED.to_string(),
+            Some(w) => format!("{prefix} - {w}"),
+            None => prefix.to_string(),
         };
         if hint {
             said.push_str(&format!(" - {RESET_SWITCH_HINT}"));
