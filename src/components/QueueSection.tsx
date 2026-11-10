@@ -156,6 +156,14 @@ function RecentImportRow({
   );
 }
 
+
+/** Rust's `PLAIN_STEPS_REFUSAL` (commands/queue.rs), word for word: the
+ * upload stopped before sending anything because the current steps of its
+ * updates could not be read. Pinned on both sides by tests. */
+export const PLAIN_STEPS_REFUSAL =
+  "The current steps of the cases this upload updates could not be read, so nothing was sent. " +
+  "If you upload anyway, their steps are written as plain text and any formatting or pictures in them are lost.";
+
 export default function QueueSection({
   org,
   project,
@@ -665,9 +673,16 @@ export default function QueueSection({
     };
   }, [setQueue, pbiId]);
 
+  // "Upload anyway" after PLAIN_STEPS_REFUSAL: the next submit (and only
+  // that one) tells Rust the person accepted plain-text steps.
+  const allowPlainNext = useRef(false);
+  const lastPreExisting = useRef<number[]>([]);
   const submit = useMutation({
     /** `preExisting`: the ids of the PBI's test cases before this upload. */
     mutationFn: async (preExisting: number[] = []) => {
+      const allowPlainSteps = allowPlainNext.current;
+      allowPlainNext.current = false;
+      lastPreExisting.current = preExisting;
       // The buttons are disabled while a hold stands; this is the backstop.
       if (holdActive) throw new Error(HOLD_REFUSAL);
       // Claimed BEFORE the pre-flight fetch below, not after it: a second
@@ -812,7 +827,7 @@ export default function QueueSection({
           // was never wanted, so null (= inherit) is now the only value.
           null,
           null,
-          orderHint,
+          { order_hint: orderHint, allow_plain_steps: allowPlainSteps },
         );
         if (r.status === "error") throw new Error(r.error);
         // The outcome is applied HERE, inside the promise, not in
@@ -848,7 +863,24 @@ export default function QueueSection({
       arm(false);
       setReviewing(false);
     },
-    onError: (e) => toast.error(`Submit failed: ${e.message}`),
+    onError: (e) => {
+      // Nothing was sent: the current steps of the updates could not be
+      // read. The person decides whether plain-text steps are acceptable.
+      if (e.message === PLAIN_STEPS_REFUSAL) {
+        toast.warning(PLAIN_STEPS_REFUSAL, {
+          duration: Infinity,
+          action: {
+            label: "Upload anyway",
+            onClick: () => {
+              allowPlainNext.current = true;
+              submit.mutate(lastPreExisting.current);
+            },
+          },
+        });
+        return;
+      }
+      toast.error(`Submit failed: ${e.message}`);
+    },
   });
 
   /** Ask ADO what titles it already has, and remember them.
