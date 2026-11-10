@@ -976,6 +976,22 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             }), &["accounts"]),
         },
         {
+            "name": "inspect_sign_in_page",
+            "description": "Read what the site's sign-in page shows, so you can write a sign-in recipe for it from what is really there. The answer lists the page's path and title, each visible field (its type, id, name, label and placeholder, and whether it is a password field) and each visible button and link (its caption), each with a `locator` a recipe step can use as it is. It never shows a typed value: no field's content is ever read, so a username or password in a field is never in the answer. With neither argument it opens the site's sign-in address in a browser of its own (headless, closed after) and reads it; nobody is signed in and no attempt is counted. With both `account` (a key from get_accounts) and `recipe` (a draft sign-in recipe) it first tries the draft once as that account, a trial that never sends a change-password form, and reads the page where the trial ended, with `sign_in` giving the trial's words. That is how you see a second page, such as a change-password page: two or more visible password fields come with a hint saying so. Give both or neither. Refused as check_autorun_sign_in is: while an unattended run, a replay or a discovery is using the Auto Run browser, while another check is running, and for an account something else holds. At most 3 sign-in attempts are made per account for one sign-in problem (this tool with an account, propose_sign_in_recipe and the check_autorun_sign_in that follows each count); after that it says so, and you report to the person and stop.",
+            "inputSchema": schema(serde_json::json!({
+                "account": { "type": "string", "description": "A saved account key (get_accounts lists them). Give it together with `recipe`, or give neither." },
+                "recipe": { "type": "object", "description": "A draft sign-in recipe to try as `account` before the page is read. Give it together with `account`, or give neither." },
+            }), &[]),
+        },
+        {
+            "name": "propose_sign_in_recipe",
+            "description": "Propose a sign-in recipe for the person to approve, after trying it. The recipe's address, steps, signed-in check and change-password part (`password_reset`) are laid over the project's saved recipe; everything else stays as saved, and an environment's own address is never replaced. It is tried once as `account`: a fresh browser (headless, closed after) signs in with the steps, never a saved session, and the proposal is kept only if that signs in. With a `password_reset` part, a trial that stops on the expired-password page that part describes also passes; the trial never sends a change-password form, so the part is used only the next time an expired password is met. A trial that does not sign in stores nothing and the answer says why. Nothing is saved until the person approves it in TCM (Auto Run, Accounts): they see the steps in words and can reject it, and a newer proposal replaces an earlier one. Refused as check_autorun_sign_in is: while an unattended run, a replay or a discovery is using the Auto Run browser, while another check is running, and for an account something else holds. At most 3 sign-in attempts are made per account for one sign-in problem (inspect_sign_in_page with an account, each trial here and the check_autorun_sign_in that follows each count); at most 2 proposals per problem. A refused proposal, a second failed trial, a wrong password, a locked account, a captcha or a one-time code means: report it to the person and stop. Never shows a password.",
+            "inputSchema": schema(serde_json::json!({
+                "recipe": { "type": "object", "description": "The whole sign-in recipe: start_url, steps, signed_in and, if the site has one, password_reset." },
+                "account": { "type": "string", "description": "The saved account key to try it as (get_accounts lists them)." },
+            }), &["recipe", "account"]),
+        },
+        {
             "name": "save_test_file",
             "description": "Save a file you made into this project's Test files, so an Auto Run `upload` action or an API template's `files` can send it by name. Only documents a test uploads are taken (the extensions are listed in the refusal); never save notes, scripts or reports here. malformed: true saves a deliberately broken file (a corrupt PDF for a test that the app rejects it); the extension rule still applies.",
             "inputSchema": schema(serde_json::json!({
@@ -2752,6 +2768,8 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
         "check_autorun_sign_in" => call("POST", "/autorun-check-sign-in", &args.to_string()),
+        "inspect_sign_in_page" => call("POST", "/autorun-inspect-sign-in", &args.to_string()),
+        "propose_sign_in_recipe" => call("POST", "/autorun-propose-sign-in", &args.to_string()),
         "save_test_file" => call("POST", "/test-file-save", &args.to_string()),
         "list_api_templates"
             if args["kind"].as_str() == Some("fixtures")

@@ -798,3 +798,83 @@ async fn check_asks_the_environments_queries_before_any_browser() {
     assert_eq!(fake.opened, 0, "a sign-in was tried for an expired password");
     assert!(summary(&out[0]).starts_with(NOT_TRIED) && summary(&out[0]).contains("password expired"), "{}", summary(&out[0]));
 }
+
+// ---- The assistant's attempts at one sign-in problem -----------------------------
+
+use v2_lib::autorun::signin_attempts;
+
+/// A browser that is gone before the check can use it: every check fails.
+fn gone() -> ScriptedDriver {
+    ScriptedDriver::new(|method, _| match method {
+        "Page.navigate" => Err(v2_lib::browser::cdp::CdpError::Closed),
+        _ => Ok(json!({})),
+    })
+}
+
+fn check_body() -> String {
+    json!({ "accounts": ["sup"] }).to_string()
+}
+
+#[tokio::test]
+async fn the_follow_up_check_counts_and_the_fourth_attempt_is_refused() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    accounts(dir.path(), &["sup"]);
+    // Two attempts made while the problem was worked on, then one failing check.
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    let none: Option<&Answers> = None;
+    let mut fake = Fake::new(gone);
+    let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &check_body()).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(fake.opened, 1);
+    // All three are used: the next check is refused before a browser opens.
+    let mut fake = Fake::new(gone);
+    let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &check_body()).await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(text, signin_attempts::attempts_used("sup"));
+    assert_eq!(fake.opened, 0);
+    signin_attempts::close(dir.path(), "sup");
+}
+
+#[tokio::test]
+async fn a_check_with_no_open_problem_is_not_counted() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    accounts(dir.path(), &["sup"]);
+    let none: Option<&Answers> = None;
+    let mut fake = Fake::new(gone);
+    for _ in 0..4 {
+        let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &check_body()).await;
+        assert_eq!(status, 200, "{text}");
+    }
+    assert_eq!(fake.opened, 4);
+    assert!(!signin_attempts::is_open(dir.path(), "sup"), "a check opened a problem");
+}
+
+#[tokio::test]
+async fn a_check_that_signs_in_closes_the_problem() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    accounts(dir.path(), &["sup"]);
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    assert!(signin_attempts::is_open(dir.path(), "sup"));
+    let none: Option<&Answers> = None;
+    let mut fake = Fake::new(|| menu(&full_menu()));
+    let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &check_body()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\"signed_in\":true"), "{text}");
+    assert!(!signin_attempts::is_open(dir.path(), "sup"), "the problem stayed open after a sign-in");
+}

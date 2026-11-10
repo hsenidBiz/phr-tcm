@@ -244,6 +244,7 @@ mod seen_check;
 mod signin_attempts;
 mod signin_inspect;
 mod signin_proposal;
+mod signin_proposal_bridge;
 mod spec_pane;
 mod speccov;
 mod speccov_bridge;

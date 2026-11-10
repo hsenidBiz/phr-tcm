@@ -175,6 +175,8 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "propose_accounts",
     "get_accounts",
     "check_autorun_sign_in",
+    "inspect_sign_in_page",
+    "propose_sign_in_recipe",
     "save_test_file",
     "get_autorun_network_wait",
     "search_autorun_requests",

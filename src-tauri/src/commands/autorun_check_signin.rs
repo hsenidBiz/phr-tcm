@@ -36,6 +36,19 @@ fn others_busy() -> bool {
     })
 }
 
+/// The claim a check holds while its browser is open: taken first, and only
+/// then are the other users of the browser looked at, so nothing starts
+/// between the look and the claim. `Err` is the sentence for why not.
+pub(crate) fn claim_check_browser() -> Result<crate::commands::autorun_replay::OneAtATime, String> {
+    let Some(claim) = crate::commands::autorun_replay::OneAtATime::claim() else {
+        return Err(refusal().unwrap_or_else(|| BROWSER_IN_USE.to_string()));
+    };
+    if others_busy() {
+        return Err(BROWSER_IN_USE.to_string());
+    }
+    Ok(claim)
+}
+
 /// Checks `keys` one at a time (`sign_in_check::check_accounts`), the
 /// environment's two queries (`queries`: password expiry, active session)
 /// asked first for each through `rows` (`None`: reading the database is off
@@ -58,12 +71,7 @@ pub async fn check_with<B: Browsers, S: RowSource>(
     area: Option<&str>,
 ) -> Result<Vec<SignInCheck>, String> {
     // Held until the last browser is closed.
-    let Some(_claim) = crate::commands::autorun_replay::OneAtATime::claim() else {
-        return Err(refusal().unwrap_or_else(|| BROWSER_IN_USE.to_string()));
-    };
-    if others_busy() {
-        return Err(BROWSER_IN_USE.to_string());
-    }
+    let _claim = claim_check_browser()?;
     let Some(first) = keys.first() else { return Ok(vec![]) };
     let _going = crate::autorun::sign_in_check::begin(first);
     let env_id = crate::environments::active_id(root)?;
