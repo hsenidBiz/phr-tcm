@@ -99,6 +99,23 @@ fn merge_takes_only_the_five_parts_from_the_draft() {
 }
 
 #[test]
+fn a_draft_without_a_change_password_page_keeps_the_saved_one() {
+    let saved = with_reset(basic("https://a.example.test", "#go"));
+    let mut draft = basic("https://a.example.test", "#other");
+    draft.password_reset = None;
+    let merged = merge(&draft, Some(&saved));
+    assert_eq!(merged.password_reset, saved.password_reset);
+    let parts = changed_parts(&merged, Some(&saved));
+    assert!(!parts.contains(&"change-password part".to_string()));
+
+    let mut own = with_reset(basic("https://a.example.test", "#other"));
+    own.password_reset.as_mut().unwrap().path_contains = "/other/Reset".into();
+    let merged = merge(&own, Some(&saved));
+    assert_eq!(merged.password_reset, own.password_reset);
+    assert!(changed_parts(&merged, Some(&saved)).contains(&"change-password part".to_string()));
+}
+
+#[test]
 fn changed_parts_name_what_differs() {
     let saved = basic("https://a.example.test", "#go");
     let mut draft = saved.clone();

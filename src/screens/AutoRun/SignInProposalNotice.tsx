@@ -25,6 +25,7 @@ export default function SignInProposalNotice({ org, project }: { org: string; pr
   const [turnOnReset, setTurnOnReset] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  if (proposal.isError) return <p className="text-xs text-danger">The assistant's proposed sign-in could not be read</p>;
   const p = proposal.data;
   if (!p) return null;
 
@@ -80,14 +81,16 @@ export default function SignInProposalNotice({ org, project }: { org: string; pr
           </dd>
         </div>
         <div className="flex items-baseline">
-          <dt className="w-28 shrink-0 text-muted">Steps</dt>
+          <dt className="w-28 shrink-0 text-muted">
+            Steps
+            {mark("steps")}
+          </dt>
           <dd className="min-w-0 text-text">
             <ol className="list-decimal space-y-0.5 pl-4">
               {p.steps.map((s, i) => (
                 <li key={i}>{s}</li>
               ))}
             </ol>
-            {mark("steps")}
           </dd>
         </div>
         <div className="flex items-baseline">
@@ -111,7 +114,7 @@ export default function SignInProposalNotice({ org, project }: { org: string; pr
       <p className="text-xs text-muted">Tried with {p.account}</p>
       {p.offer_reset_switch && (
         <label className="flex items-center gap-2 text-xs text-text">
-          <Checkbox checked={turnOnReset} ariaLabel="Also turn on Reset expired passwords" onCheckedChange={setTurnOnReset} />
+          <Checkbox checked={turnOnReset} disabled={busy} ariaLabel="Also turn on Reset expired passwords" onCheckedChange={setTurnOnReset} />
           Also turn on Reset expired passwords
         </label>
       )}

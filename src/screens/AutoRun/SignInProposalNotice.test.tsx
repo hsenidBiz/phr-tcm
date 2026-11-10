@@ -31,13 +31,18 @@ const STALE = "the sign-in recipe changed after the assistant proposed this one.
 
 type Calls = { cmd: string; args: Record<string, unknown> }[];
 
-function mount(proposal: SignInProposalView | null, approve: () => unknown = () => null) {
+function mount(
+  proposal: SignInProposalView | null,
+  approve: () => unknown = () => null,
+  reject: () => unknown = () => null,
+) {
   const calls: Calls = [];
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "auto_run_sign_in_proposal") return proposal;
     calls.push({ cmd: String(cmd), args: a });
+    if (cmd === "auto_run_sign_in_proposal") return proposal;
     if (cmd === "auto_run_approve_sign_in_proposal") return approve();
+    if (cmd === "auto_run_reject_sign_in_proposal") return reject();
     return null;
   });
   render(
@@ -49,8 +54,9 @@ function mount(proposal: SignInProposalView | null, approve: () => unknown = () 
 }
 
 test("renders nothing when there is no proposal", async () => {
-  mount(null);
-  await new Promise((r) => setTimeout(r, 30));
+  const calls = mount(null);
+  await waitFor(() => expect(calls.some((c) => c.cmd === "auto_run_sign_in_proposal")).toBe(true));
+  await new Promise((r) => setTimeout(r, 0));
   expect(screen.queryByLabelText("Proposed sign-in")).toBeNull();
 });
 
@@ -115,4 +121,48 @@ test("a stale Approve shows its sentence in a toast and keeps the notice", async
   fireEvent.click(screen.getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("changed after the assistant proposed")));
   expect(screen.getByText("Proposed by the assistant")).toBeInTheDocument();
+});
+
+test("Reject failing shows its toast and keeps the notice", async () => {
+  mount(VIEW, undefined, () => {
+    throw "the proposal could not be cleared";
+  });
+  await screen.findByText("Proposed by the assistant");
+  fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("could not be cleared")));
+  expect(screen.getByText("Proposed by the assistant")).toBeInTheDocument();
+});
+
+test("the buttons and tick box are disabled while a call is pending", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockIPC(async (cmd) => {
+    if (cmd === "auto_run_sign_in_proposal") return { ...VIEW, offer_reset_switch: true };
+    if (cmd === "auto_run_approve_sign_in_proposal") await gate;
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <SignInProposalNotice org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Proposed by the assistant");
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
+  expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "Also turn on Reset expired passwords" })).toHaveAttribute("aria-disabled", "true");
+  release();
+});
+
+test("a failed proposal read shows a one-line danger state", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_sign_in_proposal") throw "no";
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <SignInProposalNotice org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
 });

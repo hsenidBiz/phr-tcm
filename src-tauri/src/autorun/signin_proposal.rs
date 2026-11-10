@@ -46,7 +46,9 @@ pub fn saved_hash(root: &Path, org: &str, project: &str) -> Result<String, Strin
 }
 
 /// The draft's address, steps, signed-in check and change-password page
-/// laid over the saved recipe; everything else stays the saved recipe's.
+/// laid over the saved recipe; everything else stays the saved recipe's. A
+/// draft with no change-password page keeps the saved one: an omission is not
+/// a removal.
 pub fn merge(draft: &SignInRecipe, saved: Option<&SignInRecipe>) -> SignInRecipe {
     match saved {
         None => draft.clone(),
@@ -55,7 +57,7 @@ pub fn merge(draft: &SignInRecipe, saved: Option<&SignInRecipe>) -> SignInRecipe
             steps: draft.steps.clone(),
             signed_in: draft.signed_in.clone(),
             signed_in_in_menu: draft.signed_in_in_menu,
-            password_reset: draft.password_reset.clone(),
+            password_reset: draft.password_reset.clone().or_else(|| saved.password_reset.clone()),
             ..saved.clone()
         },
     }
