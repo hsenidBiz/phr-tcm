@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { WindowedList } from "../../components/ui/windowed-list";
 import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
@@ -34,6 +35,9 @@ import { IconBulkEdit, IconClear, IconCollapseAll, IconExport, IconRemove, IconR
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
  * unlocks the bulk toolbar. Grouping by module is the v1 smart grouping. */
+/** A collapsed card is about this tall; the open editor is measured. */
+const ROW_ESTIMATE_PX = 40;
+
 /** One case of the list. Memo: its handlers are made once by the list and
  * reach the list's current state themselves, so a click on one case draws
  * only the rows whose selection or open state changed. */
@@ -48,10 +52,15 @@ const ExistingRow = memo(function ExistingRow({
   onCardClick,
   onToggleOpen,
   onSaved,
+  index,
+  measure,
 }: {
   c: TestCaseFull;
   selected: boolean;
   open: boolean;
+  /** Position in the list and the window's measure ref (WindowedList). */
+  index?: number;
+  measure?: (el: Element | null) => void;
   org: string;
   project: string;
   moduleRef: string | null;
@@ -62,6 +71,8 @@ const ExistingRow = memo(function ExistingRow({
 }) {
   return (
     <li
+      ref={measure}
+      data-index={index}
       className={cn(
         // The open editor hosts a non-portaled Combobox dropdown that must
         // paint past the row's box - content-visibility's paint containment
@@ -487,21 +498,34 @@ export default function ExistingCases({
               // held open: the open editor stays, so its list stays with it.
               return (
             <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
-            <ul className="space-y-1">
-              {shown.map((c) => (
-                <ExistingRow
-                  key={c.id}
-                  c={c}
-                  selected={selected.has(c.id)}
-                  open={openId === c.id}
-                  org={org}
-                  project={project}
-                  moduleRef={prefs.moduleRef}
-                  preconditionsRef={prefs.preconditionsRef}
-                  {...rowActions}
-                />
-              ))}
-            </ul>
+            <WindowedList
+              className="space-y-1"
+              count={shown.length}
+              estimate={ROW_ESTIMATE_PX}
+              gap={4}
+              keyOf={(i) => shown[i].id}
+              // The open editor is never unmounted by scrolling: its
+              // unsaved edits would go with it.
+              pinned={openId == null ? undefined : [shown.findIndex((c) => c.id === openId)]}
+              renderRow={(i, measure) => {
+                const c = shown[i];
+                return (
+                  <ExistingRow
+                    key={c.id}
+                    c={c}
+                    index={i}
+                    measure={measure}
+                    selected={selected.has(c.id)}
+                    open={openId === c.id}
+                    org={org}
+                    project={project}
+                    moduleRef={prefs.moduleRef}
+                    preconditionsRef={prefs.preconditionsRef}
+                    {...rowActions}
+                  />
+                );
+              }}
+            />
             </Collapse>
               );
             })()}

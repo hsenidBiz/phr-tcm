@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { WindowedList } from "../../components/ui/windowed-list";
 import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
@@ -45,6 +46,9 @@ import {
  * (chevron/double-click expands a read-only detail), Group by Title,
  * click/ctrl/shift selection - and View in browser renders the selection
  * (or everything the filter shows when nothing is selected). */
+/** A collapsed card is about this tall; open ones are measured. */
+const ROW_ESTIMATE_PX = 40;
+
 /** One case of the list. Memo: its handlers are made once by the list and
  * reach the list's current state themselves, so a click on one case draws
  * only the rows whose selection, open state or comment changed. */
@@ -57,11 +61,16 @@ const ViewRow = memo(function ViewRow({
   onToggleOpen,
   onComment,
   onSaveNote,
+  index,
+  measure,
 }: {
   c: TestCaseFull;
   selected: boolean;
   open: boolean;
   note: string;
+  /** Position in the list and the window's measure ref (WindowedList). */
+  index?: number;
+  measure?: (el: Element | null) => void;
   onCardClick: (c: TestCaseFull, e: MouseEvent) => void;
   onToggleOpen: (id: number) => void;
   onComment: (c: TestCaseFull) => void;
@@ -69,6 +78,8 @@ const ViewRow = memo(function ViewRow({
 }) {
   return (
     <li
+      ref={measure}
+      data-index={index}
       className={cn(
         "cv-row cursor-pointer select-none rounded-md border transition-colors",
         selected ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong",
@@ -505,18 +516,30 @@ export default function ViewCases({
               // held open: a row being read stays, so its list stays with it.
               return (
               <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
-              <ul className="space-y-1">
-                {shown.map((c) => (
-                  <ViewRow
-                    key={c.id}
-                    c={c}
-                    selected={selected.has(c.id)}
-                    open={openIds.has(c.id)}
-                    note={notes[String(c.id)] ?? ""}
-                    {...rowActions}
-                  />
-                ))}
-              </ul>
+              <WindowedList
+                className="space-y-1"
+                count={shown.length}
+                estimate={ROW_ESTIMATE_PX}
+                gap={4}
+                keyOf={(i) => shown[i].id}
+                // Open details stay rendered (a note may be mid-edit).
+                pinned={shown.flatMap((c, i) => (openIds.has(c.id) ? [i] : []))}
+                renderRow={(i, measure) => {
+                  const c = shown[i];
+                  return (
+                    <ViewRow
+                      key={c.id}
+                      c={c}
+                      index={i}
+                      measure={measure}
+                      selected={selected.has(c.id)}
+                      open={openIds.has(c.id)}
+                      note={notes[String(c.id)] ?? ""}
+                      {...rowActions}
+                    />
+                  );
+                }}
+              />
               </Collapse>
               );
             })()}
