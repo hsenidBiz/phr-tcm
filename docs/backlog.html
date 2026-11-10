@@ -46,6 +46,21 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
+    <div class="head"><span class="num">A1</span><span class="title">Software assessment: speed, reliability and UX (agreed 10 November 2026)</span><span class="status todo">Next</span></div>
+    <p>From the assessment of 10 November 2026. Not in this batch: Excel/CSV import and export, scheduled Auto Run with a trend report, and continuous integration.</p>
+    <ul>
+      <li><b>A1.1 Keep screen state on a tab change.</b> The screen wrapper in <code>App.tsx</code> uses <code>key={section}</code>, so each tab change starts the screen again. Manual Entry loses the unsaved title, steps, preconditions and tags; View, Update and Run lose search, filter and selection. Keep the state, and keep the Manual Entry draft on disk per organization and PBI.</li>
+      <li><b>A1.2 Retry failed reads.</b> A 429, a 5xx or a network error fails a request at once (<code>ado/transport.rs</code>), and one failed call fails a full fan-out. Retry GET requests (and read-only POST queries) with a delay and jitter, and obey Retry-After. Never retry a write.</li>
+      <li><b>A1.3 Remove serial request loops.</b> One request at a time for each item: PR work-item links, mentions (up to 20 every 5 minutes), pipelines, team members, the run report, relink, step attachments and inline images. Reads of more than 200 ids also go one chunk at a time. Run them concurrently with a limit.</li>
+      <li><b>A1.4 The pacer paces writes only.</b> At Balanced or Gentle one lock puts every request in one queue (<code>ado/throttle.rs</code>), so a read over 100 projects takes at least 20 or 80 seconds. The README already says the pacer limits writes. Server-requested holds still apply to every request.</li>
+      <li><b>A1.5 List virtualization, Run Tests first.</b> All rows stay in the DOM (<code>.cv-row</code> is not virtualization). The Run Tests table has no memoized row, so a selection click renders every row again. Memoize its rows, then render only the visible rows of long lists.</li>
+      <li><b>A1.6 Move the webview cache out of localStorage.</b> The cache, the queue drafts, notes and preferences share about 5 MB. Decision: the cache moves to IndexedDB with an in-memory copy loaded before the first render, so reads stay synchronous and no data crosses IPC. Queue drafts stay in localStorage (they are user work and part of the backup), and a failed queue save now shows a warning instead of failing silently.</li>
+      <li><b>A1.7 Smaller items.</b> The log file opens and closes for each line and has no size limit; the Rust cache never removes expired entries; inline images go to the webview as base64 text up to 8 MB each; the work before the window shows is synchronous (measure each step in the log first).</li>
+      <li><b>A1.8 Arrow keys and loading states.</b> Arrow keys move through rows only in the queue; add them to View, Update, Run and Search Suites. Use skeleton loaders on Run Tests, Search Suites, Suite Management and Auto Run.</li>
+      <li><b>A1.9 Tell the user when an update loses formatting.</b> If the baseline read fails before an upload, steps are written from plain text and formatting is lost; only the log says so (<code>commands/queue.rs</code>). Tell the user and let them stop before anything is sent.</li>
+    </ul>
+  </div>
+  <div class="item">
     <div class="head"><span class="title">Assistant-built sign-in and expired-password reset (2.4.6-beta.2)</span><span class="status todo">Next</span></div>
     <ul>
       <li>Built 10 Nov 2026: the assistant inspects a sign-in or change-password page, proposes a recipe it has tried with a saved account, and you approve or reject it under the Sign-in row in Auto Run, Setup; discover and every live-app command recover through this instead of stopping. Trials only sign in on the environment's address or the saved recipe's sites; with neither, propose is refused (record a sign-in or set the address first).</li>
