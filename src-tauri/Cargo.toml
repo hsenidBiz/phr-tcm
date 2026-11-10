@@ -171,12 +171,17 @@ debug = 0
 # or unwound", and the panic hook has time to log. With abort every one of
 # those becomes the app closing instantly, mid-upload included.
 #
-# Size: one codegen unit with full LTO lets the linker drop what the crate
-# and its dependencies never call, and `opt-level = "s"` favours smaller
-# code over the last few percent of speed - the app's hot paths wait on the
-# network and the webview, not on Rust. The cost is a slower release build.
+# Size: full LTO lets the linker drop what the crate and its dependencies
+# never call, and `opt-level = "s"` favours smaller code over the last few
+# percent of speed - the app's hot paths wait on the network and the
+# webview, not on Rust.
+#
+# Speed: 16 codegen units (owner, 2026-11-10; was 1). One unit made the
+# crate's final optimisation a single-threaded job - 10m47s for a release
+# build. Measured that day: thin LTO with 16 units took 5m14s but grew the
+# exe from 52.4 MB to 62.7 MB, so full LTO stays and only the units change.
 [profile.release]
 strip = true
 lto = true
-codegen-units = 1
+codegen-units = 16
 opt-level = "s"

@@ -14,13 +14,23 @@
 
 [build]
 # Negative means "all cores MINUS this", so it scales with the machine
-# instead of hard-coding one desktop's core count: 8 free of 24 here (~70%),
-# and still sensible on a smaller box.
-jobs = -8
+# instead of hard-coding one desktop's core count. The owner chose 4 free
+# (2026-11-10, was 8): 20 of 24 here, for faster builds.
+jobs = -4
 
 [env]
 # `[env]` reaches the processes cargo launches, which is what test binaries
-# are. 16 is 70% of the 24-core desktop this was tuned on; unlike `jobs` there is
-# no relative form, so it is a ceiling rather than a fraction - harmless on
-# a smaller machine, where the real limit is the core count anyway.
-RUST_TEST_THREADS = "16"
+# are. 20 matches `jobs` on the 24-core desktop this was tuned on; unlike
+# `jobs` there is no relative form, so it is a ceiling rather than a
+# fraction - harmless on a smaller machine, where the real limit is the core
+# count anyway.
+RUST_TEST_THREADS = "20"
+
+[target.x86_64-pc-windows-msvc]
+# Rust's bundled LLVM linker instead of MSVC's link.exe (owner, 2026-11-10).
+# Linking - above all writing each test binary's PDB - was the heavy,
+# multi-threaded part of `cargo test`, and lld links the same objects in a
+# fraction of the time. It ships with the toolchain (rustlib/<host>/bin), so
+# nothing extra is installed. It takes the same /MANIFEST flags build.rs
+# passes to the test binaries.
+linker = "rust-lld.exe"

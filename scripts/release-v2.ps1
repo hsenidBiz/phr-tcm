@@ -54,10 +54,16 @@ if ($changelog -notmatch [regex]::Escape("version: `"$Version`"")) {
 # nothing on the stable line ever moves to a beta.
 $uploadArgs = @("upload", "github", "--repoUrl", $repoUrl, "--publish", "--releaseName", "v$Version", "--tag", "v$Version")
 if ($IsBeta) { $uploadArgs += "--pre" }
-# Velopack packs only target\release\v2.exe. A beta skips Tauri's own
-# installers (the MSI one refuses a non-numeric prerelease label).
-$buildArgs = @("run", "tauri", "build")
-if ($IsBeta) { $buildArgs += @("--", "--no-bundle") }
+# Velopack packs only target\release\v2.exe, so Tauri's own MSI and NSIS
+# installers are never built: nothing published them, they were the slowest
+# part of a stable build after the compile (owner, 2026-11-10), and the MSI
+# one refuses a beta's non-numeric prerelease label anyway.
+$buildArgs = @("run", "tauri", "build", "--", "--no-bundle")
+# The gates below already ran the production frontend build on this exact
+# tree, so `tauri build` does not run it a second time: this config drops its
+# beforeBuildCommand. With -SkipChecks nothing has built it, so Tauri still
+# does.
+if (-not $SkipChecks) { $buildArgs += @("--config", "src-tauri/tauri.prebuilt.conf.json") }
 # The Playwright repo's rule files are compiled into the app from
 # src-tauri/pw-rules (see snapshot-pw-rules.ps1). -PlaywrightClone overrides
 # the clone set on the Playwright tab.
@@ -101,7 +107,8 @@ if ($snapshotChanged.Count -gt 0) {
 # the other half - the cores it DOES use yield to whatever is in the
 # foreground, so the machine stays responsive rather than merely 30% idle.
 $total = [Environment]::ProcessorCount
-$jobs = [Math]::Max(1, [Math]::Floor($total * 0.7))
+# All cores but 4 (owner, 2026-11-10; was 70%), as src-tauri/.cargo/config.toml.
+$jobs = [Math]::Max(1, $total - 4)
 $me = [System.Diagnostics.Process]::GetCurrentProcess()
 $priorWas = $me.PriorityClass
 $affinityWas = $me.ProcessorAffinity
