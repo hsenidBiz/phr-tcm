@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { cacheEntry, cacheKeys } from "../lib/cache";
 import type { ComponentProps } from "react";
 import { toast } from "../lib/toast";
 import { setTourRunning } from "../tour/tourState";
@@ -741,8 +742,8 @@ test("a cached closed PR re-asks only the deployments and folds them in", async 
   expect(calls).not.toContain("pr_pipeline");
   expect(calls).toContain("pr_deployments");
   // ...and the cache itself was rebuilt with the new deployment.
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-cache:pipe:acme/Web:42:abc")!);
-  expect(stored.data[0].deployments[0].release).toBe("Release-500");
+  const stored = cacheEntry<{ deployments: { release: string }[] }[]>(cacheKeys.prPipeline("acme", "Web", 42, "abc"), Infinity);
+  expect(stored!.data[0].deployments[0].release).toBe("Release-500");
 });
 
 // ---- The comments-to-resolve pill --------------------------------------

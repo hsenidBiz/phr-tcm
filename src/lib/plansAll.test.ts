@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { AdoError, PlanWithSuites } from "../bindings";
-import { CACHE, cacheEntry, cacheKeys, cacheWrite } from "./cache";
+import { CACHE, cacheEntry, cacheKeys, cacheStoredKeys, cacheWrite, cacheWriteAtForTests } from "./cache";
 
 type Answer = { status: "ok"; data: PlanWithSuites[] } | { status: "error"; error: AdoError };
 
@@ -29,11 +29,7 @@ function answerFrom(table: Record<string, Answer>) {
   );
 }
 
-const writtenKeys = () =>
-  Object.keys(localStorage)
-    .filter((k) => k.startsWith("tcm-v2-cache:") && k !== "tcm-v2-cache-index")
-    .map((k) => k.slice("tcm-v2-cache:".length))
-    .sort();
+const writtenKeys = () => cacheStoredKeys();
 
 beforeEach(() => {
   localStorage.clear();
@@ -61,10 +57,7 @@ describe("fetchPlansAll", () => {
 
   test("a stale or missing project is fetched and written under its own key", async () => {
     // Payroll is stale (older than staleMs but inside ttlMs); Web has nothing.
-    cacheWrite(cacheKeys.plansSuites("acme", "Payroll"), [plan(1)]);
-    const stored = JSON.parse(localStorage.getItem("tcm-v2-cache:plans-suites:acme/Payroll")!);
-    stored.at = Date.now() - CACHE.structure.staleMs - 60_000;
-    localStorage.setItem("tcm-v2-cache:plans-suites:acme/Payroll", JSON.stringify(stored));
+    cacheWriteAtForTests(cacheKeys.plansSuites("acme", "Payroll"), [plan(1)], Date.now() - CACHE.structure.staleMs - 60_000);
     answerFrom({ Payroll: ok([plan(5)]), Web: ok([plan(6)]) });
     const asked: Array<[string, number, number]> = [];
 
@@ -242,10 +235,7 @@ describe("projectOfPlan", () => {
 describe("cachedPlansAll", () => {
   test("kept trees come back stale or not, and a project with none is counted out", () => {
     cacheWrite(cacheKeys.plansSuites("acme", "Web"), [plan(2)]);
-    cacheWrite(cacheKeys.plansSuites("acme", "Payroll"), [plan(1)]);
-    const stored = JSON.parse(localStorage.getItem("tcm-v2-cache:plans-suites:acme/Payroll")!);
-    stored.at = Date.now() - CACHE.structure.staleMs - 60_000;
-    localStorage.setItem("tcm-v2-cache:plans-suites:acme/Payroll", JSON.stringify(stored));
+    cacheWriteAtForTests(cacheKeys.plansSuites("acme", "Payroll"), [plan(1)], Date.now() - CACHE.structure.staleMs - 60_000);
 
     const kept = cachedPlansAll("acme", ["Web", "Payroll", "Ops"]);
 

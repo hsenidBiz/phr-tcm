@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { cacheKeys, cacheStoredKeys, resetCacheForTests } from "../lib/cache";
 import { useState, type ComponentProps } from "react";
 import WorkBoard from "./WorkBoard";
 
@@ -1195,6 +1196,7 @@ test("areas left out over the cap are reported", async () => {
   // The areas are kept on disk now: the second board starts from nothing, as
   // if the first one's answer had expired.
   localStorage.clear();
+  resetCacheForTests();
 
   mockCombined(combinedData, { paths: ["HRM\\Alpha"], coverage: { shown: 100, total: 100 } });
   renderBoard(combined);
@@ -1379,7 +1381,7 @@ test("a later visit to the board does not list the areas of every project again"
   fireEvent.click(screen.getByLabelText("Board scope"));
   await screen.findByText("Area: HRM\\Alpha");
   // Written under the cache's own key, scoped to the organization.
-  expect(localStorage.getItem("tcm-v2-cache:areas-all:acme")).not.toBeNull();
+  expect(cacheStoredKeys()).toContain(cacheKeys.areasAll("acme"));
   first.unmount();
 
   // A new visit with nothing in memory, as after the screen was left for a while.
@@ -1412,5 +1414,5 @@ test("combined PR chips come from every project", async () => {
     { organization: "acme" },
   ]);
   expect(calls.some((c) => c.cmd === "board_pr_links")).toBe(false);
-  expect(localStorage.getItem("tcm-v2-cache:board-prs-all:acme")).not.toBeNull();
+  expect(cacheStoredKeys()).toContain(cacheKeys.boardPrsAll("acme"));
 });

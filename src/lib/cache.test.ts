@@ -1,30 +1,44 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import "fake-indexeddb/auto";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   CACHE,
   cacheKeys,
   cacheRead,
   cacheRemove,
+  cacheStoredKeys,
   cacheWrite,
   claimCacheFor,
+  clearCache,
+  flushCacheForTests,
+  initCache,
   persistentQuery,
+  resetCacheForTests,
   suspendCache,
 } from "./cache";
 
-afterEach(() => {
+afterEach(async () => {
   suspendCache(false);
+  clearCache();
+  await flushCacheForTests();
+  resetCacheForTests();
   localStorage.clear();
+  vi.restoreAllMocks();
 });
+
+/** Moves the clock, so an entry written now reads as `ms` old. */
+function age(ms: number) {
+  const real = Date.now();
+  vi.spyOn(Date, "now").mockReturnValue(real + ms);
+}
 
 test("round-trips within the TTL and expires after it", () => {
   cacheWrite("k", { a: 1 });
   expect(cacheRead<{ a: number }>("k", 60_000)).toEqual({ a: 1 });
   // An entry older than the TTL reads as a miss.
-  const raw = JSON.parse(localStorage.getItem("tcm-v2-cache:k")!);
-  raw.at = Date.now() - 120_000;
-  localStorage.setItem("tcm-v2-cache:k", JSON.stringify(raw));
+  age(120_000);
   expect(cacheRead("k", 60_000)).toBeNull();
 });
 
@@ -38,9 +52,11 @@ test("demo mode never reads or writes the cache", () => {
   expect(cacheRead("real", 60_000)).toBe("data"); // real data intact
 });
 
-test("unreadable entries are dropped, not served", () => {
+test("an earlier version's unreadable entries are dropped, not served", async () => {
   localStorage.setItem("tcm-v2-cache:bad", "{not json");
+  await initCache();
   expect(cacheRead("bad", 60_000)).toBeNull();
+  expect(localStorage.getItem("tcm-v2-cache:bad")).toBeNull();
 });
 
 test("a suspended cache neither reads nor writes", () => {
@@ -82,6 +98,7 @@ test("signing in as someone else drops the previous account's cache", () => {
 
   // The address itself is never written to disk.
   expect(JSON.stringify(localStorage)).not.toContain("example.com");
+  expect(JSON.stringify(cacheStoredKeys())).not.toContain("example.com");
 });
 
 /** Callers with their own per-account state (the notification bell, the
@@ -136,9 +153,7 @@ test("a stored entry seeds initialData WITH its real age", () => {
 
 test("an entry older than the TTL is not served at all", () => {
   cacheWrite("k", ["ancient"]);
-  const raw = JSON.parse(localStorage.getItem("tcm-v2-cache:k")!);
-  raw.at = Date.now() - (CACHE.structure.ttlMs + 60_000);
-  localStorage.setItem("tcm-v2-cache:k", JSON.stringify(raw));
+  age(CACHE.structure.ttlMs + 60_000);
 
   const opts = persistentQuery({ key: "k", fetcher: async () => [], ...CACHE.structure });
   expect(opts.initialData()).toBeUndefined();
@@ -155,7 +170,7 @@ test("a store predicate keeps oversized results off the disk but still returns t
     store: (d) => d.length <= 10,
   });
   expect(await opts.queryFn()).toBe(big);
-  expect(localStorage.getItem("tcm-v2-cache:k")).toBeNull();
+  expect(cacheStoredKeys()).not.toContain("k");
 
   const small = persistentQuery({
     key: "k2",
@@ -212,15 +227,13 @@ test("cacheRemove deletes an entry that was written", () => {
   expect(cacheRead("k", 60_000)).toBeNull();
 });
 
-/** Plants an entry the way an earlier version (or this one) stores it. */
+/** Plants an entry with a given age (its `at`), as a launch would load it. */
 function plant(key: string, at: number, data: unknown = 1) {
-  localStorage.setItem(`tcm-v2-cache:${key}`, JSON.stringify({ at, data }));
-}
-
-function cachedKeys(): string[] {
-  return Object.keys(localStorage)
-    .filter((k) => k.startsWith("tcm-v2-cache:"))
-    .sort();
+  const real = Date.now;
+  vi.spyOn(Date, "now").mockReturnValue(at);
+  cacheWrite(key, data);
+  Date.now = real;
+  vi.restoreAllMocks();
 }
 
 describe("the entry limit", () => {
@@ -231,7 +244,7 @@ describe("the entry limit", () => {
     for (let i = 2; i < 150; i++) cacheWrite(`k${i}`, i);
     cacheWrite("k-new", "x");
     cacheWrite("k-newer", "y");
-    expect(cachedKeys()).toHaveLength(150);
+    expect(cacheStoredKeys()).toHaveLength(150);
     expect(cacheRead("k0", Infinity)).toBeNull();
     expect(cacheRead("k1", Infinity)).toBeNull();
     expect(cacheRead("k-new", Infinity)).toBe("x");
@@ -248,7 +261,7 @@ describe("the entry limit", () => {
     cacheWrite(cacheKeys.plansSuites("acme", "newest"), []);
 
     for (let i = 0; i < 30; i++) expect(cacheRead(`other${i}`, Infinity)).toBe(1);
-    const trees = cachedKeys().filter((k) => k.startsWith("tcm-v2-cache:plans-suites:"));
+    const trees = cacheStoredKeys().filter((k) => k.startsWith("plans-suites:"));
     expect(trees).toHaveLength(120);
     // 131 written, the 11 oldest are gone.
     for (let i = 0; i < 11; i++) expect(cacheRead(cacheKeys.plansSuites("acme", `p${i}`), Infinity)).toBeNull();
@@ -259,61 +272,83 @@ describe("the entry limit", () => {
   test("plan trees do not count toward the 150 for everything else", () => {
     for (let i = 0; i < 100; i++) plant(cacheKeys.plansSuites("acme", `p${i}`), 1_000 + i);
     for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
-    expect(cachedKeys().filter((k) => !k.startsWith("tcm-v2-cache:plans-suites:"))).toHaveLength(150);
-    expect(cachedKeys().filter((k) => k.startsWith("tcm-v2-cache:plans-suites:"))).toHaveLength(100);
+    expect(cacheStoredKeys().filter((k) => !k.startsWith("plans-suites:"))).toHaveLength(150);
+    expect(cacheStoredKeys().filter((k) => k.startsWith("plans-suites:"))).toHaveLength(100);
   });
 
-  /** Pruning used to JSON.parse every cached entry on every write just to
-   * read its age - the whole plan tree included. */
-  test("a write reads no other entry", () => {
-    for (let i = 0; i < 160; i++) cacheWrite(`k${i}`, { big: "x".repeat(100), i });
-    const getItem = vi.spyOn(Storage.prototype, "getItem");
-    try {
-      cacheWrite("one-more", 1);
-      const entryReads = getItem.mock.calls.filter(([k]) => String(k).startsWith("tcm-v2-cache:"));
-      expect(entryReads).toEqual([]);
-    } finally {
-      getItem.mockRestore();
-    }
-    expect(cachedKeys()).toHaveLength(150);
+  /** The point of the move: the cache no longer takes room in localStorage,
+   * which the queue drafts need. */
+  test("a write touches no localStorage at all", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    cacheWrite("one", { big: "x".repeat(1000) });
+    expect(setItem.mock.calls.filter(([k]) => String(k).startsWith("tcm-v2-cache:"))).toEqual([]);
   });
 
-  test("entries stored before the index existed are pruned by their real age", () => {
-    // An earlier version's 150 entries, no index: k0 the oldest.
-    for (let i = 0; i < 150; i++) plant(`old${i}`, 1_000 + i);
-    cacheWrite("fresh", "f");
-    expect(cachedKeys()).toHaveLength(150);
-    expect(cacheRead("old0", Infinity)).toBeNull();
-    expect(cacheRead("old1", Infinity)).toBe(1);
-    expect(cacheRead("fresh", Infinity)).toBe("f");
-  });
-
-  test("an unreadable entry found while pruning is dropped", () => {
-    localStorage.setItem("tcm-v2-cache:bad", "{not json");
-    localStorage.setItem("tcm-v2-cache:no-age", JSON.stringify({ at: "x", data: 1 }));
-    cacheWrite("good", 1);
-    expect(localStorage.getItem("tcm-v2-cache:bad")).toBeNull();
-    expect(localStorage.getItem("tcm-v2-cache:no-age")).toBeNull();
-    expect(cacheRead("good", Infinity)).toBe(1);
-  });
-
-  test("an entry removed behind the index's back is not counted", () => {
-    for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
-    localStorage.removeItem("tcm-v2-cache:k5");
-    cacheRemove("k6");
-    cacheWrite("a", 1);
-    cacheWrite("b", 2);
-    // 148 left + 2 new = 150: nothing had to be dropped.
-    expect(cachedKeys()).toHaveLength(150);
-    expect(cacheRead("k0", Infinity)).toBe(0);
-  });
-
-  test("signing in as someone else drops the index with the entries", () => {
+  test("signing in as someone else drops every entry", () => {
     claimCacheFor("first@example.com");
     for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
     claimCacheFor("second@example.com");
     cacheWrite("mine", 1);
-    expect(cachedKeys()).toEqual(["tcm-v2-cache:mine"]);
+    expect(cacheStoredKeys()).toEqual(["mine"]);
+  });
+});
+
+describe("IndexedDB", () => {
+  test("an entry survives a restart", async () => {
+    await initCache();
+    cacheWrite("k", ["kept"]);
+    await flushCacheForTests();
+    resetCacheForTests(); // a restart: memory gone, the database stays
+    expect(cacheRead("k", Infinity)).toBeNull();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toEqual(["kept"]);
+  });
+
+  test("a removed entry stays removed after a restart", async () => {
+    await initCache();
+    cacheWrite("k", 1);
+    await flushCacheForTests();
+    cacheRemove("k");
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("another account's wipe reaches the database", async () => {
+    await initCache();
+    claimCacheFor("first@example.com");
+    cacheWrite("k", 1);
+    await flushCacheForTests();
+    claimCacheFor("second@example.com");
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheStoredKeys()).toEqual([]);
+  });
+
+  test("an earlier version's localStorage entries move over and leave localStorage", async () => {
+    localStorage.setItem("tcm-v2-cache:old", JSON.stringify({ at: Date.now(), data: "moved" }));
+    localStorage.setItem("tcm-v2-cache-index", "{}");
+    await initCache();
+    expect(cacheRead("old", Infinity)).toBe("moved");
+    expect(localStorage.getItem("tcm-v2-cache:old")).toBeNull();
+    expect(localStorage.getItem("tcm-v2-cache-index")).toBeNull();
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("old", Infinity)).toBe("moved");
+  });
+
+  test("a write made while the cache loads is not overwritten by the disk", async () => {
+    await initCache();
+    cacheWrite("k", "old");
+    await flushCacheForTests();
+    resetCacheForTests();
+    const loading = initCache();
+    cacheWrite("k", "new");
+    await loading;
+    expect(cacheRead("k", Infinity)).toBe("new");
   });
 });
 
@@ -323,7 +358,7 @@ test("demo mode neither seeds nor stores", async () => {
   const opts = persistentQuery({ key: "k", fetcher, ...CACHE.structure });
   await opts.queryFn();
   expect(opts.initialData()).toBeUndefined();
-  expect(localStorage.getItem("tcm-v2-cache:k")).toBeNull();
+  expect(cacheStoredKeys()).not.toContain("k");
 });
 
 /**

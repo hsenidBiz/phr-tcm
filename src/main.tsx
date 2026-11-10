@@ -9,6 +9,7 @@ import { initExternalLinks } from "./lib/externalLinks";
 import "./index.css";
 import ErrorBoundary, { installGlobalErrorLog } from "./components/ErrorBoundary";
 import { hideSplash } from "./lib/splash";
+import { initCache } from "./lib/cache";
 
 // refetchOnWindowFocus off: a desktop app loses/regains focus constantly
 // (alt-tab to the browser and back), and the default would refire every
@@ -45,6 +46,12 @@ if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
   const { applyDevLatency } = await import("./dev/latency");
   applyDevLatency();
 }
+
+// The webview cache lives in IndexedDB with a copy in memory (lib/cache).
+// Loading it before the first render lets the first queries seed from it,
+// as they did when it was in localStorage. It never rejects; a database
+// that takes too long only costs this launch its head start.
+await Promise.race([initCache(), new Promise((resolve) => setTimeout(resolve, 1500))]);
 
 // The compact always-on-top runner opens as a second webview window on the
 // same bundle, routed by hash (see RunTests -> openRunnerWindow). Loaded

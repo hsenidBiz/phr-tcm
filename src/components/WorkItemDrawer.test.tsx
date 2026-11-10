@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { cacheEntry, cacheKeys } from "../lib/cache";
 import WorkItemDrawer from "./WorkItemDrawer";
 
 afterEach(() => {
@@ -128,9 +129,9 @@ test("a loaded work item is cached for the next open", async () => {
   renderDrawer();
   await screen.findByDisplayValue("Session timeout not enforced");
 
-  const raw = localStorage.getItem("tcm-v2-cache:wi-detail:acme/Web/2003");
-  expect(raw).toBeTruthy();
-  expect(JSON.parse(raw as string).data.title).toBe("Session timeout not enforced");
+  const entry = cacheEntry<{ title: string }>(cacheKeys.workItemDetail("acme", "Web", 2003), Infinity);
+  expect(entry).toBeTruthy();
+  expect(entry!.data.title).toBe("Session timeout not enforced");
 });
 
 // The State field is `ui/select.tsx`'s themed combobox (button + listbox),

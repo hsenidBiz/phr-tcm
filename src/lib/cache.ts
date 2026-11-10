@@ -24,19 +24,32 @@
  *
  * Disabled entirely in demo mode: demo data must never be served to a real
  * session, and vice versa. Bounded to MAX_ENTRIES; oldest entries fall out
- * first (localStorage is ~5 MB and shared with everything else the app
- * persists).
+ * first.
+ *
+ * Where it lives (backlog A1.6): in IndexedDB, with a copy in memory.
+ * It used to live in localStorage, which is about 5 MB for the whole app
+ * and shared with the queue drafts, notes and settings - a big plan tree
+ * could fill it, and then a queue draft could no longer be saved. Reads
+ * stay synchronous: `initCache` (awaited in main.tsx before the first
+ * render) loads every entry into memory, and writes go to memory at once
+ * and to IndexedDB in the background, batched. Nothing crosses IPC. Where
+ * IndexedDB cannot be opened the cache works for the session only.
+ * Entries an earlier version left in localStorage are moved over on the
+ * first launch and removed from there.
  */
 
 const PREFIX = "tcm-v2-cache:";
 const OWNER_KEY = "tcm-v2-cache-owner";
-/** Each entry's storage key to its `at`, so pruning never parses entries. */
-const INDEX_KEY = "tcm-v2-cache-index";
+/** The localStorage index an earlier version kept; removed on migration. */
+const LEGACY_INDEX_KEY = "tcm-v2-cache-index";
 const MAX_ENTRIES = 150;
 /** The `plans-suites:` entries (see cacheKeys.plansSuites) have a cap of
  * their own: one per project the combined walk may read (100), plus headroom. */
-const PLAN_TREES = PREFIX + "plans-suites:";
+const PLAN_TREES = "plans-suites:";
 const MAX_PLAN_TREES = 120;
+
+const DB_NAME = "tcm-v2-cache";
+const STORE = "entries";
 
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
@@ -103,6 +116,165 @@ function tag(account: string): string {
   return h.toString(36);
 }
 
+/** Every entry, by key (without PREFIX). The one place reads come from. */
+const memory = new Map<string, Entry<unknown>>();
+
+/** Writes not yet in IndexedDB: an entry to put, or null to delete. */
+const pending = new Map<string, Entry<unknown> | null>();
+let wipePending = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let db: IDBDatabase | null = null;
+
+function openDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === "undefined") return resolve(null);
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function readAll(store: IDBDatabase): Promise<[string, Entry<unknown>][]> {
+  return new Promise((resolve) => {
+    try {
+      const tx = store.transaction(STORE, "readonly");
+      const os = tx.objectStore(STORE);
+      const keys = os.getAllKeys();
+      const values = os.getAll();
+      tx.oncomplete = () =>
+        resolve((keys.result as IDBValidKey[]).map((k, i) => [String(k), values.result[i] as Entry<unknown>]));
+      tx.onerror = () => resolve([]);
+      tx.onabort = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+function isEntry(v: unknown): v is Entry<unknown> {
+  return typeof v === "object" && v !== null && typeof (v as Entry<unknown>).at === "number";
+}
+
+/** Entries an earlier version kept in localStorage: into memory (and so to
+ * IndexedDB), and out of localStorage, where the room is needed. */
+function migrateLegacy(): void {
+  try {
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith(PREFIX));
+    for (const k of keys) {
+      try {
+        const entry = JSON.parse(localStorage.getItem(k) ?? "") as unknown;
+        if (isEntry(entry)) {
+          const key = k.slice(PREFIX.length);
+          const have = memory.get(key);
+          if (!have || have.at < entry.at) {
+            memory.set(key, entry);
+            pending.set(key, entry);
+          }
+        }
+      } catch {
+        // unreadable - not a cache entry any more
+      }
+      localStorage.removeItem(k);
+    }
+    localStorage.removeItem(LEGACY_INDEX_KEY);
+  } catch {
+    // storage unavailable
+  }
+}
+
+/** One entry an earlier version left in localStorage, moved over on its
+ * first read: `migrateLegacy` moves them all at launch, and this covers an
+ * entry put back afterwards (a restored older backup carries them). */
+function legacyEntry(key: string): Entry<unknown> | undefined {
+  try {
+    const raw = localStorage.getItem(PREFIX + key);
+    if (raw == null) return undefined;
+    localStorage.removeItem(PREFIX + key);
+    const entry = JSON.parse(raw) as unknown;
+    if (!isEntry(entry)) return undefined;
+    put(key, entry);
+    return entry;
+  } catch {
+    return undefined;
+  }
+}
+
+let ready: Promise<void> | null = null;
+
+/**
+ * Load the cache into memory. main.tsx awaits this before the first render,
+ * so the first queries can seed from it. Never rejects; with no IndexedDB
+ * the cache simply starts empty for this session.
+ */
+export function initCache(): Promise<void> {
+  ready ??= (async () => {
+    migrateLegacy();
+    db = await openDb();
+    if (db) {
+      for (const [key, entry] of await readAll(db)) {
+        // A write made while this was loading is newer than the disk.
+        if (!isEntry(entry) || memory.has(key)) continue;
+        memory.set(key, entry);
+      }
+    }
+    pruneAll();
+    scheduleFlush();
+  })();
+  return ready;
+}
+
+function scheduleFlush(): void {
+  if (flushTimer != null) return;
+  flushTimer = setTimeout(flush, 50);
+}
+
+/** Write the pending changes to IndexedDB in one transaction. A failed
+ * write costs only the next launch's head start: memory still has it. */
+function flush(): void {
+  flushTimer = null;
+  if (!db || (!wipePending && pending.size === 0)) return;
+  try {
+    const tx = db.transaction(STORE, "readwrite");
+    const os = tx.objectStore(STORE);
+    if (wipePending) os.clear();
+    for (const [key, entry] of pending) {
+      if (entry) os.put(entry, key);
+      else os.delete(key);
+    }
+  } catch {
+    // quota or a closed database - memory still serves this session
+  }
+  wipePending = false;
+  pending.clear();
+}
+
+function put(key: string, entry: Entry<unknown>): void {
+  memory.set(key, entry);
+  pending.set(key, entry);
+  scheduleFlush();
+}
+
+function drop(key: string): void {
+  memory.delete(key);
+  pending.set(key, null);
+  scheduleFlush();
+}
+
+function wipe(): void {
+  memory.clear();
+  pending.clear();
+  wipePending = true;
+  scheduleFlush();
+}
+
 /**
  * Hand the cache to the signed-in account, discarding anything the previous
  * one left behind.
@@ -124,10 +296,7 @@ export function claimCacheFor(account: string | null): boolean {
   try {
     const now = tag(account);
     if (localStorage.getItem(OWNER_KEY) === now) return false;
-    for (const k of Object.keys(localStorage)) {
-      if (k.startsWith(PREFIX)) localStorage.removeItem(k);
-    }
-    localStorage.removeItem(INDEX_KEY);
+    wipe();
     localStorage.setItem(OWNER_KEY, now);
     return true;
   } catch {
@@ -161,16 +330,10 @@ function off(): boolean {
  * old the seed is (so it can decide whether to revalidate). */
 export function cacheEntry<T>(key: string, maxAgeMs: number): { data: T; at: number } | null {
   if (off()) return null;
-  try {
-    const raw = localStorage.getItem(PREFIX + key);
-    if (!raw) return null;
-    const entry = JSON.parse(raw) as Entry<T>;
-    if (typeof entry?.at !== "number") return null;
-    if (Date.now() - entry.at > maxAgeMs) return null;
-    return entry;
-  } catch {
-    return null;
-  }
+  const entry = (memory.get(key) ?? legacyEntry(key)) as Entry<T> | undefined;
+  if (!entry) return null;
+  if (Date.now() - entry.at > maxAgeMs) return null;
+  return entry;
 }
 
 export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
@@ -180,31 +343,13 @@ export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
 /** Remove one entry. Not gated by `off()`: removing is always safe, tour
  * or demo mode or not. */
 export function cacheRemove(key: string): void {
-  try {
-    localStorage.removeItem(PREFIX + key);
-  } catch {
-    // storage unavailable - nothing to remove
-  }
+  if (memory.has(key)) drop(key);
 }
 
 export function cacheWrite<T>(key: string, data: T): void {
   if (off()) return;
-  try {
-    const at = Date.now();
-    localStorage.setItem(PREFIX + key, JSON.stringify({ at, data }));
-    prune(key, at);
-  } catch {
-    // Quota or unavailable - drop everything we own and carry on; a cache
-    // that cannot write must never break the feature it accelerates.
-    try {
-      for (const k of Object.keys(localStorage)) {
-        if (k.startsWith(PREFIX)) localStorage.removeItem(k);
-      }
-      localStorage.removeItem(INDEX_KEY);
-    } catch {
-      // storage fully unavailable
-    }
-  }
+  put(key, { at: Date.now(), data });
+  prune();
 }
 
 /**
@@ -242,68 +387,68 @@ export function persistentQuery<T>(opts: {
   };
 }
 
-function readIndex(): Record<string, number> {
-  try {
-    const index = JSON.parse(localStorage.getItem(INDEX_KEY) ?? "{}") as unknown;
-    return index && typeof index === "object" ? (index as Record<string, number>) : {};
-  } catch {
-    return {};
-  }
-}
-
 /**
- * Keep at most MAX_ENTRIES, dropping the oldest. Each entry's age comes from
- * the index (one small key: storage key to `at`), so a write never parses
- * the other entries - it used to parse all of them, plan trees included.
- *
- * The index is checked against the keys actually in storage on every call -
- * listing keys reads no values. An entry it does not know (stored before the
- * index existed, or by a write whose index update was lost) is read once for
- * its age; a key it lists that is gone is forgotten.
+ * Keep at most MAX_ENTRIES, dropping the oldest. Plan trees (one per
+ * project the combined walk reads) are counted and evicted among
+ * themselves, so a walk over many projects never pushes out other screens'
+ * entries, nor they the trees. All in memory: no entry is read from disk.
  */
-function prune(key: string, at: number): void {
-  const index = readIndex();
-  const present = Object.keys(localStorage).filter((k) => k.startsWith(PREFIX));
-  const kept: Record<string, number> = {};
-  for (const k of present) {
-    if (k === PREFIX + key) continue; // just written; its age is `at`
-    if (typeof index[k] === "number") {
-      kept[k] = index[k];
-      continue;
-    }
-    let entryAt: unknown;
-    try {
-      entryAt = (JSON.parse(localStorage.getItem(k) ?? "") as Entry<unknown>).at;
-    } catch {
-      entryAt = undefined;
-    }
-    if (typeof entryAt === "number") kept[k] = entryAt;
-    else localStorage.removeItem(k); // unreadable entry - not a cache anymore
-  }
-  kept[PREFIX + key] = at;
-  const keys = Object.keys(kept);
-  // Plan trees (one per project the combined walk reads) are counted and
-  // evicted among themselves, so a walk over many projects never pushes
-  // out other screens' entries, nor they the trees.
-  trimOldest(
-    keys.filter((k) => !k.startsWith(PLAN_TREES)),
-    kept,
-    MAX_ENTRIES,
-  );
-  trimOldest(
-    keys.filter((k) => k.startsWith(PLAN_TREES)),
-    kept,
-    MAX_PLAN_TREES,
-  );
-  localStorage.setItem(INDEX_KEY, JSON.stringify(kept));
+function prune(): void {
+  if (memory.size <= Math.min(MAX_ENTRIES, MAX_PLAN_TREES)) return;
+  pruneAll();
 }
 
-/** Drops the oldest of `keys` (and from `kept`) until at most `max` remain. */
-function trimOldest(keys: string[], kept: Record<string, number>, max: number): void {
+function pruneAll(): void {
+  const keys = [...memory.keys()];
+  trimOldest(keys.filter((k) => !k.startsWith(PLAN_TREES)), MAX_ENTRIES);
+  trimOldest(keys.filter((k) => k.startsWith(PLAN_TREES)), MAX_PLAN_TREES);
+}
+
+/** Drops the oldest of `keys` until at most `max` remain. */
+function trimOldest(keys: string[], max: number): void {
   if (keys.length <= max) return;
-  keys.sort((a, b) => kept[a] - kept[b]);
-  for (const k of keys.slice(0, keys.length - max)) {
-    localStorage.removeItem(k);
-    delete kept[k];
-  }
+  keys.sort((a, b) => memory.get(a)!.at - memory.get(b)!.at);
+  for (const k of keys.slice(0, keys.length - max)) drop(k);
+}
+
+/** The keys held now, sorted. For tests and the developer panel. */
+export function cacheStoredKeys(): string[] {
+  return [...memory.keys()].sort();
+}
+
+/** Drop every entry (the developer panel's Clear app storage). */
+export function clearCache(): void {
+  wipe();
+}
+
+/** Test hook: forget memory and the open database, as a restart would.
+ * The database itself is left as it is on disk. */
+export function resetCacheForTests(): void {
+  if (flushTimer != null) clearTimeout(flushTimer);
+  flushTimer = null;
+  memory.clear();
+  pending.clear();
+  wipePending = false;
+  db?.close();
+  db = null;
+  ready = null;
+}
+
+/** Test hook: store `data` as fetched at `at` (epoch ms), so a test can
+ * age an entry without a clock of its own. */
+export function cacheWriteAtForTests<T>(key: string, data: T, at: number): void {
+  put(key, { at, data });
+}
+
+/** Test hook: write pending changes now and wait for them to land. */
+export function flushCacheForTests(): Promise<void> {
+  if (flushTimer != null) clearTimeout(flushTimer);
+  const store = db;
+  flush();
+  if (!store) return Promise.resolve();
+  return new Promise((resolve) => {
+    const tx = store.transaction(STORE, "readonly");
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
 }
