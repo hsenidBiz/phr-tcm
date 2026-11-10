@@ -38,7 +38,11 @@ function useStuck(fullWidth: boolean) {
         const top = e.rootBounds?.top ?? 0;
         setStuck(e.intersectionRatio < 1 && e.boundingClientRect.top < top);
       },
-      { root, threshold: [1] },
+      // Slack at the sides only: stuck, the bar reaches the scroller's
+      // sides (below), and a scaled display can round that reach a fraction
+      // of a pixel past them. Against the exact box the bar would then never
+      // be wholly inside again, and would stay stuck back at the top.
+      { root, threshold: [1], rootMargin: "0px 2px" },
     );
     io.observe(el);
     return () => io.disconnect();
