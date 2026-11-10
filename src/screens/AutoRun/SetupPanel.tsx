@@ -48,6 +48,7 @@ import ImportScriptsDialog from "./ImportScriptsDialog";
 import RecipeEditor from "./RecipeEditor";
 import { noProjectHint, useAllProjects } from "../../lib/projectScope";
 import RecordSignInDialog from "./RecordSignInDialog";
+import SignInProposalNotice from "./SignInProposalNotice";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
@@ -759,6 +760,8 @@ export default function SetupPanel({
                   Edit
                 </Button>
               </SetupRow>
+
+              {setupReady && <SignInProposalNotice org={org} project={project} />}
 
               <SetupRow
                 label="Accounts"
