@@ -155,6 +155,8 @@ fn the_first_list_makes_default_and_gives_it_the_old_setting() {
 /// new environment's at once.
 #[test]
 fn a_switch_turns_the_bridges_writes_off_and_takes_the_new_environments_database() {
+    // `move_bridge_to` reads the Auto Run layout, which other modules set.
+    let _lock = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
@@ -217,6 +219,8 @@ fn a_push_takes_no_ask_from_the_active_environment_not_the_webview() {
 /// writes are never on while anything but Default is active.
 #[test]
 fn no_push_or_switch_ever_leaves_writes_on_for_an_environment_that_is_not_active() {
+    // `move_bridge_to` reads the Auto Run layout, which other modules set.
+    let _lock = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let (first, qa) = two_envs(&root);
@@ -417,6 +421,8 @@ fn disabled_by_tools(c: &BridgeContext) -> Vec<String> {
 
 #[tokio::test]
 async fn after_a_switch_every_switchable_tool_is_off_until_the_new_environments_push() {
+    // `move_bridge_to` reads the Auto Run layout, which other modules set.
+    let _lock = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
@@ -443,6 +449,8 @@ async fn after_a_switch_every_switchable_tool_is_off_until_the_new_environments_
 
 #[test]
 fn a_stale_push_keeps_the_contexts_database_and_tools() {
+    // `move_bridge_to` reads the Auto Run layout, which other modules set.
+    let _lock = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
@@ -484,6 +492,8 @@ fn before_any_environment_a_push_brings_its_tools_but_no_write() {
 /// environment turns it off until the new environment's push.
 #[test]
 fn the_network_tools_switch_follows_the_active_environment() {
+    // `move_bridge_to` reads the Auto Run layout, which other modules set.
+    let _lock = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
