@@ -145,12 +145,21 @@ impl AdoClient {
         }
         let titles = self.read_titles(org, project, &ids).await;
         let mut out = vec![];
-        for id in ids {
-            let url = format!(
-                "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&$top={}&api-version=7.1-preview.4",
-                self.base_url, org, project, id, MENTION_COMMENTS
-            );
-            let answer = match self.get_json(url).await {
+        // The comments of each item, READ_CONCURRENCY at a time: this runs
+        // every five minutes in the background, and up to 20 reads one
+        // after the other kept a request going for most of a minute.
+        let urls: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                format!(
+                    "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&$top={}&api-version=7.1-preview.4",
+                    self.base_url, org, project, id, MENTION_COMMENTS
+                )
+            })
+            .collect();
+        let answers = self.get_json_each(urls).await;
+        for (id, answer) in ids.into_iter().zip(answers) {
+            let answer = match answer {
                 Ok(a) => a,
                 Err(e) => {
                     crate::applog::warn(format!("mentions: skipped #{id}, its comments could not be read: {e}"));
@@ -186,17 +195,28 @@ impl AdoClient {
         }
         let titles = self.read_titles_org(org, &ids).await;
         let mut out = vec![];
+        let mut known = vec![];
         for id in ids {
             let (title, wtype, project) = titles.get(&id).cloned().unwrap_or_default();
             if project.trim().is_empty() {
                 crate::applog::warn(format!("mentions: skipped #{id}, the project it lives in could not be read"));
                 continue;
             }
-            let url = format!(
-                "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&$top={}&api-version=7.1-preview.4",
-                self.base_url, org, project, id, MENTION_COMMENTS
-            );
-            let answer = match self.get_json(url).await {
+            known.push((id, title, wtype, project));
+        }
+        // Same as `recent_mentions`: READ_CONCURRENCY at a time.
+        let urls: Vec<String> = known
+            .iter()
+            .map(|(id, _, _, project)| {
+                format!(
+                    "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&$top={}&api-version=7.1-preview.4",
+                    self.base_url, org, project, id, MENTION_COMMENTS
+                )
+            })
+            .collect();
+        let answers = self.get_json_each(urls).await;
+        for ((id, title, wtype, project), answer) in known.into_iter().zip(answers) {
+            let answer = match answer {
                 Ok(a) => a,
                 Err(e) => {
                     crate::applog::warn(format!("mentions: skipped #{id}, its comments could not be read: {e}"));

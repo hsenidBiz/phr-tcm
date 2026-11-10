@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { clearCache } from "../lib/cache";
 import { toast } from "../lib/toast";
 import { commands, type PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../tour/tourState";
@@ -433,7 +434,15 @@ export default function DevPanel({
               >
                 Drafts
               </Button>
-              <Button size="sm" variant="danger" onClick={() => clearKeys(() => true, "app")}>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  // The query cache is in IndexedDB now, not localStorage.
+                  clearCache();
+                  clearKeys(() => true, "app");
+                }}
+              >
                 Everything
               </Button>
             </div>

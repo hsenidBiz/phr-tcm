@@ -9,6 +9,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent } from "react";
+import { ListSkeleton } from "../../components/ui/list-skeleton";
 import { createPortal } from "react-dom";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { commands, events, type AutorunResetNeeded, type Divergence, type PbiHit, type PlanView } from "../../bindings";
@@ -948,7 +949,7 @@ export default function AutoRun({
                   </span>
                 </ListToolbar>
 
-                {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
+                {cases.isLoading && <ListSkeleton label="Loading test cases…" rows={5} />}
                 {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
 
                 {rows.length > 0 && shownIdx.length === 0 && (

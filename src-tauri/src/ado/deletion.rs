@@ -216,7 +216,7 @@ impl AdoClient {
     /// UI both. For the one irreversible thing this app does, "400" with
     /// no sentence is not a diagnosis.
     async fn send_permanent_delete(&self, url: &str, id: i32) -> Result<(), AdoError> {
-        super::throttle::pace().await;
+        super::throttle::pace(true).await;
         let started = std::time::Instant::now();
         let resp = self
             .http

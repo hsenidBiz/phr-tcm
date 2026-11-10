@@ -644,3 +644,39 @@ fn only_the_newest_playwright_listing_is_kept() {
     assert!(store.get::<Vec<String>>("tags:o|p").is_some(), "other keys stay");
     assert!(Store::open(Some(&dir)).get::<u32>(&keys::pw_list("C:/one")).is_none(), "the file agrees");
 }
+
+/// Expired resolved suites and refusals leave cache.json - on load and on a
+/// write - and kinds read stale on purpose (tags, assignment baselines)
+/// stay whatever their age.
+#[test]
+fn expired_suites_are_removed_and_kinds_read_stale_stay() {
+    let dir = temp_dir("stale");
+    let now = v2_lib::cache::now_ms();
+    let suite = keys::suite("http://x", "o", "p", 42);
+    let refused = keys::suite_refused("http://x", "o", "p", "o\\area");
+    {
+        let store = Store::open(Some(&dir));
+        store.put_at(&suite, &1u32, now - keys::SUITE_TTL_MS - 1);
+        store.put_at(&refused, &true, now - keys::SUITE_REFUSED_TTL_MS - 1);
+        store.put_at(&keys::tags("o", "p"), &vec!["smoke".to_string()], 1);
+        store.put_at(&keys::assigned_seen("o", "p"), &vec!["1".to_string()], 1);
+        store.put("fresh", &1u32);
+        assert!(store.get::<u32>(&suite).is_none(), "an expired suite goes on a write");
+        assert!(store.get::<bool>(&refused).is_none(), "an expired refusal goes on a write");
+    }
+    let reopened = Store::open(Some(&dir));
+    assert!(reopened.get::<u32>(&suite).is_none());
+    assert_eq!(reopened.get::<Vec<String>>(&keys::tags("o", "p")).unwrap(), vec!["smoke"]);
+    assert_eq!(reopened.get::<Vec<String>>(&keys::assigned_seen("o", "p")).unwrap(), vec!["1"]);
+    assert_eq!(reopened.get::<u32>("fresh"), Some(1));
+}
+
+/// A suite still inside its month is kept.
+#[test]
+fn a_suite_inside_its_shelf_life_stays() {
+    let store = Store::open(Some(&temp_dir("suite-young")));
+    let suite = keys::suite("http://x", "o", "p", 7);
+    store.put_at(&suite, &1u32, v2_lib::cache::now_ms() - keys::SUITE_TTL_MS + 60_000);
+    store.put("other", &2u32);
+    assert_eq!(store.get::<u32>(&suite), Some(1));
+}

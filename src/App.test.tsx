@@ -12,7 +12,7 @@ import { saveDbWrites, saveSelectedDb } from "./lib/dbServer";
 import { saveApiWrites } from "./lib/apiTemplates";
 import { saveNetworkTools } from "./lib/networkTools";
 import { setActiveEnvId } from "./lib/activeEnv";
-import { claimCacheFor } from "./lib/cache";
+import { cacheKeys, cacheStoredKeys, claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
 import { ALL_MODULES, modulesSnapshot, resetModulesStore } from "./lib/modules";
@@ -2400,7 +2400,7 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   // Run Tests resolves and caches a plan/suite for the PBI on screen -
   // RunPanel writes that seed directly, not through anything App gates,
   // so this is the assertion that would have caught it.
-  expect(localStorage.getItem("tcm-v2-cache:suite-seed:Northwind/4821")).toBeNull();
+  expect(cacheStoredKeys()).not.toContain(cacheKeys.suiteSeed("Northwind", 4821));
 });
 
 // The first-run tour opens itself 800 ms after sign-in. A tour opened by

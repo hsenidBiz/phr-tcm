@@ -22,8 +22,8 @@ export const RATE_LEVELS: { id: RateLevel; label: string; hint: string }[] = [
     label: "Full speed",
     hint: "No delay. The default - fastest, but shares your Azure DevOps budget with your browser.",
   },
-  { id: "balanced", label: "Balanced", hint: "A small gap between requests. Try this if Azure DevOps warns about usage." },
-  { id: "gentle", label: "Gentle", hint: "Wide gaps. Use when you are working in Azure DevOps too." },
+  { id: "balanced", label: "Balanced", hint: "A small gap between writes. Try this if Azure DevOps warns about usage." },
+  { id: "gentle", label: "Gentle", hint: "Wide gaps between writes. Use when you are working in Azure DevOps too." },
 ];
 
 export function getRateLevel(): RateLevel {

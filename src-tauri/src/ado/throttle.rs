@@ -138,19 +138,31 @@ pub fn clear_backoff() {
     }
 }
 
-/// Waits until the configured gap since the previous request has elapsed.
+/// Waits out any hold Azure DevOps asked for, then - for a write - the
+/// configured gap since the previous write.
 ///
-/// The lock is deliberately held across the sleep: that serialises callers
+/// Only writes are paced locally. The setting exists so a bulk create or
+/// update does not burn the person's rate budget; pacing reads as well put
+/// every screen's reads in one queue behind one lock, so a read over 100
+/// projects took at least 20 s at Balanced and 80 s at Gentle, and the
+/// concurrency of the fan-outs bought nothing. The README already
+/// described the pacer as a limit on writes. A hold the server asked for
+/// still applies to every request, reads included.
+///
+/// The lock is deliberately held across the sleep: that serialises writers
 /// into a queue, which is the point - concurrent screens should share one
 /// budget, not each get their own. At "full" it returns without locking so
 /// the fast path stays free.
-pub async fn pace() {
+pub async fn pace(write: bool) {
     // A server-requested hold outranks the local pace - including at
     // "full", where the user asked US to go flat out, not the server to
     // tolerate it. Slept before the interval gate so the two add rather
     // than overlap.
     if let Some(hold) = remaining_backoff() {
         tokio::time::sleep(hold).await;
+    }
+    if !write {
+        return;
     }
     let want = MIN_INTERVAL_MS.load(Ordering::Relaxed);
     if want == 0 {

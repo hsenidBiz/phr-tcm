@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { ListSkeleton } from "../../components/ui/list-skeleton";
 import { commands, type PbiHit, type PlanWithSuites } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
@@ -226,7 +227,11 @@ export default function ManageCases({
         </div>
       )}
       {(together ? !loaded && !listError && (fetching || projectNames.length > 0) : fetching && !loaded) && (
-        <ScanProgress label="Loading test plans" />
+        <>
+          <ScanProgress label="Loading test plans" />
+          {/* The table's shape under the bar (the bar says what loads). */}
+          <ListSkeleton rows={6} />
+        </>
       )}
       {together && scanNote && <p className="text-xs text-muted">{scanNote}</p>}
       {together && noProjects && <p className="text-sm text-muted">{NO_PROJECTS_SENTENCE}</p>}

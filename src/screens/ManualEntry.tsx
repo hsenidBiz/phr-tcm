@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { type PbiHit, type Step, type TestCase } from "../bindings";
 import { CaseTextField } from "../components/CaseText";
 import DefaultTagsDialog from "../components/DefaultTagsDialog";
@@ -16,6 +16,8 @@ import { useQueue } from "../hooks/useQueue";
 import { IconAdd, IconSetDefault } from "../lib/actionIcons";
 import { loadDefaultTags } from "../lib/defaultTags";
 import { keptSteps } from "../lib/keptSteps";
+import { useScreenState } from "../lib/screenState";
+import { subscribeTour, tourRunningSnapshot } from "../tour/tourState";
 
 /** A fresh case opens with this many blank steps, so the usual case needs no
  * "Add Step" clicks. */
@@ -35,8 +37,15 @@ export default function ManualEntry({
   onPickPbi?: (pbi: PbiHit) => void;
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
-  const [title, setTitle] = useState("");
-  const [steps, setSteps] = useState<Step[]>(blankSteps);
+  // The unsaved case is kept per organization and PBI, on disk, so a tab
+  // change, a restart or a crash never loses what was typed. Nothing is
+  // kept while the tour runs (its key is null): the tour must leave
+  // nothing behind, and must not show a real draft.
+  const tour = useSyncExternalStore(subscribeTour, tourRunningSnapshot);
+  const draft = (field: string) => (tour || !pbi ? null : `manual:${org}/${pbi.id}:${field}`);
+  const keep = { persist: true };
+  const [title, setTitle] = useScreenState(draft("title"), "", keep);
+  const [steps, setSteps] = useScreenState<Step[]>(draft("steps"), blankSteps, keep);
   // Tags come in two halves. The project's defaults are FIXED: they ride
   // on every case and the field refuses to remove them, so the only way to
   // change them is the dialog that owns them. `extras` is what this one
@@ -46,17 +55,22 @@ export default function ManualEntry({
   // ran for the first one - and drops the extras with it, because a tag
   // typed for one project means nothing in the next.
   const [defaults, setDefaults] = useState(() => loadDefaultTags(org, project));
-  const [extras, setExtras] = useState("");
+  const [extras, setExtras] = useScreenState(draft("extras"), "", keep);
   const [editingDefaults, setEditingDefaults] = useState(false);
-  const [status, setStatus] = useState("Not Automated");
-  const [priority, setPriority] = useState<number>(DEFAULT_PRIORITY);
-  const [moduleValue, setModuleValue] = useState("");
-  const [preconditions, setPreconditions] = useState("");
+  const [status, setStatus] = useScreenState(draft("status"), "Not Automated", keep);
+  const [priority, setPriority] = useScreenState<number>(draft("priority"), DEFAULT_PRIORITY, keep);
+  const [moduleValue, setModuleValue] = useScreenState(draft("module"), "", keep);
+  const [preconditions, setPreconditions] = useScreenState(draft("preconditions"), "", keep);
   const [previewPre, setPreviewPre] = useState(false);
+  // Only a real switch of project drops the extras. The first run is the
+  // mount, and a mount must keep the extras the draft brought back.
+  const scopeSeen = useRef(`${org}/${project}`);
   useEffect(() => {
     setDefaults(loadDefaultTags(org, project));
+    if (scopeSeen.current === `${org}/${project}`) return;
+    scopeSeen.current = `${org}/${project}`;
     setExtras("");
-  }, [org, project]);
+  }, [org, project, setExtras]);
 
   if (!org || !project || !pbi) {
     return (

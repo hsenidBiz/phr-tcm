@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useRowKeys } from "../../lib/useRowKeys";
+import { WindowedList } from "../../components/ui/windowed-list";
+import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
@@ -44,6 +47,9 @@ import {
  * (chevron/double-click expands a read-only detail), Group by Title,
  * click/ctrl/shift selection - and View in browser renders the selection
  * (or everything the filter shows when nothing is selected). */
+/** A collapsed card is about this tall; open ones are measured. */
+const ROW_ESTIMATE_PX = 40;
+
 /** One case of the list. Memo: its handlers are made once by the list and
  * reach the list's current state themselves, so a click on one case draws
  * only the rows whose selection, open state or comment changed. */
@@ -56,11 +62,21 @@ const ViewRow = memo(function ViewRow({
   onToggleOpen,
   onComment,
   onSaveNote,
+  index,
+  measure,
+  tabbable = false,
+  onRowFocus,
 }: {
   c: TestCaseFull;
   selected: boolean;
   open: boolean;
   note: string;
+  /** Position in the list and the window's measure ref (WindowedList). */
+  index?: number;
+  measure?: (el: Element | null) => void;
+  /** In the Tab order (useRowKeys' roving tabindex). */
+  tabbable?: boolean;
+  onRowFocus?: (id: number) => void;
   onCardClick: (c: TestCaseFull, e: MouseEvent) => void;
   onToggleOpen: (id: number) => void;
   onComment: (c: TestCaseFull) => void;
@@ -68,6 +84,11 @@ const ViewRow = memo(function ViewRow({
 }) {
   return (
     <li
+      ref={measure}
+      data-index={index}
+      data-row-key={c.id}
+      tabIndex={tabbable ? 0 : -1}
+      onFocus={(e) => e.target === e.currentTarget && onRowFocus?.(c.id)}
       className={cn(
         "cv-row cursor-pointer select-none rounded-md border transition-colors",
         selected ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong",
@@ -128,13 +149,15 @@ export default function ViewCases({
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
-  const [search, setSearch] = useState("");
+  // Search, open details and selection survive a tab change (lib/screenState).
+  const keyOf = useScreenKeys(pbi ? `view:${org}/${project}/${pbi.id}` : null);
+  const [search, setSearch] = useScreenState(keyOf("search"), "");
   // Open detail views, PLURAL: comparing two cases side by side is the
   // normal reason to expand a second one, and "Close all" only means
   // something once several can be open. An open detail also survives its
   // GROUP being collapsed - collapsing tidies the list away, and the case
   // someone is actively reading is not list, it is their work.
-  const [openIds, setOpenIds] = useState<Set<number>>(new Set());
+  const [openIds, setOpenIds] = useScreenSet<number>(keyOf("open"));
   const toggleOpen = (id: number) =>
     setOpenIds((s) => {
       const next = new Set(s);
@@ -143,8 +166,8 @@ export default function ViewCases({
       return next;
     });
   const [commentCase, setCommentCase] = useState<TestCaseFull | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [anchor, setAnchor] = useState<number | null>(null);
+  const [selected, setSelected] = useScreenSet<number>(keyOf("selected"));
+  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null);
   const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(org));
   // Whether the browser report has been opened - see the re-export effect.
   const [reportOpen, setReportOpen] = useState(false);
@@ -181,6 +204,8 @@ export default function ViewCases({
   });
 
   const list = cases.data ?? [];
+  const loadedIds = useMemo(() => cases.data?.map((c) => c.id), [cases.data]);
+  usePruneSelection(loadedIds, setSelected);
   const settled = useSettled(list.length > 0);
   // Switching Group by title is one motion, not a regroup then an unfold
   // per open group (components/ui/collapse.tsx).
@@ -230,6 +255,24 @@ export default function ViewCases({
     }
     setAnchor(c.id);
   };
+
+  // Arrow keys and Space (backlog A1.8), in the order the rows are on
+  // screen: a folded group's rows are left out unless held open.
+  const navIds = useMemo(
+    () =>
+      ordered.flatMap(({ group, items }) =>
+        (group && collapsedGroups.has(group) ? items.filter((c) => openIds.has(c.id)) : items).map((c) => c.id),
+      ),
+    [ordered, collapsedGroups, openIds],
+  );
+  const byId = useMemo(() => new Map(flat.map((c) => [c.id, c])), [flat]);
+  const rowKeys = useRowKeys({
+    order: navIds,
+    onSelect: (id, keys) => {
+      const c = byId.get(id);
+      if (c) handleCardClick(c, keys as unknown as MouseEvent);
+    },
+  });
 
   /** The rows' handlers, made once: each reaches this render's state
    * through `rowLatest`, so a row (memo) is not drawn again for new
@@ -447,7 +490,7 @@ export default function ViewCases({
         <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
-      <div ref={regroup.ref} className="space-y-2">
+      <div ref={regroup.ref} className="space-y-2" {...rowKeys.listProps}>
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
@@ -500,18 +543,32 @@ export default function ViewCases({
               // held open: a row being read stays, so its list stays with it.
               return (
               <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
-              <ul className="space-y-1">
-                {shown.map((c) => (
-                  <ViewRow
-                    key={c.id}
-                    c={c}
-                    selected={selected.has(c.id)}
-                    open={openIds.has(c.id)}
-                    note={notes[String(c.id)] ?? ""}
-                    {...rowActions}
-                  />
-                ))}
-              </ul>
+              <WindowedList
+                className="space-y-1"
+                count={shown.length}
+                estimate={ROW_ESTIMATE_PX}
+                gap={4}
+                keyOf={(i) => shown[i].id}
+                // Open details stay rendered (a note may be mid-edit).
+                pinned={shown.flatMap((c, i) => (openIds.has(c.id) ? [i] : []))}
+                renderRow={(i, measure) => {
+                  const c = shown[i];
+                  return (
+                    <ViewRow
+                      key={c.id}
+                      c={c}
+                      index={i}
+                      measure={measure}
+                      tabbable={rowKeys.tabKey === c.id}
+                      onRowFocus={rowKeys.onRowFocus}
+                      selected={selected.has(c.id)}
+                      open={openIds.has(c.id)}
+                      note={notes[String(c.id)] ?? ""}
+                      {...rowActions}
+                    />
+                  );
+                }}
+              />
               </Collapse>
               );
             })()}

@@ -70,7 +70,7 @@ export const commands = {
 	 *  500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
 	 *  patched in place. A failed item never aborts the rest.
 	 */
-	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null, orderHint: OrderHint[]) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath, orderHint })),
+	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null, options: SubmitOptions) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath, options })),
 	/**
 	 *  Check what an interrupted upload created: the rows the queue holds as
 	 *  "outcome unknown" (C2). Read only.
@@ -8195,6 +8195,23 @@ export type SubmitItemResult = {
 	 *  updated. Empty when the row had no new files.
 	 */
 	attached?: AttachedFile[],
+};
+
+/**
+ *  The last part of a submit: two values in one argument, because a command
+ *  may take at most ten.
+ */
+export type SubmitOptions = {
+	/**
+	 *  The rows the screen left out as unchanged, with where each sat, so
+	 *  the order set after the upload still counts them. Ordering only.
+	 */
+	order_hint: OrderHint[],
+	/**
+	 *  The person chose to upload although the current steps of the updates
+	 *  could not be read (see `PLAIN_STEPS_REFUSAL`). False on a first try.
+	 */
+	allow_plain_steps: boolean,
 };
 
 /**  Emitted once per queue item while submit_queue runs. */

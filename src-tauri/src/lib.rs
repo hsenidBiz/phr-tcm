@@ -483,6 +483,30 @@ fn ms_since_launch() -> u128 {
     LAUNCHED.get().map_or(0, |t| t.elapsed().as_millis())
 }
 
+/// The start-up's parts and how long each took, for the "started" line.
+struct SetupSteps {
+    last: std::time::Instant,
+    done: Vec<(&'static str, u128)>,
+}
+
+impl SetupSteps {
+    fn new() -> Self {
+        Self { last: std::time::Instant::now(), done: Vec::new() }
+    }
+
+    /// The part that just ended, timed from the previous mark.
+    fn mark(&mut self, name: &'static str) {
+        let now = std::time::Instant::now();
+        self.done.push((name, now.duration_since(self.last).as_millis()));
+        self.last = now;
+    }
+
+    /// "cache and settings 12 ms, Auto Run data 240 ms, ..."
+    fn summary(&self) -> String {
+        self.done.iter().map(|(n, ms)| format!("{n} {ms} ms")).collect::<Vec<_>>().join(", ")
+    }
+}
+
 /// Auto Run's browsers go with the app (`close_autorun_browsers`). Bounded,
 /// so a browser that will not die cannot hold the app's exit. A template
 /// run still going keeps no browser from here on (`held::shut`): it would
@@ -565,6 +589,10 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // How long each part of the start-up took, written in the
+            // "started" line: measured first, before anything is moved off
+            // the path to the window (backlog A1.7).
+            let mut steps = SetupSteps::new();
             // Registers the typed-event registry in Tauri state; without
             // this every specta Event::emit panics with "EventRegistry not
             // found in Tauri state".
@@ -625,6 +653,7 @@ pub fn run() {
                 Err(_) => std::sync::Arc::new(db::CredentialManager),
             };
             app.manage(db::DbSecrets(db_store));
+            steps.mark("events and database logins");
 
             // npm's debug log of a Playwright tab run (its argv can hold a
             // password) goes to this folder of the app's own, emptied after
@@ -644,6 +673,7 @@ pub fn run() {
                 // inside it - see activity_log.rs.
                 activity_log::init(dir.join("activity"));
             }
+            steps.mark("npm logs folder and app log");
             // Profile folders a browser of an older version left in the
             // temp folder (`browser::tree`): only exact `tcm-autorun-<digits>`
             // names, only ones no browser of this app holds and nothing has
@@ -668,6 +698,7 @@ pub fn run() {
                 // The AI Bridge tab's writing style, read by the guide on each
                 // call (see writing_style.rs).
                 crate::writing_style::init(dir.clone());
+                steps.mark("cache and settings");
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
@@ -750,11 +781,13 @@ pub fn run() {
                 for r in &stores {
                     autorun::store::sweep_orphan_downloads(r);
                 }
+                steps.mark("Auto Run data");
             }
             applog::info(format!(
-                "Test Case Manager {} started (set up {} ms after launch)",
+                "Test Case Manager {} started (set up {} ms after launch; {})",
                 app.package_info().version,
-                ms_since_launch()
+                ms_since_launch(),
+                steps.summary()
             ));
             // A panic would otherwise vanish in a windowed release build.
             let previous = std::panic::take_hook();

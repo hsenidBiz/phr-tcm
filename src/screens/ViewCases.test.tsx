@@ -404,3 +404,23 @@ test("Export JSON and Open in browser sit on the header line; the search is the 
   expect(screen.getByRole("button", { name: "Export 1 JSON" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Open 1 in browser" })).toBeInTheDocument();
 });
+
+/// Backlog A1.8: the list takes arrow keys like the queue does. One row is
+/// in the Tab order; Down moves to the next case; Space selects it as a
+/// Ctrl-click would; Shift+Down extends the selection.
+test("arrow keys move through the cases and Space selects one", async () => {
+  mockCases();
+  renderView();
+  await screen.findByText("Login - valid");
+  const row = (title: string) => screen.getByText(title).closest<HTMLElement>("[data-row-key]")!;
+  expect(row("Login - valid").tabIndex).toBe(0);
+  expect(row("Login - locked out").tabIndex).toBe(-1);
+
+  row("Login - valid").focus();
+  fireEvent.keyDown(row("Login - valid"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Login - locked out"));
+  fireEvent.keyDown(row("Login - locked out"), { key: " " });
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+  fireEvent.keyDown(row("Login - locked out"), { key: "ArrowDown", shiftKey: true });
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+});

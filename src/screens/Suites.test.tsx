@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, expect, test, vi } from "vitest";
+import { cacheEntry, cacheKeys } from "../lib/cache";
 import Suites, { pointsIndent } from "./Suites";
 
 afterEach(() => {
@@ -880,7 +881,7 @@ test("a Refresh that fails partway keeps the projects it had not reached", async
   twoProjects();
   renderCombined();
   await screen.findByRole("heading", { name: "Payroll" });
-  const stored = (project: string) => localStorage.getItem(`tcm-v2-cache:plans-suites:acme/${project}`);
+  const stored = (project: string) => cacheEntry(cacheKeys.plansSuites("acme", project), Infinity);
   expect(stored("Web")).not.toBeNull();
 
   // Payroll still answers; Web is throttled this time.
@@ -900,7 +901,7 @@ test("a Refresh that fails partway keeps the projects it had not reached", async
 
   expect(await screen.findByText("Rate limited - retry in 7s.")).toBeInTheDocument();
   // Web's warm tree is still on disk for the next visit.
-  expect(JSON.parse(stored("Web") as string).data[0].plan.id).toBe(9);
+  expect((stored("Web")!.data as { plan: { id: number } }[])[0].plan.id).toBe(9);
 });
 
 test("an organization with no projects says so", async () => {

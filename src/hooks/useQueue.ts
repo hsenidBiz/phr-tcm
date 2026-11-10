@@ -9,6 +9,7 @@ import {
 import type { TestCase } from "../bindings";
 import { TOUR_QUEUE } from "../tour/tourData";
 import { subscribeTour, tourRunningSnapshot } from "../tour/tourState";
+import { toast } from "../lib/toast";
 
 const draftKey = (org: string, pbiId: number) => `tcm-v2-draft:${org}/${pbiId}`;
 
@@ -19,12 +20,27 @@ export function loadDraftQueue(org: string, pbiId: number): TestCase[] {
   return loadDraft(org, pbiId);
 }
 
-export function saveDraftQueue(org: string, pbiId: number, queue: TestCase[]): void {
+/** Whether the last save failed, so a run of failures warns once. */
+let saveFailing = false;
+
+/** Saves the queue for the next launch. Returns false when it could not be
+ * saved; the first failure in a run of them tells the person, because the
+ * queue then lives only until the app closes (it used to fail in silence). */
+export function saveDraftQueue(org: string, pbiId: number, queue: TestCase[]): boolean {
   try {
     if (queue.length === 0) localStorage.removeItem(draftKey(org, pbiId));
     else localStorage.setItem(draftKey(org, pbiId), JSON.stringify(queue));
+    saveFailing = false;
+    return true;
   } catch {
-    // storage unavailable -> session-only
+    if (!saveFailing) {
+      toast.warning(
+        "The queue could not be saved on this computer. It stays only until you close the app, so upload it before you close.",
+        { duration: Infinity },
+      );
+    }
+    saveFailing = true;
+    return false;
   }
 }
 

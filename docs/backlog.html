@@ -46,6 +46,91 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
+    <div class="head"><span class="num">A1</span><span class="title">Software assessment: speed, reliability and UX (agreed 10 November 2026)</span><span class="status todo">Built, hand checks owed</span></div>
+    <p>From the assessment of 10 November 2026. Not in this batch: Excel/CSV import and export, scheduled Auto Run with a trend report, and continuous integration.</p>
+    <p>Built 10 November 2026 on <code>claude/software-assessment-optimization-e3zpfi</code> and merged to main 11 November 2026, A1.1 to A1.9, with tests (plan: <code>docs/superpowers/plans/2026-11-10-assessment-a1-6-to-a1-9.md</code>). Changes from the agreement: the Rust cache removes only expired resolved suites and suite refusals (tags and assignment baselines are read stale on purpose); inline images keep base64 but one answer carries at most 24 MB of pictures; relink and step file uploads also run four at a time.</p>
+    <ul>
+      <li>Hand check owed: a suite of 1,000 or more cases in Run Tests, View and Update scrolls smoothly, Shift-click across a long range, an open editor kept while scrolled away.</li>
+      <li>Hand check owed: an installed app updated to this build keeps its cached plan trees (the one-time move from localStorage to IndexedDB) and the first screens paint from the cache.</li>
+      <li>Hand check owed: on a live org, an update whose baseline read fails (for example, VPN dropped after Review) shows "Upload anyway", and Upload anyway writes the update.</li>
+      <li>Hand check owed: the "started" line in Settings, Logs names each start-up step and its time; read it on a slow machine.</li>
+    </ul>
+    <ul>
+      <li><b>A1.1 Keep screen state on a tab change.</b> The screen wrapper in <code>App.tsx</code> uses <code>key={section}</code>, so each tab change starts the screen again. Manual Entry loses the unsaved title, steps, preconditions and tags; View, Update and Run lose search, filter and selection. Keep the state, and keep the Manual Entry draft on disk per organization and PBI.</li>
+      <li><b>A1.2 Retry failed reads.</b> A 429, a 5xx or a network error fails a request at once (<code>ado/transport.rs</code>), and one failed call fails a full fan-out. Retry GET requests (and read-only POST queries) with a delay and jitter, and obey Retry-After. Never retry a write.</li>
+      <li><b>A1.3 Remove serial request loops.</b> One request at a time for each item: PR work-item links, mentions (up to 20 every 5 minutes), pipelines, team members, the run report, relink, step attachments and inline images. Reads of more than 200 ids also go one chunk at a time. Run them concurrently with a limit.</li>
+      <li><b>A1.4 The pacer paces writes only.</b> At Balanced or Gentle one lock puts every request in one queue (<code>ado/throttle.rs</code>), so a read over 100 projects takes at least 20 or 80 seconds. The README already says the pacer limits writes. Server-requested holds still apply to every request.</li>
+      <li><b>A1.5 List virtualization, Run Tests first.</b> All rows stay in the DOM (<code>.cv-row</code> is not virtualization). The Run Tests table has no memoized row, so a selection click renders every row again. Memoize its rows, then render only the visible rows of long lists.</li>
+      <li><b>A1.6 Move the webview cache out of localStorage.</b> The cache, the queue drafts, notes and preferences share about 5 MB. Decision: the cache moves to IndexedDB with an in-memory copy loaded before the first render, so reads stay synchronous and no data crosses IPC. Queue drafts stay in localStorage (they are user work and part of the backup), and a failed queue save now shows a warning instead of failing silently.</li>
+      <li><b>A1.7 Smaller items.</b> The log file opens and closes for each line and has no size limit; the Rust cache never removes expired entries; inline images go to the webview as base64 text up to 8 MB each; the work before the window shows is synchronous (measure each step in the log first).</li>
+      <li><b>A1.8 Arrow keys and loading states.</b> Arrow keys move through rows only in the queue; add them to View, Update, Run and Search Suites. Use skeleton loaders on Run Tests, Search Suites, Suite Management and Auto Run.</li>
+      <li><b>A1.9 Tell the user when an update loses formatting.</b> If the baseline read fails before an upload, steps are written from plain text and formatting is lost; only the log says so (<code>commands/queue.rs</code>). Tell the user and let them stop before anything is sent.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="num">A2</span><span class="title">Software assessment: what is left (added 11 November 2026)</span><span class="status todo">Proposed, yours to pick</span></div>
+    <p>The rest of the 10 November 2026 assessment after A1, together with the suggestions from the second assessment in the same session. Nothing here is agreed yet; overlapping ideas are merged into one line.</p>
+    <p><b>Features with high impact</b></p>
+    <ul>
+      <li><b>F1 Excel/CSV import and export.</b> JSON is the only format today and most testers keep cases in spreadsheets. The spreadsheet readers (<code>calamine</code>, <code>csv</code>) are already in the build, for Auto Run download checks.</li>
+      <li><b>F2 Scheduled and unattended Auto Run.</b> There is no scheduler and no command-line mode (<code>--mcp</code> is the only other mode). A nightly run with a summary (to Teams or email) gives regression coverage without a person.</li>
+      <li><b>F3 Trend and traceability reports.</b> The app has a last-five history and an HTML report for a selection. Add a pass rate, duration and flakiness trend per PBI or suite, a PBI-to-case-to-bug matrix, and a coverage view for a sprint.</li>
+      <li><b>F4 Azure DevOps test features.</b> Shared steps are kept but cannot be edited or expanded (<code>steps_xml.rs</code>). Test parameters (data-driven cases) and test configurations are not supported.</li>
+      <li><b>F5 A screen for saved setups.</b> Only an assistant can use saved setups today (<code>get_kept_actions</code>, <code>save_setup</code>, <code>list_setups</code>, <code>run_setup</code>).</li>
+      <li><b>F6 Upload journal in Rust.</b> The "unknown create" hold is written only after the results arrive. If the app stops between the send and the result, no record remains and a second upload relies only on the duplicate-title warning. Write a marker in Rust before each <code>$batch</code> send.</li>
+      <li><b>F7 Optional usage counts.</b> No telemetry, so nobody knows which features are used. A local count the user can turn off is enough.</li>
+      <li><b>F8 One inbox for assistant proposals.</b> Proposals sit in two places (Accounts, Proposed, and the Sign-in notice in Auto Run, Setup) and the assistant waits while the person finds them. One "Waiting for you" list with a notification.</li>
+      <li><b>F9 Show what the assistant is doing.</b> A trial sign-in holds the browser with no sign in the app, and pressing Run during one says an unattended run is going. An activity strip with Stop, and a timeline of what the assistant saved, proposed and tried.</li>
+      <li><b>F10 Share Auto Run knowledge between people.</b> Areas, recipes and the API library appear to live on one machine and move by export file, so each teammate rediscovers the same app. Confirm first, then consider a shared location such as a repository folder.</li>
+      <li><b>F11 Audit existing test cases</b> with the quality warnings the upload queue already applies to new ones.</li>
+      <li><b>F12 A second sign-in inside one app</b> (several recipes per project), deferred in the sign-in build; only if a real site needs it.</li>
+    </ul>
+    <p><b>UI and UX</b></p>
+    <ul>
+      <li><b>U1 Undo for destructive actions.</b> Undo exists only for the case-editor discard and Power Rename. Add an Undo toast for queue row removal, Remove all and bulk edit.</li>
+      <li><b>U2 Actions in the command palette.</b> Ctrl+K only goes to screens. Add actions (import a file, upload the queue, new case, refresh) and a search for PBIs and case ids.</li>
+      <li><b>U3 Simpler navigation.</b> Up to 12 tabs; Manual Entry, Import, Update, View, Search Suites and Suite Management overlap, and Run Tests and Auto Run are easy to confuse. Think about one Cases screen with modes.</li>
+      <li><b>U4 Fixed Ctrl+number shortcuts.</b> The Ctrl+1 to 9 slots move when a module is turned on or off (<code>App.tsx</code>). Give each screen a fixed number.</li>
+      <li><b>U5 Arrow keys in Search Suites.</b> A1.8 added them to View, Update and Run Tests; the Search Suites tree still takes clicks only.</li>
+      <li><b>U6 Narrow windows.</b> Only one screen uses a media query; the rest rely on the 900 px minimum width. Check each screen at the minimum size.</li>
+      <li><b>U7 Translation.</b> All text is English in the code. Only if teams outside English-speaking ones will use the app.</li>
+      <li><b>U8 An Auto Run readiness checklist.</b> Environment, address, accounts, sign-in, areas and test files are separate rows; one checklist that says what is missing and what to do next.</li>
+      <li><b>U9 Explain the jargon where it appears.</b> Recipe, fixture, flow, area, component, quirk, divergence and ruling: an inline definition on first use.</li>
+      <li><b>U10 Show tags in Run Tests.</b> Search matches tags but the rows show none; add tag chips or a tag filter, and say so when the tag read failed instead of silently matching nothing.</li>
+      <li><b>U11 Error messages with a next step.</b> The sign-in errors now say what to do; give the older ones (for example "The signed-in check never appeared") the same pass.</li>
+      <li><b>U12 Shorter changelog in Settings.</b> The full history renders about 24,000 px tall; show the last ten versions and load the rest on demand.</li>
+    </ul>
+    <p><b>Maintainability and engineering</b></p>
+    <ul>
+      <li><b>M1 Continuous integration.</b> A workflow on Windows (22 Rust tests need it) running <code>npm test</code>, <code>npx tsc --noEmit</code> and <code>cargo test --tests</code>. It would also let Rust dependency updates land, since this machine's antivirus blocks cargo downloads (Dependabot #34 and #38, 18 open alerts).</li>
+      <li><b>M2 Split <code>ai_bridge.rs</code>.</b> 17,691 lines and one route table of about 103 arms; Crystal Reports and Database are the easiest to start with. Its header says "no writes", which is no longer true.</li>
+      <li><b>M3 Split <code>App.tsx</code> and <code>QueueSection.tsx</code></b> (about 1,600 and 2,240 lines, many <code>useState</code> and <code>useEffect</code> calls).</li>
+      <li><b>M4 One selection hook.</b> View, Update and Run Tests each copy the click, Ctrl-click and Shift-click logic, and the queue has a fourth; <code>ManageCases/selection.ts</code> has no importer.</li>
+      <li><b>M5 One markdown renderer, one UI kit.</b> Two markdown paths (<code>marked</code> + DOMPurify, and Astryx <code>Markdown</code>) and two kits (xiod-ui and Astryx), plus hand-made controls.</li>
+      <li><b>M6 Remove unused dependencies:</b> <code>@stylexjs/stylex</code> and <code>@astryxdesign/theme-neutral</code>.</li>
+      <li><b>M7 Documents that disagree with the code.</b> CLAUDE.md says there are no DELETE calls but the README names one (<code>ado/deletion.rs</code>); CLAUDE.md says tokens are never stored but the refresh token is in Windows Credential Manager; the README says the database password is plain text but logins are in Credential Manager (confirm). The README does not describe Auto Run, API Templates, Playwright or the module system.</li>
+      <li><b>M8 Code signing.</b> The release script has no signing step and update trust rests on HTTPS to GitHub. Signing also removes SmartScreen warnings and the antivirus block each new build meets on this machine. Skipped by an earlier decision; worth revisiting as users grow.</li>
+      <li><b>M9 Product coupling.</b> PeoplesHR is named in 23 Rust files (sign-in recipe, single-session rule, Playwright layout, WebForms postback). A cost only if another product must be tested.</li>
+      <li><b>M10 A scripted smoke run for hand checks.</b> Most features since 2.3 owe live-site checks. One fixed test project and environment covering sign-in, a run, an upload and a proposal would replace most of them.</li>
+      <li><b>M11 Smaller assistant guides.</b> <code>autorun/guide.rs</code> is about 205 KB; log which sections agents request and serve smaller per-job guides.</li>
+      <li><b>M12 A flaky-test log.</b> Two load-related failures this session (<code>App.test.tsx</code>, <code>bridge_per_env</code>); a short record stops each being re-diagnosed.</li>
+      <li><b>M13 Dev app beside the installed app.</b> Give development builds their own single-instance identity so TCM need not be closed to debug.</li>
+      <li><b>M14 Line endings.</b> <code>src/bindings.ts</code> and <code>Cargo.toml</code> keep showing false changes; a <code>.gitattributes</code> rule would end it.</li>
+      <li><b>M15 Check the Run Tests tag read goes through the cache</b> rather than fetching on every list load.</li>
+    </ul>
+    <p><b>Minor findings from the A1 review (deferred)</b></p>
+    <ul>
+      <li><b>R1</b> An old backup copy of a cache entry can win over a newer IndexedDB copy at the next launch; a restored entry is ignored while memory has the key.</li>
+      <li><b>R2</b> The Playwright tick choices (<code>CACHE.picks</code>) are no longer in backups since the cache moved to IndexedDB.</li>
+      <li><b>R3</b> In Manual Entry, changing project and back clears the draft's extra tags on screen.</li>
+      <li><b>R4</b> In long lists, the one row in the Tab order can scroll out of view so Tab skips the list; a focused row that scrolls away loses focus.</li>
+      <li><b>R5</b> In long lists, the visible rows can be wrong until the next scroll if a group above changes height (no resize observer).</li>
+      <li><b>R6</b> The 24 MB picture limit applies after download, so it limits what reaches the screen but not memory.</li>
+      <li><b>R7</b> The "Upload anyway" message does not suggest trying again first; a plain retry usually keeps the formatting.</li>
+      <li><b>R8</b> Unsaved Manual Entry drafts for PBIs nobody returns to stay in localStorage with no expiry (<code>forgetScreenState</code> is not used).</li>
+    </ul>
+  </div>
+  <div class="item">
     <div class="head"><span class="title">Assistant-built sign-in and expired-password reset (2.4.6-beta.2)</span><span class="status todo">Next</span></div>
     <ul>
       <li>Built 10 Nov 2026: the assistant inspects a sign-in or change-password page, proposes a recipe it has tried with a saved account, and you approve or reject it under the Sign-in row in Auto Run, Setup; discover and every live-app command recover through this instead of stopping. Trials only sign in on the environment's address or the saved recipe's sites; with neither, propose is refused (record a sign-in or set the address first).</li>

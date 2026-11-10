@@ -84,8 +84,30 @@ impl AdoClient {
     /// may reach it. Successful calls are `debug` (they are a firehose
     /// during a bulk create); anything that did not succeed is `warn`, so
     /// the useful lines still stand out at the default filter.
+    ///
+    /// A GET is a read and everything else a write; a POST that only reads
+    /// (WIQL, search, the work-item batch read) goes through `send_as`
+    /// with `Effect::Read` instead.
     pub(crate) async fn send(
         &self,
+        method: reqwest::Method,
+        url: &str,
+        build: impl FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, AdoError> {
+        let effect = if method == reqwest::Method::GET { Effect::Read } else { Effect::Write };
+        self.send_as(effect, method, url, build).await
+    }
+
+    /// `send` with the effect stated. Two things follow from it:
+    /// - Only a write waits for the local pacer (Settings, request rate).
+    ///   Reads still wait out any hold Azure DevOps asked for.
+    /// - Only a read is retried, after a failure that is likely to pass: a
+    ///   connection that failed, a 500/502/503/504, or a 429 that asks for
+    ///   a short wait. A write is never sent twice: a retry after a lost
+    ///   answer could create a second work item.
+    pub(crate) async fn send_as(
+        &self,
+        effect: Effect,
         method: reqwest::Method,
         url: &str,
         build: impl FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
@@ -104,39 +126,110 @@ impl AdoClient {
                 "{method} is not a verb this client will send"
             )));
         }
-        super::throttle::pace().await;
-        let started = std::time::Instant::now();
-        let request = build(self.http.request(method.clone(), url).bearer_auth(&self.token));
-        let outcome = request.send().await;
-        let ms = started.elapsed().as_millis();
-        match outcome {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                let line = format!("{method} {} -> {status} in {ms} ms", tidy(url));
-                if (200..300).contains(&status) {
-                    crate::applog::debug(line);
-                } else {
-                    crate::applog::warn(line);
+        let mut request = build(self.http.request(method.clone(), url).bearer_auth(&self.token));
+        let mut attempt: u32 = 0;
+        loop {
+            // A copy for a retry, reads only. A body that cannot be copied
+            // (a stream) simply gets no retry.
+            let spare = if effect == Effect::Read && attempt < MAX_READ_RETRIES {
+                request.try_clone()
+            } else {
+                None
+            };
+            super::throttle::pace(effect == Effect::Write).await;
+            let started = std::time::Instant::now();
+            let outcome = request.send().await;
+            let ms = started.elapsed().as_millis();
+            match outcome {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let line = format!("{method} {} -> {status} in {ms} ms", tidy(url));
+                    if (200..300).contains(&status) {
+                        crate::applog::debug(line);
+                    } else {
+                        crate::applog::warn(line);
+                    }
+                    // Read the throttle hint on EVERY response, not just 429.
+                    // Azure DevOps delays requests before it ever rejects one:
+                    // a throttled call "still returns HTTP 200" carrying
+                    // Retry-After / X-RateLimit-Delay. Honouring it only on
+                    // 429 meant the app kept firing at full pace through the
+                    // whole warning phase - see the 2026-08 audit (R-1).
+                    if let Some(secs) = server_delay(&resp) {
+                        super::throttle::note_server_delay(secs);
+                    }
+                    if let Some(next) = spare {
+                        if status_is_transient(status, &resp) {
+                            let wait = retry_wait(attempt);
+                            crate::applog::warn(format!(
+                                "retrying {method} {} in {} ms (attempt {} of {})",
+                                tidy(url),
+                                wait.as_millis(),
+                                attempt + 2,
+                                MAX_READ_RETRIES + 1
+                            ));
+                            tokio::time::sleep(wait).await;
+                            request = next;
+                            attempt += 1;
+                            continue;
+                        }
+                    }
+                    return Ok(resp);
                 }
-                // Read the throttle hint on EVERY response, not just 429.
-                // Azure DevOps delays requests before it ever rejects one:
-                // a throttled call "still returns HTTP 200" carrying
-                // Retry-After / X-RateLimit-Delay. Honouring it only on
-                // 429 meant the app kept firing at full pace through the
-                // whole warning phase - see the 2026-08 audit (R-1).
-                if let Some(secs) = server_delay(&resp) {
-                    super::throttle::note_server_delay(secs);
+                Err(e) => {
+                    crate::applog::warn(format!(
+                        "{method} {} failed after {ms} ms: {e}",
+                        tidy(url)
+                    ));
+                    if let Some(next) = spare {
+                        if error_is_transient(&e) {
+                            let wait = retry_wait(attempt);
+                            crate::applog::warn(format!(
+                                "retrying {method} {} in {} ms (attempt {} of {})",
+                                tidy(url),
+                                wait.as_millis(),
+                                attempt + 2,
+                                MAX_READ_RETRIES + 1
+                            ));
+                            tokio::time::sleep(wait).await;
+                            request = next;
+                            attempt += 1;
+                            continue;
+                        }
+                    }
+                    return Err(network_error(&e));
                 }
-                Ok(resp)
-            }
-            Err(e) => {
-                crate::applog::warn(format!(
-                    "{method} {} failed after {ms} ms: {e}",
-                    tidy(url)
-                ));
-                Err(network_error(&e))
             }
         }
+    }
+
+    /// GET each URL, `READ_CONCURRENCY` at a time, and give the answers in
+    /// the order the URLs were given. For reads split into 200-id chunks:
+    /// a 1,000-case PBI was five round trips one after the other.
+    pub(crate) async fn get_json_each(
+        &self,
+        urls: Vec<String>,
+    ) -> Vec<Result<serde_json::Value, AdoError>> {
+        use futures::stream::{self, StreamExt};
+        stream::iter(urls)
+            .map(|url| self.get_json(url))
+            .buffered(super::READ_CONCURRENCY)
+            .collect()
+            .await
+    }
+
+    /// `get_json_each`, failing on the first error (no answer is used if
+    /// one chunk could not be read).
+    pub(crate) async fn get_json_all(
+        &self,
+        urls: Vec<String>,
+    ) -> Result<Vec<serde_json::Value>, AdoError> {
+        use futures::stream::{self, StreamExt, TryStreamExt};
+        stream::iter(urls)
+            .map(|url| self.get_json(url))
+            .buffered(super::READ_CONCURRENCY)
+            .try_collect()
+            .await
     }
 
     pub(crate) async fn get_json(&self, url: String) -> Result<serde_json::Value, AdoError> {
@@ -254,15 +347,16 @@ impl AdoClient {
         Self::handle_json(resp).await
     }
 
-    /// POST used for WIQL queries only — query-only, creates and modifies
-    /// nothing. Still no DELETE through this funnel.
+    /// POST that only reads (WIQL, search, the work-item batch read):
+    /// creates and modifies nothing, so it is paced and retried like a
+    /// GET. Still no DELETE through this funnel.
     pub(crate) async fn post_json_query(
         &self,
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
         let resp = self
-            .send(reqwest::Method::POST, &url, |r| {
+            .send_as(Effect::Read, reqwest::Method::POST, &url, |r| {
                 r.header("Accept", "application/json").json(body)
             })
             .await?;
@@ -441,6 +535,46 @@ pub(crate) fn server_delay(resp: &reqwest::Response) -> Option<u64> {
     };
     header("Retry-After").or_else(|| header("X-RateLimit-Delay"))
 }
+
+/// What a request does, for pacing and retry (see `AdoClient::send_as`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effect {
+    Read,
+    Write,
+}
+
+/// Retries after the first try, for reads only. Three tries in all.
+pub const MAX_READ_RETRIES: u32 = 2;
+
+/// A 429 asking for a longer wait than this is not retried: the hold it
+/// sets still applies to the next request, but a screen that waits that
+/// long twice looks hung. The error reaches the screen instead.
+const RETRY_429_MAX_SECS: u32 = 10;
+
+fn status_is_transient(status: u16, resp: &reqwest::Response) -> bool {
+    match status {
+        // A 5xx that asks for a long wait is not retried either: the hold
+        // it sets still applies, and two of them hung a read a minute.
+        500 | 502 | 503 | 504 => server_delay(resp).is_none_or(|secs| secs <= u64::from(RETRY_429_MAX_SECS)),
+        429 => retry_after(resp) <= RETRY_429_MAX_SECS,
+        _ => false,
+    }
+}
+
+/// A connection that failed or broke. Not a timeout: the request may have
+/// taken its full 60 s, and three of those is a hang, not a recovery.
+fn error_is_transient(e: &reqwest::Error) -> bool {
+    !e.is_timeout() && (e.is_connect() || e.is_request())
+}
+
+/// 400 ms then 1.2 s, each with up to 200 ms of jitter so screens that
+/// failed together do not retry together. Any hold the server asked for
+/// is added by the pacer on top.
+fn retry_wait(attempt: u32) -> std::time::Duration {
+    let base = 400u64 * 3u64.pow(attempt);
+    std::time::Duration::from_millis(base + rand::random_range(0..200u64))
+}
+
 
 /// ADO's back-off hint, defaulting to 5s when it doesn't send one.
 // pub(crate) so the recycle-bin delete - which has its own sender rather

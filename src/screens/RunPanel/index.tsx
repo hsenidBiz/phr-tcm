@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { ListSkeleton } from "../../components/ui/list-skeleton";
+import { useRowKeys } from "../../lib/useRowKeys";
+import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, events, type SuiteScanProgress, type TestPoint } from "../../bindings";
@@ -13,10 +16,8 @@ import { ListToolbar } from "../../components/ui/list-toolbar";
 import { PageHeader } from "../../components/ui/page-header";
 import { SearchInput } from "../../components/ui/search-input";
 import { Select } from "../../components/ui/select";
-import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
 import ActionDock from "../../components/ActionDock";
-import { cn } from "../../lib/cn";
 import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { clearSuiteSeed, readSuiteSeed, writeSuiteSeed } from "../../lib/suiteSeed";
@@ -30,7 +31,7 @@ import { describeAdoError, unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
 import { matchesQuery, searchPlaceholder } from "../../lib/search";
 import { openRunnerWindow } from "../../lib/openRunner";
-import CasePreview from "./CasePreview";
+import { RunRows } from "./RunRows";
 import { IconCollapseAll, IconReport, IconRun, IconSetOrder } from "../../lib/actionIcons";
 import ExecutionOrderModal from "./ExecutionOrderModal";
 import { runOrderQueryOptions, useRunOrder } from "./useRunOrder";
@@ -115,20 +116,24 @@ export default function RunPanel({
   closeLabel?: string;
 }) {
   const qc = useQueryClient();
-  const [filterText, setFilterText] = useState("");
-  const [filterOutcome, setFilterOutcome] = useState("");
-  const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
+  // Filters, selection and open rows survive a tab change (lib/screenState).
+  const keyOf = useScreenKeys(
+    `run:${org}/${project}/${folder ? `folder:${folder.planId}/${folder.suiteId}` : pbiId}`,
+  );
+  const [filterText, setFilterText] = useScreenState(keyOf("filter"), "");
+  const [filterOutcome, setFilterOutcome] = useScreenState(keyOf("outcome"), "");
+  const [selected, setSelected] = useScreenSet<number>(keyOf("selected")); // test case ids
   const [scan, setScan] = useState<SuiteScanProgress | null>(null);
   const [groupMode, setGroupModeState] = useState<GroupMode>(() => loadGroupMode());
   const setGroupMode = (mode: GroupMode) => {
     setGroupModeState(mode);
     saveGroupMode(mode);
   };
-  const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
+  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null); // shift-range start
   // Open previews, PLURAL (point ids) - same model as View Test Cases:
   // several can be open for comparison, an open one survives its group
   // being collapsed, and the sticky Close all clears the lot.
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useScreenSet<number>(keyOf("expanded"));
   const toggleExpanded = (pointId: number) =>
     setExpanded((s) => {
       const next = new Set(s);
@@ -269,6 +274,7 @@ export default function RunPanel({
     () => [...new Set((points.data ?? []).flatMap((p) => (p.test_case_id == null ? [] : [p.test_case_id])))].sort((a, b) => a - b),
     [points.data],
   );
+  usePruneSelection(points.data ? historyCaseIds : undefined, setSelected);
   const history = useQuery({
     queryKey: ["run-history", org, project, suite.data?.plan_id, suite.data?.suite_id, historyCaseIds.join(",")],
     ...persistentQuery({
@@ -382,7 +388,7 @@ export default function RunPanel({
 
   // Click toggles a row; shift+click selects the whole range from the
   // last clicked row, in the visible (filtered/grouped) order.
-  const handleRowClick = (p: TestPoint, e: React.MouseEvent) => {
+  const handleRowClick = (p: TestPoint, e: MouseEvent) => {
     if (p.test_case_id == null) return;
     const flat = sections.flatMap((s) => s.pts);
     if (e.shiftKey && anchor != null) {
@@ -405,6 +411,27 @@ export default function RunPanel({
     });
     setAnchor(caseId);
   };
+
+  // Stable handlers for the memoized rows (RunRows): each reads the latest
+  // closure through a ref, so a row re-renders only when its own flags do.
+  const rowClickRef = useRef(handleRowClick);
+  rowClickRef.current = handleRowClick;
+  const onRowClick = useCallback((p: TestPoint, e: MouseEvent) => rowClickRef.current(p, e), []);
+  const toggleRef = useRef(toggleExpanded);
+  toggleRef.current = toggleExpanded;
+  const onToggleExpanded = useCallback((pointId: number) => toggleRef.current(pointId), []);
+
+  // Arrow keys and Space (backlog A1.8), by point, in the order the rows
+  // are on screen (a folded group's rows left out unless held open).
+  const shownPoints = sections.flatMap(({ name, pts }) => visibleRows(name, pts));
+  const navIds = shownPoints.map((p) => p.point_id);
+  const rowKeys = useRowKeys({
+    order: navIds,
+    onSelect: (pointId, keys) => {
+      const p = shownPoints.find((x) => x.point_id === pointId);
+      if (p) handleRowClick(p, keys as unknown as MouseEvent);
+    },
+  });
 
   /** Every case the list is currently showing (the filter applies; a
    * collapsed group's cases still count - collapsing hides rows, it does
@@ -526,7 +553,7 @@ export default function RunPanel({
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
       {points.isFetching && suite.data && !points.data && (
-        <p className="text-sm text-muted">Loading test points</p>
+        <ListSkeleton label="Loading test points" rows={6} />
       )}
       {points.isError && <p className="text-sm text-danger">{points.error.message}</p>}
       {points.data && points.data.length === 0 && (
@@ -637,7 +664,7 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
-        <div>
+        <div {...rowKeys.listProps}>
           {/* One table per group, so a group can fold as one box - a run of
               table rows cannot be wrapped. Every table is fixed-layout with
               the same column widths (RunCols), so the columns line up down
@@ -707,72 +734,20 @@ export default function RunPanel({
                 <Collapse open={shown.length > 0} animateIn={settled}>
                 <table className="w-full table-fixed border-collapse text-sm">
                 <RunCols />
-                <tbody>
-                {shown.map((p) => (
-              <Fragment key={p.point_id}>
-              <tr
-                className={cn(
-                  "cursor-pointer select-none border-b border-border/50 transition-colors",
-                  p.test_case_id != null && selected.has(p.test_case_id)
-                    ? "bg-accent-soft"
-                    : (outcomeRowTint[p.last_outcome.toLowerCase()] ?? ""),
-                  // The Paused and Not Applicable tints are already close to
-                  // surface-2, so the hover tint alone barely showed on them
-                  // (owner, 2026-10-27). An accent bar at the row's start
-                  // marks the hovered row on every tint, selected included.
-                  "hover:bg-surface-2 hover:shadow-[inset_3px_0_0_var(--color-accent)]",
-                )}
-                onClick={(e) => handleRowClick(p, e)}
-              >
-                <td className="px-2 py-1 text-text">
-                  <div className="flex items-center gap-1">
-                    <button
-                      aria-label={`${expanded.has(p.point_id) ? "Collapse" : "Expand"} test case #${p.test_case_id}`}
-                      title={expanded.has(p.point_id) ? "Hide steps" : "Show steps & last result"}
-                      className="shrink-0 text-muted hover:text-accent"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleExpanded(p.point_id);
-                      }}
-                    >
-                      {expanded.has(p.point_id) ? (
-                        <ChevronDown size={14} />
-                      ) : (
-                        <ChevronRight size={14} />
-                      )}
-                    </button>
-                    <span className="min-w-0 flex-1">
-                      <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}
-                    </span>
-                  </div>
-                </td>
-                <td
-                  className={cn(
-                    "px-2 py-1",
-                    outcomeColor[p.last_outcome.toLowerCase()] ?? "text-faint",
-                  )}
-                >
-                  {outcomeLabel(p.last_outcome) || "—"}
-                </td>
-                <td className="px-2 py-1">
-                  <HistoryDots
-                    outcomes={
-                      p.test_case_id != null ? (historyByCase.get(p.test_case_id) ?? []) : []
-                    }
-                  />
-                </td>
-              </tr>
-              <Collapse row={3} open={expanded.has(p.point_id)}>
-                <CasePreview
+                <RunRows
+                  rows={shown}
+                  selected={selected}
+                  expanded={expanded}
+                  historyByCase={historyByCase}
                   org={org}
                   project={project}
-                  point={p}
-                  history={p.test_case_id != null ? (historyByCase.get(p.test_case_id) ?? []) : []}
+                  rowTint={outcomeRowTint}
+                  outcomeColor={outcomeColor}
+                  onRowClick={onRowClick}
+                  onToggleExpanded={onToggleExpanded}
+                  tabKey={rowKeys.tabKey}
+                  onRowFocus={rowKeys.onRowFocus}
                 />
-              </Collapse>
-              </Fragment>
-                ))}
-                </tbody>
                 </table>
                 </Collapse>
               </Fragment>

@@ -34,3 +34,25 @@ fn tail_keeps_the_newest_lines_and_records_the_level() {
     assert!(!mine.iter().any(|l| l.message == format!("{prefix} 0")), "the oldest line is still held");
     assert!(recent(TAIL + 100).len() <= TAIL);
 }
+
+/// One day's file stops growing at its cap: one line says so, and the
+/// lines after it are kept in memory only.
+#[test]
+fn a_full_log_file_stops_growing_and_says_why() {
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::applog::init(dir.path().to_path_buf());
+    v2_lib::applog::set_file_cap(400);
+    for i in 0..50 {
+        log("debug", format!("applog-cap-test line {i} with some length to it"));
+    }
+    let files: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().collect();
+    assert_eq!(files.len(), 1, "one file for the day");
+    let text = std::fs::read_to_string(files[0].path()).unwrap();
+    v2_lib::applog::set_file_cap(v2_lib::applog::MAX_FILE_BYTES);
+    assert!(text.len() < 400 + 300, "the file stopped near its cap: {} bytes", text.len());
+    assert_eq!(text.matches("reached its size limit").count(), 1);
+    // The memory tail still has every line.
+    let tail: Vec<_> = recent(6000).into_iter().filter(|l| l.message.starts_with("applog-cap-test")).collect();
+    assert_eq!(tail.len(), 50);
+}

@@ -65,7 +65,7 @@ async fn maps_429_with_retry_after() {
 
     drop(clear_hold);
     let t = std::time::Instant::now();
-    v2_lib::ado::throttle::pace().await;
+    v2_lib::ado::throttle::pace(false).await;
     assert!(t.elapsed() < std::time::Duration::from_secs(2), "the 5 s hold must not outlive this test");
 }
 

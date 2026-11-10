@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useRowKeys } from "../../lib/useRowKeys";
+import { WindowedList } from "../../components/ui/windowed-list";
+import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type TestCaseFull } from "../../bindings";
@@ -33,6 +36,9 @@ import { IconBulkEdit, IconClear, IconCollapseAll, IconExport, IconRemove, IconR
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
  * unlocks the bulk toolbar. Grouping by module is the v1 smart grouping. */
+/** A collapsed card is about this tall; the open editor is measured. */
+const ROW_ESTIMATE_PX = 40;
+
 /** One case of the list. Memo: its handlers are made once by the list and
  * reach the list's current state themselves, so a click on one case draws
  * only the rows whose selection or open state changed. */
@@ -47,10 +53,20 @@ const ExistingRow = memo(function ExistingRow({
   onCardClick,
   onToggleOpen,
   onSaved,
+  index,
+  measure,
+  tabbable = false,
+  onRowFocus,
 }: {
   c: TestCaseFull;
   selected: boolean;
   open: boolean;
+  /** Position in the list and the window's measure ref (WindowedList). */
+  index?: number;
+  measure?: (el: Element | null) => void;
+  /** In the Tab order (useRowKeys' roving tabindex). */
+  tabbable?: boolean;
+  onRowFocus?: (id: number) => void;
   org: string;
   project: string;
   moduleRef: string | null;
@@ -61,6 +77,11 @@ const ExistingRow = memo(function ExistingRow({
 }) {
   return (
     <li
+      ref={measure}
+      data-index={index}
+      data-row-key={c.id}
+      tabIndex={tabbable ? 0 : -1}
+      onFocus={(e) => e.target === e.currentTarget && onRowFocus?.(c.id)}
       className={cn(
         // The open editor hosts a non-portaled Combobox dropdown that must
         // paint past the row's box - content-visibility's paint containment
@@ -119,14 +140,18 @@ export default function ExistingCases({
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
-  const [openId, setOpenId] = useState<number | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [anchor, setAnchor] = useState<number | null>(null);
+  // Search, the open case and selection survive a tab change (lib/screenState).
+  const keyOf = useScreenKeys(
+    `edit:${org}/${project}/${pbiId != null ? pbiId : `cases:${(caseIds ?? []).join(",")}`}`,
+  );
+  const [openId, setOpenId] = useScreenState<number | null>(keyOf("open"), null);
+  const [selected, setSelected] = useScreenSet<number>(keyOf("selected"));
+  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [relinkOpen, setRelinkOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useScreenState(keyOf("search"), "");
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
@@ -174,6 +199,8 @@ export default function ExistingCases({
   });
 
   const list = cases.data ?? [];
+  const loadedIds = useMemo(() => cases.data?.map((c) => c.id), [cases.data]);
+  usePruneSelection(loadedIds, setSelected);
   const settled = useSettled(list.length > 0);
   // Switching Group by title is one motion, not a regroup then an unfold
   // per open group (components/ui/collapse.tsx).
@@ -298,6 +325,24 @@ export default function ExistingCases({
     qc.invalidateQueries({ queryKey });
     qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
   };
+
+  // Arrow keys and Space (backlog A1.8), in the order the rows are on
+  // screen: a folded group's rows are left out, except the open editor.
+  const navIds = useMemo(
+    () =>
+      ordered.flatMap(({ group, items }) =>
+        (group && collapsedGroups.has(group) ? items.filter((c) => c.id === openId) : items).map((c) => c.id),
+      ),
+    [ordered, collapsedGroups, openId],
+  );
+  const byId = useMemo(() => new Map(flat.map((c) => [c.id, c])), [flat]);
+  const rowKeys = useRowKeys({
+    order: navIds,
+    onSelect: (id, keys) => {
+      const c = byId.get(id);
+      if (c) handleCardClick(c, keys as unknown as MouseEvent);
+    },
+  });
 
   /** The rows' handlers, made once: each reaches this render's
    * `handleCardClick` and `refresh` through `rowLatest`, so a row (memo) is
@@ -434,7 +479,7 @@ export default function ExistingCases({
         <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
-      <div ref={regroup.ref} className="space-y-2">
+      <div ref={regroup.ref} className="space-y-2" {...rowKeys.listProps}>
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
@@ -480,21 +525,36 @@ export default function ExistingCases({
               // held open: the open editor stays, so its list stays with it.
               return (
             <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
-            <ul className="space-y-1">
-              {shown.map((c) => (
-                <ExistingRow
-                  key={c.id}
-                  c={c}
-                  selected={selected.has(c.id)}
-                  open={openId === c.id}
-                  org={org}
-                  project={project}
-                  moduleRef={prefs.moduleRef}
-                  preconditionsRef={prefs.preconditionsRef}
-                  {...rowActions}
-                />
-              ))}
-            </ul>
+            <WindowedList
+              className="space-y-1"
+              count={shown.length}
+              estimate={ROW_ESTIMATE_PX}
+              gap={4}
+              keyOf={(i) => shown[i].id}
+              // The open editor is never unmounted by scrolling: its
+              // unsaved edits would go with it.
+              pinned={openId == null ? undefined : [shown.findIndex((c) => c.id === openId)]}
+              renderRow={(i, measure) => {
+                const c = shown[i];
+                return (
+                  <ExistingRow
+                    key={c.id}
+                    c={c}
+                    index={i}
+                    measure={measure}
+                    tabbable={rowKeys.tabKey === c.id}
+                    onRowFocus={rowKeys.onRowFocus}
+                    selected={selected.has(c.id)}
+                    open={openId === c.id}
+                    org={org}
+                    project={project}
+                    moduleRef={prefs.moduleRef}
+                    preconditionsRef={prefs.preconditionsRef}
+                    {...rowActions}
+                  />
+                );
+              }}
+            />
             </Collapse>
               );
             })()}

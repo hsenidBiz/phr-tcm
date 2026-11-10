@@ -7,10 +7,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../lib/toast";
 import type { TestCase } from "../bindings";
 import { patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
-import { cacheKeys, cacheWrite } from "../lib/cache";
+import { cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
 import { submitFinished, submitPhaseSnapshot } from "../lib/submitRun";
 import { resetFileWriteQueueForTests } from "../lib/draftWriteQueue";
-import QueueSection from "./QueueSection";
+import QueueSection, { PLAIN_STEPS_REFUSAL } from "./QueueSection";
 
 /** The floating copy only exists while the real row is off screen, so the
  * tests drive the hook rather than jsdom's (non-existent) layout. The
@@ -24,7 +24,7 @@ let onScreen = true;
 // <Toaster/> is mounted in these tests, so the real module has nothing to
 // render them into.
 vi.mock("../lib/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
 }));
 
 afterEach(() => {
@@ -865,7 +865,7 @@ test("a duplicate that appears after review still stops the write", async () => 
 /// re-uploaded file lands at the top of the suite. Each goes as a hint
 /// with its place on screen before the filter.
 test("unchanged rows go to the upload as order hints, with their place in the queue", async () => {
-  let call: { queue: TestCase[]; orderHint: unknown } | null = null;
+  let call: { queue: TestCase[]; options: { order_hint: unknown } } | null = null;
   mockIPC((cmd, args) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
@@ -890,7 +890,7 @@ test("unchanged rows go to the upload as order hints, with their place in the qu
       ];
     }
     if (cmd === "submit_queue") {
-      call = args as { queue: TestCase[]; orderHint: unknown };
+      call = args as { queue: TestCase[]; options: { order_hint: unknown } };
       return [{ index: 0, title: "Brand new", action: "created", id: 900, error: null }];
     }
     return undefined;
@@ -907,9 +907,9 @@ test("unchanged rows go to the upload as order hints, with their place in the qu
   fireEvent.click(go);
 
   await waitFor(() => expect(call).not.toBeNull());
-  const sent = call as unknown as { queue: TestCase[]; orderHint: unknown };
+  const sent = call as unknown as { queue: TestCase[]; options: { order_hint: unknown } };
   expect(sent.queue.map((c) => c.title)).toEqual(["Brand new"]);
-  expect(sent.orderHint).toEqual([
+  expect(sent.options.order_hint).toEqual([
     { index: 0, id: 201, spec_order: 1, tester_order: 2, area: "Login" },
     { index: 2, id: 202, spec_order: 3, tester_order: 3, area: "" },
   ]);
@@ -948,7 +948,7 @@ test("an upload that creates a case invalidates the run order and suite cases ca
   expect(cacheReadRunOrder()).toBeNull();
 
   function cacheReadRunOrder() {
-    return JSON.parse(localStorage.getItem(`tcm-v2-cache:${cacheKeys.runOrder("acme", "Web", 42)}`) ?? "null");
+    return cacheRead(cacheKeys.runOrder("acme", "Web", 42), Infinity);
   }
 });
 
@@ -2786,4 +2786,76 @@ test("an updated row reads no-op once the update has landed", async () => {
 
   // After: nothing left to change.
   expect(await screen.findByText(/no-op — nothing will change/)).toBeInTheDocument();
+});
+
+/// Rust stops an upload before sending anything when the current steps of
+/// its updates cannot be read (commands/queue.rs, PLAIN_STEPS_REFUSAL). The
+/// screen says so and offers "Upload anyway", which sends again with
+/// permission to write plain-text steps (backlog A1.9).
+test("an upload stopped for unreadable steps offers Upload anyway, which sends with permission", async () => {
+  const calls: { options: { allow_plain_steps: boolean } }[] = [];
+  const warning = vi.spyOn(toast, "warning");
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      calls.push(args as { options: { allow_plain_steps: boolean } });
+      if (calls.length === 1) throw PLAIN_STEPS_REFUSAL;
+      return [{ index: 0, title: "Brand new", action: "created", id: 900, error: null }];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ title: "Brand new" })]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() => expect(warning).toHaveBeenCalledWith(PLAIN_STEPS_REFUSAL, expect.anything()));
+  expect(calls[0].options.allow_plain_steps).toBe(false);
+  const opts = warning.mock.calls.find((c) => c[0] === PLAIN_STEPS_REFUSAL)![1]!;
+  expect(opts.action?.label).toBe("Upload anyway");
+  act(() => opts.action!.onClick());
+  await waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls[1].options.allow_plain_steps).toBe(true);
+});
+
+test("the plain-steps sentence is word for word the one Rust answers", () => {
+  // Pinned on the Rust side too (tests/suite/submit_plain_steps.rs).
+  expect(PLAIN_STEPS_REFUSAL).toBe(
+    "The current steps of the cases this upload updates could not be read, so nothing was sent. " +
+      "If you upload anyway, their steps are written as plain text and any formatting or pictures in them are lost.",
+  );
+});
+
+/// Review finding: the "Upload anyway" toast stays until dismissed, so it
+/// must not outlive the queue it was given for - leaving the screen (or the
+/// queue changing) closes it, and its action is then never run.
+test("the Upload anyway toast closes when the queue screen goes away", async () => {
+  const warning = vi.spyOn(toast, "warning").mockReturnValue("plain-steps-toast");
+  const dismiss = vi.spyOn(toast, "dismiss");
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") throw PLAIN_STEPS_REFUSAL;
+    return undefined;
+  });
+  const view = renderQueue([makeCase({ title: "Brand new" })]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(warning).toHaveBeenCalledWith(PLAIN_STEPS_REFUSAL, expect.anything()));
+
+  view.unmount();
+  expect(dismiss).toHaveBeenCalledWith("plain-steps-toast");
 });

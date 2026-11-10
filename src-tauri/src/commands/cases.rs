@@ -237,17 +237,21 @@ pub async fn relink_test_cases(
     ));
     let token = get_fresh_token(&app).await?;
     let client = ado::AdoClient::new(token);
-    let mut out = Vec::with_capacity(ids.len());
-    for id in ids {
-        match client
-            .relink_test_case(&organization, &project, id, from_pbi, to_pbi)
-            .await
-        {
-            Ok(()) => out.push(ado::RelinkOutcome { id, moved: true, error: None }),
-            Err(e) => out.push(ado::RelinkOutcome { id, moved: false, error: Some(e) }),
-        }
-    }
-    Ok(out)
+    // READ_CONCURRENCY cases at a time, outcomes in the order given. Each
+    // relink touches only its own work item, and every PATCH still waits
+    // for the pacer, so at Balanced or Gentle the writes stay spaced.
+    use futures::stream::{self, StreamExt};
+    let (client, organization, project) = (&client, &organization, &project);
+    Ok(stream::iter(ids)
+        .map(|id| async move {
+            match client.relink_test_case(organization, project, id, from_pbi, to_pbi).await {
+                Ok(()) => ado::RelinkOutcome { id, moved: true, error: None },
+                Err(e) => ado::RelinkOutcome { id, moved: false, error: Some(e) },
+            }
+        })
+        .buffered(ado::READ_CONCURRENCY)
+        .collect()
+        .await)
 }
 
 /// PERMANENTLY delete test cases through the Test Management API - the

@@ -723,6 +723,25 @@ async fn render_draft_html(
     Ok(path_str)
 }
 
+/// The last part of a submit: two values in one argument, because a command
+/// may take at most ten.
+#[derive(Debug, Clone, Default, serde::Deserialize, specta::Type)]
+pub struct SubmitOptions {
+    /// The rows the screen left out as unchanged, with where each sat, so
+    /// the order set after the upload still counts them. Ordering only.
+    pub order_hint: Vec<crate::run_order::OrderHint>,
+    /// The person chose to upload although the current steps of the updates
+    /// could not be read (see `PLAIN_STEPS_REFUSAL`). False on a first try.
+    pub allow_plain_steps: bool,
+}
+
+/// What `submit_queue` answers, before sending anything, when the current
+/// steps of the cases it updates cannot be read. Mirrored by
+/// `PLAIN_STEPS_REFUSAL` in src/components/QueueSection.tsx, which offers
+/// "Upload anyway"; tests on both sides pin the same text.
+pub const PLAIN_STEPS_REFUSAL: &str = "The current steps of the cases this upload updates could not be read, so nothing was sent. \
+If you upload anyway, their steps are written as plain text and any formatting or pictures in them are lost.";
+
 /// Serial creation loop ported from v1 CreationWorker: one item at a time,
 /// 500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
 /// patched in place. A failed item never aborts the rest.
@@ -738,10 +757,9 @@ pub async fn submit_queue(
     preconditions_ref: Option<String>,
     area_path: Option<String>,
     iteration_path: Option<String>,
-    // The rows the screen left out as unchanged, with where each sat, so
-    // the order set after the upload still counts them. Ordering only.
-    order_hint: Vec<crate::run_order::OrderHint>,
+    options: SubmitOptions,
 ) -> Result<Vec<SubmitItemResult>, String> {
+    let SubmitOptions { order_hint, allow_plain_steps } = options;
     // One submit at a time. A second call would run a second loop over the
     // same queue, and two loops create every case twice; this tool only
     // deletes Test Cases, and only for someone Azure DevOps says may, so
@@ -789,9 +807,17 @@ pub async fn submit_queue(
     // work (one read; none when no row has any).
     let mut relations_before: std::collections::HashMap<i32, crate::step_attachments::CaseRelations> =
         Default::default();
-    if let Ok(token) = get_fresh_token(&app).await {
+    let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
+    let token = get_fresh_token(&app).await;
+    if token.is_err() && !update_ids.is_empty() && !allow_plain_steps {
+        crate::applog::warn(format!(
+            "stopped an upload before sending anything: no token to read the current steps of {} update(s)",
+            update_ids.len()
+        ));
+        return Err(PLAIN_STEPS_REFUSAL.into());
+    }
+    if let Ok(token) = token {
         let client = ado::AdoClient::new(token);
-        let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
         if !update_ids.is_empty() {
             let mut read = client
                 .get_test_cases_by_ids(&organization, &update_ids, None, preconditions_ref.as_deref())
@@ -816,10 +842,21 @@ pub async fn submit_queue(
                         .collect();
                     steps_before = current.into_iter().map(|c| (c.id, c.steps_xml)).collect();
                 }
-                // Without a baseline the import's own steps are written, as
-                // they always were - the file is meant to describe the case.
-                // Say so, because it is the one path where markup can still
-                // be lost and the log is where that has to be visible.
+                // Without a baseline the update would write the import's own
+                // steps, which drops any formatting Azure DevOps holds. That
+                // used to happen with only a log line to say so; now the
+                // upload stops here, before anything is sent, and the
+                // person decides (backlog A1.9).
+                Err(e) if !allow_plain_steps => {
+                    crate::applog::warn(format!(
+                        "stopped an upload before sending anything: could not read the current steps of {} \
+                         update(s) ({e})",
+                        update_ids.len()
+                    ));
+                    return Err(PLAIN_STEPS_REFUSAL.into());
+                }
+                // The person chose to go on: the import's own steps are
+                // written, as they always were.
                 Err(e) => crate::applog::warn(format!(
                     "could not read the current steps and prerequisites for {} update(s) ({e}) - their \
                      steps will be rewritten from the imported text, which drops any formatting Azure \

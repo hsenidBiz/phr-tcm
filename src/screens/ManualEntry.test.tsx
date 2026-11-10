@@ -253,3 +253,34 @@ test("after Add to queue the form is back to three blank steps", async () => {
   expect(screen.getByLabelText("Step 3 action")).toHaveValue("");
   expect(screen.queryByLabelText("Step 4 action")).not.toBeInTheDocument();
 });
+
+test("an unsaved case survives a remount (a tab change) and a restart, per PBI", () => {
+  baseMocks();
+  const first = renderScreen();
+  fireEvent.change(screen.getByPlaceholderText("Test case title"), { target: { value: "Half written" } });
+  fireEvent.change(screen.getByLabelText("Step 1 action"), { target: { value: "Open page" } });
+  first.unmount();
+
+  renderScreen();
+  expect(screen.getByPlaceholderText("Test case title")).toHaveValue("Half written");
+  expect(screen.getByLabelText("Step 1 action")).toHaveValue("Open page");
+  // It is on disk, so a restart brings it back too.
+  expect(localStorage.getItem("tcm-v2-screen:manual:acme/42:title")).toBe('"Half written"');
+});
+
+test("another PBI starts with its own empty form", () => {
+  baseMocks();
+  const first = renderScreen();
+  fireEvent.change(screen.getByPlaceholderText("Test case title"), { target: { value: "For 42" } });
+  first.unmount();
+  renderScreen({ ...pbi, id: 43 });
+  expect(screen.getByPlaceholderText("Test case title")).toHaveValue("");
+});
+
+test("queuing the case clears the kept draft", async () => {
+  baseMocks();
+  renderScreen();
+  addCase("Queued case");
+  expect(localStorage.getItem("tcm-v2-screen:manual:acme/42:title")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-screen:manual:acme/42:steps")).toBeNull();
+});
