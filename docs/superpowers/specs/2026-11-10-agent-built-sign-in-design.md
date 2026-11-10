@@ -200,7 +200,7 @@ rejected because an agent changing passwords on a live site is hard to undo.
   (after a failed step and after a missing marker).
 - **What is checked:** if no described reset page matched, check whether the
   page looks like a change-password page: two or more visible password
-  fields, and no visible username field.
+  fields (no username condition; see the calls below).
 - **If it does,** report a new sentence, for example: "the site showed a
   change-password page this sign-in does not describe". When the reset switch
   is off, `RESET_SWITCH_HINT` is added.
@@ -246,7 +246,7 @@ documented screen changes.
    - Only the single-page shape the app already supports is handled:
      - an optional current-password field;
      - a new-password field;
-     - an optional confirm field;
+     - a confirm field (required, as today);
      - a submit button.
    - When the current-password field is absent, `fill_reset_form` skips it.
      That is the only format change.
