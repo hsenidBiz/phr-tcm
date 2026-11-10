@@ -27,6 +27,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.5",
+    date: "2026-11-10",
+    items: [
+      "The search box in Run Tests also finds cases by their tags.",
+      "API templates, flows and fixtures are shared by every environment. Each one is marked Unconfirmed here until it has worked on the environment you are on, and Failed here when it has not; the assistant tries what is there first and finds a working version when it fails. Copying Auto Run data from another environment no longer brings them, and never copies accounts. Backups include the shared library.",
+      "Recording a sign-in asks you to show how you sign out. If Sign out is inside a menu, such as the one under your name, open the menu and click it; the click does not sign you out, and opening the menu is not recorded. Hold Shift as you click to open a menu the app does not recognise.",
+      "A failed case in an Auto Run review has a Raise bug button that opens the bug form filled in with the steps up to the failure, what the page said, the environment, the account and the screenshots, linked to the test case and the PBI. Nothing is filed until you press File.",
+      "Auto Run lists flaky cases: those that both passed and failed in their last 10 runs on the same environment. Mark one as flaky and its failures count as flaky rather than failed in Auto Run's own summaries; Azure DevOps still receives them as failed.",
+      "A Test plan folder that is not a PBI's suite opens in Run Tests from More > Run Tests on Search Suites, with the same runner, history and report as a PBI's cases.",
+      "Search Suites can export a suite's test cases, including its inner folders, as a JSON file from More > Export JSON, and with every project shown it opens on the plans it read last time while it updates them.",
+      "When you review the queue before uploading, a case is warned about a step with no expected result, an expected result that says nothing to check, or a first step that refers to an earlier state with no preconditions. The warnings never stop the upload.",
+      "Pull requests have a Copy link button beside Open in Azure DevOps, and the project name beside a pull request group's heading shows as one pill again.",
+      "Long lists open smoothly to their full height, the changelog in Settings scrolls as one list, and case numbers on the browser page, board cards and the work item panel can be selected and copied.",
+    ],
+  },
+  {
     version: "2.4.5-beta.8",
     date: "2026-11-06",
     items: [
