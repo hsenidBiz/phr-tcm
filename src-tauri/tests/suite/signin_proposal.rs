@@ -184,14 +184,14 @@ fn approve_keeps_the_environments_own_address() {
 #[test]
 fn approve_turns_the_switch_on_only_on_a_test_environment() {
     // Not a test environment: refused, nothing written, proposal kept.
-    let dir = root("", false, false);
+    let dir = root("https://a.example.test", false, false);
     propose(dir.path(), with_reset(basic("https://a.example.test", "#go")));
     assert_eq!(approve_with(dir.path(), ORG, PROJECT, true), Err(RESET_SWITCH_NOT_TEST.to_string()));
     assert_eq!(load_recipe(dir.path(), ORG, PROJECT).unwrap(), None);
     assert!(proposal_view_with(dir.path(), ORG, PROJECT).unwrap().is_some());
 
     // A test environment: saved, switch on, proposal gone.
-    let dir = root("", true, false);
+    let dir = root("https://a.example.test", true, false);
     propose(dir.path(), with_reset(basic("https://a.example.test", "#go")));
     approve_with(dir.path(), ORG, PROJECT, true).unwrap();
     assert!(active(dir.path()).unwrap().reset_expired_passwords);
@@ -199,7 +199,7 @@ fn approve_turns_the_switch_on_only_on_a_test_environment() {
     assert!(proposal_view_with(dir.path(), ORG, PROJECT).unwrap().is_none());
 
     // Ticked off: the switch stays off.
-    let dir = root("", true, false);
+    let dir = root("https://a.example.test", true, false);
     propose(dir.path(), with_reset(basic("https://a.example.test", "#go")));
     approve_with(dir.path(), ORG, PROJECT, false).unwrap();
     assert!(!active(dir.path()).unwrap().reset_expired_passwords);
@@ -208,7 +208,7 @@ fn approve_turns_the_switch_on_only_on_a_test_environment() {
 #[test]
 fn a_switch_that_cannot_be_turned_on_still_saves_and_clears() {
     use v2_lib::commands::autorun_signin_proposal::{approve_turning_on, SWITCH_NOT_TURNED_ON};
-    let dir = root("", true, false);
+    let dir = root("https://a.example.test", true, false);
     propose(dir.path(), with_reset(basic("https://a.example.test", "#go")));
     let err = approve_turning_on(dir.path(), ORG, PROJECT, true, |_| Err("disk said /secret/path".to_string())).unwrap_err();
     assert_eq!(err, SWITCH_NOT_TURNED_ON);

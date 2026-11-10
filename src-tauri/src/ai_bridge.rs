@@ -12485,7 +12485,13 @@ pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::aut
             ),
         );
     };
-    let keys: Vec<String> = named_keys.iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
+    let mut keys: Vec<String> = Vec::new();
+    for k in named_keys.iter().map(|k| k.trim()).filter(|k| !k.is_empty()) {
+        // An account named twice is checked, and counted, once.
+        if !keys.iter().any(|seen| seen == k) {
+            keys.push(k.to_string());
+        }
+    }
     if keys.is_empty() {
         return (400, format!("`accounts` names no account. Expected {CHECK_SIGN_IN_SHAPE}."));
     }

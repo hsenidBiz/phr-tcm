@@ -446,3 +446,46 @@ async fn a_failed_trial_and_an_unreadable_page_still_say_why_the_trial_failed() 
     no_password_or_host(&text);
     signin_attempts::close(dir.path(), "sup");
 }
+
+#[tokio::test]
+async fn with_an_environment_address_and_no_saved_recipe_approval_saves_the_environments_site() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = root(HOME);
+    let mut fake = Fake::new(signs_in);
+    let mut draft = good();
+    draft["start_url"] = json!("https://evil.example.test/");
+    draft["allowed_origins"] = json!(["https://evil.example.test"]);
+    let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(draft), &quick()).await;
+    assert_eq!(status, 200, "{text}");
+    v2_lib::commands::autorun_signin_proposal::approve_with(dir.path(), ORG, PROJECT, false).unwrap();
+    let saved = load_recipe(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    let env = active(dir.path()).unwrap();
+    assert_eq!(saved.start_url, env.start_url);
+    assert_eq!(saved.allowed_origins, env.allowed_origins);
+    signin_attempts::close(dir.path(), "sup");
+}
+
+#[test]
+fn a_planted_off_site_proposal_is_refused_on_approval_and_kept() {
+    let dir = root(HOME);
+    let env = active(dir.path()).unwrap();
+    let mut off = good();
+    off["start_url"] = json!("https://evil.example.test/");
+    let recipe: SignInRecipe = serde_json::from_value(off).unwrap();
+    let stored = v2_lib::autorun::signin_proposal::StoredSignInProposal {
+        summary: v2_lib::autorun::signin_proposal::summary(&recipe),
+        recipe,
+        account: "sup".into(),
+        proposed_ms: 1.0,
+        saved_hash: String::new(),
+        changes: vec![],
+    };
+    v2_lib::autorun::signin_proposal::save(dir.path(), &env.id, ORG, PROJECT, &stored).unwrap();
+    let why = v2_lib::commands::autorun_signin_proposal::approve_with(dir.path(), ORG, PROJECT, false).unwrap_err();
+    assert!(!why.contains("evil"), "{why}");
+    assert!(load_recipe(dir.path(), ORG, PROJECT).unwrap().is_none(), "an off-site recipe was saved");
+    assert!(proposal_path(dir.path(), &env.id, ORG, PROJECT).exists(), "the proposal was dropped");
+}

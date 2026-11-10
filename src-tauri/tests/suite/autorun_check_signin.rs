@@ -915,3 +915,23 @@ async fn a_busy_check_and_a_capped_second_account_spend_nothing() {
     signin_attempts::close(dir.path(), "sup");
     signin_attempts::close(dir.path(), "admin");
 }
+
+#[tokio::test]
+async fn an_account_named_twice_is_checked_and_counted_once() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let _n = crate::serial::sign_in_attempts();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    accounts(dir.path(), &["sup"]);
+    signin_attempts::take(dir.path(), "sup").unwrap();
+    let none: Option<&Answers> = None;
+    let mut fake = Fake::new(gone);
+    let twice = json!({ "accounts": ["sup", " sup"] }).to_string();
+    let (status, text) = check_sign_in_in(&mut fake, none, dir.path(), ORG, PROJECT, &twice).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(fake.opened, 1);
+    assert_eq!(signin_attempts::take(dir.path(), "sup").unwrap(), 3, "counted more than once");
+    signin_attempts::close(dir.path(), "sup");
+}

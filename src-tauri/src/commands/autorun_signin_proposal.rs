@@ -21,6 +21,7 @@ use crate::browser::cdp::Driver;
 use crate::browser::timing::Timing;
 use std::path::Path;
 
+const OFF_SITE_PROPOSAL: &str = "the proposed sign-in goes to a site this environment does not use, so it was not saved - reject it";
 const NOTHING_PROPOSED: &str = "there is no proposed sign-in to approve";
 
 pub fn proposal_view_with(root: &Path, org: &str, project: &str) -> Result<Option<SignInProposalView>, String> {
@@ -48,6 +49,14 @@ pub fn approve_turning_on(
     let p = sp::load(root, &env.id, org, project)?.ok_or_else(|| NOTHING_PROPOSED.to_string())?;
     if sp::saved_hash(root, org, project)? != p.saved_hash {
         return Err(sp::PROPOSAL_STALE.to_string());
+    }
+    if load_recipe(root, org, project)?.is_none() {
+        // Nothing saved to keep the address of: the recipe may only go where this environment does.
+        let mut allowed: Vec<String> = crate::autorun::recipe::origin_of(&env.start_url).into_iter().collect();
+        allowed.extend(env.allowed_origins.iter().filter_map(|o| crate::autorun::recipe::origin_of(o)));
+        if !p.recipe.origins().iter().all(|o| allowed.contains(o)) {
+            return Err(OFF_SITE_PROPOSAL.to_string());
+        }
     }
     if turn_on_reset && !env.test_environment {
         return Err(sp::RESET_SWITCH_NOT_TEST.to_string());
@@ -328,7 +337,7 @@ pub async fn propose_in<B: Browsers>(
         Ok(e) => e,
         Err(e) => return (500, e),
     };
-    let (merged, effective, saved) = match trial_recipe(root, org, project, &asked.recipe, &env) {
+    let (mut merged, effective, saved) = match trial_recipe(root, org, project, &asked.recipe, &env) {
         Ok(t) => t,
         Err(refused) => return refused,
     };
@@ -386,6 +395,12 @@ pub async fn propose_in<B: Browsers>(
         Ok(found) => found,
         Err(said) => return (422, said),
     };
+    if saved.is_none() && !env.start_url.trim().is_empty() {
+        // Approval would save this as the project's recipe: it must say where
+        // the trial signed in (the environment's own site), not where the draft did.
+        merged.start_url = env.start_url.trim().to_string();
+        merged.allowed_origins = env.allowed_origins.clone();
+    }
     let mut said = sp::summary(&merged);
     if reset_found {
         said.push_str(". ");
