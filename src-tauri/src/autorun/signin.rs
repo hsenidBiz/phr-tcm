@@ -6,6 +6,7 @@
 
 use super::accounts::{find_account, Account};
 use super::recipe::{for_account, load_effective_recipe, RecipeStep, SignInRecipe, WhenVisible};
+use super::signin_inspect::visible_password_fields;
 use super::sessions::{forget_session, load_fresh_session, now_ms, save_session};
 use super::timing::{FRESH_LOGIN_WINDOW_MS, HOME_PROMPT_WINDOW_MS, PROMPT_WINDOW_MS};
 use crate::browser::actions::{
@@ -401,11 +402,16 @@ pub fn next_password(current: &str, refused: &[String]) -> Option<&'static str> 
     RESET_PASSWORDS.iter().copied().find(|p| *p != current && !refused.iter().any(|r| r == p))
 }
 
+/// The sign-in ended on a page with two or more password fields that the
+/// recipe's `password_reset` does not describe: a change-password page.
+pub const CHANGE_PASSWORD_UNKNOWN: &str = "password expired - the site showed a change-password page this sign-in does not describe";
+
 /// Did a sign-in fail as `PASSWORD_EXPIRED` (or as a reset of it that did not
-/// go through)? Read from where the words start, never searched for: a page
-/// can say anything.
+/// go through, or as a change-password page the recipe does not describe)?
+/// Read from where the words start, never searched for: a page can say
+/// anything.
 pub fn is_password_expired(detail: &str) -> bool {
-    detail.starts_with(PASSWORD_EXPIRED) || detail.starts_with(PASSWORD_RESET_FAILED)
+    detail.starts_with(PASSWORD_EXPIRED) || detail.starts_with(PASSWORD_RESET_FAILED) || detail.starts_with(CHANGE_PASSWORD_UNKNOWN)
 }
 
 /// The longest page title `landing_words` says.
@@ -473,6 +479,19 @@ impl Run<'_> {
             None
         };
         Some(landing_words(&href, name.as_deref()))
+    }
+
+    /// The sign-in ended on a change-password page the recipe does not
+    /// describe (`CHANGE_PASSWORD_UNKNOWN`), with where the browser is.
+    async fn change_password_unknown<D: Driver>(mut self, d: &mut D, hint: bool) -> SignInOutcome {
+        let mut said = match self.land(d, true).await {
+            Some(w) => format!("{CHANGE_PASSWORD_UNKNOWN} - {w}"),
+            None => CHANGE_PASSWORD_UNKNOWN.to_string(),
+        };
+        if hint {
+            said.push_str(&format!(" - {RESET_SWITCH_HINT}"));
+        }
+        self.done(false, said, false, false)
     }
 
     /// The sign-in ended on the site's password reset page.
@@ -1219,6 +1238,9 @@ async fn sign_in_core<D: Driver>(
         if !harness_failure && on_reset_page(d, recipe, timing).await {
             return expired_boxed(run, d, root, recipe, account, timing, &policy, browser, attempt).await;
         }
+        if !harness_failure && visible_password_fields(d).await >= 2 {
+            return run.change_password_unknown(d, !reset_enabled(root)).await;
+        }
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
@@ -1229,6 +1251,11 @@ async fn sign_in_core<D: Driver>(
     // is, before anything is tried again.
     if !marker.ok && !marker.harness && on_reset_page(d, recipe, timing).await {
         return expired_boxed(run, d, root, recipe, account, timing, &policy, browser, attempt).await;
+    }
+    // Two password fields the recipe does not describe: a change-password
+    // page, never a wrong password. Only reported; nothing is typed or sent.
+    if !marker.ok && !marker.harness && visible_password_fields(d).await >= 2 {
+        return run.change_password_unknown(d, !reset_enabled(root)).await;
     }
     if !marker.ok && !marker.harness && session_refused(d).await.is_none() {
         if login_form_showing(d, &recipe.steps, timing).await {
