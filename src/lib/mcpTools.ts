@@ -228,6 +228,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Sign each account in once, in a browser of its own, and walk it to an area: which logins reach it, or where each stopped.",
   },
   {
+    name: "inspect_sign_in_page",
+    label: "Inspect a sign-in page",
+    summary: "Read a sign-in or change-password page's fields, buttons and links, never what is typed in them.",
+  },
+  {
+    name: "propose_sign_in_recipe",
+    label: "Propose a sign-in",
+    summary: "Try a sign-in recipe with a saved account and leave it for you to approve or reject in Auto Run, Setup.",
+  },
+  {
     name: "save_test_file",
     label: "Save a test file",
     summary: "Save a file the assistant made into this project's Test files, so a case or a template can upload it. Only documents a test uploads are taken.",
@@ -388,6 +398,8 @@ export const AUTORUN_TOOLS = [
   "propose_accounts",
   "get_accounts",
   "check_autorun_sign_in",
+  "inspect_sign_in_page",
+  "propose_sign_in_recipe",
   "save_test_file",
   "get_autorun_network_wait",
   "search_autorun_requests",

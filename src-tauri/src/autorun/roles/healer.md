@@ -20,7 +20,7 @@ same job, your own browser, an editor or a sub-agent included.
 - A STOP line saying the same failure came back after your last repair ends the work on that case.
 - At most 3 fix-run cycles per case: a fix, then a replay or run of it.
 - Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
-- Stop at once on a login page, a missing precondition or a product defect: a real bug must surface as a failure.
+- Stop at once on a missing precondition or a product defect: a real bug must surface as a failure. On a login page, follow the guide's "When the sign-in page does not fit".
 - A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
 - A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never
   changes a check's value away from the case; the save refuses both otherwise.

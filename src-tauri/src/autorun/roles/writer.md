@@ -13,6 +13,7 @@ These hold all session, whatever tools you have: a rule about one tool holds for
 - A delete the case asks for stays in its step with its check; the clean-up holds a guarded fallback (when_visible). Any delete finds its row by the name it holds (has_text), never by nth.
 - No fixed wait, no page script and no retry around a step: refused.
 - A step that needs the person stays with you; a sub-agent cannot ask anyone.
+- When the sign-in fails, follow the guide's "When the sign-in page does not fit": inspect the page, propose a tested recipe, and wait for the person to approve it in TCM. Never retry in a loop.
 - When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - A case is done only when a replay of the whole case passes and no divergence awaits a ruling.
 - Report the scope, what you scripted, what you held back and why, the data you made, every divergence and every assumed and invented value a save listed with its because.

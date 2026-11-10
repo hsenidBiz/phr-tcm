@@ -78,6 +78,16 @@ test("the suite and wiki summaries name no single project", () => {
   expect(wiki?.summary).toBe("Search the wikis and read the pages they find.");
 });
 
+test("the sign-in tools are labelled and listed with Auto Run", () => {
+  const tool = (name: string) => MCP_TOOLS.find((t) => t.name === name);
+  expect(tool("inspect_sign_in_page")?.label).toBe("Inspect a sign-in page");
+  expect(tool("propose_sign_in_recipe")?.label).toBe("Propose a sign-in");
+  for (const name of ["inspect_sign_in_page", "propose_sign_in_recipe"]) {
+    expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
+    expect(moduleOfTool(name)).toBe("auto_run");
+  }
+});
+
 /// Past one page the list is an index, not every template in full: the
 /// summary says how it is narrowed and paged.
 test("the template list's summary describes its filters and paging", () => {

@@ -2853,3 +2853,42 @@ fn the_guide_teaches_select_option_screenshot_and_repeat() {
     assert!(g.contains("does not take"), "the unknown-key refusal is not mentioned");
     assert!(!g.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
+
+/// A sign-in page that does not match the recipe is no longer just a stop:
+/// one shared section tells the assistant to inspect, propose, and wait for
+/// the person's approval, within hard limits.
+#[test]
+fn the_sign_in_rule_is_shared_and_no_longer_just_stops() {
+    let g = autorun_guide();
+    let heading = "## When the sign-in page does not fit";
+    let start = g.find(heading).expect("the guide has the sign-in section");
+    let section = &g[start..start + 3 + g[start + 3..].find("\n## ").unwrap()];
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "inspect_sign_in_page",
+        "propose_sign_in_recipe",
+        "end_autorun_discovery",
+        "check_autorun_sign_in",
+        "at most 2 proposals",
+        "3 sign-in attempts",
+        "does not describe",
+        "Also turn on Reset expired passwords",
+        "no_current_password",
+        "Proposed by the assistant",
+        "captcha",
+        "one-time code",
+    ] {
+        assert!(flat.contains(needle), "the sign-in section never says {needle:?}");
+    }
+    let env = g.find("## Environments").unwrap();
+    assert!(env < start, "the section comes after Environments");
+    let disc = g.find("## Discovering the app").unwrap();
+    let disc_section = &g[disc..disc + 3 + g[disc + 3..].find("\n## ").unwrap()];
+    assert!(!disc_section.contains("If the sign-in fails, report it and stop"), "{disc_section}");
+    assert!(disc_section.contains("When the sign-in page does not fit"));
+    let quick = v2_lib::autorun::guide::quick_rules();
+    assert!(quick.contains("When the sign-in page does not fit"), "the quick rules never name the section");
+    for (name, text) in [("section", section), ("discovering", disc_section), ("quick", quick.as_str())] {
+        assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "a dash in {name}");
+    }
+}
