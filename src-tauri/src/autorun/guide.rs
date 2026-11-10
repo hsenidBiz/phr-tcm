@@ -3046,7 +3046,7 @@ Classify each failure before you change anything: the locator, timing, the envir
 
 - At most 3 fix-run cycles per case: a fix, then a replay or run of it.
 - Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
-- Stop at once on a missing precondition or a product defect: a real bug must surface as a failure. On a failed sign-in, follow the guide's "When the sign-in page does not fit".
+- Stop at once on a missing precondition or a product defect: a real bug must surface as a failure.
 - A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
 - A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never changes a check's value away from the case; the save refuses both otherwise.
 
