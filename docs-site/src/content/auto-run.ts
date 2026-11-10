@@ -764,7 +764,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Record sign-in" },
       name: "Record",
       does:
-        "For a site whose sign-in page the app does not know: a browser opens, you sign in once by hand, and the app saves how to do it. **Built-in** means the app's own sign-in is used. When the dialog asks you to show how you sign out, a click that opens a menu is carried out and not recorded, so you can open the menu under your name and pick **Sign out**; hold **Shift** as you click to open a menu the app does not recognise. A check picked inside a menu is marked **(inside a menu)**, and a sign-in then only asks that it is on the page.",
+        "For a site whose sign-in page the app does not know: a browser opens, you sign in once by hand, and the app saves how to do it. **Built-in** means the app's own sign-in is used. When the dialog asks you to show how you sign out, a click that opens a menu is carried out and not recorded, so you can open the menu under your name and pick **Sign out**; hold **Shift** as you click to open a menu the app does not recognise. A check picked inside a menu is marked **(inside a menu)**, and a sign-in then only asks that it is on the page. Your assistant can also work out a sign-in page it does not know: it tries a sign-in with one of your accounts and, if it works, a **Proposed by the assistant** note appears under this row with the steps, the signed-in check and any change-password part. **Approve** saves it as this environment's sign-in; **Reject** drops it. Nothing is saved until you approve. On a test environment the note can also offer **Also turn on Reset expired passwords**.",
     },
     {
       id: "edit-recipe",
