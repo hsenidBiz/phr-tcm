@@ -46,8 +46,15 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
-    <div class="head"><span class="num">A1</span><span class="title">Software assessment: speed, reliability and UX (agreed 10 November 2026)</span><span class="status todo">Next</span></div>
+    <div class="head"><span class="num">A1</span><span class="title">Software assessment: speed, reliability and UX (agreed 10 November 2026)</span><span class="status todo">Built, hand checks owed</span></div>
     <p>From the assessment of 10 November 2026. Not in this batch: Excel/CSV import and export, scheduled Auto Run with a trend report, and continuous integration.</p>
+    <p>Built 10 November 2026 on <code>claude/software-assessment-optimization-e3zpfi</code>, A1.1 to A1.9, with tests (plan: <code>docs/superpowers/plans/2026-11-10-assessment-a1-6-to-a1-9.md</code>). Changes from the agreement: the Rust cache removes only expired resolved suites and suite refusals (tags and assignment baselines are read stale on purpose); inline images keep base64 but one answer carries at most 24 MB of pictures; relink and step file uploads also run four at a time.</p>
+    <ul>
+      <li>Hand check owed: a suite of 1,000 or more cases in Run Tests, View and Update scrolls smoothly, Shift-click across a long range, an open editor kept while scrolled away.</li>
+      <li>Hand check owed: an installed app updated to this build keeps its cached plan trees (the one-time move from localStorage to IndexedDB) and the first screens paint from the cache.</li>
+      <li>Hand check owed: on a live org, an update whose baseline read fails (for example, VPN dropped after Review) shows "Upload anyway", and Upload anyway writes the update.</li>
+      <li>Hand check owed: the "started" line in Settings, Logs names each start-up step and its time; read it on a slow machine.</li>
+    </ul>
     <ul>
       <li><b>A1.1 Keep screen state on a tab change.</b> The screen wrapper in <code>App.tsx</code> uses <code>key={section}</code>, so each tab change starts the screen again. Manual Entry loses the unsaved title, steps, preconditions and tags; View, Update and Run lose search, filter and selection. Keep the state, and keep the Manual Entry draft on disk per organization and PBI.</li>
       <li><b>A1.2 Retry failed reads.</b> A 429, a 5xx or a network error fails a request at once (<code>ado/transport.rs</code>), and one failed call fails a full fan-out. Retry GET requests (and read-only POST queries) with a delay and jitter, and obey Retry-After. Never retry a write.</li>
