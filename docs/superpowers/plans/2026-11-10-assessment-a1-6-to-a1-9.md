@@ -53,10 +53,10 @@
 - Test: `src-tauri/tests/suite/applog.rs`, `src-tauri/tests/suite/cache.rs`
 
 **Interfaces:**
-- Produces: `applog::MAX_FILE_BYTES = 25 MiB`, `applog::set_file_cap(bytes: u64)`; `keys::ASSIGNED_SEEN_PREFIX = "assigned-seen"`, `keys::DURABLE_MAX_AGE_MS = 60 days`, `keys::SESSION_MAX_AGE = 24 h`.
+- Produces: `applog::MAX_FILE_BYTES = 25 MiB`, `applog::set_file_cap(bytes: u64)`; `keys::EXPIRING_KINDS = [("suite:", SUITE_TTL_MS), ("suite-refused:", SUITE_REFUSED_TTL_MS)]`, `keys::SESSION_MAX_AGE = 24 h`. (Ruling in the ledger: tags and assignment baselines are read stale on purpose, so only kinds read through `cache::fresh` expire.)
 
-- [x] **Step 1: Tests** `applog::a_full_log_file_stops_growing_and_says_why` (cap 400 bytes, 50 lines: one file, under 700 bytes, exactly one "reached its size limit" line, all 50 lines in the memory tail); `cache::entries_past_every_shelf_life_are_removed_but_assignment_baselines_stay`.
-- [x] **Step 2: Implement** the log file handle kept open per day (reopen on date change, reset on `init`), the size cap; `evict_stale` on load and on every `put_at` (assignment baselines kept); session values older than 24 h dropped on `session_put`; `SetupSteps` timings appended to the "started" log line (events and database logins, npm logs folder and app log, cache and settings, Auto Run data). Inline images were done in A1.3 (24 MB per answer).
+- [x] **Step 1: Tests** `applog::a_full_log_file_stops_growing_and_says_why` (cap 400 bytes, 50 lines: one file, under 700 bytes, exactly one "reached its size limit" line, all 50 lines in the memory tail); `cache::expired_suites_are_removed_and_kinds_read_stale_stay`, `cache::a_suite_inside_its_shelf_life_stays`.
+- [x] **Step 2: Implement** the log file handle kept open per day (reopen on date change, reset on `init`), the size cap; `evict_stale` on load and on every `put_at` (only `EXPIRING_KINDS`); session values older than 24 h dropped on `session_put`; `SetupSteps` timings appended to the "started" log line (events and database logins, npm logs folder and app log, cache and settings, Auto Run data). Inline images were done in A1.3 (24 MB per answer).
 - [ ] **Step 3: Verify** `cd src-tauri && cargo test --test suite -- applog:: cache::` passes.
 - [ ] **Step 4: Commit** `perf(v2): bounded log file and caches, startup step timings (A1.7)`.
 

@@ -22,6 +22,19 @@ pub fn tags(org: &str, project: &str) -> String {
     format!("tags:{org}/{project}")
 }
 
+/// The durable kinds that are only ever read through `cache::fresh`, each
+/// with its shelf life. An entry past it can serve no read, so it is
+/// removed when the cache loads and on each write; before this, expired
+/// suites and refusals stayed in cache.json for ever. Every other kind is
+/// kept: tags and the assignment baselines are read stale on purpose
+/// (`cache::get`), and wiki pages and Playwright listings have their own
+/// eviction.
+pub const EXPIRING_KINDS: &[(&str, u64)] = &[("suite:", SUITE_TTL_MS), ("suite-refused:", SUITE_REFUSED_TTL_MS)];
+
+/// Session values older than this are removed on each session write. The
+/// longest session shelf life is a day (`RUN_OUTCOMES_TTL` and others).
+pub const SESSION_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Work-item ids already announced as newly assigned (assigned_watch.rs).
 pub fn assigned_seen(org: &str, project: &str) -> String {
     format!("assigned-seen:{org}/{project}")

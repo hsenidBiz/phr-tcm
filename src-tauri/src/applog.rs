@@ -26,6 +26,36 @@ const TAIL: usize = 6000;
 /// Files older than this are pruned at startup.
 const KEEP_DAYS: u64 = 7;
 
+/// The most one day's file may hold. Debug lines log every request, so a
+/// long session of bulk work could grow a file without limit; past this
+/// the day's lines go to the memory tail only, after one line that says so.
+pub const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
+
+/// The cap in force: `MAX_FILE_BYTES`, or a small one a test sets.
+static FILE_CAP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(MAX_FILE_BYTES);
+
+/// Test hook: change the per-file cap (`MAX_FILE_BYTES` puts it back).
+pub fn set_file_cap(bytes: u64) {
+    FILE_CAP.store(bytes, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut slot) = open_file().lock() {
+        *slot = None;
+    }
+}
+
+/// Today's file, kept open: opening and closing the file for every line
+/// (one per request) was a system call pair on every log line.
+struct OpenFile {
+    path: PathBuf,
+    file: std::fs::File,
+    bytes: u64,
+    full: bool,
+}
+
+fn open_file() -> &'static Mutex<Option<OpenFile>> {
+    static F: OnceLock<Mutex<Option<OpenFile>>> = OnceLock::new();
+    F.get_or_init(|| Mutex::new(None))
+}
+
 /// One line, as the viewer renders it.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct LogLine {
@@ -124,6 +154,10 @@ pub fn init(dir: PathBuf) {
     if let Ok(mut cell) = dir_cell().lock() {
         *cell = Some(dir.clone());
     }
+    // A new directory: the handle kept open (if any) belongs to the old one.
+    if let Ok(mut slot) = open_file().lock() {
+        *slot = None;
+    }
     prune(&dir);
 }
 
@@ -161,9 +195,45 @@ pub fn log(level: &str, message: impl Into<String>) {
     }
 
     if let Some(path) = today_file() {
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "{} [{}] {}", line.at, line.level.to_uppercase(), line.message);
-        }
+        write_line(path, &format!("{} [{}] {}\n", line.at, line.level.to_uppercase(), line.message));
+    }
+}
+
+/// Appends to today's file through the handle kept open, opening a new one
+/// when the day (and so the path) changes or the old one failed.
+fn write_line(path: PathBuf, text: &str) {
+    let Ok(mut slot) = open_file().lock() else { return };
+    if slot.as_ref().map(|o| o.path != path).unwrap_or(true) {
+        *slot = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()
+            .map(|file| {
+                let bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
+                OpenFile { path, file, bytes, full: false }
+            });
+    }
+    let Some(open) = slot.as_mut() else { return };
+    if open.full {
+        return;
+    }
+    let cap = FILE_CAP.load(std::sync::atomic::Ordering::Relaxed);
+    if open.bytes + text.len() as u64 > cap {
+        open.full = true;
+        let _ = writeln!(
+            open.file,
+            "{} [WARN] this log file reached its size limit ({} bytes); the rest of today's lines are kept in memory only (Settings, Logs)",
+            stamp(),
+            cap
+        );
+        return;
+    }
+    if open.file.write_all(text.as_bytes()).is_ok() {
+        open.bytes += text.len() as u64;
+    } else {
+        // A broken handle (the file deleted under us): open it again next time.
+        *slot = None;
     }
 }
 

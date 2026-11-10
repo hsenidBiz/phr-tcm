@@ -145,6 +145,20 @@ fn evict_wiki_pages(entries: &mut HashMap<String, Entry>, now: u64) {
     }
 }
 
+/// Entries of an `EXPIRING_KINDS` kind past that kind's shelf life: no read
+/// can use them. Every other key is left alone. Returns whether anything
+/// went.
+fn evict_stale(entries: &mut HashMap<String, Entry>, now: u64) -> bool {
+    let before = entries.len();
+    entries.retain(|k, e| {
+        keys::EXPIRING_KINDS
+            .iter()
+            .find(|(prefix, _)| k.starts_with(prefix))
+            .is_none_or(|(_, ttl)| now.saturating_sub(e.at_ms) < *ttl)
+    });
+    entries.len() != before
+}
+
 /// A Playwright listing is kept for one clone at a time: putting `just_put`
 /// drops every other listing. Other keys are never touched here.
 fn evict_pw_lists(entries: &mut HashMap<String, Entry>, just_put: &str) {
@@ -322,6 +336,14 @@ impl Store {
                 legacy::remove(dir);
             }
         }
+        // Entries past every shelf life are dropped as the cache loads.
+        let stale = {
+            let mut inner = shared.lock();
+            evict_stale(&mut inner.disk.entries, now_ms())
+        };
+        if stale {
+            shared.write_now();
+        }
         let for_writer = Arc::clone(&shared);
         let writer = std::thread::Builder::new()
             .name("tcm-cache-writer".into())
@@ -388,6 +410,7 @@ impl Store {
             let mut inner = self.lock();
             let now = now_ms();
             inner.disk.entries.insert(key.to_string(), Entry { value, at_ms });
+            evict_stale(&mut inner.disk.entries, now);
             evict_wiki_pages(&mut inner.disk.entries, now);
             evict_pw_lists(&mut inner.disk.entries, key);
         }
@@ -442,9 +465,11 @@ impl Store {
 
     /// Keep a value in memory for this run only.
     pub fn session_put<T: Send + 'static>(&self, key: &str, value: T) {
-        self.lock()
-            .session
-            .insert(key.to_string(), (Instant::now(), Box::new(value)));
+        let mut inner = self.lock();
+        // Values past every session shelf life go, so a long session (run
+        // outcomes are kept per run) does not grow without limit.
+        inner.session.retain(|_, (at, _)| at.elapsed() < keys::SESSION_MAX_AGE);
+        inner.session.insert(key.to_string(), (Instant::now(), Box::new(value)));
     }
 
     /// Hand the cache to the signed-in account. A different account than
