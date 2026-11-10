@@ -488,6 +488,37 @@ impl AdoClient {
         Ok(cases)
     }
 
+    /// The tags of the given work items, id -> `System.Tags` as Azure
+    /// DevOps holds them (`; `-separated; an item with none maps to an
+    /// empty string). Read only: batched GETs asking for that one field.
+    pub async fn get_test_case_tags(
+        &self,
+        organization: &str,
+        ids: &[Option<i32>],
+    ) -> Result<std::collections::HashMap<i32, String>, AdoError> {
+        let mut unique: Vec<i32> = ids.iter().flatten().copied().collect();
+        unique.sort_unstable();
+        unique.dedup();
+        let mut tags = std::collections::HashMap::with_capacity(unique.len());
+        for chunk in unique.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Tags&api-version=7.1",
+                self.base_url, percent_encode_segment(organization), ids_csv
+            );
+            let fetched = self.get_json(url).await?;
+            for w in fetched["value"].as_array().cloned().unwrap_or_default() {
+                if let Some(id) = w["id"].as_i64() {
+                    tags.insert(
+                        id as i32,
+                        w["fields"]["System.Tags"].as_str().unwrap_or_default().to_string(),
+                    );
+                }
+            }
+        }
+        Ok(tags)
+    }
+
     /// Test Cases the PBI is Tested By that were created at or after
     /// `since` and whose title is one of `titles` (outer whitespace
     /// ignored), as (id, title), ids ascending. What an upload whose

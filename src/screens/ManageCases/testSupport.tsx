@@ -59,7 +59,7 @@ const point = (id: number, name: string, config = "Windows 10") => ({
   tester: "",
   last_outcome: "none",
   last_run_id: null,
-  last_result_id: null,
+  last_result_id: null, tags: "",
 });
 
 /** How the screen is mounted. `allProjects` is the "Treat all projects as

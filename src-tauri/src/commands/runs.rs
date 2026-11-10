@@ -46,9 +46,26 @@ pub async fn list_test_points(
     suite_id: i32,
 ) -> Result<Vec<ado_testplan::TestPoint>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token)
+    let client = ado::AdoClient::new(token);
+    let mut points = client
         .get_test_points(&organization, &project, plan_id, suite_id, &[])
-        .await
+        .await?;
+    // Tags make the list searchable, nothing more: a failure here must not
+    // cost the tester their points, so they come back with empty tags.
+    let case_ids: Vec<Option<i32>> = points.iter().map(|p| p.test_case_id).collect();
+    match client.get_test_case_tags(&organization, &case_ids).await {
+        Ok(tags) => {
+            for p in &mut points {
+                if let Some(t) = p.test_case_id.and_then(|id| tags.get(&id)) {
+                    p.tags = t.clone();
+                }
+            }
+        }
+        Err(e) => crate::applog::warn(format!(
+            "test points for suite {suite_id}: tags could not be read, searching by tag will not match: {e}"
+        )),
+    }
+    Ok(points)
 }
 
 /// A live run's identity plus every point's result row, so the runner can

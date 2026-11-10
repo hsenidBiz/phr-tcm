@@ -81,7 +81,7 @@ function pointMatches(p: TestPoint, filterOutcome: string, filterText: string): 
   if (
     filterText &&
     !matchesQuery(
-      [p.test_case_id, p.test_case_name, outcomeLabel(p.last_outcome) || "Never run", p.tester, p.config_name],
+      [p.test_case_id, p.test_case_name, p.tags, outcomeLabel(p.last_outcome) || "Never run", p.tester, p.config_name],
       filterText,
     )
   )
@@ -570,7 +570,7 @@ export default function RunPanel({
             <SearchInput
               aria-label="Filter points"
               className="w-full"
-              placeholder={searchPlaceholder(["name", "id", "outcome", "tester", "configuration"])}
+              placeholder={searchPlaceholder(["name", "id", "tag", "outcome", "tester", "configuration"])}
               value={filterText}
               onChange={setFilterText}
             />

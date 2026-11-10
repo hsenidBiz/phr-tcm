@@ -122,7 +122,7 @@ test("plays a case, records it into a lazily-opened run, and Finish completes it
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     if (cmd === "start_test_run") {
@@ -189,7 +189,7 @@ test("Next records the outcome immediately, without waiting for Finish", async (
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
         {
           point_id: 8,
@@ -199,7 +199,7 @@ test("Next records the outcome immediately, without waiting for Finish", async (
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     if (cmd === "start_test_run")
@@ -264,7 +264,7 @@ test("a previously-run case opens unmarked with its last verdict tinted", async 
           tester: "",
           last_outcome: "failed",
           last_run_id: 3,
-          last_result_id: 30,
+          last_result_id: 30, tags: "",
         },
         {
           point_id: 8,
@@ -274,7 +274,7 @@ test("a previously-run case opens unmarked with its last verdict tinted", async 
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
         // A point for a case NOT in this runner's list (another config or
         // a filtered run). Its pre-seeded state must not count: the header
@@ -288,7 +288,7 @@ test("a previously-run case opens unmarked with its last verdict tinted", async 
           tester: "",
           last_outcome: "passed",
           last_run_id: 3,
-          last_result_id: 31,
+          last_result_id: 31, tags: "",
         },
       ];
     if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
@@ -341,7 +341,7 @@ test("clicking the previous run's own verdict records a fresh result", async () 
           tester: "",
           last_outcome: "passed",
           last_run_id: 3,
-          last_result_id: 30,
+          last_result_id: 30, tags: "",
         },
         {
           point_id: 8,
@@ -351,7 +351,7 @@ test("clicking the previous run's own verdict records a fresh result", async () 
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     if (cmd === "get_result_detail") return { outcome: "passed", comment: "" };
@@ -570,7 +570,7 @@ test("Paused is offered and records as a real outcome", async () => {
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     if (cmd === "start_test_run")
@@ -610,7 +610,7 @@ test("offline defers records and the reconnect flushes them", async () => {
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
         {
           point_id: 8,
@@ -620,7 +620,7 @@ test("offline defers records and the reconnect flushes them", async () => {
           tester: "",
           last_outcome: "",
           last_run_id: null,
-          last_result_id: null,
+          last_result_id: null, tags: "",
         },
       ];
     if (cmd === "start_test_run")
@@ -993,7 +993,7 @@ function mockRecordingWithFiles(
         tester: "",
         last_outcome: "",
         last_run_id: null,
-        last_result_id: null,
+        last_result_id: null, tags: "",
       }));
     if (cmd === "start_test_run")
       return {
@@ -1245,7 +1245,7 @@ test("a shared step shows its reference and has no Pass/Fail marks", async () =>
       return [
         {
           point_id: 7, test_case_id: 201, test_case_name: "Valid login", config_name: "W10",
-          tester: "", last_outcome: "", last_run_id: null, last_result_id: null,
+          tester: "", last_outcome: "", last_run_id: null, last_result_id: null, tags: "",
         },
       ];
     if (cmd === "test_cases_by_ids")

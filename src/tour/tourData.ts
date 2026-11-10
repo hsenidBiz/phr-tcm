@@ -179,6 +179,7 @@ export const TOUR_POINTS: TestPoint[] = TOUR_CASES.map((c, i) => ({
   last_outcome: ["Passed", "Failed", "Passed", "None"][i],
   last_run_id: null,
   last_result_id: null,
+  tags: "",
 }));
 
 /** A suite's contents, for Suite Management: the sample cases in the order

@@ -1347,3 +1347,38 @@ async fn run_history_reports_unauthorized_even_after_some_runs_were_read() {
     let err = client.run_history(&o, &p, 9, &[310]).await.unwrap_err();
     assert!(matches!(err, AdoError::Unauthorized), "{err:?}");
 }
+
+#[tokio::test]
+async fn test_case_tags_come_back_by_id_asking_only_for_tags() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/tagorg/_apis/wit/workitems"))
+        .and(query_param("ids", "201,202"))
+        .and(query_param("fields", "System.Tags"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 201, "fields": {"System.Tags": "Smoke; Regression"}},
+                {"id": 202, "fields": {}}
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    // Duplicates and missing ids are folded away before the request.
+    let tags = client
+        .get_test_case_tags("tagorg", &[Some(202), None, Some(201), Some(201)])
+        .await
+        .unwrap();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags[&201], "Smoke; Regression");
+    assert_eq!(tags[&202], "");
+}
+
+#[tokio::test]
+async fn test_case_tags_with_nothing_to_ask_make_no_request() {
+    let server = MockServer::start().await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    assert!(client.get_test_case_tags("tagorg", &[None]).await.unwrap().is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
