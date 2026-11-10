@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.1",
+    date: "2026-11-10",
+    items: [
+      "In Settings, opening the full changelog no longer grows it over the cards beside it on a wide window: they move aside first.",
+      "A list's search bar goes back to its normal look when you scroll back to the top, instead of staying stretched across the page (seen in Run Tests on a scaled display).",
+    ],
+  },
+  {
     version: "2.4.5",
     date: "2026-11-10",
     items: [
