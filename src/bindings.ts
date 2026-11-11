@@ -1255,6 +1255,7 @@ export const commands = {
 } | null, string>(__TAURI_INVOKE("auto_run_sign_in_proposal", { organization, project })),
 	autoRunApproveSignInProposal: (organization: string, project: string, turnOnReset: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_approve_sign_in_proposal", { organization, project, turnOnReset })),
 	autoRunRejectSignInProposal: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_reject_sign_in_proposal", { organization, project })),
+	autoRunWaitingItems: (organization: string, project: string) => typedError<WaitingItems, string>(__TAURI_INVOKE("auto_run_waiting_items", { organization, project })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -3055,7 +3056,7 @@ export type AutorunDataChanged = {
  *  Which of the data an assistant adds through the AI bridge changed. The
  *  Auto Run screen reads each kind from its own queries.
  */
-export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal";
+export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Run browser: while
@@ -4400,6 +4401,8 @@ export type Divergence_Deserialize = {
 	 *  fix), scrubbed; shown wherever the divergence is listed.
 	 */
 	proposal?: string | null,
+	/**  The PBI the assistant was working on when it reported this, set once. */
+	pbi?: number | null,
 };
 
 export type Divergence_Serialize = {
@@ -4442,6 +4445,8 @@ export type Divergence_Serialize = {
 	 *  fix), scrubbed; shown wherever the divergence is listed.
 	 */
 	proposal?: string | null,
+	/**  The PBI the assistant was working on when it reported this, set once. */
+	pbi?: number | null,
 };
 
 /**
@@ -9046,6 +9051,20 @@ export type WaitView = {
 	waited_s: number,
 	give_up_in_s: number,
 };
+
+export type WaitingItem = {
+	key: string,
+	title: string,
+	proposed_ms: number | null,
+	target: WaitingTarget,
+};
+
+export type WaitingItems = {
+	env_id: string,
+	items: WaitingItem[],
+};
+
+export type WaitingTarget = { kind: "accounts" } | { kind: "sign_in" } | { kind: "divergence"; id: string; case_id: number; step: number; pbi: number | null };
 
 /**
  *  Emitted when the JSON file an import is following changes on disk -

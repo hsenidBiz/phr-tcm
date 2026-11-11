@@ -27,6 +27,7 @@ export const DATA_KIND_KEYS: Record<AutorunDataKind, readonly unknown[]> = {
   testFiles: ["test-files"],
   proposals: envKeys.proposals,
   signInProposal: ["autorun-sign-in-proposal"],
+  divergences: ["autorun-divergences"],
 };
 
 /** One array, not one per event: `pending` compares keys by reference, so a

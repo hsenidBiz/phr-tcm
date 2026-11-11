@@ -71,6 +71,7 @@ pub enum AutorunDataKind {
     TestFiles,
     Proposals,
     SignInProposal,
+    Divergences,
 }
 
 /// Emitted after a successful write to that data, whoever made it, so the

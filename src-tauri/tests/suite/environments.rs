@@ -1103,6 +1103,7 @@ mod accounts_for_the_assistant {
                 password: pw.map(str::to_string),
                 no_password: None,
                 marks: vec![],
+                proposed_ms: None,
             })
             .collect();
         save_proposals(root, &active_id(root).unwrap(), &list).unwrap();

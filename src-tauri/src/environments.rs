@@ -894,6 +894,9 @@ pub struct StoredProposal {
     pub no_password: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<String>,
+    /// Epoch milliseconds when the assistant proposed it; older files have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_ms: Option<u64>,
 }
 
 /// Hand-written so a password cannot reach a log line through `{:?}`.

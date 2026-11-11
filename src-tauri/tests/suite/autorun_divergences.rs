@@ -125,6 +125,7 @@ fn divergence(id: &str, case_id: i32, step: i32, kind: DivergenceKind, reported_
         said: None,
         note: None,
         proposal: None,
+        pbi: None,
     }
 }
 
@@ -1466,4 +1467,19 @@ mod ruling_route {
             assert!(!smells_like_a_write("POST", p), "{p}");
         }
     }
+}
+
+#[test]
+fn note_pbi_sets_once() {
+    let mut l = vec![divergence("d1", 5, 1, DivergenceKind::Data, 1)];
+    v2_lib::autorun::divergences::note_pbi_in(&mut l, "d1", Some(42));
+    v2_lib::autorun::divergences::note_pbi_in(&mut l, "d1", Some(7));
+    assert_eq!(l[0].pbi, Some(42));
+}
+
+#[test]
+fn an_older_file_without_pbi_still_loads() {
+    let json = r#"{"id":"d1","case_id":5,"step":1,"case_says":"a","app_shows":"b","kind":"data","reported_at":"1","status":"open"}"#;
+    let d: Divergence = serde_json::from_str(json).unwrap();
+    assert_eq!(d.pbi, None);
 }

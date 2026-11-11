@@ -11978,7 +11978,9 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
         let id = match &r {
             Reported::New(id) | Reported::Updated(id) => id,
         };
-        let stored = list.iter().find(|d| &d.id == id).cloned().expect("the divergence just reported");
+        let id = id.clone();
+        divergences::note_pbi_in(list, &id, ctx.current_pbi.as_ref().map(|p| p.id));
+        let stored = list.iter().find(|d| d.id == id).cloned().expect("the divergence just reported");
         Ok((stored, matches!(r, Reported::Updated(_))))
     });
     match reported {
@@ -12340,6 +12342,7 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
                 password: p.password,
                 no_password,
                 marks: vec![],
+                proposed_ms: Some(crate::autorun::sessions::now_ms()),
             }
         })
         .collect();
