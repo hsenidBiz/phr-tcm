@@ -139,6 +139,7 @@ async fn inspect_without_an_account_never_signs_in() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("https://hr.example.internal/login");
     let mut fake = Fake::new(|| readable(stateful_app(false, None).0, "https://hr.example.internal/login?x=1"));
     let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, "{}", &quick()).await;
@@ -160,6 +161,7 @@ async fn inspect_with_an_account_tries_the_draft_counts_it_and_reads_where_it_en
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
@@ -179,6 +181,7 @@ async fn inspect_takes_a_recipe_only_together_with_an_account() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &json!({ "recipe": good() }).to_string(), &quick()).await;
@@ -193,6 +196,7 @@ async fn inspect_with_an_account_alone_runs_the_saved_sign_in_and_reads_where_it
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let (status, text) = inspect_in(&mut fake, dir.path(), ORG, PROJECT, &json!({ "account": "sup" }).to_string(), &quick()).await;
@@ -220,6 +224,7 @@ async fn inspect_refuses_an_unsaved_account_before_a_browser_opens() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let asked = json!({ "account": "ghost", "recipe": good() }).to_string();
@@ -235,6 +240,7 @@ async fn a_proposal_that_signs_in_is_stored_and_says_so() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
@@ -257,6 +263,7 @@ async fn an_environment_with_its_own_address_makes_the_address_no_change() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root(HOME);
     let mut fake = Fake::new(signs_in);
     let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
@@ -274,6 +281,7 @@ async fn a_failed_trial_stores_nothing() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(never_signs_in);
     let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
@@ -292,6 +300,7 @@ async fn a_reset_part_passes_on_the_described_page_without_sending() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let submits = Arc::new(AtomicUsize::new(0));
     let seen = submits.clone();
@@ -317,6 +326,7 @@ async fn a_reset_part_does_not_pass_a_site_that_stops_somewhere_else() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(never_signs_in);
     let mut draft = good();
@@ -334,6 +344,7 @@ async fn a_marker_naming_the_account_is_refused() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let mut draft = good();
@@ -351,6 +362,7 @@ async fn a_parse_error_never_quotes_the_body() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let mut draft = good();
@@ -371,6 +383,7 @@ async fn an_unsaved_account_and_a_spent_account_are_refused_before_a_browser_ope
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let ghost = json!({ "recipe": good(), "account": "ghost" }).to_string();
@@ -406,6 +419,7 @@ async fn a_trial_never_goes_to_a_site_the_app_was_not_given() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     // A saved recipe elsewhere: a draft on a third host is refused, and so is
     // one that names its own allowed sites to get there.
     let dir = root_with("", Some(saved_on_another_site()));
@@ -442,6 +456,7 @@ async fn an_inspect_with_an_account_at_the_cap_is_refused_before_a_browser_opens
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     for _ in 0..3 {
         signin_attempts::take(dir.path(), "sup").unwrap();
@@ -460,6 +475,7 @@ async fn a_failed_trial_and_an_unreadable_page_still_say_why_the_trial_failed() 
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     // Nothing answers the page reader: the answer is not 200 but carries the trial's words.
     let mut fake = Fake::new(|| stateful_app(false, Some("#go")).0.answering_first(|m, p| {
@@ -478,6 +494,7 @@ async fn with_an_environment_address_and_no_saved_recipe_approval_saves_the_envi
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root(HOME);
     let mut fake = Fake::new(signs_in);
     let mut draft = good();
@@ -521,6 +538,7 @@ async fn clearing_the_address_before_approval_cannot_make_the_drafts_site_the_re
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root_with(HOME, Some(recipe()));
     let mut fake = Fake::new(signs_in);
     let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(off_site_start()), &quick()).await;
@@ -578,6 +596,7 @@ async fn a_full_draft_that_only_reaches_the_reset_page_keeps_the_saved_sign_in()
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let submits = Arc::new(AtomicUsize::new(0));
     let seen = submits.clone();
@@ -605,6 +624,7 @@ async fn a_full_draft_that_only_reaches_the_reset_page_with_nothing_saved_is_ref
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root_with(HOME, None);
     let submits = Arc::new(AtomicUsize::new(0));
     let seen = submits.clone();
@@ -626,6 +646,7 @@ async fn a_reset_part_alone_is_laid_over_the_saved_sign_in() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let submits = Arc::new(AtomicUsize::new(0));
     let seen = submits.clone();
@@ -658,6 +679,7 @@ async fn a_proposal_gives_a_recipe_or_a_reset_part_never_both_or_neither() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     for asked in [
@@ -689,6 +711,7 @@ async fn a_browser_that_will_not_open_spends_no_attempt() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let (status, text) = propose_in(&mut Broken, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
     assert_eq!(status, 422, "{text}");
@@ -704,6 +727,7 @@ async fn approving_a_proposal_closes_the_accounts_sign_in_problem() {
     let _h = crate::serial::held_browsers();
     let _l = crate::serial::account_leases();
     let _n = crate::serial::sign_in_attempts();
+    let _t = crate::serial::sign_in_trial();
     let dir = root("");
     let mut fake = Fake::new(signs_in);
     let (status, text) = propose_in(&mut fake, dir.path(), ORG, PROJECT, &body(good()), &quick()).await;
