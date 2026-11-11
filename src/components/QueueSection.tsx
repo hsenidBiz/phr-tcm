@@ -887,8 +887,15 @@ export default function QueueSection({
         applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue, since, preExisting });
         // The hold (if any) is saved by now, so the journal can go: until
         // here it is what turns a crash into a hold.
-        const cleared = await commands.uploadJournalClear(org, pbiId);
-        if (cleared.status === "error") logUi(`upload journal not cleared: ${cleared.error}`);
+        // The upload already happened: a failure to tidy the journal up
+        // (an IPC error as much as an error result) must not turn it into a
+        // failed upload.
+        try {
+          const cleared = await commands.uploadJournalClear(org, pbiId);
+          if (cleared.status === "error") logUi(`upload journal not cleared: ${cleared.error}`);
+        } catch (e) {
+          logUi(`upload journal not cleared: ${String(e)}`);
+        }
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.

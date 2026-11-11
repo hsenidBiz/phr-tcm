@@ -72,6 +72,36 @@ fn another_account_never_sees_or_clears_a_journal() {
 }
 
 #[test]
+fn a_file_naming_another_org_or_pbi_is_not_found_and_not_cleared() {
+    let _g = crate::serial::upload_journal();
+    let dir = tempfile::tempdir().unwrap();
+    // A journal for ("other", 7) sitting under the file name of ("acme", 42).
+    let stray = journal("other", 7);
+    upload_journal::write_in(dir.path(), "o1", &stray).unwrap();
+    std::fs::rename(
+        dir.path().join(upload_journal::file_name("other", 7)),
+        dir.path().join(upload_journal::file_name("acme", 42)),
+    )
+    .unwrap();
+    assert_eq!(upload_journal::read_in(dir.path(), "o1", "acme", 42), JournalRead::None);
+    upload_journal::clear_in(dir.path(), "o1", "acme", 42).unwrap();
+    assert!(dir.path().join(upload_journal::file_name("acme", 42)).exists());
+}
+
+#[test]
+fn clear_does_nothing_while_that_upload_runs() {
+    let _g = crate::serial::upload_journal();
+    let dir = tempfile::tempdir().unwrap();
+    upload_journal::write_in(dir.path(), "o1", &journal("acme", 42)).unwrap();
+    let m = upload_journal::mark_running("acme", 42);
+    upload_journal::clear_in(dir.path(), "o1", "acme", 42).unwrap();
+    assert!(dir.path().join(upload_journal::file_name("acme", 42)).exists());
+    drop(m);
+    upload_journal::clear_in(dir.path(), "o1", "acme", 42).unwrap();
+    assert!(!dir.path().join(upload_journal::file_name("acme", 42)).exists());
+}
+
+#[test]
 fn list_is_per_org() {
     let _g = crate::serial::upload_journal();
     let dir = tempfile::tempdir().unwrap();

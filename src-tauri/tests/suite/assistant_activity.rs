@@ -100,6 +100,14 @@ fn a_read_is_not_recorded() {
 }
 
 #[test]
+fn a_huge_window_does_not_panic() {
+    let (_g, dir) = fresh();
+    record_call(&Caller::Default, "org-huge", "env-1", "POST", "/autorun-try", "{}", 200);
+    let got = timeline_in(dir.path(), "org-huge", "env-1", u32::MAX, SystemTime::now());
+    assert_eq!(got.len(), 1);
+}
+
+#[test]
 fn the_timeline_shows_only_this_org_and_environment() {
     let (_g, dir) = fresh();
     record_call(&Caller::Default, "org-a", "env-1", "POST", "/autorun-try", "{}", 200);

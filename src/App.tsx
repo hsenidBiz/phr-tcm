@@ -617,18 +617,47 @@ export default function App() {
     setRunFolder(null); // ...and Run Tests to the PBI
   };
   // A bell notice about a PBI: open it, then land on `then`. The hit comes
-  // from the search so the title is the real one; a PBI the search does not
-  // return still opens, under a plain title, because the id is all the
-  // screens key on.
+  // from the search so the title is the real one. Projects shown together:
+  // the PBI's own project decides where every later write goes, so the id is
+  // looked up across the organization and the PBI opens only under the
+  // project the hit names; no hit, no switch. One project at a time, a PBI
+  // the search does not return still opens under a plain title in the
+  // project that was searched. The values read after the search are the
+  // current ones: if the organization, the project or the scope moved while
+  // it ran, the notice is no longer what the person is looking at.
+  const latestScope = useRef({ org, project, allProjects });
+  latestScope.current = { org, project, allProjects };
   const openPbiById = async (id: number, pbiProject: string, then: Section) => {
-    let hit: PbiHit = { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
+    const started = latestScope.current;
+    let hit: PbiHit | null = null;
     try {
-      const found = await unwrap(commands.searchPbis(org, pbiProject, String(id)));
-      hit = found.find((h) => h.id === id) ?? hit;
+      if (started.allProjects) {
+        const found = await unwrap(commands.searchPbisAll(started.org, String(id)));
+        const f = found.find((h) => h.id === id);
+        hit = f?.project ? f : null;
+      } else {
+        const found = await unwrap(commands.searchPbis(started.org, pbiProject, String(id)));
+        const f = found.find((h) => h.id === id);
+        hit = f
+          ? { ...f, project: f.project || pbiProject }
+          : { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
+      }
     } catch (e) {
       logUi(`nav: PBI ${id} search failed: ${String(e)}`);
+      if (!started.allProjects) {
+        hit = { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
+      }
     }
-    if (!allProjects && pbiProject !== project) setProject(pbiProject);
+    const now = latestScope.current;
+    if (now.org !== started.org || now.allProjects !== started.allProjects) {
+      logUi(`nav: PBI ${id} not opened, the organization or project scope changed meanwhile`);
+      return;
+    }
+    if (!hit) {
+      logUi(`nav: PBI ${id} not opened, no project found for it`);
+      return;
+    }
+    if (!now.allProjects && hit.project && hit.project !== now.project) setProject(hit.project);
     setPbi(hit);
     goToSection(then);
   };

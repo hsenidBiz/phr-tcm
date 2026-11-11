@@ -2909,6 +2909,28 @@ test("submit sends pre_existing and the hold signatures, and clears the journal 
   expect(holdAtClear).toBe(true);
 });
 
+test("an IPC error clearing the journal does not turn a finished upload into a failed one", async () => {
+  let cleared = false;
+  journalMocks((cmd) => {
+    if (cmd === "submit_queue") return [{ index: 0, title: "Brand new", action: "created", id: 900, error: null }];
+    if (cmd === "upload_journal_clear") {
+      cleared = true;
+      throw new Error("ipc down");
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ title: "Brand new" })]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(cleared).toBe(true));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining("Submit failed"));
+});
+
 test("a remount mid-upload does not turn the journal into a hold", async () => {
   const calls: string[] = [];
   journalMocks((cmd) => {

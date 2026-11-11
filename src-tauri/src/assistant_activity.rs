@@ -136,6 +136,9 @@ pub fn record_call(caller: &Caller, org: &str, env: &str, method: &str, target: 
 /// This organisation's and environment's records from the last `days` days,
 /// newest first, at most `TIMELINE_CAP`.
 pub fn timeline_in(dir: &Path, org: &str, env: &str, days: u32, now: SystemTime) -> Vec<AssistantRecord> {
+    // Nothing older than the retention exists, and a huge value would
+    // overflow the time arithmetic below.
+    let days = days.min(crate::activity_log::KEEP_DAYS as u32);
     let since = crate::applog::stamp_of(now - Duration::from_secs(u64::from(days) * 86_400));
     let mut out: Vec<AssistantRecord> = Vec::new();
     for back in 0..=u64::from(days) {

@@ -128,15 +128,21 @@ pub fn read_in(dir: &Path, owner: &str, organization: &str, pbi_id: i32) -> Jour
         return JournalRead::Running;
     }
     match load(&dir.join(file_name(organization, pbi_id))) {
-        Some(d) if d.owner == owner => JournalRead::Found { journal: d.journal },
+        Some(d) if d.owner == owner && d.journal.organization == organization && d.journal.pbi_id == pbi_id => {
+            JournalRead::Found { journal: d.journal }
+        }
         _ => JournalRead::None,
     }
 }
 
 pub fn clear_in(dir: &Path, owner: &str, organization: &str, pbi_id: i32) -> Result<(), String> {
+    // The running upload's own journal is what turns a crash into a hold.
+    if is_running(organization, pbi_id) {
+        return Ok(());
+    }
     let path = dir.join(file_name(organization, pbi_id));
     match load(&path) {
-        Some(d) if d.owner == owner => std::fs::remove_file(&path).or_else(|e| {
+        Some(d) if d.owner == owner && d.journal.organization == organization && d.journal.pbi_id == pbi_id => std::fs::remove_file(&path).or_else(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 Ok(())
             } else {
