@@ -25,6 +25,7 @@ use std::time::SystemTime;
 pub enum Kind {
     Db,
     Api,
+    Assistant,
 }
 
 impl Kind {
@@ -32,8 +33,18 @@ impl Kind {
         match self {
             Kind::Db => "db",
             Kind::Api => "api",
+            Kind::Assistant => "assistant",
         }
     }
+}
+
+/// Set by every `Kind::Assistant` record, cleared by `take_assistant_changed`:
+/// the timeline's once-a-second watch reads it.
+static ASSISTANT_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True once since the last call when an assistant record was written.
+pub fn take_assistant_changed() -> bool {
+    ASSISTANT_CHANGED.swap(false, std::sync::atomic::Ordering::SeqCst)
 }
 
 /// How long activity files are kept - see the plan's global constraints.
@@ -85,6 +96,9 @@ pub fn record(kind: Kind, mut entry: serde_json::Value) {
     };
     if let Ok(line) = serde_json::to_string(&entry) {
         let _ = writeln!(f, "{line}");
+        if kind == Kind::Assistant {
+            ASSISTANT_CHANGED.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 }
 
@@ -98,7 +112,7 @@ pub fn prune(dir: &Path, now: SystemTime, keep_days: u64) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        let ours = (name.starts_with("db-") || name.starts_with("api-")) && name.ends_with(".jsonl");
+        let ours = (name.starts_with("db-") || name.starts_with("api-") || name.starts_with("assistant-")) && name.ends_with(".jsonl");
         if !ours {
             continue;
         }

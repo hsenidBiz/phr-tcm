@@ -23,6 +23,7 @@ mod serial_order;
 
 mod action_help;
 mod activity_log;
+mod assistant_activity;
 mod ado;
 mod ado_retry;
 mod ado_boards;

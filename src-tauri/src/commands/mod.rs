@@ -17,6 +17,7 @@ pub mod autorun_signin_proposal;
 pub mod autorun_waiting;
 pub mod autorun_replay;
 pub mod autorun_setup;
+pub mod assistant_activity;
 pub mod autorun_slots;
 pub mod board;
 pub mod bugs;

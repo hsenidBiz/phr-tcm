@@ -282,6 +282,12 @@ pub struct AutorunAgentsChanged {
     pub agents: Vec<crate::commands::autorun_slots::AgentView>,
 }
 
+/// Emitted, at most once a second, when an assistant's save, proposal or try
+/// was recorded (`commands::assistant_activity::spawn_assistant_activity_watch`):
+/// the timeline reloads. It carries nothing.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AssistantActivityChanged {}
+
 /// Emitted when an unattended run pauses before a batch: before case
 /// `before_case_id` runs, which opens batch `batch`, a person sets each
 /// setting in `set` to its value and reverts `names` (`changed_by` gives,

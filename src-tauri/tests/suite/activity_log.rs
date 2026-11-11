@@ -22,6 +22,7 @@ fn a_record_lands_in_todays_file_for_its_kind() {
 fn file_names_are_kind_and_date() {
     assert_eq!(activity_log::file_name(Kind::Api, "2026-09-28"), "api-2026-09-28.jsonl");
     assert_eq!(activity_log::file_name(Kind::Db, "2026-09-28"), "db-2026-09-28.jsonl");
+    assert_eq!(activity_log::file_name(Kind::Assistant, "2026-09-28"), "assistant-2026-09-28.jsonl");
 }
 
 /// Old files this module wrote go; a recent one and a file it never wrote
@@ -34,14 +35,16 @@ fn prune_keeps_thirty_days_and_touches_nothing_else() {
 
     let old_db = dir.path().join("db-2026-08-01.jsonl");
     let old_api = dir.path().join("api-2026-08-01.jsonl");
+    let old_assistant = dir.path().join("assistant-2026-08-01.jsonl");
     let recent = dir.path().join("db-2026-08-30.jsonl");
     let notes = dir.path().join("notes.txt");
-    for p in [&old_db, &old_api, &recent, &notes] {
+    for p in [&old_db, &old_api, &old_assistant, &recent, &notes] {
         std::fs::write(p, "x").unwrap();
     }
 
     touch(&old_db, now - Duration::from_secs(31 * 86_400));
     touch(&old_api, now - Duration::from_secs(31 * 86_400));
+    touch(&old_assistant, now - Duration::from_secs(31 * 86_400));
     touch(&recent, now - Duration::from_secs(29 * 86_400));
     touch(&notes, now - Duration::from_secs(31 * 86_400));
 
@@ -49,6 +52,7 @@ fn prune_keeps_thirty_days_and_touches_nothing_else() {
 
     assert!(!old_db.exists(), "a 31-day-old db activity file must be pruned");
     assert!(!old_api.exists(), "a 31-day-old api activity file must be pruned");
+    assert!(!old_assistant.exists(), "a 31-day-old assistant activity file must be pruned");
     assert!(recent.exists(), "a 29-day-old activity file must stay");
     assert!(notes.exists(), "prune must never touch a file this module did not write");
 }

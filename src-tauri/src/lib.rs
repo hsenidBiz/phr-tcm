@@ -17,6 +17,7 @@ pub mod ado_git;
 pub mod ado_share;
 pub mod ado_testplan;
 pub mod activity_log;
+pub mod assistant_activity;
 pub mod upload_journal;
 pub mod applog;
 pub mod autorun;
@@ -84,7 +85,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_check_signin, autorun_divergence, autorun_record_signin, autorun_signin_proposal, autorun_waiting, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
+        autorun_check_signin, autorun_divergence, autorun_record_signin, autorun_signin_proposal, autorun_waiting, autorun_replay, autorun_setup, autorun_slots, assistant_activity, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
         test_files, testplan, upload_journal, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -109,6 +110,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunSessionChanged,
             events::AutorunDiscoveryChanged,
             events::AutorunAgentsChanged,
+            events::AssistantActivityChanged,
             events::AutorunResetNeeded,
             events::AutorunNetworkWait,
             events::RecordingEvent,
@@ -250,6 +252,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_end_discovery,
             autorun::auto_run_release_browser,
             autorun_slots::auto_run_agents,
+            assistant_activity::auto_run_assistant_timeline,
             autorun_slots::auto_run_stop_agent,
             autorun_slots::auto_run_end_agent_discovery,
             autorun_slots::auto_run_release_agent,
@@ -616,6 +619,7 @@ pub fn run() {
             // The Assistants card hears who is connected and what each is
             // doing, once a second at most, when it changed.
             commands::autorun_slots::spawn_agents_watch(app.handle().clone());
+            commands::assistant_activity::spawn_assistant_activity_watch(app.handle().clone());
             // Every script written or removed, whoever did it, is said to
             // the window: the Auto Run screen reads those scripts again.
             {

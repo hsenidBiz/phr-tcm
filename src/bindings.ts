@@ -566,6 +566,11 @@ export const commands = {
 	/**  The assistants connected now, and what each is doing. */
 	autoRunAgents: () => __TAURI_INVOKE<AgentView[]>("auto_run_agents"),
 	/**
+	 *  What assistants saved, proposed, tried and changed in this organisation
+	 *  and the active environment over the last `days` days, newest first.
+	 */
+	autoRunAssistantTimeline: (organization: string, days: number) => typedError<AssistantRecord[], string>(__TAURI_INVOKE("auto_run_assistant_timeline", { organization, days })),
+	/**
 	 *  Stop what slot `slot`'s assistant is doing: its replay (never the
 	 *  person's), and a batch of discovery actions, at their next look. The
 	 *  assistant's browser stays as it is.
@@ -1877,6 +1882,7 @@ export const commands = {
 /** Events */
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
+	assistantActivityChanged: makeEvent<AssistantActivityChanged>("assistant-activity-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	autorunAgentsChanged: makeEvent<AutorunAgentsChanged>("autorun-agents-changed"),
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
@@ -2676,6 +2682,8 @@ pdf?: PdfSpec_Serialize | null }) & { absent?: never; account?: never; answer?: 
  */
 ({ kind: "page_until"; next: Target_Serialize; until?: Target_Serialize | null; until_all?: Target_Serialize[] | null; max_pages: number }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; attribute?: never; by?: never; cells?: never; checked?: never; child?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; label?: never; matches?: never; max?: never; method?: never; min?: never; name?: never; not_before_ms?: never; not_empty?: never; not_equals?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; property?: never; query?: never; region?: never; relation?: never; relative_to?: never; same_as?: never; same_document?: never; selector?: never; settle_ms?: never; sheet?: never; started_within_ms?: never; status?: never; table?: never; text?: never; texts?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; visible?: never; within_ms?: never };
 
+export type ActivityGroup = "saved" | "proposed" | "tried" | "changed_data";
+
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
 } } | { kind: "Forbidden" } | { kind: "NotFound" } | 
@@ -2974,6 +2982,24 @@ export type AssignedItem = {
 	state: string,
 	/**  The project the item lives in (per-project reads: the argument). */
 	project: string,
+};
+
+/**
+ *  Emitted, at most once a second, when an assistant's save, proposal or try
+ *  was recorded (`commands::assistant_activity::spawn_assistant_activity_watch`):
+ *  the timeline reloads. It carries nothing.
+ */
+export type AssistantActivityChanged = Record<string, never>;
+
+export type AssistantRecord = {
+	at: string,
+	label: string,
+	group: ActivityGroup,
+	action: string,
+	ok: boolean,
+	case_id?: number | null,
+	env: string,
+	org: string,
 };
 
 /**
