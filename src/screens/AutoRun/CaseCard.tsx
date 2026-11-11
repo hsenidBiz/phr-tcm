@@ -119,6 +119,7 @@ function CaseCard({
   onAskClear,
   onClearDone,
   lastRun,
+  highlighted = false,
 }: {
   c: { id: number; title: string; steps: { action: string; expected: string; shared?: number | null }[] };
   org: string;
@@ -144,6 +145,8 @@ function CaseCard({
   onClearDone: () => void;
   /** The run the last result came from, with this case's steps in it. */
   lastRun?: { runId: string; steps?: ReadonlyArray<{ downloads?: string[] }> };
+  /** Ringed for a moment: a Waiting for you row or a bell notice opened it. */
+  highlighted?: boolean;
 }) {
   const bodyId = useId();
   const ready = Boolean(script);
@@ -168,10 +171,14 @@ function CaseCard({
 
   return (
     <li
+      data-case-id={c.id}
       className={cn(
+        // The case a Waiting for you row or a bell notice just opened.
+        highlighted && "ring-2 ring-accent",
         // A long list skips painting the cards off screen. An open card
         // drops it: its confirm and its files must paint past its box.
-        !open && "cv-row",
+        // The ring is painted outside the box, which skipping would clip.
+        !open && !highlighted && "cv-row",
         "rounded-md border border-border bg-surface text-sm",
       )}
       style={{ "--cv-size": "42px" } as CSSProperties}

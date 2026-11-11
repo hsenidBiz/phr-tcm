@@ -38,6 +38,7 @@ import {
   forgetAllNotifications,
   noteAssigned,
   noteInterruptedUploads,
+  noteWaiting,
   type NotificationTarget,
 } from "./lib/notifications";
 import { requestAutoRunFocus } from "./lib/autoRunFocus";
@@ -78,6 +79,7 @@ import { clearReviewRequest, useBackgroundRun } from "./lib/backgroundRun";
 import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunDataSync } from "./hooks/useAutoRunDataSync";
+import { useWaitingItems } from "./lib/useWaitingItems";
 import { useEnvironmentChangeSync } from "./hooks/useEnvironmentChangeSync";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
@@ -895,6 +897,16 @@ export default function App() {
     })().catch((e) => logUi(`upload journals: could not list (${String(e)})`));
   }, [signedIn, org, tourOpen]);
 
+  // What the assistants left for a person to decide, for the Auto Run rail's
+  // count and the bell. Auto Run's files belong to the home project, so that
+  // is the project asked about while the projects show together.
+  const autoRunProject = allProjects ? homeProject : project;
+  const waiting = useWaitingItems(org, autoRunProject, signedIn && modules.has("auto_run") && !tourOpen);
+  useEffect(() => {
+    if (!waiting || !org || tourOpen || isCaptureMode()) return;
+    noteWaiting(org, autoRunProject, waiting);
+  }, [waiting, org, autoRunProject, tourOpen]);
+
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version
   // silently - see `updatedFrom` in lib/changelogSeen.ts for the rules. The
@@ -1464,6 +1476,7 @@ export default function App() {
             <Sidebar
               section={section}
               onSelect={goToSection}
+              badges={{ autorun: waiting?.items.length ?? 0 }}
               locked={tourOpen}
               liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}            />
           ))}
@@ -1514,8 +1527,17 @@ export default function App() {
                   return;
                 }
                 if (target.kind === "auto-run") {
-                  goToSection("autorun");
-                  requestAutoRunFocus(target.focus);
+                  // Auto Run switched off: there is no screen to open.
+                  if (!modules.has("auto_run")) return;
+                  const f = target.focus;
+                  // A divergence of another PBI: open that one first, so
+                  // its case is in the list the focus looks for.
+                  if (f.kind === "divergence" && f.pbi != null && f.pbi !== pbi?.id) {
+                    void openPbiById(f.pbi, target.project, "autorun");
+                  } else {
+                    goToSection("autorun");
+                  }
+                  requestAutoRunFocus(f);
                   return;
                 }
                 if (!allProjects && target.project !== project) setProject(target.project);
@@ -1793,6 +1815,7 @@ export default function App() {
                     project={allProjects ? homeProject : project}
                     adoProject={project}
                     pbi={pbi}
+                    onOpenPbi={(id) => void openPbiById(id, autoRunProject, "autorun")}
                     onOpenPlaywright={() => goToSection("playwright")}
                     onOpenFixtures={() => {
                       askForFixturesView();

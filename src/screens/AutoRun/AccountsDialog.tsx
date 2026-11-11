@@ -91,16 +91,20 @@ export default function AccountsDialog({
   onClose,
   org = "",
   project = "",
+  initialTab,
 }: {
   onClose: () => void;
   org?: string;
   project?: string;
+  /** The tab the dialog opens on: Proposed, from Waiting for you. It falls
+   * back to Accounts while nothing is proposed. */
+  initialTab?: "proposed";
 }) {
   const qc = useQueryClient();
   const tabIds = useId();
   const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
-  // The dialog opens on Accounts.
-  const [tab, setTab] = useState<TabId>("accounts");
+  // The dialog opens on Accounts, unless asked for the Proposed tab.
+  const [tab, setTab] = useState<TabId>(initialTab ?? "accounts");
   // What the accounts file looked like when the list was read: sent back
   // with the save, which is refused when something else changed the file
   // since. Asked before the list, so a change in between is never missed.

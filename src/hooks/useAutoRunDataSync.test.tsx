@@ -33,6 +33,7 @@ function Host({ counts }: { counts: Record<string, number> }) {
     <>
       <Counted name="nav" queryKey={["autorun-nav", "o", "p"]} counts={counts} />
       <Counted name="components" queryKey={["autorun-components", "o", "p"]} counts={counts} />
+      <Counted name="waiting" queryKey={["autorun-waiting", "o", "p", "env"]} counts={counts} />
       <Counted name="fixtures" queryKey={["api-fixtures", "o", "p"]} counts={counts} />
     </>
   );
@@ -46,7 +47,7 @@ async function mount(counts: Record<string, number>) {
       <Host counts={counts} />
     </QueryClientProvider>,
   );
-  await waitFor(() => expect(counts).toEqual({ nav: 1, components: 1, fixtures: 1 }));
+  await waitFor(() => expect(counts).toEqual({ nav: 1, components: 1, waiting: 1, fixtures: 1 }));
 }
 
 test("a change to areas reads the areas again and not the components", async () => {
@@ -81,7 +82,7 @@ test("a burst of events is read once", async () => {
   expect(counts.nav).toBe(2);
   // Nothing more is read afterwards.
   await new Promise((r) => setTimeout(r, 500));
-  expect(counts).toEqual({ nav: 2, components: 2, fixtures: 1 });
+  expect(counts).toEqual({ nav: 2, components: 2, waiting: 1, fixtures: 1 });
 });
 
 test("a burst of fixture events reads the fixtures once", async () => {
@@ -93,11 +94,25 @@ test("a burst of fixture events reads the fixtures once", async () => {
   await waitFor(() => expect(counts.fixtures).toBe(2));
   // Nothing more is read afterwards.
   await new Promise((r) => setTimeout(r, 500));
-  expect(counts).toEqual({ nav: 1, components: 1, fixtures: 2 });
+  expect(counts).toEqual({ nav: 1, components: 1, waiting: 1, fixtures: 2 });
 });
 
 test("every kind of data has its query key", () => {
-  const kinds: AutorunDataKind[] = ["areas", "components", "map", "mappingSummary", "quirks", "testFiles", "proposals", "signInProposal"];
+  const kinds: AutorunDataKind[] = ["areas", "components", "map", "mappingSummary", "quirks", "testFiles", "proposals", "signInProposal", "divergences"];
   for (const k of kinds) expect(DATA_KIND_KEYS[k].length).toBeGreaterThan(0);
   expect(Object.keys(DATA_KIND_KEYS).sort()).toEqual([...kinds].sort());
+});
+
+test("a change to proposals, the sign-in or divergences reads what waits again", async () => {
+  const counts: Record<string, number> = {};
+  await mount(counts);
+  await act(async () => {
+    await emit("autorun-data-changed", { kinds: ["divergences"] });
+  });
+  await waitFor(() => expect(counts.waiting).toBe(2));
+  await act(async () => {
+    await emit("autorun-data-changed", { kinds: ["areas"] });
+  });
+  await waitFor(() => expect(counts.nav).toBe(2));
+  expect(counts.waiting).toBe(2);
 });

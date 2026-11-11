@@ -11,6 +11,7 @@ import {
   markSeen,
   noteAssigned,
   noteInterruptedUploads,
+  noteWaiting,
   notePrComments,
   notePrOverview,
   raise,
@@ -307,4 +308,41 @@ test("the focus store hands a request over once cleared", () => {
   expect(result.current).toEqual({ kind: "accounts" });
   act(() => clearAutoRunFocus());
   expect(result.current).toBeNull();
+});
+
+test("a waiting item is raised once per proposal and environment", () => {
+  const acct = (key: string, proposed_ms: number) => ({
+    key,
+    title: `Account ${key}`,
+    proposed_ms,
+    target: { kind: "accounts" as const },
+  });
+  const w = (env_id: string, ms: number) => ({ env_id, items: [acct("hr.sup", ms)] });
+  const first = noteWaiting("acme", "Web", w("env-1", 1000));
+  expect(first).toHaveLength(1);
+  expect(noteWaiting("acme", "Web", w("env-1", 1000))).toHaveLength(0);
+  expect(noteWaiting("acme", "Web", w("env-1", 2000))).toHaveLength(1);
+  expect(noteWaiting("acme", "Web", w("env-2", 1000))).toHaveLength(1);
+  expect(first[0].id).toBe("assistant-waiting:accounts:env-1:hr.sup:1000");
+  expect(first[0].kind).toBe("assistant-waiting");
+  expect(first[0].title).toBe("The assistant proposed the account hr.sup");
+  expect(first[0].body).toBe("Open Auto Run to decide.");
+  expect(first[0].target).toEqual({ kind: "auto-run", project: "Web", focus: { kind: "accounts" } });
+});
+
+test("a waiting divergence and sign-in carry their own titles and focus", () => {
+  const got = noteWaiting("acme", "Web", {
+    env_id: "env-1",
+    items: [
+      { key: "d1", title: "x", proposed_ms: 5, target: { kind: "divergence", id: "d1", case_id: 7, step: 2, pbi: 42 } },
+      { key: "sign-in", title: "y", proposed_ms: 6, target: { kind: "sign_in" } },
+    ],
+  });
+  expect(got.map((n) => n.title)).toEqual(["Case 7 needs your ruling", "The assistant proposed a sign-in"]);
+  expect(got[0].target).toEqual({
+    kind: "auto-run",
+    project: "Web",
+    focus: { kind: "divergence", id: "d1", caseId: 7, pbi: 42 },
+  });
+  expect(got[1].target).toMatchObject({ focus: { kind: "sign-in" } });
 });

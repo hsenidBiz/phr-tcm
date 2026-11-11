@@ -13,8 +13,8 @@
 // what is genuinely new reaches the list.
 
 import { useSyncExternalStore } from "react";
-import type { AssignedItem, PullRequest, UploadJournal } from "../bindings";
-import type { AutoRunFocus } from "./autoRunFocus";
+import type { AssignedItem, PullRequest, UploadJournal, WaitingItem, WaitingItems } from "../bindings";
+import { focusOf, type AutoRunFocus } from "./autoRunFocus";
 import { isCaptureMode } from "../dev/capture";
 
 export type NotificationKind =
@@ -289,6 +289,34 @@ export function noteInterruptedUploads(org: string, journals: UploadJournal[]): 
       title: `An upload to PBI ${j.pbi_id} was interrupted`,
       body: "Open the PBI and press Check with Azure DevOps before uploading again.",
       target: { kind: "pbi" as const, id: j.pbi_id, project: j.project },
+    })),
+  );
+}
+
+/** One notice per waiting item, per environment and per proposal: the same
+ * proposal in another environment is its own event, and a newer proposal of
+ * the same thing is raised again. */
+export function waitingNoticeId(envId: string, item: WaitingItem): string {
+  return `assistant-waiting:${item.target.kind}:${envId}:${item.key}:${item.proposed_ms ?? 0}`;
+}
+
+/** What the assistants left for a person to decide, as the bell's notices.
+ * Called with the whole current list every time; the dedupe keeps only what
+ * is new. Returns what the bell took in, so the caller announces only that. */
+export function noteWaiting(org: string, project: string, w: WaitingItems): AppNotification[] {
+  return raise(
+    org,
+    w.items.map((item) => ({
+      id: waitingNoticeId(w.env_id, item),
+      kind: "assistant-waiting" as const,
+      title:
+        item.target.kind === "accounts"
+          ? `The assistant proposed the account ${item.key}`
+          : item.target.kind === "sign_in"
+            ? "The assistant proposed a sign-in"
+            : `Case ${item.target.case_id} needs your ruling`,
+      body: "Open Auto Run to decide.",
+      target: { kind: "auto-run" as const, project, focus: focusOf(item.target) },
     })),
   );
 }
