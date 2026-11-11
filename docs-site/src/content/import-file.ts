@@ -727,7 +727,7 @@ export const importFile: Screen = {
     "With the queue empty, **Recent JSON Imports** lists files you imported before. **Open** imports one again as it is now; the x takes it off the list.",
     "Warnings about an imported file, such as a field it could not read, are listed under the share link.",
     "While an upload runs, a bar under the queue says what it is doing (checking what changed, then uploading) and how many cases are done.",
-    "If an upload is cut off before Azure DevOps answers, the cases it may have created are marked and uploading is held until you press **Check with Azure DevOps**, so nothing is created twice.",
+    "If an upload is cut off before Azure DevOps answers, the cases it may have created are marked and uploading is held until you press **Check with Azure DevOps**, so nothing is created twice. This also happens when the app closes during an upload: the next time you open that PBI the cases are held the same way.",
     "When a held case's title matches more than one test case in Azure DevOps, the app cannot tell which is yours. Check in Azure DevOps, then press **Release** and confirm, and the case can be uploaded again.",
   ],
   howTo: [
