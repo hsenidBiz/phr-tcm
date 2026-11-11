@@ -72,7 +72,7 @@
     <p>The rest of the 10 November 2026 assessment after A1, together with the suggestions from the second assessment in the same session. Nothing here is agreed yet; overlapping ideas are merged into one line.</p>
     <p><b>Features with high impact</b></p>
     <ul>
-      <li><b>F1 Excel/CSV import and export.</b> JSON is the only format today and most testers keep cases in spreadsheets. The spreadsheet readers (<code>calamine</code>, <code>csv</code>) are already in the build, for Auto Run download checks.</li>
+      <li><s><b>F1 Excel/CSV import and export.</b></s> Declined 11 November 2026: JSON is the chosen import and export format and stays the only one.</li>
       <li><b>F2 Scheduled and unattended Auto Run.</b> There is no scheduler and no command-line mode (<code>--mcp</code> is the only other mode). A nightly run with a summary (to Teams or email) gives regression coverage without a person.</li>
       <li><b>F3 Trend and traceability reports.</b> The app has a last-five history and an HTML report for a selection. Add a pass rate, duration and flakiness trend per PBI or suite, a PBI-to-case-to-bug matrix, and a coverage view for a sprint.</li>
       <li><b>F4 Azure DevOps test features.</b> Shared steps are kept but cannot be edited or expanded (<code>steps_xml.rs</code>). Test parameters (data-driven cases) and test configurations are not supported.</li>
