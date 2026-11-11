@@ -13,10 +13,18 @@
 // what is genuinely new reaches the list.
 
 import { useSyncExternalStore } from "react";
-import type { AssignedItem, PullRequest } from "../bindings";
+import type { AssignedItem, PullRequest, UploadJournal } from "../bindings";
+import type { AutoRunFocus } from "./autoRunFocus";
 import { isCaptureMode } from "../dev/capture";
 
-export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments" | "mention";
+export type NotificationKind =
+  | "assigned"
+  | "pr-conflict"
+  | "pr-review"
+  | "pr-comments"
+  | "mention"
+  | "upload-interrupted"
+  | "assistant-waiting";
 
 /** What a notification is about, in the app's own terms - enough for a
  * screen to open the thing without parsing a URL back apart. Every
@@ -24,7 +32,9 @@ export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-co
  * opening one from a different project has to switch there first. */
 export type NotificationTarget =
   | { kind: "work-item"; id: number; project: string }
-  | { kind: "pr"; repo: string; id: number; project: string };
+  | { kind: "pr"; repo: string; id: number; project: string }
+  | { kind: "pbi"; id: number; project: string }
+  | { kind: "auto-run"; project: string; focus: AutoRunFocus };
 
 export type AppNotification = {
   /** Stable per event, e.g. `pr-conflict:Web:412` - the dedupe key. */
@@ -264,6 +274,23 @@ export function notePrComments(org: string, project: string, pr: PullRequest, un
       target: { kind: "pr", repo: pr.repo, id: pr.id, project: where },
     },
   ]);
+}
+
+/** Uploads that stopped before they finished, one notice per interruption
+ * (the journal's start time keeps a second interruption of the same PBI a
+ * separate event). The notice opens the PBI, where Check with Azure DevOps
+ * settles what the dead upload created. */
+export function noteInterruptedUploads(org: string, journals: UploadJournal[]): AppNotification[] {
+  return raise(
+    org,
+    journals.map((j) => ({
+      id: `upload-interrupted:${j.pbi_id}:${j.since}`,
+      kind: "upload-interrupted" as const,
+      title: `An upload to PBI ${j.pbi_id} was interrupted`,
+      body: "Open the PBI and press Check with Azure DevOps before uploading again.",
+      target: { kind: "pbi" as const, id: j.pbi_id, project: j.project },
+    })),
+  );
 }
 
 /** Test seam: forget the in-memory copies (storage is cleared by the test). */

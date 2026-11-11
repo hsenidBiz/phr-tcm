@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import type { PullRequest } from "../bindings";
 import {
@@ -10,6 +10,7 @@ import {
   markAllRead,
   markSeen,
   noteAssigned,
+  noteInterruptedUploads,
   notePrComments,
   notePrOverview,
   raise,
@@ -17,6 +18,7 @@ import {
   unreadCount,
   useNotifications,
 } from "./notifications";
+import { clearAutoRunFocus, requestAutoRunFocus, useAutoRunFocus } from "./autoRunFocus";
 
 // The store caches per org in memory; every test starts from nothing.
 beforeEach(() => {
@@ -283,4 +285,26 @@ test("one report larger than the cap keeps every id it reported", () => {
   }));
   raise(ORG, many);
   expect(raise(ORG, [many[KNOWN_CAP + 99]])).toEqual([]);
+});
+
+test("an interrupted upload is raised once per interruption", () => {
+  const j = { organization: "acme", project: "Web", pbi_id: 42, since: "2026-11-11T10:00:00Z", titles: ["A"], sigs: [], ids: [] };
+  const first = noteInterruptedUploads("acme", [j]);
+  expect(first).toHaveLength(1);
+  expect(first[0].id).toBe("upload-interrupted:42:2026-11-11T10:00:00Z");
+  expect(first[0].target).toEqual({ kind: "pbi", id: 42, project: "Web" });
+  expect(first[0].title).toBe("An upload to PBI 42 was interrupted");
+  expect(first[0].body).toBe("Open the PBI and press Check with Azure DevOps before uploading again.");
+  expect(first[0].href).toBeUndefined();
+  expect(noteInterruptedUploads("acme", [j])).toHaveLength(0);
+  expect(noteInterruptedUploads("acme", [{ ...j, since: "2026-11-11T11:00:00Z" }])).toHaveLength(1);
+});
+
+test("the focus store hands a request over once cleared", () => {
+  const { result } = renderHook(() => useAutoRunFocus());
+  expect(result.current).toBeNull();
+  act(() => requestAutoRunFocus({ kind: "accounts" }));
+  expect(result.current).toEqual({ kind: "accounts" });
+  act(() => clearAutoRunFocus());
+  expect(result.current).toBeNull();
 });

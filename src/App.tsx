@@ -34,7 +34,14 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import { forgetAllNotifications, noteAssigned, type NotificationTarget } from "./lib/notifications";
+import {
+  forgetAllNotifications,
+  noteAssigned,
+  noteInterruptedUploads,
+  type NotificationTarget,
+} from "./lib/notifications";
+import { requestAutoRunFocus } from "./lib/autoRunFocus";
+import { submitPhaseSnapshot } from "./lib/submitRun";
 import { forgetMentionBaselines } from "./lib/mentions";
 import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
@@ -606,6 +613,22 @@ export default function App() {
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
     setRunFolder(null); // ...and Run Tests to the PBI
   };
+  // A bell notice about a PBI: open it, then land on `then`. The hit comes
+  // from the search so the title is the real one; a PBI the search does not
+  // return still opens, under a plain title, because the id is all the
+  // screens key on.
+  const openPbiById = async (id: number, pbiProject: string, then: Section) => {
+    let hit: PbiHit = { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
+    try {
+      const found = await unwrap(commands.searchPbis(org, pbiProject, String(id)));
+      hit = found.find((h) => h.id === id) ?? hit;
+    } catch (e) {
+      logUi(`nav: PBI ${id} search failed: ${String(e)}`);
+    }
+    if (!allProjects && pbiProject !== project) setProject(pbiProject);
+    setPbi(hit);
+    goToSection(then);
+  };
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
   useOpenOnExportRequest(() => {
@@ -848,6 +871,29 @@ export default function App() {
     forgetAllNotifications();
     forgetMentionBaselines();
   }
+
+  // Uploads that died before they finished (the app closed, the machine
+  // slept) left a journal behind; each raises one bell notice that opens
+  // its PBI. Once per organisation per session; an upload still running
+  // right now is not interrupted and is skipped.
+  const journalsChecked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!signedIn || !org || tourOpen || isCaptureMode()) return;
+    if (journalsChecked.current === org) return;
+    journalsChecked.current = org;
+    void (async () => {
+      const r = await commands.uploadJournalList(org);
+      if (r.status === "error") {
+        logUi(`upload journals: could not list (${r.error})`);
+        return;
+      }
+      const running = submitPhaseSnapshot();
+      noteInterruptedUploads(
+        org,
+        r.data.filter((j) => !(running && running.org === org && running.pbiId === j.pbi_id)),
+      );
+    })().catch((e) => logUi(`upload journals: could not list (${String(e)})`));
+  }, [signedIn, org, tourOpen]);
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version
@@ -1463,6 +1509,15 @@ export default function App() {
                 // the focus carries the project, and the board and the Pull
                 // Requests panel, which read every project, open the item or
                 // pull request in it.
+                if (target.kind === "pbi") {
+                  void openPbiById(target.id, target.project, "import");
+                  return;
+                }
+                if (target.kind === "auto-run") {
+                  goToSection("autorun");
+                  requestAutoRunFocus(target.focus);
+                  return;
+                }
                 if (!allProjects && target.project !== project) setProject(target.project);
                 setWorkFocus(target);
                 setWorkSection(target.kind === "pr" ? "prs" : "board");
