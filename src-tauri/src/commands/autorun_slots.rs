@@ -814,10 +814,15 @@ pub fn spawn_agents_watch(app: tauri::AppHandle) {
         tauri::async_runtime::spawn(async move {
             use tauri_specta::Event as _;
             let mut last: Vec<AgentView> = Vec::new();
+            let mut last_trial = crate::autorun::signin_trial::current();
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                if let Some(agents) = next_views_to_send(&mut last, crate::autorun::sessions::now_ms()) {
-                    let _ = crate::events::AutorunAgentsChanged { agents }.emit(&app);
+                let changed = next_views_to_send(&mut last, crate::autorun::sessions::now_ms());
+                let trial = crate::autorun::signin_trial::current();
+                if changed.is_some() || trial != last_trial {
+                    let agents = changed.unwrap_or_else(|| last.clone());
+                    last_trial = trial.clone();
+                    let _ = crate::events::AutorunAgentsChanged { agents, trial }.emit(&app);
                 }
             }
         });
@@ -844,6 +849,14 @@ fn slot_numbered(n: u8) -> Result<SlotNo, String> {
 #[specta::specta]
 pub fn auto_run_agents() -> Vec<AgentView> {
     agent_views(crate::autorun::sessions::now_ms())
+}
+
+/// The sign-in trial running now, by environment name only. No Stop: nothing
+/// cancels a trial safely.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_sign_in_trial() -> Option<crate::autorun::signin_trial::SignInTrial> {
+    crate::autorun::signin_trial::current()
 }
 
 /// Stop what slot `slot`'s assistant is doing: its replay (never the

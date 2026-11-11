@@ -265,6 +265,7 @@ mod template_held;
 mod test_files;
 mod test_map;
 mod throttle_backoff;
+mod signin_trial;
 mod throttle_default;
 mod transform;
 mod tray;

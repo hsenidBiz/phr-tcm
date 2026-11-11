@@ -566,6 +566,13 @@ export const commands = {
 	/**  The assistants connected now, and what each is doing. */
 	autoRunAgents: () => __TAURI_INVOKE<AgentView[]>("auto_run_agents"),
 	/**
+	 *  The sign-in trial running now, by environment name only. No Stop: nothing
+	 *  cancels a trial safely.
+	 */
+	autoRunSignInTrial: () => __TAURI_INVOKE<{
+	environment: string,
+} | null>("auto_run_sign_in_trial"),
+	/**
 	 *  What assistants saved, proposed, tried and changed in this organisation
 	 *  and the active environment over the last `days` days, newest first.
 	 */
@@ -3054,6 +3061,8 @@ export type AutoApproveOutcome = {
  */
 export type AutorunAgentsChanged = {
 	agents: AgentView[],
+	/**  A sign-in trial running in the check browser, by environment name only. */
+	trial: SignInTrial | null,
 };
 
 /**
@@ -7842,6 +7851,10 @@ export type SignInSaveResult = {
 	saved: boolean,
 	/**  Why nothing was saved; empty when `saved`. */
 	failure: string,
+};
+
+export type SignInTrial = {
+	environment: string,
 };
 
 export type SkippedCase = {

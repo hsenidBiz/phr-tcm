@@ -280,6 +280,8 @@ pub struct AutorunDiscoveryChanged {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunAgentsChanged {
     pub agents: Vec<crate::commands::autorun_slots::AgentView>,
+    /// A sign-in trial running in the check browser, by environment name only.
+    pub trial: Option<crate::autorun::signin_trial::SignInTrial>,
 }
 
 /// Emitted, at most once a second, when an assistant's save, proposal or try

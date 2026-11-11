@@ -252,6 +252,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_end_discovery,
             autorun::auto_run_release_browser,
             autorun_slots::auto_run_agents,
+            autorun_slots::auto_run_sign_in_trial,
             assistant_activity::auto_run_assistant_timeline,
             autorun_slots::auto_run_stop_agent,
             autorun_slots::auto_run_end_agent_discovery,

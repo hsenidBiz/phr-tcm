@@ -248,3 +248,9 @@ pub fn upload_journal() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The running sign-in trial (`autorun::signin_trial`). Held alone.
+pub fn sign_in_trial() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
