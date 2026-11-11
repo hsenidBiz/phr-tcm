@@ -63,6 +63,8 @@ function standIns(): Partial<Commands> {
     pbiTestCasesFull: () => ok(TOUR_CASES),
     testCasesByIds: () => ok(TOUR_CASES),
     canDeleteTestCases: () => ok(false), // the tour never mentions deleting
+    // The queue looks for an interrupted upload's journal when it opens.
+    uploadJournalRead: () => ok({ kind: "none" }),
 
     // Suites and runs.
     ensurePbiSuite: () => ok(TOUR_SUITE),

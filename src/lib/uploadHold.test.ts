@@ -5,9 +5,11 @@ import {
   checkExcludeIds,
   claimsForCheck,
   heldRows,
+  holdFromJournal,
   holdFromResults,
   holdSignature,
   loadHold,
+  mergeHolds,
   narrowHold,
   reconciledResults,
   saveHold,
@@ -200,4 +202,39 @@ test("a claimed create's step files are asked for only when its row carries loca
   ]);
   expect(merged[0].attached).toEqual([{ step: 0, path: "C:/x/a.png", id: "g-1", name: "a.png" }]);
   expect(merged[1].attached ?? []).toEqual([]);
+});
+
+test("a journal becomes an unknown hold", () => {
+  expect(
+    holdFromJournal({ organization: "acme", project: "Web", pbi_id: 42, since: "2026-11-11T10:00:00Z", titles: ["A", "B"], sigs: ["sa", "sb"], ids: [7] }),
+  ).toEqual({ since: "2026-11-11T10:00:00Z", titles: ["A", "B"], ids: [7], sigs: ["sa", "sb"] });
+});
+
+test("a journal whose signatures do not line up has none", () => {
+  const h = holdFromJournal({ organization: "acme", project: "Web", pbi_id: 42, since: "s", titles: ["A", "B"], sigs: [], ids: [] });
+  expect(h.sigs).toBeUndefined();
+  expect(h.ambiguous).toBeUndefined();
+});
+
+test("merging takes the earlier since, every id and each row once", () => {
+  const existing = { since: "2026-11-11T10:05:00.000Z", titles: ["A"], ids: [1], sigs: ["sa"], ambiguous: ["A"] };
+  const add = { since: "2026-11-11T10:00:00Z", titles: ["A", "B"], ids: [7], sigs: ["sa", "sb"] };
+  expect(mergeHolds(existing, add)).toEqual({ since: "2026-11-11T10:00:00Z", titles: ["A", "B"], ids: [1, 7], sigs: ["sa", "sb"], ambiguous: ["A"] });
+});
+
+test("merging with nothing standing returns the new hold", () => {
+  const add = { since: "s", titles: ["A"], ids: [] };
+  expect(mergeHolds(null, add)).toBe(add);
+});
+
+test("two rows sharing a title stay two", () => {
+  expect(
+    mergeHolds({ since: "s", titles: ["A", "A"], ids: [], sigs: ["s1", "s2"] }, { since: "s", titles: ["A"], ids: [], sigs: ["s1"] }).titles,
+  ).toEqual(["A", "A"]);
+});
+
+test("a hold without signatures merges by title", () => {
+  const m = mergeHolds({ since: "s", titles: ["A"], ids: [] }, { since: "s", titles: ["A", "B"], ids: [], sigs: ["x", "y"] });
+  expect(m.titles).toEqual(["A", "B"]);
+  expect(m.sigs).toBeUndefined();
 });

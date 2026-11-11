@@ -34,7 +34,7 @@
  * nothing is refused, but the hold itself is left exactly as it was, and it
  * applies again the moment a same-titled row reappears.
  */
-import type { ClaimedFiles, ReconciledCase, SubmitItemResult, TestCase } from "../bindings";
+import type { ClaimedFiles, ReconciledCase, SubmitItemResult, TestCase, UploadJournal } from "../bindings";
 
 export type UploadHold = {
   /** ISO time the upload started (less a margin): the lookup's lower bound. */
@@ -300,4 +300,50 @@ export function claimsForCheck(queue: TestCase[], results: SubmitItemResult[]): 
 export function withClaimedFiles(results: SubmitItemResult[], files: ClaimedFiles[]): SubmitItemResult[] {
   const byId = new Map(files.map((f) => [f.id, f.attached]));
   return results.map((r) => (r.id != null && byId.has(r.id) ? { ...r, attached: byId.get(r.id) } : r));
+}
+
+/** The hold an interrupted upload leaves behind: the journal Rust wrote
+ * before the first batch, read as "every create may exist". Signatures are
+ * kept only when they line up with the titles. */
+export function holdFromJournal(j: UploadJournal): UploadHold {
+  const hold: UploadHold = { since: j.since, titles: [...j.titles], ids: [...j.ids] };
+  return j.sigs.length === j.titles.length ? { ...hold, sigs: [...j.sigs] } : hold;
+}
+
+/** Fold `add` into a hold already standing for the same PBI. A journal left
+ * beside a hold saved from the same upload must never double a row, so rows
+ * merge by multiset MAX, not sum: each distinct (title, signature) pair
+ * appears as often as the larger side has it. Without signatures on both
+ * sides, titles merge by max count per title and signatures are dropped. */
+export function mergeHolds(existing: UploadHold | null, add: UploadHold): UploadHold {
+  if (existing == null) return add;
+  const since = Date.parse(add.since) < Date.parse(existing.since) ? add.since : existing.since;
+  const ids = [...new Set([...(existing.ids ?? []), ...(add.ids ?? [])])];
+  const both =
+    existing.sigs != null &&
+    add.sigs != null &&
+    existing.sigs.length === existing.titles.length &&
+    add.sigs.length === add.titles.length;
+  const merged = (keys: string[], a: string[], b: string[]) => {
+    const inA = countOf(a);
+    const inB = countOf(b);
+    const out: string[] = [];
+    for (const k of keys) {
+      if (out.includes(k)) continue;
+      const n = Math.max(inA.get(k) ?? 0, inB.get(k) ?? 0);
+      for (let i = 0; i < n; i++) out.push(k);
+    }
+    return out;
+  };
+  let result: UploadHold;
+  if (both) {
+    const pair = (t: string, s: string) => JSON.stringify([t, s]);
+    const ea = existing.titles.map((t, i) => pair(t, existing.sigs![i]));
+    const aa = add.titles.map((t, i) => pair(t, add.sigs![i]));
+    const rows = merged([...ea, ...aa], ea, aa).map((p) => JSON.parse(p) as [string, string]);
+    result = { since, titles: rows.map((r) => r[0]), ids, sigs: rows.map((r) => r[1]) };
+  } else {
+    result = { since, titles: merged([...existing.titles, ...add.titles], existing.titles, add.titles), ids };
+  }
+  return existing.ambiguous !== undefined ? { ...result, ambiguous: existing.ambiguous } : result;
 }

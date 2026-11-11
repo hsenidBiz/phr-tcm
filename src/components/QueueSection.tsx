@@ -28,6 +28,7 @@ import {
   claimsForCheck,
   heldRows,
   holdFromResults,
+  holdSignature,
   loadHold,
   narrowHold,
   reconciledResults,
@@ -46,6 +47,8 @@ import {
   submitUploading,
   subscribeSubmit,
 } from "../lib/submitRun";
+import { recoverJournal } from "../lib/uploadJournal";
+import { logUi } from "../lib/uiLog";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
 import { freshWatches, noteWritten, runOnFileChain } from "../lib/draftWriteQueue";
 import { cacheKeys, cacheRemove } from "../lib/cache";
@@ -248,6 +251,30 @@ export default function QueueSection({
   // thing between the user and a duplicate.
   const hold = useSyncExternalStore(subscribeHold, () => loadHold(org, pbiId));
   const [checkingHold, setCheckingHold] = useState(false);
+
+  // A journal left by an upload that never finished becomes a hold: on
+  // mount, and again whenever an upload for this PBI ends (by any route).
+  // recoverJournal itself stands down while this window is uploading it.
+  useEffect(() => {
+    let live = true;
+    let unlisten: (() => void) | undefined;
+    void recoverJournal(org, pbiId).catch(() => {});
+    void events.uploadEnded
+      .listen((e) => {
+        if (e.payload.organization === org && e.payload.pbi_id === pbiId) {
+          void recoverJournal(org, pbiId).catch(() => {});
+        }
+      })
+      .then((u) => {
+        if (live) unlisten = u;
+        else detach(u);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      detach(unlisten);
+    };
+  }, [org, pbiId]);
 
   // An upload runs to the end once started - there is no Stop. The case
   // in flight could never be taken back (created cases cannot be deleted),
@@ -693,6 +720,12 @@ export default function QueueSection({
       const allowPlainSteps = allowPlainNext.current;
       allowPlainNext.current = false;
       lastPreExisting.current = preExisting;
+      // A journal still on disk is an upload that never finished. Rust's
+      // next write would overwrite it, so it is turned into a hold FIRST,
+      // and if that hold marks a row here the upload does not start.
+      if ((await recoverJournal(org, pbiId)) === "recovered" && heldRows(queue, loadHold(org, pbiId)).some(Boolean)) {
+        throw new Error(HOLD_REFUSAL);
+      }
       // The buttons are disabled while a hold stands; this is the backstop.
       if (holdActive) throw new Error(HOLD_REFUSAL);
       // Claimed BEFORE the pre-flight fetch below, not after it: a second
@@ -837,7 +870,12 @@ export default function QueueSection({
           // was never wanted, so null (= inherit) is now the only value.
           null,
           null,
-          { order_hint: orderHint, allow_plain_steps: allowPlainSteps },
+          {
+            order_hint: orderHint,
+            allow_plain_steps: allowPlainSteps,
+            pre_existing: preExisting,
+            hold_sigs: toSend.map(holdSignature),
+          },
         );
         if (r.status === "error") throw new Error(r.error);
         // The outcome is applied HERE, inside the promise, not in
@@ -847,6 +885,10 @@ export default function QueueSection({
         // finishes. `sent` is the FILTERED list: every result index is an
         // index into it, and keepUploaded matches on that list.
         applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue, since, preExisting });
+        // The hold (if any) is saved by now, so the journal can go: until
+        // here it is what turns a crash into a hold.
+        const cleared = await commands.uploadJournalClear(org, pbiId);
+        if (cleared.status === "error") logUi(`upload journal not cleared: ${cleared.error}`);
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
