@@ -105,7 +105,9 @@ and status, so it cannot leak arguments by accident.
   `holdSignature` uses (or the data needed to compute it, builder's choice,
   as long as a hold made from the journal marks the same rows a normal hold
   would), and the ids already linked to the PBI before the upload (the
-  `ids` a hold carries). Updates are not journaled: a re-sent update is the
+  `ids` a hold carries). Rust does not have those today: the webview's
+  `preExisting` list is passed into `submit_queue` as a new parameter
+  **(my call: no extra network call)**. Updates are not journaled: a re-sent update is the
   same PATCH.
 - **Location.** A small JSON file per PBI under the app's local data folder
   (`upload-journal/`), written atomically (temp + rename). File names carry
@@ -114,7 +116,10 @@ and status, so it cannot leak arguments by accident.
   clears it (new command) only **after** `applyOutcome` has saved any hold
   (or confirmed none is needed). So a crash anywhere between "send" and
   "hold saved" leaves the journal behind.
-- **Recover.** When the queue for a PBI loads, the frontend asks for that
+- **Recover.** When the queue for a PBI loads, and **no upload for that
+  PBI is running** (neither the Rust-side cancel slot nor the webview's
+  `submitRun` slot shows one; a remount mid-upload must not turn a live
+  upload into a hold) **(my call)**, the frontend asks for that
   PBI's journal. If one exists it becomes a hold through the existing
   `saveHold` path: every journaled title held as unknown (not ambiguous),
   `since`, `ids`, `sigs`. If a hold already exists for that PBI, the two are
@@ -127,6 +132,7 @@ and status, so it cannot leak arguments by accident.
   `upload-interrupted`, "An upload to PBI {id} was interrupted", whose click
   opens that PBI (the journal then becomes a hold as above). Dedupe id
   includes the journal's `since`, so the same interruption is raised once.
+  Journals of an upload still running are skipped here too.
 - **Account switch.** Journals belong to the org they were written for; a
   different account never sees them, and they are not wiped (a wiped
   journal is a lost hold).
@@ -136,7 +142,8 @@ and status, so it cannot leak arguments by accident.
 - **Items** (active environment, current project) **(my call on the set)**:
   1. each proposed account awaiting approval;
   2. a proposed sign-in awaiting approval;
-  3. each case divergence awaiting a ruling.
+  3. each case divergence with status `Open` (`AwaitingRepair` waits on the
+     assistant, `Ruled` is done) **(my call)**.
   Suspected defects are left out: they are findings shown on the case and
   in run results, not a decision the assistant is waiting on.
 - **Rust.** One command returns the items: kind, a short title (account
@@ -152,10 +159,18 @@ and status, so it cannot leak arguments by accident.
     empty. Each row: icon by kind, title, age, and **Open** taking the
     person to the existing place (Accounts dialog on the Proposed tab; the
     sign-in notice; the case card scrolled into view and highlighted).
+    Divergences record no PBI today, and Auto Run shows only the selected
+    PBI's cases. New divergences now store the PBI the assistant was working
+    under (the bridge's current PBI) **(my call)**; Open switches to that PBI
+    first when it differs. A divergence without one (written before this
+    change) opens Auto Run showing the row's own detail and the line "This
+    case is not under the selected PBI" instead of a card.
   - Sidebar: Auto Run's entry shows the count as a small badge (same badge
     style as the bell's unread count).
   - Bell: a new notification kind `assistant-waiting`, raised once per new
-    item (dedupe id = kind + item key), whose click opens Auto Run with the
+    item (dedupe id = kind + environment id + item key + when it was
+    proposed, so a re-proposal later or in another environment raises
+    again) **(my call)**, whose click opens Auto Run with the
     item in view. Deciding the item does not need the bell entry dismissed.
 - **Copy** is plain and names the assistant only as "the assistant" or its
   label as the Assistants card shows it.
@@ -189,7 +204,12 @@ and status, so it cannot leak arguments by accident.
   curated table only. Each record: time, the caller's label (as the card
   shows it), a fixed action sentence from the table, ok/refused (status
   < 400), and the case id when the route names one in the body's
-  well-known field. Nothing else from the body or query, ever.
+  well-known field, plus the active environment id and the signed-in org.
+  Nothing else from the body or query, ever. Recent activity shows only
+  records for the current org and active environment **(my call: follows
+  the active-environment ruling and keeps one account's activity from
+  another's)**. Calls with no assistant attached (an older client) are
+  recorded under the label "Assistant" **(my call)**.
 - Table, grouped:
   - **Saved**: script, component, area, setup (and setup removed), quirk,
     validation rule, test file, API template / fixture / flow, run order.
