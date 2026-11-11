@@ -880,6 +880,7 @@ fn a_divergence_shows_on_its_case_in_the_report() {
         said: None,
         note: None,
         proposal: None,
+        pbi: None,
     };
     let day = 24 * 60 * 60 * 1000;
     let list = vec![
@@ -966,6 +967,7 @@ fn the_report_names_an_assistant_ruling_and_the_persons_words() {
         said: Some("a different cycle name is fine".into()),
         note: None,
         proposal: None,
+        pbi: None,
     }];
     let html = build_with_extras(
         &run,

@@ -970,6 +970,9 @@ export const autoRun: Screen = {
     },
   ],
   tips: [
+    "**Waiting for you**, at the top of Auto Run, lists what an assistant left for you to decide: accounts it proposed, a sign-in it proposed and divergences waiting for a ruling. It shows only while something waits. **Open** on a row takes you to where the decision is made: the Proposed tab of the Accounts window, the sign-in proposal, or the case the divergence belongs to, switching to its Product Backlog Item first if needed. The **Auto Run** tab in the sidebar shows how many are waiting, and the bell tells you when something new arrives.",
+    "While an assistant works, a thin line above whichever screen you are on says what it is doing, which browser it uses and the account it is signed in as, with **Stop** where it can be stopped. While a sign-in is being tried it says **Trying a sign-in**, and when more than three assistants work it says how many more there are. **Open** on the line goes to Auto Run. The line takes up no room while no assistant is working.",
+    "**Recent activity**, on Auto Run, lists what the assistants saved, proposed and tried over the last seven days, newest first and grouped by day, for the organisation and environment you are in. When more than one assistant appears, the buttons above the list let you narrow it to one assistant. A line that names a case has a link that goes to the case when it is under the PBI you have selected. It shows only when something was recorded.",
     "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",

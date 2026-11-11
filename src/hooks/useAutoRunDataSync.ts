@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { events, type AutorunDataKind } from "../bindings";
 import { envKeys } from "../lib/environments";
+import { WAITING_KEY } from "../lib/useWaitingItems";
 import { FIXTURES_KEY } from "../screens/ApiTemplates/FixturesTab";
 
 /** How long a burst of events is gathered before the queries are read. */
@@ -27,6 +28,7 @@ export const DATA_KIND_KEYS: Record<AutorunDataKind, readonly unknown[]> = {
   testFiles: ["test-files"],
   proposals: envKeys.proposals,
   signInProposal: ["autorun-sign-in-proposal"],
+  divergences: ["autorun-divergences"],
 };
 
 /** One array, not one per event: `pending` compares keys by reference, so a
@@ -51,7 +53,11 @@ export function useAutoRunDataSync(): void {
     };
     const unsubs = [
       events.autorunDataChanged.listen((e) => {
-        for (const kind of e.payload.kinds) want(DATA_KIND_KEYS[kind]);
+        for (const kind of e.payload.kinds) {
+          want(DATA_KIND_KEYS[kind]);
+          // What waits for a person is made of these three.
+          if (kind === "proposals" || kind === "signInProposal" || kind === "divergences") want(WAITING_KEY);
+        }
       }),
       events.apiTemplatesChanged.listen(() => want(FIXTURES_QUERY_KEY)),
     ];

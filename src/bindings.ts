@@ -48,6 +48,9 @@ export const commands = {
 	projectsWithAutorunFiles: (organization: string, projects: string[]) => typedError<string[], string>(__TAURI_INVOKE("projects_with_autorun_files", { organization, projects })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
 	parseImportFile: (path: string) => typedError<ImportResult_Serialize, string>(__TAURI_INVOKE("parse_import_file", { path })),
+	uploadJournalRead: (organization: string, pbiId: number) => typedError<JournalRead, string>(__TAURI_INVOKE("upload_journal_read", { organization, pbiId })),
+	uploadJournalClear: (organization: string, pbiId: number) => typedError<null, string>(__TAURI_INVOKE("upload_journal_clear", { organization, pbiId })),
+	uploadJournalList: (organization: string) => typedError<UploadJournal[], string>(__TAURI_INVOKE("upload_journal_list", { organization })),
 	/**
 	 *  One-shot content fingerprint. Used when a watch is (re)armed, to catch
 	 *  an edit made while the app was closed or the tab was elsewhere - the
@@ -562,6 +565,18 @@ export const commands = {
 	autoRunReleaseBrowser: () => typedError<string, string>(__TAURI_INVOKE("auto_run_release_browser")),
 	/**  The assistants connected now, and what each is doing. */
 	autoRunAgents: () => __TAURI_INVOKE<AgentView[]>("auto_run_agents"),
+	/**
+	 *  The sign-in trial running now, by environment name only. No Stop: nothing
+	 *  cancels a trial safely.
+	 */
+	autoRunSignInTrial: () => __TAURI_INVOKE<{
+	environment: string,
+} | null>("auto_run_sign_in_trial"),
+	/**
+	 *  What assistants saved, proposed, tried and changed in this organisation
+	 *  and the active environment over the last `days` days, newest first.
+	 */
+	autoRunAssistantTimeline: (organization: string, days: number) => typedError<AssistantRecord[], string>(__TAURI_INVOKE("auto_run_assistant_timeline", { organization, days })),
 	/**
 	 *  Stop what slot `slot`'s assistant is doing: its replay (never the
 	 *  person's), and a batch of discovery actions, at their next look. The
@@ -1252,6 +1267,7 @@ export const commands = {
 } | null, string>(__TAURI_INVOKE("auto_run_sign_in_proposal", { organization, project })),
 	autoRunApproveSignInProposal: (organization: string, project: string, turnOnReset: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_approve_sign_in_proposal", { organization, project, turnOnReset })),
 	autoRunRejectSignInProposal: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_reject_sign_in_proposal", { organization, project })),
+	autoRunWaitingItems: (organization: string, project: string) => typedError<WaitingItems, string>(__TAURI_INVOKE("auto_run_waiting_items", { organization, project })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -1873,6 +1889,7 @@ export const commands = {
 /** Events */
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
+	assistantActivityChanged: makeEvent<AssistantActivityChanged>("assistant-activity-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	autorunAgentsChanged: makeEvent<AutorunAgentsChanged>("autorun-agents-changed"),
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
@@ -1901,6 +1918,7 @@ export const events = {
 	suiteNotCreated: makeEvent<SuiteNotCreated>("suite-not-created"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 	updateProgress: makeEvent<UpdateProgress>("update-progress"),
+	uploadEnded: makeEvent<UploadEnded>("upload-ended"),
 	watchedFileChanged: makeEvent<WatchedFileChanged>("watched-file-changed"),
 	workAssigned: makeEvent<WorkAssigned>("work-assigned"),
 };
@@ -2671,6 +2689,8 @@ pdf?: PdfSpec_Serialize | null }) & { absent?: never; account?: never; answer?: 
  */
 ({ kind: "page_until"; next: Target_Serialize; until?: Target_Serialize | null; until_all?: Target_Serialize[] | null; max_pages: number }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; attribute?: never; by?: never; cells?: never; checked?: never; child?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; label?: never; matches?: never; max?: never; method?: never; min?: never; name?: never; not_before_ms?: never; not_empty?: never; not_equals?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; property?: never; query?: never; region?: never; relation?: never; relative_to?: never; same_as?: never; same_document?: never; selector?: never; settle_ms?: never; sheet?: never; started_within_ms?: never; status?: never; table?: never; text?: never; texts?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; visible?: never; within_ms?: never };
 
+export type ActivityGroup = "saved" | "proposed" | "tried" | "changed_data";
+
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
 } } | { kind: "Forbidden" } | { kind: "NotFound" } | 
@@ -2972,6 +2992,24 @@ export type AssignedItem = {
 };
 
 /**
+ *  Emitted, at most once a second, when an assistant's save, proposal or try
+ *  was recorded (`commands::assistant_activity::spawn_assistant_activity_watch`):
+ *  the timeline reloads. It carries nothing.
+ */
+export type AssistantActivityChanged = Record<string, never>;
+
+export type AssistantRecord = {
+	at: string,
+	label: string,
+	group: ActivityGroup,
+	action: string,
+	ok: boolean,
+	case_id?: number | null,
+	env: string,
+	org: string,
+};
+
+/**
  *  A step file the upload attached: which step (0-based) held the local
  *  `path`, and the Azure DevOps attachment id it became. The queue swaps
  *  the path for the id so uploading the same queue again does not attach
@@ -3023,6 +3061,8 @@ export type AutoApproveOutcome = {
  */
 export type AutorunAgentsChanged = {
 	agents: AgentView[],
+	/**  A sign-in trial running in the check browser, by environment name only. */
+	trial: SignInTrial | null,
 };
 
 /**
@@ -3051,7 +3091,7 @@ export type AutorunDataChanged = {
  *  Which of the data an assistant adds through the AI bridge changed. The
  *  Auto Run screen reads each kind from its own queries.
  */
-export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal";
+export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Run browser: while
@@ -4396,6 +4436,8 @@ export type Divergence_Deserialize = {
 	 *  fix), scrubbed; shown wherever the divergence is listed.
 	 */
 	proposal?: string | null,
+	/**  The PBI the assistant was working on when it reported this, set once. */
+	pbi?: number | null,
 };
 
 export type Divergence_Serialize = {
@@ -4438,6 +4480,8 @@ export type Divergence_Serialize = {
 	 *  fix), scrubbed; shown wherever the divergence is listed.
 	 */
 	proposal?: string | null,
+	/**  The PBI the assistant was working on when it reported this, set once. */
+	pbi?: number | null,
 };
 
 /**
@@ -5151,6 +5195,8 @@ export type IterationRef = {
 	start_date: string | null,
 	finish_date: string | null,
 };
+
+export type JournalRead = { kind: "none" } | { kind: "running" } | { kind: "found"; journal: UploadJournal };
 
 /**  A test's result in the newest report. */
 export type LastResult = "Passed" | "Failed" | "Flaky" | "Skipped";
@@ -7807,6 +7853,10 @@ export type SignInSaveResult = {
 	failure: string,
 };
 
+export type SignInTrial = {
+	environment: string,
+};
+
 export type SkippedCase = {
 	case_id: number,
 	why: string,
@@ -8212,6 +8262,13 @@ export type SubmitOptions = {
 	 *  could not be read (see `PLAIN_STEPS_REFUSAL`). False on a first try.
 	 */
 	allow_plain_steps: boolean,
+	/**  Ids of the PBI's cases that existed before this upload (for the upload journal). */
+	pre_existing?: number[],
+	/**
+	 *  The webview's hold signature of each `queue` row (for the upload journal);
+	 *  stored, never recomputed here.
+	 */
+	hold_sigs?: string[],
 };
 
 /**  Emitted once per queue item while submit_queue runs. */
@@ -8999,6 +9056,33 @@ export type UpdatedArea = {
 	new_path: string,
 };
 
+/**
+ *  Emitted when a submit_queue call ends, by any route (finished, refused,
+ *  failed, panicked), after its running mark is gone.
+ */
+export type UploadEnded = {
+	organization: string,
+	pbi_id: number,
+};
+
+/**  What an upload meant to create when it started. */
+export type UploadJournal = {
+	organization: string,
+	project: string,
+	pbi_id: number,
+	/**  ISO-8601 lower bound for "created by this upload". */
+	since: string,
+	/**  Titles of the rows that create (no `update_id`), in queue order. */
+	titles: string[],
+	/**
+	 *  The webview's hold signature of each of those rows (empty when the
+	 *  webview sent none that lined up with the queue).
+	 */
+	sigs: string[],
+	/**  Ids of the PBI's linked cases that existed before the upload. */
+	ids: number[],
+};
+
 /**  What the app shows of a run waiting for the network. */
 export type WaitView = {
 	run_id: string,
@@ -9006,6 +9090,20 @@ export type WaitView = {
 	waited_s: number,
 	give_up_in_s: number,
 };
+
+export type WaitingItem = {
+	key: string,
+	title: string,
+	proposed_ms: number | null,
+	target: WaitingTarget,
+};
+
+export type WaitingItems = {
+	env_id: string,
+	items: WaitingItem[],
+};
+
+export type WaitingTarget = { kind: "accounts" } | { kind: "sign_in" } | { kind: "divergence"; id: string; case_id: number; step: number; pbi: number | null };
 
 /**
  *  Emitted when the JSON file an import is following changes on disk -

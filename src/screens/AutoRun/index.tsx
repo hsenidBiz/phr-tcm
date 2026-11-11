@@ -56,6 +56,9 @@ import { useModule } from "../../lib/modules";
 import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
 import AssistantsCard from "./AssistantsCard";
+import WaitingForYou from "./WaitingForYou";
+import RecentActivity from "./RecentActivity";
+import { clearAutoRunFocus, useAutoRunFocus } from "../../lib/autoRunFocus";
 import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
 import RunPane from "./RunPane";
@@ -108,6 +111,7 @@ export default function AutoRun({
   onOpenPlaywright,
   onOpenModules,
   onOpenFixtures,
+  onOpenPbi,
 }: {
   org: string;
   /** The project Auto Run's files belong to (the application under test):
@@ -124,6 +128,8 @@ export default function AutoRun({
   /** The API Templates screen on its Fixtures tab, for the Setup panel's
    * Fixtures row. */
   onOpenFixtures?: () => void;
+  /** Open another PBI, for a waiting divergence that belongs to it. */
+  onOpenPbi?: (pbiId: number) => void;
 }) {
   const { prefs } = useFieldRefs(org, project);
 
@@ -505,6 +511,38 @@ export default function AutoRun({
   const collapseAll = () => setOpenHere(() => NONE_OPEN);
 
   const rows = cases.data ?? [];
+
+  // A case a Waiting for you row or a bell notice asked to see: the Test
+  // cases tab, the card open and ringed for a moment, scrolled into view.
+  // It waits for the PBI it belongs to and for that PBI's cases to load.
+  const focus = useAutoRunFocus();
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!focus || (focus.kind !== "divergence" && focus.kind !== "case")) return;
+    if (focus.kind === "divergence" && focus.pbi != null && pbi?.id !== focus.pbi) return;
+    if (!pbi) {
+      clearAutoRunFocus();
+      return;
+    }
+    if (cases.isError) {
+      clearAutoRunFocus();
+      return;
+    }
+    if (!cases.data) return;
+    clearAutoRunFocus();
+    if (!cases.data.some((c) => c.id === focus.caseId)) return;
+    setTab("cases");
+    setSearch("");
+    setOpenHere((prev) => new Set([...prev, focus.caseId]));
+    setHighlightId(focus.caseId);
+  }, [focus, pbi, cases.data, cases.isError]);
+  useEffect(() => {
+    if (highlightId === null) return;
+    document.querySelector(`[data-case-id="${highlightId}"]`)?.scrollIntoView?.({ block: "center" });
+    const t = setTimeout(() => setHighlightId(null), 3000);
+    return () => clearTimeout(t);
+  }, [highlightId]);
+
   const settled = useSettled(rows.length > 0);
   /** Each case's result in the newest run that holds it - the runs Past
    * runs lists, so the two tabs never disagree. */
@@ -730,6 +768,7 @@ export default function AutoRun({
         result={lastOf(i)}
         selected={selected.has(c.id)}
         open={openHere.has(c.id)}
+        highlighted={highlightId === c.id}
         runBlocked={runBlocked}
         confirmingClear={confirmingClear === c.id}
         divergences={divergencesByCase[c.id] ?? EMPTY}
@@ -742,6 +781,9 @@ export default function AutoRun({
   if (!org || !pbi) {
     return (
       <div className="space-y-4">
+        {/* What the assistants left for a person to decide. */}
+        <WaitingForYou org={org} project={project} pbiId={null} cases={[]} onOpenPbi={onOpenPbi} />
+        <RecentActivity org={org} />
         {/* Assistants work whatever PBI is open, or none. */}
         <AssistantsCard />
         <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>
@@ -774,6 +816,14 @@ export default function AutoRun({
       <div className="space-y-4">
         {/* Who is connected and what each assistant is doing, above the tabs
             (and before a PBI is picked); nothing at all while none is. */}
+        <WaitingForYou
+          org={org}
+          project={project}
+          pbiId={pbi.id}
+          cases={rows.map((c) => c.id)}
+          onOpenPbi={onOpenPbi}
+        />
+        <RecentActivity org={org} />
         <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the
             keyboard a tab list owes: only the chosen tab is in the Tab

@@ -12,6 +12,14 @@ pub struct SubmitProgress {
     pub action: String,
 }
 
+/// Emitted when a submit_queue call ends, by any route (finished, refused,
+/// failed, panicked), after its running mark is gone.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct UploadEnded {
+    pub organization: String,
+    pub pbi_id: i32,
+}
+
 /// Emitted by submit_queue when the PBI had NO area-matched test plan and
 /// one was created on the fly, before the upload proceeds - the frontend
 /// tells the user so plans never appear out of nowhere.
@@ -63,6 +71,7 @@ pub enum AutorunDataKind {
     TestFiles,
     Proposals,
     SignInProposal,
+    Divergences,
 }
 
 /// Emitted after a successful write to that data, whoever made it, so the
@@ -271,7 +280,15 @@ pub struct AutorunDiscoveryChanged {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunAgentsChanged {
     pub agents: Vec<crate::commands::autorun_slots::AgentView>,
+    /// A sign-in trial running in the check browser, by environment name only.
+    pub trial: Option<crate::autorun::signin_trial::SignInTrial>,
 }
+
+/// Emitted, at most once a second, when an assistant's save, proposal or try
+/// was recorded (`commands::assistant_activity::spawn_assistant_activity_watch`):
+/// the timeline reloads. It carries nothing.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AssistantActivityChanged {}
 
 /// Emitted when an unattended run pauses before a batch: before case
 /// `before_case_id` runs, which opens batch `batch`, a person sets each

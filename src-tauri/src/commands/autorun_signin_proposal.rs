@@ -293,6 +293,7 @@ pub async fn inspect_in<B: Browsers>(
         Ok(c) => c,
         Err(why) => return (409, why),
     };
+    let _trial = account.is_some().then(|| crate::autorun::signin_trial::start(&env.name));
     // Dropped (the account let go) after the browser is closed.
     let mut lease = Held::setup();
     if let Some((who, _)) = &account {
@@ -411,6 +412,7 @@ pub async fn propose_in<B: Browsers>(
         Ok(c) => c,
         Err(why) => return (409, why),
     };
+    let _trial = crate::autorun::signin_trial::start(&env.name);
     let mut lease = Held::setup();
     if let Err(why) = lease.hold(root, &who.key).await {
         return (409, redact(&why, &who));

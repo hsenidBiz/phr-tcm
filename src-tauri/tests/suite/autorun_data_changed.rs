@@ -187,3 +187,32 @@ fn the_event_is_registered_and_the_app_listens() {
     assert!(lib.contains("events::AutorunDataChanged,"), "listed in collect_events");
     assert!(lib.contains("autorun::data_changed::on_data_changed("), "the app registers its listener");
 }
+
+#[test]
+fn reporting_and_ruling_a_divergence_says_divergences() {
+    use v2_lib::autorun::divergences::{self, DivergenceKind, Ruling};
+    let dir = tempfile::tempdir().unwrap();
+    let heard = listen(dir.path());
+    divergences::update(dir.path(), "acme", "Web", |l| {
+        divergences::report_in(l, 5, 1, "a", "b", DivergenceKind::Data, 1).map(|_| ())
+    })
+    .unwrap();
+    assert_eq!(*heard.lock().unwrap(), vec![vec![Kind::Divergences]]);
+    divergences::update(dir.path(), "acme", "Web", |l| {
+        divergences::rule_in(l, "d1", Ruling::CaseStands, 2).map(|_| ())
+    })
+    .unwrap();
+    assert_eq!(heard.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn a_refused_divergence_says_nothing() {
+    use v2_lib::autorun::divergences::{self, DivergenceKind};
+    let dir = tempfile::tempdir().unwrap();
+    let heard = listen(dir.path());
+    let r = divergences::update(dir.path(), "acme", "Web", |l| {
+        divergences::report_in(l, 0, 1, "a", "b", DivergenceKind::Data, 1).map(|_| ())
+    });
+    assert!(r.is_err());
+    assert!(heard.lock().unwrap().is_empty());
+}

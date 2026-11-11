@@ -34,7 +34,16 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import { forgetAllNotifications, noteAssigned, type NotificationTarget } from "./lib/notifications";
+import {
+  forgetAllNotifications,
+  noteAssigned,
+  noteInterruptedUploads,
+  noteWaiting,
+  type NotificationTarget,
+} from "./lib/notifications";
+import { requestAutoRunFocus } from "./lib/autoRunFocus";
+import ActivityStrip from "./components/ActivityStrip";
+import { submitPhaseSnapshot } from "./lib/submitRun";
 import { forgetMentionBaselines } from "./lib/mentions";
 import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
@@ -71,6 +80,7 @@ import { clearReviewRequest, useBackgroundRun } from "./lib/backgroundRun";
 import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunDataSync } from "./hooks/useAutoRunDataSync";
+import { useWaitingItems } from "./lib/useWaitingItems";
 import { useEnvironmentChangeSync } from "./hooks/useEnvironmentChangeSync";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
@@ -606,6 +616,51 @@ export default function App() {
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
     setRunFolder(null); // ...and Run Tests to the PBI
   };
+  // A bell notice about a PBI: open it, then land on `then`. The hit comes
+  // from the search so the title is the real one. Projects shown together:
+  // the PBI's own project decides where every later write goes, so the id is
+  // looked up across the organization and the PBI opens only under the
+  // project the hit names; no hit, no switch. One project at a time, a PBI
+  // the search does not return still opens under a plain title in the
+  // project that was searched. The values read after the search are the
+  // current ones: if the organization, the project or the scope moved while
+  // it ran, the notice is no longer what the person is looking at.
+  const latestScope = useRef({ org, project, allProjects });
+  latestScope.current = { org, project, allProjects };
+  const openPbiById = async (id: number, pbiProject: string, then: Section) => {
+    const started = latestScope.current;
+    let hit: PbiHit | null = null;
+    try {
+      if (started.allProjects) {
+        const found = await unwrap(commands.searchPbisAll(started.org, String(id)));
+        const f = found.find((h) => h.id === id);
+        hit = f?.project ? f : null;
+      } else {
+        const found = await unwrap(commands.searchPbis(started.org, pbiProject, String(id)));
+        const f = found.find((h) => h.id === id);
+        hit = f
+          ? { ...f, project: f.project || pbiProject }
+          : { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
+      }
+    } catch (e) {
+      logUi(`nav: PBI ${id} search failed: ${String(e)}`);
+      if (!started.allProjects) {
+        hit = { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
+      }
+    }
+    const now = latestScope.current;
+    if (now.org !== started.org || now.allProjects !== started.allProjects) {
+      logUi(`nav: PBI ${id} not opened, the organization or project scope changed meanwhile`);
+      return;
+    }
+    if (!hit) {
+      logUi(`nav: PBI ${id} not opened, no project found for it`);
+      return;
+    }
+    if (!now.allProjects && hit.project && hit.project !== now.project) setProject(hit.project);
+    setPbi(hit);
+    goToSection(then);
+  };
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
   useOpenOnExportRequest(() => {
@@ -848,6 +903,39 @@ export default function App() {
     forgetAllNotifications();
     forgetMentionBaselines();
   }
+
+  // Uploads that died before they finished (the app closed, the machine
+  // slept) left a journal behind; each raises one bell notice that opens
+  // its PBI. Once per organisation per session; an upload still running
+  // right now is not interrupted and is skipped.
+  const journalsChecked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!signedIn || !org || tourOpen || isCaptureMode()) return;
+    if (journalsChecked.current === org) return;
+    journalsChecked.current = org;
+    void (async () => {
+      const r = await commands.uploadJournalList(org);
+      if (r.status === "error") {
+        logUi(`upload journals: could not list (${r.error})`);
+        return;
+      }
+      const running = submitPhaseSnapshot();
+      noteInterruptedUploads(
+        org,
+        r.data.filter((j) => !(running && running.org === org && running.pbiId === j.pbi_id)),
+      );
+    })().catch((e) => logUi(`upload journals: could not list (${String(e)})`));
+  }, [signedIn, org, tourOpen]);
+
+  // What the assistants left for a person to decide, for the Auto Run rail's
+  // count and the bell. Auto Run's files belong to the home project, so that
+  // is the project asked about while the projects show together.
+  const autoRunProject = allProjects ? homeProject : project;
+  const waiting = useWaitingItems(org, autoRunProject, signedIn && modules.has("auto_run") && !tourOpen);
+  useEffect(() => {
+    if (!waiting || !org || tourOpen || isCaptureMode()) return;
+    noteWaiting(org, autoRunProject, waiting);
+  }, [waiting, org, autoRunProject, tourOpen]);
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version
@@ -1418,6 +1506,7 @@ export default function App() {
             <Sidebar
               section={section}
               onSelect={goToSection}
+              badges={{ autorun: waiting?.items.length ?? 0 }}
               locked={tourOpen}
               liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}            />
           ))}
@@ -1463,6 +1552,24 @@ export default function App() {
                 // the focus carries the project, and the board and the Pull
                 // Requests panel, which read every project, open the item or
                 // pull request in it.
+                if (target.kind === "pbi") {
+                  void openPbiById(target.id, target.project, "import");
+                  return;
+                }
+                if (target.kind === "auto-run") {
+                  // Auto Run switched off: there is no screen to open.
+                  if (!modules.has("auto_run")) return;
+                  const f = target.focus;
+                  // A divergence of another PBI: open that one first, so
+                  // its case is in the list the focus looks for.
+                  if (f.kind === "divergence" && f.pbi != null && f.pbi !== pbi?.id) {
+                    void openPbiById(f.pbi, target.project, "autorun");
+                  } else {
+                    goToSection("autorun");
+                  }
+                  requestAutoRunFocus(f);
+                  return;
+                }
                 if (!allProjects && target.project !== project) setProject(target.project);
                 setWorkFocus(target);
                 setWorkSection(target.kind === "pr" ? "prs" : "board");
@@ -1550,6 +1657,10 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* What the assistants are doing, on every screen: in the layout
+              flow, so it pushes the page down rather than covering it. */}
+          {signedIn && modules.has("auto_run") && <ActivityStrip onOpen={() => goToSection("autorun")} />}
 
           {/* Work Manager scrolls inside its own columns - the outer main
               must not add a second scrollbar around the board. */}
@@ -1738,6 +1849,7 @@ export default function App() {
                     project={allProjects ? homeProject : project}
                     adoProject={project}
                     pbi={pbi}
+                    onOpenPbi={(id) => void openPbiById(id, autoRunProject, "autorun")}
                     onOpenPlaywright={() => goToSection("playwright")}
                     onOpenFixtures={() => {
                       askForFixturesView();

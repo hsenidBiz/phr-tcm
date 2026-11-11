@@ -635,6 +635,9 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_discovery_active", // read-only, local: whether discovery holds the Auto Run browser
     "auto_run_end_discovery", // local: ends the assistant's discovery and closes its browser (End discovery); never ADO
     "auto_run_agents", // read-only, local: the Assistants card's list of connected assistants
+    "auto_run_waiting_items", // read-only, local: what the assistants left for a person to decide (Waiting for you); never ADO
+    "auto_run_sign_in_trial", // read-only, local: the activity strip's sign-in trial; never ADO
+    "auto_run_assistant_timeline", // read-only, local: Recent activity, read from the assistants' journal; never ADO
     "test_files_list", // read-only, local: the Setup card's Test files count
     "env_list", // read-only, local: the header's environment name and its address
     "db_databases", // read-only, local: the environments list checks its databases against these

@@ -81,6 +81,7 @@ pub mod signin;
 pub mod signin_attempts;
 pub mod signin_inspect;
 pub mod signin_proposal;
+pub mod signin_trial;
 pub mod signin_recorder;
 pub mod slots;
 pub mod store;

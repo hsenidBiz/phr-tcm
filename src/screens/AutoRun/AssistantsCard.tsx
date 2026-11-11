@@ -11,34 +11,18 @@
 // at most once a second), so the rows are replaced outright rather than
 // patched.
 
-import { useEffect, useId, useRef, useState } from "react";
-import { commands, events, type AgentActivity, type AgentView } from "../../bindings";
+import { useEffect, useId, useState } from "react";
+import { commands, type AgentActivity, type AgentView } from "../../bindings";
+import { useAgents } from "../../hooks/useAgents";
+import { activityText, isWorking } from "../../lib/agentActivity";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { IconRelease, IconStop } from "../../lib/actionIcons";
 import { logUi } from "../../lib/uiLog";
 import AssistantOffice, { hueFor } from "./AssistantScene";
 
-/** What a row says its assistant is doing. */
-function activityText(a: AgentActivity, idleMinutes: number): string {
-  switch (a.kind) {
-    case "idle":
-      return idleMinutes > 0 ? `Idle for ${idleMinutes} min` : "Idle";
-    case "discovering":
-      return a.area ? `Discovering ${a.area}` : "Discovering";
-    case "mapping":
-      return `Mapping menus (${a.modules.join(", ")})`;
-    case "exploring":
-      return "Exploring";
-    case "replaying":
-      // Before the first step the count is 0 of 0, which is not worth saying.
-      return a.step === 0 && a.of === 0
-        ? `Replaying case ${a.case_id} (starting)`
-        : `Replaying case ${a.case_id} (step ${a.step} of ${a.of})`;
-    case "working":
-      return "Working";
-  }
-}
+// The old home of this helper; the card's test still imports it from here.
+export { isWorking };
 
 /** Which browser the assistant has, and who is signed in there. */
 function browserText(a: AgentView): string {
@@ -46,11 +30,6 @@ function browserText(a: AgentView): string {
   if (a.browser) text += `, ${a.browser}`;
   if (a.account) text += `, signed in as ${a.account}`;
   return text;
-}
-
-/** Whether the assistant is doing something, which is what brings the card up. */
-export function isWorking(a: AgentActivity): boolean {
-  return a.kind !== "idle";
 }
 
 /** Whether the assistant is exploring the app rather than running cases. */
@@ -66,20 +45,17 @@ type Note = { text: string; error: boolean };
 type Answer = { status: "ok"; data: string | null } | { status: "error"; error: string };
 
 export default function AssistantsCard() {
-  const [agents, setAgents] = useState<AgentView[]>([]);
+  const { agents } = useAgents();
   const [notes, setNotes] = useState<Record<string, Note>>({});
   /** Rows with a button's answer still on its way. */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-  /** An event has already supplied the list, so the first load is stale. */
-  const heard = useRef(false);
   const headingId = useId();
 
-  /** Takes a new list, and forgets the answers and waits of any assistant
-   * not in it: Rust hands out the smallest free number, so a new session can
-   * be "Assistant 1" again and must not inherit the last one's answer. */
-  function take(list: AgentView[]) {
-    const here = new Set(list.map((a) => a.label));
-    setAgents(list);
+  // Forgets the answers and waits of any assistant not in the list: Rust
+  // hands out the smallest free number, so a new session can be "Assistant 1"
+  // again and must not inherit the last one's answer.
+  useEffect(() => {
+    const here = new Set(agents.map((a) => a.label));
     setNotes((n) => {
       const kept = Object.entries(n).filter(([l]) => here.has(l));
       return kept.length === Object.keys(n).length ? n : Object.fromEntries(kept);
@@ -88,30 +64,7 @@ export default function AssistantsCard() {
       const kept = [...b].filter((l) => here.has(l));
       return kept.length === b.size ? b : new Set(kept);
     });
-  }
-  const takeRef = useRef(take);
-  takeRef.current = take;
-
-  useEffect(() => {
-    let live = true;
-    // Listen first and load after, so a change between the two is not
-    // missed; an event that lands during the load beats it.
-    const un = events.autorunAgentsChanged.listen((e) => {
-      heard.current = true;
-      if (live) takeRef.current(e.payload.agents);
-    });
-    void un
-      .catch(() => {})
-      .then(() => (live ? commands.autoRunAgents() : null))
-      .then((list) => {
-        if (live && !heard.current && Array.isArray(list)) takeRef.current(list);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
+  }, [agents]);
 
   /** Runs one button's command and shows what came of it under the row. */
   async function press(label: string, call: () => Promise<Answer>, action: string, failed: string) {

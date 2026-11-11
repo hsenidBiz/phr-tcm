@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "../lib/toast";
 import { cn } from "../lib/cn";
+import { timeAgo } from "../lib/timeAgo";
 import { IconOpenInBrowser } from "../lib/actionIcons";
 import {
   clearAll,
@@ -29,6 +30,8 @@ const KIND_LABEL: Record<AppNotification["kind"], string> = {
   "pr-review": "Review",
   "pr-comments": "Comments",
   mention: "Mention",
+  "upload-interrupted": "Upload",
+  "assistant-waiting": "Assistant",
 };
 
 // Mention wears the one status token no other kind uses, so it reads as
@@ -39,20 +42,9 @@ const KIND_CLASS: Record<AppNotification["kind"], string> = {
   "pr-review": "bg-success/15 text-success",
   "pr-comments": "bg-warning/15 text-warning",
   mention: "bg-danger/15 text-danger",
+  "upload-interrupted": "bg-warning/15 text-warning",
+  "assistant-waiting": "bg-accent/15 text-accent",
 };
-
-function ago(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const mins = Math.floor((Date.now() - d.getTime()) / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString();
-}
 
 /** Fira Sans's 1 is a stem with a small flag reaching left, so its weight
  * sits about 0.4px right of its own box at the badge's 10px (measured from
@@ -167,7 +159,7 @@ export default function NotificationBell({
                       >
                         <span className="label-trim">{KIND_LABEL[n.kind]}</span>
                       </span>
-                      <span className="text-[11px] text-faint">{ago(n.at)}</span>
+                      <span className="text-[11px] text-faint">{timeAgo(n.at)}</span>
                       {/* The title goes to the thing itself, in the app;
                           this small button beside the time is the way out
                           to the browser for anyone who wants Azure DevOps'

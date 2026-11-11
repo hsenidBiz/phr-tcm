@@ -9,6 +9,7 @@ import type { TestCase } from "../bindings";
 import { patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
 import { submitFinished, submitPhaseSnapshot } from "../lib/submitRun";
+import { holdSignature, loadHold } from "../lib/uploadHold";
 import { resetFileWriteQueueForTests } from "../lib/draftWriteQueue";
 import QueueSection, { PLAIN_STEPS_REFUSAL } from "./QueueSection";
 
@@ -2858,4 +2859,135 @@ test("the Upload anyway toast closes when the queue screen goes away", async () 
 
   view.unmount();
   expect(dismiss).toHaveBeenCalledWith("plain-steps-toast");
+});
+
+const JOURNAL = {
+  organization: "acme",
+  project: "Web",
+  pbi_id: 42,
+  since: "2026-11-11T10:00:00Z",
+  titles: ["A", "B"],
+  sigs: ["sa", "sb"],
+  ids: [7],
+};
+
+function journalMocks(over: (cmd: string, args: unknown) => unknown) {
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    return over(cmd, args);
+  });
+}
+
+test("submit sends pre_existing and the hold signatures, and clears the journal only after the hold is saved", async () => {
+  const row = makeCase({ title: "Brand new" });
+  let options: { pre_existing?: number[]; hold_sigs?: string[] } | null = null;
+  let holdAtClear: boolean | null = null;
+  journalMocks((cmd, args) => {
+    if (cmd === "submit_queue") {
+      options = (args as { options: typeof options }).options;
+      return [{ index: 0, title: "Brand new", action: "unknown", id: null, error: "x" }];
+    }
+    if (cmd === "upload_journal_clear") {
+      holdAtClear = loadHold("acme", 42) !== null;
+      return null;
+    }
+    return undefined;
+  });
+  renderQueue([row]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(holdAtClear).not.toBeNull());
+  expect(options!.pre_existing).toEqual([]);
+  expect(options!.hold_sigs).toEqual([holdSignature(row)]);
+  expect(holdAtClear).toBe(true);
+});
+
+test("an IPC error clearing the journal does not turn a finished upload into a failed one", async () => {
+  let cleared = false;
+  journalMocks((cmd) => {
+    if (cmd === "submit_queue") return [{ index: 0, title: "Brand new", action: "created", id: 900, error: null }];
+    if (cmd === "upload_journal_clear") {
+      cleared = true;
+      throw new Error("ipc down");
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ title: "Brand new" })]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(cleared).toBe(true));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining("Submit failed"));
+});
+
+test("a remount mid-upload does not turn the journal into a hold", async () => {
+  const calls: string[] = [];
+  journalMocks((cmd) => {
+    calls.push(cmd);
+    if (cmd === "submit_queue") return new Promise(() => {});
+    // Rust writes the journal as the upload starts, so it exists only once
+    // submit_queue has been called.
+    if (cmd === "upload_journal_read") {
+      return calls.includes("submit_queue") ? { kind: "found", journal: JOURNAL } : { kind: "none" };
+    }
+    return undefined;
+  });
+  const first = renderQueue([makeCase()]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(calls).toContain("submit_queue"));
+  const readsBefore = calls.filter((c) => c === "upload_journal_read").length;
+  first.unmount();
+  renderQueue([makeCase()]);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(calls.filter((c) => c === "upload_journal_read").length).toBe(readsBefore);
+  expect(loadHold("acme", 42)).toBeNull();
+});
+
+test("a leftover journal shows the Outcome unknown banner on load", async () => {
+  journalMocks((cmd) => {
+    if (cmd === "upload_journal_read") return { kind: "found", journal: { ...JOURNAL, titles: ["Login works", "B"] } };
+    if (cmd === "upload_journal_clear") return null;
+    return undefined;
+  });
+  renderQueue([makeCase()]);
+  expect(await screen.findByText(/Outcome unknown for 2 cases/)).toBeInTheDocument();
+});
+
+test("Upload does not send while a journal still stands: it becomes a hold first", async () => {
+  let reads = 0;
+  const calls: string[] = [];
+  journalMocks((cmd) => {
+    calls.push(cmd);
+    if (cmd === "upload_journal_read") {
+      reads += 1;
+      // The mount's read finds nothing; the journal appears after.
+      return reads === 1 ? { kind: "none" } : { kind: "found", journal: { ...JOURNAL, titles: ["Login works"], sigs: [] } };
+    }
+    if (cmd === "upload_journal_clear") return null;
+    if (cmd === "submit_queue") return [];
+    return undefined;
+  });
+  renderQueue([makeCase()]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(loadHold("acme", 42)).not.toBeNull());
+  expect(calls).not.toContain("submit_queue");
 });

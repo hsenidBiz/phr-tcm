@@ -240,3 +240,17 @@ pub fn sign_in_attempts() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The running mark (`upload_journal::mark_running`): process-wide, keyed by
+/// organization and PBI, so a test that reads a journal for a key another
+/// test marks as running takes this. Held alone.
+pub fn upload_journal() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
+
+/// The running sign-in trial (`autorun::signin_trial`). Held alone.
+pub fn sign_in_trial() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

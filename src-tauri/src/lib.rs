@@ -17,6 +17,8 @@ pub mod ado_git;
 pub mod ado_share;
 pub mod ado_testplan;
 pub mod activity_log;
+pub mod assistant_activity;
+pub mod upload_journal;
 pub mod applog;
 pub mod autorun;
 pub mod branchcheck;
@@ -83,12 +85,13 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_check_signin, autorun_divergence, autorun_record_signin, autorun_signin_proposal, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
-        test_files, testplan, workspace, writing_style,
+        autorun_check_signin, autorun_divergence, autorun_record_signin, autorun_signin_proposal, autorun_waiting, autorun_replay, autorun_setup, autorun_slots, assistant_activity, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
+        test_files, testplan, upload_journal, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
+            events::UploadEnded,
             events::SuiteScanProgress,
             audio::AudioSpectrum,
             events::CaseNoteSaved,
@@ -107,6 +110,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunSessionChanged,
             events::AutorunDiscoveryChanged,
             events::AutorunAgentsChanged,
+            events::AssistantActivityChanged,
             events::AutorunResetNeeded,
             events::AutorunNetworkWait,
             events::RecordingEvent,
@@ -134,6 +138,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             discovery::projects_with_autorun_files,
             cases::pbi_test_cases,
             queue::parse_import_file,
+            upload_journal::upload_journal_read,
+            upload_journal::upload_journal_clear,
+            upload_journal::upload_journal_list,
             queue::file_stamp,
             queue::watch_file,
             queue::unwatch_file,
@@ -245,6 +252,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_end_discovery,
             autorun::auto_run_release_browser,
             autorun_slots::auto_run_agents,
+            autorun_slots::auto_run_sign_in_trial,
+            assistant_activity::auto_run_assistant_timeline,
             autorun_slots::auto_run_stop_agent,
             autorun_slots::auto_run_end_agent_discovery,
             autorun_slots::auto_run_release_agent,
@@ -320,6 +329,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_signin_proposal::auto_run_sign_in_proposal,
             autorun_signin_proposal::auto_run_approve_sign_in_proposal,
             autorun_signin_proposal::auto_run_reject_sign_in_proposal,
+            autorun_waiting::auto_run_waiting_items,
             autorun_publish::auto_run_publish,
             discovery::list_project_tags,
             runs::result_screenshots,
@@ -610,6 +620,7 @@ pub fn run() {
             // The Assistants card hears who is connected and what each is
             // doing, once a second at most, when it changed.
             commands::autorun_slots::spawn_agents_watch(app.handle().clone());
+            commands::assistant_activity::spawn_assistant_activity_watch(app.handle().clone());
             // Every script written or removed, whoever did it, is said to
             // the window: the Auto Run screen reads those scripts again.
             {
@@ -662,6 +673,7 @@ pub fn run() {
                 let logs = dir.join("pw-npm-logs");
                 crate::pw_repo::process::empty_dir(&logs);
                 crate::pw_repo::process::set_npm_logs_dir(logs);
+                crate::upload_journal::init(dir.join(crate::upload_journal::DIR_NAME));
             }
 
             // App log: file per day next to the OS's other app logs, plus

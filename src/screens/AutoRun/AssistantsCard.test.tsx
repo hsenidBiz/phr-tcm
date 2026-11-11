@@ -79,7 +79,7 @@ async function mount(agents: AgentView[]) {
 /** Pushes an `autorun-agents-changed` event the way Rust does. */
 async function push(agents: AgentView[]) {
   await waitFor(() => expect(h.emit).not.toBeNull());
-  const payload: AutorunAgentsChanged = { agents };
+  const payload: AutorunAgentsChanged = { agents, trial: null };
   await act(async () => {
     h.emit!({ payload });
   });

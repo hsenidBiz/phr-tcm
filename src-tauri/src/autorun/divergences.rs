@@ -119,6 +119,9 @@ pub struct Divergence {
     /// fix), scrubbed; shown wherever the divergence is listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal: Option<String>,
+    /// The PBI the assistant was working on when it reported this, set once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pbi: Option<i32>,
 }
 
 impl Divergence {
@@ -201,7 +204,19 @@ pub fn update<T>(
     touched.sort_unstable();
     touched.dedup();
     super::store::notify_scripts_changed(root, &touched);
+    if before != list {
+        super::data_changed::notify(root, crate::events::AutorunDataKind::Divergences);
+    }
     Ok(out)
+}
+
+/// Remember the PBI a divergence was reported under; only the first one is kept.
+pub fn note_pbi_in(list: &mut [Divergence], id: &str, pbi: Option<i32>) {
+    if let Some(d) = list.iter_mut().find(|d| d.id == id) {
+        if d.pbi.is_none() {
+            d.pbi = pbi;
+        }
+    }
 }
 
 fn ms_of(s: &str) -> u64 {
@@ -345,6 +360,7 @@ pub fn report_with_proposal_in(
         said: None,
         note: None,
         proposal: proposal.map(str::to_string),
+        pbi: None,
     });
     Ok(Reported::New(id))
 }

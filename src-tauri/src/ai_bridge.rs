@@ -400,6 +400,15 @@ pub async fn route_timed(
     // One line per call: the route and how long it took, so a slow call can
     // be told from a slow site. The query and the body are never logged.
     crate::applog::debug(call_time_line(method, target, answer.0, started.elapsed().as_millis()));
+    crate::assistant_activity::record_call(
+        caller,
+        &ctx.org,
+        ctx.gate.env_id.as_deref().unwrap_or(""),
+        method,
+        target,
+        body,
+        answer.0,
+    );
     answer
 }
 
@@ -11978,7 +11987,9 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
         let id = match &r {
             Reported::New(id) | Reported::Updated(id) => id,
         };
-        let stored = list.iter().find(|d| &d.id == id).cloned().expect("the divergence just reported");
+        let id = id.clone();
+        divergences::note_pbi_in(list, &id, ctx.current_pbi.as_ref().map(|p| p.id));
+        let stored = list.iter().find(|d| d.id == id).cloned().expect("the divergence just reported");
         Ok((stored, matches!(r, Reported::Updated(_))))
     });
     match reported {
@@ -12340,6 +12351,7 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
                 password: p.password,
                 no_password,
                 marks: vec![],
+                proposed_ms: Some(crate::autorun::sessions::now_ms()),
             }
         })
         .collect();
@@ -12879,7 +12891,7 @@ fn release_failed_start(newly_claimed: Option<i32>, caller: &crate::autorun::age
 }
 
 /// The `case_id` a request body names, when it names one.
-fn named_case_id(body: &str) -> Option<i32> {
+pub(crate) fn named_case_id(body: &str) -> Option<i32> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     v.get("case_id")?.as_i64().and_then(|n| i32::try_from(n).ok())
 }

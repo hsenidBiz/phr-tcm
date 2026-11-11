@@ -3003,6 +3003,74 @@ test("a work item notification from the project on screen opens in that project"
   expect(storedPrefs().project).toBe("Web");
 });
 
+/** An "upload interrupted" bell item that opens PBI 77 of `project`. */
+function seedPbiNotification(project: string) {
+  claimCacheFor("a@b.com");
+  localStorage.setItem(
+    "tcm-v2-notifications:acme",
+    JSON.stringify([
+      {
+        id: "upload-interrupted:77:t",
+        kind: "upload-interrupted",
+        title: "An upload to PBI 77 was interrupted",
+        body: "Open the PBI and press Check with Azure DevOps before uploading again.",
+        at: new Date().toISOString(),
+        read: false,
+        href: "",
+        target: { kind: "pbi", id: 77, project },
+      },
+    ]),
+  );
+  resetNotifications();
+}
+
+test("in combined mode a PBI notice opens the PBI under the project the search names", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedPbiNotification("Web");
+  const asked: unknown[] = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return PROJECTS;
+    if (cmd === "search_pbis_all") {
+      asked.push(args);
+      return [{ id: 77, title: "Real payroll PBI", work_item_type: "Product Backlog Item", project: "Payroll" }];
+    }
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "An upload to PBI 77 was interrupted" }));
+
+  expect(await screen.findByText("Real payroll PBI")).toBeInTheDocument();
+  expect(asked[0]).toEqual({ organization: "acme", query: "77" });
+  // The home project is not the PBI's to overwrite.
+  expect(storedPrefs().project).toBe("Web");
+  expect(storedPrefs().pbi).toMatchObject({ id: 77, project: "Payroll" });
+});
+
+test("in combined mode a PBI notice whose PBI cannot be found switches nothing", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedPbiNotification("Web");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return PROJECTS;
+    if (cmd === "search_pbis_all") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "An upload to PBI 77 was interrupted" }));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  expect(screen.queryByText("PBI 77")).not.toBeInTheDocument();
+  expect(storedPrefs().pbi).toBeNull();
+  expect(storedPrefs().project).toBe("Web");
+});
+
 /** Leaves the Work Manager one way and comes back another; the Pull Requests
  * screen is up again and has never read a pull request in Payroll. */
 async function backIntoPullRequests(asked: PrAsk[], leave: () => void, enter: () => Promise<void> | void) {

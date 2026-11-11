@@ -392,6 +392,7 @@ fn marks_travel_with_a_stored_proposal_and_never_a_password() {
         password: Some("hunter2".into()),
         no_password: None,
         marks: vec!["expired".into()],
+        proposed_ms: None,
     };
     let view = serde_json::to_string(&p.view()).unwrap();
     assert!(view.contains("\"marks\":[\"expired\"]"), "{view}");

@@ -160,6 +160,8 @@ export {
   // Opening the calendar to choose a date (DateField).
   CalendarDays as IconPickDate,
   LogIn as IconSignIn,
+  // Open on a Waiting for you row: go to the thing that needs you.
+  MoveRight as IconGoTo,
   RefreshCw as IconRefresh,
   Plug as IconRegister,
   Compass as IconTour,
