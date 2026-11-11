@@ -733,6 +733,13 @@ pub struct SubmitOptions {
     /// The person chose to upload although the current steps of the updates
     /// could not be read (see `PLAIN_STEPS_REFUSAL`). False on a first try.
     pub allow_plain_steps: bool,
+    /// Ids of the PBI's cases that existed before this upload (for the upload journal).
+    #[serde(default)]
+    pub pre_existing: Vec<i32>,
+    /// The webview's hold signature of each `queue` row (for the upload journal);
+    /// stored, never recomputed here.
+    #[serde(default)]
+    pub hold_sigs: Vec<String>,
 }
 
 /// What `submit_queue` answers, before sending anything, when the current
@@ -759,7 +766,7 @@ pub async fn submit_queue(
     iteration_path: Option<String>,
     options: SubmitOptions,
 ) -> Result<Vec<SubmitItemResult>, String> {
-    let SubmitOptions { order_hint, allow_plain_steps } = options;
+    let SubmitOptions { order_hint, allow_plain_steps, pre_existing, hold_sigs } = options;
     // One submit at a time. A second call would run a second loop over the
     // same queue, and two loops create every case twice; this tool only
     // deletes Test Cases, and only for someone Azure DevOps says may, so
@@ -769,6 +776,28 @@ pub async fn submit_queue(
     let Some(_running) = single.claim() else {
         crate::applog::warn("refused a second submit while one was already running");
         return Err("A submit is already running. Wait for it to finish.".into());
+    };
+    // Marks this upload as running for the journal's readers, and tells the
+    // webview when it ends. Dropped on every exit, a panic included: the
+    // mark goes first, so a reader that hears of the end finds it gone.
+    struct EndGuard {
+        mark: Option<crate::upload_journal::RunningMark>,
+        app: tauri::AppHandle,
+        organization: String,
+        pbi_id: i32,
+    }
+    impl Drop for EndGuard {
+        fn drop(&mut self) {
+            drop(self.mark.take());
+            let _ = crate::events::UploadEnded { organization: self.organization.clone(), pbi_id: self.pbi_id }
+                .emit(&self.app);
+        }
+    }
+    let _end = EndGuard {
+        mark: Some(crate::upload_journal::mark_running(&organization, pbi_id)),
+        app: app.clone(),
+        organization: organization.clone(),
+        pbi_id,
     };
 
     // The lower bound for "what did this upload create", should a batch
@@ -959,6 +988,18 @@ pub async fn submit_queue(
     crate::applog::info(format!(
         "Submitting {total} test case(s) to {organization}/{project} PBI #{pbi_id} in batches of {BATCH_SIZE}"
     ));
+    // Written before anything is sent: if the app dies mid-upload, the next
+    // start reads this to find what may already exist. Never cleared here.
+    if let (Some(dir), Some(j)) = (
+        crate::upload_journal::directory(),
+        crate::upload_journal::journal_for_submit(
+            &organization, &project, pbi_id, &upload_since, &queue, &pre_existing, &hold_sigs,
+        ),
+    ) {
+        if let Err(e) = crate::upload_journal::write_in(&dir, &crate::cache::owner(), &j) {
+            crate::applog::warn(format!("could not write the upload journal: {e}"));
+        }
+    }
     // Chunks of BATCH_SIZE, each one HTTP call executed on the server in
     // order. An upload runs to the end once started: the case in flight
     // could never be taken back (created cases cannot be deleted), so a

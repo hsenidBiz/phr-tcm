@@ -12,6 +12,14 @@ pub struct SubmitProgress {
     pub action: String,
 }
 
+/// Emitted when a submit_queue call ends, by any route (finished, refused,
+/// failed, panicked), after its running mark is gone.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct UploadEnded {
+    pub organization: String,
+    pub pbi_id: i32,
+}
+
 /// Emitted by submit_queue when the PBI had NO area-matched test plan and
 /// one was created on the fly, before the upload proceeds - the frontend
 /// tells the user so plans never appear out of nowhere.

@@ -36,5 +36,6 @@ pub mod run_order;
 pub mod runs;
 pub mod test_files;
 pub mod testplan;
+pub mod upload_journal;
 pub mod workspace;
 pub mod writing_style;

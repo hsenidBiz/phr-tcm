@@ -48,6 +48,9 @@ export const commands = {
 	projectsWithAutorunFiles: (organization: string, projects: string[]) => typedError<string[], string>(__TAURI_INVOKE("projects_with_autorun_files", { organization, projects })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
 	parseImportFile: (path: string) => typedError<ImportResult_Serialize, string>(__TAURI_INVOKE("parse_import_file", { path })),
+	uploadJournalRead: (organization: string, pbiId: number) => typedError<JournalRead, string>(__TAURI_INVOKE("upload_journal_read", { organization, pbiId })),
+	uploadJournalClear: (organization: string, pbiId: number) => typedError<null, string>(__TAURI_INVOKE("upload_journal_clear", { organization, pbiId })),
+	uploadJournalList: (organization: string) => typedError<UploadJournal[], string>(__TAURI_INVOKE("upload_journal_list", { organization })),
 	/**
 	 *  One-shot content fingerprint. Used when a watch is (re)armed, to catch
 	 *  an edit made while the app was closed or the tab was elsewhere - the
@@ -1901,6 +1904,7 @@ export const events = {
 	suiteNotCreated: makeEvent<SuiteNotCreated>("suite-not-created"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 	updateProgress: makeEvent<UpdateProgress>("update-progress"),
+	uploadEnded: makeEvent<UploadEnded>("upload-ended"),
 	watchedFileChanged: makeEvent<WatchedFileChanged>("watched-file-changed"),
 	workAssigned: makeEvent<WorkAssigned>("work-assigned"),
 };
@@ -5152,6 +5156,8 @@ export type IterationRef = {
 	finish_date: string | null,
 };
 
+export type JournalRead = { kind: "none" } | { kind: "running" } | { kind: "found"; journal: UploadJournal };
+
 /**  A test's result in the newest report. */
 export type LastResult = "Passed" | "Failed" | "Flaky" | "Skipped";
 
@@ -8212,6 +8218,13 @@ export type SubmitOptions = {
 	 *  could not be read (see `PLAIN_STEPS_REFUSAL`). False on a first try.
 	 */
 	allow_plain_steps: boolean,
+	/**  Ids of the PBI's cases that existed before this upload (for the upload journal). */
+	pre_existing?: number[],
+	/**
+	 *  The webview's hold signature of each `queue` row (for the upload journal);
+	 *  stored, never recomputed here.
+	 */
+	hold_sigs?: string[],
 };
 
 /**  Emitted once per queue item while submit_queue runs. */
@@ -8997,6 +9010,33 @@ export type UpdatedArea = {
 	 *  clicks arrive on changed.
 	 */
 	new_path: string,
+};
+
+/**
+ *  Emitted when a submit_queue call ends, by any route (finished, refused,
+ *  failed, panicked), after its running mark is gone.
+ */
+export type UploadEnded = {
+	organization: string,
+	pbi_id: number,
+};
+
+/**  What an upload meant to create when it started. */
+export type UploadJournal = {
+	organization: string,
+	project: string,
+	pbi_id: number,
+	/**  ISO-8601 lower bound for "created by this upload". */
+	since: string,
+	/**  Titles of the rows that create (no `update_id`), in queue order. */
+	titles: string[],
+	/**
+	 *  The webview's hold signature of each of those rows (empty when the
+	 *  webview sent none that lined up with the queue).
+	 */
+	sigs: string[],
+	/**  Ids of the PBI's linked cases that existed before the upload. */
+	ids: number[],
 };
 
 /**  What the app shows of a run waiting for the network. */

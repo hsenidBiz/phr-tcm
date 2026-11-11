@@ -267,6 +267,7 @@ mod throttle_default;
 mod transform;
 mod tray;
 mod updater;
+mod upload_journal;
 mod upload_timeout;
 mod webtheme;
 mod wit_batch;

@@ -17,6 +17,7 @@ pub mod ado_git;
 pub mod ado_share;
 pub mod ado_testplan;
 pub mod activity_log;
+pub mod upload_journal;
 pub mod applog;
 pub mod autorun;
 pub mod branchcheck;
@@ -84,11 +85,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
         autorun_check_signin, autorun_divergence, autorun_record_signin, autorun_signin_proposal, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
-        test_files, testplan, workspace, writing_style,
+        test_files, testplan, upload_journal, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
+            events::UploadEnded,
             events::SuiteScanProgress,
             audio::AudioSpectrum,
             events::CaseNoteSaved,
@@ -134,6 +136,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             discovery::projects_with_autorun_files,
             cases::pbi_test_cases,
             queue::parse_import_file,
+            upload_journal::upload_journal_read,
+            upload_journal::upload_journal_clear,
+            upload_journal::upload_journal_list,
             queue::file_stamp,
             queue::watch_file,
             queue::unwatch_file,
@@ -662,6 +667,7 @@ pub fn run() {
                 let logs = dir.join("pw-npm-logs");
                 crate::pw_repo::process::empty_dir(&logs);
                 crate::pw_repo::process::set_npm_logs_dir(logs);
+                crate::upload_journal::init(dir.join(crate::upload_journal::DIR_NAME));
             }
 
             // App log: file per day next to the OS's other app logs, plus
