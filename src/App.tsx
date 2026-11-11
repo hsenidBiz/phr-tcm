@@ -42,6 +42,7 @@ import {
   type NotificationTarget,
 } from "./lib/notifications";
 import { requestAutoRunFocus } from "./lib/autoRunFocus";
+import ActivityStrip from "./components/ActivityStrip";
 import { submitPhaseSnapshot } from "./lib/submitRun";
 import { forgetMentionBaselines } from "./lib/mentions";
 import { announce, summarize } from "./lib/assignedAlerts";
@@ -1627,6 +1628,10 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* What the assistants are doing, on every screen: in the layout
+              flow, so it pushes the page down rather than covering it. */}
+          {signedIn && modules.has("auto_run") && <ActivityStrip onOpen={() => goToSection("autorun")} />}
 
           {/* Work Manager scrolls inside its own columns - the outer main
               must not add a second scrollbar around the board. */}
