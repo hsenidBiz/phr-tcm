@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.4",
+    date: "2026-11-11",
+    items: [
+      "If an upload is cut off, even by a crash, the cases it may have sent are held for a Check with Azure DevOps the next time you open that PBI, and the bell tells you which PBI.",
+      "Waiting for you, at the top of Auto Run, lists what the assistant left for you to decide: proposed accounts, a proposed sign-in and divergences to rule on. The Auto Run tab shows how many, and the bell tells you when something new arrives.",
+      "While an assistant works, a line above every screen says what it is doing, with Stop. Auto Run shows its recent activity for the last seven days.",
+    ],
+  },
+  {
     version: "2.4.6-beta.3",
     date: "2026-11-11",
     items: [
