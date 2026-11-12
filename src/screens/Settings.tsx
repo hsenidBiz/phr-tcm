@@ -22,6 +22,7 @@ import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
 import { Button } from "../components/ui/button";
+import { SpinHolder } from "../components/ui/spin-holder";
 import { Switch } from "../components/ui/switch";
 import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
@@ -475,7 +476,9 @@ export default function Settings({
           description="Updates install automatically from the releases feed."
           control={
             <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
-              <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
+              <SpinHolder spinning={check.isPending}>
+                <IconRefresh aria-hidden />
+              </SpinHolder>
               {check.isPending ? "Checking" : "Check for updates"}
             </Button>
           }

@@ -1,6 +1,6 @@
 //! What is waiting on the person in a project: the assistant's proposed
-//! logins and sign-in, and the open divergences. Never a login, a password
-//! or an address.
+//! logins and sign-in. Never a divergence (those are ruled on in each case's
+//! card), a login, a password or an address.
 
 use v2_lib::autorun::divergences::{self, Divergence, DivergenceKind, DivergenceStatus};
 use v2_lib::autorun::signin_proposal::{self, StoredSignInProposal};
@@ -97,15 +97,21 @@ fn everything_waiting_comes_newest_first() {
     assert_eq!(w.env_id, env_id);
     assert_eq!(
         w.items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
-        vec!["Case 5: step 2 differs (data)", "Sign-in for Staging", "hr.sup", "clerk"]
+        vec!["Sign-in for Staging", "hr.sup", "clerk"]
     );
-    assert_eq!(
-        w.items[0].target,
-        WaitingTarget::Divergence { id: "d1".into(), case_id: 5, step: 2, pbi: Some(42) }
-    );
-    assert_eq!(w.items[1].target, WaitingTarget::SignIn);
-    assert_eq!(w.items[2].target, WaitingTarget::Accounts);
-    assert_eq!(w.items[3].proposed_ms, 0.0);
+    assert_eq!(w.items[0].target, WaitingTarget::SignIn);
+    assert_eq!(w.items[1].target, WaitingTarget::Accounts);
+    assert_eq!(w.items[2].proposed_ms, 0.0);
+}
+
+#[test]
+fn open_divergences_are_not_waiting_items() {
+    let dir = root();
+    seed(dir.path());
+    // The seed stored an open divergence; it is still stored, just not waiting.
+    assert_eq!(divergences::load(dir.path(), "acme", "Web").unwrap().len(), 3);
+    let w = waiting_items_with(dir.path(), "acme", "Web").unwrap();
+    assert!(w.items.iter().all(|i| !i.title.contains("Case ")), "{:?}", w.items);
 }
 
 #[test]

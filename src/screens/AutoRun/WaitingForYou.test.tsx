@@ -27,32 +27,17 @@ const SIGN_IN: WaitingItem = {
   proposed_ms: 0,
   target: { kind: "sign_in" },
 };
-const divergence = (pbi: number | null): WaitingItem => ({
-  key: "d1",
-  title: "Case 5 needs a ruling",
-  proposed_ms: Date.now() - 3_600_000,
-  target: { kind: "divergence", id: "d1", case_id: 5, step: 2, pbi },
-});
-
-function mount(items: WaitingItem[], props: { pbiId?: number | null; cases?: number[]; onOpenPbi?: (n: number) => void } = {}) {
+function mount(items: WaitingItem[]) {
   mockIPC((cmd) => {
     if (cmd === "auto_run_waiting_items") return { env_id: "env-1", items };
     if (cmd === "auto_run_list_accounts") return [];
     if (cmd === "env_proposals")
       return [{ key: "hr.sup", label: "Supervisor", username: "sup", role: null, has_password: false, no_password: null, marks: [] }];
-    if (cmd === "auto_run_load_divergences")
-      return [{ id: "d1", case_id: 5, step: 2, case_says: "A message shows", app_shows: "Nothing shows", kind: "different", reported_at: "1", status: "open" }];
     return null;
   });
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <WaitingForYou
-        org="acme"
-        project="Web"
-        pbiId={props.pbiId ?? 7}
-        cases={props.cases ?? []}
-        onOpenPbi={props.onOpenPbi}
-      />
+      <WaitingForYou org="acme" project="Web" />
     </QueryClientProvider>,
   );
 }
@@ -64,12 +49,12 @@ test("nothing waiting draws nothing", async () => {
 });
 
 test("each row has an icon, its title and Open", async () => {
-  const { container } = mount([ACCOUNT, SIGN_IN, divergence(7)]);
+  const { container } = mount([ACCOUNT, SIGN_IN]);
   expect(await screen.findByRole("heading", { name: "Waiting for you" })).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: /^Open: / })).toHaveLength(3);
+  expect(screen.getAllByRole("button", { name: /^Open: / })).toHaveLength(2);
   expect(screen.getByText("1 proposed account is waiting for you to accept")).toBeInTheDocument();
   expect(screen.getByText("5m ago")).toBeInTheDocument();
-  expect(container.querySelectorAll("li svg")).toHaveLength(6);
+  expect(container.querySelectorAll("li svg")).toHaveLength(4);
 });
 
 test("Open on an account opens Accounts on the Proposed tab", async () => {
@@ -78,22 +63,10 @@ test("Open on an account opens Accounts on the Proposed tab", async () => {
   expect(await screen.findByRole("heading", { name: /Proposed by the assistant \(1\)/ })).toBeInTheDocument();
 });
 
-test("Open on a divergence under another PBI switches PBI first", async () => {
-  const onOpenPbi = vi.fn();
-  mount([divergence(42)], { pbiId: 7, onOpenPbi });
-  fireEvent.click(await screen.findByRole("button", { name: "Open: Case 5 needs a ruling" }));
-  expect(onOpenPbi).toHaveBeenCalledWith(42);
-  const { useAutoRunFocus } = await import("../../lib/autoRunFocus");
-  const { renderHook } = await import("@testing-library/react");
-  const held = renderHook(() => useAutoRunFocus());
-  expect(held.result.current).toEqual({ kind: "divergence", id: "d1", caseId: 5, pbi: 42 });
-});
-
-test("a divergence with no PBI says it is not under the selected PBI", async () => {
-  mount([divergence(null)], { cases: [] });
-  fireEvent.click(await screen.findByRole("button", { name: "Open: Case 5 needs a ruling" }));
-  expect(await screen.findByText("This case is not under the selected PBI.")).toBeInTheDocument();
-  expect(await screen.findByText("Nothing shows")).toBeInTheDocument();
+test("accounts and a sign-in show no divergence text", async () => {
+  mount([ACCOUNT, SIGN_IN]);
+  await screen.findByRole("heading", { name: "Waiting for you" });
+  expect(screen.queryByText(/differs|ruling|divergence|not under the selected PBI/i)).toBeNull();
 });
 
 test("a bell click on the sign-in expands it under its row", async () => {
@@ -105,7 +78,7 @@ test("a bell click on the sign-in expands it under its row", async () => {
 
 test("many proposed accounts are one row that names none of them", async () => {
   const more = (key: string): WaitingItem => ({ ...ACCOUNT, key, title: `Account ${key} is proposed` });
-  mount([ACCOUNT, more("abigail"), more("aiden"), divergence(7)]);
+  mount([ACCOUNT, more("abigail"), more("aiden"), SIGN_IN]);
   expect(await screen.findByText("3 proposed accounts are waiting for you to accept")).toBeInTheDocument();
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
   expect(screen.queryByText(/abigail|aiden|hr\.sup/)).toBeNull();

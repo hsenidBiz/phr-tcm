@@ -1,9 +1,8 @@
-//! What is waiting on the person in the current project: the assistant's
-//! proposed logins, its proposed sign-in and the divergences nobody has
-//! ruled on yet. Each item says what it is and where it leads; none carries
-//! a login, a password or an address.
+//! What is waiting on the person in the current project: the active
+//! environment's proposed logins and its proposed sign-in. Each item says
+//! what it is and where it leads; none carries a login, a password or an
+//! address. Divergences are not here: they are ruled on in each case's card.
 
-use crate::autorun::divergences::{self, DivergenceStatus};
 use crate::autorun::signin_proposal;
 use std::path::Path;
 
@@ -12,7 +11,6 @@ use std::path::Path;
 pub enum WaitingTarget {
     Accounts,
     SignIn,
-    Divergence { id: String, case_id: i32, step: i32, pbi: Option<i32> },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
@@ -29,9 +27,8 @@ pub struct WaitingItems {
     pub items: Vec<WaitingItem>,
 }
 
-/// The active environment's proposals plus the project's sign-in proposal
-/// and open divergences, newest first (ties keep accounts, sign-in,
-/// divergences).
+/// The active environment's proposals plus the project's sign-in proposal,
+/// newest first (ties keep accounts, then sign-in).
 pub fn waiting_items_with(root: &Path, organization: &str, project: &str) -> Result<WaitingItems, String> {
     let env = crate::environments::active(root)?;
     let mut items: Vec<WaitingItem> = Vec::new();
@@ -49,17 +46,6 @@ pub fn waiting_items_with(root: &Path, organization: &str, project: &str) -> Res
             title: format!("Sign-in for {}", env.name),
             proposed_ms: p.proposed_ms,
             target: WaitingTarget::SignIn,
-        });
-    }
-    for d in divergences::load(root, organization, project)? {
-        if d.status != DivergenceStatus::Open {
-            continue;
-        }
-        items.push(WaitingItem {
-            key: d.id.clone(),
-            title: format!("Case {}: step {} differs ({})", d.case_id, d.step, d.kind.word()),
-            proposed_ms: d.reported_at.trim().parse::<u64>().unwrap_or(0) as f64,
-            target: WaitingTarget::Divergence { id: d.id, case_id: d.case_id, step: d.step, pbi: d.pbi },
         });
     }
     // Stable: equal times keep the order they were pushed in.

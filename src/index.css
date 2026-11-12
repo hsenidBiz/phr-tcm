@@ -870,6 +870,16 @@ table {
   }
 }
 
+/* Spinners: keep every spinning element on its own compositor layer so it
+   turns as one rasterised image. A small button's 14px icon still centres on
+   a half device pixel at 150% scaling; those spin inside SpinHolder
+   (components/ui/spin-holder.tsx), a 16px box with a pixel-exact centre. */
+.animate-spin {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform-origin: 50% 50%;
+}
+
 /* Long-list rows: the browser skips layout and paint for rows outside the
    viewport, which is the difference between a 300-row list stuttering and
    scrolling clean. NOT virtualization - every row stays in the DOM, so

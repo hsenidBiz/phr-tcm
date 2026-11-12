@@ -19,7 +19,7 @@ export function accountsWaitingTitle(count: number): string {
 const stamp = (ms: number | null | undefined) => ms ?? 0;
 
 /** Display rows, newest first. The accounts row sits where its newest
- * proposal falls; sign-ins and divergences stay one row each. Ties keep the
+ * proposal falls; a sign-in stays one row. Ties keep the
  * order the items arrived in. */
 export function waitingRows(items: readonly WaitingItem[]): WaitingRow[] {
   const rows: WaitingRow[] = [];
