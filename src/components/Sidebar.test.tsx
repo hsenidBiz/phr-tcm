@@ -4,7 +4,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type WorkSection } from "./Sidebar";
+import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type Section, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
 import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest, shouldLeaveHidden, type Module } from "../lib/modules";
 import { isNewNav, noteModuleSwitch, resetNewNavForTest } from "../lib/newNav";
@@ -291,7 +291,7 @@ test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
 
 test("a marked row that also has a count does not say new twice", () => {
   markAutoRun();
-  render(<Sidebar section="manual" onSelect={() => {}} badges={{ autorun: 93 }} />);
+  render(<Sidebar<Section> section="manual" onSelect={() => {}} badges={{ autorun: 93 }} />);
   const row = screen.getByRole("button", { name: "Auto Run (93 new)" });
   expect(row).toHaveClass("nav-new");
 });
