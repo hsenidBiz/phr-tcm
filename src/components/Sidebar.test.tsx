@@ -289,6 +289,13 @@ test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
   expect(screen.getByRole("button", { name: "AI Bridge" })).not.toHaveClass("nav-new");
 });
 
+test("a marked row that also has a count does not say new twice", () => {
+  markAutoRun();
+  render(<Sidebar section="manual" onSelect={() => {}} badges={{ autorun: 93 }} />);
+  const row = screen.getByRole("button", { name: "Auto Run (93 new)" });
+  expect(row).toHaveClass("nav-new");
+});
+
 test("the mark shows on the collapsed icon rail too", () => {
   localStorage.setItem("tcm-v2-sidebar", "collapsed");
   markAutoRun();

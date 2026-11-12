@@ -223,7 +223,9 @@ export default function Sidebar<T extends string = Section>({
         const heading = group && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;
+        // A row with a badge already says it is new; the bare "new" is for rows without one.
         const fresh = showMarks && isNewNav(id, marks);
+        const bareNew = fresh && badge === 0;
         const tip = note ? `${label} (In Development)` : label;
         const name = badge > 0 ? `${label} (${badge} new)` : label;
         return (
@@ -255,7 +257,7 @@ export default function Sidebar<T extends string = Section>({
         )}
         {/* Only when collapsed: with the rail open the label is right there.
             The note joins the tooltip so the status survives the icon rail. */}
-        <Tooltip label={[tip, badge > 0 ? `${badge} new` : null, fresh ? "new" : null].filter(Boolean).join(" · ")} side="right" disabled={!collapsed}>
+        <Tooltip label={[tip, badge > 0 ? `${badge} new` : null, bareNew ? "new" : null].filter(Boolean).join(" · ")} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           disabled={dead}
@@ -268,7 +270,7 @@ export default function Sidebar<T extends string = Section>({
             onSelect(id);
           }}
           aria-current={section === id ? "page" : undefined}
-          aria-label={fresh ? `${name} (new)` : name}
+          aria-label={bareNew ? `${name} (new)` : name}
           data-new={fresh ? "" : undefined}
           className={cn(
             // px-3 keeps the icon at the exact same x whether the rail is
