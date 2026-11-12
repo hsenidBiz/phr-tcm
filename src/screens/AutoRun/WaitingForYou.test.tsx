@@ -67,14 +67,14 @@ test("each row has an icon, its title and Open", async () => {
   const { container } = mount([ACCOUNT, SIGN_IN, divergence(7)]);
   expect(await screen.findByRole("heading", { name: "Waiting for you" })).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: /^Open: / })).toHaveLength(3);
-  expect(screen.getByText("Account hr.sup is proposed")).toBeInTheDocument();
+  expect(screen.getByText("1 proposed account is waiting for you to accept")).toBeInTheDocument();
   expect(screen.getByText("5m ago")).toBeInTheDocument();
   expect(container.querySelectorAll("li svg")).toHaveLength(6);
 });
 
 test("Open on an account opens Accounts on the Proposed tab", async () => {
   mount([ACCOUNT]);
-  fireEvent.click(await screen.findByRole("button", { name: "Open: Account hr.sup is proposed" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open: 1 proposed account is waiting for you to accept" }));
   expect(await screen.findByRole("heading", { name: /Proposed by the assistant \(1\)/ })).toBeInTheDocument();
 });
 
@@ -101,4 +101,14 @@ test("a bell click on the sign-in expands it under its row", async () => {
   await screen.findByRole("heading", { name: "Waiting for you" });
   act(() => requestAutoRunFocus({ kind: "sign-in" }));
   await waitFor(() => expect(screen.getByRole("button", { name: /^Open: / })).toHaveAttribute("aria-expanded", "true"));
+});
+
+test("many proposed accounts are one row that names none of them", async () => {
+  const more = (key: string): WaitingItem => ({ ...ACCOUNT, key, title: `Account ${key} is proposed` });
+  mount([ACCOUNT, more("abigail"), more("aiden"), divergence(7)]);
+  expect(await screen.findByText("3 proposed accounts are waiting for you to accept")).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.queryByText(/abigail|aiden|hr\.sup/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Open: 3 proposed accounts are waiting for you to accept" }));
+  expect(await screen.findByRole("heading", { name: /Proposed by the assistant/ })).toBeInTheDocument();
 });

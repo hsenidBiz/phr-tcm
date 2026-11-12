@@ -16,6 +16,7 @@ import { useSyncExternalStore } from "react";
 import type { AssignedItem, PullRequest, UploadJournal, WaitingItem, WaitingItems } from "../bindings";
 import { focusOf, type AutoRunFocus } from "./autoRunFocus";
 import { isCaptureMode } from "../dev/capture";
+import { accountsWaitingTitle, waitingRows } from "./waitingRows";
 
 export type NotificationKind =
   | "assigned"
@@ -293,11 +294,13 @@ export function noteInterruptedUploads(org: string, journals: UploadJournal[]): 
   );
 }
 
-/** One notice per waiting item and per proposal. Accounts and sign-ins are
- * per environment, so the same proposal in another environment is its own
- * event; divergences are stored per organisation and project, so the
- * environment is left out of theirs and switching environment does not raise
- * one again. A newer proposal of the same thing is raised again. */
+/** One notice per waiting item. Sign-ins are per environment, so the same
+ * proposal in another environment is its own event; divergences are stored
+ * per organisation and project, so the environment is left out of theirs and
+ * switching environment does not raise one again. A newer proposal of the
+ * same thing is raised again. Proposed accounts are the exception: all of an
+ * environment's accounts are ONE notice (`groupedAccountsNoticeId`), keyed
+ * by the newest proposal, so forty proposals do not flood the bell. */
 export function waitingNoticeId(envId: string, item: WaitingItem): string {
   if (item.target.kind === "divergence") {
     return `assistant-waiting:divergence:${item.key}:${item.proposed_ms ?? 0}`;
@@ -305,24 +308,58 @@ export function waitingNoticeId(envId: string, item: WaitingItem): string {
   return `assistant-waiting:${item.target.kind}:${envId}:${item.key}:${item.proposed_ms ?? 0}`;
 }
 
+const ACCOUNTS_PREFIX = "assistant-waiting:accounts:";
+const GROUPED_ACCOUNTS_ID = /^assistant-waiting:accounts:[^:]+:\d+$/;
+
+/** The one notice id for an environment's proposed accounts. */
+function groupedAccountsNoticeId(envId: string, newestMs: number | null): string {
+  return `${ACCOUNTS_PREFIX}${envId}:${newestMs ?? 0}`;
+}
+
+/** Drop the notices an older version raised, one per account
+ * (`assistant-waiting:accounts:<env>:<key>:<ms>`). Other kinds are untouched. */
+function dropPerAccountNotices(org: string): void {
+  const list = load(org);
+  const next = list.filter((n) => !(n.id.startsWith(ACCOUNTS_PREFIX) && !GROUPED_ACCOUNTS_ID.test(n.id)));
+  if (next.length !== list.length) save(org, next);
+}
+
 /** What the assistants left for a person to decide, as the bell's notices.
  * Called with the whole current list every time; the dedupe keeps only what
  * is new. Returns what the bell took in, so the caller announces only that. */
 export function noteWaiting(org: string, project: string, w: WaitingItems): AppNotification[] {
+  dropPerAccountNotices(org);
+  const target = (item: WaitingItem) => ({
+    kind: "auto-run" as const,
+    project,
+    focus: focusOf(item.target),
+  });
+  const rows = waitingRows(w.items);
   return raise(
     org,
-    w.items.map((item) => ({
-      id: waitingNoticeId(w.env_id, item),
-      kind: "assistant-waiting" as const,
-      title:
-        item.target.kind === "accounts"
-          ? `The assistant proposed the account ${item.key}`
-          : item.target.kind === "sign_in"
-            ? "The assistant proposed a sign-in"
-            : `Case ${item.target.case_id} needs your ruling`,
-      body: "Open Auto Run to decide.",
-      target: { kind: "auto-run" as const, project, focus: focusOf(item.target) },
-    })),
+    rows.map((row) => {
+      if (row.kind === "accounts") {
+        const first = w.items.find((i) => i.target.kind === "accounts")!;
+        return {
+          id: groupedAccountsNoticeId(w.env_id, row.proposed_ms),
+          kind: "assistant-waiting" as const,
+          title: accountsWaitingTitle(row.count),
+          body: `Open Auto Run to accept or decline ${row.count === 1 ? "it" : "them"}.`,
+          target: target(first),
+        };
+      }
+      const item = row.item;
+      return {
+        id: waitingNoticeId(w.env_id, item),
+        kind: "assistant-waiting" as const,
+        title:
+          item.target.kind === "divergence"
+            ? `Case ${item.target.case_id} needs your ruling`
+            : "The assistant proposed a sign-in",
+        body: "Open Auto Run to decide.",
+        target: target(item),
+      };
+    }),
   );
 }
 

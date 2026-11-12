@@ -81,6 +81,7 @@ import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunDataSync } from "./hooks/useAutoRunDataSync";
 import { useWaitingItems } from "./lib/useWaitingItems";
+import { waitingRows } from "./lib/waitingRows";
 import { useEnvironmentChangeSync } from "./hooks/useEnvironmentChangeSync";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
@@ -1508,7 +1509,7 @@ export default function App() {
             <Sidebar
               section={section}
               onSelect={goToSection}
-              badges={{ autorun: waiting?.items.length ?? 0 }}
+              badges={{ autorun: waitingRows(waiting?.items ?? []).length }}
               locked={tourOpen}
               liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}            />
           ))}
