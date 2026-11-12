@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.5",
+    date: "2026-11-12",
+    items: [
+      "A divergence you have not ruled on no longer comes back to the bell each time you switch environment.",
+      "Stop on the assistant activity line now ignores extra clicks while the assistant is stopping.",
+      "If an earlier interrupted upload was never checked, a new upload to the same PBI keeps its cases in the record instead of replacing them, so Check can still account for all of them.",
+      "Signing in as a different account now checks for that account's interrupted uploads.",
+    ],
+  },
+  {
     version: "2.4.6-beta.4",
     date: "2026-11-11",
     items: [
