@@ -50,6 +50,7 @@ import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
 import AstryxIsland from "../components/AstryxIsland";
 import { Markdown } from "@astryxdesign/core/Markdown";
+import { SpinHolder } from "../components/ui/spin-holder";
 
 /** Mirrors AdoClient::PR_PAGE_SIZE - a full page implies a next page. */
 const PR_PAGE = 25;
@@ -1105,10 +1106,9 @@ export default function PrPanel({
             }
           }}
         >
-          <RefreshCw
-            size={14}
-            className={overview.isFetching || anyRepoFetching ? "animate-spin" : undefined}
-          />
+          <SpinHolder spinning={overview.isFetching || anyRepoFetching} className="-m-px">
+            <RefreshCw size={14} />
+          </SpinHolder>
         </button>
       </div>
 

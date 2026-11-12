@@ -39,6 +39,7 @@ import { useModule } from "../lib/modules";
 import { disabledToolsSnapshot, loadDisabledTools, subscribeDisabledTools, toolShown, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { logUi } from "../lib/uiLog";
+import { SpinHolder } from "../components/ui/spin-holder";
 import {
   addRepository,
   currentPathSnapshot,
@@ -545,7 +546,9 @@ export default function AiBridge() {
                 .catch(() => toast.error("Could not scan for AI tools."));
             }}
           >
-            <IconRefresh aria-hidden className={cn(tools.isFetching && "animate-spin")} />
+            <SpinHolder spinning={tools.isFetching}>
+              <IconRefresh aria-hidden />
+            </SpinHolder>
             {tools.isFetching ? "Scanning" : "Rescan"}
           </Button>
         </div>
