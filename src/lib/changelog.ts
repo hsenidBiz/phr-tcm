@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.7",
+    date: "2026-11-12",
+    items: [
+      "Recent activity on Auto Run has a Hide button that folds it down to its heading; Show brings it back, and the app remembers your choice.",
+    ],
+  },
+  {
     version: "2.4.6-beta.6",
     date: "2026-11-12",
     items: [
