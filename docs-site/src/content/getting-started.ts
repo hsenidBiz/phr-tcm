@@ -288,7 +288,7 @@ export const gettingStarted: Screen = {
       group: "top-right",
       locate: { testId: "nav-board" },
       name: "Board",
-      does: "The team's board. A red number on it counts work newly assigned to you; opening the board clears it.",
+      does: "The team's board. A red dot on it marks work newly assigned to you; opening the board clears it.",
     },
     {
       id: "nav-create",

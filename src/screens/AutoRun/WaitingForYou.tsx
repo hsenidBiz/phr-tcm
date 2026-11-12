@@ -12,10 +12,12 @@ import { clearAutoRunFocus, focusOf, requestAutoRunFocus, useAutoRunFocus } from
 import { unwrapStr } from "../../lib/ipc";
 import { timeAgo } from "../../lib/timeAgo";
 import { useWaitingItems } from "../../lib/useWaitingItems";
+import { accountsWaitingTitle, waitingRows, type WaitingRow } from "../../lib/waitingRows";
 import AccountsDialog from "./AccountsDialog";
 import SignInProposalNotice from "./SignInProposalNotice";
 
 const rowKey = (item: WaitingItem) => `${item.target.kind}:${item.key}`;
+const keyOfRow = (row: WaitingRow) => (row.kind === "accounts" ? "accounts" : rowKey(row.item));
 
 const ICONS = {
   accounts: IconAccounts,
@@ -66,16 +68,14 @@ export default function WaitingForYou({
     }
   }, [focus, waiting]);
 
-  const items = waiting?.items ?? [];
-  if (items.length === 0 && !accountsOpen) return null;
+  const rows = waitingRows(waiting?.items ?? []);
+  if (rows.length === 0 && !accountsOpen) return null;
 
   const open = (item: WaitingItem) => {
     const t = item.target;
-    if (t.kind === "accounts") {
-      setAccountsOpen(true);
-    } else if (t.kind === "sign_in") {
+    if (t.kind === "sign_in") {
       setExpanded((cur) => (cur === rowKey(item) ? null : rowKey(item)));
-    } else {
+    } else if (t.kind === "divergence") {
       if (t.pbi != null && t.pbi !== pbiId) onOpenPbi?.(t.pbi);
       if (t.pbi != null || cases.includes(t.case_id)) {
         requestAutoRunFocus(focusOf(t));
@@ -87,15 +87,36 @@ export default function WaitingForYou({
 
   return (
     <>
-      {items.length > 0 && (
+      {rows.length > 0 && (
         <section aria-labelledby={headingId} className="space-y-2 rounded-md border border-border bg-surface p-3">
           <h2 id={headingId} className="text-sm font-semibold text-text">
             Waiting for you
           </h2>
           <ul className="space-y-2">
-            {items.map((item) => {
+            {rows.map((row) => {
+              const key = keyOfRow(row);
+              if (row.kind === "accounts") {
+                const title = accountsWaitingTitle(row.count);
+                return (
+                  <li key={key} className="space-y-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      <IconAccounts aria-hidden className="size-4 shrink-0 text-muted" />
+                      <span className="min-w-0 flex-1 text-text">{title}</span>
+                      {row.proposed_ms ? (
+                        <span className="shrink-0 text-xs text-muted">
+                          {timeAgo(new Date(row.proposed_ms).toISOString())}
+                        </span>
+                      ) : null}
+                      <Button size="sm" variant="outline" aria-label={`Open: ${title}`} onClick={() => setAccountsOpen(true)}>
+                        <IconGoTo aria-hidden />
+                        Open
+                      </Button>
+                    </div>
+                  </li>
+                );
+              }
+              const item = row.item;
               const Icon = ICONS[item.target.kind];
-              const key = rowKey(item);
               const t = item.target;
               return (
                 <li key={key} className="space-y-2">

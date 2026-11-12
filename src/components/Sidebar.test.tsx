@@ -1,10 +1,10 @@
-// The rail's badge bubbles: a count on an item when something arrived,
-// nothing at all when the count is zero.
+// The rail's badge: a small dot on an item when something arrived (the count
+// is in the accessible name, not drawn), nothing at all when it is zero.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type WorkSection } from "./Sidebar";
+import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type Section, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
 import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest, shouldLeaveHidden, type Module } from "../lib/modules";
 import { isNewNav, noteModuleSwitch, resetNewNavForTest } from "../lib/newNav";
@@ -35,8 +35,10 @@ test("a badge count lands on its item and reaches the accessible name", () => {
       badges={{ board: 3 }}
     />,
   );
-  expect(screen.getByRole("button", { name: "Board (3 new)" })).toBeInTheDocument();
-  expect(screen.getByText("3")).toBeInTheDocument();
+  const row = screen.getByRole("button", { name: "Board (3 new)" });
+  // A dot, not a number: a count bubble was cut off by the collapsed rail.
+  expect(row.querySelector("[data-badge-dot]")).not.toBeNull();
+  expect(screen.queryByText("3")).not.toBeInTheDocument();
 });
 
 /// Auto Run is no longer marked as in development: no row carries a
@@ -209,7 +211,7 @@ test("zero and absent counts render no bubble", () => {
       badges={{ board: 0 }}
     />,
   );
-  expect(screen.getByRole("button", { name: "Board" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Board" }).querySelector("[data-badge-dot]")).toBeNull();
   expect(screen.queryByText("0")).not.toBeInTheDocument();
 });
 
@@ -285,6 +287,13 @@ test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
   // The label is still there to read, and no other row is marked.
   expect(row).toHaveTextContent("Auto Run");
   expect(screen.getByRole("button", { name: "AI Bridge" })).not.toHaveClass("nav-new");
+});
+
+test("a marked row that also has a count does not say new twice", () => {
+  markAutoRun();
+  render(<Sidebar<Section> section="manual" onSelect={() => {}} badges={{ autorun: 93 }} />);
+  const row = screen.getByRole("button", { name: "Auto Run (93 new)" });
+  expect(row).toHaveClass("nav-new");
 });
 
 test("the mark shows on the collapsed icon rail too", () => {

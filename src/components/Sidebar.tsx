@@ -223,7 +223,9 @@ export default function Sidebar<T extends string = Section>({
         const heading = group && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;
+        // A row with a badge already says it is new; the bare "new" is for rows without one.
         const fresh = showMarks && isNewNav(id, marks);
+        const bareNew = fresh && badge === 0;
         const tip = note ? `${label} (In Development)` : label;
         const name = badge > 0 ? `${label} (${badge} new)` : label;
         return (
@@ -255,7 +257,7 @@ export default function Sidebar<T extends string = Section>({
         )}
         {/* Only when collapsed: with the rail open the label is right there.
             The note joins the tooltip so the status survives the icon rail. */}
-        <Tooltip label={fresh ? `${tip} · new` : tip} side="right" disabled={!collapsed}>
+        <Tooltip label={[tip, badge > 0 ? `${badge} new` : null, bareNew ? "new" : null].filter(Boolean).join(" · ")} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           disabled={dead}
@@ -268,7 +270,7 @@ export default function Sidebar<T extends string = Section>({
             onSelect(id);
           }}
           aria-current={section === id ? "page" : undefined}
-          aria-label={fresh ? `${name} (new)` : name}
+          aria-label={bareNew ? `${name} (new)` : name}
           data-new={fresh ? "" : undefined}
           className={cn(
             // px-3 keeps the icon at the exact same x whether the rail is
@@ -310,14 +312,18 @@ export default function Sidebar<T extends string = Section>({
             )}
           />
           {badge > 0 && (
-            // Pinned to the icon, not the row end, so it survives the
-            // collapse to an icon rail unchanged.
+            // A small dot pinned to the icon's corner, not a count: a number
+            // bubble was cut off by the collapsed rail. The count stays in
+            // the accessible name and the collapsed tooltip.
             <span
               aria-hidden
-              className="absolute left-6 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-status"
-            >
-              <span className="label-trim">{badge > 99 ? "99+" : badge}</span>
-            </span>
+              data-badge-dot
+              className={cn(
+                "absolute left-[25px] top-[7px] size-2 rounded-full bg-danger ring-2",
+                // The halo takes the row's own background so it does not show as a patch.
+                section === id ? "ring-accent-soft" : "ring-surface group-hover:ring-surface-2",
+              )}
+            />
           )}
           <span className={cn(labelCls, note && "flex items-baseline")} style={labelDelay}>
             {label}

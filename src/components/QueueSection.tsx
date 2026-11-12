@@ -47,7 +47,7 @@ import {
   submitUploading,
   subscribeSubmit,
 } from "../lib/submitRun";
-import { recoverJournal } from "../lib/uploadJournal";
+import { finishJournal, recoverJournal } from "../lib/uploadJournal";
 import { logUi } from "../lib/uiLog";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
 import { freshWatches, noteWritten, runOnFileChain } from "../lib/draftWriteQueue";
@@ -890,12 +890,14 @@ export default function QueueSection({
         // The upload already happened: a failure to tidy the journal up
         // (an IPC error as much as an error result) must not turn it into a
         // failed upload.
-        try {
-          const cleared = await commands.uploadJournalClear(org, pbiId);
-          if (cleared.status === "error") logUi(`upload journal not cleared: ${cleared.error}`);
-        } catch (e) {
-          logUi(`upload journal not cleared: ${String(e)}`);
-        }
+        await finishJournal(
+          org,
+          pbiId,
+          toSend.filter((c) => c.update_id == null).map((c) => c.title),
+          r.data
+            .filter((x) => (x.action === "created" || x.action === "updated") && x.id != null)
+            .map((x) => x.id as number),
+        ).catch((e) => logUi(`upload journal not finished: ${String(e)}`));
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
