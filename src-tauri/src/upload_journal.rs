@@ -129,7 +129,8 @@ pub fn write_in(dir: &Path, owner: &str, j: &UploadJournal) -> Result<(), String
 }
 
 /// `old` (unrecovered) followed by `new`. Sigs are kept only while they line
-/// up with the titles on both sides; empty means "not aligned".
+/// up with the titles on both sides; empty means "not aligned". `ids` are the
+/// older journal's, unchanged (its pre-upload baseline).
 fn merge(old: UploadJournal, new: &UploadJournal) -> UploadJournal {
     let aligned = old.sigs.len() == old.titles.len() && new.sigs.len() == new.titles.len();
     let mut titles = old.titles;
@@ -141,12 +142,10 @@ fn merge(old: UploadJournal, new: &UploadJournal) -> UploadJournal {
     } else {
         Vec::new()
     };
-    let mut ids = old.ids;
-    for id in &new.ids {
-        if !ids.contains(id) {
-            ids.push(*id);
-        }
-    }
+    // The older upload's baseline stays: `new.ids` was fetched after that
+    // upload ran, so it already holds cases the older upload created, and
+    // excluding those from Check's pairing would hide them.
+    let ids = old.ids;
     UploadJournal {
         organization: new.organization.clone(),
         project: new.project.clone(),

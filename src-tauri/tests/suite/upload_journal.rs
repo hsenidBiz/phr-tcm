@@ -184,7 +184,10 @@ fn a_new_journal_merges_into_an_unrecovered_one() {
     assert_eq!(j.project, "Mobile");
     assert_eq!(j.titles, vec!["A", "B", "C"]);
     assert_eq!(j.sigs, vec!["sa", "sb", "sc"]);
-    assert_eq!(j.ids, vec![7, 8, 9]);
+    // The older upload's baseline is kept: the new journal's ids were read
+    // after the older upload ran, so they include cases it created, and
+    // excluding those from Check would hide them.
+    assert_eq!(j.ids, vec![7, 8]);
 }
 
 #[test]
