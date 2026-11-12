@@ -113,9 +113,48 @@ pub fn journal_for_submit(
 
 pub fn write_in(dir: &Path, owner: &str, j: &UploadJournal) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("could not create the journal folder: {e}"))?;
-    let body = serde_json::to_string(&OnDisk { owner: owner.to_string(), journal: j.clone() })
+    let path = dir.join(file_name(&j.organization, j.pbi_id));
+    // An earlier upload of this PBI that was never recovered still owns the
+    // titles it may have created; fold the new upload into it rather than
+    // replacing it.
+    let merged = match load(&path) {
+        Some(d) if d.owner == owner && d.journal.organization == j.organization && d.journal.pbi_id == j.pbi_id => {
+            merge(d.journal, j)
+        }
+        _ => j.clone(),
+    };
+    let body = serde_json::to_string(&OnDisk { owner: owner.to_string(), journal: merged })
         .map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&dir.join(file_name(&j.organization, j.pbi_id)), &body)
+    crate::ai_tools::atomic_write(&path, &body)
+}
+
+/// `old` (unrecovered) followed by `new`. Sigs are kept only while they line
+/// up with the titles on both sides; empty means "not aligned". `ids` are the
+/// older journal's, unchanged (its pre-upload baseline).
+fn merge(old: UploadJournal, new: &UploadJournal) -> UploadJournal {
+    let aligned = old.sigs.len() == old.titles.len() && new.sigs.len() == new.titles.len();
+    let mut titles = old.titles;
+    titles.extend(new.titles.iter().cloned());
+    let sigs = if aligned {
+        let mut s = old.sigs;
+        s.extend(new.sigs.iter().cloned());
+        s
+    } else {
+        Vec::new()
+    };
+    // The older upload's baseline stays: `new.ids` was fetched after that
+    // upload ran, so it already holds cases the older upload created, and
+    // excluding those from Check's pairing would hide them.
+    let ids = old.ids;
+    UploadJournal {
+        organization: new.organization.clone(),
+        project: new.project.clone(),
+        pbi_id: new.pbi_id,
+        since: old.since,
+        titles,
+        sigs,
+        ids,
+    }
 }
 
 fn load(path: &Path) -> Option<OnDisk> {

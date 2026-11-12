@@ -77,6 +77,29 @@ test("Stop only when the assistant can be stopped", async () => {
   await waitFor(() => expect(stop).toHaveBeenCalledWith({ slot: 2 }));
 });
 
+test("a second Stop click while the first is pending calls once, and re-enables after", async () => {
+  let release: (v: null) => void = () => {};
+  const stop = vi.fn();
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_agents") return [agent({ can_stop: true, slot: 2 })];
+    if (cmd === "auto_run_sign_in_trial") return null;
+    if (cmd === "auto_run_stop_agent") {
+      stop(args);
+      return new Promise<null>((res) => (release = res));
+    }
+    return null;
+  });
+  render(<ActivityStrip onOpen={() => {}} />);
+  const btn = await screen.findByRole("button", { name: "Stop Assistant 1" });
+  fireEvent.click(btn);
+  await waitFor(() => expect(btn).toBeDisabled());
+  fireEvent.click(btn);
+  expect(stop).toHaveBeenCalledTimes(1);
+  release(null);
+  await waitFor(() => expect(btn).toBeEnabled());
+  expect(stop).toHaveBeenCalledTimes(1);
+});
+
 test("a sign-in trial shows with no Stop", async () => {
   mount([agent({ activity: { kind: "idle" } })], { environment: "Staging" });
   expect(await screen.findByText("Trying a sign-in · Staging")).toBeInTheDocument();
@@ -91,4 +114,13 @@ test("the strip is in the layout flow above main", () => {
   expect(app.indexOf("<ActivityStrip")).toBeLessThan(app.indexOf("<main"));
   const strip = source("components/ActivityStrip.tsx");
   expect(strip).not.toMatch(/\b(fixed|absolute|sticky)\b|\bz-\d/);
+});
+
+test("the interrupted-upload check is keyed by account and organisation", () => {
+  // A different account signing in must list its own journals, so the
+  // once-per-session key and the effect's dependencies both carry the account.
+  const src = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const app = readFileSync(join(src, "App.tsx"), "utf-8");
+  expect(app).toContain("const checkKey = `${journalAccount}|${org}`;");
+  expect(app).toContain("}, [signedIn, org, tourOpen, journalAccount]);");
 });

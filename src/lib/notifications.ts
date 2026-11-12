@@ -293,10 +293,15 @@ export function noteInterruptedUploads(org: string, journals: UploadJournal[]): 
   );
 }
 
-/** One notice per waiting item, per environment and per proposal: the same
- * proposal in another environment is its own event, and a newer proposal of
- * the same thing is raised again. */
+/** One notice per waiting item and per proposal. Accounts and sign-ins are
+ * per environment, so the same proposal in another environment is its own
+ * event; divergences are stored per organisation and project, so the
+ * environment is left out of theirs and switching environment does not raise
+ * one again. A newer proposal of the same thing is raised again. */
 export function waitingNoticeId(envId: string, item: WaitingItem): string {
+  if (item.target.kind === "divergence") {
+    return `assistant-waiting:divergence:${item.key}:${item.proposed_ms ?? 0}`;
+  }
   return `assistant-waiting:${item.target.kind}:${envId}:${item.key}:${item.proposed_ms ?? 0}`;
 }
 
