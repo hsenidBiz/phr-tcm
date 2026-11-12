@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.8",
+    date: "2026-11-12",
+    items: [
+      "Divergences no longer appear in Waiting for you, light the Auto Run dot or raise bell notices; you rule on them in each case's card as before.",
+      "The spinner on Check for updates and Restart to update turns in place instead of bobbing up and down.",
+    ],
+  },
+  {
     version: "2.4.6-beta.7",
     date: "2026-11-12",
     items: [
