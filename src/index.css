@@ -870,11 +870,10 @@ table {
   }
 }
 
-/* Spinners: a spinning icon painted in place is re-rasterised every frame,
-   snapped to the device-pixel grid. At fractional scaling (150%) that snap
-   changes with the angle, so the icon wobbles up and down instead of turning
-   about its centre. Its own compositor layer is rasterised once and rotated
-   by the GPU, smoothly, about the true centre. */
+/* Spinners: keep every spinning element on its own compositor layer so it
+   turns as one rasterised image. A small button's 14px icon still centres on
+   a half device pixel at 150% scaling; those spin inside SpinHolder
+   (components/ui/spin-holder.tsx), a 16px box with a pixel-exact centre. */
 .animate-spin {
   will-change: transform;
   backface-visibility: hidden;

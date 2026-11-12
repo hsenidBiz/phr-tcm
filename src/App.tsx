@@ -107,6 +107,7 @@ import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT, TOUR_REPO_PATH } from "./tour/tourDat
 import { tourControl, tourStepsFor, type TourWhere } from "./tour/tourScript";
 import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from "./tour/tourState";
 import { Button } from "./components/ui/button";
+import { SpinHolder } from "./components/ui/spin-holder";
 import { unwrap } from "./lib/ipc";
 import { logUi } from "./lib/uiLog";
 import { hideSplash } from "./lib/splash";
@@ -1648,7 +1649,9 @@ export default function App() {
                   </span>
                 )}
                 <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
-                  <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
+                  <SpinHolder spinning={applyUpdate.isPending}>
+                    <IconRefresh aria-hidden />
+                  </SpinHolder>
                   {applyUpdate.isPending ? "Updating" : "Restart to update"}
                 </Button>
               </div>
