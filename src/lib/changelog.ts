@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.9",
+    date: "2026-11-12",
+    items: [
+      "Every refresh button's spinner now turns in place instead of bobbing up and down, as on Check for updates.",
+    ],
+  },
+  {
     version: "2.4.6-beta.8",
     date: "2026-11-12",
     items: [
