@@ -330,6 +330,25 @@ test("a waiting item is raised once per proposal and environment", () => {
   expect(first[0].target).toEqual({ kind: "auto-run", project: "Web", focus: { kind: "accounts" } });
 });
 
+test("a divergence keeps one id across environments, an account proposal does not", () => {
+  const div = (env_id: string) => ({
+    env_id,
+    items: [
+      { key: "d1", title: "x", proposed_ms: 5, target: { kind: "divergence" as const, id: "d1", case_id: 7, step: 2, pbi: 42 } },
+    ],
+  });
+  const first = noteWaiting("acme", "Web", div("env-1"));
+  expect(first).toHaveLength(1);
+  expect(first[0].id).toBe("assistant-waiting:divergence:d1:5");
+  expect(noteWaiting("acme", "Web", div("env-2"))).toHaveLength(0);
+  const acct = (env_id: string) => ({
+    env_id,
+    items: [{ key: "hr.sup", title: "a", proposed_ms: 9, target: { kind: "accounts" as const } }],
+  });
+  expect(noteWaiting("acme", "Web", acct("env-1"))).toHaveLength(1);
+  expect(noteWaiting("acme", "Web", acct("env-2"))).toHaveLength(1);
+});
+
 test("a waiting divergence and sign-in carry their own titles and focus", () => {
   const got = noteWaiting("acme", "Web", {
     env_id: "env-1",
