@@ -906,13 +906,15 @@ export default function App() {
 
   // Uploads that died before they finished (the app closed, the machine
   // slept) left a journal behind; each raises one bell notice that opens
-  // its PBI. Once per organisation per session; an upload still running
-  // right now is not interrupted and is skipped.
+  // its PBI. Once per account and organisation per session; an upload still
+  // running right now is not interrupted and is skipped.
   const journalsChecked = useRef<string | null>(null);
+  const journalAccount = status.data?.account ?? "";
   useEffect(() => {
     if (!signedIn || !org || tourOpen || isCaptureMode()) return;
-    if (journalsChecked.current === org) return;
-    journalsChecked.current = org;
+    const checkKey = `${journalAccount}|${org}`;
+    if (journalsChecked.current === checkKey) return;
+    journalsChecked.current = checkKey;
     void (async () => {
       const r = await commands.uploadJournalList(org);
       if (r.status === "error") {
@@ -925,7 +927,7 @@ export default function App() {
         r.data.filter((j) => !(running && running.org === org && running.pbiId === j.pbi_id)),
       );
     })().catch((e) => logUi(`upload journals: could not list (${String(e)})`));
-  }, [signedIn, org, tourOpen]);
+  }, [signedIn, org, tourOpen, journalAccount]);
 
   // What the assistants left for a person to decide, for the Auto Run rail's
   // count and the bell. Auto Run's files belong to the home project, so that
