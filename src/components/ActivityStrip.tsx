@@ -3,6 +3,7 @@
 // Stop where it can be stopped and one Open that goes to Auto Run. It draws
 // nothing, and takes no height, while nothing is working.
 
+import { useState } from "react";
 import { commands } from "../bindings";
 import { useAgents } from "../hooks/useAgents";
 import { activityText, isWorking } from "../lib/agentActivity";
@@ -16,6 +17,8 @@ export const STRIP_MAX_LINES = 3;
 
 export default function ActivityStrip({ onOpen }: { onOpen: () => void }) {
   const { agents, trial } = useAgents();
+  // Slots whose Stop is in flight; declared above the early return below.
+  const [stopping, setStopping] = useState<ReadonlySet<number>>(new Set());
   const working = agents.filter((a) => isWorking(a.activity));
   if (working.length === 0 && !trial) return null;
 
@@ -23,12 +26,20 @@ export default function ActivityStrip({ onOpen }: { onOpen: () => void }) {
   const more = working.length - shown.length;
 
   async function stop(slot: number, label: string) {
+    if (stopping.has(slot)) return;
+    setStopping((s) => new Set(s).add(slot));
     try {
       const r = await commands.autoRunStopAgent(slot);
       if (r.status === "error") toast.error(r.error);
     } catch (e) {
       logUi(`activity strip: stop for ${label} failed: ${e instanceof Error ? e.message : String(e)}`);
       toast.error(`Could not stop ${label}. Try again, or see Settings → Logs.`);
+    } finally {
+      setStopping((s) => {
+        const next = new Set(s);
+        next.delete(slot);
+        return next;
+      });
     }
   }
 
@@ -45,7 +56,14 @@ export default function ActivityStrip({ onOpen }: { onOpen: () => void }) {
               <li key={a.label} className="flex items-center gap-2">
                 <span className="truncate">{line}</span>
                 {a.can_stop && slot !== null && (
-                  <Button size="sm" variant="outline" aria-label={`Stop ${a.label}`} onClick={() => void stop(slot, a.label)}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Stop ${a.label}`}
+                    aria-busy={stopping.has(slot)}
+                    disabled={stopping.has(slot)}
+                    onClick={() => void stop(slot, a.label)}
+                  >
                     <IconStop aria-hidden />
                     Stop
                   </Button>
