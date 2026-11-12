@@ -48,12 +48,18 @@ export async function recoverJournal(org: string, pbiId: number): Promise<Recove
 }
 
 /** The journal's rows that did NOT come from the upload that just finished.
- * Rust merges a new upload's create titles after the older ones, so the
- * older rows are the leading ones. `thisUploadCreates` counts the SENT rows
- * with no update id (how Rust counts them); 0 when the upload created
- * nothing. Null when nothing older is left. */
-export function olderPartOf(j: UploadJournal, thisUploadCreates: number): UploadJournal | null {
-  const older = j.titles.length - thisUploadCreates;
+ * Rust merges a new upload's create titles after the older ones, so when this
+ * upload's journal write succeeded they are the journal's trailing rows.
+ * `thisUploadTitles` is the SENT rows with no update id, in order (how Rust
+ * builds them; empty when the upload created nothing). They are subtracted
+ * only when the journal's trailing titles equal them exactly: if this
+ * upload's own write failed, the journal is purely the older upload's and is
+ * held whole. Null when nothing older is left. */
+export function olderPartOf(j: UploadJournal, thisUploadTitles: string[]): UploadJournal | null {
+  const n = thisUploadTitles.length;
+  const tail = j.titles.slice(j.titles.length - n);
+  const ours = n > 0 && n <= j.titles.length && tail.every((t, i) => t === thisUploadTitles[i]);
+  const older = ours ? j.titles.length - n : j.titles.length;
   if (older <= 0) return null;
   return {
     ...j,
@@ -67,13 +73,13 @@ export function olderPartOf(j: UploadJournal, thisUploadCreates: number): Upload
 export async function finishJournal(
   org: string,
   pbiId: number,
-  thisUploadCreates: number,
+  thisUploadTitles: string[],
   createdIds: number[],
 ): Promise<void> {
   try {
     const read = await commands.uploadJournalRead(org, pbiId);
     if (read && read.status !== "error" && read.data && read.data.kind === "found") {
-      const older = olderPartOf(read.data.journal, thisUploadCreates);
+      const older = olderPartOf(read.data.journal, thisUploadTitles);
       if (older) {
         const merged = mergeHolds(loadHold(org, pbiId), holdFromJournal(older));
         // The hold applyOutcome just saved carries this upload's preExisting,

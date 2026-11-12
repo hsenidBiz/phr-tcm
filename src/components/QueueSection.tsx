@@ -893,7 +893,7 @@ export default function QueueSection({
         await finishJournal(
           org,
           pbiId,
-          toSend.filter((c) => c.update_id == null).length,
+          toSend.filter((c) => c.update_id == null).map((c) => c.title),
           r.data
             .filter((x) => (x.action === "created" || x.action === "updated") && x.id != null)
             .map((x) => x.id as number),
