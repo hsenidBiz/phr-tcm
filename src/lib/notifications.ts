@@ -335,6 +335,16 @@ export function noteWaiting(org: string, project: string, w: WaitingItems): AppN
     focus: focusOf(item.target),
   });
   const rows = waitingRows(w.items);
+  // One batch of proposals spans several stamps (each account is stamped as
+  // it is proposed). Remember the grouped id of every stamp, raise only the
+  // newest: accepting the newest-stamped accounts drops the group to an
+  // older stamp, which must not read as a fresh proposal.
+  const stamps = new Set(w.items.filter((i) => i.target.kind === "accounts").map((i) => i.proposed_ms));
+  const newest = rows.find((r) => r.kind === "accounts")?.proposed_ms ?? null;
+  remember(
+    org,
+    [...stamps].filter((ms) => ms !== newest).map((ms) => groupedAccountsNoticeId(w.env_id, ms)),
+  );
   return raise(
     org,
     rows.map((row) => {

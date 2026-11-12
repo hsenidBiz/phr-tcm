@@ -334,6 +334,14 @@ test("proposed accounts are one notice per environment, keyed by the newest prop
   expect(noteWaiting("acme", "Web", w("env-2", 1000))).toHaveLength(1);
 });
 
+test("accepting the newest-stamped accounts does not raise a fresh notice for the older stamp", () => {
+  const w = (...ms: number[]) => ({ env_id: "env-1", items: ms.map((m, i) => acct(`hr.a${i}`, m)) });
+  expect(noteWaiting("acme", "Web", w(1000, 900, 800))).toHaveLength(1);
+  expect(noteWaiting("acme", "Web", w(900, 800))).toHaveLength(0);
+  expect(noteWaiting("acme", "Web", w(800))).toHaveLength(0);
+  expect(noteWaiting("acme", "Web", w(2000, 800))).toHaveLength(1);
+});
+
 test("a single proposed account reads in the singular", () => {
   const [n] = noteWaiting("acme", "Web", { env_id: "env-1", items: [acct("hr.sup", 5)] });
   expect(n.title).toBe("1 proposed account is waiting for you to accept");
