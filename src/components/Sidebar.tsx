@@ -318,7 +318,11 @@ export default function Sidebar<T extends string = Section>({
             <span
               aria-hidden
               data-badge-dot
-              className="absolute left-[25px] top-[7px] size-2 rounded-full bg-danger ring-2 ring-surface"
+              className={cn(
+                "absolute left-[25px] top-[7px] size-2 rounded-full bg-danger ring-2",
+                // The halo takes the row's own background so it does not show as a patch.
+                section === id ? "ring-accent-soft" : "ring-surface group-hover:ring-surface-2",
+              )}
             />
           )}
           <span className={cn(labelCls, note && "flex items-baseline")} style={labelDelay}>
