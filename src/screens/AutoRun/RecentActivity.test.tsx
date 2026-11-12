@@ -7,7 +7,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { AssistantRecord } from "../../bindings";
 import { clearAutoRunFocus } from "../../lib/autoRunFocus";
-import RecentActivity from "./RecentActivity";
+import RecentActivity, { HIDDEN_KEY } from "./RecentActivity";
 
 afterEach(() => {
   clearMocks();
@@ -86,4 +86,22 @@ test("nothing recorded draws nothing", async () => {
   const { container } = mount([]);
   await new Promise((r) => setTimeout(r, 30));
   expect(container.firstChild).toBeNull();
+});
+
+test("Hide folds the list to its heading, remembered; Show brings it back", async () => {
+  localStorage.removeItem(HIDDEN_KEY);
+  const first = mount([rec({ action: "Saved a script" })]);
+  fireEvent.click(await screen.findByRole("button", { name: "Hide recent activity" }));
+  expect(screen.queryByText("Saved a script")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Recent activity" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show recent activity" })).toHaveAttribute("aria-expanded", "false");
+  first.unmount();
+
+  // Remembered across a remount (a restart reads the same store).
+  mount([rec({ action: "Saved a script" })]);
+  const show = await screen.findByRole("button", { name: "Show recent activity" });
+  expect(screen.queryByText("Saved a script")).not.toBeInTheDocument();
+  fireEvent.click(show);
+  expect(screen.getByText("Saved a script")).toBeInTheDocument();
+  expect(localStorage.getItem(HIDDEN_KEY)).toBeNull();
 });
