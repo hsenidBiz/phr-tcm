@@ -8,25 +8,25 @@ const acct = (key: string, ms: number | null): WaitingItem => ({
   proposed_ms: ms,
   target: { kind: "accounts" },
 });
-const div: WaitingItem = {
-  key: "d1",
-  title: "d",
+const signIn: WaitingItem = {
+  key: "sign-in",
+  title: "s",
   proposed_ms: 500,
-  target: { kind: "divergence", id: "d1", case_id: 1, step: 1, pbi: null },
+  target: { kind: "sign_in" },
 };
 
-test("forty proposed accounts and a divergence are two rows", () => {
-  const items = [...Array.from({ length: 40 }, (_, i) => acct(`a${i}`, 100 + i)), div];
+test("forty proposed accounts and a sign-in are two rows", () => {
+  const items = [...Array.from({ length: 40 }, (_, i) => acct(`a${i}`, 100 + i)), signIn];
   expect(waitingRows(items)).toHaveLength(2);
 });
 
 test("the accounts row carries the count and newest time, and sorts by it", () => {
-  const rows = waitingRows([acct("a", 100), div, acct("b", 900), acct("c", 50)]);
+  const rows = waitingRows([acct("a", 100), signIn, acct("b", 900), acct("c", 50)]);
   expect(rows).toEqual([
     { kind: "accounts", count: 3, proposed_ms: 900 },
-    { kind: "item", item: div },
+    { kind: "item", item: signIn },
   ]);
-  expect(waitingRows([acct("a", 100), div])[0]).toEqual({ kind: "item", item: div });
+  expect(waitingRows([acct("a", 100), signIn])[0]).toEqual({ kind: "item", item: signIn });
 });
 
 test("the sentence is singular for one", () => {

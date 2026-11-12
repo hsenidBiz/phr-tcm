@@ -1563,13 +1563,7 @@ export default function App() {
                   // Auto Run switched off: there is no screen to open.
                   if (!modules.has("auto_run")) return;
                   const f = target.focus;
-                  // A divergence of another PBI: open that one first, so
-                  // its case is in the list the focus looks for.
-                  if (f.kind === "divergence" && f.pbi != null && f.pbi !== pbi?.id) {
-                    void openPbiById(f.pbi, target.project, "autorun");
-                  } else {
-                    goToSection("autorun");
-                  }
+                  goToSection("autorun");
                   requestAutoRunFocus(f);
                   return;
                 }
@@ -1852,7 +1846,6 @@ export default function App() {
                     project={allProjects ? homeProject : project}
                     adoProject={project}
                     pbi={pbi}
-                    onOpenPbi={(id) => void openPbiById(id, autoRunProject, "autorun")}
                     onOpenPlaywright={() => goToSection("playwright")}
                     onOpenFixtures={() => {
                       askForFixturesView();

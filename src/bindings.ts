@@ -9103,7 +9103,7 @@ export type WaitingItems = {
 	items: WaitingItem[],
 };
 
-export type WaitingTarget = { kind: "accounts" } | { kind: "sign_in" } | { kind: "divergence"; id: string; case_id: number; step: number; pbi: number | null };
+export type WaitingTarget = { kind: "accounts" } | { kind: "sign_in" };
 
 /**
  *  Emitted when the JSON file an import is following changes on disk -

@@ -295,16 +295,11 @@ export function noteInterruptedUploads(org: string, journals: UploadJournal[]): 
 }
 
 /** One notice per waiting item. Sign-ins are per environment, so the same
- * proposal in another environment is its own event; divergences are stored
- * per organisation and project, so the environment is left out of theirs and
- * switching environment does not raise one again. A newer proposal of the
+ * proposal in another environment is its own event. A newer proposal of the
  * same thing is raised again. Proposed accounts are the exception: all of an
  * environment's accounts are ONE notice (`groupedAccountsNoticeId`), keyed
  * by the newest proposal, so forty proposals do not flood the bell. */
 export function waitingNoticeId(envId: string, item: WaitingItem): string {
-  if (item.target.kind === "divergence") {
-    return `assistant-waiting:divergence:${item.key}:${item.proposed_ms ?? 0}`;
-  }
   return `assistant-waiting:${item.target.kind}:${envId}:${item.key}:${item.proposed_ms ?? 0}`;
 }
 
@@ -324,11 +319,22 @@ function dropPerAccountNotices(org: string): void {
   if (next.length !== list.length) save(org, next);
 }
 
+const DIVERGENCE_PREFIX = "assistant-waiting:divergence:";
+
+/** Drop the divergence notices an older version raised. Divergences are
+ * ruled on in each case's card and no longer wait anywhere else. */
+function dropDivergenceNotices(org: string): void {
+  const list = load(org);
+  const next = list.filter((n) => !n.id.startsWith(DIVERGENCE_PREFIX));
+  if (next.length !== list.length) save(org, next);
+}
+
 /** What the assistants left for a person to decide, as the bell's notices.
  * Called with the whole current list every time; the dedupe keeps only what
  * is new. Returns what the bell took in, so the caller announces only that. */
 export function noteWaiting(org: string, project: string, w: WaitingItems): AppNotification[] {
   dropPerAccountNotices(org);
+  dropDivergenceNotices(org);
   const target = (item: WaitingItem) => ({
     kind: "auto-run" as const,
     project,
@@ -362,10 +368,7 @@ export function noteWaiting(org: string, project: string, w: WaitingItems): AppN
       return {
         id: waitingNoticeId(w.env_id, item),
         kind: "assistant-waiting" as const,
-        title:
-          item.target.kind === "divergence"
-            ? `Case ${item.target.case_id} needs your ruling`
-            : "The assistant proposed a sign-in",
+        title: "The assistant proposed a sign-in",
         body: "Open Auto Run to decide.",
         target: target(item),
       };

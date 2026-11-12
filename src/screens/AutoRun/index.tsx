@@ -111,7 +111,6 @@ export default function AutoRun({
   onOpenPlaywright,
   onOpenModules,
   onOpenFixtures,
-  onOpenPbi,
 }: {
   org: string;
   /** The project Auto Run's files belong to (the application under test):
@@ -128,8 +127,6 @@ export default function AutoRun({
   /** The API Templates screen on its Fixtures tab, for the Setup panel's
    * Fixtures row. */
   onOpenFixtures?: () => void;
-  /** Open another PBI, for a waiting divergence that belongs to it. */
-  onOpenPbi?: (pbiId: number) => void;
 }) {
   const { prefs } = useFieldRefs(org, project);
 
@@ -512,14 +509,13 @@ export default function AutoRun({
 
   const rows = cases.data ?? [];
 
-  // A case a Waiting for you row or a bell notice asked to see: the Test
+  // A case a bell notice or a link asked to see: the Test
   // cases tab, the card open and ringed for a moment, scrolled into view.
   // It waits for the PBI it belongs to and for that PBI's cases to load.
   const focus = useAutoRunFocus();
   const [highlightId, setHighlightId] = useState<number | null>(null);
   useEffect(() => {
-    if (!focus || (focus.kind !== "divergence" && focus.kind !== "case")) return;
-    if (focus.kind === "divergence" && focus.pbi != null && pbi?.id !== focus.pbi) return;
+    if (!focus || focus.kind !== "case") return;
     if (!pbi) {
       clearAutoRunFocus();
       return;
@@ -782,7 +778,7 @@ export default function AutoRun({
     return (
       <div className="space-y-4">
         {/* What the assistants left for a person to decide. */}
-        <WaitingForYou org={org} project={project} pbiId={null} cases={[]} onOpenPbi={onOpenPbi} />
+        <WaitingForYou org={org} project={project} />
         <RecentActivity org={org} />
         {/* Assistants work whatever PBI is open, or none. */}
         <AssistantsCard />
@@ -816,13 +812,7 @@ export default function AutoRun({
       <div className="space-y-4">
         {/* Who is connected and what each assistant is doing, above the tabs
             (and before a PBI is picked); nothing at all while none is. */}
-        <WaitingForYou
-          org={org}
-          project={project}
-          pbiId={pbi.id}
-          cases={rows.map((c) => c.id)}
-          onOpenPbi={onOpenPbi}
-        />
+        <WaitingForYou org={org} project={project} />
         <RecentActivity org={org} />
         <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the

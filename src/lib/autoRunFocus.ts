@@ -1,6 +1,6 @@
 /**
  * A request to open Auto Run with one thing in view: the accounts, the
- * sign-in, a divergence waiting for a ruling, or a case.
+ * sign-in, or a case.
  *
  * Whoever asks (a bell notification, the Waiting for you list) calls
  * requestAutoRunFocus and goes to the Auto Run section; the screen reads it
@@ -15,7 +15,6 @@ import type { WaitingTarget } from "../bindings";
 export type AutoRunFocus =
   | { kind: "accounts" }
   | { kind: "sign-in" }
-  | { kind: "divergence"; id: string; caseId: number; pbi: number | null }
   | { kind: "case"; caseId: number };
 
 /** The focus a waiting item opens: what the bell notice and the Open button
@@ -26,8 +25,6 @@ export function focusOf(t: WaitingTarget): AutoRunFocus {
       return { kind: "accounts" };
     case "sign_in":
       return { kind: "sign-in" };
-    case "divergence":
-      return { kind: "divergence", id: t.id, caseId: t.case_id, pbi: t.pbi };
   }
 }
 

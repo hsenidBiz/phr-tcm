@@ -348,7 +348,7 @@ test("a single proposed account reads in the singular", () => {
   expect(n.body).toBe("Open Auto Run to accept or decline it.");
 });
 
-test("noteWaiting removes the old one-notice-per-account entries and nothing else", () => {
+test("noteWaiting removes the old one-notice-per-account entries and the old divergence notices, nothing else", () => {
   const old = (id: string, kind: "assistant-waiting" | "mention" = "assistant-waiting") => ({
     id,
     kind,
@@ -370,44 +370,20 @@ test("noteWaiting removes the old one-notice-per-account entries and nothing els
   resetForTests();
   noteWaiting("acme", "Web", { env_id: "env-1", items: [] });
   const { result } = renderHook(() => useNotifications("acme"));
-  expect(result.current.map((n) => n.id)).toEqual([
-    "assistant-waiting:accounts:env-1:7",
-    "assistant-waiting:divergence:d1:5",
-    "mention:1",
-  ]);
+  expect(result.current.map((n) => n.id)).toEqual(["assistant-waiting:accounts:env-1:7", "mention:1"]);
 });
 
-test("a divergence keeps one id across environments, an account proposal does not", () => {
-  const div = (env_id: string) => ({
-    env_id,
-    items: [
-      { key: "d1", title: "x", proposed_ms: 5, target: { kind: "divergence" as const, id: "d1", case_id: 7, step: 2, pbi: 42 } },
-    ],
-  });
-  const first = noteWaiting("acme", "Web", div("env-1"));
-  expect(first).toHaveLength(1);
-  expect(first[0].id).toBe("assistant-waiting:divergence:d1:5");
-  expect(noteWaiting("acme", "Web", div("env-2"))).toHaveLength(0);
+test("an account proposal is raised again in another environment", () => {
   const accts = (env_id: string) => ({ env_id, items: [acct("hr.sup", 9)] });
   expect(noteWaiting("acme", "Web", accts("env-1"))).toHaveLength(1);
   expect(noteWaiting("acme", "Web", accts("env-2"))).toHaveLength(1);
 });
 
-test("a waiting divergence and sign-in carry their own titles and focus", () => {
+test("a waiting sign-in carries its own title and focus", () => {
   const got = noteWaiting("acme", "Web", {
     env_id: "env-1",
-    items: [
-      { key: "d1", title: "x", proposed_ms: 5, target: { kind: "divergence", id: "d1", case_id: 7, step: 2, pbi: 42 } },
-      { key: "sign-in", title: "y", proposed_ms: 6, target: { kind: "sign_in" } },
-    ],
+    items: [{ key: "sign-in", title: "y", proposed_ms: 6, target: { kind: "sign_in" } }],
   });
-  expect(got.map((n) => n.title).sort()).toEqual(["Case 7 needs your ruling", "The assistant proposed a sign-in"]);
-  const ruling = got.find((n) => n.title.startsWith("Case"))!;
-  const signIn = got.find((n) => n.title.includes("sign-in"))!;
-  expect(ruling.target).toEqual({
-    kind: "auto-run",
-    project: "Web",
-    focus: { kind: "divergence", id: "d1", caseId: 7, pbi: 42 },
-  });
-  expect(signIn.target).toMatchObject({ focus: { kind: "sign-in" } });
+  expect(got.map((n) => n.title)).toEqual(["The assistant proposed a sign-in"]);
+  expect(got[0].target).toMatchObject({ focus: { kind: "sign-in" } });
 });
