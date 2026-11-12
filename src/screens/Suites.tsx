@@ -27,6 +27,7 @@ import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { toTestCase } from "../lib/testCaseConvert";
 import { matchesQuery, searchPlaceholder } from "../lib/search";
 import { outcomeLabel } from "./RunPanel";
+import { SpinHolder } from "../components/ui/spin-holder";
 
 // The same colours Run Tests and the runner give each outcome: Paused is
 // the muted grey and Not Applicable the theme's own ink, so the two differ.
@@ -609,10 +610,9 @@ export default function Suites({
               outcome queries live one-per-suite inside SuitePoints, out of
               reach here - useIsFetching counts them by key, which is the
               same key this button just invalidated. */}
-          <RefreshCw
-            size={14}
-            className={fetching || pointsFetching > 0 ? "animate-spin" : undefined}
-          />
+          <SpinHolder spinning={fetching || pointsFetching > 0} className="-m-px">
+            <RefreshCw size={14} />
+          </SpinHolder>
         </button>
         {busy && <span className="text-xs text-muted">Collecting test cases</span>}
           </>

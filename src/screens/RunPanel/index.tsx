@@ -37,6 +37,7 @@ import ExecutionOrderModal from "./ExecutionOrderModal";
 import { runOrderQueryOptions, useRunOrder } from "./useRunOrder";
 import { suiteCasesKey } from "../ManageCases/suiteCasesQuery";
 import { loadGroupMode, saveGroupMode, type GroupMode } from "../../lib/runOrder";
+import { SpinHolder } from "../../components/ui/spin-holder";
 
 
 export { outcomeLabel };
@@ -524,14 +525,9 @@ export default function RunPanel({
               className="rounded p-0.5 text-muted hover:text-accent"
               onClick={(e) => (e.shiftKey ? redetectSuite() : refreshPoints())}
             >
-              <RefreshCw
-                size={12}
-                className={
-                  suite.isFetching || points.isFetching || history.isFetching
-                    ? "animate-spin"
-                    : undefined
-                }
-              />
+              <SpinHolder spinning={suite.isFetching || points.isFetching || history.isFetching} className="-m-0.5">
+                <RefreshCw size={12} />
+              </SpinHolder>
             </button>
             {suite.isFetching && <span>(re-detecting)</span>}
           </p>

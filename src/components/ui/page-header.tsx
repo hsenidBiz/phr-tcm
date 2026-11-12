@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { IconAbout, IconRefresh } from "../../lib/actionIcons";
-import { cn } from "../../lib/cn";
+import { SpinHolder } from "./spin-holder";
 
 /**
  * The one header line of a list screen: what you are looking at (a count or
@@ -49,7 +49,9 @@ export function PageHeader({
           >
             {/* A refetch keeps the old rows on screen while it runs, so the
                 spin is the only sign the click did anything. */}
-            <IconRefresh aria-hidden className={cn("size-3.5", refreshing && "animate-spin")} />
+            <SpinHolder spinning={Boolean(refreshing)} className="-m-px">
+              <IconRefresh aria-hidden className="size-3.5" />
+            </SpinHolder>
           </button>
         )}
         {info && (

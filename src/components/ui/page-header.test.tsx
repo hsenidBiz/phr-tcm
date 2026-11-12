@@ -25,11 +25,12 @@ test("refresh is a button named Refresh that calls onRefresh and spins while ref
   const { rerender } = render(<PageHeader title="T" onRefresh={onRefresh} />);
   const btn = screen.getByRole("button", { name: "Refresh" });
   expect(btn).toHaveAttribute("title", "Refresh");
-  expect(btn.querySelector("svg")).not.toHaveClass("animate-spin");
+  expect(btn.querySelector(".animate-spin")).toBeNull();
   fireEvent.click(btn);
   expect(onRefresh).toHaveBeenCalledTimes(1);
   rerender(<PageHeader title="T" onRefresh={onRefresh} refreshing />);
-  expect(screen.getByRole("button", { name: "Refresh" }).querySelector("svg")).toHaveClass("animate-spin");
+  // The 16px holder turns, carrying the icon (see spin-holder.tsx).
+  expect(screen.getByRole("button", { name: "Refresh" }).querySelector("[data-spinning]")).toHaveClass("animate-spin");
 });
 
 test("refreshLabel renames the refresh button", () => {
