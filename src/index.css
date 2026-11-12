@@ -870,6 +870,17 @@ table {
   }
 }
 
+/* Spinners: a spinning icon painted in place is re-rasterised every frame,
+   snapped to the device-pixel grid. At fractional scaling (150%) that snap
+   changes with the angle, so the icon wobbles up and down instead of turning
+   about its centre. Its own compositor layer is rasterised once and rotated
+   by the GPU, smoothly, about the true centre. */
+.animate-spin {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform-origin: 50% 50%;
+}
+
 /* Long-list rows: the browser skips layout and paint for rows outside the
    viewport, which is the difference between a 300-row list stuttering and
    scrolling clean. NOT virtualization - every row stays in the DOM, so
