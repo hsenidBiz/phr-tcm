@@ -1,5 +1,5 @@
-// The rail's badge bubbles: a count on an item when something arrived,
-// nothing at all when the count is zero.
+// The rail's badge: a small dot on an item when something arrived (the count
+// is in the accessible name, not drawn), nothing at all when it is zero.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -35,8 +35,10 @@ test("a badge count lands on its item and reaches the accessible name", () => {
       badges={{ board: 3 }}
     />,
   );
-  expect(screen.getByRole("button", { name: "Board (3 new)" })).toBeInTheDocument();
-  expect(screen.getByText("3")).toBeInTheDocument();
+  const row = screen.getByRole("button", { name: "Board (3 new)" });
+  // A dot, not a number: a count bubble was cut off by the collapsed rail.
+  expect(row.querySelector("[data-badge-dot]")).not.toBeNull();
+  expect(screen.queryByText("3")).not.toBeInTheDocument();
 });
 
 /// Auto Run is no longer marked as in development: no row carries a
@@ -209,7 +211,7 @@ test("zero and absent counts render no bubble", () => {
       badges={{ board: 0 }}
     />,
   );
-  expect(screen.getByRole("button", { name: "Board" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Board" }).querySelector("[data-badge-dot]")).toBeNull();
   expect(screen.queryByText("0")).not.toBeInTheDocument();
 });
 

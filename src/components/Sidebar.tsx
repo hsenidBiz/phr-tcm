@@ -255,7 +255,7 @@ export default function Sidebar<T extends string = Section>({
         )}
         {/* Only when collapsed: with the rail open the label is right there.
             The note joins the tooltip so the status survives the icon rail. */}
-        <Tooltip label={fresh ? `${tip} · new` : tip} side="right" disabled={!collapsed}>
+        <Tooltip label={[tip, badge > 0 ? `${badge} new` : null, fresh ? "new" : null].filter(Boolean).join(" · ")} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           disabled={dead}
@@ -310,14 +310,14 @@ export default function Sidebar<T extends string = Section>({
             )}
           />
           {badge > 0 && (
-            // Pinned to the icon, not the row end, so it survives the
-            // collapse to an icon rail unchanged.
+            // A small dot pinned to the icon's corner, not a count: a number
+            // bubble was cut off by the collapsed rail. The count stays in
+            // the accessible name and the collapsed tooltip.
             <span
               aria-hidden
-              className="absolute left-6 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-status"
-            >
-              <span className="label-trim">{badge > 99 ? "99+" : badge}</span>
-            </span>
+              data-badge-dot
+              className="absolute left-[25px] top-[7px] size-2 rounded-full bg-danger ring-2 ring-surface"
+            />
           )}
           <span className={cn(labelCls, note && "flex items-baseline")} style={labelDelay}>
             {label}
