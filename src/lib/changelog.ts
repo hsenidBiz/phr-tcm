@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.6",
+    date: "2026-11-12",
+    items: [
+      "When an assistant proposes accounts, Waiting for you shows one line saying how many are waiting for you to accept, and its Open shows the list. The bell raises one notice for them instead of one per account.",
+      "The sidebar marks news with a small dot instead of a number, so nothing is cut off when the sidebar is collapsed.",
+      "If an earlier interrupted upload to a PBI was never checked, a later upload that finishes now keeps those cases as Outcome unknown instead of forgetting them.",
+    ],
+  },
+  {
     version: "2.4.6-beta.5",
     date: "2026-11-12",
     items: [
