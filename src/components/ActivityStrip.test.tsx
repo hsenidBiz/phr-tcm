@@ -115,3 +115,12 @@ test("the strip is in the layout flow above main", () => {
   const strip = source("components/ActivityStrip.tsx");
   expect(strip).not.toMatch(/\b(fixed|absolute|sticky)\b|\bz-\d/);
 });
+
+test("the interrupted-upload check is keyed by account and organisation", () => {
+  // A different account signing in must list its own journals, so the
+  // once-per-session key and the effect's dependencies both carry the account.
+  const src = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const app = readFileSync(join(src, "App.tsx"), "utf-8");
+  expect(app).toContain("const checkKey = `${journalAccount}|${org}`;");
+  expect(app).toContain("}, [signedIn, org, tourOpen, journalAccount]);");
+});
