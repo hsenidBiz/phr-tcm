@@ -156,3 +156,56 @@ fn submit_queue_writes_the_journal_before_the_first_batch_and_never_clears_it() 
     assert!(body.find("mark_running").unwrap() < write);
     assert!(!src.contains("upload_journal::clear_in"));
 }
+
+fn second(titles: &[&str], sigs: &[&str], ids: &[i32]) -> UploadJournal {
+    UploadJournal {
+        organization: "acme".into(),
+        project: "Mobile".into(),
+        pbi_id: 42,
+        since: "2026-11-12T09:00:00Z".into(),
+        titles: titles.iter().map(|s| s.to_string()).collect(),
+        sigs: sigs.iter().map(|s| s.to_string()).collect(),
+        ids: ids.to_vec(),
+    }
+}
+
+#[test]
+fn a_new_journal_merges_into_an_unrecovered_one() {
+    let _g = crate::serial::upload_journal();
+    let dir = tempfile::tempdir().unwrap();
+    let mut old = journal("acme", 42);
+    old.ids = vec![7, 8];
+    upload_journal::write_in(dir.path(), "o1", &old).unwrap();
+    upload_journal::write_in(dir.path(), "o1", &second(&["B", "C"], &["sb", "sc"], &[8, 9])).unwrap();
+    let JournalRead::Found { journal: j } = upload_journal::read_in(dir.path(), "o1", "acme", 42) else {
+        panic!("expected a journal");
+    };
+    assert_eq!(j.since, "2026-11-11T10:00:00Z");
+    assert_eq!(j.project, "Mobile");
+    assert_eq!(j.titles, vec!["A", "B", "C"]);
+    assert_eq!(j.sigs, vec!["sa", "sb", "sc"]);
+    assert_eq!(j.ids, vec![7, 8, 9]);
+}
+
+#[test]
+fn merging_with_misaligned_sigs_leaves_them_empty() {
+    let _g = crate::serial::upload_journal();
+    let dir = tempfile::tempdir().unwrap();
+    upload_journal::write_in(dir.path(), "o1", &journal("acme", 42)).unwrap();
+    upload_journal::write_in(dir.path(), "o1", &second(&["B", "C"], &[], &[])).unwrap();
+    let JournalRead::Found { journal: j } = upload_journal::read_in(dir.path(), "o1", "acme", 42) else {
+        panic!("expected a journal");
+    };
+    assert_eq!(j.titles, vec!["A", "B", "C"]);
+    assert!(j.sigs.is_empty());
+}
+
+#[test]
+fn a_journal_of_another_account_is_overwritten_not_merged() {
+    let _g = crate::serial::upload_journal();
+    let dir = tempfile::tempdir().unwrap();
+    upload_journal::write_in(dir.path(), "o1", &journal("acme", 42)).unwrap();
+    let new = second(&["B"], &["sb"], &[1]);
+    upload_journal::write_in(dir.path(), "o2", &new).unwrap();
+    assert_eq!(upload_journal::read_in(dir.path(), "o2", "acme", 42), JournalRead::Found { journal: new });
+}
