@@ -268,10 +268,16 @@ pub async fn attach_screenshots(
 #[specta::specta]
 pub fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
     use base64::Engine;
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    if bytes.len() > 25 * 1024 * 1024 {
+    // Look before reading: a folder, or a file over the limit, is refused
+    // without being loaded, and neither sentence names the path.
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        return Err("Folders can't be attached - attach the files inside it.".into());
+    }
+    if meta.len() > 25 * 1024 * 1024 {
         return Err("File is larger than 25 MB.".into());
     }
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let file_name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())

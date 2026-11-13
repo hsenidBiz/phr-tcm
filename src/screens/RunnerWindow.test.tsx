@@ -1490,3 +1490,12 @@ test("the drop hint is pointer-events-none and only while dragging", async () =>
   await dragEvent("leave");
   expect(screen.queryByText(/Drop to attach/)).not.toBeInTheDocument();
 });
+
+test("the drop hint does not name a case when none is open", async () => {
+  mockMultiFile(0, []);
+  renderRunner();
+  await act(async () => {});
+  await dragEvent("enter");
+  expect(screen.getByText("Open a case to attach files")).toBeInTheDocument();
+  expect(screen.queryByText(/case #/)).not.toBeInTheDocument();
+});

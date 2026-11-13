@@ -55,7 +55,7 @@ export function downloadResultFile(
 
 export type ReadReport = { read: RunAttachment[]; failed: { name: string; why: string }[] };
 
-const baseName = (path: string) => path.split(/[\/]/).filter(Boolean).pop() ?? path;
+const baseName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
 /** Reads each path through read_file_b64, one after another (several large
  * files at once would hold all their base64 in memory together); one

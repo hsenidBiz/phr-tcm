@@ -272,3 +272,20 @@ async fn screenshots_for_the_preview_are_unchanged() {
     let shots = client(&server).get_result_screenshots("o", "p", 7, 9).await.unwrap();
     assert_eq!(shots, vec![base64::engine::general_purpose::STANDARD.encode(PNG)]);
 }
+
+#[test]
+fn read_file_b64_refuses_a_folder_without_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = v2_lib::commands::bugs::read_file_b64(dir.path().to_string_lossy().into()).err().unwrap();
+    assert_eq!(err, "Folders can't be attached - attach the files inside it.");
+}
+
+#[test]
+fn read_file_b64_refuses_an_oversize_file_without_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("secret-name.bin");
+    std::fs::File::create(&big).unwrap().set_len(25 * 1024 * 1024 + 1).unwrap();
+    let err = v2_lib::commands::bugs::read_file_b64(big.to_string_lossy().into()).err().unwrap();
+    assert_eq!(err, "File is larger than 25 MB.");
+    assert!(!err.contains("secret-name"));
+}

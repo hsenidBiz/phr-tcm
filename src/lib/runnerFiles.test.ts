@@ -88,3 +88,11 @@ test("every picked file is read and one failure does not stop the others", async
   expect(r.read.map((a) => a.file_name)).toEqual(["f1.txt", "f3.txt"]);
   expect(r.failed).toEqual([{ name: "big.bin", why: "File is larger than 25 MB." }]);
 });
+
+test("a failure names only the file, never a Windows path", async () => {
+  mockIPC(() => {
+    throw "File is larger than 25 MB.";
+  });
+  const r = await readFiles(["C:\\Users\\someone\\Documents\\big.bin"]);
+  expect(r.failed).toEqual([{ name: "big.bin", why: "File is larger than 25 MB." }]);
+});
