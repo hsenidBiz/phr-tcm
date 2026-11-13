@@ -231,7 +231,7 @@ render - tells you where: swap `data/<feature>.json` for
 `specs/<stem>.spec.ts` in that same path and grep it, e.g.
 
 ```bash
-grep -n "loadCase" "suites/sl/admin/performance/DW-rating-methods/specs/rating-methods.spec.ts"
+grep -n "loadCase" "suites/sl/admin/performance/rating-methods/specs/rating-methods.spec.ts"
 ```
 
 Do not glob for the spec (`suites/**/specs/...`) - `**` is not recursive in
