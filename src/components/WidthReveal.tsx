@@ -10,6 +10,11 @@
  * label that reads a count never flashes "Run 0". Collapsed-in-motion it is
  * `inert` and `aria-hidden`. With reduced motion it is instant.
  *
+ * `children` may be a function receiving `settled`: false while the width is
+ * animating (in or out), true only once fully open (at once under reduced
+ * motion). An IntersectionObserver treats this wrapper's overflow clip as
+ * "off screen", so a floating copy of its content must stay down until then.
+ *
  * Fully collapsed it renders nothing, so a parent's `gap-*` leaves no empty
  * slot; while animating, a negative left margin cancels the gap and eases
  * back to zero in step with the width.
@@ -33,13 +38,14 @@ export default function WidthReveal({
   gap = "0.5rem",
 }: {
   show: boolean;
-  children: ReactNode;
+  children: ReactNode | ((settled: boolean) => ReactNode);
   /** The parent's gap, cancelled while the wrapper is narrower than its content. */
   gap?: string;
 }) {
   const [mounted, setMounted] = useState(show);
   const [open, setOpen] = useState(show);
-  const last = useRef<ReactNode>(children);
+  const [settledOpen, setSettledOpen] = useState(show && reducedMotion());
+  const last = useRef(children);
   if (show) last.current = children;
 
   useEffect(() => {
@@ -47,13 +53,21 @@ export default function WidthReveal({
       setMounted(true);
       if (reducedMotion()) {
         setOpen(true);
+        setSettledOpen(true);
         return;
       }
+      setSettledOpen(false);
       // Let the collapsed frame paint first so the width transition runs.
       const id = requestAnimationFrame(() => requestAnimationFrame(() => setOpen(true)));
-      return () => cancelAnimationFrame(id);
+      // transitionend normally settles it; this covers one that never fires.
+      const t = window.setTimeout(() => setSettledOpen(true), DURATION_MS + 150);
+      return () => {
+        cancelAnimationFrame(id);
+        window.clearTimeout(t);
+      };
     }
     setOpen(false);
+    setSettledOpen(false);
     if (reducedMotion()) {
       setMounted(false);
       return;
@@ -77,11 +91,13 @@ export default function WidthReveal({
         expanded ? "grid-cols-[1fr] opacity-100" : "grid-cols-[0fr] opacity-0",
       )}
       onTransitionEnd={(e) => {
-        if (e.target === e.currentTarget && !show) setMounted(false);
+        if (e.target !== e.currentTarget) return;
+        if (show) setSettledOpen(true);
+        else setMounted(false);
       }}
     >
       <div className="min-w-0 overflow-hidden" style={{ paddingLeft: gap }}>
-        {last.current}
+        {typeof last.current === "function" ? last.current(show && settledOpen) : last.current}
       </div>
     </div>
   );

@@ -49,3 +49,29 @@ test("reduced motion removes children immediately", () => {
   rerender(<WidthReveal show={false}>one</WidthReveal>);
   expect(container).toBeEmptyDOMElement();
 });
+
+test("settled is false while animating and after hide, true once the enter ends", () => {
+  mockReduced(false);
+  const seen: boolean[] = [];
+  const kids = (s: boolean) => {
+    seen.push(s);
+    return <span>{s ? "settled" : "moving"}</span>;
+  };
+  const { container, rerender } = render(<WidthReveal show={false}>{kids}</WidthReveal>);
+  rerender(<WidthReveal show>{kids}</WidthReveal>);
+  expect(container).toHaveTextContent("moving");
+  act(() => {
+    fireEvent.transitionEnd(container.querySelector("[data-width-reveal]") as HTMLElement);
+  });
+  expect(container).toHaveTextContent("settled");
+  rerender(<WidthReveal show={false}>{kids}</WidthReveal>);
+  expect(container).toHaveTextContent("moving");
+});
+
+test("settled is true at once under reduced motion", () => {
+  mockReduced(true);
+  const { container } = render(
+    <WidthReveal show>{(s: boolean) => <span>{s ? "settled" : "moving"}</span>}</WidthReveal>,
+  );
+  expect(container).toHaveTextContent("settled");
+});

@@ -325,6 +325,39 @@ test("clearing the selection collapses the Run button without ever reading Run 0
   expect(document.body.textContent).not.toContain("Run 0 in runner");
 });
 
+test("the floating copy stays down while the toolbar actions animate in and out", async () => {
+  // Off screen as far as the observer is concerned (the animating wrapper clips the row).
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      cb: (e: { isIntersecting: boolean }[]) => void;
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+        this.cb = cb;
+      }
+      observe() {
+        this.cb([{ isIntersecting: false }]);
+      }
+      disconnect() {}
+    },
+  );
+  try {
+    mockAll();
+    renderPanel();
+    await screen.findByText("Valid login");
+    fireEvent.click(screen.getByText("Valid login"));
+    const dock = () => document.body.querySelector("[data-sticky-action]") as HTMLElement;
+    // Entering: not settled yet.
+    expect(dock()).toHaveAttribute("inert");
+    fireEvent.transitionEnd(document.querySelector("[data-width-reveal]") as HTMLElement);
+    await waitFor(() => expect(dock()).not.toHaveAttribute("inert"));
+    // Clearing: down at once, before the collapse ends.
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(dock()).toHaveAttribute("inert");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 /// The selection's Run button sits at the right end of the filter row,
 /// directly above the list it acts on - not up beside Set execution order.
 test("the Run in runner button sits in the filter row above the list", async () => {
@@ -458,6 +491,10 @@ test("the selection's actions sit in the toolbar and float once it scrolls away"
     expect(dock).toHaveAttribute("aria-label", "Run selection");
     expect(dock.className).toContain("opacity-0");
 
+    // The reveal has to finish before a floating copy may show.
+    act(() => {
+      fireEvent.transitionEnd(document.querySelector("[data-width-reveal]") as HTMLElement);
+    });
     act(() => watched.forEach((cb) => cb([{ isIntersecting: false }])));
     expect(dock.className).toContain("opacity-100");
     expect(dock.className).toContain("bg-surface"); // the surface pill it always had

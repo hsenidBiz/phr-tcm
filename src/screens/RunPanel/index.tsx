@@ -631,8 +631,8 @@ export default function RunPanel({
               row scrolls away - the same dock Update Test Cases' selection
               uses. `suite.data` is what openRunner needs for the plan id. */}
           <WidthReveal show={!!suite.data && selected.size > 0}>
-            {suite.data && selected.size > 0 && (
-            <ActionDock label="Run selection" surface className="flex-nowrap">
+            {(settled) => suite.data && selected.size > 0 && (
+            <ActionDock label="Run selection" surface active={settled} className="flex-nowrap">
               {(floating) => (
                 <>
                   {/* No "N selected" text - the count is already in the
