@@ -27,6 +27,25 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6",
+    date: "2026-11-13",
+    items: [
+      "If an upload is cut off, even by a crash, the cases it may have sent are held as Outcome unknown for a Check with Azure DevOps the next time you open that PBI, and the bell tells you which PBI. A later upload never forgets an earlier one that was not checked.",
+      "Waiting for you, at the top of Auto Run, lists what the assistant left for you to decide: the accounts it proposed (one line saying how many, with Open to see them) and a sign-in it proposed. A dot on the Auto Run tab and one bell notice tell you when something new arrives.",
+      "While an assistant works, a line above every screen says what it is doing, which browser it uses and the account it is signed in as, with Stop.",
+      "Your assistant can work out a sign-in page it does not know: it reads the page's fields and buttons (never what is typed in them), tries a sign-in with one of your accounts and proposes it under the Sign-in row in Auto Run, Setup. Nothing is saved until you approve, a trial only signs in on this environment's own sites and never sends a change-password form, and a change-password page with no current-password field is supported.",
+      "Filing a bug works when your organisation's bugs need extra fields: the bug window asks for them, remembers your answers for next time, and if Azure DevOps still refuses, it highlights the fields it named and creates nothing.",
+      "In the Test Runner, every attached file has a download button, and Previously uploaded lists every file from the last result, videos included, with its size. Attach file takes several files at once, and you can drop files anywhere on the Test Runner to attach them to the case on screen.",
+      "Moving to another screen and back keeps what you had: Manual Entry keeps your unsaved case (per organization and PBI, even after a restart), and View, Update and Run Tests keep their search, filter and selection.",
+      "Long lists in Run Tests, View and Update draw only the rows on screen, so suites with thousands of cases scroll and select quickly. Arrow keys move through the rows, and lists show a placeholder while they load.",
+      "Reading from Azure DevOps is faster and steadier: a busy or failed read is tried again after a short wait, several reads run at once, and the pace setting now slows only writes.",
+      "If an update cannot read the case's current steps just before upload, it stops and asks first. Upload anyway sends the steps as plain text, so their formatting is lost.",
+      "Saved data from Azure DevOps has much more room, so large plans no longer crowd out other saved data, and you see a warning if your queue cannot be saved. The log file has a size limit and expired saved data is cleared.",
+      "The sidebar marks news with a small dot instead of a number, so nothing is cut off when it is collapsed. Refresh spinners turn in place instead of bobbing, and in Run Tests the Run in runner button slides in and out as you select or clear cases.",
+      "In Settings, opening the full changelog on a wide window moves the cards beside it aside instead of growing over them, and a list's search bar goes back to its normal look when you scroll back to the top.",
+    ],
+  },
+  {
     version: "2.4.6-beta.10",
     date: "2026-11-13",
     items: [
