@@ -1024,12 +1024,24 @@ export default function PrPanel({
   handledRef.current = onFocusHandled;
   useEffect(() => {
     if (focus == null || !overview.isSuccess) return;
+    // Judged once your completed ones are known, or one of them would be
+    // sent to "track the repository" while it is still loading.
+    if (showMyCompleted && myCompleted.isLoading) return;
     const holds = (list: PullRequest[]) =>
       list.some((p) => p.repo === focus.repo && p.id === focus.id);
     const isMine = holds(overview.data.mine);
+    // Completed shows your completed group, not your active one: an
+    // active PR of yours (the notifications name active ones) is one
+    // toggle away, and a completed one in an untracked repo is listed.
+    if (showMyCompleted && isMine) {
+      toast.info(`PR #${focus.id} is still active. Switch to Active to see it.`);
+      handledRef.current?.();
+      return;
+    }
     const couldHold =
       holds(overview.data.awaiting) ||
       (showYours && isMine) ||
+      (showMyCompleted && holds(myCompleted.data ?? [])) ||
       // Together a repository is told apart by its project as well as its
       // name: two projects can each have a "web".
       trackedRepos.some(
@@ -1055,7 +1067,17 @@ export default function PrPanel({
       handledRef.current?.();
     }, 4000);
     return () => window.clearTimeout(timer);
-  }, [focus, overview.isSuccess, overview.data, showYours, trackedRepos, allProjects]);
+  }, [
+    focus,
+    overview.isSuccess,
+    overview.data,
+    showYours,
+    showMyCompleted,
+    myCompleted.data,
+    myCompleted.isLoading,
+    trackedRepos,
+    allProjects,
+  ]);
 
   // A tick whose repository the fresh list no longer offers - disabled in
   // Azure DevOps, or gone from the project. It is not requested at all (it

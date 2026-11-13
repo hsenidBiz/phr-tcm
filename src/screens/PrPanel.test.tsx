@@ -933,6 +933,36 @@ test("a focused pull request that is one of yours, with the group hidden, says s
   expect(handled).toHaveBeenCalledTimes(1);
 });
 
+test("a focused active PR of yours while Completed shows says to switch to Active", async () => {
+  localStorage.setItem("tcm-v2-pr-status", "completed");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(99, { repo: "billing" })] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "my_completed_prs") return [];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "billing", id: 99 }, onFocusHandled: handled });
+  await vi.waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith("PR #99 is still active. Switch to Active to see it."),
+  );
+  expect(handled).toHaveBeenCalledTimes(1);
+});
+
+test("a focused completed PR of yours in an untracked repo is claimed by its row", async () => {
+  localStorage.setItem("tcm-v2-pr-status", "completed");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "my_completed_prs")
+      return [pr(77, { repo: "billing", status: "completed", closed: "2026-11-10T08:00:00Z" })];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "billing", id: 77 }, onFocusHandled: handled });
+  expect(await screen.findByText("!77")).toBeInTheDocument();
+  await waitFor(() => expect(handled).toHaveBeenCalled());
+  expect(toast.info).not.toHaveBeenCalled();
+});
+
 test("a saved repository the fresh list no longer offers is not requested, and says why", async () => {
   // r9 was ticked once; the project's list no longer carries it (disabled,
   // or gone). The tick stays in storage for the person to remove.
