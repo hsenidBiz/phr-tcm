@@ -75,3 +75,18 @@ test("settled is true at once under reduced motion", () => {
   );
   expect(container).toHaveTextContent("settled");
 });
+
+test("collapsed footprint is 0 and the open gap is the parent's: margin carries the gap, no inner padding", () => {
+  mockReduced(false);
+  const { container, rerender } = render(<WidthReveal show={false}>x</WidthReveal>);
+  rerender(<WidthReveal show>x</WidthReveal>);
+  const el = container.querySelector("[data-width-reveal]") as HTMLElement;
+  // Entering (not yet open): pulled left by exactly one gap, so gap + margin = 0.
+  expect(el.style.marginLeft).toMatch(/^calc\((-1 \* )?-?0\.5rem\)$/);
+  // A grid item cannot shrink below its padding, so the clip box must have none.
+  const inner = el.firstElementChild as HTMLElement;
+  expect(inner.style.paddingLeft).toBe("");
+  expect(inner.className).toContain("min-w-0");
+  expect(inner.className).toContain("overflow-hidden");
+  expect(el.className).toContain("grid-cols-[0fr]");
+});

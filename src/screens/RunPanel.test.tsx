@@ -312,6 +312,7 @@ test("clearing the selection collapses the Run button without ever reading Run 0
   expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.getByLabelText("Filter points")).toHaveFocus();
   // Still mounted for the collapse, hidden from the a11y tree, last count kept.
   const reveal = document.querySelector("[data-width-reveal]") as HTMLElement;
   expect(reveal).toBeInTheDocument();

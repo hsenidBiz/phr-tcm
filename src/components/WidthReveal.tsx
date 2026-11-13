@@ -16,8 +16,9 @@
  * "off screen", so a floating copy of its content must stay down until then.
  *
  * Fully collapsed it renders nothing, so a parent's `gap-*` leaves no empty
- * slot; while animating, a negative left margin cancels the gap and eases
- * back to zero in step with the width.
+ * slot; while animating, a negative left margin cancels the parent's gap and
+ * eases back to zero in step with the width (collapsed footprint is exactly 0,
+ * open gap is exactly the parent's).
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../lib/cn";
@@ -96,7 +97,10 @@ export default function WidthReveal({
         else setMounted(false);
       }}
     >
-      <div className="min-w-0 overflow-hidden" style={{ paddingLeft: gap }}>
+      {/* No padding here: a grid item cannot shrink below its padding, so the
+          collapsed track would not be 0. The gap is the parent's own, carried
+          by the wrapper's transitioned negative margin. */}
+      <div className="min-w-0 overflow-hidden">
         {typeof last.current === "function" ? last.current(show && settledOpen) : last.current}
       </div>
     </div>

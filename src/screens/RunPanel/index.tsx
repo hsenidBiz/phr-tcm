@@ -416,6 +416,7 @@ export default function RunPanel({
 
   // Stable handlers for the memoized rows (RunRows): each reads the latest
   // closure through a ref, so a row re-renders only when its own flags do.
+  const searchRef = useRef<HTMLInputElement>(null);
   const rowClickRef = useRef(handleRowClick);
   rowClickRef.current = handleRowClick;
   const onRowClick = useCallback((p: TestPoint, e: MouseEvent) => rowClickRef.current(p, e), []);
@@ -592,6 +593,7 @@ export default function RunPanel({
           surface
           search={
             <SearchInput
+              ref={searchRef}
               aria-label="Filter points"
               className="w-full"
               placeholder={searchPlaceholder(["name", "id", "tag", "outcome", "tester", "configuration"])}
@@ -650,7 +652,11 @@ export default function RunPanel({
                     title="Clear selection"
                     tabIndex={floating ? -1 : undefined}
                     className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
-                    onClick={() => setSelected(new Set())}
+                    onClick={() => {
+                      setSelected(new Set());
+                      // The x collapses away; keep focus in the toolbar.
+                      searchRef.current?.focus();
+                    }}
                   >
                     <X size={14} />
                   </button>
