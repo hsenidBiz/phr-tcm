@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import {
   commands,
@@ -45,9 +45,21 @@ export function toAdoDate(ymd: string): string {
   return new Date(y, m - 1, d).toISOString();
 }
 
+/** Whether a value can be sent for the field: not blank, a pick must still
+ * be one of the allowed values, a date must be a real day. */
+function usable(f: ExtraField, raw: string): boolean {
+  const v = raw.trim();
+  if (!v) return false;
+  if (f.kind === "pick") return f.allowed.includes(v);
+  if (f.kind === "date") {
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(new Date(`${v}T00:00:00`).getTime());
+  }
+  return true;
+}
+
 /** References of the fields still blank (whitespace counts as blank). */
 export function missingRequired(fields: ExtraField[], values: Record<string, string>): string[] {
-  return fields.filter((f) => !(values[f.reference_name] ?? "").trim()).map((f) => f.reference_name);
+  return fields.filter((f) => !usable(f, values[f.reference_name] ?? "")).map((f) => f.reference_name);
 }
 
 /** The process rules named fields: nothing was created. */
@@ -189,7 +201,11 @@ export default function BugDialog({
     retry: false,
     placeholderData: keepPreviousData,
   });
-  const fields: ExtraField[] = lookup.data?.fields ?? [];
+  // The last good list stands in when a refetch (after a rejection) fails,
+  // so the fields already filled in do not vanish.
+  const lastFields = useRef<ExtraField[]>([]);
+  if (lookup.data) lastFields.current = lookup.data.fields;
+  const fields: ExtraField[] = lookup.data?.fields ?? lastFields.current;
 
   const file = useMutation({
     mutationFn: (p: BugPayload) =>
@@ -234,6 +250,8 @@ export default function BugDialog({
     });
   };
   const flagged = (ref: string) => ref in violations;
+  const invalid = (ref: string) =>
+    flagged(ref) ? { "aria-invalid": true as const, "aria-describedby": `bugerr-${ref}` } : {};
   const ring = (ref: string) => (flagged(ref) ? "ring-2 ring-danger" : undefined);
   const missing = missingRequired(fields, values);
   const labelOf = (ref: string) => fields.find((f) => f.reference_name === ref)?.label ?? ref;
@@ -292,6 +310,7 @@ export default function BugDialog({
             ) : f.kind === "html" ? (
               <Textarea
                 aria-label={f.label}
+                {...invalid(ref)}
                 className={cn("mt-1 h-20 w-full", ring(ref))}
                 value={v}
                 onChange={(e) => setValue(ref, e.target.value)}
@@ -299,12 +318,17 @@ export default function BugDialog({
             ) : (
               <Input
                 aria-label={f.label}
+                {...invalid(ref)}
                 className={cn("mt-1 w-full", ring(ref))}
                 value={v}
                 onChange={(e) => setValue(ref, e.target.value)}
               />
             )}
-            {flagged(ref) && <div className="mt-1 text-xs text-danger">{violations[ref]}</div>}
+            {flagged(ref) && (
+              <div id={`bugerr-${ref}`} className="mt-1 text-xs text-danger">
+                {violations[ref]}
+              </div>
+            )}
           </div>
         );
       })}
