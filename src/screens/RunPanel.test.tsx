@@ -304,6 +304,61 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
+test("clearing the selection collapses the Run button without ever reading Run 0", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.getByLabelText("Filter points")).toHaveFocus();
+  // Still mounted for the collapse, hidden from the a11y tree, last count kept.
+  const reveal = document.querySelector("[data-width-reveal]") as HTMLElement;
+  expect(reveal).toBeInTheDocument();
+  expect(reveal).toHaveAttribute("aria-hidden", "true");
+  expect(reveal.textContent).toContain("Run 1 in runner");
+  expect(reveal.textContent).not.toContain("Run 0");
+  expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+
+  fireEvent.transitionEnd(reveal);
+  expect(document.querySelector("[data-width-reveal]")).not.toBeInTheDocument();
+  expect(document.body.textContent).not.toContain("Run 0 in runner");
+});
+
+test("the floating copy stays down while the toolbar actions animate in and out", async () => {
+  // Off screen as far as the observer is concerned (the animating wrapper clips the row).
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      cb: (e: { isIntersecting: boolean }[]) => void;
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+        this.cb = cb;
+      }
+      observe() {
+        this.cb([{ isIntersecting: false }]);
+      }
+      disconnect() {}
+    },
+  );
+  try {
+    mockAll();
+    renderPanel();
+    await screen.findByText("Valid login");
+    fireEvent.click(screen.getByText("Valid login"));
+    const dock = () => document.body.querySelector("[data-sticky-action]") as HTMLElement;
+    // Entering: not settled yet.
+    expect(dock()).toHaveAttribute("inert");
+    fireEvent.transitionEnd(document.querySelector("[data-width-reveal]") as HTMLElement);
+    await waitFor(() => expect(dock()).not.toHaveAttribute("inert"));
+    // Clearing: down at once, before the collapse ends.
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(dock()).toHaveAttribute("inert");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 /// The selection's Run button sits at the right end of the filter row,
 /// directly above the list it acts on - not up beside Set execution order.
 test("the Run in runner button sits in the filter row above the list", async () => {
@@ -437,6 +492,10 @@ test("the selection's actions sit in the toolbar and float once it scrolls away"
     expect(dock).toHaveAttribute("aria-label", "Run selection");
     expect(dock.className).toContain("opacity-0");
 
+    // The reveal has to finish before a floating copy may show.
+    act(() => {
+      fireEvent.transitionEnd(document.querySelector("[data-width-reveal]") as HTMLElement);
+    });
     act(() => watched.forEach((cb) => cb([{ isIntersecting: false }])));
     expect(dock.className).toContain("opacity-100");
     expect(dock.className).toContain("bg-surface"); // the surface pill it always had
