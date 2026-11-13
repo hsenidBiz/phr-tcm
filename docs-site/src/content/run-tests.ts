@@ -487,8 +487,11 @@ export const runTests: Screen = {
       group: "work-through",
       locate: { role: "button", name: "Attach file" },
       name: "Attach file",
-      does: "Attaches any file you pick to this case's result.",
-      tips: ["Attached pictures show as thumbnails: click one to see it full size, or its x to remove it. Pictures uploaded with the last result show under them."],
+      does: "Attaches the files you pick to this case's result. You can pick several at once, or drop files anywhere on the runner.",
+      tips: [
+        "Every attached file has a download button. Pictures show as thumbnails: click one to see it full size, or its x to remove it.",
+        "Previously uploaded lists every file from the last result, with its size, and a download button for each.",
+      ],
     },
     {
       id: "file-bug",
@@ -593,7 +596,8 @@ export const runTests: Screen = {
       name: "Links and screenshots",
       does:
         "The bug is linked to the test case and the Product Backlog Item, and carries the pictures attached to this case in the runner. " +
-        "Press [[Ctrl]]+[[V]] in the window to add more. **File bug** creates it in Azure DevOps and notes its number on the case.",
+        "Press [[Ctrl]]+[[V]] in the window to add more. **File bug** creates it in Azure DevOps and notes its number on the case. " +
+        "If Azure DevOps needs more fields for a bug, the window asks for them above this line, and **File bug** waits until they are filled. Your answers are remembered for the next bug in this project.",
     },
     {
       id: "bug-cancel",
@@ -609,6 +613,7 @@ export const runTests: Screen = {
     "A run is opened in Azure DevOps with the first result you record and stays open until **Finish**, so closing the runner never loses a result you moved past.",
     "Offline, the runner keeps your marks and sends them when the connection comes back.",
     "The list colours each row by its last outcome, and the runner's results show here as you record them.",
+    "If Azure DevOps still refuses the bug, nothing is created: the fields it named are highlighted with what it said. Fill them in and file again.",
   ],
   howTo: [
     {
