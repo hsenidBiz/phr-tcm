@@ -305,10 +305,15 @@ export const commands = {
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
 	/**
+	 *  The fields the Bug dialog must ask for: the type's required fields that
+	 *  ADO does not fill, plus `extra_refs` (fields a rejection named).
+	 */
+	bugFields: (organization: string, project: string, extraRefs: string[]) => typedError<BugFields, AdoError>(__TAURI_INVOKE("bug_fields", { organization, project, extraRefs })),
+	/**
 	 *  File a Bug (or Issue on Basic-process projects) for a failed case:
 	 *  Related links to the test case + PBI, screenshots attached. POST only.
 	 */
-	fileBug: (organization: string, project: string, title: string, reproText: string, testCaseId: number, pbiId: number, screenshotsB64: string[]) => typedError<FiledBug, string>(__TAURI_INVOKE("file_bug", { organization, project, title, reproText, testCaseId, pbiId, screenshotsB64 })),
+	fileBug: (organization: string, project: string, title: string, reproText: string, testCaseId: number, pbiId: number, screenshotsB64: string[], fieldValues: BugFieldValue[]) => typedError<FiledBug, FileBugError>(__TAURI_INVOKE("file_bug", { organization, project, title, reproText, testCaseId, pbiId, screenshotsB64, fieldValues })),
 	listTeams: (organization: string, project: string) => typedError<TeamRef[], AdoError>(__TAURI_INVOKE("list_teams", { organization, project })),
 	listTeamMembers: (organization: string, project: string) => typedError<Member[], AdoError>(__TAURI_INVOKE("list_team_members", { organization, project })),
 	workItemDetail: (organization: string, project: string, id: number) => typedError<WorkItemDetail, AdoError>(__TAURI_INVOKE("work_item_detail", { organization, project, id })),
@@ -1280,6 +1285,18 @@ export const commands = {
 	 */
 	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
+	/**  Every file attached to a result, with a thumbnail for each image. */
+	resultAttachments: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultAttachment[], AdoError>(__TAURI_INVOKE("result_attachments", { organization, project, runId, resultId })),
+	/**
+	 *  Download one result attachment straight to a path the person chose. The
+	 *  bytes go from Azure DevOps to disk in Rust and never cross IPC.
+	 */
+	saveResultAttachment: (organization: string, project: string, runId: number, resultId: number, attachmentId: number, sizeBytes: number, destPath: string) => typedError<null, AdoError>(__TAURI_INVOKE("save_result_attachment", { organization, project, runId, resultId, attachmentId, sizeBytes, destPath })),
+	/**
+	 *  Write a file the page holds as base64 (a recording from this session)
+	 *  to a path the person chose.
+	 */
+	saveAttachmentB64: (destPath: string, b64: string) => typedError<null, string>(__TAURI_INVOKE("save_attachment_b64", { destPath, b64 })),
 	/**
 	 *  Render the queue's HTML report to a temp file and open it in the
 	 *  default browser - v1's "View" behaviour, no save dialog. Cases with a
@@ -3331,6 +3348,21 @@ export type BrowserMode = "Hidden" | "Shown" |
 /**  Playwright's Inspector, paused at the start of every test. */
 "Debug";
 
+/**  One value the tester gave for a Bug field. */
+export type BugFieldValue = {
+	reference_name: string,
+	value: string,
+};
+
+/**
+ *  The fields a Bug of this project's process must be given beyond its
+ *  title and repro steps.
+ */
+export type BugFields = {
+	wi_type: string,
+	fields: ExtraField[],
+};
+
 /**  What the app hands the reporter. */
 export type BugReport = {
 	/**
@@ -4806,7 +4838,7 @@ export type ExtraField = {
 	reference_name: string,
 	/**  Which form section (column in ADO's layout) the field sits in. */
 	section: number,
-	/**  "html" (rich text), "pick" (allowed values), or "text". */
+	/**  "html" (rich text), "pick" (allowed values), "date", or "text". */
 	kind: string,
 	/**  Allowed values when kind == "pick". */
 	allowed: string[],
@@ -4852,6 +4884,18 @@ export type FieldRef = {
 
 /**  What a field step fills in. */
 export type FieldRole = "username" | "password" | "text";
+
+/**  One field a rule rejected, with a sentence fit to show a person. */
+export type FieldViolation = {
+	reference_name: string,
+	message: string,
+};
+
+/**
+ *  Why a bug was not filed: the process rules named fields (nothing was
+ *  created), or Azure DevOps / the network failed some other way.
+ */
+export type FileBugError = { kind: "RuleViolations"; detail: FieldViolation[] } | { kind: "Ado"; detail: AdoError };
 
 export type FiledBug = {
 	id: number,
@@ -7304,6 +7348,18 @@ export type ResetRecord_Serialize = {
 	waited_ms: number,
 	/**  "continued" or "stopped". */
 	outcome: string,
+};
+
+/**  One file attached to a test result, as the Test Runner lists it. */
+export type ResultAttachment = {
+	id: number,
+	file_name: string,
+	/**  Azure DevOps' "size", saturating; u32 because specta refuses u64 over IPC. */
+	size_bytes: number,
+	/**  "image" | "video" | "file" */
+	kind: string,
+	/**  Images only; None when the thumbnail could not be read. */
+	thumb_b64: string | null,
 };
 
 export type ResultDetail = {

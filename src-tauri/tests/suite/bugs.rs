@@ -161,3 +161,234 @@ async fn an_empty_and_a_cut_off_screenshot_are_never_uploaded_and_count_as_faile
         "Azure DevOps stays GET/POST/PATCH"
     );
 }
+
+// ---- Required fields on a bug ---------------------------------------------
+//
+// An org whose Bug type has required custom fields refuses a create that
+// leaves them out, with a 400 that names every field at once.
+
+use v2_lib::ado::rule_errors::rule_violations;
+use v2_lib::ado::AdoError;
+use v2_lib::commands::bugs::{file_bug_with, BugFieldValue, FileBugError};
+use wiremock::matchers::body_string_contains;
+
+fn rule_body() -> String {
+    let flags = "required, hasValues, limitedToValues, allowsOldValue, invalidEmpty";
+    let mut errors = vec![serde_json::json!({
+        "fieldReferenceName": "Custom.BugType",
+        "fieldStatusFlags": flags,
+        "errorMessage": "TF401320: Rule Error for field Bug Type. Error code: Required, HasValues, LimitedToValues, AllowsOldValue, InvalidEmpty.",
+    })];
+    for n in 1..7 {
+        errors.push(serde_json::json!({
+            "fieldReferenceName": format!("Custom.Field{n}"),
+            "fieldStatusFlags": "required, invalidEmpty",
+            "errorMessage": format!("TF401320: Rule Error for field Field {n}. Error code: Required, InvalidEmpty."),
+        }));
+    }
+    serde_json::json!({
+        "$id": "1",
+        "customProperties": {
+            "FieldReferenceName": null,
+            "FieldStatusFlags": "none",
+            "ErrorMessage": "TF401320: Rule Error for field Bug Type. Error code: Required, HasValues, LimitedToValues, AllowsOldValue, InvalidEmpty. 6 additional errors occurred during validation of the work item. Please correct all errors and try again.",
+            "FieldStatusCode": 0,
+            "RuleValidationErrors": errors,
+        },
+        "message": "TF401320: Rule Error for field Bug Type.",
+    })
+    .to_string()
+}
+
+#[test]
+fn every_rule_violation_in_the_body_is_returned() {
+    let v = rule_violations(&rule_body());
+    assert_eq!(v.len(), 7, "{v:?}");
+    assert_eq!(v[0].reference_name, "Custom.BugType");
+    assert!(!v[0].message.starts_with("TF401320"), "{}", v[0].message);
+    assert_eq!(v[6].reference_name, "Custom.Field6");
+}
+
+#[test]
+fn a_message_carrying_a_url_is_replaced_by_the_flag_sentence() {
+    let body = serde_json::json!({"customProperties": {"RuleValidationErrors": [{
+        "fieldReferenceName": "Custom.BugType",
+        "fieldStatusFlags": "required, invalidEmpty",
+        "errorMessage": "TF401320: Rule Error. See https://dev.azure.com/x?secret=1",
+    }]}})
+    .to_string();
+    let v = rule_violations(&body);
+    assert_eq!(v.len(), 1);
+    assert_eq!(v[0].message, "This field is required.");
+    assert!(!v[0].message.contains("://"));
+}
+
+#[test]
+fn a_body_that_is_not_a_rule_error_has_no_violations() {
+    assert!(rule_violations(r#"{"message":"VS402323: The request is not valid."}"#).is_empty());
+    assert!(rule_violations("not json at all").is_empty());
+    assert!(rule_violations("").is_empty());
+}
+
+fn two_url_client(uri: &str) -> AdoClient {
+    AdoClient::with_base_urls("tok".into(), uri.to_string(), uri.to_string())
+}
+
+#[tokio::test]
+async fn required_fields_skip_what_ado_fills_and_fields_with_defaults() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/workitemtypes/Bug/fields"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"referenceName": "System.Title", "name": "Title", "alwaysRequired": true},
+            {"referenceName": "System.AreaPath", "name": "Area Path", "alwaysRequired": true},
+            {"referenceName": "Microsoft.VSTS.TCM.ReproSteps", "name": "Repro Steps", "alwaysRequired": true},
+            {"referenceName": "Microsoft.VSTS.Common.Severity", "name": "Severity", "alwaysRequired": true, "defaultValue": "3 - Medium"},
+            {"referenceName": "Custom.BugType", "name": "Bug Type", "alwaysRequired": true, "allowedValues": ["UI", "API"]},
+            {"referenceName": "Custom.FoundOn", "name": "Found On", "alwaysRequired": true},
+            {"referenceName": "Custom.Optional", "name": "Optional", "alwaysRequired": false},
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/fields/Custom.FoundOn"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"type": "dateTime"})))
+        .mount(&server)
+        .await;
+    let client = two_url_client(&server.uri());
+    let f = client
+        .bug_field_definitions("o", "p", "Bug", "Microsoft.VSTS.TCM.ReproSteps", &[])
+        .await
+        .unwrap();
+    assert_eq!(f.len(), 2, "{f:?}");
+    assert_eq!(f[0].reference_name, "Custom.BugType");
+    assert_eq!(f[0].kind, "pick");
+    assert_eq!(f[0].allowed, vec!["UI", "API"]);
+    assert_eq!(f[1].reference_name, "Custom.FoundOn");
+    assert_eq!(f[1].kind, "date");
+}
+
+#[tokio::test]
+async fn extra_refs_are_returned_even_when_not_always_required() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/workitemtypes/Bug/fields"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"referenceName": "Custom.RootCause", "name": "Root Cause", "alwaysRequired": false},
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/fields/Custom.RootCause"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"type": "string"})))
+        .mount(&server)
+        .await;
+    let client = two_url_client(&server.uri());
+    let f = client
+        .bug_field_definitions("o", "p", "Bug", "Microsoft.VSTS.TCM.ReproSteps", &["Custom.RootCause".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].reference_name, "Custom.RootCause");
+    assert_eq!(f[0].kind, "text");
+}
+
+/// The one read `file_bug_with` makes before the create: the type list
+/// (Bug exists).
+async fn bug_server() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/workitemtypes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"name": "Bug"}]})))
+        .mount(&server)
+        .await;
+    server
+}
+
+fn value(r: &str, v: &str) -> BugFieldValue {
+    BugFieldValue { reference_name: r.into(), value: v.into() }
+}
+
+#[tokio::test]
+async fn field_values_go_in_the_create_patch() {
+    let server = bug_server().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/workitems/$Bug"))
+        .and(body_string_contains(r#"{"op":"add","path":"/fields/Custom.BugType","value":"UI"}"#))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 9, "_links": {"html": {"href": "https://x/9"}}})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = two_url_client(&server.uri());
+    let bug = file_bug_with(&client, "o", "p", "T", "steps", 1, 2, &[], &[value("Custom.BugType", "UI")])
+        .await
+        .unwrap();
+    assert_eq!(bug.id, 9);
+}
+
+#[tokio::test]
+async fn field_values_never_override_title_or_repro_and_odd_refs_are_dropped() {
+    let server = bug_server().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/workitems/$Bug"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 9})))
+        .mount(&server)
+        .await;
+    let client = two_url_client(&server.uri());
+    let values = [
+        value("System.Title", "HIJACK"),
+        value("Microsoft.VSTS.TCM.ReproSteps", "HIJACK"),
+        value("Custom.X/../relations", "HIJACK"),
+        value("Custom.Y", ""),
+        value("Custom.Z", "kept"),
+    ];
+    file_bug_with(&client, "o", "p", "Dialog title", "steps", 1, 2, &[], &values).await.unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    let post = reqs.iter().find(|r| r.method.as_str() == "POST").unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&post.body).unwrap();
+    let ops = body.as_array().unwrap();
+    let on = |p: &str| ops.iter().filter(|o| o["path"] == p).count();
+    assert_eq!(on("/fields/System.Title"), 1);
+    assert!(ops.iter().any(|o| o["path"] == "/fields/System.Title" && o["value"] == "Dialog title"));
+    assert_eq!(on("/fields/Microsoft.VSTS.TCM.ReproSteps"), 1);
+    assert!(!String::from_utf8_lossy(&post.body).contains("HIJACK"));
+    assert_eq!(on("/fields/Custom.Y"), 0);
+    assert_eq!(on("/fields/Custom.Z"), 1);
+    assert!(ops.iter().all(|o| !o["path"].as_str().unwrap().contains("..")));
+}
+
+#[tokio::test]
+async fn a_rule_rejection_creates_nothing_and_returns_the_fields() {
+    let server = bug_server().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/workitems/$Bug"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(rule_body()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/attachments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"url": "https://x/a"})))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let client = two_url_client(&server.uri());
+    let shots = vec![b64(&whole_png())];
+    let err = file_bug_with(&client, "o", "p", "T", "steps", 1, 2, &shots, &[]).await.unwrap_err();
+    match err {
+        FileBugError::RuleViolations(v) => assert_eq!(v.len(), 7, "{v:?}"),
+        other => panic!("expected rule violations, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn other_failures_stay_ado_errors() {
+    let server = bug_server().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/workitems/$Bug"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    let client = two_url_client(&server.uri());
+    let err = file_bug_with(&client, "o", "p", "T", "steps", 1, 2, &[], &[]).await.unwrap_err();
+    assert!(matches!(err, FileBugError::Ado(AdoError::Forbidden)), "{err:?}");
+}

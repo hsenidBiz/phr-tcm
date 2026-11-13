@@ -16,8 +16,10 @@ import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import { unwrap, unwrapStr } from "../lib/ipc";
+import { unwrap } from "../lib/ipc";
 import { blobToB64, imageExt, imageMimeForName, validImageB64 } from "../lib/blob";
+import { formatBytes } from "../lib/bytes";
+import { downloadResultFile, downloadSessionFile, readFiles } from "../lib/runnerFiles";
 import {
   firstValidClipboardImage,
   imageOfPasteFile,
@@ -34,6 +36,7 @@ import {
   IconAttach,
   IconBack,
   IconBug,
+  IconDownload,
   IconFinish,
   IconNext,
   IconPasteImage,
@@ -131,6 +134,7 @@ export default function RunnerWindow() {
   // inserts a late arrival at its fetch position - it never otherwise
   // touches what Prev/Next walk.
   const [order, setOrder] = useState<number[] | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [states, setStates] = useState<Record<number, CaseState>>({});
   const [bugFor, setBugFor] = useState<TestCaseFull | null>(null);
   // The window is created with the remembered pin preference (openRunner
@@ -369,18 +373,21 @@ export default function RunnerWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id, currentPoint?.last_result_id]);
 
-  // Previously-uploaded screenshots load automatically when a case with a
-  // prior result becomes current (v1 "auto-load" request; no button).
+  // Every file the last result carries loads automatically when a case with
+  // a prior result becomes current (v1 "auto-load" request; no button).
+  // Thumbnails arrive with the list; the files themselves are only fetched
+  // by Rust when one is downloaded.
   const uploaded = useQuery({
     queryKey: [
-      "uploaded-shots",
+      "result-attachments",
       session?.org,
+      session?.project,
       currentPoint?.last_run_id,
       currentPoint?.last_result_id,
     ],
     queryFn: () =>
       unwrap(
-        commands.resultScreenshots(
+        commands.resultAttachments(
           session!.org,
           session!.project,
           currentPoint!.last_run_id!,
@@ -394,8 +401,9 @@ export default function RunnerWindow() {
 
   // Fullscreen viewer for the uploaded-screenshot thumbnails (zoom/pan +
   // prev/next). Media rebuilds with the query, so triggers stay in sync.
-  const shots = (uploaded.data ?? []).map((b64, i) => ({
-    src: `data:image/png;base64,${b64}`,
+  const uploadedThumbs = (uploaded.data ?? []).filter((a) => a.thumb_b64);
+  const shots = uploadedThumbs.map((a, i) => ({
+    src: `data:${imageMimeForName(a.file_name)};base64,${a.thumb_b64}`,
     alt: `Uploaded screenshot ${i + 1}`,
   }));
   const lightbox = useLightbox({ media: shots });
@@ -646,18 +654,48 @@ export default function RunnerWindow() {
     }
   }
 
+  /** Reads each path and puts it on the case; says what attached and names
+   * every file that could not be read, with why. */
+  async function attachPaths(caseId: number, paths: string[]) {
+    if (paths.length === 0) return;
+    const { read, failed } = await readFiles(paths);
+    for (const att of read) addAttachment(caseId, att);
+    if (read.length > 0) toast.success(`Attached ${read.length} ${read.length === 1 ? "file" : "files"}`);
+    if (failed.length > 0)
+      toast.error(`Could not attach ${failed.map((f) => `${f.name} (${f.why})`).join(", ")}`);
+  }
+
   async function attachFile() {
     if (!current) return;
-    const path = await open({ multiple: false, title: "Attach a file to this result" });
-    if (typeof path !== "string") return;
-    try {
-      const att = await unwrapStr(commands.readFileB64(path));
-      addAttachment(current.id, att);
-      toast.success(`Attached ${att.file_name}`);
-    } catch (e) {
-      toast.error(`Could not read the file: ${(e as Error).message}`);
-    }
+    const caseId = current.id;
+    const picked = await open({ multiple: true, title: "Attach files to this result" });
+    // One path (a string) is what a single-file dialog answers; several is a list.
+    const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+    await attachPaths(caseId, paths);
   }
+
+  // Files dropped on the window go to the case on screen AT DROP TIME. The
+  // listener is registered once, so it reads the case id through a ref.
+  const currentIdRef = useRef<number | null>(null);
+  currentIdRef.current = current?.id ?? null;
+  const attachPathsRef = useRef(attachPaths);
+  attachPathsRef.current = attachPaths;
+  useEffect(() => {
+    const un = getCurrentWindow().onDragDropEvent((e) => {
+      const p = e.payload;
+      if (p.type === "enter" || p.type === "over") setDragOver(true);
+      else if (p.type === "leave") setDragOver(false);
+      else if (p.type === "drop") {
+        setDragOver(false);
+        const id = currentIdRef.current;
+        if (id == null) toast.info("Open a case to attach files to it.");
+        else void attachPathsRef.current(id, p.paths);
+      }
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   // ---- Incremental recording: Next writes the case being left. -------
   //
@@ -957,11 +995,19 @@ export default function RunnerWindow() {
   const markedCount = list.filter((c) => states[c.id]?.outcome).length;
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-text">
+    <div className="relative flex h-screen flex-col bg-bg text-text">
       {/* Hover-to-dismiss: the paste confirmation lands on the outcome
           buttons, and a hand heading for one should not have to wait it
           out or drag it away. */}
       <HoverDismissToaster />
+      {dragOver && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-surface/95 text-sm font-semibold text-text"
+        >
+          {current ? `Drop to attach to case #${current.id}` : "Open a case to attach files"}
+        </div>
+      )}
       <header
         data-tauri-drag-region
         className="flex select-none items-center gap-2 border-b border-border bg-surface px-3 py-2"
@@ -1188,6 +1234,13 @@ export default function RunnerWindow() {
                         {...sessionLightbox.getTriggerProps(si)}
                       />
                       <button
+                        aria-label={`Download ${a.file_name}`}
+                        className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-text [&_svg]:size-2.5"
+                        onClick={() => void downloadSessionFile(a)}
+                      >
+                        <IconDownload aria-hidden />
+                      </button>
+                      <button
                         aria-label={`Remove ${a.file_name}`}
                         className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-danger"
                         onClick={() => removeAttachment(current.id, a.index)}
@@ -1209,6 +1262,13 @@ export default function RunnerWindow() {
                       >
                         <span className="label-trim">{a.file_name}</span>
                         <button
+                          aria-label={`Download ${a.file_name}`}
+                          className="hover:text-text [&_svg]:size-2.5"
+                          onClick={() => void downloadSessionFile(a)}
+                        >
+                          <IconDownload aria-hidden />
+                        </button>
+                        <button
                           aria-label={`Remove ${a.file_name}`}
                           className="hover:text-danger"
                           onClick={() => removeAttachment(current.id, i)}
@@ -1226,17 +1286,44 @@ export default function RunnerWindow() {
           {(uploaded.data?.length ?? 0) > 0 && (
             <div className="space-y-1">
               <div className="text-xs text-muted">Previously uploaded:</div>
-              <div className="flex flex-wrap gap-1">
-                {uploaded.data!.map((b64, i) => (
-                  <img
-                    key={i}
-                    alt={`Uploaded screenshot ${i + 1}`}
-                    className="h-16 cursor-zoom-in rounded border border-border object-cover"
-                    src={`data:image/png;base64,${b64}`}
-                    {...lightbox.getTriggerProps(i)}
-                  />
+              {uploadedThumbs.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {uploadedThumbs.map((a, i) => (
+                    <img
+                      key={a.id}
+                      alt={`Uploaded screenshot ${i + 1}`}
+                      className="h-16 cursor-zoom-in rounded border border-border object-cover"
+                      src={`data:${imageMimeForName(a.file_name)};base64,${a.thumb_b64}`}
+                      {...lightbox.getTriggerProps(i)}
+                    />
+                  ))}
+                </div>
+              )}
+              <ul className="space-y-0.5">
+                {uploaded.data!.map((a) => (
+                  <li key={a.id} className="flex items-center gap-2 text-xs text-muted">
+                    <span className="label-trim">{a.file_name}</span>
+                    <span>{formatBytes(a.size_bytes)}</span>
+                    <span>{a.kind === "image" ? "Picture" : a.kind === "video" ? "Video" : "File"}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Download ${a.file_name}`}
+                      onClick={() =>
+                        void downloadResultFile(
+                          session!.org,
+                          session!.project,
+                          currentPoint!.last_run_id!,
+                          currentPoint!.last_result_id!,
+                          a,
+                        )
+                      }
+                    >
+                      <IconDownload aria-hidden />
+                    </Button>
+                  </li>
                 ))}
-              </div>
+              </ul>
               <AstryxIsland>{lightbox.element}</AstryxIsland>
             </div>
           )}

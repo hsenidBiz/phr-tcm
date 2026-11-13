@@ -154,6 +154,16 @@ pub struct ExtraPage {
     pub fields: Vec<ExtraField>,
 }
 
+/// Fields Azure DevOps fills on create, which a Bug form never asks for.
+pub const BUG_AUTO_FILLED: &[&str] = &[
+    "System.Title", "System.AreaPath", "System.IterationPath", "System.State", "System.Reason",
+    "System.CreatedBy", "System.CreatedDate", "System.ChangedBy", "System.ChangedDate",
+    "System.AuthorizedAs", "System.AuthorizedDate", "System.RevisedDate", "System.Id",
+    "System.Rev", "System.TeamProject", "System.WorkItemType", "System.Watermark",
+    "System.BoardColumn", "System.BoardColumnDone", "System.BoardLane", "System.CommentCount",
+    "System.History",
+];
+
 /// A single field on an extra page.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct ExtraField {
@@ -161,7 +171,7 @@ pub struct ExtraField {
     pub reference_name: String,
     /// Which form section (column in ADO's layout) the field sits in.
     pub section: u32,
-    /// "html" (rich text), "pick" (allowed values), or "text".
+    /// "html" (rich text), "pick" (allowed values), "date", or "text".
     pub kind: String,
     /// Allowed values when kind == "pick".
     pub allowed: Vec<String>,

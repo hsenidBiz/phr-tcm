@@ -104,6 +104,8 @@ export const cacheKeys = {
   runOrder: (org: string, project: string, pbiId: number) => `run-order:${org}/${project}/${pbiId}`,
   sharedStepTitle: (org: string, id: number) => `shared-step:${org}/${id}`,
   pwTicks: (clone: string) => `pw-ticks:${clone}`,
+  // What a person last answered for the fields a Bug requires (shelf: CACHE.picks).
+  bugFieldValues: (org: string, project: string) => `bug-fields:${org}/${project}`,
 };
 
 /** Non-reversible tag for an account, so the identity check never needs the

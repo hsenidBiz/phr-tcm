@@ -18,6 +18,7 @@ import { SearchInput } from "../../components/ui/search-input";
 import { Select } from "../../components/ui/select";
 import ScanProgress from "../../components/ScanProgress";
 import ActionDock from "../../components/ActionDock";
+import WidthReveal from "../../components/WidthReveal";
 import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { clearSuiteSeed, readSuiteSeed, writeSuiteSeed } from "../../lib/suiteSeed";
@@ -415,6 +416,7 @@ export default function RunPanel({
 
   // Stable handlers for the memoized rows (RunRows): each reads the latest
   // closure through a ref, so a row re-renders only when its own flags do.
+  const searchRef = useRef<HTMLInputElement>(null);
   const rowClickRef = useRef(handleRowClick);
   rowClickRef.current = handleRowClick;
   const onRowClick = useCallback((p: TestPoint, e: MouseEvent) => rowClickRef.current(p, e), []);
@@ -591,6 +593,7 @@ export default function RunPanel({
           surface
           search={
             <SearchInput
+              ref={searchRef}
               aria-label="Filter points"
               className="w-full"
               placeholder={searchPlaceholder(["name", "id", "tag", "outcome", "tester", "configuration"])}
@@ -629,8 +632,9 @@ export default function RunPanel({
               above the list they act on, floating bottom-right once this
               row scrolls away - the same dock Update Test Cases' selection
               uses. `suite.data` is what openRunner needs for the plan id. */}
-          {suite.data && selected.size > 0 && (
-            <ActionDock label="Run selection" surface>
+          <WidthReveal show={!!suite.data && selected.size > 0}>
+            {(settled) => suite.data && selected.size > 0 && (
+            <ActionDock label="Run selection" surface active={settled} className="flex-nowrap">
               {(floating) => (
                 <>
                   {/* No "N selected" text - the count is already in the
@@ -648,14 +652,19 @@ export default function RunPanel({
                     title="Clear selection"
                     tabIndex={floating ? -1 : undefined}
                     className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
-                    onClick={() => setSelected(new Set())}
+                    onClick={() => {
+                      setSelected(new Set());
+                      // The x collapses away; keep focus in the toolbar.
+                      searchRef.current?.focus();
+                    }}
                   >
                     <X size={14} />
                   </button>
                 </>
               )}
             </ActionDock>
-          )}
+            )}
+          </WidthReveal>
         </ListToolbar>
       )}
 

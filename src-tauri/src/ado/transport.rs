@@ -271,6 +271,72 @@ impl AdoClient {
         }
     }
 
+    /// GET streamed chunk by chunk into a `<dest>.tcm-<unique>.part` file, renamed onto `dest`
+    /// on success. On any failure the `.part` is removed and `dest` is left
+    /// untouched. Status mapping as `get_bytes`. A local I/O failure names
+    /// no path. Returns the bytes written.
+    pub(crate) async fn get_to_file(
+        &self,
+        url: String,
+        dest: &std::path::Path,
+        deadline: std::time::Duration,
+    ) -> Result<u64, AdoError> {
+        use std::io::Write;
+        let mut resp = self
+            .send(reqwest::Method::GET, &url, |r| {
+                r.timeout(deadline).header("Accept", "application/octet-stream")
+            })
+            .await?;
+        match resp.status().as_u16() {
+            200..=299 => {}
+            401 => return Err(AdoError::Unauthorized),
+            403 => return Err(AdoError::Forbidden),
+            404 => return Err(AdoError::NotFound),
+            429 => return Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
+            s => {
+                return Err(AdoError::Http {
+                    status: s,
+                    body: resp.text().await.unwrap_or_default(),
+                })
+            }
+        }
+        let part = temp_part_path(dest);
+        // Declared before the file so the file closes first when both drop
+        // (Windows cannot remove an open file). Covers a cancelled future
+        // and a panic as well as every error return.
+        let guard = PartGuard(part.clone());
+        let local = |e: std::io::Error| {
+            crate::applog::warn(format!("saving a download failed: {e}"));
+            AdoError::Http { status: 0, body: format!("Could not save the file: {e}") }
+        };
+        let mut file = std::fs::File::create(&part).map_err(local)?;
+        let mut written: u64 = 0;
+        let result: Result<(), AdoError> = async {
+            loop {
+                match resp.chunk().await {
+                    Ok(Some(chunk)) => {
+                        file.write_all(&chunk).map_err(local)?;
+                        written += chunk.len() as u64;
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        crate::applog::warn(format!("reading {} body failed: {e}", tidy(&url)));
+                        return Err(network_error(&e));
+                    }
+                }
+            }
+            file.flush().map_err(local)?;
+            Ok(())
+        }
+        .await;
+        drop(file);
+        let result = result.and_then(|()| std::fs::rename(&part, dest).map_err(local));
+        if result.is_ok() {
+            guard.disarm();
+        }
+        result.map(|()| written)
+    }
+
     /// GET returning the raw body as text - build logs are plain text, not
     /// JSON. Same status handling as the JSON path.
     pub(crate) async fn get_text(&self, url: String) -> Result<String, AdoError> {
@@ -586,4 +652,39 @@ pub(crate) fn retry_after(resp: &reqwest::Response) -> u32 {
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse().ok())
         .unwrap_or(5)
+}
+
+/// A temp file name beside `dest` that no other program is likely to use:
+/// process id, a nanosecond clock and a counter.
+pub(crate) fn temp_part_path(dest: &std::path::Path) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut name = dest.as_os_str().to_owned();
+    name.push(format!(
+        ".tcm-{}-{nanos}-{}.part",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::path::PathBuf::from(name)
+}
+
+/// Removes its file on drop unless disarmed.
+pub(crate) struct PartGuard(pub(crate) std::path::PathBuf);
+
+impl PartGuard {
+    pub(crate) fn disarm(mut self) {
+        self.0 = std::path::PathBuf::new();
+    }
+}
+
+impl Drop for PartGuard {
+    fn drop(&mut self) {
+        if !self.0.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
 }

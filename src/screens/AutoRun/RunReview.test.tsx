@@ -1159,6 +1159,7 @@ test("Raise bug is offered on a failed case only and opens a filled-in bug", asy
   expect(repro).toContain("tester1");
   expect(repro).not.toContain("Log out afterwards");
 
+  await waitFor(() => expect(screen.getByRole("button", { name: /File bug/ })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: /File bug/ }));
   await waitFor(() => expect(filed.testCaseId).toBe(201));
   expect(filed.pbiId).toBe(42);

@@ -12,6 +12,7 @@
 pub mod attachments;
 pub mod endpoints;
 pub mod fanout;
+pub mod rule_errors;
 pub mod wit_batch;
 pub use endpoints::{tags_write_ops, RelinkOutcome};
 /// The single, audited exception to the no-DELETE rule. See its header.
@@ -19,7 +20,7 @@ pub mod deletion;
 pub mod permissions;
 pub mod single_flight;
 pub mod throttle;
-mod transport;
+pub(crate) mod transport;
 pub use transport::{network_error, said, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE, REPO_UNAVAILABLE};
 pub(crate) use transport::tidy;
 

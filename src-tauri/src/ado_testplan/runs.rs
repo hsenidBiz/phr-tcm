@@ -1,9 +1,12 @@
 //! Test points, manual runs, results and result attachments.
 
 use super::{
-    cap_comment, id_i32, is_no_verdict, OutcomeUpdate, ResultDetail, RunCreated, RunResultRef, TestPoint,
+    attachment_kind, cap_comment, id_i32, is_no_verdict, OutcomeUpdate, ResultAttachment, ResultDetail, RunCreated, RunResultRef, TestPoint,
 };
 use crate::ado::{AdoClient, AdoError};
+
+const MAX_THUMBS: usize = 12;
+const MAX_THUMB_SOURCE_BYTES: u32 = 2 * 1024 * 1024;
 
 impl AdoClient {
     /// All test points in a plan+suite (paginated). Read only.
@@ -272,6 +275,124 @@ impl AdoClient {
         })
     }
 
+    /// Every attachment on a result: (id, file name, size). A failure to
+    /// list is an error; nothing is downloaded here.
+    async fn list_result_attachments(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+    ) -> Result<Vec<(i32, String, u32)>, AdoError> {
+        let url = format!(
+            "{}/test/Runs/{}/Results/{}/attachments?api-version=7.1",
+            self.tp_base(org, project),
+            run_id,
+            result_id
+        );
+        let data = self.get_json(url).await?;
+        let mut out = vec![];
+        for a in data["value"].as_array().cloned().unwrap_or_default() {
+            let Some(id) = a["id"].as_i64().and_then(|i| i32::try_from(i).ok()) else { continue };
+            let name = a["fileName"].as_str().unwrap_or_default().to_string();
+            let size = a["size"]
+                .as_u64()
+                .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+                .unwrap_or(0);
+            out.push((id, name, size));
+        }
+        Ok(out)
+    }
+
+    fn result_attachment_url(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+        id: i32,
+    ) -> String {
+        format!(
+            "{}/test/Runs/{}/Results/{}/attachments/{}?api-version=7.1",
+            self.tp_base(org, project),
+            run_id,
+            result_id,
+            id
+        )
+    }
+
+    /// All of a result's attachments with a thumbnail for each image. A
+    /// thumbnail that cannot be read leaves the entry without one; a 401 or
+    /// 429 stops further thumbnails (it is about the session) but the list
+    /// is still returned. Read only.
+    pub async fn get_result_attachments(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+    ) -> Result<Vec<ResultAttachment>, AdoError> {
+        use base64::Engine;
+        let listed = self.list_result_attachments(org, project, run_id, result_id).await?;
+        let mut out = Vec::with_capacity(listed.len());
+        let mut thumbs_ok = true;
+        let mut thumbs_tried = 0usize;
+        for (id, name, size) in listed {
+            let kind = attachment_kind(&name);
+            let mut thumb_b64 = None;
+            // One IPC reply carries every thumbnail, so bound it: only the
+            // first MAX_THUMBS images, and none whose file is large.
+            if kind == "image" && thumbs_ok && thumbs_tried < MAX_THUMBS && size <= MAX_THUMB_SOURCE_BYTES {
+                thumbs_tried += 1;
+                let dl = self.result_attachment_url(org, project, run_id, result_id, id);
+                match self.get_bytes(dl).await {
+                    Ok(bytes) => {
+                        thumb_b64 = Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
+                    }
+                    Err(e @ (AdoError::Unauthorized | AdoError::RateLimited { .. })) => {
+                        crate::applog::warn(format!(
+                            "run {run_id} result {result_id}: thumbnails stopped: {e}"
+                        ));
+                        thumbs_ok = false;
+                    }
+                    Err(e) => crate::applog::warn(format!(
+                        "run {run_id} result {result_id}: thumbnail {id} could not be read: {e}"
+                    )),
+                }
+            }
+            out.push(ResultAttachment {
+                id,
+                file_name: name,
+                size_bytes: size,
+                kind: kind.to_string(),
+                thumb_b64,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Stream one attachment straight to `dest`; returns the bytes written.
+    pub async fn download_result_attachment(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+        attachment_id: i32,
+        size_bytes: u32,
+        dest: &std::path::Path,
+    ) -> Result<u64, AdoError> {
+        let url = self.result_attachment_url(org, project, run_id, result_id, attachment_id);
+        // An unknown size (0) gets the longest deadline, not the shortest.
+        let deadline = if size_bytes == 0 {
+            crate::ado::UPLOAD_TIMEOUT_CAP
+        } else {
+            crate::ado::upload_timeout(size_bytes as usize)
+        };
+        self.get_to_file(url, dest, deadline)
+            .await
+    }
+
     /// A result's previously-uploaded *image* attachments as b64 (v1
     /// get_result_screenshots). Non-image attachments skipped; download
     /// failures skipped (best-effort viewing). Read only.
@@ -283,16 +404,10 @@ impl AdoClient {
         result_id: i32,
     ) -> Result<Vec<String>, AdoError> {
         use base64::Engine;
-        let url = format!(
-            "{}/test/Runs/{}/Results/{}/attachments?api-version=7.1",
-            self.tp_base(org, project),
-            run_id,
-            result_id
-        );
-        let data = self.get_json(url).await?;
+        let listed = self.list_result_attachments(org, project, run_id, result_id).await?;
         let mut shots = vec![];
-        for a in data["value"].as_array().cloned().unwrap_or_default() {
-            let name = a["fileName"].as_str().unwrap_or_default().to_lowercase();
+        for (id, name, _) in listed {
+            let name = name.to_lowercase();
             if !(name.ends_with(".png")
                 || name.ends_with(".jpg")
                 || name.ends_with(".jpeg")
@@ -300,14 +415,7 @@ impl AdoClient {
             {
                 continue;
             }
-            let Some(id) = a["id"].as_i64() else { continue };
-            let dl = format!(
-                "{}/test/Runs/{}/Results/{}/attachments/{}?api-version=7.1",
-                self.tp_base(org, project),
-                run_id,
-                result_id,
-                id
-            );
+            let dl = self.result_attachment_url(org, project, run_id, result_id, id);
             // Through the transport, so this is paced, logged, and a 401
             // becomes a re-sign-in rather than an empty screenshot strip.
             // A single picture failing must still not lose the others, so
