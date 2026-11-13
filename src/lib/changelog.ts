@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.6-beta.10",
+    date: "2026-11-13",
+    items: [
+      "Filing a bug works when your organisation's bugs need extra fields: the bug window asks for them, remembers your answers for next time, and if Azure DevOps still refuses, it highlights the fields it named and creates nothing.",
+      "In the Test Runner, every attached file has a download button, and Previously uploaded lists every file from the last result, videos included, each with its size and a download button.",
+      "Attach file takes several files at once, and you can drop files anywhere on the Test Runner to attach them to the case on screen.",
+      "In Run Tests, the Run in runner button slides in and out when you select or clear cases, and the search box widens smoothly.",
+      "Recent activity is hidden from Auto Run for now.",
+    ],
+  },
+  {
     version: "2.4.6-beta.9",
     date: "2026-11-12",
     items: [
