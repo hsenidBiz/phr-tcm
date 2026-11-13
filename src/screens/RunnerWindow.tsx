@@ -16,10 +16,10 @@ import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import { unwrap, unwrapStr } from "../lib/ipc";
+import { unwrap } from "../lib/ipc";
 import { blobToB64, imageExt, imageMimeForName, validImageB64 } from "../lib/blob";
 import { formatBytes } from "../lib/bytes";
-import { downloadResultFile, downloadSessionFile } from "../lib/runnerFiles";
+import { downloadResultFile, downloadSessionFile, readFiles } from "../lib/runnerFiles";
 import {
   firstValidClipboardImage,
   imageOfPasteFile,
@@ -134,6 +134,7 @@ export default function RunnerWindow() {
   // inserts a late arrival at its fetch position - it never otherwise
   // touches what Prev/Next walk.
   const [order, setOrder] = useState<number[] | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [states, setStates] = useState<Record<number, CaseState>>({});
   const [bugFor, setBugFor] = useState<TestCaseFull | null>(null);
   // The window is created with the remembered pin preference (openRunner
@@ -653,18 +654,48 @@ export default function RunnerWindow() {
     }
   }
 
+  /** Reads each path and puts it on the case; says what attached and names
+   * every file that could not be read, with why. */
+  async function attachPaths(caseId: number, paths: string[]) {
+    if (paths.length === 0) return;
+    const { read, failed } = await readFiles(paths);
+    for (const att of read) addAttachment(caseId, att);
+    if (read.length > 0) toast.success(`Attached ${read.length} ${read.length === 1 ? "file" : "files"}`);
+    if (failed.length > 0)
+      toast.error(`Could not attach ${failed.map((f) => `${f.name} (${f.why})`).join(", ")}`);
+  }
+
   async function attachFile() {
     if (!current) return;
-    const path = await open({ multiple: false, title: "Attach a file to this result" });
-    if (typeof path !== "string") return;
-    try {
-      const att = await unwrapStr(commands.readFileB64(path));
-      addAttachment(current.id, att);
-      toast.success(`Attached ${att.file_name}`);
-    } catch (e) {
-      toast.error(`Could not read the file: ${(e as Error).message}`);
-    }
+    const caseId = current.id;
+    const picked = await open({ multiple: true, title: "Attach files to this result" });
+    // One path (a string) is what a single-file dialog answers; several is a list.
+    const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+    await attachPaths(caseId, paths);
   }
+
+  // Files dropped on the window go to the case on screen AT DROP TIME. The
+  // listener is registered once, so it reads the case id through a ref.
+  const currentIdRef = useRef<number | null>(null);
+  currentIdRef.current = current?.id ?? null;
+  const attachPathsRef = useRef(attachPaths);
+  attachPathsRef.current = attachPaths;
+  useEffect(() => {
+    const un = getCurrentWindow().onDragDropEvent((e) => {
+      const p = e.payload;
+      if (p.type === "enter" || p.type === "over") setDragOver(true);
+      else if (p.type === "leave") setDragOver(false);
+      else if (p.type === "drop") {
+        setDragOver(false);
+        const id = currentIdRef.current;
+        if (id == null) toast.info("Open a case to attach files to it.");
+        else void attachPathsRef.current(id, p.paths);
+      }
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   // ---- Incremental recording: Next writes the case being left. -------
   //
@@ -964,11 +995,19 @@ export default function RunnerWindow() {
   const markedCount = list.filter((c) => states[c.id]?.outcome).length;
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-text">
+    <div className="relative flex h-screen flex-col bg-bg text-text">
       {/* Hover-to-dismiss: the paste confirmation lands on the outcome
           buttons, and a hand heading for one should not have to wait it
           out or drag it away. */}
       <HoverDismissToaster />
+      {dragOver && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-surface/95 text-sm font-semibold text-text"
+        >
+          Drop to attach to case #{current?.id}
+        </div>
+      )}
       <header
         data-tauri-drag-region
         className="flex select-none items-center gap-2 border-b border-border bg-surface px-3 py-2"
@@ -1196,7 +1235,7 @@ export default function RunnerWindow() {
                       />
                       <button
                         aria-label={`Download ${a.file_name}`}
-                        className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-text"
+                        className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-text [&_svg]:size-2.5"
                         onClick={() => void downloadSessionFile(a)}
                       >
                         <IconDownload aria-hidden />
@@ -1224,7 +1263,7 @@ export default function RunnerWindow() {
                         <span className="label-trim">{a.file_name}</span>
                         <button
                           aria-label={`Download ${a.file_name}`}
-                          className="hover:text-text"
+                          className="hover:text-text [&_svg]:size-2.5"
                           onClick={() => void downloadSessionFile(a)}
                         >
                           <IconDownload aria-hidden />

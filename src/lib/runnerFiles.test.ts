@@ -1,7 +1,7 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { ResultAttachment } from "../bindings";
-import { downloadResultFile, downloadSessionFile } from "./runnerFiles";
+import { downloadResultFile, downloadSessionFile, readFiles } from "./runnerFiles";
 
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("./toast", () => ({ toast: toastMock }));
@@ -57,11 +57,34 @@ test("an uploaded file is fetched by Rust, not read into the webview", async () 
 test("a failure toasts the reason", async () => {
   dialog.save.mockResolvedValue("C:/out/rec.webm");
   respond = (cmd) => {
-    if (cmd === "save_result_attachment") throw "Azure DevOps refused the download.";
+    if (cmd === "save_result_attachment") throw { kind: "Forbidden" };
     return null;
   };
   expect(await downloadResultFile("org", "proj", 3, 30, att)).toBe(false);
   expect(toastMock.error).toHaveBeenCalledTimes(1);
-  expect(String(toastMock.error.mock.calls[0][0])).toContain("Could not save rec.webm");
+  expect(String(toastMock.error.mock.calls[0][0])).toBe("Could not save rec.webm: You don't have permission for this resource.");
   expect(toastMock.success).not.toHaveBeenCalled();
+});
+
+test("a session file failure toasts Rust's sentence", async () => {
+  dialog.save.mockResolvedValue("C:/out/a.txt");
+  respond = (cmd) => {
+    if (cmd === "save_attachment_b64") throw "The destination is not writable.";
+    return null;
+  };
+  expect(await downloadSessionFile({ file_name: "a.txt", b64: "QQ==" })).toBe(false);
+  expect(String(toastMock.error.mock.calls[0][0])).toBe("Could not save a.txt: The destination is not writable.");
+});
+
+test("every picked file is read and one failure does not stop the others", async () => {
+  let n = 0;
+  mockIPC((cmd) => {
+    if (cmd !== "read_file_b64") return null;
+    n += 1;
+    if (n === 2) throw "File is larger than 25 MB.";
+    return { file_name: `f${n}.txt`, b64: "QQ==" };
+  });
+  const r = await readFiles(["C:/a/f1.txt", "C:/b/big.bin", "C:/c/f3.txt"]);
+  expect(r.read.map((a) => a.file_name)).toEqual(["f1.txt", "f3.txt"]);
+  expect(r.failed).toEqual([{ name: "big.bin", why: "File is larger than 25 MB." }]);
 });
