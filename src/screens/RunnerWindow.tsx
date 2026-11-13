@@ -18,6 +18,8 @@ import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { blobToB64, imageExt, imageMimeForName, validImageB64 } from "../lib/blob";
+import { formatBytes } from "../lib/bytes";
+import { downloadResultFile, downloadSessionFile } from "../lib/runnerFiles";
 import {
   firstValidClipboardImage,
   imageOfPasteFile,
@@ -34,6 +36,7 @@ import {
   IconAttach,
   IconBack,
   IconBug,
+  IconDownload,
   IconFinish,
   IconNext,
   IconPasteImage,
@@ -369,18 +372,21 @@ export default function RunnerWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id, currentPoint?.last_result_id]);
 
-  // Previously-uploaded screenshots load automatically when a case with a
-  // prior result becomes current (v1 "auto-load" request; no button).
+  // Every file the last result carries loads automatically when a case with
+  // a prior result becomes current (v1 "auto-load" request; no button).
+  // Thumbnails arrive with the list; the files themselves are only fetched
+  // by Rust when one is downloaded.
   const uploaded = useQuery({
     queryKey: [
-      "uploaded-shots",
+      "result-attachments",
       session?.org,
+      session?.project,
       currentPoint?.last_run_id,
       currentPoint?.last_result_id,
     ],
     queryFn: () =>
       unwrap(
-        commands.resultScreenshots(
+        commands.resultAttachments(
           session!.org,
           session!.project,
           currentPoint!.last_run_id!,
@@ -394,8 +400,9 @@ export default function RunnerWindow() {
 
   // Fullscreen viewer for the uploaded-screenshot thumbnails (zoom/pan +
   // prev/next). Media rebuilds with the query, so triggers stay in sync.
-  const shots = (uploaded.data ?? []).map((b64, i) => ({
-    src: `data:image/png;base64,${b64}`,
+  const uploadedThumbs = (uploaded.data ?? []).filter((a) => a.thumb_b64);
+  const shots = uploadedThumbs.map((a, i) => ({
+    src: `data:${imageMimeForName(a.file_name)};base64,${a.thumb_b64}`,
     alt: `Uploaded screenshot ${i + 1}`,
   }));
   const lightbox = useLightbox({ media: shots });
@@ -1188,6 +1195,13 @@ export default function RunnerWindow() {
                         {...sessionLightbox.getTriggerProps(si)}
                       />
                       <button
+                        aria-label={`Download ${a.file_name}`}
+                        className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-text"
+                        onClick={() => void downloadSessionFile(a)}
+                      >
+                        <IconDownload aria-hidden />
+                      </button>
+                      <button
                         aria-label={`Remove ${a.file_name}`}
                         className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-danger"
                         onClick={() => removeAttachment(current.id, a.index)}
@@ -1209,6 +1223,13 @@ export default function RunnerWindow() {
                       >
                         <span className="label-trim">{a.file_name}</span>
                         <button
+                          aria-label={`Download ${a.file_name}`}
+                          className="hover:text-text"
+                          onClick={() => void downloadSessionFile(a)}
+                        >
+                          <IconDownload aria-hidden />
+                        </button>
+                        <button
                           aria-label={`Remove ${a.file_name}`}
                           className="hover:text-danger"
                           onClick={() => removeAttachment(current.id, i)}
@@ -1226,17 +1247,44 @@ export default function RunnerWindow() {
           {(uploaded.data?.length ?? 0) > 0 && (
             <div className="space-y-1">
               <div className="text-xs text-muted">Previously uploaded:</div>
-              <div className="flex flex-wrap gap-1">
-                {uploaded.data!.map((b64, i) => (
-                  <img
-                    key={i}
-                    alt={`Uploaded screenshot ${i + 1}`}
-                    className="h-16 cursor-zoom-in rounded border border-border object-cover"
-                    src={`data:image/png;base64,${b64}`}
-                    {...lightbox.getTriggerProps(i)}
-                  />
+              {uploadedThumbs.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {uploadedThumbs.map((a, i) => (
+                    <img
+                      key={a.id}
+                      alt={`Uploaded screenshot ${i + 1}`}
+                      className="h-16 cursor-zoom-in rounded border border-border object-cover"
+                      src={`data:${imageMimeForName(a.file_name)};base64,${a.thumb_b64}`}
+                      {...lightbox.getTriggerProps(i)}
+                    />
+                  ))}
+                </div>
+              )}
+              <ul className="space-y-0.5">
+                {uploaded.data!.map((a) => (
+                  <li key={a.id} className="flex items-center gap-2 text-xs text-muted">
+                    <span className="label-trim">{a.file_name}</span>
+                    <span>{formatBytes(a.size_bytes)}</span>
+                    <span>{a.kind === "image" ? "Picture" : a.kind === "video" ? "Video" : "File"}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Download ${a.file_name}`}
+                      onClick={() =>
+                        void downloadResultFile(
+                          session!.org,
+                          session!.project,
+                          currentPoint!.last_run_id!,
+                          currentPoint!.last_result_id!,
+                          a,
+                        )
+                      }
+                    >
+                      <IconDownload aria-hidden />
+                    </Button>
+                  </li>
                 ))}
-              </div>
+              </ul>
               <AstryxIsland>{lightbox.element}</AstryxIsland>
             </div>
           )}

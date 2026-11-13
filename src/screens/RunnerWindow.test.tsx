@@ -292,7 +292,7 @@ test("a previously-run case opens unmarked with its last verdict tinted", async 
         },
       ];
     if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
-    if (cmd === "result_screenshots") return [];
+    if (cmd === "result_attachments") return [];
   });
   renderRunner();
   await screen.findByText("Valid login");
@@ -355,7 +355,7 @@ test("clicking the previous run's own verdict records a fresh result", async () 
         },
       ];
     if (cmd === "get_result_detail") return { outcome: "passed", comment: "" };
-    if (cmd === "result_screenshots") return [];
+    if (cmd === "result_attachments") return [];
     if (cmd === "start_test_run")
       return {
         run_id: 300,
@@ -1258,4 +1258,78 @@ test("a shared step shows its reference and has no Pass/Fail marks", async () =>
   expect(screen.getByText("Shared steps #812")).toBeInTheDocument();
   expect(await screen.findByText(/Sign in as an admin/)).toBeInTheDocument();
   expect(screen.getAllByTitle("Passed")).toHaveLength(2); // the two local steps only
+});
+
+/// "Previously uploaded" is the whole file list of the last result, not only
+/// its pictures: each row names the file, its size, and offers Download.
+test("previously uploaded lists every file with size and Download", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "failed",
+          last_run_id: 3,
+          last_result_id: 30,
+          tags: "",
+        },
+      ];
+    if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
+    if (cmd === "result_attachments")
+      return [
+        { id: 1, file_name: "shot.png", size_bytes: 1024, kind: "image", thumb_b64: PNG_B64 },
+        { id: 2, file_name: "rec.webm", size_bytes: 5000000, kind: "video", thumb_b64: null },
+        { id: 3, file_name: "log.txt", size_bytes: 20, kind: "file", thumb_b64: null },
+      ];
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await screen.findByRole("button", { name: "Download rec.webm" });
+  expect(screen.getByRole("button", { name: "Download shot.png" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Download log.txt" })).toBeInTheDocument();
+  expect(screen.getByText("4.8 MB")).toBeInTheDocument();
+  expect(document.querySelectorAll("img.cursor-zoom-in")).toHaveLength(1);
+});
+
+test("a session recording can be downloaded", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+          tags: "",
+        },
+      ];
+    if (cmd === "plugin:dialog|open") return "C:/files/rec.webm";
+    if (cmd === "read_file_b64") return { file_name: "rec.webm", b64: "QUJD" };
+    if (cmd === "plugin:dialog|save") return "C:/out/rec.webm";
+    if (cmd === "save_attachment_b64") return null;
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: /Attach file/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Download rec.webm" }));
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "save_attachment_b64")).toBe(true));
+  expect(calls.find((c) => c.cmd === "save_attachment_b64")!.args).toEqual({
+    destPath: "C:/out/rec.webm",
+    b64: "QUJD",
+  });
 });
