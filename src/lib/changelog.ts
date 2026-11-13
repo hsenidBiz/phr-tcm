@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.1",
+    date: "2026-11-13",
+    items: [
+      "Pull Requests: with Completed picked, Your Pull Requests lists your 25 most recently completed pull requests from every repository (every project when they show together), newest first.",
+    ],
+  },
+  {
     version: "2.4.6",
     date: "2026-11-13",
     items: [
