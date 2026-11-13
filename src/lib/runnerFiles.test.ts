@@ -57,11 +57,21 @@ test("an uploaded file is fetched by Rust, not read into the webview", async () 
 test("a failure toasts the reason", async () => {
   dialog.save.mockResolvedValue("C:/out/rec.webm");
   respond = (cmd) => {
-    if (cmd === "save_result_attachment") throw "Azure DevOps refused the download.";
+    if (cmd === "save_result_attachment") throw { kind: "Forbidden" };
     return null;
   };
   expect(await downloadResultFile("org", "proj", 3, 30, att)).toBe(false);
   expect(toastMock.error).toHaveBeenCalledTimes(1);
-  expect(String(toastMock.error.mock.calls[0][0])).toContain("Could not save rec.webm");
+  expect(String(toastMock.error.mock.calls[0][0])).toBe("Could not save rec.webm: You don't have permission for this resource.");
   expect(toastMock.success).not.toHaveBeenCalled();
+});
+
+test("a session file failure toasts Rust's sentence", async () => {
+  dialog.save.mockResolvedValue("C:/out/a.txt");
+  respond = (cmd) => {
+    if (cmd === "save_attachment_b64") throw "The destination is not writable.";
+    return null;
+  };
+  expect(await downloadSessionFile({ file_name: "a.txt", b64: "QQ==" })).toBe(false);
+  expect(String(toastMock.error.mock.calls[0][0])).toBe("Could not save a.txt: The destination is not writable.");
 });

@@ -1196,7 +1196,7 @@ export default function RunnerWindow() {
                       />
                       <button
                         aria-label={`Download ${a.file_name}`}
-                        className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-text"
+                        className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-text [&_svg]:size-2.5"
                         onClick={() => void downloadSessionFile(a)}
                       >
                         <IconDownload aria-hidden />
@@ -1224,7 +1224,7 @@ export default function RunnerWindow() {
                         <span className="label-trim">{a.file_name}</span>
                         <button
                           aria-label={`Download ${a.file_name}`}
-                          className="hover:text-text"
+                          className="hover:text-text [&_svg]:size-2.5"
                           onClick={() => void downloadSessionFile(a)}
                         >
                           <IconDownload aria-hidden />

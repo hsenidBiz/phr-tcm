@@ -1333,3 +1333,40 @@ test("a session recording can be downloaded", async () => {
     b64: "QUJD",
   });
 });
+
+test("a session image can be downloaded", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+          tags: "",
+        },
+      ];
+    if (cmd === "plugin:dialog|open") return "C:/files/pic.png";
+    if (cmd === "read_file_b64") return { file_name: "pic.png", b64: PNG_B64 };
+    if (cmd === "plugin:dialog|save") return "C:/out/pic.png";
+    if (cmd === "save_attachment_b64") return null;
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: /Attach file/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Download pic.png" }));
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "save_attachment_b64")).toBe(true));
+  expect(calls.find((c) => c.cmd === "save_attachment_b64")!.args).toEqual({
+    destPath: "C:/out/pic.png",
+    b64: PNG_B64,
+  });
+});
