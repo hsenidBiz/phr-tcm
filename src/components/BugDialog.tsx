@@ -1,14 +1,25 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "../lib/toast";
-import { commands, type FileBugError, type Step, type TestCaseFull } from "../bindings";
+import {
+  commands,
+  type ExtraField,
+  type FieldViolation,
+  type FileBugError,
+  type Step,
+  type TestCaseFull,
+} from "../bindings";
+import { CACHE, cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
+import { cn } from "../lib/cn";
 import { imageMime } from "../lib/blob";
 import { firstValidClipboardImage, imageOfPasteFile, NOT_ON_CLIPBOARD_YET, type ClipboardImage } from "../lib/clipboardImage";
-import { describeAdoError } from "../lib/ipc";
+import { describeAdoError, unwrap } from "../lib/ipc";
 import { sharedStepQueryKey, sharedStepText } from "../lib/sharedSteps";
 import { Button } from "./ui/button";
+import DateField from "./ui/datefield";
 import { Input, Textarea } from "./ui/input";
+import { Select } from "./ui/select";
 import { Modal } from "./ui/modal";
 import { IconBug, IconCancel } from "../lib/actionIcons";
 
@@ -27,11 +38,36 @@ export function fileBugErrorText(e: FileBugError): string {
   return String(e);
 }
 
+/** The "YYYY-MM-DD" a date field holds, as the instant Azure DevOps takes:
+ * local midnight of that day. */
+export function toAdoDate(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
+/** References of the fields still blank (whitespace counts as blank). */
+export function missingRequired(fields: ExtraField[], values: Record<string, string>): string[] {
+  return fields.filter((f) => !(values[f.reference_name] ?? "").trim()).map((f) => f.reference_name);
+}
+
+/** The process rules named fields: nothing was created. */
+class RuleViolationsError extends Error {
+  constructor(public violations: FieldViolation[]) {
+    super("Azure DevOps rejected the bug's fields");
+  }
+}
+
 async function unwrapFileBug<T>(
   p: Promise<{ status: "ok"; data: T } | { status: "error"; error: FileBugError }>,
 ): Promise<T> {
   const r = await p;
-  if (r.status === "error") throw new Error(fileBugErrorText(r.error));
+  if (r.status === "error") {
+    const e = r.error;
+    if (e && typeof e === "object" && "kind" in e && e.kind === "RuleViolations") {
+      throw new RuleViolationsError(e.detail);
+    }
+    throw new Error(fileBugErrorText(e));
+  }
   return r.data;
 }
 
@@ -131,14 +167,37 @@ export default function BugDialog({
    * screenshot at all, silently: the toast still said "Filed bug #N".
    * `onClick` is updated during the commit itself, so a payload built
    * there is always the one the person can see. */
-  type BugPayload = { title: string; repro: string; shots: string[] };
+  type BugPayload = {
+    title: string;
+    repro: string;
+    shots: string[];
+    fieldValues: { reference_name: string; value: string }[];
+    remember: Record<string, string>;
+  };
+
+  const [values, setValues] = useState<Record<string, string>>(
+    () => cacheRead<Record<string, string>>(cacheKeys.bugFieldValues(org, project), CACHE.picks.ttlMs) ?? {},
+  );
+  const [violations, setViolations] = useState<Record<string, string>>({});
+  const [extraRefs, setExtraRefs] = useState<string[]>([]);
+  // The fields this project's Bug requires. A failed lookup means no extra
+  // fields: the bug can still be filed with a title, as before.
+  const lookup = useQuery({
+    queryKey: ["bug-fields", org, project, extraRefs],
+    queryFn: () => unwrap(commands.bugFields(org, project, extraRefs)),
+    staleTime: 30 * 60_000,
+    retry: false,
+    placeholderData: keepPreviousData,
+  });
+  const fields: ExtraField[] = lookup.data?.fields ?? [];
 
   const file = useMutation({
     mutationFn: (p: BugPayload) =>
       unwrapFileBug(
-        commands.fileBug(org, project, p.title.trim(), p.repro, testCase.id, pbiId, p.shots, []),
+        commands.fileBug(org, project, p.title.trim(), p.repro, testCase.id, pbiId, p.shots, p.fieldValues),
       ),
-    onSuccess: (bug) => {
+    onSuccess: (bug, p) => {
+      cacheWrite(cacheKeys.bugFieldValues(org, project), p.remember);
       // The bug exists either way - re-filing over a failed upload would
       // leave a duplicate - but a tester who attached screenshots of the
       // failure has to be told when they did not arrive.
@@ -152,8 +211,38 @@ export default function BugDialog({
       }
       onFiled(bug.id);
     },
-    onError: (e) => toast.error(`Could not file bug: ${e.message}`),
+    onError: (e) => {
+      if (e instanceof RuleViolationsError) {
+        setViolations(Object.fromEntries(e.violations.map((v) => [v.reference_name, v.message])));
+        const shown = new Set(fields.map((f) => f.reference_name));
+        const fresh = e.violations.map((v) => v.reference_name).filter((r) => !shown.has(r));
+        if (fresh.length > 0) setExtraRefs((x) => [...new Set([...x, ...fresh])]);
+        toast.error("Azure DevOps needs more fields - fill in the highlighted ones and file again.");
+      } else {
+        toast.error(`Could not file bug: ${e.message}`);
+      }
+    },
   });
+
+  const setValue = (ref: string, v: string) => {
+    setValues((x) => ({ ...x, [ref]: v }));
+    setViolations((x) => {
+      if (!(ref in x)) return x;
+      const rest = { ...x };
+      delete rest[ref];
+      return rest;
+    });
+  };
+  const flagged = (ref: string) => ref in violations;
+  const ring = (ref: string) => (flagged(ref) ? "ring-2 ring-danger" : undefined);
+  const missing = missingRequired(fields, values);
+  const labelOf = (ref: string) => fields.find((f) => f.reference_name === ref)?.label ?? ref;
+  const lookupSettled = !lookup.isLoading && !lookup.isPlaceholderData;
+  // A rejection on a field the lookup still does not return is said in
+  // words, so the person learns why it failed.
+  const unshown = lookupSettled
+    ? Object.entries(violations).filter(([ref]) => !fields.some((f) => f.reference_name === ref))
+    : [];
 
   return (
     <Modal onClose={onClose} className="w-full max-w-lg p-4">
@@ -171,6 +260,59 @@ export default function BugDialog({
         value={repro}
         onChange={(e) => setRepro(e.target.value)}
       />
+      {fields.map((f) => {
+        const ref = f.reference_name;
+        const v = values[ref] ?? "";
+        return (
+          <div key={ref} className="text-xs text-muted">
+            {f.label}
+            {f.kind === "pick" ? (
+              <Select
+                aria-label={f.label}
+                className="mt-1"
+                triggerClassName={cn(ring(ref))}
+                value={v}
+                onChange={(e) => setValue(ref, e.target.value)}
+              >
+                <option value="">Choose...</option>
+                {f.allowed.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </Select>
+            ) : f.kind === "date" ? (
+              <DateField
+                className="mt-1"
+                ariaLabel={f.label}
+                flagged={flagged(ref)}
+                value={v}
+                onChange={(d) => setValue(ref, d)}
+              />
+            ) : f.kind === "html" ? (
+              <Textarea
+                aria-label={f.label}
+                className={cn("mt-1 h-20 w-full", ring(ref))}
+                value={v}
+                onChange={(e) => setValue(ref, e.target.value)}
+              />
+            ) : (
+              <Input
+                aria-label={f.label}
+                className={cn("mt-1 w-full", ring(ref))}
+                value={v}
+                onChange={(e) => setValue(ref, e.target.value)}
+              />
+            )}
+            {flagged(ref) && <div className="mt-1 text-xs text-danger">{violations[ref]}</div>}
+          </div>
+        );
+      })}
+      {unshown.map(([ref, msg]) => (
+        <div key={ref} className="text-xs text-danger">
+          {ref}: {msg}
+        </div>
+      ))}
       {pasted.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {pasted.map((img, i) => (
@@ -204,8 +346,20 @@ export default function BugDialog({
         </Button>
         <Button
           size="sm"
-          disabled={!title.trim() || file.isPending}
-          onClick={() => file.mutate({ title, repro, shots: [...screenshots, ...pasted.map((p) => p.b64)] })}
+          disabled={!title.trim() || file.isPending || !lookupSettled || missing.length > 0}
+          title={missing.length > 0 ? `Fill in: ${missing.map(labelOf).join(", ")}` : undefined}
+          onClick={() =>
+            file.mutate({
+              title,
+              repro,
+              shots: [...screenshots, ...pasted.map((p) => p.b64)],
+              fieldValues: fields.map((f) => {
+                const v = (values[f.reference_name] ?? "").trim();
+                return { reference_name: f.reference_name, value: f.kind === "date" ? toAdoDate(v) : v };
+              }),
+              remember: values,
+            })
+          }
         >
           <IconBug aria-hidden />
           {file.isPending ? "Filing" : "File bug"}
