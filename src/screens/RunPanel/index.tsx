@@ -18,6 +18,7 @@ import { SearchInput } from "../../components/ui/search-input";
 import { Select } from "../../components/ui/select";
 import ScanProgress from "../../components/ScanProgress";
 import ActionDock from "../../components/ActionDock";
+import WidthReveal from "../../components/WidthReveal";
 import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { clearSuiteSeed, readSuiteSeed, writeSuiteSeed } from "../../lib/suiteSeed";
@@ -629,8 +630,9 @@ export default function RunPanel({
               above the list they act on, floating bottom-right once this
               row scrolls away - the same dock Update Test Cases' selection
               uses. `suite.data` is what openRunner needs for the plan id. */}
-          {suite.data && selected.size > 0 && (
-            <ActionDock label="Run selection" surface>
+          <WidthReveal show={!!suite.data && selected.size > 0}>
+            {suite.data && selected.size > 0 && (
+            <ActionDock label="Run selection" surface className="flex-nowrap">
               {(floating) => (
                 <>
                   {/* No "N selected" text - the count is already in the
@@ -655,7 +657,8 @@ export default function RunPanel({
                 </>
               )}
             </ActionDock>
-          )}
+            )}
+          </WidthReveal>
         </ListToolbar>
       )}
 
