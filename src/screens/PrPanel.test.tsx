@@ -504,6 +504,66 @@ test("the completed filter runs a separate query and titles the group", async ()
   expect(asked).toContain("completed");
 });
 
+test("completed lists your recently completed PRs from every repo, once", async () => {
+  const asked: string[] = [];
+  mockIPC((cmd, args) => {
+    asked.push(cmd);
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(2)] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "my_completed_prs") {
+      expect(args).toMatchObject({ organization: "acme", project: "Web" });
+      return [
+        pr(31, { repo: "api", status: "completed", closed: "2026-11-10T08:00:00Z" }),
+        pr(30, { repo: "web", status: "completed", closed: "2026-11-01T08:00:00Z" }),
+      ];
+    }
+    if (cmd === "repo_pull_requests")
+      return [
+        pr(30, { status: "completed", closed: "2026-11-01T08:00:00Z" }),
+        pr(40, { status: "completed", closed: "2026-10-01T08:00:00Z" }),
+      ];
+  });
+  renderPanel();
+  expect(await screen.findByText("!2")).toBeInTheDocument();
+  // Not asked while Active is showing.
+  expect(asked).not.toContain("my_completed_prs");
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("web");
+
+  fireEvent.click(screen.getByRole("button", { name: "completed" }));
+  expect(await screen.findByText("Your completed pull requests")).toBeInTheDocument();
+  expect(await screen.findByText("!31")).toBeInTheDocument();
+  expect(screen.queryByText("Your pull requests")).not.toBeInTheDocument();
+  expect(screen.queryByText("!2")).not.toBeInTheDocument();
+  // !30 is yours: listed once, under your group, not again under the repo.
+  expect(await screen.findByText("!40")).toBeInTheDocument();
+  expect(screen.getAllByText("!30")).toHaveLength(1);
+});
+
+test("completed with the projects together asks across the organization", async () => {
+  localStorage.setItem("tcm-v2-pr-status", "completed");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview_all")
+      return { awaiting: [], mine: [], coverage: { shown: 0, total: 0 } };
+    if (cmd === "list_repos_all") return [];
+    if (cmd === "my_completed_prs_all")
+      return [pr(55, { status: "completed", closed: "2026-11-10T08:00:00Z", project: "HRM" })];
+  });
+  renderPanel({ allProjects: true });
+  expect(await screen.findByText("!55")).toBeInTheDocument();
+});
+
+test("no completed PRs of yours says so", async () => {
+  localStorage.setItem("tcm-v2-pr-status", "completed");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "my_completed_prs") return [];
+  });
+  renderPanel();
+  expect(await screen.findByText("You have no completed pull requests.")).toBeInTheDocument();
+});
+
 test("an expanded PR shows its builds, stages and deployed environments", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "pr_overview") return { awaiting: [pr(42, { merge_commit: "abc123" })], mine: [] };
@@ -871,6 +931,36 @@ test("a focused pull request that is one of yours, with the group hidden, says s
     ),
   );
   expect(handled).toHaveBeenCalledTimes(1);
+});
+
+test("a focused active PR of yours while Completed shows says to switch to Active", async () => {
+  localStorage.setItem("tcm-v2-pr-status", "completed");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(99, { repo: "billing" })] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "my_completed_prs") return [];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "billing", id: 99 }, onFocusHandled: handled });
+  await vi.waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith("PR #99 is still active. Switch to Active to see it."),
+  );
+  expect(handled).toHaveBeenCalledTimes(1);
+});
+
+test("a focused completed PR of yours in an untracked repo is claimed by its row", async () => {
+  localStorage.setItem("tcm-v2-pr-status", "completed");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "my_completed_prs")
+      return [pr(77, { repo: "billing", status: "completed", closed: "2026-11-10T08:00:00Z" })];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "billing", id: 77 }, onFocusHandled: handled });
+  expect(await screen.findByText("!77")).toBeInTheDocument();
+  await waitFor(() => expect(handled).toHaveBeenCalled());
+  expect(toast.info).not.toHaveBeenCalled();
 });
 
 test("a saved repository the fresh list no longer offers is not requested, and says why", async () => {

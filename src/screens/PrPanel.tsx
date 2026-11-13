@@ -962,16 +962,35 @@ export default function PrPanel({
       // session-only
     }
   };
-  // "Active on <repo>" drops any PR already shown in a group ABOVE it, so
+  // Completed: "Your pull requests" lists your most recently completed ones,
+  // from every repository (and every project while together) - not only
+  // the tracked ones. Asked only while that group is on screen.
+  const showMyCompleted = showYours && prStatus === "completed";
+  const myCompleted = useQuery({
+    queryKey: allProjects ? ["my-completed-prs-all", org] : ["my-completed-prs", org, project],
+    queryFn: () =>
+      allProjects
+        ? unwrap(commands.myCompletedPrsAll(org))
+        : unwrap(commands.myCompletedPrs(org, project)),
+    enabled: showMyCompleted && (allProjects ? Boolean(org) : Boolean(org && project)),
+    // Completed history only ever gains newer entries.
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  // A repository section drops any PR already shown in a group ABOVE it, so
   // a PR appears once. Only groups actually on screen count: with "Your
   // Pull Requests" deselected, your PRs must stay in the repo sections -
   // deduping against a hidden group would make them vanish entirely.
   const shownAbove = useMemo(() => {
     const ids = new Set<number>();
-    for (const pr of overview.data?.awaiting ?? []) ids.add(pr.id);
-    if (showYours) for (const pr of overview.data?.mine ?? []) ids.add(pr.id);
+    if (prStatus === "active") {
+      for (const pr of overview.data?.awaiting ?? []) ids.add(pr.id);
+      if (showYours) for (const pr of overview.data?.mine ?? []) ids.add(pr.id);
+    } else if (showYours) {
+      for (const pr of myCompleted.data ?? []) ids.add(pr.id);
+    }
     return ids;
-  }, [overview.data, showYours]);
+  }, [overview.data, showYours, prStatus, myCompleted.data]);
 
   // Tracked repos render in the repo list's order, not click order - the
   // sections keep a stable arrangement however the selection was built.
@@ -992,7 +1011,8 @@ export default function PrPanel({
     allProjects &&
     spansProjects([
       ...(overview.data?.awaiting ?? []),
-      ...(showYours ? (overview.data?.mine ?? []) : []),
+      ...(showYours && !showMyCompleted ? (overview.data?.mine ?? []) : []),
+      ...(showMyCompleted ? (myCompleted.data ?? []) : []),
       ...trackedRepos,
     ]);
 
@@ -1004,12 +1024,24 @@ export default function PrPanel({
   handledRef.current = onFocusHandled;
   useEffect(() => {
     if (focus == null || !overview.isSuccess) return;
+    // Judged once your completed ones are known, or one of them would be
+    // sent to "track the repository" while it is still loading.
+    if (showMyCompleted && myCompleted.isLoading) return;
     const holds = (list: PullRequest[]) =>
       list.some((p) => p.repo === focus.repo && p.id === focus.id);
     const isMine = holds(overview.data.mine);
+    // Completed shows your completed group, not your active one: an
+    // active PR of yours (the notifications name active ones) is one
+    // toggle away, and a completed one in an untracked repo is listed.
+    if (showMyCompleted && isMine) {
+      toast.info(`PR #${focus.id} is still active. Switch to Active to see it.`);
+      handledRef.current?.();
+      return;
+    }
     const couldHold =
       holds(overview.data.awaiting) ||
       (showYours && isMine) ||
+      (showMyCompleted && holds(myCompleted.data ?? [])) ||
       // Together a repository is told apart by its project as well as its
       // name: two projects can each have a "web".
       trackedRepos.some(
@@ -1035,7 +1067,17 @@ export default function PrPanel({
       handledRef.current?.();
     }, 4000);
     return () => window.clearTimeout(timer);
-  }, [focus, overview.isSuccess, overview.data, showYours, trackedRepos, allProjects]);
+  }, [
+    focus,
+    overview.isSuccess,
+    overview.data,
+    showYours,
+    showMyCompleted,
+    myCompleted.data,
+    myCompleted.isLoading,
+    trackedRepos,
+    allProjects,
+  ]);
 
   // A tick whose repository the fresh list no longer offers - disabled in
   // Azure DevOps, or gone from the project. It is not requested at all (it
@@ -1076,7 +1118,7 @@ export default function PrPanel({
             );
           }}
         />
-        {/* Which slice of the repo's PRs the bottom group shows. */}
+        {/* Which slice your own and the tracked repositories' groups show. */}
         <div className="flex rounded-md border border-border p-0.5">
           {(["active", "completed"] as const).map((s) => (
             <button
@@ -1100,13 +1142,18 @@ export default function PrPanel({
             if (allProjects) {
               qc.invalidateQueries({ queryKey: ["pr-overview-all", org] });
               qc.invalidateQueries({ queryKey: ["repo-prs", org] });
+              qc.invalidateQueries({ queryKey: ["my-completed-prs-all", org] });
             } else {
               qc.invalidateQueries({ queryKey: ["pr-overview", org, project] });
               qc.invalidateQueries({ queryKey: ["repo-prs", org, project] });
+              qc.invalidateQueries({ queryKey: ["my-completed-prs", org, project] });
             }
           }}
         >
-          <SpinHolder spinning={overview.isFetching || anyRepoFetching} className="-m-px">
+          <SpinHolder
+            spinning={overview.isFetching || anyRepoFetching || myCompleted.isFetching}
+            className="-m-px"
+          >
             <RefreshCw size={14} />
           </SpinHolder>
         </button>
@@ -1140,11 +1187,27 @@ export default function PrPanel({
             focus={focus}
             onFocusHandled={onFocusHandled}
           />
-          {showYours && (
+          {showYours && !showMyCompleted && (
             <PrGroup
               title="Your pull requests"
               prs={overview.data.mine}
               empty="You have no active pull requests."
+              org={org}
+              project={project}
+              allProjects={allProjects}
+              showProject={showProject}
+              focus={focus}
+              onFocusHandled={onFocusHandled}
+            />
+          )}
+          {showMyCompleted && (
+            <PrGroup
+              title="Your completed pull requests"
+              prs={myCompleted.data ?? []}
+              error={myCompleted.isError ? myCompleted.error.message : undefined}
+              empty={
+                myCompleted.isLoading ? "Loading…" : "You have no completed pull requests."
+              }
               org={org}
               project={project}
               allProjects={allProjects}
@@ -1247,10 +1310,9 @@ function RepoPrSection({
     retry: false,
   });
   const fetched = useMemo(() => active.data?.pages.flat() ?? [], [active.data]);
-  // Only the active list can collide with the groups above; completed PRs
-  // are never shown there, so they must not be de-duplicated away.
-  const repoPrs =
-    prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
+  // `shownAbove` holds what the groups above list for this status: the
+  // active ones, or your completed ones.
+  const repoPrs = fetched.filter((pr) => !shownAbove.has(pr.id));
 
   return (
     <>
@@ -1263,7 +1325,7 @@ function RepoPrSection({
             ? "Loading…"
             : prStatus === "active"
               ? "No other active pull requests on this repository."
-              : "No completed pull requests on this repository."
+              : "No other completed pull requests on this repository."
         }
         org={org}
         project={project}

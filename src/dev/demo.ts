@@ -1035,6 +1035,23 @@ function applyPatches() {
     { id: "demo-repo-1", name: "demo-web", project: "Demo Project" },
     { id: "demo-repo-2", name: "demo-api", project: "Demo Project" },
   ];
+  // Your recently completed pull requests, newest closed first, from both
+  // repositories.
+  const demoMyCompletedPrs = [
+    { id: 498, title: "Remember the last picked PBI", repo: "demo-api", closed: "2026-07-17T15:20:00Z" },
+    { id: 495, title: "Fix the import preview's column widths", repo: "demo-web", closed: "2026-07-12T09:05:00Z" },
+  ].map((p) => ({
+    ...p,
+    repo_id: p.repo === "demo-web" ? "demo-repo-1" : "demo-repo-2",
+    project: "Demo Project",
+    author: "Demo User", source_branch: "feature/demo", target_branch: "main",
+    created: "2026-07-10T08:00:00Z",
+    description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,
+    my_vote: 0,
+    reviewers: [{ display_name: "Alex Kim", vote: 10 }],
+    web_url: `https://example.invalid/demo-pr/${p.id}`,
+    status: "completed", merge_commit: "",
+  }));
   const demoPrOverview = {
     awaiting: [
       {
@@ -1265,6 +1282,8 @@ function applyPatches() {
     prOverview: () => ok(demoPrOverview),
     // Nothing is left out of the sample organization.
     prOverviewAll: () => ok({ ...demoPrOverview, coverage: { shown: 0, total: 0 } }),
+    myCompletedPrs: () => ok(demoMyCompletedPrs),
+    myCompletedPrsAll: () => ok(demoMyCompletedPrs),
     boardPrLinks: () => ok(demoPrLinks),
     boardPrLinksAll: () => ok(demoPrLinks),
     prWorkItems: () =>

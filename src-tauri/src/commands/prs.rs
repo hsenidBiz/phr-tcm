@@ -51,6 +51,30 @@ pub async fn pr_overview_all(
     ado::AdoClient::new(token).pr_overview_all(&organization).await
 }
 
+/// The user's most recently completed pull requests in one project, every
+/// repository of it, newest first.
+#[tauri::command]
+#[specta::specta]
+pub async fn my_completed_prs(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<ado_git::PullRequest>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).my_completed_prs(&organization, &project).await
+}
+
+/// `my_completed_prs` across every project of the organization.
+#[tauri::command]
+#[specta::specta]
+pub async fn my_completed_prs_all(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<Vec<ado_git::PullRequest>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).my_completed_prs_all(&organization).await
+}
+
 /// `board_pr_links` across every project of the organization.
 #[tauri::command]
 #[specta::specta]

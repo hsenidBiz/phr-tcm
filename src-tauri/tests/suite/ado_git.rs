@@ -489,3 +489,37 @@ async fn an_ordinary_404_is_still_not_found() {
         .expect_err("404");
     assert!(matches!(err, AdoError::NotFound), "got {err:?}");
 }
+
+#[tokio::test]
+async fn my_completed_prs_asks_for_my_completed_ones_and_lists_newest_closed_first() {
+    let server = MockServer::start().await;
+    mount_connection_data(&server).await;
+    let closed = |id: i32, at: &str| {
+        let mut pr = pr_json(id, 0);
+        pr["status"] = serde_json::json!("completed");
+        pr["closedDate"] = serde_json::json!(at);
+        pr
+    };
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/pullrequests"))
+        .and(query_param("searchCriteria.status", "completed"))
+        .and(query_param("searchCriteria.creatorId", "me-guid"))
+        .and(query_param("$top", "25"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                closed(4, "2026-11-01T10:00:00Z"),
+                closed(5, "2026-11-12T10:00:00Z"),
+                closed(6, "2026-11-05T10:00:00Z")
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let prs = client.my_completed_prs("org", "proj").await.unwrap();
+
+    assert_eq!(prs.iter().map(|p| p.id).collect::<Vec<_>>(), vec![5, 6, 4]);
+    assert_eq!(prs[0].closed, "2026-11-12T10:00:00Z");
+    server.verify().await;
+}

@@ -726,3 +726,45 @@ async fn the_boards_pull_request_chips_log_a_project_they_cannot_read() {
     let logged = logged.expect("the skipped project is written to the log");
     assert!(!logged.message.contains("http"), "no URL in the log line: {}", logged.message);
 }
+
+// ------------------------------------------------- your completed ones
+
+fn my_closed_pr(id: i32, project: Option<&str>, at: &str) -> serde_json::Value {
+    let mut v = pr(id, "web", "g2", project, 0);
+    v["status"] = serde_json::json!("completed");
+    v["closedDate"] = serde_json::json!(at);
+    v
+}
+
+#[tokio::test]
+async fn my_completed_prs_all_merges_the_projects_newest_first_and_keeps_25() {
+    let org = "prs-mine-done";
+    let (server, client) = start(org).await;
+    mount_identity(&server, org).await;
+    mount_repos(&server, org, vec![repo("g1", "api", "A", false), repo("g2", "web", "C", false)]).await;
+    mount_org_refused(&server, org, 404, 1).await;
+    // Each project answers with its own most recent: 20 from A, 10 from C.
+    let a: Vec<_> = (1..=20).map(|i| my_closed_pr(i, Some("A"), &format!("2026-10-{i:02}T00:00:00Z"))).collect();
+    let c: Vec<_> = (101..=110)
+        .map(|i| my_closed_pr(i, None, &format!("2026-11-{:02}T00:00:00Z", i - 100)))
+        .collect();
+    for (project, list) in [("A", a), ("C", c)] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{org}/{project}/_apis/git/pullrequests")))
+            .and(query_param("searchCriteria.status", "completed"))
+            .and(query_param("searchCriteria.creatorId", "me-guid"))
+            .and(query_param("$top", "25"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(prs_body(list)))
+            .mount(&server)
+            .await;
+    }
+
+    let prs = client.my_completed_prs_all(org).await.unwrap();
+
+    assert_eq!(prs.len(), 25, "cut back to the newest 25");
+    assert_eq!(prs[0].id, 110, "newest closed first");
+    assert_eq!(prs[0].project, "C", "an answer naming no project is the project asked");
+    assert_eq!(prs[9].id, 101);
+    assert_eq!(prs[10].id, 20);
+    assert_eq!(prs[24].id, 6, "A's five oldest are left out");
+}
