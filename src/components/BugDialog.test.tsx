@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import BugDialog, { missingRequired, toAdoDate } from "./BugDialog";
-import { clearCache, flushCacheForTests, resetCacheForTests } from "../lib/cache";
+import { cacheKeys, cacheWrite, clearCache, flushCacheForTests, resetCacheForTests } from "../lib/cache";
 import { renderCaseMarkdown } from "../lib/markdown";
 
 // The toasts are asserted on (a broken paste must never claim success).
@@ -481,5 +481,56 @@ test("toAdoDate keeps the local day and missingRequired ignores blanks", () => {
   expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2026, 10, 13]);
   expect(missingRequired([pickField, textField], { "Custom.BugType": "  ", "Custom.Build": "1" })).toEqual([
     "Custom.BugType",
+  ]);
+});
+
+test("a remembered pick that is no longer allowed is blank and never sent", async () => {
+  cacheWrite(cacheKeys.bugFieldValues("acme", "Web"), { "Custom.BugType": "Legacy" });
+  let filed: Record<string, unknown> | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "bug_fields") return { wi_type: "Bug", fields: [pickField] };
+    if (cmd === "file_bug") {
+      filed = args as Record<string, unknown>;
+      return { id: 9, url: "x", screenshots_total: 0, screenshots_failed: 0 };
+    }
+  });
+  renderIn("Web");
+  await screen.findByRole("combobox", { name: "Bug Type" });
+  expect(fileButton()).toBeDisabled();
+  fireEvent.click(screen.getByRole("combobox", { name: "Bug Type" }));
+  fireEvent.click(screen.getByRole("option", { name: "API" }));
+  expect(fileButton()).toBeEnabled();
+  fireEvent.click(fileButton());
+  await vi.waitFor(() => expect(filed).not.toBeNull());
+  expect(JSON.stringify(filed)).not.toContain("Legacy");
+  expect((filed as unknown as { fieldValues: { value: string }[] }).fieldValues[0].value).toBe("API");
+});
+
+test("a failed refetch keeps the fields already shown and filled", async () => {
+  let n = 0;
+  let filed: Record<string, unknown> | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "bug_fields") {
+      n++;
+      if (n > 1) throw { kind: "Forbidden" };
+      return { wi_type: "Bug", fields: [textField] };
+    }
+    if (cmd === "file_bug") {
+      filed = args as Record<string, unknown>;
+      throw { kind: "RuleViolations", detail: [{ reference_name: "Custom.Hidden", message: "Needed." }] };
+    }
+  });
+  renderIn("Web");
+  await screen.findByLabelText("Build");
+  fireEvent.change(screen.getByLabelText("Build"), { target: { value: "1.2" } });
+  fireEvent.click(fileButton());
+  expect(await screen.findByText("Custom.Hidden: Needed.")).toBeInTheDocument();
+  expect(screen.getByLabelText("Build")).toHaveValue("1.2");
+  await vi.waitFor(() => expect(fileButton()).toBeEnabled());
+  filed = null;
+  fireEvent.click(fileButton());
+  await vi.waitFor(() => expect(filed).not.toBeNull());
+  expect((filed as unknown as { fieldValues: unknown[] }).fieldValues).toEqual([
+    { reference_name: "Custom.Build", value: "1.2" },
   ]);
 });
