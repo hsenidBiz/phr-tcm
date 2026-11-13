@@ -57,7 +57,8 @@ import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
 import AssistantsCard from "./AssistantsCard";
 import WaitingForYou from "./WaitingForYou";
-import RecentActivity from "./RecentActivity";
+// Recent activity (./RecentActivity) is built and tested but not shown: the
+// owner is still deciding where on Auto Run it belongs (2026-11-13).
 import { clearAutoRunFocus, useAutoRunFocus } from "../../lib/autoRunFocus";
 import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
@@ -779,7 +780,6 @@ export default function AutoRun({
       <div className="space-y-4">
         {/* What the assistants left for a person to decide. */}
         <WaitingForYou org={org} project={project} />
-        <RecentActivity org={org} />
         {/* Assistants work whatever PBI is open, or none. */}
         <AssistantsCard />
         <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>
@@ -813,7 +813,6 @@ export default function AutoRun({
         {/* Who is connected and what each assistant is doing, above the tabs
             (and before a PBI is picked); nothing at all while none is. */}
         <WaitingForYou org={org} project={project} />
-        <RecentActivity org={org} />
         <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the
             keyboard a tab list owes: only the chosen tab is in the Tab
