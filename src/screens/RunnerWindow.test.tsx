@@ -11,12 +11,17 @@ import RunnerWindow from "./RunnerWindow";
 // vi.fn() (undefined) threw an unhandled error that failed the release
 // gate even with every assertion green. ONE shared object, so tests can
 // assert calls like minimize/unminimize across getCurrentWindow() calls.
+const dragDrop = vi.hoisted(() => ({ handler: null as null | ((e: unknown) => void) }));
 const windowMock = vi.hoisted(() => ({
   close: vi.fn(() => Promise.resolve()),
   setFocus: vi.fn(() => Promise.resolve()),
   setAlwaysOnTop: vi.fn(() => Promise.resolve()),
   minimize: vi.fn(() => Promise.resolve()),
   unminimize: vi.fn(() => Promise.resolve()),
+  onDragDropEvent: vi.fn((cb: (e: unknown) => void) => {
+    dragDrop.handler = cb;
+    return Promise.resolve(() => {});
+  }),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => windowMock,
@@ -1369,4 +1374,119 @@ test("a session image can be downloaded", async () => {
     destPath: "C:/out/pic.png",
     b64: PNG_B64,
   });
+});
+
+/// Attach several files at once, and drop files onto the window.
+function mockMultiFile(
+  cases: number,
+  picked: string[],
+  calls: Array<{ cmd: string; args: Record<string, unknown> }> = [],
+) {
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }].slice(0, cases);
+    if (cmd === "list_test_points")
+      return [7, 8].slice(0, cases).map((id, i) => ({
+        point_id: id,
+        test_case_id: 201 + i,
+        test_case_name: i ? "Invalid login" : "Valid login",
+        config_name: "W10",
+        tester: "",
+        last_outcome: "",
+        last_run_id: null,
+        last_result_id: null,
+        tags: "",
+      }));
+    if (cmd === "plugin:dialog|open") return picked;
+    if (cmd === "read_file_b64") {
+      const path = (args as { path: string }).path;
+      if (path.includes("big")) throw "File is larger than 25 MB.";
+      return { file_name: path.split("/").pop(), b64: path.endsWith(".png") ? PNG_B64 : "QQ==" };
+    }
+  });
+}
+
+const drop = (paths: string[]) =>
+  act(async () => {
+    dragDrop.handler!({ payload: { type: "drop", paths } });
+  });
+const dragEvent = (type: "enter" | "leave") =>
+  act(async () => {
+    dragDrop.handler!({ payload: { type, paths: [] } });
+  });
+
+test("Attach file takes several files", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockMultiFile(1, ["C:/a.txt", "C:/b.png"], calls);
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: /Attach file/ }));
+  await screen.findByLabelText("Remove a.txt");
+  await screen.findByLabelText("Remove b.png");
+  const open = calls.find((c) => c.cmd === "plugin:dialog|open")!;
+  expect((open.args.options as { multiple: boolean }).multiple).toBe(true);
+  expect(toastMock.success).toHaveBeenCalledWith("Attached 2 files");
+});
+
+test("a failed file is named and the rest still attach", async () => {
+  mockMultiFile(1, ["C:/a.txt", "C:/big.bin", "C:/b.txt"]);
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: /Attach file/ }));
+  await screen.findByLabelText("Remove b.txt");
+  expect(screen.getByLabelText("Remove a.txt")).toBeInTheDocument();
+  expect(toastMock.error).toHaveBeenCalledWith("Could not attach big.bin (File is larger than 25 MB.)");
+});
+
+test("dropping files attaches them to the case on screen", async () => {
+  mockMultiFile(1, []);
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  await drop(["C:/d1.txt", "C:/d2.png"]);
+  await screen.findByLabelText("Remove d1.txt");
+  await screen.findByLabelText("Remove d2.png");
+  expect(toastMock.success).toHaveBeenCalledWith("Attached 2 files");
+});
+
+test("a drop after moving to the next case attaches to the new case", async () => {
+  mockMultiFile(2, []);
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Invalid login");
+  await drop(["C:/late.txt"]);
+  await screen.findByLabelText("Remove late.txt");
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Valid login");
+  expect(screen.queryByLabelText("Remove late.txt")).not.toBeInTheDocument();
+});
+
+test("a drop with no case on screen attaches nothing and says so", async () => {
+  mockMultiFile(0, []);
+  renderRunner();
+  await act(async () => {});
+  await drop(["C:/x.txt"]);
+  expect(toastMock.info).toHaveBeenCalledWith("Open a case to attach files to it.");
+  expect(screen.queryByLabelText("Remove x.txt")).not.toBeInTheDocument();
+});
+
+test("the drop hint is pointer-events-none and only while dragging", async () => {
+  mockMultiFile(1, []);
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+  expect(screen.queryByText(/Drop to attach/)).not.toBeInTheDocument();
+  await dragEvent("enter");
+  const hint = screen.getByText(/Drop to attach to case #201/);
+  expect(hint).toHaveClass("pointer-events-none");
+  // A click still reaches the controls under it.
+  fireEvent.click(screen.getByRole("button", { name: /Paste/ }));
+  await dragEvent("leave");
+  expect(screen.queryByText(/Drop to attach/)).not.toBeInTheDocument();
 });

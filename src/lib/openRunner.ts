@@ -31,6 +31,10 @@ export async function openRunnerWindow(session: RunnerSession) {
     resizable: true,
     focus: true,
     decorations: false,
+    // Files dropped on the runner attach to the case on screen. The runner has
+    // no HTML5 drag targets of its own, so the native drop handler costs it
+    // nothing; the main window keeps it off for its own drag-and-drop.
+    dragDropEnabled: true,
   });
   runner.once("tauri://error", (e) => {
     // eslint-disable-next-line no-console

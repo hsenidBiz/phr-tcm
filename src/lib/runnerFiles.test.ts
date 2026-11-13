@@ -1,7 +1,7 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { ResultAttachment } from "../bindings";
-import { downloadResultFile, downloadSessionFile } from "./runnerFiles";
+import { downloadResultFile, downloadSessionFile, readFiles } from "./runnerFiles";
 
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("./toast", () => ({ toast: toastMock }));
@@ -74,4 +74,17 @@ test("a session file failure toasts Rust's sentence", async () => {
   };
   expect(await downloadSessionFile({ file_name: "a.txt", b64: "QQ==" })).toBe(false);
   expect(String(toastMock.error.mock.calls[0][0])).toBe("Could not save a.txt: The destination is not writable.");
+});
+
+test("every picked file is read and one failure does not stop the others", async () => {
+  let n = 0;
+  mockIPC((cmd) => {
+    if (cmd !== "read_file_b64") return null;
+    n += 1;
+    if (n === 2) throw "File is larger than 25 MB.";
+    return { file_name: `f${n}.txt`, b64: "QQ==" };
+  });
+  const r = await readFiles(["C:/a/f1.txt", "C:/b/big.bin", "C:/c/f3.txt"]);
+  expect(r.read.map((a) => a.file_name)).toEqual(["f1.txt", "f3.txt"]);
+  expect(r.failed).toEqual([{ name: "big.bin", why: "File is larger than 25 MB." }]);
 });

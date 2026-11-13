@@ -52,3 +52,22 @@ export function downloadResultFile(
     unwrap(commands.saveResultAttachment(org, project, runId, resultId, att.id, att.size_bytes, path)),
   );
 }
+
+export type ReadReport = { read: RunAttachment[]; failed: { name: string; why: string }[] };
+
+const baseName = (path: string) => path.split(/[\/]/).filter(Boolean).pop() ?? path;
+
+/** Reads each path through read_file_b64, one after another (several large
+ * files at once would hold all their base64 in memory together); one
+ * failure never stops the rest. */
+export async function readFiles(paths: string[]): Promise<ReadReport> {
+  const report: ReadReport = { read: [], failed: [] };
+  for (const path of paths) {
+    try {
+      report.read.push(await unwrapStr(commands.readFileB64(path)));
+    } catch (e) {
+      report.failed.push({ name: baseName(path), why: reason(e) });
+    }
+  }
+  return report;
+}
