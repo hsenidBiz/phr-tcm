@@ -190,6 +190,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::export_queue_json,
             testplan::list_plans_with_suites,
             runs::get_result_detail,
+            bugs::bug_fields,
             bugs::file_bug,
             board::list_teams,
             board::list_team_members,

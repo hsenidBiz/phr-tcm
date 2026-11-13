@@ -5,7 +5,7 @@ use crate::state::get_fresh_token;
 use crate::ado;
 
 pub mod work_bug {
-    #[derive(serde::Serialize, specta::Type)]
+    #[derive(Debug, serde::Serialize, specta::Type)]
     pub struct FiledBug {
         pub id: i32,
         pub url: String,
@@ -36,6 +36,63 @@ pub fn repro_html(repro_text: &str) -> String {
     crate::case_markdown::prereq_md_to_html(repro_text)
 }
 
+/// The fields a Bug of this project's process must be given beyond its
+/// title and repro steps.
+#[derive(serde::Serialize, specta::Type)]
+pub struct BugFields {
+    pub wi_type: String,
+    pub fields: Vec<crate::work_board::ExtraField>,
+}
+
+/// One value the tester gave for a Bug field.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct BugFieldValue {
+    pub reference_name: String,
+    pub value: String,
+}
+
+/// Why a bug was not filed: the process rules named fields (nothing was
+/// created), or Azure DevOps / the network failed some other way.
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "kind", content = "detail")]
+pub enum FileBugError {
+    RuleViolations(Vec<ado::rule_errors::FieldViolation>),
+    Ado(ado::AdoError),
+}
+
+impl From<ado::AdoError> for FileBugError {
+    fn from(e: ado::AdoError) -> Self {
+        if let ado::AdoError::Http { status, body } = &e {
+            if (400..500).contains(status) {
+                let v = ado::rule_errors::rule_violations(body);
+                if !v.is_empty() {
+                    return FileBugError::RuleViolations(v);
+                }
+            }
+        }
+        FileBugError::Ado(e)
+    }
+}
+
+/// The fields the Bug dialog must ask for: the type's required fields that
+/// ADO does not fill, plus `extra_refs` (fields a rejection named).
+#[tauri::command]
+#[specta::specta]
+pub async fn bug_fields(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    extra_refs: Vec<String>,
+) -> Result<BugFields, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let info = client.detect_bug_type(&organization, &project).await?;
+    let fields = client
+        .bug_field_definitions(&organization, &project, &info.wi_type, &info.repro_field, &extra_refs)
+        .await?;
+    Ok(BugFields { wi_type: info.wi_type, fields })
+}
+
 /// File a Bug (or Issue on Basic-process projects) for a failed case:
 /// Related links to the test case + PBI, screenshots attached. POST only.
 #[tauri::command]
@@ -49,26 +106,64 @@ pub async fn file_bug(
     test_case_id: i32,
     pbi_id: i32,
     screenshots_b64: Vec<String>,
-) -> Result<work_bug::FiledBug, String> {
-    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    field_values: Vec<BugFieldValue>,
+) -> Result<work_bug::FiledBug, FileBugError> {
+    let token = get_fresh_token(&app).await?;
     let client = ado::AdoClient::new(token);
-    let info = client
-        .detect_bug_type(&organization, &project)
-        .await
-        .map_err(|e| e.to_string())?;
-    let fields = vec![
-        ("System.Title".to_string(), title),
-        (info.repro_field.clone(), repro_html(&repro_text)),
+    file_bug_with(
+        &client,
+        &organization,
+        &project,
+        &title,
+        &repro_text,
+        test_case_id,
+        pbi_id,
+        &screenshots_b64,
+        &field_values,
+    )
+    .await
+}
+
+/// The body of `file_bug`, testable against a mock server. Blank values,
+/// the title and repro fields, and anything that is not a plain dotted
+/// field reference are dropped: a value can never steer the JSON-patch path
+/// or override what the dialog itself supplies.
+pub async fn file_bug_with(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    title: &str,
+    repro_text: &str,
+    test_case_id: i32,
+    pbi_id: i32,
+    screenshots_b64: &[String],
+    field_values: &[BugFieldValue],
+) -> Result<work_bug::FiledBug, FileBugError> {
+    let info = client.detect_bug_type(organization, project).await?;
+    let mut fields = vec![
+        ("System.Title".to_string(), title.to_string()),
+        (info.repro_field.clone(), repro_html(repro_text)),
     ];
+    for v in field_values {
+        let r = v.reference_name.as_str();
+        if v.value.trim().is_empty()
+            || r == "System.Title"
+            || r == info.repro_field
+            || !ado::rule_errors::is_plain_ref(r)
+            || fields.iter().any(|(have, _)| have == r)
+        {
+            continue;
+        }
+        fields.push((r.to_string(), v.value.clone()));
+    }
     let (id, url) = client
-        .create_work_item(&organization, &project, &info.wi_type, &fields, &[test_case_id, pbi_id], None)
-        .await
-        .map_err(|e| e.to_string())?;
+        .create_work_item(organization, project, &info.wi_type, &fields, &[test_case_id, pbi_id], None)
+        .await?;
     // The bug itself exists from here on, so a screenshot that fails must
     // not fail the call - re-filing would leave a duplicate. Count them
     // instead: a tester who attached three screenshots of a failure needs
     // to know when none of them arrived.
-    let failed = attach_screenshots(&client, &organization, &project, id, &screenshots_b64).await;
+    let failed = attach_screenshots(client, organization, project, id, screenshots_b64).await;
     Ok(work_bug::FiledBug {
         id,
         url,

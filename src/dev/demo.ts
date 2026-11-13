@@ -1245,6 +1245,7 @@ function applyPatches() {
     getResultDetail: () => ok({ outcome: "Failed", comment: "Demo failure comment" }),
     resultFailureDetail: () => ok({ comment: "Demo: step 3 timed out waiting for the redirect.", bug_ids: [2003] }),
     resultScreenshots: () => ok([]),
+    bugFields: () => ok({ wi_type: "Bug", fields: [] }),
     fileBug: (_o: string, _p: string, title: string) => {
       const id = nextId++;
       boardItems.push({ id, title, work_item_type: "Bug", state: "To Do", state_color: "cc293d", column: "To Do", assigned_to: "Demo User", tags: "demo", priority: 2, changed_date: new Date().toISOString(), parent: null, project: "Demo Project" });

@@ -2,10 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "../lib/toast";
-import { commands, type Step, type TestCaseFull } from "../bindings";
+import { commands, type FileBugError, type Step, type TestCaseFull } from "../bindings";
 import { imageMime } from "../lib/blob";
 import { firstValidClipboardImage, imageOfPasteFile, NOT_ON_CLIPBOARD_YET, type ClipboardImage } from "../lib/clipboardImage";
-import { unwrapStr } from "../lib/ipc";
+import { describeAdoError } from "../lib/ipc";
 import { sharedStepQueryKey, sharedStepText } from "../lib/sharedSteps";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
@@ -14,6 +14,26 @@ import { IconBug, IconCancel } from "../lib/actionIcons";
 
 /** A line that opens (or closes) a fenced code block. */
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** What a failed file-a-bug call says. An unknown shape (the dev fault
+ * injector hands back a bare AdoError or a string) is shown as it is. */
+export function fileBugErrorText(e: FileBugError): string {
+  if (e && typeof e === "object" && "kind" in e) {
+    if (e.kind === "Ado") return describeAdoError(e.detail);
+    if (e.kind === "RuleViolations") {
+      return `Azure DevOps needs: ${e.detail.map((v) => v.reference_name).join(", ")}`;
+    }
+  }
+  return String(e);
+}
+
+async function unwrapFileBug<T>(
+  p: Promise<{ status: "ok"; data: T } | { status: "error"; error: FileBugError }>,
+): Promise<T> {
+  const r = await p;
+  if (r.status === "error") throw new Error(fileBugErrorText(r.error));
+  return r.data;
+}
 
 /** One step of the repro as a Markdown list item. The repro goes to Azure
  * DevOps as rich text, so the step's other lines are indented under its
@@ -115,8 +135,8 @@ export default function BugDialog({
 
   const file = useMutation({
     mutationFn: (p: BugPayload) =>
-      unwrapStr(
-        commands.fileBug(org, project, p.title.trim(), p.repro, testCase.id, pbiId, p.shots),
+      unwrapFileBug(
+        commands.fileBug(org, project, p.title.trim(), p.repro, testCase.id, pbiId, p.shots, []),
       ),
     onSuccess: (bug) => {
       // The bug exists either way - re-filing over a failed upload would

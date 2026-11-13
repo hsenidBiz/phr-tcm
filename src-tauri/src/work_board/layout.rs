@@ -2,10 +2,110 @@
 //! carries beyond the main Details page, e.g. a Bug's RCA and Preventive
 //! Measures, resolved from the org-level processes API.
 
-use super::{ExtraField, ExtraPage};
-use crate::ado::AdoClient;
+use super::{ExtraField, ExtraPage, BUG_AUTO_FILLED};
+use crate::ado::{AdoClient, AdoError};
 
 impl AdoClient {
+    /// The fields a create of `wi_type` must be given: everything the type
+    /// marks always-required that ADO does not fill itself (no default, not
+    /// in `BUG_AUTO_FILLED`, not the repro field), plus every ref in
+    /// `extra_refs` (fields a rule rejection named, shown even when the type
+    /// does not mark them required). In the type's own order, extras last.
+    /// A field whose own definition cannot be read is still offered, as text.
+    pub async fn bug_field_definitions(
+        &self,
+        org: &str,
+        project: &str,
+        wi_type: &str,
+        repro_field: &str,
+        extra_refs: &[String],
+    ) -> Result<Vec<ExtraField>, AdoError> {
+        use crate::ado::endpoints::percent_encode_segment;
+        use crate::ado::rule_errors::is_plain_ref;
+        let (o, p) = (percent_encode_segment(org), percent_encode_segment(project));
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitemtypes/{}/fields?$expand=all&api-version=7.1",
+            self.base_url,
+            o,
+            p,
+            urlencoding::encode(wi_type)
+        );
+        let listing = self.get_json(url).await?;
+        let skip = |r: &str| r == repro_field || BUG_AUTO_FILLED.contains(&r) || !is_plain_ref(r);
+
+        // (reference name, name, allowed values from the type's own entry)
+        let mut wanted: Vec<(String, String, Vec<String>)> = Vec::new();
+        let push = |r: &str, name: &str, allowed: Vec<String>, wanted: &mut Vec<_>| {
+            if !skip(r) && !wanted.iter().any(|(w, _, _): &(String, String, Vec<String>)| w == r) {
+                wanted.push((r.to_string(), name.to_string(), allowed));
+            }
+        };
+        let allowed_of = |f: &serde_json::Value| -> Vec<String> {
+            f["allowedValues"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        };
+        let has_default = |f: &serde_json::Value| match &f["defaultValue"] {
+            serde_json::Value::Null => false,
+            serde_json::Value::String(s) => !s.is_empty(),
+            _ => true,
+        };
+        for f in listing["value"].as_array().into_iter().flatten() {
+            let Some(r) = f["referenceName"].as_str() else { continue };
+            let extra = extra_refs.iter().any(|e| e == r);
+            if extra || (f["alwaysRequired"].as_bool() == Some(true) && !has_default(f)) {
+                push(r, f["name"].as_str().unwrap_or(r), allowed_of(f), &mut wanted);
+            }
+        }
+        for r in extra_refs {
+            push(r, r, Vec::new(), &mut wanted);
+        }
+
+        let urls = wanted
+            .iter()
+            .map(|(r, _, _)| format!("{}/{}/{}/_apis/wit/fields/{}?api-version=7.1", self.base_url, o, p, urlencoding::encode(r)))
+            .collect();
+        let defs = self.get_json_each(urls).await;
+
+        let mut out = Vec::new();
+        for ((reference_name, listed_name, mut allowed), def) in wanted.into_iter().zip(defs) {
+            let def = def.unwrap_or(serde_json::Value::Null);
+            let label = if listed_name != reference_name {
+                listed_name
+            } else {
+                def["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(&reference_name).to_string()
+            };
+            let ftype = def["type"].as_str().unwrap_or_default().to_ascii_lowercase();
+            if allowed.is_empty() && ftype.starts_with("picklist") {
+                allowed = self
+                    .get_field_allowed_values(org, project, wi_type, &reference_name)
+                    .await
+                    .unwrap_or_default();
+            }
+            let kind = if !allowed.is_empty() {
+                "pick"
+            } else if ftype == "datetime" {
+                "date"
+            } else if ftype == "html" {
+                "html"
+            } else {
+                "text"
+            };
+            out.push(ExtraField {
+                label,
+                reference_name,
+                section: 0,
+                kind: kind.to_string(),
+                allowed,
+                value: String::new(),
+            });
+        }
+        Ok(out)
+    }
+
     /// The type's custom form pages beyond the first (main) one, with every
     /// visible field control they contain - the same tabs ADO's own form
     /// shows (Bug: RCA, Preventive Measures). Fields are included even when

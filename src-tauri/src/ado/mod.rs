@@ -12,6 +12,7 @@
 pub mod attachments;
 pub mod endpoints;
 pub mod fanout;
+pub mod rule_errors;
 pub mod wit_batch;
 pub use endpoints::{tags_write_ops, RelinkOutcome};
 /// The single, audited exception to the no-DELETE rule. See its header.
