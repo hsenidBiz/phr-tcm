@@ -282,15 +282,14 @@ pub fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
     })
 }
 
-/// Write `bytes` to `dest` through a `.part` file and a rename, so a
+/// Write `bytes` to `dest` through a unique `.part` file and a rename, so a
 /// failure never leaves half a file at `dest`.
 pub fn write_file_atomically(dest: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut part_name = dest.as_os_str().to_owned();
-    part_name.push(".part");
-    let part = std::path::PathBuf::from(part_name);
+    let part = ado::transport::temp_part_path(dest);
+    let guard = ado::transport::PartGuard(part.clone());
     let result = std::fs::write(&part, bytes).and_then(|()| std::fs::rename(&part, dest));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&part);
+    if result.is_ok() {
+        guard.disarm();
     }
     result
 }

@@ -5,6 +5,9 @@ use super::{
 };
 use crate::ado::{AdoClient, AdoError};
 
+const MAX_THUMBS: usize = 12;
+const MAX_THUMB_SOURCE_BYTES: u32 = 2 * 1024 * 1024;
+
 impl AdoClient {
     /// All test points in a plan+suite (paginated). Read only.
     pub async fn get_test_points(
@@ -333,10 +336,14 @@ impl AdoClient {
         let listed = self.list_result_attachments(org, project, run_id, result_id).await?;
         let mut out = Vec::with_capacity(listed.len());
         let mut thumbs_ok = true;
+        let mut thumbs_tried = 0usize;
         for (id, name, size) in listed {
             let kind = attachment_kind(&name);
             let mut thumb_b64 = None;
-            if kind == "image" && thumbs_ok {
+            // One IPC reply carries every thumbnail, so bound it: only the
+            // first MAX_THUMBS images, and none whose file is large.
+            if kind == "image" && thumbs_ok && thumbs_tried < MAX_THUMBS && size <= MAX_THUMB_SOURCE_BYTES {
+                thumbs_tried += 1;
                 let dl = self.result_attachment_url(org, project, run_id, result_id, id);
                 match self.get_bytes(dl).await {
                     Ok(bytes) => {
@@ -376,7 +383,13 @@ impl AdoClient {
         dest: &std::path::Path,
     ) -> Result<u64, AdoError> {
         let url = self.result_attachment_url(org, project, run_id, result_id, attachment_id);
-        self.get_to_file(url, dest, crate::ado::upload_timeout(size_bytes as usize))
+        // An unknown size (0) gets the longest deadline, not the shortest.
+        let deadline = if size_bytes == 0 {
+            crate::ado::UPLOAD_TIMEOUT_CAP
+        } else {
+            crate::ado::upload_timeout(size_bytes as usize)
+        };
+        self.get_to_file(url, dest, deadline)
             .await
     }
 
