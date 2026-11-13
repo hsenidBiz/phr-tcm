@@ -118,6 +118,9 @@ impl LinkedPr {
 /// How many completed pull requests the board reads work items for.
 const COMPLETED_PRS_ON_BOARD: usize = 25;
 
+/// How many of the user's own completed pull requests the panel lists.
+pub const MY_COMPLETED_PRS: usize = 25;
+
 /// The entries of an Azure DevOps list answer.
 fn values_of(data: &serde_json::Value) -> Vec<serde_json::Value> {
     data["value"].as_array().cloned().unwrap_or_default()
@@ -236,6 +239,14 @@ impl AdoClient {
     /// Page size for repo_pull_requests. The frontend mirrors this to know
     /// when a page is full (i.e. a next page may exist).
     pub const PR_PAGE_SIZE: u32 = 25;
+}
+
+/// Newest closed first, cut to `MY_COMPLETED_PRS`. The sort is stable, so
+/// equal dates keep the order Azure DevOps (or the projects) gave them.
+fn newest_closed(mut prs: Vec<PullRequest>) -> Vec<PullRequest> {
+    prs.sort_by(|a, b| b.closed.cmp(&a.closed));
+    prs.truncate(MY_COMPLETED_PRS);
+    prs
 }
 
 fn parse_pr(
@@ -498,6 +509,41 @@ impl AdoClient {
         let awaiting = reviewing.into_iter().map(parse).filter(|pr| pr.my_vote == 0).collect();
         let mine = created.into_iter().map(parse).collect();
         Ok(PrOverviewAll { awaiting, mine, coverage })
+    }
+
+    /// The user's most recently completed pull requests in one project,
+    /// every repository of it, newest first. Read only.
+    pub async fn my_completed_prs(&self, org: &str, project: &str) -> Result<Vec<PullRequest>, AdoError> {
+        let me = self.my_identity_id(org).await?;
+        let url = format!(
+            "{}/{}/{}/_apis/git/pullrequests?searchCriteria.status=completed&searchCriteria.creatorId={}&$top={}&api-version=7.1",
+            self.base_url, org, project, me, MY_COMPLETED_PRS
+        );
+        let data = self.get_json(url).await?;
+        let prs = values_of(&data)
+            .iter()
+            .map(|v| parse_pr(v, &self.base_url, org, project, &me))
+            .collect();
+        Ok(newest_closed(prs))
+    }
+
+    /// `my_completed_prs` across every project of the organization. Asked
+    /// project by project, each project answers with its own most recent,
+    /// so the merged list is cut back to the newest `MY_COMPLETED_PRS`.
+    /// Read only.
+    pub async fn my_completed_prs_all(&self, org: &str) -> Result<Vec<PullRequest>, AdoError> {
+        let me = self.my_identity_id(org).await?;
+        let (listed, _) = self
+            .pull_requests_across(
+                org,
+                &format!("searchCriteria.status=completed&searchCriteria.creatorId={me}&$top={MY_COMPLETED_PRS}"),
+            )
+            .await?;
+        let prs = listed
+            .into_iter()
+            .map(|(project, v)| parse_pr(&v, &self.base_url, org, &project, &me))
+            .collect();
+        Ok(newest_closed(prs))
     }
 
     /// `board_pr_links` across every project of the organization: the

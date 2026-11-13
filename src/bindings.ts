@@ -1480,6 +1480,13 @@ export const commands = {
 	listReposAll: (organization: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos_all", { organization })),
 	/**  `pr_overview` across every project of the organization. */
 	prOverviewAll: (organization: string) => typedError<PrOverviewAll, AdoError>(__TAURI_INVOKE("pr_overview_all", { organization })),
+	/**
+	 *  The user's most recently completed pull requests in one project, every
+	 *  repository of it, newest first.
+	 */
+	myCompletedPrs: (organization: string, project: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("my_completed_prs", { organization, project })),
+	/**  `my_completed_prs` across every project of the organization. */
+	myCompletedPrsAll: (organization: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("my_completed_prs_all", { organization })),
 	/**  `board_pr_links` across every project of the organization. */
 	boardPrLinksAll: (organization: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links_all", { organization })),
 	repoPullRequests: (organization: string, project: string, repoId: string, status: string, skip: number) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status, skip })),
