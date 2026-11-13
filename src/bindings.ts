@@ -1285,6 +1285,18 @@ export const commands = {
 	 */
 	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
+	/**  Every file attached to a result, with a thumbnail for each image. */
+	resultAttachments: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultAttachment[], AdoError>(__TAURI_INVOKE("result_attachments", { organization, project, runId, resultId })),
+	/**
+	 *  Download one result attachment straight to a path the person chose. The
+	 *  bytes go from Azure DevOps to disk in Rust and never cross IPC.
+	 */
+	saveResultAttachment: (organization: string, project: string, runId: number, resultId: number, attachmentId: number, sizeBytes: number, destPath: string) => typedError<null, AdoError>(__TAURI_INVOKE("save_result_attachment", { organization, project, runId, resultId, attachmentId, sizeBytes, destPath })),
+	/**
+	 *  Write a file the page holds as base64 (a recording from this session)
+	 *  to a path the person chose.
+	 */
+	saveAttachmentB64: (destPath: string, b64: string) => typedError<null, string>(__TAURI_INVOKE("save_attachment_b64", { destPath, b64 })),
 	/**
 	 *  Render the queue's HTML report to a temp file and open it in the
 	 *  default browser - v1's "View" behaviour, no save dialog. Cases with a
@@ -7336,6 +7348,18 @@ export type ResetRecord_Serialize = {
 	waited_ms: number,
 	/**  "continued" or "stopped". */
 	outcome: string,
+};
+
+/**  One file attached to a test result, as the Test Runner lists it. */
+export type ResultAttachment = {
+	id: number,
+	file_name: string,
+	/**  Azure DevOps' "size", saturating; u32 because specta refuses u64 over IPC. */
+	size_bytes: number,
+	/**  "image" | "video" | "file" */
+	kind: string,
+	/**  Images only; None when the thumbnail could not be read. */
+	thumb_b64: string | null,
 };
 
 export type ResultDetail = {

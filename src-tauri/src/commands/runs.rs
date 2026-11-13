@@ -297,6 +297,51 @@ pub async fn result_screenshots(
         .await
 }
 
+/// Every file attached to a result, with a thumbnail for each image.
+#[tauri::command]
+#[specta::specta]
+pub async fn result_attachments(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+    result_id: i32,
+) -> Result<Vec<ado_testplan::ResultAttachment>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_result_attachments(&organization, &project, run_id, result_id)
+        .await
+}
+
+/// Download one result attachment straight to a path the person chose. The
+/// bytes go from Azure DevOps to disk in Rust and never cross IPC.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_result_attachment(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+    result_id: i32,
+    attachment_id: i32,
+    size_bytes: u32,
+    dest_path: String,
+) -> Result<(), ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .download_result_attachment(
+            &organization,
+            &project,
+            run_id,
+            result_id,
+            attachment_id,
+            size_bytes,
+            std::path::Path::new(&dest_path),
+        )
+        .await
+        .map(|_| ())
+}
+
 /// Recent outcome history (last 5, newest first) for the given test
 /// cases of a plan - the suite's cases, so the sweep knows when it can
 /// stop. An empty list returns every case in the plan's 15 newest runs.

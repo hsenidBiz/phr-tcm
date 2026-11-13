@@ -203,6 +203,29 @@ pub struct OutcomeUpdate {
     pub bug_ids: Option<Vec<i32>>,
 }
 
+/// One file attached to a test result, as the Test Runner lists it.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ResultAttachment {
+    pub id: i32,
+    pub file_name: String,
+    /// Azure DevOps' "size", saturating; u32 because specta refuses u64 over IPC.
+    pub size_bytes: u32,
+    /// "image" | "video" | "file"
+    pub kind: String,
+    /// Images only; None when the thumbnail could not be read.
+    pub thumb_b64: Option<String>,
+}
+
+/// What a file is, from its name alone.
+pub fn attachment_kind(file_name: &str) -> &'static str {
+    let ext = file_name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" => "image",
+        "webm" | "mp4" | "mov" | "mkv" | "avi" => "video",
+        _ => "file",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct ResultDetail {
     pub outcome: String,

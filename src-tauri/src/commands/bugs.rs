@@ -282,6 +282,34 @@ pub fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
     })
 }
 
+/// Write `bytes` to `dest` through a `.part` file and a rename, so a
+/// failure never leaves half a file at `dest`.
+pub fn write_file_atomically(dest: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut part_name = dest.as_os_str().to_owned();
+    part_name.push(".part");
+    let part = std::path::PathBuf::from(part_name);
+    let result = std::fs::write(&part, bytes).and_then(|()| std::fs::rename(&part, dest));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    result
+}
+
+/// Write a file the page holds as base64 (a recording from this session)
+/// to a path the person chose.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn save_attachment_b64(dest_path: String, b64: String) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .map_err(|_| "The file data is damaged.".to_string())?;
+    write_file_atomically(std::path::Path::new(&dest_path), &bytes).map_err(|e| {
+        crate::applog::warn(format!("saving a session file failed: {e}"));
+        format!("Could not save the file: {e}")
+    })
+}
+
 /// Launch the Windows snipping overlay (result lands on the clipboard; the
 /// runner polls and attaches it).
 #[tauri::command]

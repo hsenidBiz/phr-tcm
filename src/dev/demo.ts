@@ -1245,6 +1245,8 @@ function applyPatches() {
     getResultDetail: () => ok({ outcome: "Failed", comment: "Demo failure comment" }),
     resultFailureDetail: () => ok({ comment: "Demo: step 3 timed out waiting for the redirect.", bug_ids: [2003] }),
     resultScreenshots: () => ok([]),
+    resultAttachments: () => ok([]),
+    saveResultAttachment: () => err("Demo mode: downloads are disabled"),
     bugFields: () => ok({ wi_type: "Bug", fields: [] }),
     fileBug: (_o: string, _p: string, title: string) => {
       const id = nextId++;

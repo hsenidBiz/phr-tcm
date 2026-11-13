@@ -33,6 +33,7 @@ mod ado_network;
 mod ado_share;
 mod ado_step_attachments;
 mod ado_testplan;
+mod result_files;
 mod agents;
 mod ai_bridge;
 mod ai_tools;
