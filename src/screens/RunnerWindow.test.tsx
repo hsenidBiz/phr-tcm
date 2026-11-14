@@ -1,7 +1,7 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MY_ORDER_EVENT } from "../lib/runOrder";
 import RunnerWindow from "./RunnerWindow";
@@ -1263,6 +1263,68 @@ test("a shared step shows its reference and has no Pass/Fail marks", async () =>
   expect(screen.getByText("Shared steps #812")).toBeInTheDocument();
   expect(await screen.findByText(/Sign in as an admin/)).toBeInTheDocument();
   expect(screen.getAllByTitle("Passed")).toHaveLength(2); // the two local steps only
+});
+
+/** The steps inside a Shared Steps item show under its line, numbered under
+ * the case's step, read-only: no marks and nothing to edit. */
+test("a shared step shows the steps inside it, read-only", async () => {
+  const asked: number[][] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        {
+          ...fullCase,
+          steps: [fullCase.steps[0], { action: "", expected: "", shared: 812 }, fullCase.steps[1]],
+          step_ids: ["2", "", "3"],
+        },
+      ];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7, test_case_id: 201, test_case_name: "Valid login", config_name: "W10",
+          tester: "", last_outcome: "", last_run_id: null, last_result_id: null, tags: "",
+        },
+      ];
+    if (cmd === "test_cases_by_ids") {
+      const ids = (args as { ids: number[] }).ids;
+      asked.push(ids);
+      return ids.map((id) => ({
+        ...fullCase, id, title: "Sign in as an admin",
+        steps: [
+          { action: "Open the login page", expected: "" },
+          { action: "Enter the admin's name and password", expected: "The home page opens" },
+        ],
+        step_ids: ["2", "3"], steps_xml: "",
+      }));
+    }
+  });
+  renderRunner();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  const inner = await screen.findByRole("list", { name: "Steps in shared steps #812" });
+  expect(within(inner).getByText("Open the login page")).toBeInTheDocument();
+  expect(within(inner).getByText("The home page opens")).toBeInTheDocument();
+  expect(within(inner).getByText("2.1")).toBeInTheDocument();
+  expect(within(inner).getByText("2.2")).toBeInTheDocument();
+  expect(within(inner).queryAllByTitle("Passed")).toHaveLength(0);
+  expect(within(inner).queryByRole("textbox")).toBeNull();
+  expect(asked).toContainEqual([812]);
+});
+
+test("a shared step whose steps cannot be read says where to see them", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [{ ...fullCase, steps: [{ action: "", expected: "", shared: 812 }], step_ids: [""] }];
+    if (cmd === "list_test_points") return [];
+    if (cmd === "test_cases_by_ids") throw { kind: "NotFound" };
+  });
+  renderRunner();
+  expect(
+    await screen.findByText(
+      "Its steps could not be read. Open Shared steps #812 in Azure DevOps to see them.",
+    ),
+  ).toBeInTheDocument();
 });
 
 /// "Previously uploaded" is the whole file list of the last result, not only

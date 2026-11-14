@@ -11,7 +11,7 @@ import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
 import CaseText from "../components/CaseText";
 import HistoryDots from "../components/HistoryDots";
-import SharedStepLabel from "../components/SharedStepLabel";
+import SharedStepSteps from "../components/SharedStepSteps";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
@@ -1108,7 +1108,7 @@ export default function RunnerWindow() {
                   <span className="id-mono text-xs text-faint">{i + 1}</span>
                   <div className="flex-1">
                     {step.shared != null ? (
-                      <SharedStepLabel id={step.shared} org={session?.org} />
+                      <SharedStepSteps id={step.shared} org={session?.org} stepNumber={i + 1} />
                     ) : (
                       <>
                         <CaseText kind="step" text={step.action} />
