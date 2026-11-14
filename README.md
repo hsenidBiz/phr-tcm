@@ -173,9 +173,9 @@ the board's test count.
   credentials. The password reaches `sqlcmd` through its own
   `SQLCMDPASSWORD` environment variable rather than a command-line
   argument, so it does not appear in this machine's process list. That is
-  not the same as saying nothing else on this machine can read it: a
-  password typed into this form is stored here, in the app's own
-  settings, in plain text.
+  not the same as saying nothing else in your Windows session can read it:
+  the saved login sits in your own Credential Manager, so anything running
+  as your Windows account can read it.
 
 ### Work Manager
 - A To Do, In Progress and Done board of your work items, or a team's,
@@ -202,17 +202,64 @@ the board's test count.
   assignments, PRs with conflicts or comments to resolve, and PRs waiting
   for your review. Opening the bell marks everything read.
 
+### Modules
+- Core is always on: test cases, suites, runs and the board. The rest of
+  the app is split into optional modules, chosen per machine on the Modules
+  page (Settings, General, Modules): Database Access, Writing Style, Auto
+  Run, API Templates and Playwright.
+- Modules form a tree. Auto Run needs Database Access, and API Templates and
+  Playwright need Auto Run. A module whose parent is off shows Locked;
+  switching a module off switches off everything under it.
+- Off only hides. Scripts, runs, templates and settings stay on this
+  computer for when the module comes back, and a module's assistant tools
+  appear and disappear with it.
+
+### Auto Run
+- The app drives a real browser (Edge or Chrome, over the DevTools
+  protocol) through a test case's steps from a script, either with you
+  watching and deciding each result or unattended while you work on
+  something else. An assistant writes the scripts, from the live site,
+  through the AI Bridge tools.
+- Setup holds the site address for each environment, the sign-in, your test
+  accounts, the areas of the site and the files scripts upload. A script
+  names an account by key and never carries a login.
+- Results stay on this computer until you review a run and send what you
+  confirm to Azure DevOps. Past runs keep every run for review.
+- A script's precondition can run an API template to build the data a case
+  needs. A case whose setup cannot run is Blocked, not Failed.
+
+### API Templates
+- A template is a recipe for creating or changing test data through the
+  site's own requests: create a user, lock an account, add an address. An
+  assistant builds each one from the application's code. A template that
+  is new or imported shows as Unconfirmed until it has worked on the
+  active environment, and each environment confirms it separately.
+- The screen lists templates by module with what each does and when it
+  last ran, shows their parameters, requests and run history, and lets you
+  read and remove them. Flows chain templates in the order the application
+  allows; fixtures are the drafts a setup builds data from.
+
+### Playwright
+- Points the app at your clone of the team's Playwright repo: an overview of
+  what the repo holds, a runner for its tests (hidden, shown or debug, with
+  a count check before a run, live output and past reports), management of
+  the repo's test accounts, and Export and Sync, which turn Auto Run scripts
+  into the repo's specs and update only the ones that changed.
+- The app runs only the repo's own commands inside the clone. It never
+  commits, pulls or pushes.
+
 ### Appearance
-- Themes: Light, Slate, Midnight, Graphite, Ocean, OLED and System. Accent
+- Themes: Light, Slate, Midnight, Graphite, Ocean, Onyx and System. Accent
   presets sit on top.
 - App-matched scrollbars, a startup splash, a collapsible icon sidebar,
-  frameless window chrome, a Ctrl K command palette, Ctrl 1 to 8 tab
-  shortcuts and Ctrl Shift M for Work Manager.
+  frameless window chrome, a Ctrl K command palette, Ctrl plus a number for
+  the sidebar tabs in order and Ctrl Shift M for Work Manager.
 - An animated sign-in screen. Tab bodies fade in on switch. A guided tour
   covers every tab.
 
 ### Settings
-- Theme, accent and request rate. Backup and restore of app data.
+- Theme, accent and request rate. Backup and restore of app data. Modules
+  (see above).
 - Treat all projects as one (General, on by default): PBIs, test suites,
   the board and pull requests span every project, and new test cases go to
   the PBI's own project. While it is on and the organization has several
@@ -256,6 +303,15 @@ are enforced in code and by tests.
   nowhere else. Sign out, or turning the setting off, removes it. A test
   fails the build if a token-shaped field appears in the generated
   bindings.
+- Windows Credential Manager holds the refresh token, the database
+  logins and each environment's default password. A database password
+  never reaches the web layer, only whether one is saved. The exception is
+  Auto Run's test-account passwords: they are saved in a plain JSON file
+  beside your scripts, on this machine, so every tester can run the same
+  scripts with their own logins, and the Accounts dialog receives them
+  through one IPC call. Proposed accounts keep the passwords read from the
+  database in a plain JSON proposals file until you accept or dismiss
+  them. They are never logged.
 - Confirm before every write. A review gate precedes any create or update.
   Reads happen freely.
 - Rate-limited writes. A pacer spaces writes to the budget you set, and
@@ -301,6 +357,16 @@ npm run build            # type-check + Vite build
 cargo test --tests       # Rust (run inside src-tauri/)
 npm run docs:build       # build docs-site/ into src-tauri/help/ (the How To Use site)
 ```
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request to `main`,
+and by hand from the Actions tab, on a Windows runner (some Rust tests need
+Windows). It runs `npx tsc --noEmit`, `npm test`, `npm run build` and
+`cargo test --tests`, then fails if `src/bindings.ts` is not what the Rust
+now generates. A newer push on the same branch cancels the older run. The
+tests marked `#[ignore]` need a real Edge browser or the network and are
+not run there; run them on purpose with `cargo test --test suite <module>:: -- --ignored`.
 
 ### Dev-only features
 
@@ -355,16 +421,26 @@ src-tauri/                  Rust core
     lib.rs                  Crate root: module tree, specta builder, app wiring
     commands/               The IPC surface, one thin module per domain
                             (auth, discovery, queue, cases, testplan, runs,
-                            bugs, board, misc)
+                            bugs, board, autorun, api_templates, modules,
+                            environments, ai_tools, misc, ...)
     events.rs               Typed tauri-specta events
     state.rs                Managed state and the shared token-refresh helper
     ado/                    Azure DevOps REST client (GET, POST, PATCH,
-                            $batch): transport, endpoints, throttle
+                            $batch): transport, endpoints, throttle.
+                            deletion.rs is the one audited DELETE
     ado_testplan/           Test plans and suites, runs and results, history
     work_board/             Board pipeline, item detail, process layout
     import_parser/          Parsing (golden-tested), exports, HTML report
-    ai_bridge.rs, mcp.rs    The local bridge and the MCP server the
+    ai_bridge/, mcp.rs      The local bridge and the MCP server the
                             assistants talk to
+    db/                     Database Access: sqlcmd, statement guard, logins
+    modules.rs              The optional modules and their tree
+    autorun/, browser/      Auto Run: scripts, runs, accounts; the browser
+                            driver (DevTools protocol)
+    api_templates/          API Templates: recipes, fixtures, flows
+    pw_repo/, pw_export/    Playwright: the repo's runner and accounts;
+                            export and sync of Auto Run scripts
+    cache/                  The on-disk cache (data that survives a restart)
     auth.rs                 MSAL PKCE loopback sign-in and in-memory token
     saved_session.rs        Stay signed in: the refresh token kept in
                             Windows Credential Manager
@@ -378,9 +454,11 @@ src-tauri/                  Rust core
 src/                        React and TypeScript frontend
   App.tsx                   Shell: title bar, sidebar, context bar, routing
   bindings.ts               Generated typed IPC (tauri-specta)
-  screens/                  ManualEntry, ImportFile, EditCases, ViewCases,
-                            RunPanel, RunnerWindow, Suites, AiBridge,
-                            WorkBoard, PrPanel, Settings
+  screens/                  ManualEntry, ImportFile, ExistingCases,
+                            ManageCases, ViewCases, RunPanel, RunnerWindow,
+                            Suites, AiBridge, AutoRun, ApiTemplates,
+                            Playwright, Modules, WorkBoard, PrPanel,
+                            Settings
   components/               TitleBar, Sidebar, ContextBar, PbiPicker,
                             QueueSection, NotificationBell, ErrorBoundary,
                             ui/ (calendar, datefield, button, input, select)
