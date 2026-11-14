@@ -1,14 +1,47 @@
 //! The AI bridge: a 127.0.0.1-only service that lets the tcm-mcp stdio
-//! binary (and therefore AI tools) read a live writing guide, fetch real
-//! example cases, reorganise a draft into a run sheet, and search PBIs.
-//! Reads and pure transforms ONLY - no writes, no raw ADO passthrough, and
-//! the bearer token never leaves the app. Modeled on note_server.rs; the
-//! TCP loop is thin, all logic lives in `route` so tests need no sockets.
+//! binary (and therefore AI tools) use the app: read a live writing guide,
+//! fetch real example cases, reorganise a draft into a run sheet, search
+//! PBIs, and work Auto Run, API templates, the database tools and the
+//! report tools. Modeled on note_server.rs; the TCP loop is thin
+//! (`server`), all logic lives in `route` so tests need no sockets.
+//!
+//! What it reads: Azure DevOps (cases, suites, tags, PBIs, wiki pages, run
+//! results) - read only, no writes to Azure DevOps and no raw passthrough
+//! to it - plus the app's own saved state (accounts without passwords,
+//! scripts, quirks, templates, Test files).
+//!
+//! What it writes, and what guards each write:
+//! - Case files: a draft the app follows, or one under the working
+//!   repository's `.test-cases` folder, and only by canonical path
+//!   (`bridge_may_write`, `workspace::is_inside`).
+//! - The app's own Auto Run and Test file stores (scripts, components,
+//!   areas, quirks, validation rules, defects, run order, setups, Test
+//!   files, API templates, fixtures and flows): each route validates what
+//!   it is handed, and a route that belongs to a module is answered only
+//!   while that module is on (`module_guard`).
+//! - The application under test: proving or running an API template, or an
+//!   explore session's own changes, only with the API templates switch on
+//!   (`API_WRITES_OFF`), and in Auto Run's own browser the network tools
+//!   only with their switch on (`NETWORK_TOOLS_OFF`).
+//! - The database: `db_query` writes only with the create, update and
+//!   delete switch on AND a connection whose own user may write.
+//! - The open report file, through the report tools.
+//!
+//! Every tool the person switched off is refused, any other method or path
+//! that looks like a write gets `WRITE_REFUSAL`, and the bearer token never
+//! leaves the app.
 
 use crate::autorun::agents::AgentKey;
 use crate::autorun::slots::{SlotNo, SLOT_COUNT};
 use rand::RngExt;
 use serde::Serialize;
+use std::sync::{Arc, Mutex as StdMutex};
+
+mod db_tools;
+mod report_tools;
+
+pub use self::db_tools::*;
+pub use self::report_tools::*;
 
 static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new();
 
@@ -12946,561 +12979,6 @@ pub fn mapping_refusal(caller_slot: SlotNo, mapping: [bool; SLOT_COUNT]) -> Opti
 
 // ------------------------------------------------------- the company database
 
-/// The two things both database routes need before they can do anything:
-/// a connection the person chose, and a sqlcmd to run it with. Neither is
-/// a failure of the call - both are 409, "the app is not set up for this
-/// yet" - and each says which of the two is missing.
-fn db_ready(
-    ctx: &BridgeContext,
-) -> Result<(crate::db::Connection, std::path::PathBuf), (u16, String)> {
-    // Resolved now, not when the context was pushed: a login saved since
-    // is the one this call signs in with. An id this build does not know -
-    // one saved for a preset a later release removed - is nothing chosen
-    // too: the person's next step is the same, pick a database.
-    crate::db::query::ready(ctx.db_secrets.as_deref(), ctx.db_id.as_deref()).map_err(|why| (409, why))
-}
-
-/// Said when a template on a flow is proven or run with no database chosen:
-/// its gate is a set of database checks, so without one it cannot run.
-pub const FLOW_NEEDS_DB: &str =
-    "this template belongs to a flow, and flow checks need a database: choose one on the AI Bridge tab";
-
-/// Said when a flow check would run while the Database Access module is
-/// off: every check is an assistant-written read of that database, so none
-/// runs until the module is on again.
-pub const FLOW_NEEDS_READING: &str =
-    "flow checks read the company database: turn the Database Access module on in Settings";
-
-/// The chosen database as the place flow checks are asked, with
-/// `db_ready`'s refusals as they are - what saving a flow and a flow's
-/// progress answer with. Refused first while the Database Access module is
-/// off, whatever the disabled list says, before any connection is looked
-/// at.
-fn stage_db(
-    ctx: &BridgeContext,
-) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
-    stage_db_for(ctx, &crate::modules::current())
-}
-
-/// `stage_db` with the modules that are on passed in, so both answers are
-/// testable. The module is the switch for reading the database; a
-/// `db_query` entry among the disabled tools refuses too, as a second door.
-pub fn stage_db_for(
-    ctx: &BridgeContext,
-    on: &std::collections::BTreeSet<crate::modules::Module>,
-) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
-    if !on.contains(&crate::modules::Module::DbAccess) || ctx.disabled_tools.iter().any(|t| t == "db_query") {
-        return Err((409, FLOW_NEEDS_READING.to_string()));
-    }
-    let (conn, exe) = db_ready(ctx)?;
-    Ok(crate::api_templates::gate::SqlcmdStageDb { runner: crate::db::RealRunner, exe, conn })
-}
-
-/// The database a prove or a run of a template on a flow gates on. With
-/// nothing chosen the answer says why a template needs one at all
-/// (`FLOW_NEEDS_DB`), with `db_ready`'s own status; the Database Access
-/// module being off is `stage_db`'s `FLOW_NEEDS_READING`; every other
-/// refusal - no login saved, a store that cannot be read, no sqlcmd - is
-/// `db_ready`'s, unchanged.
-pub fn real_stage_db(
-    ctx: &BridgeContext,
-) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
-    real_stage_db_for(ctx, &crate::modules::current())
-}
-
-/// `real_stage_db` with the modules that are on passed in.
-pub fn real_stage_db_for(
-    ctx: &BridgeContext,
-    on: &std::collections::BTreeSet<crate::modules::Module>,
-) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
-    stage_db_for(ctx, on).map_err(|(status, why)| {
-        if why == crate::db::query::NO_CONNECTION {
-            (status, FLOW_NEEDS_DB.to_string())
-        } else {
-            (status, why)
-        }
-    })
-}
-
-// ---- Crystal Reports -----------------------------------------------------
-//
-// Every call below runs the report library on a blocking thread: it may
-// render a PDF while holding the open report's lock, and a panic inside the
-// bundle must come back as an answer, never take the bridge down.
-
-/// Said when the report library panicked inside a call.
-const CRYSTAL_STOPPED: &str = "The report library stopped unexpectedly while doing that. Nothing was saved unless the report says otherwise.";
-
-/// Run `work` on a blocking thread: `Err((400, sentence))` when it refuses,
-/// `Err((500, ..))` when it panicked, and what it answers otherwise.
-async fn crystal_blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, (u16, String)> {
-    match tokio::task::spawn_blocking(work).await {
-        Ok(Ok(answer)) => Ok(answer),
-        Ok(Err(why)) => Err((400, why)),
-        Err(_) => Err((500, CRYSTAL_STOPPED.to_string())),
-    }
-}
-
-/// A 200 with `value` as JSON text, or the refusal.
-fn crystal_answer(done: Result<serde_json::Value, (u16, String)>) -> (u16, String) {
-    match done {
-        Ok(value) => (200, serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())),
-        Err(refused) => refused,
-    }
-}
-
-/// A crystal route's body as an object. An empty body is no arguments, for
-/// the routes whose arguments are all optional.
-fn crystal_args(body: &str) -> Result<serde_json::Value, (u16, String)> {
-    if body.trim().is_empty() {
-        return Ok(serde_json::json!({}));
-    }
-    match serde_json::from_str::<serde_json::Value>(body) {
-        Ok(v) if v.is_object() => Ok(v),
-        Ok(_) => Err((400, "the arguments must be a JSON object.".to_string())),
-        Err(e) => Err((400, format!("that is not readable JSON: {e}."))),
-    }
-}
-
-/// A text argument, trimmed; `None` when it is missing, null or blank.
-fn crystal_text(args: &serde_json::Value, key: &str) -> Option<String> {
-    args.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
-}
-
-/// A text argument the call cannot do without.
-fn crystal_required(args: &serde_json::Value, key: &str) -> Result<String, (u16, String)> {
-    crystal_text(args, key).ok_or_else(|| (400, format!("this call needs a \"{key}\".")))
-}
-
-/// `ops` and `plan` arrive as JSON, but an assistant that wrapped them in a
-/// string (as it does for several other tools) is read the same way.
-fn crystal_json_arg(args: &serde_json::Value, key: &str) -> Option<serde_json::Value> {
-    match args.get(key) {
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::String(text)) => {
-            Some(serde_json::from_str(text).unwrap_or_else(|_| serde_json::Value::String(text.clone())))
-        }
-        Some(found) => Some(found.clone()),
-    }
-}
-
-async fn crystal_open(body: &str) -> (u16, String) {
-    let path = match crystal_args(body).and_then(|args| crystal_required(&args, "path")) {
-        Ok(path) => path,
-        Err(refused) => return refused,
-    };
-    let done = crystal_blocking(move || crate::crystal::open(&path)).await;
-    // A refused open leaves the old report open; only a new one changes the screen.
-    if done.is_ok() {
-        crystal_changed().await;
-    }
-    crystal_answer(done)
-}
-
-async fn crystal_read(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let filter =
-        crate::crystal::ReadFilter { section: crystal_text(&args, "section"), object: crystal_text(&args, "object") };
-    crystal_answer(crystal_blocking(move || crate::crystal::read(&filter)).await)
-}
-
-/// Apply one batch. A batch the bundle refuses saves nothing, and the
-/// answer is the refusal followed by the report as it now stands, so the
-/// assistant has fresh ids to try again with.
-async fn crystal_change(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let (ops, plan) = (crystal_json_arg(&args, "ops"), crystal_json_arg(&args, "plan"));
-    let done = crystal_blocking(move || {
-        crate::crystal::edit(ops, plan).map_err(|why| {
-            let now = crate::crystal::read(&crate::crystal::ReadFilter::default())
-                .ok()
-                .and_then(|ir| serde_json::to_string_pretty(&ir).ok());
-            match now {
-                Some(ir) => format!("{why}\n\n{ir}"),
-                None => why,
-            }
-        })
-    })
-    .await;
-    // A refused batch tells the screen too: the report is re-read from disk.
-    crystal_changed().await;
-    crystal_answer(done)
-}
-
-async fn crystal_compare(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let (a, b) = match (crystal_required(&args, "a"), crystal_required(&args, "b")) {
-        (Ok(a), Ok(b)) => (a, b),
-        (Err(refused), _) | (_, Err(refused)) => return refused,
-    };
-    let done = crystal_blocking(move || crate::crystal::compare(&a, &b)).await;
-    crystal_answer(done.map(|lines| serde_json::json!(lines)))
-}
-
-async fn crystal_check(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let path = crystal_text(&args, "path");
-    crystal_answer(crystal_blocking(move || crate::crystal::check(path.as_deref())).await)
-}
-
-async fn crystal_new(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let path = match crystal_required(&args, "path") {
-        Ok(path) => path,
-        Err(refused) => return refused,
-    };
-    let opts = rpt_core::blank::NewReportOptions {
-        title: crystal_text(&args, "title"),
-        author: crystal_text(&args, "author"),
-        comments: crystal_text(&args, "comments"),
-        ..Default::default()
-    };
-    let done = crystal_blocking(move || crate::crystal::new_report(&path, opts)).await;
-    if done.is_ok() {
-        crystal_changed().await;
-    }
-    crystal_answer(done)
-}
-
-async fn crystal_preview(body: &str) -> (u16, String) {
-    let params = match crystal_args(body).and_then(|args| crystal_params(&args)) {
-        Ok(params) => params,
-        Err(refused) => return refused,
-    };
-    let done = crystal_blocking(move || crate::crystal::preview_saved_with(params)).await;
-    // A render that failed is kept as the preview too, so the screen shows why.
-    crystal_changed().await;
-    crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
-}
-
-/// The open report's parameters, in the order it declares them.
-async fn crystal_parameters() -> (u16, String) {
-    let done = crystal_blocking(crate::crystal::parameters).await;
-    crystal_answer(done.and_then(|list| serde_json::to_value(list).map_err(|e| (500, e.to_string()))))
-}
-
-/// Find text across the open report and its subreports. The text keeps its
-/// spaces: unlike the other routes' arguments it is not trimmed.
-async fn crystal_find(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let Some(text) = args.get("text").and_then(|v| v.as_str()).map(str::to_string) else {
-        return (400, "this call needs a \"text\".".to_string());
-    };
-    let match_case = args.get("match_case").and_then(|v| v.as_bool()).unwrap_or(false);
-    let done = crystal_blocking(move || crate::crystal::find(&text, match_case)).await;
-    crystal_answer(done.and_then(|hits| serde_json::to_value(hits).map_err(|e| (500, e.to_string()))))
-}
-
-/// Replace text across the open report and its subreports; `dry_run` lists
-/// the changes and saves nothing. `find` and `replace` keep their spaces and
-/// `replace` may be empty (it removes the text).
-async fn crystal_replace(body: &str) -> (u16, String) {
-    let args = match crystal_args(body) {
-        Ok(args) => args,
-        Err(refused) => return refused,
-    };
-    let Some(find) = args.get("find").and_then(|v| v.as_str()).map(str::to_string) else {
-        return (400, "this call needs a \"find\".".to_string());
-    };
-    let Some(replace) = args.get("replace").and_then(|v| v.as_str()).map(str::to_string) else {
-        return (400, "this call needs a \"replace\" (it may be empty, to remove the text).".to_string());
-    };
-    let match_case = args.get("match_case").and_then(|v| v.as_bool()).unwrap_or(false);
-    let dry_run = args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
-    let done = crystal_blocking(move || crate::crystal::replace(&find, &replace, match_case, dry_run)).await;
-    // A refused replace re-read the file, and an applied one changed it.
-    crystal_changed().await;
-    crystal_answer(done.and_then(|out| serde_json::to_value(out).map_err(|e| (500, e.to_string()))))
-}
-
-/// The two doors of a live preview that need no connection to check:
-/// Database Access on (the route's own guard is Crystal Reports'), and the
-/// person's switch for database writes - running a report's stored
-/// procedure is a procedure call, which TCM treats as a write. `on` is
-/// explicit so both are testable.
-pub fn live_preview_gate(
-    on: &std::collections::BTreeSet<crate::modules::Module>,
-    writes_on: bool,
-) -> Result<(), (u16, String)> {
-    use crate::modules::Module;
-    if !on.contains(&Module::DbAccess) {
-        return Err((404, Module::DbAccess.off_sentence()));
-    }
-    if !writes_on {
-        return Err((400, crate::db::query::WRITES_OFF.to_string()));
-    }
-    Ok(())
-}
-
-/// The report's parameters out of `params` (name to value). A number or a
-/// true/false is taken as its text, which the bundle reads against the
-/// parameter's declared kind.
-fn crystal_params(args: &serde_json::Value) -> Result<Vec<(String, String)>, (u16, String)> {
-    use serde_json::Value;
-    match args.get("params") {
-        None | Some(Value::Null) => Ok(Vec::new()),
-        Some(Value::Object(map)) => map
-            .iter()
-            .map(|(name, value)| match value {
-                Value::String(text) => Ok((name.clone(), text.clone())),
-                Value::Number(n) => Ok((name.clone(), n.to_string())),
-                Value::Bool(b) => Ok((name.clone(), b.to_string())),
-                _ => Err((400, format!("params.{name} must be text, a number or true/false."))),
-            })
-            .collect(),
-        Some(_) => Err((
-            400,
-            "\"params\" must be an object of parameter name to value, e.g. { \"performance_cycle_id\": \"42\" }."
-                .to_string(),
-        )),
-    }
-}
-
-/// The chosen database by the name the AI Bridge tab shows it under -
-/// what a live preview says it came from, never the host.
-fn chosen_database_name(ctx: &BridgeContext) -> String {
-    ctx.db_secrets
-        .as_deref()
-        .zip(ctx.db_id.as_deref())
-        .and_then(|(store, id)| crate::db::credentials::databases(store).into_iter().find(|d| d.id == id.trim()))
-        .map(|d| d.label)
-        .unwrap_or_else(|| "the chosen database".to_string())
-}
-
-/// Draw the open report with fresh rows from its stored procedure. Every
-/// door is checked before anything connects: Database Access and writes
-/// (`live_preview_gate`), a chosen connection, and the Dev login on it;
-/// then `crystal::preview_live` checks the procedure and the parameters.
-/// The bundle blocks on a runtime of its own, so the call runs on a
-/// blocking thread (`crystal_blocking`), never on this one.
-///
-/// `on` is the modules that are on and `fetch` the bundle's
-/// fetch-and-render (`preview_live_report`); both are parameters so a test
-/// can show that a refused call never reaches the fetch.
-pub async fn crystal_preview_live(
-    ctx: &BridgeContext,
-    body: &str,
-    on: &std::collections::BTreeSet<crate::modules::Module>,
-    fetch: impl FnOnce(&rpt_core::rpt_reader::Rpt, &rpt_core::LiveDb) -> Result<rpt_core::PreviewOutput, String>
-        + Send
-        + 'static,
-) -> (u16, String) {
-    let params = match crystal_args(body).and_then(|args| crystal_params(&args)) {
-        Ok(params) => params,
-        Err(refused) => return refused,
-    };
-    if let Err(refused) = live_preview_gate(on, ctx.db_writes) {
-        return refused;
-    }
-    let conn = match crate::db::query::connection(ctx.db_secrets.as_deref(), ctx.db_id.as_deref()) {
-        Ok(conn) => conn,
-        Err(why) => return (409, why),
-    };
-    if crate::db::access_for_user(&conn.user) == crate::db::Access::ReadOnly {
-        return (400, crate::db::READ_ONLY_SENTENCE.to_string());
-    }
-    let name = chosen_database_name(ctx);
-    let done = crystal_blocking(move || crate::crystal::preview_live_with(&conn, &name, params, fetch)).await;
-    // Past the doors a failed draw is kept as the preview (as with the saved one); a refusal is
-    // only a re-read.
-    crystal_changed().await;
-    crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
-}
-
-/// How to work with reports. The guide is a constant, so nothing here can
-/// block or panic.
-fn crystal_guide() -> (u16, String) {
-    (200, crate::crystal::guide().to_string())
-}
-
-/// A body's JSON, parsed once, or the refusal that names what could not be
-/// read. Both database routes need more than one field out of the same
-/// body (`db_lookup` reads `query` and `limit`), so parsing happens here
-/// and every field after this is read from the one `Value`.
-fn db_body(body: &str, shape: &str) -> Result<serde_json::Value, (u16, String)> {
-    serde_json::from_str(body)
-        .map_err(|e| (400, format!("that is not readable JSON: {e}. Expected {shape}.")))
-}
-
-/// One named string out of an already-parsed body, trimmed, or the
-/// refusal that says what the body should have carried. Separate from
-/// `body_field` because these two routes want the empty string and the
-/// missing key to read the same way: neither is a question.
-fn db_body_text(parsed: &serde_json::Value, key: &str, shape: &str) -> Result<String, (u16, String)> {
-    let text = parsed.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
-    if text.is_empty() {
-        return Err((400, format!("this call needs a \"{key}\". Expected {shape}.")));
-    }
-    Ok(text)
-}
-
-/// The tables and columns behind some words, or one table's own columns.
-async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"query\": \"leave request\", \"limit\": 10 }";
-    let parsed = match db_body(body, SHAPE) {
-        Ok(v) => v,
-        Err(refused) => return refused,
-    };
-    let query = match db_body_text(&parsed, "query", SHAPE) {
-        Ok(q) => q,
-        Err(refused) => return refused,
-    };
-    let limit = crate::db::query::lookup_limit(parsed.get("limit").and_then(|l| l.as_i64()));
-    let (connection, exe) = match db_ready(ctx) {
-        Ok(ready) => ready,
-        Err(refused) => return refused,
-    };
-    // Kept here, not in `run_lookup`, so the lookup itself stays a plain
-    // function of what sqlcmd answers - and only an answer is kept, never
-    // a failure, so a server that was briefly unreachable is asked again.
-    let key = crate::cache::keys::db_lookup(
-        &connection.server,
-        &connection.database,
-        limit,
-        &query.to_lowercase(),
-    );
-    if let Some(hit) = crate::cache::session_fresh::<String>(&key, crate::cache::keys::DB_LOOKUP_TTL) {
-        return (200, hit);
-    }
-    match crate::db::query::run_lookup(
-        &crate::db::RealRunner,
-        &exe,
-        &connection,
-        &query,
-        limit,
-    )
-    .await
-    {
-        Ok(text) => {
-            crate::cache::session_put(&key, text.clone());
-            (200, text)
-        }
-        Err(refused) => refused,
-    }
-}
-
-/// The statements of a batch body: each either `{ "sql": ..., "expect_rows":
-/// N }` or a bare string. Anything else is named back rather than skipped -
-/// a dropped statement would change what the transaction does.
-fn batch_statements(list: &[serde_json::Value]) -> Result<Vec<crate::db::BatchStatement>, (u16, String)> {
-    list.iter()
-        .enumerate()
-        .map(|(i, item)| {
-            let n = i + 1;
-            let (sql, expect_rows) = match item {
-                serde_json::Value::String(s) => (s.clone(), None),
-                serde_json::Value::Object(o) => {
-                    let sql = o.get("sql").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                    let expect_rows = match o.get("expect_rows") {
-                        None | Some(serde_json::Value::Null) => None,
-                        Some(v) => Some(v.as_i64().ok_or_else(|| {
-                            (400, format!("statement {n}: expect_rows must be a whole number"))
-                        })?),
-                    };
-                    (sql, expect_rows)
-                }
-                _ => {
-                    return Err((
-                        400,
-                        format!("statement {n} must be an object with \"sql\" (and optionally \"expect_rows\")"),
-                    ))
-                }
-            };
-            if sql.trim().is_empty() {
-                return Err((400, format!("statement {n} has no \"sql\"")));
-            }
-            Ok(crate::db::BatchStatement { sql: sql.trim().to_string(), expect_rows })
-        })
-        .collect()
-}
-
-/// One statement, or a batch of them as one transaction, if the guard and
-/// the two write doors allow it.
-async fn db_query(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"sql\": \"SELECT TOP (10) * FROM dbo.LeaveRequest\" } or { \"statements\": [{ \"sql\": \"UPDATE ...\", \"expect_rows\": 2 }], \"dry_run\": true }";
-    let parsed = match db_body(body, SHAPE) {
-        Ok(v) => v,
-        Err(refused) => return refused,
-    };
-    let dry_run = parsed.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
-    // A single `sql` with dry_run is a batch of one: ignoring the flag
-    // would run for real what the caller asked only to try.
-    let batch = match (parsed.get("statements"), parsed.get("sql")) {
-        (Some(_), Some(_)) => {
-            return (400, format!("send \"sql\" or \"statements\", not both. Expected {SHAPE}."))
-        }
-        (Some(list), None) => match list.as_array() {
-            Some(list) => Some(list.clone()),
-            None => return (400, format!("\"statements\" must be a list. Expected {SHAPE}.")),
-        },
-        (None, Some(sql)) if dry_run => Some(vec![sql.clone()]),
-        _ => None,
-    };
-    if let Some(list) = batch {
-        let statements = match batch_statements(&list) {
-            Ok(s) => s,
-            Err(refused) => return refused,
-        };
-        let (connection, exe) = match db_ready(ctx) {
-            Ok(ready) => ready,
-            Err(refused) => return refused,
-        };
-        return match crate::db::query::run_batch_query(
-            &crate::db::RealRunner,
-            &exe,
-            &connection,
-            ctx.db_writes,
-            &statements,
-            dry_run,
-        )
-        .await
-        {
-            Ok(text) => (200, text),
-            Err(refused) => refused,
-        };
-    }
-    let sql = match db_body_text(&parsed, "sql", SHAPE) {
-        Ok(s) => s,
-        Err(refused) => return refused,
-    };
-    let (connection, exe) = match db_ready(ctx) {
-        Ok(ready) => ready,
-        Err(refused) => return refused,
-    };
-    match crate::db::query::run_query(
-        &crate::db::RealRunner,
-        &exe,
-        &connection,
-        ctx.db_writes,
-        &sql,
-    )
-    .await
-    {
-        Ok(text) => (200, text),
-        Err(refused) => refused,
-    }
-}
-
 /// The body keys `save_autorun_script` reads. Anything else is named
 /// back rather than dropped - a misspelled "edits" that was silently
 /// ignored would let an undeclared repair through as if it were a new
@@ -17346,9 +16824,7 @@ async fn wiki_page(
     }
 }
 
-// ---------------------------------------------------------------- server
 
-use std::sync::{Arc, Mutex as StdMutex};
 
 /// Context shared between the TCP loop and the set_bridge_context command.
 pub struct BridgeState {
