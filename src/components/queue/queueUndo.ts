@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { TestCase } from "../../bindings";
 import { toast } from "../../lib/toast";
 
@@ -97,14 +97,29 @@ export function revertBulk(
 /** The queue's one Undo toast. Only the newest destructive action can be
  * undone: showing a new toast takes the older one down and its button, if
  * it is somehow still clicked, does nothing. Undo runs once. */
-export function useUndoToast() {
-  const live = useRef<{ token: number; id?: string } | null>(null);
+export function useUndoToast(scope: string, watchKey: string) {
+  const live = useRef<{ token: number; id?: string; expect: string } | null>(null);
   const issued = useRef(0);
+  const watchNow = useRef(watchKey);
+  watchNow.current = watchKey;
+  const cancel = useCallback(() => {
+    if (live.current?.id) toast.dismiss(live.current.id);
+    live.current = null;
+  }, []);
+  // A pending Undo belongs to the PBI it was shown for and to this screen:
+  // leaving either (another PBI or org, the screen unmounting) cancels it.
+  useEffect(() => cancel, [scope, cancel]);
+  // ...and to the files being watched as they stood. Importing a file or
+  // stopping a watch during the window would make Undo duplicate rows next
+  // to a fresh import, or bring back a watch the person stopped.
+  useEffect(() => {
+    if (live.current && live.current.expect !== watchKey) cancel();
+  }, [watchKey, cancel]);
   return useCallback(
-    (kind: "info" | "success", message: string, undo?: () => void) => {
+    (kind: "info" | "success", message: string, undo?: () => void, expectWatchKey?: string) => {
       if (live.current?.id) toast.dismiss(live.current.id);
       const token = ++issued.current;
-      live.current = { token };
+      live.current = { token, expect: expectWatchKey ?? watchNow.current };
       if (!undo) {
         toast[kind](message);
         return;

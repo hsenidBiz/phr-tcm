@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { TestCase } from "../bindings";
 import { useQueue } from "../hooks/useQueue";
@@ -19,6 +19,8 @@ const DRAFT = "tcm-v2-draft:acme/42";
 
 beforeEach(() => {
   localStorage.clear();
+  vi.mocked(toast.info).mockReturnValue("toast-info");
+  vi.mocked(toast.success).mockReturnValue("toast-success");
 });
 afterEach(() => {
   const phase = submitPhaseSnapshot();
@@ -44,6 +46,8 @@ function makeCase(title: string, overrides: Partial<TestCase> = {}): TestCase {
 }
 
 let setQueueOut: Dispatch<SetStateAction<TestCase[]>> = () => {};
+let setPbiOut: (n: number) => void = () => {};
+let setWatchesOut: (w: WatchedFile[]) => void = () => {};
 
 /** The queue is owned by the real `useQueue`, as Manual Entry owns it, so
  * what reaches storage is what the app would really save. */
@@ -53,19 +57,23 @@ type Owner = {
   onQueueRestored?: (dropped: WatchedFile[]) => void;
 };
 function Harness({ owner }: { owner: Owner }) {
-  const { queue, setQueue } = useQueue("acme", 42);
+  const [pbi, setPbi] = useState(42);
+  const [watches, setWatches] = useState(owner.watches);
+  setPbiOut = setPbi;
+  setWatchesOut = (w) => setWatches(w);
+  const { queue, setQueue } = useQueue("acme", pbi);
   setQueueOut = setQueue;
   return (
     <QueueSection
       org="acme"
       project="Web"
-      pbiId={42}
+      pbiId={pbi}
       queue={queue}
       setQueue={setQueue}
-      watches={owner.watches}
+      watches={watches}
       onQueueCleared={owner.onQueueCleared}
       onQueueRestored={owner.onQueueRestored}
-      onWatchPatched={owner.watches ? () => {} : undefined}
+      onWatchPatched={watches ? () => {} : undefined}
     />
   );
 }
@@ -432,4 +440,83 @@ test("while an upload runs, a removal gets no Undo and Undo is refused", async (
   // A removal made during the upload offers none.
   fireEvent.click(screen.getByRole("button", { name: "Remove Bravo from the queue" }));
   expect(lastToast()).toEqual({ message: "Removed 1 case", undo: undefined });
+});
+
+test("a pending Undo is cancelled when the PBI changes", async () => {
+  const a = makeCase("Alpha");
+  const restored = vi.fn();
+  renderQueue([a, makeCase("Bravo")], { watches: [fileOf([a])], onQueueCleared: () => {}, onQueueRestored: restored });
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("button", { name: /Clear queue/ }));
+  const shown = lastToast();
+  act(() => setPbiOut(43));
+  await waitFor(() => expect(toast.dismiss).toHaveBeenCalledWith("toast-info"));
+  act(() => shown.undo!());
+  expect(rowTitles()).toEqual([]);
+  expect(restored).not.toHaveBeenCalled();
+});
+
+test("a pending Undo is cancelled when the screen unmounts", async () => {
+  const a = makeCase("Alpha");
+  const restored = vi.fn();
+  const view = renderQueue([a, makeCase("Bravo")], {
+    watches: [fileOf([a])],
+    onQueueCleared: () => {},
+    onQueueRestored: restored,
+  });
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("button", { name: /Clear queue/ }));
+  const shown = lastToast();
+  view.unmount();
+  expect(toast.dismiss).toHaveBeenCalledWith("toast-info");
+  act(() => shown.undo!());
+  expect(restored).not.toHaveBeenCalled();
+});
+
+test("importing a file during the Undo window cancels it; the clear itself does not", async () => {
+  const a = makeCase("Alpha");
+  const restored = vi.fn();
+  renderQueue([a, makeCase("Bravo")], {
+    watches: [fileOf([a])],
+    onQueueCleared: () => setWatchesOut([]),
+    onQueueRestored: restored,
+  });
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("button", { name: /Clear queue/ }));
+  const shown = lastToast();
+  // The owner dropped its watches: that is part of the clear, Undo stays.
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toast.dismiss).not.toHaveBeenCalled();
+
+  act(() => setWatchesOut([{ path: "C:/drafts/new.json", stamp: "s", snapshot: [] }]));
+  await waitFor(() => expect(toast.dismiss).toHaveBeenCalledWith("toast-info"));
+  act(() => shown.undo!());
+  expect(rowTitles()).toEqual([]);
+  expect(restored).not.toHaveBeenCalled();
+});
+
+test("Undo of a bulk remove that emptied the queue arms the dropped watches again", async () => {
+  const elsewhere = fileOf([makeCase("Not in the queue")]);
+  const restored = vi.fn();
+  renderQueue([makeCase("Alpha"), makeCase("Bravo")], {
+    watches: [elsewhere],
+    onQueueCleared: () => setWatchesOut([]),
+    onQueueRestored: restored,
+  });
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Remove 2/ }));
+  const shown = lastToast();
+  await waitFor(() => expect(localStorage.getItem(DRAFT)).toBeNull());
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toast.dismiss).not.toHaveBeenCalled();
+
+  pressUndo(shown);
+  await screen.findByText("Alpha");
+  expect(restored).toHaveBeenCalledTimes(1);
+  expect(restored.mock.calls[0][0]).toEqual([elsewhere]);
 });

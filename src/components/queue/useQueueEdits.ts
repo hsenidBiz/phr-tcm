@@ -31,6 +31,7 @@ export function useQueueEdits({
   selected,
   setEditingIdx,
   uploading = false,
+  scope = "",
 }: {
   queue: TestCase[];
   setQueue: Dispatch<SetStateAction<TestCase[]>>;
@@ -46,8 +47,10 @@ export function useQueueEdits({
    * stamps each created id onto its row, and a row that was out of the
    * queue at that moment would come back without one. */
   uploading?: boolean;
+  /** Which PBI this queue is for; a pending Undo does not outlive it. */
+  scope?: string;
 }) {
-  const announce = useUndoToast();
+  const announce = useUndoToast(scope, JSON.stringify(watches.map((w) => w.path)));
   /** A row a hand edit replaced, to the row that replaced it - how a bulk
    * edit's Undo still finds a row someone has since edited. */
   const successor = useRef(new WeakMap<TestCase, TestCase>());
@@ -174,6 +177,8 @@ export function useQueueEdits({
     // Undone before the write-back below returns: the queue must not then be
     // reported as cleared (which drops the file watches) under the restored rows.
     let undone = false;
+    let cleared = false;
+    const dropped = watchesRef.current;
     announce(
       "info",
       `Removed ${noun(removing.size)}`,
@@ -181,14 +186,20 @@ export function useQueueEdits({
         ? undefined
         : () => {
             undone = undoRemoval(gone);
+            // The watches were already dropped: arm them again.
+            if (undone && cleared && dropped.length > 0) onQueueRestored?.(dropped);
           },
+      kept.length === 0 ? "[]" : undefined,
     );
     await writeBackOwned(
       prev,
       prev.map((tc, i) => (removing.has(i) ? null : tc)),
       removing,
     );
-    if (kept.length === 0 && !undone) onQueueCleared?.();
+    if (kept.length === 0 && !undone) {
+      cleared = true;
+      onQueueCleared?.();
+    }
   };
 
   /** Renaming drafts touches only this list and the files they came from,
@@ -337,6 +348,7 @@ export function useQueueEdits({
             if (dropped.length > 0) onQueueRestored?.(dropped);
             restoreMarks?.();
           },
+      "[]",
     );
   };
 

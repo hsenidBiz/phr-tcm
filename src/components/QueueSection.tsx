@@ -267,6 +267,7 @@ export default function QueueSection({
     selected,
     setEditingIdx,
     uploading: submit.isPending || progress != null,
+    scope: `${org}/${pbiId}`,
   });
 
   const problems = useMemo(() => queue.map((tc) => validateCase(tc)), [queue]);
