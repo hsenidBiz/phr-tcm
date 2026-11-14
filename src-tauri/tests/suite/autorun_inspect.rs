@@ -425,7 +425,7 @@ async fn a_token_in_an_accessible_name_is_hidden() {
 /// a discovery), as the probe's does: after the let-go.
 #[test]
 fn the_route_publishes_the_discovery_after_letting_a_dead_browser_go() {
-    let source = include_str!("../../src/ai_bridge.rs");
+    let source = crate::bridge_source::ai_bridge_source();
     let route = &source[source.find("async fn autorun_inspect(").unwrap()..];
     let route = &route[..route.find("\n}").unwrap()];
     let let_go = route.find("let_go_if_silent(&mut slot, answer)").expect("a dead browser is let go");

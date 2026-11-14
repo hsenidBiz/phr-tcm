@@ -5381,7 +5381,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
         assert!(body.contains(stops), "{start} does not stop a batch before it waits");
     }
     // And the route clears an earlier stop before it takes the browser.
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     let route = &bridge[bridge.find("async fn autorun_discover_actions(").unwrap()..];
     let route = &route[..route.find("session_slot(n).lock()").unwrap()];
     assert!(route.contains("batch_stop(n).store(false"), "an old stop would end the next batch");

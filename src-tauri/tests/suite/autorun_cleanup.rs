@@ -403,7 +403,7 @@ fn only_a_successful_prove_or_clean_up_calls_proof_deleted() {
     }
     callers.sort();
     callers.dedup();
-    let prove = "ai_bridge.rs::run_api_template_request".to_string();
+    let prove = "ai_bridge/template_routes.rs::run_api_template_request".to_string();
     let stray: Vec<_> = callers.iter().filter(|c| **c != prove && !c.starts_with("autorun/cleanup.rs::")).collect();
     assert!(stray.is_empty(), "proof_deleted called from {stray:?}");
     assert!(callers.contains(&prove), "the prove handler no longer marks what it deleted: {callers:?}");
@@ -1279,7 +1279,7 @@ fn the_bridge_reaches_clean_up_only_to_undo_an_explore_session() {
     let read = |p: &str| {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap().replace("\r\n", "\n")
     };
-    let bridge = read("src/ai_bridge.rs");
+    let bridge = crate::bridge_source::ai_bridge_source();
     let mcp = read("src/mcp.rs");
     for (name, text) in [("src/ai_bridge.rs", &bridge), ("src/mcp.rs", &mcp)] {
         for forbidden in [
@@ -1308,7 +1308,7 @@ fn the_bridge_reaches_clean_up_only_to_undo_an_explore_session() {
     // The undo function is named in no file but cleanup.rs and one caller,
     // in any form (see `files_naming_the_undo`): the explore undo route, once,
     // as `cleanup::undo_explore_session(`, inside `fn explore_undo_in`.
-    let callers: &[&str] = &["ai_bridge.rs"];
+    let callers: &[&str] = &["ai_bridge/explore.rs"];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     assert_eq!(files_naming_the_undo(&src), callers, "the undo function is named outside its one allowed caller");
 
@@ -1365,9 +1365,13 @@ fn the_explore_undo_function_has_one_caller_and_one_route() {
         }
     }
     naming.sort();
-    assert_eq!(naming, ["ai_bridge.rs"], "the explore undo function is named outside the bridge");
+    assert_eq!(
+        naming,
+        ["ai_bridge/explore.rs"],
+        "the explore undo function is named outside the bridge"
+    );
 
-    let bridge = std::fs::read_to_string(src.join("ai_bridge.rs")).unwrap().replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source();
     // The nearest item start above `at`.
     let enclosing = |at: usize| -> String {
         let before = &bridge[..at];

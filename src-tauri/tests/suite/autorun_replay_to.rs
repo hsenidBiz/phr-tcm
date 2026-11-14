@@ -1291,7 +1291,7 @@ fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
     let replay = body("pub(crate) async fn replay_supervised");
     assert!(replay.contains("signed_in_event(") && !replay.contains("sign_in_forgotten_event("), "{replay}");
     assert!(body("pub async fn reset_for_assistant").contains("sign_in_forgotten_event("));
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     assert!(!bridge.contains("sign_in_forgotten_event(") && !bridge.contains("tell_panes"), "a try tells the panes of a session it ended");
 }
 
@@ -1604,7 +1604,7 @@ fn another_page_or_an_old_stand_starts_over() {
 fn every_other_use_of_the_browser_clears_the_stand() {
     let norm = |s: &str| s.replace("\r\n", "\n");
     let source = norm(include_str!("../../src/commands/autorun.rs"));
-    let bridge = norm(include_str!("../../src/ai_bridge.rs"));
+    let bridge = norm(&crate::bridge_source::ai_bridge_source());
     let body = |text: &str, start: &str| -> String {
         let from = &text[text.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
         from[..from.find("\n}\n").unwrap()].to_string()

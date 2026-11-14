@@ -323,7 +323,7 @@ mod routing {
             let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
             &from[..from.find("\n}\n").unwrap_or(from.len())]
         }
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         let request = body(&bridge, "async fn run_api_template_request<");
         assert!(request.contains("asker: Option<SlotNo>"), "{request}");
         assert!(request.contains("assistant_browser_holds(n, &req.account)"), "{request}");
@@ -379,7 +379,7 @@ mod routing {
     /// once.
     #[test]
     fn route_as_does_not_pick_a_slot_for_a_read_of_an_imported_set() {
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         let head = bridge.find("pub async fn route_as(").expect("route_as");
         let after = &bridge[head..];
         let route_as = &after[..after.find("\n}").expect("end of route_as")];
@@ -428,7 +428,7 @@ mod routing {
     /// or handler of the bridge locks main's session by name any more.
     #[test]
     fn route_as_picks_the_slot_once_and_no_handler_locks_main() {
-        let bridge = include_str!("../../src/ai_bridge.rs");
+        let bridge = crate::bridge_source::ai_bridge_source();
         let head = bridge.find("pub async fn route_as(").expect("route_as");
         let after = &bridge[head..];
         let end = after.find("\n}").expect("end of route_as");
@@ -454,7 +454,7 @@ mod routing {
             let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
             &from[..from.find("\n}").unwrap_or(from.len())]
         }
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         for head in [
             "async fn autorun_capture(",
             "async fn autorun_override(",
@@ -509,7 +509,7 @@ mod routing {
     #[test]
     fn the_guide_reads_only_the_callers_own_discovery_area() {
         assert_eq!(v2_lib::ai_bridge::running_discovery_area(None), None);
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         let route = &bridge[bridge.find("(\"GET\", \"/autorun-guide\")").unwrap()..];
         let route = &route[..route.find("(\"GET\", \"/autorun-role\")").unwrap()];
         assert!(route.contains("let asker = crate::commands::autorun_slots::slot_if_any(caller);"), "{route}");
@@ -939,7 +939,7 @@ mod card {
     /// nothing open in it.
     #[test]
     fn the_open_arms_free_an_unused_extra_browser_on_a_failure() {
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         for arm in ["(\"POST\", \"/autorun-discover-start\")", "(\"POST\", \"/autorun-replay\")"] {
             let from = &bridge[bridge.find(arm).unwrap()..];
             let arm_text = &from[..from.find("\n        }\n").unwrap()];
@@ -990,7 +990,7 @@ mod card {
             let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
             &from[..from.find("\n}\n").unwrap_or(from.len())]
         }
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         let commands = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
         let route_as = body(&bridge, "pub async fn route_as(");
         assert!(route_as.contains("let holder = caller.key();"), "{route_as}");
@@ -1226,7 +1226,7 @@ mod card {
         let body = &slots[head..];
         let body = &body[..body.find("\n}\n").unwrap()];
         assert!(body.contains("crate::ai_bridge::forget_writing_jobs_of(&key.id)"), "{body}");
-        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
         assert!(bridge.contains("pub fn forget_writing_jobs_of(agent_id: &str)"));
         let bye = &bridge[bridge.find("(\"POST\", \"/agent-bye\")").unwrap()..];
         assert!(bye[..400].contains("forget_writing_jobs_of(&key.id)"), "the goodbye still forgets them");
@@ -2146,7 +2146,7 @@ mod global_checks {
         let source = norm(include_str!("../../src/commands/autorun.rs"));
         let open = body(&source, "async fn open_into(");
         assert!(open.contains("opening().try_read()"), "{open}");
-        for (name, src) in [("autorun.rs", &source), ("ai_bridge.rs", &norm(include_str!("../../src/ai_bridge.rs")))] {
+        for (name, src) in [("autorun.rs", &source), ("ai_bridge.rs", &norm(&crate::bridge_source::ai_bridge_source()))] {
             assert!(!src.contains("opening().read()"), "{name} waits for the opening lock");
         }
         // The refusal is a sentence for the person, no dash.

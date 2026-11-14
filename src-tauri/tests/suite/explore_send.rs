@@ -525,7 +525,7 @@ fn only_send_records_a_create_by_itself() {
         }
     }
     assert_eq!(calls.len(), 1, "{calls:?}");
-    assert_eq!(calls[0].0, "ai_bridge.rs");
+    assert_eq!(calls[0].0, "ai_bridge/explore.rs");
     assert!(calls[0].1.contains("fn send_in<"), "{calls:?}");
 }
 
