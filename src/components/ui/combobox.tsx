@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { IconPinToTop } from "../../lib/actionIcons";
 
@@ -60,6 +60,30 @@ export default function Combobox({
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // The panel hangs from the trigger's left edge and grows to its longest
+  // option. On a trigger near the right edge of a narrow window that pushes
+  // it past the scroll area, which then scrolls sideways to show it. When it
+  // would, it hangs from the trigger's right edge instead (when it fits
+  // there); with room it never moves.
+  const [alignEnd, setAlignEnd] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setAlignEnd(false);
+      return;
+    }
+    const panel = panelRef.current;
+    const trigger = triggerRef.current;
+    if (!panel || !trigger) return;
+    let clip: HTMLElement | null = panel.parentElement;
+    while (clip && clip !== document.body && getComputedStyle(clip).overflowX === "visible") clip = clip.parentElement;
+    const edge = clip && clip !== document.body ? clip.getBoundingClientRect().left + clip.clientWidth : window.innerWidth;
+    const p = panel.getBoundingClientRect();
+    const t = trigger.getBoundingClientRect();
+    const left = clip && clip !== document.body ? clip.getBoundingClientRect().left : 0;
+    if (p.right > edge + 1 && p.width <= t.right - left) setAlignEnd(true);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -140,7 +164,7 @@ export default function Combobox({
           setOpen((o) => !o);
         }}
       >
-        <span className={cn("truncate", value ? "text-text" : "text-faint")}>
+        <span className={cn("truncate", value ? "text-text" : "text-faint")} title={selectedLabel || undefined}>
           {selectedLabel || placeholder}
         </span>
         <span className="flex shrink-0 items-center gap-1">
@@ -166,7 +190,13 @@ export default function Combobox({
         // but option lists like iteration paths run much longer - the
         // panel grows to the longest option (viewport-capped, then the
         // rows truncate) instead of squeezing everything to the box.
-        <div className="t-dropdown absolute left-0 top-full z-40 mt-1 w-max min-w-full max-w-[min(42rem,calc(100vw-3rem))] rounded-md border border-border bg-surface shadow-xl">
+        <div
+          ref={panelRef}
+          className={cn(
+            "t-dropdown absolute top-full z-40 mt-1 w-max min-w-full max-w-[min(42rem,calc(100vw-3rem))] rounded-md border border-border bg-surface shadow-xl",
+            alignEnd ? "right-0" : "left-0",
+          )}
+        >
           <div className="border-b border-border p-1.5">
             <input
               ref={inputRef}
@@ -243,7 +273,7 @@ export default function Combobox({
                     onMouseEnter={() => setActive(row)}
                     onClick={() => commit(r.value)}
                   >
-                    <span className="truncate">{r.label}</span>
+                    <span className="truncate" title={r.label}>{r.label}</span>
                     <span className="ml-2 flex shrink-0 items-center gap-1.5">
                       {details?.[r.label] && (
                         <span className="whitespace-nowrap text-xs text-faint">{details[r.label]}</span>

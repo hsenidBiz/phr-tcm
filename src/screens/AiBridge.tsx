@@ -643,7 +643,10 @@ export default function AiBridge() {
             <div>
               <p className="mb-1 text-faint">Command-line registration (run inside the repository):</p>
               <div className="flex items-center gap-2">
-                <code className="id-mono flex-1 truncate rounded bg-surface-2 px-2 py-1 text-xs text-text">
+                <code
+                  className="id-mono min-w-0 flex-1 truncate rounded bg-surface-2 px-2 py-1 text-xs text-text"
+                  title={`claude mcp add --scope project ${TCM_SERVER} -- "${exe}" --mcp`}
+                >
                   claude mcp add --scope project {TCM_SERVER} -- "{exe}" --mcp
                 </code>
                 <Button
