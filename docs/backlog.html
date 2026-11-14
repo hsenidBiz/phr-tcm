@@ -42,31 +42,9 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 5 November 2026: stable 2.4.4 shipped (quieter labels, New / Update badges, the Halloween theme no longer offered), then 2.4.5-beta.1 (Run Tests on a folder, copyable ids) and 2.4.5-beta.2 (Raise bug, flaky cases, queue quality warnings, one-list changelog). Earlier, 4 November 2026: backlog 63, 64 and 71 done, the environment pill removed from Auto Run and API Templates, and every How To Use shot retaken; earlier, after 2.4.1: backlog 77 to 89 built for 2.4.4-beta.1; backlog 55 to 62 built for 2.4.3-beta.10 and 65 to 70 for 2.4.3-beta.11. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below.</p>
+  <p class="sub">Updated 14 November 2026, after stable 2.4.6 and 2.4.7-beta.1. Only work that is not built is listed. Everything already built, with its hand checks, was taken out on this date; the version of this file before that commit still has them.</p>
 
-  <h2>Agreed, not built yet</h2>
-  <div class="item">
-    <div class="head"><span class="num">A1</span><span class="title">Software assessment: speed, reliability and UX (agreed 10 November 2026)</span><span class="status todo">Built, hand checks owed</span></div>
-    <p>From the assessment of 10 November 2026. Not in this batch: Excel/CSV import and export, scheduled Auto Run with a trend report, and continuous integration.</p>
-    <p>Built 10 November 2026 on <code>claude/software-assessment-optimization-e3zpfi</code> and merged to main 11 November 2026, A1.1 to A1.9, with tests (plan: <code>docs/superpowers/plans/2026-11-10-assessment-a1-6-to-a1-9.md</code>). Changes from the agreement: the Rust cache removes only expired resolved suites and suite refusals (tags and assignment baselines are read stale on purpose); inline images keep base64 but one answer carries at most 24 MB of pictures; relink and step file uploads also run four at a time.</p>
-    <ul>
-      <li>Hand check owed: a suite of 1,000 or more cases in Run Tests, View and Update scrolls smoothly, Shift-click across a long range, an open editor kept while scrolled away.</li>
-      <li>Hand check owed: an installed app updated to this build keeps its cached plan trees (the one-time move from localStorage to IndexedDB) and the first screens paint from the cache.</li>
-      <li>Hand check owed: on a live org, an update whose baseline read fails (for example, VPN dropped after Review) shows "Upload anyway", and Upload anyway writes the update.</li>
-      <li>Hand check owed: the "started" line in Settings, Logs names each start-up step and its time; read it on a slow machine.</li>
-    </ul>
-    <ul>
-      <li><b>A1.1 Keep screen state on a tab change.</b> The screen wrapper in <code>App.tsx</code> uses <code>key={section}</code>, so each tab change starts the screen again. Manual Entry loses the unsaved title, steps, preconditions and tags; View, Update and Run lose search, filter and selection. Keep the state, and keep the Manual Entry draft on disk per organization and PBI.</li>
-      <li><b>A1.2 Retry failed reads.</b> A 429, a 5xx or a network error fails a request at once (<code>ado/transport.rs</code>), and one failed call fails a full fan-out. Retry GET requests (and read-only POST queries) with a delay and jitter, and obey Retry-After. Never retry a write.</li>
-      <li><b>A1.3 Remove serial request loops.</b> One request at a time for each item: PR work-item links, mentions (up to 20 every 5 minutes), pipelines, team members, the run report, relink, step attachments and inline images. Reads of more than 200 ids also go one chunk at a time. Run them concurrently with a limit.</li>
-      <li><b>A1.4 The pacer paces writes only.</b> At Balanced or Gentle one lock puts every request in one queue (<code>ado/throttle.rs</code>), so a read over 100 projects takes at least 20 or 80 seconds. The README already says the pacer limits writes. Server-requested holds still apply to every request.</li>
-      <li><b>A1.5 List virtualization, Run Tests first.</b> All rows stay in the DOM (<code>.cv-row</code> is not virtualization). The Run Tests table has no memoized row, so a selection click renders every row again. Memoize its rows, then render only the visible rows of long lists.</li>
-      <li><b>A1.6 Move the webview cache out of localStorage.</b> The cache, the queue drafts, notes and preferences share about 5 MB. Decision: the cache moves to IndexedDB with an in-memory copy loaded before the first render, so reads stay synchronous and no data crosses IPC. Queue drafts stay in localStorage (they are user work and part of the backup), and a failed queue save now shows a warning instead of failing silently.</li>
-      <li><b>A1.7 Smaller items.</b> The log file opens and closes for each line and has no size limit; the Rust cache never removes expired entries; inline images go to the webview as base64 text up to 8 MB each; the work before the window shows is synchronous (measure each step in the log first).</li>
-      <li><b>A1.8 Arrow keys and loading states.</b> Arrow keys move through rows only in the queue; add them to View, Update, Run and Search Suites. Use skeleton loaders on Run Tests, Search Suites, Suite Management and Auto Run.</li>
-      <li><b>A1.9 Tell the user when an update loses formatting.</b> If the baseline read fails before an upload, steps are written from plain text and formatting is lost; only the log says so (<code>commands/queue.rs</code>). Tell the user and let them stop before anything is sent.</li>
-    </ul>
-  </div>
+  <h2>Proposed, yours to pick</h2>
   <div class="item">
     <div class="head"><span class="num">A2</span><span class="title">Software assessment: what is left (added 11 November 2026)</span><span class="status todo">Proposed, yours to pick</span></div>
     <p>The rest of the 10 November 2026 assessment after A1, together with the suggestions from the second assessment in the same session. Nothing here is agreed yet; overlapping ideas are merged into one line.</p>
@@ -77,10 +55,7 @@
       <li><b>F3 Trend and traceability reports.</b> The app has a last-five history and an HTML report for a selection. Add a pass rate, duration and flakiness trend per PBI or suite, a PBI-to-case-to-bug matrix, and a coverage view for a sprint.</li>
       <li><b>F4 Azure DevOps test features.</b> Shared steps are kept but cannot be edited or expanded (<code>steps_xml.rs</code>). Test parameters (data-driven cases) and test configurations are not supported.</li>
       <li><b>F5 A screen for saved setups.</b> Only an assistant can use saved setups today (<code>get_kept_actions</code>, <code>save_setup</code>, <code>list_setups</code>, <code>run_setup</code>).</li>
-      <li><s><b>F6 Upload journal in Rust.</b></s> Shipped in 2.4.6-beta.4. The "unknown create" hold is written only after the results arrive. If the app stops between the send and the result, no record remains and a second upload relies only on the duplicate-title warning. Write a marker in Rust before each <code>$batch</code> send.</li>
       <li><b>F7 Optional usage counts.</b> No telemetry, so nobody knows which features are used. A local count the user can turn off is enough.</li>
-      <li><s><b>F8 One inbox for assistant proposals.</b></s> Shipped in 2.4.6-beta.4. Proposals sit in two places (Accounts, Proposed, and the Sign-in notice in Auto Run, Setup) and the assistant waits while the person finds them. One "Waiting for you" list with a notification.</li>
-      <li><s><b>F9 Show what the assistant is doing.</b></s> Shipped in 2.4.6-beta.4. A trial sign-in holds the browser with no sign in the app, and pressing Run during one says an unattended run is going. An activity strip with Stop, and a timeline of what the assistant saved, proposed and tried.</li>
       <li><b>F9b Where Recent activity lives.</b> Hidden from Auto Run in 2.4.6-beta.10 at the owner's request (code and tests kept): the owner is deciding where the section belongs before it is shown again.</li>
       <li><b>F10 Share Auto Run knowledge between people.</b> Areas, recipes and the API library appear to live on one machine and move by export file, so each teammate rediscovers the same app. Confirm first, then consider a shared location such as a repository folder.</li>
       <li><b>F11 Audit existing test cases</b> with the quality warnings the upload queue already applies to new ones.</li>
@@ -132,820 +107,195 @@
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Assistant-built sign-in and expired-password reset (2.4.6-beta.2)</span><span class="status todo">Next</span></div>
+    <div class="head"><span class="title">From the Manage Cycle comparison</span><span class="status todo">Proposed, yours to pick</span></div>
     <ul>
-      <li>Built 10 Nov 2026: the assistant inspects a sign-in or change-password page, proposes a recipe it has tried with a saved account, and you approve or reject it under the Sign-in row in Auto Run, Setup; discover and every live-app command recover through this instead of stopping. Trials only sign in on the environment's address or the saved recipe's sites; with neither, propose is refused (record a sign-in or set the address first).</li>
-      <li>Hand checks owed on a live site: on hSenid HRM legacy, let an account expire (or use one that is) with Reset expired passwords on for a test environment; run discovery; the assistant should reach changepassword.aspx, propose the change-password part, the notice offers the tick box; approve; the next sign-in resets the password and Accounts shows the new one. Also: a deliberately wrong recipe makes discovery propose a replacement; Reject leaves the old recipe; three failed attempts stop the assistant.</li>
-      <li>Parked follow-ups: a project still on the built-in sign-in cannot propose a change-password part on its own (needs a recorded sign-in first); approve says "not saved" if removing the proposal fails after saving; the notice matches one Rust sentence by hand; no in-app sign of a running trial; a draft that types fixed text into a password field during a trial is not refused yet.</li>
+      <li>expect_response cannot require a query parameter to be absent.</li>
+      <li>Absence checks have no positive control at run time.</li>
+      <li>Precondition records are not tied to the case's names.</li>
+      <li>Components still wait for "Showing 1-1 of 1" rather than the search response.</li>
+      <li>Nothing flags nth where a label exists.</li>
+      <li>Script fixes for 141706, 142514, 141708 and 141727.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Shared API library (2.4.5-beta.7) and sign-in check in a menu</span><span class="status todo">Next</span></div>
+    <div class="head"><span class="title">Pull Requests: your completed pull requests</span><span class="status todo">Proposed, yours to pick</span></div>
     <ul>
-      <li>Shared API library shipped in 2.4.5-beta.7: templates, flows and fixtures are one library for every environment, each marked Unconfirmed here / Failed here per environment. Hand checks owed on a live org: a fresh environment runs a shared fixture as a setup and gets the "has not worked on this environment yet" Blocked sentence; the assistant replaces a template from a second environment and the first then reads Unconfirmed here; the one-time move on the installed app keeps every template, fixture and flow; restoring an older backup keeps run histories; the retaken API Templates and Search Suites More shots look right.</li>
-      <li>Sign-in check inside a menu (agreed 6 Nov 2026, built for 2.4.5-beta.8): while picking the signed-in check, menu-opening clicks and Shift-clicks are carried out and not recorded; a check picked inside a menu passes when present even with the menu closed. For the hSenid HRM legacy site the check today is the menu toggle button; with this change, Logout in the name menu. Hand check owed: on a live site whose Sign out sits under the user's name, record a sign-in, open the menu while showing how you sign out, pick Sign out, see "(inside a menu)", Check and save, then replay a case with another account.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
-    <ul>
-      <li>Faster suite lookup: shipped in 2.3.1-beta.18. Hand checks owed on a live org before 2.4.0: Run Tests finds a real PBI's suite quickly (the suites-by-test-case answer has requirement suites and names their project), a PBI with requirement suites in two plans picks your area's plan, and "Reading a large plan (page N)" shows on plan 55291 when the full walk runs.</li>
-      <li>Saved setups: shipped in 2.3.1-beta.19 (assistant tools get_kept_actions, save_setup, list_setups, run_setup; no UI). Hand checks owed on a live org before 2.4.0: save a setup that creates a leave type with a database find rule, run it twice (built, then found); run it with Database Read Access off and a browser find rule; undo a record a setup built with undo_explore_creates.</li>
-      <li>2.4.1 (stable, 28 October 2026): the Setup warning names what needs attention; the sidebar groups its rows under Test Case Management and Advanced (Auto Run Ctrl+9); the Playwright pill counts the pipeline's rule files; what an assistant adds (areas, components, discovery map, quirks, test files, proposed accounts, fixtures) shows on Auto Run without a reload. Hand checks owed: watch an assistant add an area and a fixture while Auto Run is open; the sidebar collapsed and open; the pill with a clone missing one rule file. The How To Use screenshots still show the old sidebar order and should be retaken.</li>
-      <li>The final screenshot run: shipped in 2.4.0. All 90 shots retaken in both themes, plus the new Assistants card shot; the Settings switch to treat all projects as one is a located control.</li>
-      <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Several assistants at once: a browser each</span><span class="status todo">Shipped, hand checks owed</span></div>
-    <p>Phase 1 (who is calling): the proxy names each caller, the log shows which assistant made each call, and one assistant's calls no longer wait for each other (at most 8 at once). Because those calls now overlap, saves that could collide take turns: writes of the areas, the run order, the run histories, test files and flows never lose one another. An area save is refused (409) when the area changed or its name was taken while it was being saved, a script save is refused (409) when the script changed since its checks first read it, and a second first save of one flow is refused unless it says replace with a why (2.3.1-beta.3). Phase 2 (one slot table, 2.3.1-beta.4): the browser state is held per numbered slot and every browser route picks its slot once, still always the main one, so nothing changed yet. Phase 3 (2.3.1-beta.5): the Assistants card for the main browser shows each connected assistant, its browser, its account and what it is doing, with Stop, End discovery and Release; it also shows before a PBI is picked, and How To Use describes it. Phase 4 (extra browsers) shipped in 2.3.1-beta.14: up to three assistants work at once, each in a browser of its own and signed in as an account of its own; a second assistant gets its own browser when the main one is in use, a third gets one while fewer than three are open, and past that the call is refused; an account another assistant holds is refused by name; one case is worked by one assistant at a time and only one menu mapping runs at once; Release all and exit close every assistant's browser; an assistant that goes away has its extra browser released after about a minute and a half; and an assistant that names itself with the agent argument (a subagent, or one of several chats sharing one connection) gets a browser of its own. This delivers the old item "One discovery browser per account" (several assistants exploring at once), which is folded in here. How To Use describes it. Phase 5 (idle release) is built and ships in the next beta: an assistant's own browser is released after 30 minutes without a call from that assistant, whether or not the assistant is still listed, unless a replay, a batch of discovery actions or a call is going in it; the assistant's next call that acts on or reads a browser is told once why, and the main browser is never released this way.</p>
-    <ul>
-      <li>Hand check owed: two Claude Code sessions calling Auto Run tools. Settings, Logs shows "AI tool ... (Assistant 1)" and "(Assistant 2)". In one session, a quick call answers while its replay is still waiting.</li>
-      <li>Hand check owed: one assistant in the dev app, everything as before: discovery, try, replay (carry-on included), reset, release, an explore session's send_api_request and undo, and the person's Open browser, Close browser, Replay to step and Release Auto Run browser.</li>
-      <li>Hand check owed: two sessions connected, the card lists both.</li>
-      <li>Hand check owed: Stop, End discovery and Release on the main browser's row.</li>
-      <li>Hand check owed against a live org (phase 4): two sessions with two accounts discovering at once, each in a browser of its own.</li>
-      <li>Hand check owed: a second session asking for an account the first holds is refused, and the refusal names the first assistant and the account.</li>
-      <li>Hand check owed: the same case asked for from two sessions is refused for the second.</li>
-      <li>Hand check owed: a session closed mid-replay has its browser released within about 90 seconds, and its account is free again.</li>
-      <li>Hand check owed: the person's Open browser and Release Auto Run browser (Release all) while two assistants work.</li>
-      <li>Hand check owed: two subagents of one session given different agent names get two browsers.</li>
-      <li>Hand check owed (phase 5): an assistant's own browser left 30 minutes without a call closes, its row on the card loses its browser, and that assistant's next call says why; the main browser stays open however long it is left, and a browser with a replay going is not closed.</li>
-      <li>Hand check owed: Task Manager memory and CPU with three browsers on PeoplesHR, recorded here. The limit of three may be lowered on that measurement, never raised.</li>
-      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The Assistants card shot is among them.</li>
+      <li>The 25 are picked by when they were created, not when they closed: one opened long ago and merged today is left out when 25 newer ones exist. Azure DevOps can be asked by close date instead (the board's completed chips pick the same way).</li>
+      <li>Across projects, a project that fails only for this list is left out without a note (the overview's "Showing pull requests from N of M projects" covers the usual case).</li>
+      <li>Until the list loads, your completed pull requests show for a moment in a tracked repository's Completed section.</li>
     </ul>
   </div>
 
+  <h2>Decisions waiting on you</h2>
   <div class="item">
-    <div class="head"><span class="title">WebForms postback steps in API templates</span><span class="status todo">Built on feat/webforms-postbacks, not released</span></div>
-    <p>A template step (and a one-off in an explore session) can be a full WebForms postback: the page state is carried in the page itself, chained across steps of a run, with HTML checks and captures. Full postbacks only.</p>
+    <div class="head"><span class="title">A check that something is shown, in the case's own words</span><span class="status todo">Your decision</span></div>
+    <p>It still saves without that text having been seen on the app. Should it be refused until it has been seen? Scripts that rely on it today would be refused the next time they are saved.</p>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Procedures named sp_... in the report module</span><span class="status todo">Your decision</span></div>
+    <p>Your own procedures, views and functions named <code>sp_...</code> or <code>xp_...</code> are refused (SQL Server looks for those names in master first). Allow them when written with a non-sys schema (<code>dbo.sp_x</code>)?</p>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Keep or remove</span><span class="status todo">Your decision</span></div>
     <ul>
-      <li>Hand check owed on a live PeoplesHR WebForms page: <code>CompanyEvaluation.aspx</code>, Save, then Create, then Save Item, proven and saved as a template.</li>
-      <li>Hand check owed: a one-off try of each of those three postbacks, one call at a time (the answer says carried on or loaded fresh).</li>
-      <li>Hand check owed: a run whose session was taken over part-way (signed out) fails with the signed-out sentence and sends nothing more.</li>
-      <li>Open follow-up: record-and-replay of postbacks (turning a person's clicks on a WebForms page into a template; approach 3 of the design). Parked; out of scope for this build.</li>
-      <li>Open follow-up, not yet built: a cross-origin SSO redirect on a postback is not yet recognised as signed out (today it fails as "the request did not complete"). Parked.</li>
-      <li>Open follow-up: a saved template (a plain POST or a postback) is not checked for a step that deletes, such as a Delete argument or a delete endpoint, against its declared effect. Only one-off requests check this today.</li>
+      <li>scripts/csp-verify.mjs and scripts/measure-text-centre.mjs.</li>
+      <li>The allow rules for v1 scripts in .claude/settings.local.json.</li>
+      <li>Stale branches and worktrees (claude/cool-bohr-..., claude/hopeful-swirles-..., claude/software-assessment-optimization-e3zpfi) and the ignored old v2/ folder (about 6 GB).</li>
+      <li>.test-cases/ in the repository folder: add it to .gitignore or move it.</li>
     </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Fill in the sign-in recipe's menu preferences and modes</span><span class="status todo">Your side</span></div>
+    <p>In Settings' sign-in recipe: the clicks that open the Preferences dialog, its close button and the Group Menu Items checkbox, and how the page shows Admin or Self Service with the control that switches to each. Nothing uses them until they are filled in.</p>
   </div>
 
-  <h2>Folder runs, Raise bug, flaky cases and quality warnings (2.4.5-beta.1 and beta.2)</h2>
+  <h2>Open follow-ups from built work</h2>
   <div class="item">
-    <div class="head"><span class="title">Run Tests on a Test plan folder</span><span class="status todo">Shipped, hand checks owed</span></div>
-    <p>Search Suites, More, Run Tests on a folder that is not a PBI's suite opens the full Run Tests screen on that folder's own cases (not its subfolders'), with history, My order and Spec order, the report and the runner. No suggested order (that lives on a PBI).</p>
+    <div class="head"><span class="title">Sign-in built by the assistant</span><span class="status todo">Follow-ups</span></div>
     <ul>
-      <li>Hand check owed on the live org: hSenid QA Test Suit, Widget, Regression: tick three cases, run them, outcomes land on that suite's points; Back returns to the PBI or to Search Suites.</li>
+      <li>A project still on the built-in sign-in cannot propose a change-password part on its own (it needs a recorded sign-in first).</li>
+      <li>Approve says "not saved" if removing the proposal fails after saving.</li>
+      <li>The notice matches one Rust sentence by hand.</li>
+      <li>No sign in the app of a trial that is running.</li>
+      <li>A draft that types fixed text into a password field during a trial is not refused yet.</li>
+      <li>A second sign-in inside one app is F12 above.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Copyable ids</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <div class="head"><span class="title">API templates and WebForms postbacks</span><span class="status todo">Follow-ups</span></div>
     <ul>
-      <li>Hand check owed: double-click a case number on the browser page selects only the number; select and copy a work item id on a board card (the card must not drag or open) and in the work item panel's header.</li>
+      <li>Record-and-replay of postbacks (turning a person's clicks on a WebForms page into a template). Parked.</li>
+      <li>A cross-origin SSO redirect on a postback is not recognised as signed out (it fails as "the request did not complete"). Parked.</li>
+      <li>A saved template (a plain POST or a postback) is not checked for a step that deletes against its declared effect; only one-off requests are.</li>
+      <li>Writes caught by what changed rather than by verb are not built, and a marked writing GET is not noted for the GET steps of a template run or a prove (79).</li>
+      <li>No template-string transform; base64 and JSON only (81).</li>
+      <li>A later working call replaces the latest same-route auto-save, whether or not the earlier one failed, and keeps the old run history (77).</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Raise bug from a failed Auto Run case</span><span class="status todo">Shipped, hand checks owed</span></div>
+    <div class="head"><span class="title">Auto Run runs and reports</span><span class="status todo">Follow-ups</span></div>
     <ul>
-      <li>Hand check owed on the live org: Raise bug on a failed case files a Bug linked to the case and the PBI with the failure screenshot attached; on an older run whose screenshots were cleared, the form still opens and says how many are gone.</li>
-      <li>Open, yours to pick: the filed bug number shows only until the review closes (the run record has no field for it).</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Flaky cases</span><span class="status todo">Shipped, hand checks owed</span></div>
-    <ul>
-      <li>Hand check owed: with real run history, the list shows cases that both passed and failed on one environment; Mark flaky moves its failures to "flaky" in Past runs and the review; a marked case that then fails every run stays listed and can be unmarked.</li>
-      <li>Open, yours to pick: the HTML run report and the Test cases tab still count a flaky-marked failure as failed; the review has no Flaky filter.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Queue quality warnings</span><span class="status todo">Shipped, hand checks owed</span></div>
-    <ul>
-      <li>Hand check owed: in review, a case with an empty expected result, an expected result of "Works", or a first step saying "the above" with no preconditions shows the warning on its row, and Upload still works.</li>
-    </ul>
-  </div>
-
-  <h2>Expired passwords, kept data and Check sign-in (2.4.3-beta.9)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Kept records, password expiry and Check sign-in</span><span class="status todo">Built, hand checks owed</span></div>
-    <p>Scripts can name the records they need (a run is Blocked when one is missing); an environment can hold a password expiry query and an active session query; Check sign-in tries accounts against an area; a test environment can reset an expired password.</p>
-    <ul>
-      <li>Hand check owed against a live org: a case with a needs_records entry whose record is missing runs as Blocked, and passes once the setup has built the record.</li>
-      <li>Hand check owed against a live org: the password expiry and active session queries on the user table HS_SM_USER_ACCOUNT, with the expiry date and the logged-in rows read correctly.</li>
-      <li>Hand check owed: the reset page is recognised with the owner's recorded sign-in recipe and fails as "password expired".</li>
-      <li>Hand check owed: Check sign-in to an area for several accounts (the seven HR-admin logins to Definition Wizard): reaches / stopped where, Cancel, and the proposals preferring the ones that reached it.</li>
-      <li>Hand check owed: the Reset expired passwords switch on a test environment (one expired account on QA Automation), including a reset that is not confirmed: the old password stays stored and the message says so.</li>
-      <li>Hand check owed: the run window's warning for accounts expired or due within a week.</li>
-      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The Accounts window now has a shot per tab (Accounts, and Proposed).</li>
-    </ul>
-  </div>
-
-  <h2>Auto Run backlog 77 to 89 and comma search (2.4.4-beta.1)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Nine Box seed round: one-off sends, kept values, sign-out, screenshot, select_option, release, db_query</span><span class="status todo">Built, hand checks owed</span></div>
-    <p>Built for 2.4.4-beta.1 (a stable 2.4.3 comes from another branch). <code>save: false</code> and <code>timeout_s</code> on <code>send_api_request</code>; <code>covers</code> and <code>route_kind</code> on the change list; capture filters (with <code>[N]</code> after a filter) and <code>$base64</code> / <code>$json</code> body wrappers; <code>keep</code> and <code>{{var.name}}</code>; a token page found for a POST; signed-out detection; <code>screenshot</code> and <code>select_option</code> actions; <code>end_autorun_discovery</code> releasing the browser; a read-it-in-pieces note on <code>db_query</code>. A comma in any search bar searches for several things at once.</p>
-    <ul>
-      <li>Hand check owed: a full-page screenshot (<code>full_page</code>) of a long PeoplesHR page comes back whole.</li>
-      <li>Hand check owed: <code>select_option</code> on a Knockout list picks the option by its text, and the page shows the choice.</li>
-      <li>Hand check owed: a long call (<code>timeout_s</code> 60 or more) that times out answers <code>timed_out</code>, and the same for a postback; the save is noted and nothing is sent twice.</li>
-      <li>Hand check owed: signed-out detection on PeoplesHR: a session ended mid-run answers <code>signed_out</code> for a plain call and for a postback, later sends are refused, and the next discovery signs in afresh.</li>
-      <li>Hand check owed: a kept value (<code>keep</code>) never shows in an answer, in the capture tools, in an export or in the log, including after the discovery ends.</li>
-      <li>Hand check owed: <code>end_autorun_discovery</code> frees the account at once (also after a replay), and a second assistant can take it; the person's own browser is left open.</li>
-      <li>Left open (79): writes caught by what changed rather than by verb are not built, and a marked writing GET is not noted for the GET steps of a template run or a prove. Route marks are kept per environment.</li>
-      <li>Left open (84): a sign-in page served in place at the same URL is not caught; only a move to another path, or landing on the start page.</li>
-      <li>Left open (87): <code>fill</code> on a Knockout list is unchanged (use <code>select_option</code>); <code>press_key</code> still takes named keys only.</li>
-      <li>Left open (81): no template-string transform; base64 and JSON only.</li>
-      <li>Left open (89): sqlcmd still cuts long text at about 256 characters. The answer says how to read a value in pieces and caps a value at 64 KB; lifting the cut needs measuring against the real database.</li>
-      <li>Left open (77): a later working call replaces the latest same-route auto-save, whether or not the earlier one failed, and keeps the old run history.</li>
-    </ul>
-  </div>
-
-  <h2>Auto Run backlog 55 to 62 (2.4.3-beta.10)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Environment update, import, holds, cold sites, delete loops, locators, passwords</span><span class="status todo">Built, hand checks owed</span></div>
-    <p>The update puts old data in the active environment only and runs where they were made; Import scripts… on the Setup panel; a failed discovery start frees its case; a cold site gets 2 minutes; delete loops with <code>except</code> are guarded and settle; <code>has_text</code>, <code>remember_text</code> with <code>same_as</code>; <code>when_visible</code> and <code>expect_hidden</code> in a loop; <code>patch_steps</code> adds a step; get_accounts shows no passwords.</p>
-    <ul>
-      <li>Hand check owed: a fresh flat install updated with two environments shows the move toast once, QA starts empty, and runs land where they were made.</li>
-      <li>Hand check owed: Import scripts… from the 582-script archive into QA Automation lists the 31 differing cases and leaves them unless Replace is ticked.</li>
-      <li>Hand check owed: a subagent whose discovery start fails frees its case for the next.</li>
-      <li>Hand check owed: the Philippines dev site after an idle night signs in within 2 minutes, or says it is slow to start.</li>
-      <li>Hand check owed: the competency groups loop with <code>except</code> stops before deleting on the Definition Wizard tree.</li>
-      <li>Hand check owed: the 135412 and 135421 by-name delete loops on the slow site run once.</li>
-      <li>Hand check owed: a <code>has_text</code> delete and a <code>remember_text</code> pills check on a Competencies case.</li>
-      <li>Hand check owed: 135342 gets its clean-up step through one patch.</li>
-      <li>Hand check owed: get_accounts on QA Automation lists no password.</li>
-      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The Setup panel shot shows Import scripts.</li>
-      <li>Done (63): an exported Playwright test runs the same rows check as Auto Run before its first pass (in the page and in the list's own frame) and stops with the same sentence.</li>
-      <li>Done (64): a discovery try files a pass only when a row it saw named a protected text; a try that never ran the check files nothing, so an older refusal stays.</li>
-    </ul>
-  </div>
-
-  <h2>Auto Run backlog 65 to 70 (2.4.3-beta.11)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Quirk cap, check swaps, resets, whole-case replays, clean-up guards</span><span class="status todo">Built, hand checks owed</span></div>
-    <p>The quirk cap is 100 and a refused quirk opens the save's answer; a swap of check kinds is accepted; an empty <code>unchecked</code> list clears; a replay past the last step always starts from the beginning; a reset goes back to the signed-in page and says why when the sign-in has gone; a clean-up guard's target saves unseen with a note and is filed when the guard fires.</p>
-    <ul>
-      <li>Hand check owed: a reset on PeoplesHR keeps the sign-in, and the next replay does not sign in again. If a reset says the sign-in has gone, note the reason it gives (68 is only partly done; the cause is not confirmed).</li>
-      <li>Hand check owed: a whole-case replay starts from the beginning even when the discovery left the browser mid-case, and says why it did not carry on.</li>
-      <li>Hand check owed: a guarded clean-up's then saves unseen with a note, and is filed as seen the first time its guard fires (135540).</li>
-      <li>Hand check owed: the by-text row of a typed name (135388): if its name came from a placeholder or a noted value, it still needs a sighting (70).</li>
-      <li>Done (71) in 2.4.3-beta.12: a clean-up guard that never fired is listed on the case card until a replay or run fires it.</li>
-    </ul>
-  </div>
-
-  <h2>Per-environment Auto Run data (built, not yet released)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Each environment keeps its own Auto Run data</span><span class="status todo">Built, hand checks owed</span></div>
-    <p>Scripts, areas, components, quirks, saved setups, API templates, fixtures and flows live in a folder per environment; run history stays with the environment that made it. The update copies the existing data into every environment once. Switching environment switches the folder, and is refused while a browser or run is busy. Copy Auto Run data in Edit environments, and Copy to environment and Copy from environment on a script, move data between environments (a removed environment's data is kept for 30 days). Playwright export and Sync work in one export environment, shown as Exports from.</p>
-    <ul>
-      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each). The environment label is gone from these screens (the title bar names the environment), and both frames are taller so the selection bar and the Setup rows fit.</li>
-      <li>Hand check owed: the first start after the update on the owner's real data. Two environments with scripts in both, history only in the active one, the launch time noted, and the old flat layout untouched if the copy fails.</li>
-      <li>Hand check owed: switching environment with a browser open is refused and says why; with Auto Run open and nothing busy, the list reloads and an open editor closes.</li>
-      <li>Hand check owed: an assistant's save that was in flight during a switch is refused.</li>
-      <li>Hand check owed: copy one case in both directions (Copy to environment and Copy from environment), including a case that uses a component, a missing account and an existing script to replace.</li>
-      <li>Hand check owed: copy a whole environment with Copy Auto Run data, with and without replacing.</li>
-      <li>Hand check owed: remove an environment, then copy its data back from the removed entry within 30 days.</li>
-      <li>Hand check owed: Playwright export is refused outside the export environment and names the one to switch to; Sync works in it; changing the export environment moves both.</li>
-      <li>Hand check owed: import a backup made before the update. Its files fill every environment, the confirmation names what it replaces, and the previous data is kept in the removed area for 30 days.</li>
-      <li>Done 4 November 2026: every How To Use shot retaken in both themes (91 each).</li>
-    </ul>
-  </div>
-
-  <h2>Halloween theme and a centred bell count (2.4.2 stable, 29 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Shipped</span><span class="status todo">Shipped</span></div>
-    <p>A seventh theme, Halloween (orange and black), with pumpkins under the PBI bar, bats flying point to point, three spiders on threads that lengthen, and a cobweb with stuck bugs at the bottom left of the content column. Every launch before 1 November 2026 switches the machine onto it once; 7 days later the theme and the accent go back separately, unless the person picked one meanwhile (src/lib/season.ts). The decorations never take a click: a click on an empty spot under a pumpkin or spider makes it react. The bell's 1 (and 7) is nudged to the circle's middle. The guide's Settings shots were retaken for the seventh theme card.</p>
-    <ul>
-      <li>Minor, not built: if the hourly switch-back fires while Settings is open, its theme and accent selection shows the old values until Settings is reopened.</li>
-      <li>Hand check owed: a real install updating to 2.4.2 lands on Halloween, and is back on its own theme and accent 7 days later.</li>
-    </ul>
-  </div>
-
-  <h2>Second writer run, backlog 42 and 43, and a furnished office (2.4.2-beta.3, 29 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Shipped</span><span class="status todo">Shipped</span></div>
-    <p>Areas keep a menu path per menu shape; walks wait out overlays and keep an open menu open; probes count every visible match and show attributes; page answers drop an unchanged side menu; truer save notes and replays; a reset keeps its sign-in; fuller divergences. Writers make the data a case needs (through the app or API templates, never their own SQL) instead of holding it back. The Assistants office: name tags pace with their assistant, assistants without an Auto Run browser are left out, and the three rooms are furnished (chemistry lab with lab coats, holographic map, furnished lounge).</p>
-    <ul>
-      <li>Hand check owed on a live org: an account with the other menu shape (evelyn, automation51) reaches My Assessments after a writer records the second path with variant: true.</li>
-      <li>Hand check owed: the first Talent click after sign-in waits out div.mode-overlay__desc; an expanded Talent is not collapsed.</li>
-      <li>Hand check owed: reset_autorun_browser after a long discovery keeps the sign-in (log line to look for if not: "the assistant's reset found the sign-in gone").</li>
-      <li>Hand check owed: a writer run that makes its own data (a participant, a cycle) and saves it as a fixture, with nothing held back that could be made.</li>
-      <li>Hand check owed: the furnished office in a real window, both screens, light and dark, with someone idle in the Lounge.</li>
-      <li>Not detected: a sign-in reached by a click-through redirect (the print retake skips only a navigate to the sign-in address, a typed password or a sign_in action).</li>
-      <li>Not reproduced: 144580's exact trailing-space failure. Record a quirk on the cycle-selection race on a live run.</li>
-      <li>The per-call timing line is at debug level (hidden in the log viewer by default).</li>
-    </ul>
-  </div>
-
-  <h2>Several writers fixes, backlog 41 (2.4.2-beta.2, 28 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Shipped</span><span class="status todo">Shipped</span></div>
-    <p>From the first three-writer run: a refused action names the field it expected with an example; a discovery wait without a timeout gets 10 s, waits are capped at 120 s and no call runs past 280 s; a failed area walk says when the account's menu lacks the click; refused-session log lines say which browser, why and how old; a discovery naming a saved area starts there with the cookie banner closed; subagents leave their report in a file; /tcm:gen-tests can split cases between writers by what each account can do. The Assistants office bubble wraps instead of being cut off.</p>
-    <ul>
-      <li>Hand check owed on a live org: a three-writer run on the new build (each writer's discovery starting at its area, no banner click lost, no hung waits).</li>
-      <li>Hand check owed: an account with a different menu (gabriel on My Assessments) fails with the menu sentence.</li>
-      <li>Hand check owed: the Several writers split's db_query on the Performance module gives a usable account / roles / records table.</li>
-      <li>Owed on a live run: record My Assessments' slow first load as a quirk (record_quirk).</li>
-      <li>Update the installed app on the machine that ran the writers: 2.3.1-beta.4 there has no agent on end_autorun_discovery.</li>
-      <li>Not tested end to end: the per-action timeout with a real hung browser (the fake driver answers at once).</li>
-    </ul>
-  </div>
-
-  <h2>The Assistants office (2.4.2-beta.1, 28 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Shipped</span><span class="status todo">Shipped</span></div>
-    <p>The Assistants card has a small office above its rows, with three corners: the Test lab (replaying, working), the Map room (discovering, mapping, exploring) and the Lounge (idle). Each assistant has a name tag and a speech bubble, and walks to its new corner when its activity changes. Each row has a square in that assistant's colour. The browser and activity lines start with a capital. Only the Assistants How To Use shot was retaken.</p>
-    <ul>
-      <li>Hand check owed: the walk between corners animates in the real app (only reasoned about, never watched): change an assistant from discovering to replaying and it should walk left, facing left, for about 2.5 s.</li>
-      <li>Hand check owed: on both of the owner's screens, the bubble sits above the head and the Map room pacer stays inside its corner at the narrowest window.</li>
-      <li>Hand check owed: with reduced motion on, nothing moves or flips; an assistant changing corner jumps.</li>
-      <li>Other Auto Run How To Use shots still show the old, shorter card at the top. A full capture run moves controls between the light and dark passes on Selected, Setup and Past runs (the taller card pushes them near the bottom edge), so those routes need a fixed scroll before the next full run.</li>
-    </ul>
-  </div>
-
-  <h2>List toolbars, wider search, Setup tidy-up (2.3.1-beta.17, 27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Shipped</span><span class="status todo">Shipped</span></div>
-    <p>Every list screen (Update and View Test Cases, Run Tests, Search Suites, Suite Management, Work Manager, the Auto Run case list) has one header line (count or title, refresh, page actions on the right) and one toolbar line: a wide search, then its filters, all 40px tall, switches without a box. The toolbar sticks to the top while the list scrolls, with a line under it only once stuck; beside another column (Auto Run's Setup) it stays in its own column. Every search matches each word against more than the name: tags, module, automation status, priority, state, assignee, outcome, tester and more, as each screen has them loaded. The Auto Run search moved from the Setup panel into the case list's toolbar. Save words and Protected records left the Setup panel (their saved lists still apply). Setup gained a Fixtures row that opens API Templates on its Fixtures tab. A hovered Run Tests row shows an accent bar. Each Auto Run assistant has a small figure that walks, types or dozes, and the Assistants card shows only while one works (2.3.1-beta.16).</p>
-    <ul>
-      <li>Not searchable without new requests (owner may ask): state, assignee and area on Update and View Test Cases; the cases inside a suite on Search Suites; Suite Management has no search box.</li>
-      <li>In a blue accent theme the three assistant figures are all shades of blue.</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 1: one organization is chosen for you (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <p>When the signed-in account has exactly one organization, the bar selects it automatically and the Organization picker is not drawn. Zero or several organizations keep the picker. The guided tour never auto-selects, and its "Choose where you work" stop now rings the whole scope group (Organization, Project and PBI search) with a body that fits one or several organizations.</p>
-    <ul>
-      <li>Hand check owed: sign in with a one-organization account. There is no Organization picker, the organization is selected on its own, the Project picker lists its projects, and the header stays on one line in a 1280px window.</li>
-      <li>Hand check owed: sign in with a two-organization account. The Organization picker shows and nothing is chosen for you.</li>
-      <li>Hand check owed: run the guided tour on a one-organization account. The "Choose where you work" stop rings the Project and PBI search, and your real organization is still selected when the tour ends.</li>
-      <li>Owed: the How To Use header shots. The getting-started page no longer documents an Organization control (the demo data has one organization, so the picker is not drawn) and says in words that a picker shows with several; the shot image still shows the old header with the picker. Re-take the shots (docs:dev, docs:shots) with the installed app closed, in phase 7 or sooner.</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 2: the switch and the PBI path (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <p>Released in 2.3.1-beta.8. Settings has a Treat all projects as one switch (on by default) and, while it is on, a Home project picker. With it on there is no Project picker; PBI search and Recent PBIs cover every project and a hit names its project when more than one shows; test cases, runs and new work items go to the project of the PBI (or of the parent PBI). Auto Run, API Templates and Playwright keep their files in the home project, and an Auto Run result is sent to the PBI's own project. Search Suites still shows one project at a time until phase 5: the PBI's project, or the home project when no PBI is picked (the board stopped doing so in phase 3 and pull requests in phase 4, below). A notification from another project opens its item without moving the home project.</p>
-    <ul>
-      <li>Hand check owed: an existing install keeps its saved PBI after the update, its old project becomes the home project, and the one-time notice that projects now show together appears once and not again (an organization with one project is not told). It says only that PBIs from every project show in one search, that Auto Run, API Templates and Playwright stay on the home project, and how to switch off. On a fresh install with several projects, the first PBI you pick becomes the home project and a message says so.</li>
-      <li>Hand check owed: search for a PBI that lives in a second project. The hit shows the project chip, picking it makes Test Cases, Run Tests and Auto Run work on that PBI, and a new test case is created in that PBI's project.</li>
-      <li>Hand check owed: New Work Item with a parent PBI from another project says it will be created there, and the work item appears in that project; with no parent it goes to the home project.</li>
-      <li>Hand check owed: Auto Run with a PBI in another project reads its recipe and scripts from the home project, and Send to Azure DevOps puts the results in the PBI's project.</li>
-      <li>Hand check owed: switch off in Settings. The Project picker comes back showing the PBI's project and the PBI stays; switch on again changes nothing else. Change the Home project and check Auto Run, API Templates and Playwright follow it.</li>
-      <li>Hand check owed: open a pull request notification for another project while the switch is on. The Pull Requests screen lists every project, the notified pull request is expanded and ringed and reads its comments and work items in its own project, no Project picker appears, and Settings still shows the old home project. Resolve one of its comment threads and check it resolves in Azure DevOps in that project. (A work item notification opens on the board across projects; see phase 3.)</li>
-      <li>Hand check owed: with a PBI in a second project, an assistant's get_run_results for it reads that PBI's own suite and results (not the home project's). The assistant's other reads (suite search and suite cases, PBI search, tags and wiki) were closed in phase 6, below.</li>
-      <li>Owed: the How To Use Settings and header shots (phase 7; the text for the switch, the Home project picker and the missing Project picker is written, see the phase 7 section below).</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 3: the board across projects (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <p>Released in 2.3.1-beta.9. With the switch on, Work Manager's board shows work items from every project of the organization at once: My work is everything assigned to you in any project, an area board lists the areas of every project (each starting with its project's name), and By PBI searches every project. A card, and a swimlane heading, name their project only when more than one project is on the board. Moving a card, and every change in its window (fields, comments, history), goes to that card's own project; a lane parent from another project opens in its project, and a work item notification opens the item in the notification's project even when the board does not hold it. Pinned areas and folded lanes start from the home project's the first time and are then kept on their own (the home project's are left as they were). If the organization has more projects than the board reads, it says "Showing areas from N of M projects". Switched off, the board is the one-project board as before. The pull request chips on cards come from every project too (phase 4, below).</p>
-    <ul>
-      <li>Hand check owed: My work across projects. With work assigned to you in two projects, both show on the board, each card names its project, and with work in only one project no card names one.</li>
-      <li>Hand check owed: an area board's This sprint. Pick an area, tick This sprint: the board shows only the items in the current sprint of the area's team (or of its project's default team, when the area is not a team), and the ticked state is remembered.</li>
-      <li>Hand check owed: move a card that belongs to a second project. Drag it to In Progress: the state changes in that project (check the work item in Azure DevOps), and a card whose process uses other state names shows its own state colour.</li>
-      <li>Hand check owed: open a card from a second project and save a field and a comment. Both land on that work item in its own project.</li>
-      <li>Hand check owed: reassign and then comment in the same open window. On My work, open a card from a second project, set Assigned To to a colleague and save (the card leaves the board because it is no longer yours), then add a comment in the window that is still open. The comment lands on that work item in its own project, not the home project.</li>
-      <li>Hand check owed: swimlanes whose parent is in another project. The lane heading names the parent's project and clicking its title opens it there.</li>
-      <li>Hand check owed: an existing install keeps its pinned areas and folded lanes on the combined board (copied from the home project), and switching the switch off shows the one-project pins and lanes as they were.</li>
-      <li>Hand check owed: an organization with many projects. The area list is complete up to 100 projects; beyond that the board says how many projects the list covers. The list is kept for an hour, and across a restart: open the board, leave Work Manager for longer than five minutes and come back, and the second visit does not read every project again. If listing the areas fails, the board says so in red under the toolbar and does not retry by itself.</li>
-      <li>Owed: the How To Use Board text now says the board covers every project (and what the project name on a card means); the screenshots are not re-taken until phase 7.</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 4: pull requests, mentions, assigned work and notifications (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <p>Built, shipping as 2.3.1-beta.10. With the switch on, Pull Requests lists awaiting and your own pull requests from every project of the organization, and the Repositories picker lists every project's repositories (a name two projects share reads name (project)). The tracked repositories and the Your Pull Requests choice start from the home project's the first time and are then kept on their own (the home project's are left as they were). The Work Manager badge, the bell and the pull request chips on the board's cards all count pull requests of every project, and each pull request is read and answered in its own project. Work item mentions of you are checked across the organization, and newly assigned work is watched across it; each one names its own project. Opening a notification never switches project: a work item opens on the board in its own project, and a pull request opens expanded and ringed in Pull Requests, in its own project. Switched off, all of this is the one-project behaviour as before, and a notification from another project switches to its project.</p>
-    <ul>
-      <li>Live check owed, before this ships: with a signed-in session on the real organization and the switch on, open Pull Requests once and read Settings, Logs. The line "pull requests: organization-wide listing refused" being there means the organization lists pull requests project by project (only projects that own a repository); its absence means one organization-wide call is used. Write the answer here. Both paths are built and tested, so the beta is correct either way. Answer: not yet recorded.</li>
-      <li>Hand check owed: with the switch on, Pull Requests lists awaiting and your pull requests from every project, each row naming its project once two projects appear; the Repositories picker lists every project's repositories; tracking ones carries over from the home project's choice once, and switching off finds the old choice untouched. With a project you cannot read, the line "Showing pull requests from N of M projects." appears.</li>
-      <li>Hand check owed: the Work Manager badge and the bell count pull requests of every project, and the board's cards show pull request chips for pull requests in a second project.</li>
-      <li>Hand check owed: open a pull request notification for another project. Pull Requests shows that pull request expanded and ringed, reads its comments and work items in its own project, no Project picker appears, and Settings still shows the old home project. Resolve one of its comment threads and check it resolves in Azure DevOps in that project.</li>
-      <li>Hand check owed: open a work item notification (an assignment or a mention) for a second project. The board opens that work item in its own project and the home project is untouched.</li>
-      <li>Hand check owed: have a colleague mention you on a work item in a second project, and assign you a work item there. Within five minutes (both checks run about that often) each reaches the bell and names its project, and clicking it opens the item.</li>
-      <li>Hand check owed: the first check after the update learns the standing mentions and assignments of projects other than the home project without a toast, a badge or a bell entry; only ones that arrive after it are announced. Flipping the switch afterwards does not announce again what the bell already holds.</li>
-      <li>Hand check owed: switch off in Settings and open a notification for another project. The app switches to that project and opens the item there, as before.</li>
-      <li>Owed: the How To Use text for Pull Requests and notifications says they cover every project; the screenshots are not re-taken until phase 7.</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 5: Search Suites and Suite Management (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <p>Built, shipping in the next beta. With the switch on, Search Suites and Suite Management (with no PBI picked) list the test plans of every project of the organization, each under its project's name once more than one project has plans, and say "Showing plans from N of M projects." when a project could not be read. The plans are read one project at a time through the same per-project cache the single-project screens use, and both screens share the one combined list. Every action on a plan or suite goes to that plan's own project: a suite's points, the runner session, the report, the Azure DevOps link, Use as current PBI, Update Test Cases on its cases, and in Suite Management reading a suite, reordering it, copying cases, creating a suite and the permission to create one. Manage in Search Suites hands the suite over with its project, so Suite Management opens that plan in its own project. With a PBI picked, Suite Management is as before: the PBI's project and its plan. Copying cases is limited to the plan the cases were selected in, so a copy never crosses plans or projects. Switched off, both screens list the picked project as before.</p>
-    <ul>
-      <li>Hand check owed: with the switch on and no PBI picked, Search Suites and Suite Management list plans from at least two projects under project headings; with only one project holding plans, no heading shows.</li>
-      <li>Hand check owed: in Suite Management, open a suite of a plan in a second project, reorder its cases and Apply order. In Azure DevOps the order changed in that project's plan.</li>
-      <li>Hand check owed: in Suite Management, create a static suite in a plan of a second project (with cases selected and without). It appears in that plan in Azure DevOps and in the screen after the save, and nothing was written to the home project.</li>
-      <li>Hand check owed: copy selected cases to another suite of a plan in a second project. They are in the target suite in Azure DevOps and stay in their own suite. The Copy to list shows only that plan's suites.</li>
-      <li>Hand check owed: in Search Suites, open Manage on a suite of a plan in a second project. Suite Management shows that plan with the suite open, the home project's plans are not shown, and the home project in Settings is unchanged.</li>
-      <li>Hand check owed: in Search Suites, open Edit cases on a plan in a second project, and delete, retag or bulk edit one case there. The change lands in that project.</li>
-      <li>Hand check owed: with a project you cannot read, "Showing plans from N of M projects." shows on both screens, and the rest still list.</li>
-      <li>Hand check owed: switch off in Settings. Both screens list the picked project's plans only and Manage works as before.</li>
-      <li>Hand check owed: a project with Test Plans turned off in its project settings, and an account with Stakeholder access. If Azure DevOps answers anything other than 403 or 404 there, the whole combined list fails for the organization. Confirm the answer is one of those two, which the list skips and counts out of "Showing plans from N of M projects."</li>
-      <li>Measurement owed: after one combined Search Suites visit in the real organization, add up the size of the stored plan trees. In the developer console run <code>Object.keys(localStorage).filter(k =&gt; k.includes("plans-suites:")).reduce((n, k) =&gt; n + localStorage.getItem(k).length, 0)</code>. If the total is past about 2 million characters (the webview's storage holds roughly 5 million, shared with the rest of the cache and the settings), move the per-project plan trees to the Rust disk cache in a later phase; a write that overflows the storage clears the whole webview cache.</li>
-      <li>Owed: the How To Use text for Search Suites and Suite Management says they cover every project; the screenshots are not re-taken until phase 7.</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 6: the AI bridge across projects (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <p>Built, shipping in the next beta. With the switch on, an assistant's Azure DevOps reads cover every project of the organization: PBI search (each hit names its project), test suite search (one row per suite with its project; if the organization has more projects than the bridge reads, or the walk runs past its 120 second budget, or a project cannot be read, the answer says how many were read, and calling again carries on from the trees already read), a suite's cases (found from the plan id, or from the project the assistant passes), run results (read in the PBI's own project), wiki search (the organization's wikis, each page naming its project) and reading a wiki page (in the project of the hit, or of the pasted URL). Tags stay on the home project, except that an assistant whose writing job named a reference PBI reads the tags of that PBI's project (each assistant keeps its own job's PBI; it is dropped when that assistant says goodbye or a different account signs in). The API templates, Auto Run, quirks, accounts and test files stay on the home project. The tool descriptions an assistant is given say "every project" only while the switch is on; with the app closed they read per project. Switched off, the bridge answers exactly as before.</p>
-    <ul>
-      <li>Hand check owed: with a PBI in a second project, ask an assistant to find it. search_pbis lists it with its project, get_test_cases reads its cases, get_run_results reads its results and search_test_suites with its id finds its requirement suite in that project.</li>
-      <li>Hand check owed: search_test_suites lists suites from two projects with a project on each row, and get_suite_test_cases for a suite of the second project answers without a project argument (and with one).</li>
-      <li>Hand check owed: search_wiki finds a page in a second project's wiki and names the project; get_wiki_page with that project reads it; get_wiki_page with only a pasted page URL from the second project reads it too.</li>
-      <li>Hand check owed: start a writing job with begin_test_case_writing naming a reference PBI from a second project; get_tags then answers with that project's tags and says which project they are from. A job that names no PBI puts get_tags back on the home project.</li>
-      <li>Hand check owed: with two assistants connected, one starting a job that names a second project's PBI and the other a job that names none, each one's get_tags answers for its own job.</li>
-      <li>Live check owed: time a cold search_test_suites (first call of a session) on an organization with several large projects. It should answer inside the proxy's 300 second limit, with a note that some projects were not read in time; a second call should add the rest.</li>
-      <li>Hand check owed: in the assistant's tool list, search_test_suites, search_pbis and search_wiki say every project with the switch on and the current project with it off; a Claude Code session started before the change keeps the old words until it is restarted.</li>
-      <li>Live check owed: the organization-wide wiki search (the search service accepts a request with no project in its address). Confirm search_wiki returns hits from more than one project's wiki; if it answers an error, wiki search must be read project by project.</li>
-      <li>Owed: the How To Use text for the AI Bridge says the assistant reads every project; the screenshots are not re-taken until phase 7.</li>
-    </ul>
-  </div>
-
-  <h2>All projects as one, phase 7: the README and the How To Use guide (27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Guide text done, screenshots owed</span><span class="status todo">Follow-ups</span></div>
-    <p>The README and the guide text now describe working across every project: Treat all projects as one and the Home project picker (Settings, General), the hidden Organization and Project pickers, a PBI from any project, which screens use the home project, the project label on board and pull request items, plans grouped by project with "Showing plans from N of M projects.", and the assistants' cross-project search. The built guide is rebuilt from that text.</p>
-    <ul>
-      <li>Owed: re-take the How To Use shots (docs:dev, docs:shots) with the installed app closed. Stale in particular: the Getting started header shot and command palette shot (the palette no longer lists the projects while the switch is on; its route now scrolls to Check for updates), the Settings General card, and every screen's header.</li>
-      <li>Owed: once the shots are re-taken, the Settings Treat all projects as one row can become a located control with its own box (a <code>switch</code> named Treat all projects as one on <code>settings-main</code>); today it is described in the General group's text because the guard tests reject a control with no captured position, so it goes in together with the capture.</li>
-    </ul>
-  </div>
-
-  <h2>The owner's UI list (2.3.1-beta.6, 27 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>The Settings gear after a sidebar click: it was not reproduced in the browser; the button is now a fixed centred square with a centred turn. If it still looks off, a larger screenshot.</li>
-      <li>Auto Run on a short window beside the list: the Setup card fits the window, only its body scrolls, Hide setup details stays reachable.</li>
-      <li>Bulk edit on real cases: Clear module clears it on every selected case; Leave unchanged keeps each case's value.</li>
-      <li>AI Bridge: with Database Access off, flow checks and precondition checks say the module is off; with it on, they run.</li>
-      <li>Owed: How To Use screenshots for Manual Entry, Import (card, share link, spec chips, bulk edit), Update Test Cases (bulk edit, Move to PBI), Run Tests, Auto Run (cases, script window, Setup card), Playwright Overview, AI Bridge tool list and Database card, and every screen's header (the wider search). They need the installed app closed.</li>
-    </ul>
-  </div>
-
-  <h2>Timing checks on a request, Playwright specs pill (2.3.1-beta.2, 23 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>141717 step 3 with expect_response not_before_ms 600 and timeout_ms 2000: passes on the real debounced search and reports the measured start; step 4 (Enter) with started_within_ms passes.</li>
-      <li>141721-141724 with same_document: true on the cards request: pass (the filter re-fetches), and the case text says the page does not reload.</li>
-      <li>The Playwright header shows green "N specs ready"; edit a spec in your clone and within a minute (or on returning to TCM) it shows "Updating specs" then green again.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>The component-aware timing placement check runs only when the assistant saves a script, not on a script imported on the Auto Run screen.</li>
-      <li>In the Playwright export, a request that never answers reports "had not finished" rather than a start-time failure (Playwright gives no start time until a response).</li>
-      <li>A timed check whose first matching request starts out of window still waits its full timeout before failing.</li>
-      <li>The specs pill turns red if a spec listing fails because a run holds the Playwright slot; Refresh clears it.</li>
-      <li>How To Use does not yet mention the specs pill.</li>
-    </ul>
-  </div>
-
-  <h2>Settings card, Playwright folder menu, disabled repositories (2.3.1-beta.1, 23 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Settings on a wide window: the Auto Run card sits under AI tools and slides with the other cards.</li>
-      <li>Playwright Overview: right-click a folder, New feature folder makes one; Rename on a folder nothing imports goes straight through; Rename on a common component folder used through an @ alias lists the specs that would break.</li>
-      <li>Pull Requests: HRM-PMS-NET is gone from the picker, the tracked line shows with Stop tracking, and pressing it clears the line.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>The five Settings screenshots in How To Use still show the old Auto Run card place: re-take them with the installed app closed.</li>
-      <li>The rename check was tested on made-up repositories only, not on your real clone's tsconfig aliases.</li>
-      <li>The tracked-repository line cannot name the repository (only its id was saved).</li>
-    </ul>
-  </div>
-
-  <h2>Backlog 39, screenshot paste, Not Applicable (2.2.3-beta.26, 23 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Not Applicable, marked in the runner, is easy to read on the dark theme, and still distinct from Paused.</li>
-      <li>Paste a normal screenshot and a copied JPEG in the runner and in File a bug: both attach. Paste quickly from your VM: it retries or asks you to paste again, never a broken image.</li>
-      <li>A Manage Cycle case with an unchecked expectation (141717's timing) shows "1 expectation unchecked" on a pass, in the run report, and as a TODO line in its Playwright export.</li>
-      <li>141739 with expect_no_change: clicking another card while disabled passes when nothing happens.</li>
-      <li>141724's filter-then-check step: expect_response matches the filter's own request and says which one.</li>
-      <li>Save a script whose check takes a colour or state from the page with no because: refused, naming the kind; add a because and it saves.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>A repair that renames a button the case itself names is now refused: report it as a divergence.</li>
-      <li>"no &lt;something&gt;" in a step counts as stating 0 for every count in that step.</li>
-      <li>A page that polls with a POST every second fails expect_no_change (it cannot tell that save from one the click caused).</li>
-      <li>The exported expect_no_change does not wait for the control to hold still, and its covered-control check looks only inside the control's own frame.</li>
+      <li>Raise bug: the filed bug number shows only until the review closes (the run record has no field for it).</li>
+      <li>Flaky cases: the HTML run report and the Test cases tab still count a flaky-marked failure as failed; the review has no Flaky filter.</li>
+      <li>A verdict set later in Review (Failed or Blocked on a watched run) may not clear a script's checked mark; only a run's first save does.</li>
+      <li>A step-by-step run's later steps do not re-check whether the case was rewritten; the first step does.</li>
+      <li>A Rewrite ruling made while Azure DevOps cannot be read takes the case's fingerprint at the next read, so a case rewritten before that is not noticed.</li>
+      <li>A guard the case itself asks for ("if a banner shows, close it") still needs a quirk classed app quirk in a repair.</li>
+      <li>Whether a removed precondition is really replaced by steps that create that state is not checked; a precondition put back from the editor goes to the end of the list.</li>
       <li>Run-result attachments are checked in the app before upload; only the bug dialog's upload checks again on the Rust side.</li>
-    </ul>
-  </div>
-
-  <h2>Scripting rules from the Playwright repo, page size, auto-allowed tools, account passwords (2.2.3-beta.25, 22 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>With the Playwright tab set to your clone, the healer's role text starts with TCM's rules, then your repo's healer file, then the In TCM note; with the clone setting cleared, Auto Run shows the "Playwright is needed" modal once and the role text says it is the shipped copy.</li>
-      <li>Edit a file in your clone's .claude/agents (uncommitted): the next release refuses and names it; commit it and the release snapshot picks it up.</li>
-      <li>/tcm:gen-tests on one PBI; /tcm:script-pbi says it was renamed.</li>
-      <li>In a Claude Code session in your repo, the Auto Run tools run without a permission prompt; switch Auto Run off and on and your own hand-written rules are still there.</li>
-      <li>Set the page size to 1366 x 768: the next run's page is that size, and an exported spec shows out of date and carries the size.</li>
-      <li>Ask the assistant to propose accounts on a test environment: each comes with its password from HS_SM_USER_ACCOUNT, or a reason.</li>
+      <li>The run window's dialog has no accessible name.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <div class="head"><span class="title">Auto Run checks and locators</span><span class="status todo">Follow-ups</span></div>
     <ul>
-      <li>The settings-more screenshot no longer scrolls, so it looks the same as settings-main.</li>
-      <li>A rule Claude Code writes into the same settings file at the very moment TCM writes it can be lost, and TCM rewrites the file's formatting.</li>
-      <li>An allow file that cannot be written is retried only when the tool list, repository or modules change.</li>
-    </ul>
-  </div>
-
-  <h2>Backlog 37 and 38 (2.2.3-beta.24, 22 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Your decision</span><span class="status todo">Waiting on you</span></div>
-    <p>A check that something IS shown, using the case's own words, still saves without that text having been seen on the app (as before). Should it be refused until it has been seen? Scripts that rely on it today would be refused the next time they are saved.</p>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
+      <li>A sign-in page served in place at the same URL is not caught as signed out; only a move to another path, or landing on the start page (84).</li>
+      <li>A sign-in reached by a click-through redirect is not detected by the print retake.</li>
+      <li><code>fill</code> on a Knockout list is unchanged (use <code>select_option</code>); <code>press_key</code> takes named keys only (87).</li>
+      <li>sqlcmd still cuts long text at about 256 characters (89); lifting the cut needs measuring against the real database.</li>
+      <li>The component-aware timing placement check runs only when the assistant saves a script, not on a script imported on the Auto Run screen.</li>
+      <li>A timed check whose first matching request starts out of window still waits its full timeout before failing.</li>
+      <li>A repair that renames a button the case itself names is refused: report it as a divergence.</li>
+      <li>"no &lt;something&gt;" in a step counts as stating 0 for every count in that step.</li>
+      <li>A page that polls with a POST every second fails expect_no_change.</li>
       <li>Drag and file uploads found by text drawn in other capitals do not say "matched as written".</li>
       <li>A locator with nth can say "as written" when a sibling it trimmed away was the one that matched that way (never a false pass).</li>
       <li>page_until knows a page has turned from the whole page's text; a Next that changes nothing visible reads as "did not turn".</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Backlog 37-38 hand checks</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Manage Cycle 141724 walks to a Published and an Unpublished card with page_until.</li>
-      <li>141701 checks "Duration" exactly.</li>
-      <li>141749 checks the address is unchanged since step 3.</li>
-      <li>141751 and 141739 save their absence checks as from_case.</li>
-      <li>An assistant ruling from the chat shows on the card with the person's words, and Undo ruling releases it.</li>
-    </ul>
-  </div>
-
-  <h2>Explore mode (2.2.3-beta.23, 22 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>A create is only verified when its id is new to the session; a small id that already appeared on an earlier page leaves the create unverified (removable in the browser, not by undo).</li>
-      <li>A first write sent with effect read is saved as a read template before the change list can show otherwise.</li>
-      <li>Saves the browser made that no action answer reported are not swept from the network record into the unrecorded list.</li>
-      <li>A one-off call uses the recipe's first site for its diagnostics; a recipe with several sites may adapt a path wrongly.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>One real /tcm:explore task end to end in a live test environment: a create made in the browser is on the change list as verified, and the summary lands in tcm-explore in the folder Claude was started in.</li>
-      <li>send_api_request from the session's own page: a GET, a POST create (the new record is on the change list), and the same call run again matching the template it saved instead of saving another.</li>
-      <li>A delete call refused until the person says yes in the chat, then sent, and never saved as a template.</li>
-      <li>Undo asked for after the person switched environment: refused, naming the environment the session ran in, and nothing deleted.</li>
-      <li>undo_explore_creates on one session's verified creates through a proven delete template; a create made only in the browser and never verified stays, and the answer says so.</li>
-      <li>run_api_template inside an explore session that holds the template's account: no new browser, no second sign-in.</li>
-      <li>A change list picked up in a new chat with get_explore_changes after the first chat ended.</li>
-    </ul>
-  </div>
-
-  <h2>Menu preferences, Admin or Self Service mode, replays that carry on (2.2.3-beta.21, 21 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Before these work: fill in the sign-in recipe</span><span class="status todo">Waiting on you</span></div>
-    <p>In Settings' sign-in recipe, set the menu preferences (the clicks that open the Preferences dialog, its close button, and the Group Menu Items checkbox) and the two modes (how the page shows the current mode, and the control that switches to each). Nothing changes until they are filled in.</p>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Does switching to Self Service (or back to Admin) save anything on the server? It is allowed through a must-not-save case either way, but worth knowing.</li>
-      <li>An account with Group Menu Items on: the first trip turns it off, the side menu opens again, and the next sign-in changes nothing.</li>
-      <li>Record an area that starts in Admin and clicks Switch to Self Service: it saves, and records Admin.</li>
-      <li>Re-map an existing module: its areas pick up their mode and menu preferences.</li>
-      <li>Two cases with the same first steps replayed one after the other: the second carries on when the first saved nothing, and starts over (saying why) when it saved something or opened a pop-up tab.</li>
-      <li>A must-not-save discovery whose save is stopped: the answer calls it blocked, not written.</li>
-      <li>With the code entered, the hidden module shows in Modules and the sidebar; after Reset to default it is gone again, and so are its assistant tools, even with the app closed.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Menu preferences are matched only after a sign-in, not on a trip from an already signed-in page.</li>
-      <li>Reading the current mode can take up to 2 seconds per trip for an account whose page shows no mode at all.</li>
-      <li>A blocked save's typed text is cleaned two slightly different ways (single action and batch).</li>
-      <li>An older version of the app cannot read a sign-in recipe saved with the new fields.</li>
-      <li>"Saved something" is also said when the save record was too full to be sure, which can overclaim.</li>
-      <li>An assistant's area repair does not re-read the mode or menu preferences; it keeps what the area had.</li>
-    </ul>
-  </div>
-
-  <h2>The Playwright pipeline's rules in TCM, tool errors 72-79 (2.2.3-beta.20, 21 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>The Setup panel's rows on a narrow and a wide window: no label sits on top of its controls.</li>
-      <li>An assistant reset during discovery keeps your sign-in. The log says either "the assistant's reset found the sign-in gone" or "the home page re-issued the sign-in's cookies".</li>
-      <li>A case whose text disagrees with the app: the assistant reports it, the case card asks for your ruling, and each ruling does what it says. After "Rewrite the case", editing the case in Azure DevOps, saving the script in the editor, or Undo ruling releases it.</li>
-      <li>/tcm:gen-tests on one PBI: it loads the writer's rules first, stops at the bounds, and never fits a check to the page.</li>
-      <li>Playwright rules from the repo: with a clone set, a writer session's first rules are read from it (edit a line in the clone's healer file, see it in the next session) and with none, the modal shows once and the rules say they are the shipped copy.</li>
-      <li>A repair that tries to add a when-visible guard without a quirk is refused; with an app-quirk quirk it saves.</li>
-      <li>A product bug the assistant notes shows on its cases and at the top of the run report.</li>
-      <li>The assistant makes an import spreadsheet with a bad row and saves it with save_test_file; an upload step then uses it. A .ps1 or .md is refused.</li>
-      <li>In a new Claude chat, the first discovery answer carries the writer's rules; each answer of the four tools ends with the rules of the moment.</li>
-      <li>The tcm-writer, tcm-healer, tcm-case-rewriter and tcm-auditor agent files appear beside the skills and leave your own agents alone.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>A verdict you set later in Review (Failed or Blocked on a watched run) may not clear a script's checked mark; only a run's first save does.</li>
-      <li>A guard the case itself asks for ("if a banner shows, close it") still needs a quirk classed app quirk in a repair.</li>
-      <li>A Rewrite ruling made while Azure DevOps cannot be read takes the case's fingerprint at the next read, so a case rewritten before that is not noticed (the editor save, Undo ruling or a repair still release it).</li>
-      <li>A step-by-step run's later steps do not re-check whether the case was rewritten; the first step does.</li>
-      <li>How To Use does not yet show the Undo ruling button.</li>
-      <li>The fixtures list's size cap has no test of its own.</li>
-    </ul>
-  </div>
-
-  <h2>Thorough checks (2.2.3-beta.19, 20 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Have the assistant rewrite one Manage Cycle case that only counted cards (141699 or 141700) with expect_each: every card's name and subtitle checked; then blank one card's name in a test environment and the case fails.</li>
-      <li>141720: the status options checked with expect_order, so Published can no longer be satisfied by Unpublished.</li>
-      <li>141698: the New Cycle button checked with expect_position (in the top right of the header).</li>
-      <li>Save a script whose only check is "there is no switch" on a Published card: the save asks for a positive control until the script also shows a switch on a Draft card.</li>
-      <li>Export one of those cases to Playwright and run it there: it passes and fails the same way.</li>
-      <li>Then the next designs, for you to review first: all projects as one, and several agents with their own browsers.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>A pattern's \w and \d match English letters and digits only (as in Playwright); a name with an accent needs an explicit set of letters.</li>
-      <li>A position check does not undo CSS transforms on the page.</li>
+      <li>A pattern's letters and digits classes match English ones only; a position check does not undo CSS transforms.</li>
       <li>The note about a record named without a precondition does not look inside components or API requests that make the record.</li>
-    </ul>
-  </div>
-
-  <h2>Cleanup and area path repair (2.2.3-beta.18, 20 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Start a new assistant session: it lists the merged tools (about 52 with Network tools off), and a call to an old tool name answers with its new name.</li>
-      <li>Switch Network tools on for one environment in AI Bridge: the six network tools appear in a new session; switch it off and they are refused.</li>
-      <li>Move or rename a menu entry an area uses (or point an area at a wrong click): the assistant repairs the area's path with a reason, Auto Run, Areas shows "Path repaired by an assistant", and Put old path back restores it.</li>
-      <li>With API Templates on, a discovery that saves something builds and proves a template from the request it saw; with it off, the summary lists "API templates to make".</li>
-      <li>Settings, Logs shows one line per tool call (name and outcome only).</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Left for you to decide</span><span class="status todo">Owner's call</span></div>
-    <ul>
-      <li>scripts/csp-verify.mjs (a one-off from the CSP work) and scripts/measure-text-centre.mjs: keep or delete.</li>
-      <li>.claude/settings.local.json still holds allow rules for v1 scripts.</li>
-      <li>Two stale git worktree branches (claude/cool-bohr-..., claude/hopeful-swirles-...) and the ignored old v2/ folder (about 6 GB).</li>
-      <li>.test-cases/ in the repository folder is test-case data the AI bridge wrote; add it to .gitignore or move it.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Calls the assistant's connection refuses on its own (a wrong argument shape, an unknown or old tool name, a guide topic that is off) are not in the call log.</li>
-      <li>A server name written without a path or port (for example "example.com" alone) is not hidden in notes the assistant writes.</li>
-    </ul>
-  </div>
-
-  <h2>Preconditions in repairs, item 28 (2.2.3-beta.17, 20 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Have the assistant heal 135057 (or 135621, 135581) by removing the "A profile has a competency assigned" precondition with a reason: the replay gets past the precondition, and the save answer names the change and its reason.</li>
-      <li>Open that script in the editor: "Precondition changes by an assistant" lists it with the reason, Put back on Save brings it back, and saving clears the list.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Whether a removed precondition is really replaced by steps that create that state is not checked; the assistant must say so in its reason.</li>
-      <li>A precondition put back from the editor goes to the end of the list.</li>
-    </ul>
-  </div>
-
-  <h2>Items 31-39 and the bundle check (2.2.3-beta.16, 20 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Playwright Overview: the numbers count up when the tab opens, and the Folder area reads as a tree (nesting, indentation, the totals beside each folder). Neither could be looked at on this machine.</li>
-      <li>Playwright Runner and Accounts: Refresh works as List again did; no number beside Accounts.</li>
-      <li>Auto Run: the environment and the case search sit in Setup; typing a case id on Past runs switches to Test cases; Has a script lists only scripted cases and is remembered per project; a missing test file is named whether Setup is open or shut.</li>
-      <li>AI Bridge: the AI Tools Breakdown reads well at a glance.</li>
-      <li>The Settings extra plays as you wanted (speed, pick-ups).</li>
-      <li>The run window opens as before (it now loads the first time it is opened), and the installer is about 0.7 MB smaller.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>The run window's dialog has no accessible name (it was like this before).</li>
-      <li>The new Setup row for protected records has no entry in How To Use yet.</li>
-      <li>The bundle check (docs/bundle-check-2026-10.md) found nothing else worth changing: most of the app is its Rust code, already built for size, and startup is mostly WebView2 starting and the sign-in check.</li>
-    </ul>
-  </div>
-
-  <h2>The assistant's network, cookie and element tools (2.2.3-beta.14, 20 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed (need your organisation)</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>In a discovery, Save a form, then have the assistant read that request and its response and build an API template from it: no password, token or session value shows anywhere, and the template proves.</li>
-      <li>Have the assistant set a feature or culture cookie, replay a case (its answer says "Passed with these changes in place"), then reset: the cookie is gone and the answer is plain again.</li>
-      <li>Inspect a button that looks disabled: its styles, the click listeners on it and above it, and whether something covers it.</li>
-      <li>Export the requests of a discovery to a HAR file and open it in your browser's developer tools.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Opaque tokens written all in lower case, or as dashed GUIDs, in a request body are not recognised as secrets unless their field name says so.</li>
-      <li>If the environment's address is set to the sign-in provider's page, nothing is captured until a page of the application itself shows signed in.</li>
-      <li>A sign-in made by hand (or a restored one) where the address redirects to a different application address never confirms the site, so nothing is captured in that browser.</li>
-      <li>A very large response (near 2 MB) can be skipped on a busy machine; the request itself is still listed.</li>
-      <li>A HAR file you import from elsewhere is capped on its bodies, not on its header values and addresses.</li>
-    </ul>
-  </div>
-
-  <h2>Tool errors from 19 October, rows 25-71 (2.2.3-beta.15, 20 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed (need your organisation)</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Replay a case three times with reset_autorun_browser between: the reset says "still signed in", and the next replays say "Signed in already". If a reset still says the sign-in has gone, Settings, Logs names the cookie that changed.</li>
-      <li>A case whose old cookie-banner guard (when_visible on the banner's close button) used to fail: it now carries on.</li>
-      <li>A discovery with "page": false answers without the page dump.</li>
-      <li>A long replay stopped with replay_autorun_to_step and stop: true answers "stopped on request".</li>
-      <li>A script with a clean-up step that removes what the case made: run it unattended with a step made to fail; the clean-up still runs and the case reads failed, not passed. With a confirm on the Delete, the clean-up's expect_dialog answers it.</li>
-      <li>Save a script whose "there is no X" check was only probed (0 matches): it saves.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>An application with no HttpOnly sign-in cookie signs in again on every replay (nothing then shows whose sign-in it is).</li>
-      <li>A stop is heard between actions, not inside one long wait: it can take up to that action's timeout.</li>
       <li>Text repeated in several pieces under one line of a page read is counted once, so a save can pass that a replay then finds matching several.</li>
       <li>What a component's checks find is filed under the page the browser is on after the component ran.</li>
-      <li>Two live-browser tests (an unattended selection's page path, and API checks on a real page) fail on this machine and were failing before this work.</li>
-    </ul>
-  </div>
-
-  <h2>Formatting in test case text (2.2.3-beta.13, 19 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed (need your organisation)</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Create a case whose step has "Run the following query." and a fenced query, and whose prerequisites have a bulleted list: in Azure DevOps the step shows the query on its own lines and the prerequisites show a list.</li>
-      <li>Edit only a title in TCM, then check the work item's history: the prerequisites were not rewritten.</li>
-      <li>An old Calculation Engine case opens and saves unchanged.</li>
-      <li>Convert one work item's List of Prerequisites to Markdown in Azure DevOps ("convert this field"), then open it in TCM: TCM should read it as Markdown and keep it Markdown when it saves. This depends on Azure DevOps reporting the field's format to TCM.</li>
-      <li>Look over the screens: tall step rows, the Preview boxes, long queries wrapping in table cells, the Runner's step text, the review page.</li>
-      <li>File a Bug from a failed step that holds a query: the steps stay separate in the Bug.</li>
+      <li>An application with no HttpOnly sign-in cookie signs in again on every replay.</li>
+      <li>A stop is heard between actions, not inside one long wait.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <div class="head"><span class="title">Discovery, explore and refusals</span><span class="status todo">Follow-ups</span></div>
     <ul>
-      <li>Underline from Azure DevOps reads back as plain text (Markdown has no underline), and an old draft of an underlined step saves without it.</li>
-      <li>A case exported to JSON before this version and re-imported with its id can get a formatting warning for text that was always there (a line starting with #, for example). Warnings only.</li>
-      <li>Old queue drafts kept in the app can show a*b*c in italics until the case is read again; saving leaves the step alone.</li>
+      <li>Explore: a create is verified only when its id is new to the session; a first write sent with effect read is saved as a read template; saves no action answer reported are not swept into the unrecorded list; a one-off call uses the recipe's first site for its diagnostics.</li>
+      <li>Menu preferences are matched only after a sign-in, not on a trip from an already signed-in page; reading the mode can take up to 2 seconds per trip on a page that shows none; a blocked save's typed text is cleaned two slightly different ways; an older app cannot read a recipe saved with the new fields; "saved something" can overclaim when the save record was too full; an area repair keeps the area's mode and menu preferences without re-reading them.</li>
+      <li>Typing into a field also does the two page reads; a request the page starts after the action's own check is found only later; a page with more than a thousand message-like items can hide a toast; a refusal read right after the 250 ms wait can pick up a request started during it; a return to an area made inside a "when visible" guard does not move the area a rule is filed under.</li>
+      <li>Calls the assistant's connection refuses on its own (wrong argument shape, unknown or old tool name, a guide topic that is off) are not in the call log.</li>
+      <li>A server name written without a path or port is not hidden in notes the assistant writes.</li>
+      <li>The "Not in an area" row fills up during a /tcm:map-menus run and always looks stale.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Network, cookie and element tools</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>Opaque tokens in lower case, or as dashed GUIDs, in a request body are not recognised as secrets unless their field name says so.</li>
+      <li>If the environment's address is the sign-in provider's page, nothing is captured until a page of the application shows signed in.</li>
+      <li>A sign-in made by hand where the address redirects to a different application address never confirms the site, so nothing is captured.</li>
+      <li>A very large response (near 2 MB) can be skipped on a busy machine; the request itself is still listed.</li>
+      <li>An imported HAR file is capped on its bodies, not on its header values and addresses.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Playwright export and repo rules</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>A request that never answers reports "had not finished" rather than a start-time failure; the exported expect_no_change does not wait for the control to hold still and looks for a covering control only in its own frame.</li>
+      <li>The specs pill turns red if a spec listing fails because a run holds the Playwright slot; Refresh clears it.</li>
+      <li>Replacing a case the repo wrote from the ticket keeps the repo's own Preconditions rows beside TCM's.</li>
+      <li>docs/app-quirks.md: a blank line between a quirk's title and its tag line, or a changed heading level, makes the next export add a second title.</li>
+      <li>Editing the protected-records list does not mark exported cases Out of date; an export made before 2.2.3-beta.9 stays Current until something else changes; "Run A before B" lines only count for the case they are written in.</li>
+      <li>Smaller: a search field named with "search" inside another word is skipped; the Protected records dialog drops blank or repeated rows silently; a quirk warning is left out silently if the quirks file can't be read; the needs warning also looks at unticked cases.</li>
+      <li>A rule Claude Code writes into the same settings file at the moment TCM writes it can be lost, and TCM rewrites the file's formatting; an allow file that cannot be written is retried only when the tool list, repository or modules change.</li>
+      <li>A case handed back to its area's folder still has its suggestion worked out from its old folder until the mappings are saved.</li>
+      <li>The app starting Claude Code itself for Finish in the repo (option B): on hold.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Test case text and screens</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>Underline from Azure DevOps reads back as plain text, and an old draft of an underlined step saves without it.</li>
+      <li>A case exported to JSON before 2.2.3-beta.13 and re-imported with its id can get a formatting warning for text that was always there (warnings only); old queue drafts can show a*b*c in italics until the case is read again.</li>
       <li>Very long steps with many stars or underscores take a little longer to read and save.</li>
-      <li>A Run pane test ("a failed action offers the screenshot taken when it failed") sometimes fails under the full test run's load and passes on its own.</li>
-    </ul>
-  </div>
-
-  <h2>The application's refusals (2.2.3-beta.11, 18 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed (need your org)</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>A discovery on Eval Rules with both assessment components off: the Save &amp; Continue action shows "the page showed: ..." or "the app refused: ..." straight away, with the trace id when the server sent one.</li>
-      <li>The next discovery of that area lists the rule under Known validation rules in the assistant's guide.</li>
-      <li>A saved case that checks a refusal on purpose still passes unattended.</li>
-      <li>A toast or field message inside an iframe is read, and a success toast ("Saved") never stops a batch.</li>
-      <li>Discovery feels as quick as before (each click now does two quick page reads, and waits only while its own request is unanswered, up to 3 s).</li>
+      <li>Not searchable without new requests: state, assignee and area on Update and View Test Cases; the cases inside a suite on Search Suites; Suite Management has no search box.</li>
+      <li>In a blue accent theme the three assistant figures are all shades of blue.</li>
+      <li>Pull Requests: the tracked-repository line cannot name the repository (only its id was saved).</li>
+      <li>In the app's dropdowns, the down arrow on an empty list and then Enter has nothing to pick.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <div class="head"><span class="title">How To Use</span><span class="status todo">Follow-ups</span></div>
     <ul>
-      <li>Typing into a field also does the two page reads, so a long form costs a little more than before.</li>
-      <li>A request the page starts after the action's own check is found only when a later action fails or the next page change looks again.</li>
-      <li>A page with more than a thousand message-like items can still hide a toast from the check; a SweetAlert prompt with a text field reads as two messages.</li>
-      <li>A refusal read right after the 250 ms wait for a late answer can pick up a request the page started during that wait.</li>
-      <li>A return to an area made inside a "when visible" guard does not move the area a run's rule is filed under.</li>
+      <li>The Playwright page and the report module's page have no screenshots.</li>
+      <li>No mention of the Playwright specs pill or the Undo ruling button.</li>
+      <li>The settings-more screenshot no longer scrolls, so it looks the same as settings-main.</li>
+      <li>A full capture run moves controls between the light and dark passes on Auto Run's Selected, Setup and Past runs; those routes need a fixed scroll.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Replays without re-signing in (2.2.3-beta.12): hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <div class="head"><span class="title">Report module</span><span class="status todo">Follow-ups</span></div>
+    <p><b>On your re-implementation's side (TCM does not patch it)</b></p>
     <ul>
-      <li>Heal one case with three replays in a row: only the first signs in; the others say "Signed in already: went to ...".</li>
-      <li>A no_save discovery, then end_autorun_discovery, then a replay of a case that saves: the save goes through.</li>
-      <li>reset_autorun_browser leaves the browser signed in at the home page.</li>
-      <li>A step that signs in as another user (a role test): the next replay signs in again as its own account. Whether PeoplesHR keeps who is signed in only in cookies decides this.</li>
-      <li>Your End discovery button on the Setup card still closes the assistant's browser.</li>
+      <li>Live data runs <code>EXEC [&lt;whole name&gt;]</code>, so a procedure stored with a schema or database in front (<code>dbo.MyProc</code>) is not found.</li>
+      <li>Subreport data is never fetched live; tell me before a version that passes the live scope to subreports is copied in (TCM's safety check covers only the main report's procedure).</li>
+      <li>A report's saved parameter values are never bound (an unsupplied parameter is sent as NULL), though the comment in <code>rpt-db-mssql/src/lib.rs</code> says otherwise; the comment in <code>rpt-core/src/preview.rs</code> (around line 143) says subreports share the live scope, and they do not.</li>
+      <li>The library has its own compare; TCM still uses its copy of the one in <code>rpt-cli</code>.</li>
+      <li>PDF/A export, thumbnails and editing inside subreports: not offered yet (decided 29 October 2026).</li>
+      <li>A raw viewer so the preview no longer goes through a PDF: when it exists, TCM's page view switches to it.</li>
+      <li>Placeholders for fields with no data would need a render option on your side.</li>
     </ul>
-  </div>
-
-  <h2>Agreed, not built yet</h2>
-
-  <h2>Export to Playwright hand-over (2.2.3-beta.9, 18 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed (need your Playwright clone)</span><span class="status todo">Waiting on you</span></div>
+    <p><b>In TCM</b></p>
     <ul>
-      <li>A real export into the clone, then <code>npm run lint:tests -- --require-specs</code> in the clone passes.</li>
-      <li>Paste a Finish in the repo prompt into Claude Code in the clone: it reads the From TCM, Uses and order blocks and the protected-records baseline.</li>
-      <li>git diff of <code>docs/app-quirks.md</code> after an export shows only TCM's tagged entries changed.</li>
-      <li>Export the same cases twice: the second export changes nothing in git.</li>
-      <li>Modules screen: one scrollbar only, and the Core to hidden-module turn looks smooth at your usual window size.</li>
-      <li>Compare the installed size with 2.2.3-beta.8 (v2.exe 63.7 MB, full package 25.9 MB, Setup.exe 33.1 MB), and check the app still feels as quick.</li>
+      <li>A request over 64 KiB is refused by the AI Bridge, so a procedure body over about 60,000 characters can't be sent.</li>
+      <li>XML methods written <code>T.c.value(...)</code> are refused; which form works on SQL Server, <code>(T.c).value(...)</code> or <code>c.value(...)</code>, is not confirmed.</li>
+      <li>Refused on purpose inside a procedure: <code>CREATE INDEX</code> on a temp table, <code>ALTER TABLE #t DROP COLUMN</code>, <code>OUTPUT ... INTO</code> a real table, <code>WITH EXECUTE AS</code>; SQL text with a lone carriage return is refused everywhere.</li>
+      <li>A slow render or live fetch holds the open report, so other report calls wait for it.</li>
+      <li>Open in the report designer says "no program" for any opener failure; the screen re-fetches the whole PDF on every change; a file deleted while open is noticed only on the next change; a new report whose write fails can leave a partial file.</li>
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <div class="head"><span class="title">Smaller edge cases</span><span class="status todo">Optional</span></div>
     <ul>
-      <li>Replacing a case that the repo wrote from the ticket (not from TCM) keeps the repo's own Preconditions rows beside TCM's, so the rows can look doubled in the diff. That comes from never deleting what the repo wrote.</li>
-      <li>docs/app-quirks.md: if someone in the repo puts a blank line between a quirk's title and its tag line, the next export adds a second title, and retiring that quirk leaves the old title behind. The same happens if the repo changes the title's heading level.</li>
-      <li>Editing the protected-records list does not mark exported cases Out of date. They pick up the change on their next export.</li>
-      <li>An export made before 2.2.3-beta.9 stays Current until something else about that case changes, even if its hand-over would now say more.</li>
-      <li>"Run A before B" order lines only count for the case they are written in, so a change on a sibling case does not mark this one Out of date.</li>
-      <li>Smaller ones: a search field whose name contains "search" inside another word (such as "Research") is skipped when listing what a case creates; the Protected records dialog drops blank or repeated rows without saying so; a quirk warning is left out without a message if the quirks file can't be read; the needs warning also looks at unticked cases.</li>
-    </ul>
-  </div>
-
-  <h2>Open follow-ups from shipped work</h2>
-  <div class="item">
-    <div class="head"><span class="title">Discovery window during menu mapping</span><span class="status todo">Small follow-up</span></div>
-    <p>The "Not in an area" row fills up during a /tcm:map-menus run and always looks stale.</p>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">How To Use screenshots</span><span class="status todo">Open</span></div>
-    <ul>
-      <li>The Setup panel screenshot shows the old 7 save words (retake needs the dev app).</li>
-      <li>The Playwright page has no screenshots.</li>
-      <li>The hidden module's page has no screenshots.</li>
-    </ul>
-  </div>
-  <div class="item"><div class="head"><span class="title">The app starting Claude Code for Finish in the repo (option B)</span><span class="status todo">On hold</span></div><p>The handoff prompt (option A) shipped; the app launching Claude Code itself is on hold.</p></div>
-
-  <h2>Hidden report module (2.2.3-beta.4, 17 October 2026)</h2>
-  <div class="item">
-    <div class="head"><span class="title">For your re-implementation (TCM does not patch it)</span><span class="status todo">Your side</span></div>
-    <ul>
-      <li>Live data runs <code>EXEC [&lt;whole name&gt;]</code>, so a procedure stored with a schema or database in front (<code>dbo.MyProc</code>) is not found on the server. The six samples use plain names.</li>
-      <li>Subreport data is never fetched live; only the main report's procedure runs. If a future version passes the live scope to subreports, tell me before I copy it in: TCM's safety check only covers the main report's procedure today.</li>
-      <li>A report's saved parameter values are never bound: an unsupplied parameter is sent as NULL, though the comment in <code>rpt-db-mssql/src/lib.rs</code> says saved values "are consulted first". TCM refuses a live preview when a required parameter is not passed.</li>
-      <li>The library now has its own compare; TCM still uses its own copy of the one in <code>rpt-cli</code>.</li>
-      <li>PDF/A export, thumbnails and editing inside subreports: not offered yet (decided 29 October 2026). Find and replace is the one thing that changes subreport text.</li>
-      <li>You plan a raw viewer so the preview no longer goes through a PDF (2026-10-17). When it exists, tell me and TCM's page view switches to it.</li>
-      <li>Placeholders for fields with no data (for example "[Employee Name]") would need a render option on your side.</li>
-      <li>The comment in <code>rpt-core/src/preview.rs</code> (around line 143) says subreports share the live scope; they do not today.</li>
-      <li>Already known limits, passed on to the assistant: text with embedded fields, subreport internals, paper size without a saved printer, password-protected reports.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Decision for you: procedures named sp_...</span><span class="status todo">Waiting on you</span></div>
-    <p>Your own procedures, views and functions named <code>sp_...</code> or <code>xp_...</code> are refused (SQL Server looks for those names in master first), so a report procedure with such a name can't be created, altered or previewed live through TCM. Allow them when written with a non-sys schema (<code>dbo.sp_x</code>)?</p>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Not fully done in TCM</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>A request over 64 KiB is refused by the AI Bridge, so a procedure body over about 60,000 characters can't be sent (the guard itself allows 200,000).</li>
-      <li>XML methods written <code>T.c.value(...)</code> are refused (they read as a three-part name). The refusal suggests <code>(T.c).value(...)</code>, not yet confirmed on SQL Server; <code>c.value(...)</code> is the other candidate.</li>
-      <li>Refused on purpose inside a procedure: <code>CREATE INDEX</code> on a temp table, <code>ALTER TABLE #t DROP COLUMN</code>, <code>OUTPUT ... INTO</code> a real table, <code>WITH EXECUTE AS</code>. SQL text with a carriage return on its own (old Mac line endings) is refused everywhere.</li>
-      <li>A slow render or live fetch holds the open report, so other report calls wait for it (up to about a minute for a live fetch that can't connect).</li>
-      <li>Small polish left from the reviews: Open in the report designer says "no program" for any opener failure; the screen re-fetches the whole PDF on every change; a file deleted while the screen is open is only noticed on the next change; a new report whose write fails can leave a partial file.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Hand checks owed (need your Dev database and the report designer)</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Create and alter one procedure, one view and one function on the Dev login through the assistant.</li>
-      <li>A live preview of a real report against its procedure (the main sample needs five parameters).</li>
-      <li>Open in the report designer opens the saved file, and an edited file loads in the designer.</li>
-      <li>The page view (2.2.3-beta.5): a real report's pages draw, Fit width / 100% / zoom work, the page area fills the screen and scrolls, and a long report stays responsive (pages are drawn only near the view). In the app's developer tools, a pdf.worker thread should be running with no "fake worker" warning.</li>
-      <li>pdf.js runs without WebAssembly (the app's security settings block it): a report with ICC colour profiles or JPEG 2000 / JBIG2 images would draw with fallback colours or miss those images. Your renderer does not seem to write those.</li>
-      <li>Open report from the file picker, in the real window: the picked file opens, and a cancelled picker changes nothing.</li>
-      <li>The parameters panel: fill values for the main sample, and the preview draws with them; a wrong name or a value that does not fit is refused with the parameter named.</li>
-      <li>Find and replace, in the real window: Find lists the matches, Replace all shows the count and asks first, and the saved file shows the change (including subreport text, and text holding fields left alone).</li>
-      <li>Which XML form works: <code>(T.c).value(...)</code> or <code>c.value(...)</code>.</li>
-      <li>Whether sqlcmd reads <code>RESET</code>/<code>ED</code>/<code>EXIT</code>/<code>QUIT</code> at the start of a line inside a string (predates this work).</li>
+      <li>Two real-browser tests fail: an unattended selection's saved run lacks the page path the run in memory has; a second response check in one step reads "not run: an earlier action in this step failed" against a real page.</li>
+      <li>A drag the browser hands over after the last mouse move is lost without a message.</li>
+      <li>Key combinations in a second tab have no test of their own.</li>
+      <li>A page error during a sign-in part-way through a case is not counted; a dialog that opens during sign-in or the trip to the area never fails a step.</li>
+      <li>A PDF's compressed contents can use more memory than its 50 MB size suggests.</li>
+      <li>AI Bridge per environment: right after start-up, the always-allow entry is brought in line with the active environment only at the first environment-list read, so a stale entry could be live for a moment.</li>
+      <li>Cache: with the Runner window open beside the main window, both can save the entry-age list at once, so an entry may be fetched again early; a crash can lose the last fraction of a second of cache changes.</li>
     </ul>
   </div>
 
@@ -953,66 +303,10 @@
   <div class="item"><div class="head"><span class="title">Edge stall after long role-lookup polling</span><span class="status todo">To investigate</span></div></div>
 
   <h2>On hold</h2>
-
   <div class="item">
     <div class="head"><span class="num">13</span><span class="title">Auto Run: server-side validation checks</span><span class="status todo">On hold</span></div>
     <p>Checking that the app refuses changed requests. Not something I can design or build.</p>
   </div>
-
-  <h2>Smaller follow-ups</h2>
-  <div class="item">
-    <div class="head"><span class="title">Two real-browser tests fail (found 22 October 2026, before the 1280 x 720 change)</span><span class="status todo">To fix</span></div>
-    <ul>
-      <li>An unattended selection's saved run lacks the page path the run in memory has.</li>
-      <li>A second response check in one step reads "not run: an earlier action in this step failed" against a real page.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Small edge cases left from the last reviews</span><span class="status todo">Optional</span></div>
-    <ul>
-      <li>A drag the browser hands over after the last mouse move is lost without a message.</li>
-      <li>Key combinations in a second tab have no test of their own.</li>
-      <li>A page error during a sign-in part-way through a case is not counted.</li>
-      <li>A dialog that opens during sign-in or the trip to the area never fails a step.</li>
-      <li>A PDF's compressed contents can use more memory than its 50 MB size suggests.</li>
-      <li>AI Bridge per environment (2.2.3-beta.8): right after the app starts, the always-allow entry in your project folder's assistant settings is only brought in line with the active environment at the first environment-list read, not at start-up, so a stale entry could be live for a moment. Fix: keep writes held until that first repair has run. Also untested: the switch command calling the allow-file update, and the start-up hold itself (only the pieces they call are tested).</li>
-      <li>In the app's dropdowns, pressing the down arrow while the list is empty, then Enter, has nothing to pick (found 2026-10-17, predates the folder pickers).</li>
-      <li>Export to Playwright: a case handed back to its area's folder after having its own still has its suggestion worked out from its old folder until the mappings are saved.</li>
-      <li>Cache (2.2.3-beta.10): while the Runner window is open beside the main window, both can save the cache's list of entry ages at the same moment, so an entry may be dropped early and fetched again once. A crash (not a normal close) can lose the last fraction of a second of cache changes; they are fetched again.</li>
-    </ul>
-  </div>
-
-  <h2>Hand checks owed (built, not yet tried against a real organisation)</h2>
-  <ul class="done">
-    <li>Betas 16 to 22: export #137561 and #137563 (table checks); Export dialog on the pc-cycle-setup branch shows New / In the repo / Excluded correctly; a run with settings marks pauses Before Batch 1 and 2; a no_save discovery blocks Distribute Evenly; the settle wait on Rating Methods Save &amp; Continue; paste a Finish in the repo prompt into Claude Code in the clone and check the finished spec and lint.</li>
-    <li>Playwright tab, on a real clone: npm -v on team machines (needs npm 8+ for the log fix), then an account Add with a password leaves no new log in %LOCALAPPDATA%\npm-cache\_logs; a password with % ^ &amp; " ! round-trips through Show; Stop during the dry count, mid-run, on quit and on update restart leaves no node or chrome in Task Manager; leave and re-enter the tab during the dry count; change a spec title after listing then Run picked; re-export a case with engineer, Also and floor blocks and git diff the .md and index.json; a clone without node_modules hides Runner and Accounts; open a real HTML report; a Scoop or %APPDATA%\npm Node install.</li>
-    <li>Round C: a watched run of several cases shows one window per case and no about:blank; the Setup panel's lag on a wide window; Auto Run updating while the assistant saves or deletes a script; How To Use with Advanced Features off and on in a release build; a delete refused during a watched run.</li>
-    <li>Round B: a real toggle switch drawn behind its label (click and expect_checked); expect_disabled inside a disabled fieldset; a save refused for a partial name in a click.</li>
-    <li>Round A: a long assistant replay answering "still running" and being picked up; a replay carrying on from the step it stopped at.</li>
-    <li>Faster discovery: write one page's scripts with get_autorun_page reads, the batch tool and dry runs, and count the refused saves.</li>
-    <li>Held browser and sessions: Release Auto Run browser after a browser dies; a "Cookie has been tampered" page signs in fresh once.</li>
-    <li>Edge leak fix: an unattended run of 135592 leaves one tcm-autorun browser, none after Stop or quitting mid-run; a file opened in Excel from the supervised browser survives closing it; read the new log line if the first process ends.</li>
-    <li>Navigation speed: a real unattended run of 3 cases compared with the 2.1.2 phase timings; a trip from a module screen with the menu open; Highlight each action off in a watched run.</li>
-    <li>Template browser reuse: two real API template runs within 2 minutes; the second skips the sign-in.</li>
-    <li>Assistant pitfalls: a refused script save during a live discovery that records the locator from the page; a setup script with #c{{setup.cycle_id}} running against a fresh draft; the date-picker day roles on a real picker.</li>
-    <li>Export to Playwright into a real clone.</li>
-    <li>Menu mapping: one real /tcm:map-menus run of one module, then each area's entry in the Discovery window.</li>
-    <li>Speed: one real unattended run of 3 cases, comparing the phase timings.</li>
-    <li>Queue grouped by area, and selecting cases by clicking.</li>
-    <li>Components: a real date-picker component made during discovery and used by two scripts; a change refused because it would break a script.</li>
-    <li>Discovery: /tcm:discover on one case end to end, a save refused for an unseen locator, Run buttons greying out and coming back, End discovery, the wait when a sign-in has expired.</li>
-    <li>Run in background: a real unattended run sent to the background and reopened from the pill.</li>
-    <li>Fixtures: Run, Rebuild, a failing step.</li>
-    <li>Script setup: approve, change the fixture, "Changed since you approved it".</li>
-    <li>Clean up test-made drafts: a real delete and Stop.</li>
-    <li>Reset points: a run pausing, and closing the app while paused.</li>
-    <li>Replay to a step from Past runs; opening a downloaded file.</li>
-    <li>Several tabs: a real report or print preview opening in a new tab; a second tab on the same record.</li>
-    <li>Readable script view and the wider Auto Run dialogs.</li>
-    <li>New checks against the real app: drag on a real sortable grid, a real confirm dialog, a real grid's row and sort checks, a real PDF download.</li>
-    <li>A script that visits Common Configurator and returns to its own area.</li>
-    <li>Test cases tab and dialogs: layout at 1920 and 1280 pixels, filter colours in light and dark.</li>
-  </ul>
 </main>
 </body>
 </html>
