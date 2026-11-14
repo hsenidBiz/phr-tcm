@@ -30,6 +30,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: "2.4.7-beta.3",
     date: "2026-11-14",
     items: [
+      "Accounts: a password changed elsewhere while the Accounts window is open is no longer overwritten by saving the window, even when the new password is the same length.",
       "Upload queue: removing cases, Remove all and a bulk edit each show Undo for a few seconds. Removing cases that came from a watched file has no Undo yet.",
       "The app fits its smallest window size: the start address fields in Auto Run's site and sign-in dialogs are full width, a dropdown near the right edge opens leftwards instead of pushing the screen sideways, and shortened values show in full on hover.",
     ],
