@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request replaces the run in flight.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # src-tauri/.cargo/config.toml is tuned for the owner's 24-core desktop:
+  # it links with rust-lld and leaves four cores free (`jobs = -4`), and its
+  # [env] table sets RUST_TEST_THREADS to 20 (an [env] entry never overrides
+  # a variable that is already set). A hosted runner has 4 cores and no
+  # reason to keep any free, so the real values go in here: Cargo reads
+  # CARGO_* variables ahead of the config file, and the linker is the stock
+  # MSVC one that every Windows runner has.
+  CARGO_BUILD_JOBS: 4
+  RUST_TEST_THREADS: 4
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: link.exe
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    # Some Rust tests only run on Windows (the Common-Controls manifest note
+    # at the top of src-tauri/tests/bindings.rs, PowerShell, cmd.exe).
+    runs-on: windows-latest
+    # A cold Rust build of the crate and Tauri is long; a cached one is not.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Production frontend build
+        run: npm run build
+
+      # The repository pins no toolchain, so it is the current stable one.
+      - name: Rust toolchain
+        run: rustup update stable --no-self-update
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --tests
+
+      # `cargo test --tests` ran tests/bindings.rs, which rewrites
+      # src/bindings.ts from the command signatures. If that changed the
+      # file, the committed copy was stale. The index holds LF; a Windows
+      # checkout may hold CRLF, so line endings are ignored in the compare.
+      - name: Generated bindings are up to date
+        shell: bash
+        run: git diff --exit-code --ignore-cr-at-eol -- src/bindings.ts
