@@ -79,7 +79,9 @@ before pushing anyway.
   in a plain JSON file beside the scripts, and sent to the webview by one
   IPC call (`autoRunListAccounts`) for the Accounts dialog, because
   `Account` in `autorun/accounts.rs` derives `specta::Type`. Proposed
-  accounts keep their database-read passwords in that same JSON. Never log
+  accounts keep their database-read passwords in plain JSON too (the
+  proposals file) until accepted or dismissed; the webview only learns
+  whether one exists. Never log
   them, and never add a second call that carries a password.
 - **All Azure DevOps calls go through `src-tauri/src/ado/`.** The client
   issues GET / POST / PATCH only, with ONE audited exception:

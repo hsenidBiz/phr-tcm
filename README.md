@@ -310,7 +310,8 @@ are enforced in code and by tests.
   beside your scripts, on this machine, so every tester can run the same
   scripts with their own logins, and the Accounts dialog receives them
   through one IPC call. Proposed accounts keep the passwords read from the
-  database in that same file. They are never logged.
+  database in a plain JSON proposals file until you accept or dismiss
+  them. They are never logged.
 - Confirm before every write. A review gate precedes any create or update.
   Reads happen freely.
 - Rate-limited writes. A pacer spaces writes to the budget you set, and
