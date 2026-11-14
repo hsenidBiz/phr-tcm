@@ -282,7 +282,7 @@ fn nothing_asks_the_person_before_a_replay() {
 ");
     let lib = norm(include_str!("../../src/lib.rs"));
     let events = norm(include_str!("../../src/events.rs"));
-    let bridge = norm(include_str!("../../src/ai_bridge.rs"));
+    let bridge = norm(&crate::bridge_source::ai_bridge_source());
     for gone in ["AutorunReplayRequest", "auto_run_answer_replay_request", "replay_ask"] {
         assert!(!lib.contains(gone), "lib.rs still names {gone}");
         assert!(!events.contains(gone), "events.rs still names {gone}");

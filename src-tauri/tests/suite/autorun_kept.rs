@@ -275,7 +275,7 @@ async fn a_discovery_start_binds_the_kept_list_to_the_assistant_that_started_it(
     assert_eq!(ask(&a).await, (409, NOT_AN_EXPLORE.to_string()));
 
     // The route calls it after every start that answered 200.
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     let arm = bridge.find("(\"POST\", \"/autorun-discover-start\") => {").expect("the start arm");
     let at = arm + bridge[arm..].find("kept_started(slot, caller).await;").expect("the start no longer binds a kept list");
     assert!(bridge[at.saturating_sub(60)..at].contains("if answer.0 == 200 {"), "it is not guarded by a 200");

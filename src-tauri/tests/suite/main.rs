@@ -17,6 +17,7 @@
 //! Run one module's tests with a path filter:
 //!   cargo test --test suite throttle_backoff::
 
+mod bridge_source;
 mod common;
 mod serial;
 mod serial_order;

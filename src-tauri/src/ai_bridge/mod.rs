@@ -21,8 +21,9 @@
 //!   while that module is on (`module_guard`).
 //! - The application under test: proving or running an API template, or an
 //!   explore session's own changes, only with the API templates switch on
-//!   (`API_WRITES_OFF`), and in Auto Run's own browser the network tools
-//!   only with their switch on (`NETWORK_TOOLS_OFF`).
+//!   (`API_WRITES_OFF`). The Auto Run browser's captured requests, test
+//!   headers and cookies (the network tools) are answered only with their
+//!   switch on (`NETWORK_TOOLS_OFF`).
 //! - The database: `db_query` writes only with the create, update and
 //!   delete switch on AND a connection whose own user may write.
 //! - The open report file, through the report tools.

@@ -1027,7 +1027,7 @@ mod across_browsers {
         let commands = include_str!("../../src/commands/autorun.rs");
         assert!(commands.contains("lease: crate::autorun::lease::Held::supervised_in(n),"));
         assert!(!commands.contains("lease: crate::autorun::lease::Held::supervised(),"));
-        let bridge = include_str!("../../src/ai_bridge.rs");
+        let bridge = crate::bridge_source::ai_bridge_source();
         assert!(bridge.contains("with_holder_named("));
         // One wrapper around every arm of `route_as`, after the match, not an arm at a time.
         let route_as = &bridge[bridge.find("pub async fn route_as(").unwrap()..];

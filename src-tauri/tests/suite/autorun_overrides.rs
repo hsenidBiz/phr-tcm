@@ -929,7 +929,7 @@ fn every_answer_ends_with_what_is_changed_for_testing() {
 #[test]
 fn the_answers_read_what_is_changed_under_the_lock() {
     let norm = |s: &str| s.replace("\r\n", "\n");
-    let bridge = norm(include_str!("../../src/ai_bridge.rs"));
+    let bridge = norm(&crate::bridge_source::ai_bridge_source());
     let commands = norm(include_str!("../../src/commands/autorun.rs"));
     let host = norm(include_str!("../../src/commands/ai_bridge.rs"));
     let body = |text: &str, start: &str| -> String {

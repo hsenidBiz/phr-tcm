@@ -1885,7 +1885,7 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record() {
     let read = |p: &str| {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap().replace("\r\n", "\n")
     };
-    let bridge = read("src/ai_bridge.rs");
+    let bridge = crate::bridge_source::ai_bridge_source();
     let mcp = read("src/mcp.rs");
 
     let route_body = &bridge[bridge.find("pub async fn route_as(").unwrap()..];

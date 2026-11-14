@@ -298,7 +298,7 @@ fn the_writing_guide_drops_the_custom_style_with_writing_style_off() {
     v2_lib::writing_style::set_dir(None);
     assert!(on.expect("on, the style is carried").contains("Name every screen in bold."));
     assert_eq!(off, None, "off, the guide is the standard one");
-    let bridge = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ai_bridge.rs")).unwrap();
+    let bridge = crate::bridge_source::ai_bridge_source();
     assert!(
         bridge.contains("custom_style_when(crate::modules::on(crate::modules::Module::WritingStyle))"),
         "the guide asks Writing Style"
@@ -318,7 +318,7 @@ fn preconditions_need_database_access_as_well_as_the_switch() {
     let read = |p: &str| std::fs::read_to_string(format!("{}/src/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
     assert_eq!(read("commands/autorun.rs").matches("preconditions::read_access(db_read_access)").count(), 2);
     assert_eq!(read("commands/autorun_replay.rs").matches("preconditions::read_access(db_read_access)").count(), 1);
-    assert!(read("ai_bridge.rs").contains("crate::autorun::preconditions::read_access(!ctx.disabled_tools"));
+    assert!(crate::bridge_source::ai_bridge_source().contains("crate::autorun::preconditions::read_access(!ctx.disabled_tools"));
 }
 
 mod commands {

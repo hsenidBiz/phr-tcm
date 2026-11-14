@@ -225,7 +225,7 @@ fn the_mapping_flag_is_published_with_the_discovery_and_read_by_the_start() {
     let publish = &autorun[autorun.find("pub(crate) fn publish_discovery_in(").unwrap()..];
     let publish = &publish[..publish.find("\n}\n").unwrap()];
     assert!(publish.contains("MAPPING_ACTIVE[n.index()].store(") && publish.contains(".mapping.is_some()"), "{publish}");
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     let start = &bridge[bridge.find("async fn autorun_discover_start(").unwrap()..];
     let start = &start[..start.find("\n}\n").unwrap()];
     let refuse = start.find("claim_mapping_start(n)").expect("a second mapping run is refused by the start claim");
@@ -400,7 +400,7 @@ async fn a_refused_claim_binds_nothing_not_even_a_free_main() {
         Ok(SlotNo::MAIN)
     );
     // The claim is looked at before the browser is picked, in the source too.
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     let route = &bridge[bridge.find("pub async fn route_as(").unwrap()..];
     let route = &route[..route.find("\n}\n").unwrap()];
     let pick = route.find("slot_for(caller,").unwrap();
@@ -476,7 +476,7 @@ async fn the_persons_release_of_a_slot_leaves_the_claims_of_an_assistant_bound_e
 /// including the answer that leaves the person's browser open (409).
 #[test]
 fn the_bridge_ends_claims_on_a_release_that_left_a_persons_browser_open() {
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     let at = bridge.find("release_for_assistant(slot).await").unwrap();
     let arm = &bridge[at..at + 700];
     assert!(arm.contains("PERSONS_BROWSER_OPEN") && arm.contains("end_claims_of"), "{arm}");

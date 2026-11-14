@@ -1090,7 +1090,7 @@ fn an_api_quirk_needs_api_templates_too() {
             "{path}: Auto Run off says Auto Run"
         );
     }
-    let bridge = include_str!("../../src/ai_bridge.rs");
+    let bridge = crate::bridge_source::ai_bridge_source();
     assert!(bridge.contains("module_guard(path, body, &crate::modules::current())"), "route uses the body-aware guard");
 }
 
@@ -4647,7 +4647,7 @@ fn page_false_leaves_the_page_out() {
 /// one of them.
 #[test]
 fn every_route_that_answers_the_page_can_leave_it_out() {
-    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let bridge = crate::bridge_source::ai_bridge_source().replace("\r\n", "\n");
     let arm = |path: &str| -> String {
         let start = bridge.find(&format!("(\"POST\", \"{path}\") =>")).unwrap_or_else(|| panic!("{path} is routed"));
         let rest = &bridge[start + 1..];
