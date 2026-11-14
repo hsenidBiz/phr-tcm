@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, events } from "../bindings";
 import { toast } from "../lib/toast";
-import { detach } from "./detach";
+import { detach } from "../lib/detach";
 
 /** How often to look for a new release, in the background. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000;

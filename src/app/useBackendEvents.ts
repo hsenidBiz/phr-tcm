@@ -10,7 +10,7 @@ import { announce, summarize } from "../lib/assignedAlerts";
 import { useWaitingItems } from "../lib/useWaitingItems";
 import { logUi } from "../lib/uiLog";
 import { isCaptureMode } from "../dev/capture";
-import { detach } from "./detach";
+import { detach } from "../lib/detach";
 
 /**
  * Floor between two slowdown toasts. Azure DevOps can ask the app to slow
