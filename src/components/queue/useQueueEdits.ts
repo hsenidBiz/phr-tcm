@@ -4,6 +4,16 @@ import { toast } from "../../lib/toast";
 import { fileName, fileOwners, patchWatch, type WatchedFile } from "../../lib/fileSync";
 import { freshWatches, noteWritten, runOnFileChain } from "../../lib/draftWriteQueue";
 import type { RenameTarget } from "../PowerRenameDialog";
+import {
+  changedKeys,
+  restoreRows,
+  revertBulk,
+  useUndoToast,
+  type BulkChange,
+  type RemovedRow,
+} from "./queueUndo";
+
+const noun = (n: number) => `${n} case${n === 1 ? "" : "s"}`;
 
 /**
  * Every way the queue changes under the user's hand - bulk edit, bulk
@@ -19,6 +29,7 @@ export function useQueueEdits({
   onQueueCleared,
   selected,
   setEditingIdx,
+  uploading = false,
 }: {
   queue: TestCase[];
   setQueue: Dispatch<SetStateAction<TestCase[]>>;
@@ -28,7 +39,15 @@ export function useQueueEdits({
   onQueueCleared?: () => void;
   selected: Set<number>;
   setEditingIdx: Dispatch<SetStateAction<number | null>>;
+  /** An upload is running. Rows removed meanwhile get no Undo: the upload
+   * stamps each created id onto its row, and a row that was out of the
+   * queue at that moment would come back without one. */
+  uploading?: boolean;
 }) {
+  const announce = useUndoToast();
+  /** A row a hand edit replaced, to the row that replaced it - how a bulk
+   * edit's Undo still finds a row someone has since edited. */
+  const successor = useRef(new WeakMap<TestCase, TestCase>());
   /** Write bulk changes back into the files the cases came from, so the
    * file says what the queue says - otherwise the next external save of
    * that file would quietly revert the bulk edit.
@@ -114,8 +133,33 @@ export function useQueueEdits({
     const chosen = new Set(selected);
     const next: (TestCase | null)[] = prev.map((tc, i) => (chosen.has(i) ? edit(tc) : tc));
     setQueue(next.filter((x): x is TestCase => x != null));
+    const changes: BulkChange[] = [];
+    chosen.forEach((i) => {
+      const after = next[i];
+      if (!after || after === prev[i]) return;
+      const keys = changedKeys(prev[i], after);
+      if (keys.length > 0) changes.push({ index: i, before: prev[i], after, keys });
+    });
+    announce(
+      "success",
+      `Edited ${noun(chosen.size)}`,
+      changes.length > 0 && !uploading ? () => undoBulk(changes) : undefined,
+    );
     await writeBackOwned(prev, next, chosen);
-    toast.success(`Updated ${chosen.size} queued case${chosen.size === 1 ? "" : "s"}.`);
+  };
+
+  /** Put back what the bulk edit set, where it still stands. The files the
+   * cases came from follow, as they did for the edit. */
+  const undoBulk = (changes: BulkChange[]) => {
+    const { queue: now, writeBackOwned: writeBack, uploading: busy } = latest.current;
+    if (busy) {
+      toast.info("Undo is not available while an upload is running.");
+      return;
+    }
+    const { queue: reverted, touched } = revertBulk(now, changes, successor.current);
+    if (touched.size === 0) return;
+    setQueue(reverted);
+    void writeBack(now, reverted, touched);
   };
 
   const bulkRemove = async () => {
@@ -123,13 +167,14 @@ export function useQueueEdits({
     const removing = new Set(selected);
     const kept = prev.filter((_, i) => !removing.has(i));
     setQueue(kept);
+    const gone = prev.flatMap((row, index) => (removing.has(index) ? [{ index, row }] : []));
+    announce("info", `Removed ${noun(removing.size)}`, uploading ? undefined : () => undoRemoval(gone));
     await writeBackOwned(
       prev,
       prev.map((tc, i) => (removing.has(i) ? null : tc)),
       removing,
     );
     if (kept.length === 0) onQueueCleared?.();
-    toast.info(`Removed ${removing.size} queued case${removing.size === 1 ? "" : "s"}.`);
   };
 
   /** Renaming drafts touches only this list and the files they came from,
@@ -164,6 +209,7 @@ export function useQueueEdits({
           continue;
         }
         next[qi] = { ...tc, title: row.after };
+        successor.current.set(tc, next[qi]!);
         changed.add(qi);
       }
       setQueue(next.filter((x): x is TestCase => x != null));
@@ -179,8 +225,8 @@ export function useQueueEdits({
   // row on every render - which is exactly what made a 100-case queue
   // slow to switch to. The two that need the current queue and file
   // list read them through a ref instead of closing over them.
-  const latest = useRef({ queue, writeBackOwned });
-  latest.current = { queue, writeBackOwned };
+  const latest = useRef({ queue, writeBackOwned, uploading });
+  latest.current = { queue, writeBackOwned, uploading };
   // The owning FILE follows a single removal exactly as it follows a bulk
   // one: otherwise the next outside save of that file sees the case in
   // both snapshots, not in the queue, and puts it back.
@@ -190,6 +236,16 @@ export function useQueueEdits({
   // row. The row object is the identity; a row already on its way out is
   // not removed twice.
   const removing = useRef(new WeakSet<TestCase>());
+  /** Put removed rows back where they stood. Nothing is sent anywhere: the
+   * queue is local, and it is saved like any other change to it. */
+  const undoRemoval = (gone: RemovedRow[]) => {
+    if (latest.current.uploading) {
+      toast.info("Undo is not available while an upload is running.");
+      return;
+    }
+    for (const { row } of gone) removing.current.delete(row);
+    setQueue((q) => restoreRows(q, gone));
+  };
   const removeRow = useCallback(
     (i: number) => {
       const { queue: prev, writeBackOwned: writeBack } = latest.current;
@@ -197,17 +253,22 @@ export function useQueueEdits({
       if (!target || removing.current.has(target)) return;
       removing.current.add(target);
       setQueue((q) => q.filter((t) => t !== target));
+      const gone = [{ index: i, row: target }];
+      announce("info", `Removed ${noun(1)}`, latest.current.uploading ? undefined : () => undoRemoval(gone));
       void writeBack(
         prev,
         prev.map((t) => (t === target ? null : t)),
         new Set([i]),
       );
     },
+    // announce and undoRemoval are stable in effect: they read through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [setQueue],
   );
   const saveRow = useCallback(
     (i: number, next: TestCase) => {
       const { queue: prev, writeBackOwned: writeBack } = latest.current;
+      if (prev[i]) successor.current.set(prev[i], next);
       setQueue((q) => q.map((t, j) => (j === i ? next : t)));
       setEditingIdx(null);
       // The owning FILE follows the edit, through the same machinery as
@@ -225,5 +286,25 @@ export function useQueueEdits({
     [setQueue],
   );
 
-  return { bulkApply, bulkRemove, renameTarget, removeRow, saveRow };
+  /** Remove all: the rows go; Undo puts them back ahead of anything added
+   * since, and `restoreMarks` puts the caller's uploaded / failed marks
+   * back. The files they came from are left as they are, as before. */
+  const clearQueue = (restoreMarks?: () => void) => {
+    const rows = latest.current.queue;
+    const gone = rows.map((row, index) => ({ index, row }));
+    setQueue([]);
+    onQueueCleared?.();
+    announce(
+      "info",
+      `Removed all ${noun(rows.length)}`,
+      uploading
+        ? undefined
+        : () => {
+            undoRemoval(gone);
+            restoreMarks?.();
+          },
+    );
+  };
+
+  return { bulkApply, bulkRemove, clearQueue, renameTarget, removeRow, saveRow };
 }

@@ -1,7 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "../lib/toast";
 import PowerRenameDialog from "./PowerRenameDialog";
 import { commands, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
@@ -253,7 +252,7 @@ export default function QueueSection({
     onNavigate,
   } = useQueueSelection({ queue, areaGrouped, foldedAreas, editingIdx });
 
-  const { bulkApply, bulkRemove, renameTarget, removeRow, saveRow } = useQueueEdits({
+  const { bulkApply, bulkRemove, clearQueue, renameTarget, removeRow, saveRow } = useQueueEdits({
     queue,
     setQueue,
     watches,
@@ -262,6 +261,7 @@ export default function QueueSection({
     onQueueCleared,
     selected,
     setEditingIdx,
+    uploading: submit.isPending || progress != null,
   });
 
   const problems = useMemo(() => queue.map((tc) => validateCase(tc)), [queue]);
@@ -434,12 +434,14 @@ export default function QueueSection({
         onView={() => viewHtml.mutate()}
         onShare={() => share.mutate()}
         onClear={() => {
-          const n = queue.length;
-          setQueue([]);
+          const failed = failedRows;
+          const uploaded = uploadedIds;
+          clearQueue(() => {
+            setFailedRows(failed);
+            setUploadedIds(uploaded);
+          });
           setFailedRows(new Set());
           setUploadedIds(new Set());
-          onQueueCleared?.();
-          toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
         }}
       />
 
