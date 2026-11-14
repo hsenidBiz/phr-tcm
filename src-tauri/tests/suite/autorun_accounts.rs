@@ -242,6 +242,26 @@ fn a_save_made_from_an_older_list_is_refused_and_a_person_change_lets_go_of_a_he
     assert!(v2_lib::autorun::accounts::pending_password_for(dir.path(), &env_id, "admin").is_none());
 }
 
+/// A fast machine can rewrite the file within one clock tick: the same size
+/// and the same time must still read as changed when the contents differ.
+#[test]
+fn a_same_length_change_in_the_same_tick_still_changes_the_version() {
+    use v2_lib::autorun::accounts::{accounts_path_for, accounts_version, save_accounts_checked, set_password_for, ACCOUNTS_CHANGED};
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    let path = accounts_path_for(dir.path(), &env_id);
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let loaded = accounts_version(dir.path(), &env_id);
+    set_password_for(dir.path(), &env_id, "admin", "Abc@123").unwrap();
+    // Same length as before; put the time back exactly as it was.
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(before).unwrap();
+    assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
+    assert_ne!(accounts_version(dir.path(), &env_id), loaded);
+    let err = save_accounts_checked(dir.path(), &env_id, &[account("admin", "kim", "Old-Pw1")], Some(&loaded)).unwrap_err();
+    assert_eq!(err, ACCOUNTS_CHANGED);
+}
+
 #[test]
 fn merging_added_accounts_keeps_a_password_changed_meanwhile_and_races_lose_nothing() {
     use v2_lib::autorun::accounts::{merge_accounts_for, set_password_for};

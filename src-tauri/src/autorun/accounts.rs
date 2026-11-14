@@ -178,18 +178,27 @@ fn files() -> std::sync::MutexGuard<'static, ()> {
 /// the list.
 pub const ACCOUNTS_CHANGED: &str = "an account changed while this was open - reopen Accounts";
 
-/// What the accounts file looks like now (its size and time), for a caller
-/// that wants to know later whether anything else wrote it. It carries no
-/// password.
+/// What the accounts file looks like now, for a caller that wants to know
+/// later whether anything else wrote it: its size, its time and a hash of
+/// its contents. Size and time alone missed a password changed to one of
+/// the same length within one clock tick (a fast machine does both writes
+/// in the same tick). The hash is keyed with a value chosen afresh each run,
+/// so the version carries nothing that could be worked back to a password;
+/// it is only ever compared within one run of the app.
 pub fn accounts_version(root: &Path, env_id: &str) -> String {
-    match std::fs::metadata(accounts_path_for(root, env_id)) {
+    use std::hash::{BuildHasher, Hasher};
+    static KEY: std::sync::OnceLock<std::collections::hash_map::RandomState> = std::sync::OnceLock::new();
+    let path = accounts_path_for(root, env_id);
+    match std::fs::metadata(&path) {
         Ok(m) => {
             let when = m
                 .modified()
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_nanos());
-            format!("{}-{when}", m.len())
+            let mut h = KEY.get_or_init(std::collections::hash_map::RandomState::new).build_hasher();
+            h.write(&std::fs::read(&path).unwrap_or_default());
+            format!("{}-{when}-{:016x}", m.len(), h.finish())
         }
         Err(_) => "none".to_string(),
     }
