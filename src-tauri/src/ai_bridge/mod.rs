@@ -15,12 +15,16 @@
 //!   repository's `.test-cases` folder, and only by canonical path
 //!   (`bridge_may_write`, `workspace::is_inside`).
 //! - The app's own Auto Run and Test file stores (scripts, components,
-//!   areas, quirks, validation rules, defects, run order, setups, Test
-//!   files, API templates, fixtures and flows): each route validates what
-//!   it is handed, and a route that belongs to a module is answered only
-//!   while that module is on (`module_guard`).
-//! - The application under test: proving or running an API template, or an
-//!   explore session's own changes, only with the API templates switch on
+//!   areas, quirks, validation rules, defects, run order, setups, kept
+//!   actions, proposed accounts (with their passwords, on test
+//!   environments), Test files, API templates, fixtures and flows): each
+//!   route validates what it is handed, and a route that belongs to a module
+//!   is answered only while that module is on (`module_guard`).
+//! - The application under test, two ways. Through its UI: discovery tries
+//!   and batches and replays drive the Auto Run browser and can submit
+//!   forms, held back only where a case or discovery says must-not-save.
+//!   Through HTTP: proving or running an API template, or an explore
+//!   session's own sends, only with the API templates switch on
 //!   (`API_WRITES_OFF`). The Auto Run browser's captured requests, test
 //!   headers and cookies (the network tools) are answered only with their
 //!   switch on (`NETWORK_TOOLS_OFF`).
