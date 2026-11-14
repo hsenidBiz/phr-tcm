@@ -105,9 +105,10 @@ export default function SiteAddressDialog({
         </p>
       )}
       <label className="space-y-1">
-        <span className="text-xs font-medium text-muted">Start address</span>
+        <span className="block text-xs font-medium text-muted">Start address</span>
         <Input
           aria-label="Start address"
+          className="w-full"
           placeholder={recipeAddress || "https://hr.example.internal/"}
           value={startValue}
           disabled={blocked}

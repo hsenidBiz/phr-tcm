@@ -358,9 +358,10 @@ export default function RecordSignInDialog({
             </div>
           )}
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-muted">Start address</span>
+            <span className="block text-xs font-medium text-muted">Start address</span>
             <Input
               aria-label="Start address"
+              className="w-full"
               placeholder="https://hr.example.internal/"
               value={startValue}
               onChange={(e) => setStart(e.target.value)}
