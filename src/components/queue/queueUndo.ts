@@ -41,8 +41,7 @@ export function changedKeys(before: TestCase, after: TestCase): string[] {
 
 /** Each bulk-edited row's place in the queue as it is now. By identity
  * first, following the row through the hand edits that replaced it
- * (`successor`); failing that by title, at the old position when it still
- * fits. A row that was renamed some other way is not found and is left as
+ * (`successor`); failing that by title, when exactly one row has it. A row that was renamed some other way is not found and is left as
  * it is. */
 function locate(
   queue: TestCase[],
@@ -58,10 +57,9 @@ function locate(
     const at = queue.indexOf(chain[c]);
     if (at >= 0 && !claimed.has(at)) return at;
   }
-  const title = change.after.title;
-  const home = queue[change.index];
-  if (home && home.title === title && !claimed.has(change.index)) return change.index;
-  return queue.findIndex((t, i) => t.title === title && !claimed.has(i));
+  // By title only when it names exactly one row now; otherwise it is a guess.
+  const same = queue.flatMap((t, i) => (t.title === change.after.title ? [i] : []));
+  return same.length === 1 && !claimed.has(same[0]) ? same[0] : -1;
 }
 
 /** Undo a bulk edit: on the rows that still exist, put back only the fields

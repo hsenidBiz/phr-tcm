@@ -5,6 +5,8 @@ import type { Dispatch, SetStateAction } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { TestCase } from "../bindings";
 import { useQueue } from "../hooks/useQueue";
+import type { WatchedFile } from "../lib/fileSync";
+import { submitFinished, submitPhaseSnapshot, submitStarted } from "../lib/submitRun";
 import { toast } from "../lib/toast";
 import QueueSection from "./QueueSection";
 
@@ -19,6 +21,8 @@ beforeEach(() => {
   localStorage.clear();
 });
 afterEach(() => {
+  const phase = submitPhaseSnapshot();
+  if (phase) submitFinished(phase.run);
   clearMocks();
   localStorage.clear();
   vi.clearAllMocks();
@@ -43,27 +47,48 @@ let setQueueOut: Dispatch<SetStateAction<TestCase[]>> = () => {};
 
 /** The queue is owned by the real `useQueue`, as Manual Entry owns it, so
  * what reaches storage is what the app would really save. */
-function Harness() {
+type Owner = {
+  watches?: WatchedFile[];
+  onQueueCleared?: () => void;
+  onQueueRestored?: (dropped: WatchedFile[]) => void;
+};
+function Harness({ owner }: { owner: Owner }) {
   const { queue, setQueue } = useQueue("acme", 42);
   setQueueOut = setQueue;
-  return <QueueSection org="acme" project="Web" pbiId={42} queue={queue} setQueue={setQueue} />;
+  return (
+    <QueueSection
+      org="acme"
+      project="Web"
+      pbiId={42}
+      queue={queue}
+      setQueue={setQueue}
+      watches={owner.watches}
+      onQueueCleared={owner.onQueueCleared}
+      onQueueRestored={owner.onQueueRestored}
+      onWatchPatched={owner.watches ? () => {} : undefined}
+    />
+  );
 }
 
-function renderQueue(initial: TestCase[]) {
+function renderQueue(initial: TestCase[], owner: Owner = {}) {
   localStorage.setItem(DRAFT, JSON.stringify(initial));
-  mockIPC((cmd) => {
+  mockIPC((cmd, args) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "list_project_tags") return ["smoke"];
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as { edits: Array<{ after: TestCase | null }> };
+      return { stamp: "stamp-2", cases: p.edits.flatMap((e) => (e.after ? [e.after] : [])) };
+    }
     return undefined;
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Harness />
+      <Harness owner={owner} />
     </QueryClientProvider>,
   );
 }
@@ -309,3 +334,102 @@ test("Undo does nothing to Azure DevOps", async () => {
   expect(writes).toEqual([]);
 });
 
+
+const fileOf = (rows: TestCase[]): WatchedFile => ({ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: rows });
+
+test("removing a row a watched file owns gets no Undo; a hand-typed row still does", async () => {
+  const owned = makeCase("Owned");
+  const owned2 = makeCase("Owned too");
+  const hand = makeCase("Typed by hand");
+  renderQueue([owned, owned2, hand], { watches: [fileOf([owned, owned2])], onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  expect(lastToast()).toEqual({ message: "Removed 1 case", undo: undefined });
+
+  // Selected rows: one owned among them is enough to withhold Undo.
+  fireEvent.click(screen.getByRole("row", { name: /^Owned too / }));
+  fireEvent.click(screen.getByRole("row", { name: /^Typed by hand / }), { ctrlKey: true });
+  fireEvent.click(screen.getByRole("button", { name: /^Remove 2/ }));
+  expect(lastToast()).toEqual({ message: "Removed 2 cases", undo: undefined });
+});
+
+test("removing only hand-typed rows keeps Undo even when a file feeds the queue", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned, makeCase("Typed by hand")], { watches: [fileOf([owned])] });
+  await screen.findByText("Typed by hand");
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Typed by hand from the queue" }));
+  pressUndo(lastToast());
+  await screen.findByText("Typed by hand");
+  expect(rowTitles()).toEqual(["Owned", "Typed by hand"]);
+});
+
+test("Undo of Remove all arms the dropped file watches again", async () => {
+  const a = makeCase("Alpha");
+  const watch = fileOf([a]);
+  const cleared = vi.fn();
+  const restored = vi.fn();
+  renderQueue([a, makeCase("Bravo")], { watches: [watch], onQueueCleared: cleared, onQueueRestored: restored });
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("button", { name: /Clear queue/ }));
+  expect(cleared).toHaveBeenCalledTimes(1);
+  const shown = lastToast();
+  expect(restored).not.toHaveBeenCalled();
+  pressUndo(shown);
+  await screen.findByText("Alpha");
+  expect(restored).toHaveBeenCalledTimes(1);
+  expect(restored.mock.calls[0][0]).toEqual([watch]);
+});
+
+test("a bulk remove that empties the queue is not reported cleared after Undo came first", async () => {
+  const cleared = vi.fn();
+  renderQueue([makeCase("Alpha"), makeCase("Bravo")], { onQueueCleared: cleared });
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Remove 2/ }));
+  // Undo before the write-back has had a turn to return.
+  pressUndo(lastToast());
+  await new Promise((r) => setTimeout(r, 20));
+  expect(cleared).not.toHaveBeenCalled();
+  expect(rowTitles()).toEqual(["Alpha", "Bravo"]);
+});
+
+test("a bulk edit Undo does not guess between rows that share a title", async () => {
+  renderQueue([makeCase("Alpha"), makeCase("Bravo")]);
+  await screen.findByText("Bravo");
+
+  fireEvent.click(screen.getByRole("row", { name: /^Alpha / }));
+  await bulkSetStatus(1, "Planned");
+  await waitFor(() => expect(stored().map((t) => t.automation_status)).toEqual(["Planned", "Not Automated"]));
+  const shown = lastToast();
+
+  // The rows are replaced by new ones, two of which now share the title.
+  act(() =>
+    setQueueOut([makeCase("Alpha", { automation_status: "Planned" }), makeCase("Alpha", { automation_status: "Planned" })]),
+  );
+  pressUndo(shown);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(stored().map((t) => t.automation_status)).toEqual(["Planned", "Planned"]);
+});
+
+test("while an upload runs, a removal gets no Undo and Undo is refused", async () => {
+  renderQueue([makeCase("Alpha"), makeCase("Bravo"), makeCase("Charlie")]);
+  await screen.findByText("Charlie");
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Alpha from the queue" }));
+  const before = lastToast();
+  expect(before.undo).toBeTypeOf("function");
+
+  // An upload starts after the removal: Undo is refused and says why.
+  act(() => void submitStarted("acme", 42, 2));
+  act(() => before.undo!());
+  expect(rowTitles()).toEqual(["Bravo", "Charlie"]);
+  expect(vi.mocked(toast.info)).toHaveBeenLastCalledWith("Undo is not available while an upload is running.");
+
+  // A removal made during the upload offers none.
+  fireEvent.click(screen.getByRole("button", { name: "Remove Bravo from the queue" }));
+  expect(lastToast()).toEqual({ message: "Removed 1 case", undo: undefined });
+});

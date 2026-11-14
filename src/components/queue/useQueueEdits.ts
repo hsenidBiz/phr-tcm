@@ -27,6 +27,7 @@ export function useQueueEdits({
   watchesRef,
   onWatchPatched,
   onQueueCleared,
+  onQueueRestored,
   selected,
   setEditingIdx,
   uploading = false,
@@ -37,6 +38,8 @@ export function useQueueEdits({
   watchesRef: MutableRefObject<WatchedFile[]>;
   onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
   onQueueCleared?: () => void;
+  /** Undo of Remove all: the watches Clear dropped, to arm again. */
+  onQueueRestored?: (dropped: WatchedFile[]) => void;
   selected: Set<number>;
   setEditingIdx: Dispatch<SetStateAction<number | null>>;
   /** An upload is running. Rows removed meanwhile get no Undo: the upload
@@ -168,13 +171,24 @@ export function useQueueEdits({
     const kept = prev.filter((_, i) => !removing.has(i));
     setQueue(kept);
     const gone = prev.flatMap((row, index) => (removing.has(index) ? [{ index, row }] : []));
-    announce("info", `Removed ${noun(removing.size)}`, uploading ? undefined : () => undoRemoval(gone));
+    // Undone before the write-back below returns: the queue must not then be
+    // reported as cleared (which drops the file watches) under the restored rows.
+    let undone = false;
+    announce(
+      "info",
+      `Removed ${noun(removing.size)}`,
+      uploading || fileOwned(prev, removing)
+        ? undefined
+        : () => {
+            undone = undoRemoval(gone);
+          },
+    );
     await writeBackOwned(
       prev,
       prev.map((tc, i) => (removing.has(i) ? null : tc)),
       removing,
     );
-    if (kept.length === 0) onQueueCleared?.();
+    if (kept.length === 0 && !undone) onQueueCleared?.();
   };
 
   /** Renaming drafts touches only this list and the files they came from,
@@ -238,13 +252,25 @@ export function useQueueEdits({
   const removing = useRef(new WeakSet<TestCase>());
   /** Put removed rows back where they stood. Nothing is sent anywhere: the
    * queue is local, and it is saved like any other change to it. */
-  const undoRemoval = (gone: RemovedRow[]) => {
+  const undoRemoval = (gone: RemovedRow[]): boolean => {
     if (latest.current.uploading) {
       toast.info("Undo is not available while an upload is running.");
-      return;
+      return false;
     }
     for (const { row } of gone) removing.current.delete(row);
     setQueue((q) => restoreRows(q, gone));
+    return true;
+  };
+
+  /** Whether any of these rows belongs to a watched file. Removing such a
+   * row is written into the file, and the write-back has no way to put an
+   * entry back, so Undo would leave queue and file disagreeing: a removal
+   * of file-owned rows gets no Undo. It gets one once the file write-back
+   * can re-insert an entry. */
+  const fileOwned = (rows: TestCase[], at: Set<number>) => {
+    if (watchesRef.current.length === 0) return false;
+    const owners = fileOwners(rows, watchesRef.current);
+    return [...at].some((i) => owners[i]?.path);
   };
   const removeRow = useCallback(
     (i: number) => {
@@ -254,7 +280,11 @@ export function useQueueEdits({
       removing.current.add(target);
       setQueue((q) => q.filter((t) => t !== target));
       const gone = [{ index: i, row: target }];
-      announce("info", `Removed ${noun(1)}`, latest.current.uploading ? undefined : () => undoRemoval(gone));
+      announce(
+        "info",
+        `Removed ${noun(1)}`,
+        latest.current.uploading || fileOwned(prev, new Set([i])) ? undefined : () => void undoRemoval(gone),
+      );
       void writeBack(
         prev,
         prev.map((t) => (t === target ? null : t)),
@@ -292,6 +322,9 @@ export function useQueueEdits({
   const clearQueue = (restoreMarks?: () => void) => {
     const rows = latest.current.queue;
     const gone = rows.map((row, index) => ({ index, row }));
+    // Clearing drops the file watches (onQueueCleared); keep them so Undo
+    // can arm them again and the restored rows are owned as before.
+    const dropped = watchesRef.current;
     setQueue([]);
     onQueueCleared?.();
     announce(
@@ -300,7 +333,8 @@ export function useQueueEdits({
       uploading
         ? undefined
         : () => {
-            undoRemoval(gone);
+            if (!undoRemoval(gone)) return;
+            if (dropped.length > 0) onQueueRestored?.(dropped);
             restoreMarks?.();
           },
     );

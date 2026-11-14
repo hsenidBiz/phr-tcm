@@ -53,6 +53,7 @@ export default function QueueSection({
   fileChanges,
   watches = [],
   onQueueCleared,
+  onQueueRestored,
   onWatchPatched,
   recentImports = [],
   onOpenRecent,
@@ -78,6 +79,9 @@ export default function QueueSection({
    * those watches existed, so leaving them armed means a later save to a
    * finished file quietly refills a queue the user deliberately emptied. */
   onQueueCleared?: () => void;
+  /** Called when Undo of Remove all puts the rows back, with the watches
+   * onQueueCleared dropped, so the owner can arm them again. */
+  onQueueRestored?: (dropped: WatchedFile[]) => void;
   /** Called after a bulk change is written back into a watched file, with
    * the file's new fingerprint and snapshot - the owner of the watch list
    * moves it forward so the watcher stays silent about our own write. */
@@ -259,6 +263,7 @@ export default function QueueSection({
     watchesRef,
     onWatchPatched,
     onQueueCleared,
+    onQueueRestored,
     selected,
     setEditingIdx,
     uploading: submit.isPending || progress != null,
@@ -437,8 +442,8 @@ export default function QueueSection({
           const failed = failedRows;
           const uploaded = uploadedIds;
           clearQueue(() => {
-            setFailedRows(failed);
-            setUploadedIds(uploaded);
+            setFailedRows((cur) => new Set([...cur, ...failed]));
+            setUploadedIds((cur) => new Set([...cur, ...uploaded]));
           });
           setFailedRows(new Set());
           setUploadedIds(new Set());
