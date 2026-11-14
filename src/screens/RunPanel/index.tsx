@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { ListSkeleton } from "../../components/ui/list-skeleton";
 import { useRowKeys } from "../../lib/useRowKeys";
+import { clickHow, useRowSelection } from "../../lib/useRowSelection";
 import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
@@ -131,7 +132,7 @@ export default function RunPanel({
     setGroupModeState(mode);
     saveGroupMode(mode);
   };
-  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null); // shift-range start
+  const anchor = useScreenState<number | null>(keyOf("anchor"), null); // shift-range start
   // Open previews, PLURAL (point ids) - same model as View Test Cases:
   // several can be open for comparison, an open one survives its group
   // being collapsed, and the sticky Close all clears the lot.
@@ -390,28 +391,24 @@ export default function RunPanel({
 
   // Click toggles a row; shift+click selects the whole range from the
   // last clicked row, in the visible (filtered/grouped) order.
+  // A plain click flips the row and a Shift range always adds to what is
+  // selected: this list has no "replace" click. A folded group's cases are
+  // still in the range - collapsing hides rows, it does not unpick them.
+  const caseOrder = useMemo(
+    () =>
+      sections.flatMap((s) => s.pts).flatMap((p) => (p.test_case_id == null ? [] : [p.test_case_id])),
+    [sections],
+  );
+  const selection = useRowSelection({
+    order: caseOrder,
+    setSelected,
+    anchor,
+    plainClick: "toggle",
+    range: "add",
+  });
   const handleRowClick = (p: TestPoint, e: MouseEvent) => {
     if (p.test_case_id == null) return;
-    const flat = sections.flatMap((s) => s.pts);
-    if (e.shiftKey && anchor != null) {
-      const ids = flat.map((x) => x.test_case_id);
-      const a = ids.indexOf(anchor);
-      const b = ids.indexOf(p.test_case_id);
-      if (a >= 0 && b >= 0) {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        const range = ids.slice(lo, hi + 1).filter((x): x is number => x != null);
-        setSelected((s) => new Set([...s, ...range]));
-        return;
-      }
-    }
-    const caseId = p.test_case_id;
-    setSelected((s) => {
-      const next = new Set(s);
-      if (next.has(caseId)) next.delete(caseId);
-      else next.add(caseId);
-      return next;
-    });
-    setAnchor(caseId);
+    selection.select(p.test_case_id, clickHow(e));
   };
 
   // Stable handlers for the memoized rows (RunRows): each reads the latest
@@ -441,9 +438,7 @@ export default function RunPanel({
    * not unpick them). */
   const selectAllVisible = () => {
     const ids = filtered.map((p) => p.test_case_id).filter((x): x is number => x != null);
-    if (!ids.length) return;
-    setSelected(new Set(ids));
-    setAnchor(ids[0]);
+    selection.selectOnly(ids);
   };
 
   // Ctrl/Cmd+A selects every case instead of the page's text - unless the
@@ -463,15 +458,7 @@ export default function RunPanel({
   /** Group-header click: select every case under it (again to clear). */
   const toggleSection = (pts: TestPoint[]) => {
     const ids = pts.map((p) => p.test_case_id).filter((x): x is number => x != null);
-    if (!ids.length) return;
-    setSelected((s) => {
-      const all = ids.every((id) => s.has(id));
-      const next = new Set(s);
-      if (all) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => next.add(id));
-      return next;
-    });
-    setAnchor(ids[0]);
+    selection.toggleGroup(ids);
   };
 
   return (
