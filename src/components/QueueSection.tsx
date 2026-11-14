@@ -243,7 +243,7 @@ export default function QueueSection({
   const {
     selected,
     setSelected,
-    selAnchor,
+    toggleGroup,
     areaGroups,
     rowsOnScreen,
     rowIds,
@@ -508,8 +508,7 @@ export default function QueueSection({
               toggleFoldedArea={toggleFoldedArea}
               editingIdx={editingIdx}
               selected={selected}
-              setSelected={setSelected}
-              selAnchor={selAnchor}
+              toggleGroup={toggleGroup}
               renderRow={renderRow}
             />
           ))}

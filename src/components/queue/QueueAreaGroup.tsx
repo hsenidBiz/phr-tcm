@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { Dispatch, MutableRefObject, ReactNode, SetStateAction } from "react";
+import type { ReactNode } from "react";
 import { groupIndices, type AreaGroup } from "../../lib/areaGroups";
 import { Checkbox } from "../ui/checkbox";
 import { Collapse } from "../ui/collapse";
@@ -21,8 +21,7 @@ export default function QueueAreaGroup({
   toggleFoldedArea,
   editingIdx,
   selected,
-  setSelected,
-  selAnchor,
+  toggleGroup,
   renderRow,
 }: {
   group: AreaGroup;
@@ -31,8 +30,8 @@ export default function QueueAreaGroup({
   toggleFoldedArea: (key: string) => void;
   editingIdx: number | null;
   selected: Set<number>;
-  setSelected: Dispatch<SetStateAction<Set<number>>>;
-  selAnchor: MutableRefObject<number | null>;
+  /** Select all of these queue indices, or clear them when all are. */
+  toggleGroup: (indices: readonly number[]) => void;
   /** One queued case, by its real queue index. */
   renderRow: (i: number) => ReactNode;
 }) {
@@ -46,18 +45,7 @@ export default function QueueAreaGroup({
   // The group's tick box selects every case in it, nested included, and
   // clears them when they are all selected - Update Test Cases' group
   // tick box (its toggleGroup).
-  const pickGroup = () => {
-    setSelected((s) => {
-      const next = new Set(s);
-      const every = all.every((i) => s.has(i));
-      for (const i of all) {
-        if (every) next.delete(i);
-        else next.add(i);
-      }
-      return next;
-    });
-    if (all.length) selAnchor.current = all[0];
-  };
+  const pickGroup = () => toggleGroup(all);
   return (
     <div className="space-y-1">
       <div className="flex w-full items-center gap-3 pb-1 pt-2">
@@ -117,8 +105,7 @@ export default function QueueAreaGroup({
               toggleFoldedArea={toggleFoldedArea}
               editingIdx={editingIdx}
               selected={selected}
-              setSelected={setSelected}
-              selAnchor={selAnchor}
+              toggleGroup={toggleGroup}
               renderRow={renderRow}
             />
           ))}

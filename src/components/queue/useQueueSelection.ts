@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import type { TestCase } from "../../bindings";
 import { buildAreaGroups, visibleOrder } from "../../lib/areaGroups";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
+import { useRowSelection } from "../../lib/useRowSelection";
 
 /** Group by area: a per-machine view choice, off until switched on. Only
  * how the Queue is DRAWN - the queue array, its upload order and every
@@ -55,34 +56,37 @@ export function useQueueSelection({
       return new Set([...prev].filter((i) => i < queue.length));
     });
   }, [queue.length]);
-  // The shift-click anchor is only ever read inside toggleSelect, so it
-  // lives in a ref: that keeps the callback's identity stable, which is
-  // what lets the rows below stay memoised.
-  const selAnchor = useRef<number | null>(null);
-  useEffect(() => {
-    setSelected(new Set());
-    selAnchor.current = null;
-  }, [queue.length]);
-
   // Group by area: the tree, and the rows it leaves on screen top to
   // bottom. A Shift-click range runs over what the user SEES, so while the
   // Queue is grouped it follows this order (folded groups' cases left out)
-  // rather than raw queue positions. Held in a ref for the same reason the
-  // anchor is: toggleSelect has to stay stable for the memoised rows.
+  // rather than raw queue positions.
   const areaGroups = useMemo(() => (areaGrouped ? buildAreaGroups(queue) : null), [areaGrouped, queue]);
-  const shownOrder = useRef<number[] | null>(null);
   // Every row on screen, top to bottom, grouped or flat: what the arrow
-  // keys walk. The row being edited counts even inside a folded group,
-  // because it is still drawn there.
+  // keys walk and what a Shift range runs over. The row being edited
+  // counts even inside a folded group, because it is still drawn there.
   const rowsOnScreen = useMemo(
     () => (areaGroups ? visibleOrder(areaGroups, foldedAreas, editingIdx) : queue.map((_, i) => i)),
     [areaGroups, foldedAreas, editingIdx, queue],
   );
   const rowOrder = useRef<number[]>([]);
   useEffect(() => {
-    shownOrder.current = areaGroups ? rowsOnScreen : null;
     rowOrder.current = rowsOnScreen;
-  }, [areaGroups, rowsOnScreen]);
+  }, [rowsOnScreen]);
+
+  // Selection works the way Update Test Cases' does: a click selects that
+  // one case (and clears it if it was the only one), Ctrl/Cmd toggles one,
+  // Shift takes the range from the anchor in the order on screen, and
+  // Ctrl+Shift adds that range. A range leaves the anchor where it was.
+  // The handlers keep one identity, which is what lets the rows stay
+  // memoised.
+  const { select: toggleSelect, toggleGroup, extendTo, setAnchor } = useRowSelection({
+    order: rowsOnScreen,
+    setSelected,
+  });
+  useEffect(() => {
+    setSelected(new Set());
+    setAnchor(null);
+  }, [queue.length, setAnchor]);
 
   // The grid's one Tab stop (a roving tabindex): the row focus was last in,
   // while it is on screen, else the first row. The arrow keys move it.
@@ -91,42 +95,6 @@ export function useQueueSelection({
   useEffect(() => setFocusRow(null), [queue.length]);
   const tabRow = focusRow != null && rowsOnScreen.includes(focusRow) ? focusRow : (rowsOnScreen[0] ?? null);
   const onRowFocus = useCallback((i: number) => setFocusRow(i), []);
-
-  // Selection works the way Update Test Cases' does: a click selects that
-  // one case (and clears it if it was the only one), Ctrl/Cmd toggles one,
-  // Shift takes the range from the anchor in the order on screen, and
-  // Ctrl+Shift adds that range. A range leaves the anchor where it was.
-  const toggleSelect = useCallback((i: number, how: { range: boolean; toggle: boolean }) => {
-    const anchor = selAnchor.current;
-    if (how.range && anchor != null) {
-      const order = shownOrder.current;
-      let range: number[] | null = null;
-      if (order) {
-        const from = order.indexOf(anchor);
-        const to = order.indexOf(i);
-        if (from >= 0 && to >= 0) range = order.slice(Math.min(from, to), Math.max(from, to) + 1);
-      } else {
-        range = [];
-        for (let k = Math.min(anchor, i); k <= Math.max(anchor, i); k++) range.push(k);
-      }
-      if (range) {
-        const r = range;
-        setSelected((s) => (how.toggle ? new Set([...s, ...r]) : new Set(r)));
-        return;
-      }
-    }
-    if (how.toggle) {
-      setSelected((s) => {
-        const next = new Set(s);
-        if (next.has(i)) next.delete(i);
-        else next.add(i);
-        return next;
-      });
-    } else {
-      setSelected((s) => (s.size === 1 && s.has(i) ? new Set() : new Set([i])));
-    }
-    selAnchor.current = i;
-  }, []);
 
   // Up and Down move to the row above or below in the order on screen
   // (folded groups skipped), Home and End to the first and last. With
@@ -143,20 +111,17 @@ export function useQueueSelection({
             ? order.length - 1
             : Math.min(order.length - 1, Math.max(0, (at < 0 ? 0 : at) + (key === "ArrowDown" ? 1 : -1)));
       const next = order[to];
-      if (extend) {
-        if (selAnchor.current == null) selAnchor.current = i;
-        toggleSelect(next, { range: true, toggle: false });
-      }
+      if (extend) extendTo(i, next);
       setFocusRow(next);
       document.getElementById(`${rowIds}-${next}-row`)?.focus();
     },
-    [toggleSelect, rowIds],
+    [extendTo, rowIds],
   );
 
   return {
     selected,
     setSelected,
-    selAnchor,
+    toggleGroup,
     areaGroups,
     rowsOnScreen,
     rowIds,
