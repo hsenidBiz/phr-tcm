@@ -63,7 +63,7 @@
     </ul>
     <p><b>UI and UX</b></p>
     <ul>
-      <li><b>U1 Undo for destructive actions.</b> Undo exists only for the case-editor discard and Power Rename. Add an Undo toast for queue row removal, Remove all and bulk edit.</li>
+      <li><b>U1b Undo for removing rows that came from a watched file.</b> Undo for queue removals, Remove all and bulk edits shipped; removing rows that came from a watched import file still has no Undo, because the file write-back can edit or remove an entry but not put one back. Needs the Rust write-back to re-insert at the old position.</li>
       <li><b>U2 Actions in the command palette.</b> Ctrl+K only goes to screens. Add actions (import a file, upload the queue, new case, refresh) and a search for PBIs and case ids.</li>
       <li><b>U3 Simpler navigation.</b> Up to 12 tabs; Manual Entry, Import, Update, View, Search Suites and Suite Management overlap, and Run Tests and Auto Run are easy to confuse. Think about one Cases screen with modes.</li>
       <li><b>U4 Fixed Ctrl+number shortcuts.</b> The Ctrl+1 to 9 slots move when a module is turned on or off (<code>App.tsx</code>). Give each screen a fixed number.</li>
@@ -78,20 +78,13 @@
     </ul>
     <p><b>Maintainability and engineering</b></p>
     <ul>
-      <li><b>M1 Continuous integration.</b> A workflow on Windows (22 Rust tests need it) running <code>npm test</code>, <code>npx tsc --noEmit</code> and <code>cargo test --tests</code>. It would also let Rust dependency updates land, since this machine's antivirus blocks cargo downloads (Dependabot #34 and #38, 18 open alerts).</li>
-      <li><b>M2 Split <code>ai_bridge.rs</code>.</b> 17,691 lines and one route table of about 103 arms; Crystal Reports and Database are the easiest to start with. Its header says "no writes", which is no longer true.</li>
-      <li><b>M3 Split <code>App.tsx</code> and <code>QueueSection.tsx</code></b> (about 1,600 and 2,240 lines, many <code>useState</code> and <code>useEffect</code> calls).</li>
-      <li><b>M4 One selection hook.</b> View, Update and Run Tests each copy the click, Ctrl-click and Shift-click logic, and the queue has a fourth; <code>ManageCases/selection.ts</code> has no importer.</li>
       <li><b>M5 One markdown renderer, one UI kit.</b> Two markdown paths (<code>marked</code> + DOMPurify, and Astryx <code>Markdown</code>) and two kits (xiod-ui and Astryx), plus hand-made controls.</li>
-      <li><b>M6 Remove unused dependencies:</b> <code>@stylexjs/stylex</code> and <code>@astryxdesign/theme-neutral</code>.</li>
-      <li><b>M7 Documents that disagree with the code.</b> CLAUDE.md says there are no DELETE calls but the README names one (<code>ado/deletion.rs</code>); CLAUDE.md says tokens are never stored but the refresh token is in Windows Credential Manager; the README says the database password is plain text but logins are in Credential Manager (confirm). The README does not describe Auto Run, API Templates, Playwright or the module system.</li>
       <li><b>M8 Code signing.</b> The release script has no signing step and update trust rests on HTTPS to GitHub. Signing also removes SmartScreen warnings and the antivirus block each new build meets on this machine. Skipped by an earlier decision; worth revisiting as users grow.</li>
       <li><b>M9 Product coupling.</b> PeoplesHR is named in 23 Rust files (sign-in recipe, single-session rule, Playwright layout, WebForms postback). A cost only if another product must be tested.</li>
       <li><b>M10 A scripted smoke run for hand checks.</b> Most features since 2.3 owe live-site checks. One fixed test project and environment covering sign-in, a run, an upload and a proposal would replace most of them.</li>
       <li><b>M11 Smaller assistant guides.</b> <code>autorun/guide.rs</code> is about 205 KB; log which sections agents request and serve smaller per-job guides.</li>
       <li><b>M12 A flaky-test log.</b> Two load-related failures this session (<code>App.test.tsx</code>, <code>bridge_per_env</code>); a short record stops each being re-diagnosed.</li>
       <li><b>M13 Dev app beside the installed app.</b> Give development builds their own single-instance identity so TCM need not be closed to debug.</li>
-      <li><b>M14 Line endings.</b> <code>src/bindings.ts</code> and <code>Cargo.toml</code> keep showing false changes; a <code>.gitattributes</code> rule would end it.</li>
       <li><b>M15 Check the Run Tests tag read goes through the cache</b> rather than fetching on every list load.</li>
     </ul>
     <p><b>Minor findings from the A1 review (deferred)</b></p>

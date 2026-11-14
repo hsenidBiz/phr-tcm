@@ -6,3 +6,12 @@ src-tauri/pw-rules/** -text
 # The report engine copy is a byte-for-byte copy of its source folder. Never
 # convert its line endings, or a refresh shows every file as changed.
 crystal-reports/** -text
+
+# Files the tools rewrite with LF (the bindings generator, cargo, the release
+# bump). Checked out as LF so a regeneration that changes nothing shows
+# nothing, instead of a whole-file line-ending change under core.autocrlf.
+src/bindings.ts text eol=lf
+src/lib/changelog.ts text eol=lf
+src-tauri/Cargo.toml text eol=lf
+src-tauri/Cargo.lock text eol=lf
+src-tauri/tauri.conf.json text eol=lf
