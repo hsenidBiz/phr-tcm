@@ -79,7 +79,7 @@ export function useQueueSelection({
   // Ctrl+Shift adds that range. A range leaves the anchor where it was.
   // The handlers keep one identity, which is what lets the rows stay
   // memoised.
-  const { select: toggleSelect, toggleGroup, extendTo, setAnchor } = useRowSelection({
+  const { select, toggleGroup, extendTo, setAnchor } = useRowSelection({
     order: rowsOnScreen,
     setSelected,
   });
@@ -127,7 +127,7 @@ export function useQueueSelection({
     rowIds,
     tabRow,
     onRowFocus,
-    toggleSelect,
+    select,
     onNavigate,
   };
 }

@@ -246,6 +246,39 @@ describe("useRowSelection", () => {
     expect(ids(result)).toEqual([2, 3, 4]);
   });
 
+  test("a kept anchor changed from outside is the one the next Shift-click uses", () => {
+    const { result } = renderHook(() => {
+      const [selected, setSelected] = useState<Set<number>>(new Set());
+      const anchor = useState<number | null>(null);
+      const api = useRowSelection<number>({ order: [1, 2, 3, 4, 5], setSelected, anchor });
+      return { selected, setOutside: anchor[1], ...api };
+    });
+    act(() => result.current.select(1, click));
+    act(() => result.current.setOutside(4));
+    act(() => result.current.select(5, shift));
+    expect([...result.current.selected].sort()).toEqual([4, 5]);
+  });
+
+  test("selectOnly of nothing changes nothing", () => {
+    const { result } = setup([1, 2]);
+    act(() => result.current.select(1, click));
+    act(() => result.current.selectOnly([]));
+    expect(ids(result)).toEqual([1]);
+    act(() => result.current.select(2, shift));
+    expect(ids(result)).toEqual([1, 2]);
+  });
+
+  describe("option soleAmong", () => {
+    test("a plain click clears a row that is the only one among the listed rows", () => {
+      const { result } = setup([1, 2, 3], { soleAmong: [1, 2, 3] });
+      act(() => result.current.select(9 as number, ctrl));
+      act(() => result.current.select(1, ctrl));
+      expect(ids(result)).toEqual([1, 9]);
+      act(() => result.current.select(1, click));
+      expect(ids(result)).toEqual([]);
+    });
+  });
+
   describe("option plainClick: toggle", () => {
     test("a plain click flips the row and keeps the others", () => {
       const { result } = setup([1, 2, 3], { plainClick: "toggle" });
@@ -257,14 +290,22 @@ describe("useRowSelection", () => {
     });
   });
 
-  describe("option range: add", () => {
+  describe("option shiftRange: add", () => {
     test("a Shift range is added to what is selected", () => {
-      const { result } = setup([1, 2, 3, 4, 5], { plainClick: "toggle", range: "add" });
+      const { result } = setup([1, 2, 3, 4, 5], { plainClick: "toggle", shiftRange: "add" });
       act(() => result.current.select(1, click));
       act(() => result.current.select(5, click));
       act(() => result.current.select(3, click));
       expect(ids(result)).toEqual([1, 3, 5]);
       act(() => result.current.select(4, shift));
+      expect(ids(result)).toEqual([1, 3, 4, 5]);
+    });
+
+    test("Ctrl+Shift adds the range too", () => {
+      const { result } = setup([1, 2, 3, 4, 5], { shiftRange: "add" });
+      act(() => result.current.select(1, click));
+      act(() => result.current.select(5, ctrl));
+      act(() => result.current.select(3, ctrlShift));
       expect(ids(result)).toEqual([1, 3, 4, 5]);
     });
 

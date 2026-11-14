@@ -249,7 +249,7 @@ export default function QueueSection({
     rowIds,
     tabRow,
     onRowFocus,
-    toggleSelect,
+    select,
     onNavigate,
   } = useQueueSelection({ queue, areaGrouped, foldedAreas, editingIdx });
 
@@ -375,7 +375,7 @@ export default function QueueSection({
         diff={diff}
         diffFailed={diffFailed}
         busy={submit.isPending}
-        onToggleSelect={toggleSelect}
+        onToggleSelect={select}
         idBase={rowIds}
         tabStop={tabRow === i}
         onNavigate={onNavigate}

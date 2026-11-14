@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/button";
 import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
 import { IconClear, IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { clickHow, useRowSelection } from "../../lib/useRowSelection";
 import { moveBlock, moveBlockBefore, nudgeBlock, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
 
 /** A section's display name, which is also its key in the collapsed set. */
@@ -98,50 +99,25 @@ export default function CaseOrderList({
     ? sections.flatMap((s) => (isFolded(s.name) ? [] : s.ids))
     : cases.map((c) => c.id);
 
-  const toggleOne = (id: number) => {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    onSelect(next);
-  };
-
-  const clickRow = (id: number, e: MouseEvent) => {
-    const additive = e.ctrlKey || e.metaKey;
-    if (e.shiftKey && anchor != null) {
-      const a = onScreen.indexOf(anchor);
-      const b = onScreen.indexOf(id);
-      if (a >= 0 && b >= 0) {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        const range = onScreen.slice(lo, hi + 1);
-        onSelect(additive ? new Set([...selected, ...range]) : new Set(range));
-        return;
-      }
-    }
-    if (additive) toggleOne(id);
-    // A plain click selects just this row; clicking the only selected row
-    // again clears it, same as View Test Cases.
-    else onSelect(here === 1 && selected.has(id) ? new Set() : new Set([id]));
-    setAnchor(id);
-  };
+  // `selected` and `onSelect` are the screen's; the hook only needs a setter.
+  // A plain click clears "the only selected row" among THIS list's cases -
+  // the selected set can hold cases from other suites of the plan.
+  const selection = useRowSelection({
+    order: onScreen,
+    setSelected: (u) => onSelect(typeof u === "function" ? u(selected) : u),
+    anchor: [anchor, setAnchor],
+    soleAmong: cases.map((c) => c.id),
+  });
+  const clickRow = (id: number, e: MouseEvent) => selection.select(id, clickHow(e));
 
   // Keyboard users get the same selection the checkbox used to give them.
   const keyRow = (id: number, e: KeyboardEvent) => {
     if (e.key !== " " && e.key !== "Enter") return;
     e.preventDefault();
-    toggleOne(id);
-    setAnchor(id);
+    selection.select(id, { range: false, toggle: true });
   };
 
-  const toggleSection = (ids: number[]) => {
-    const all = ids.every((id) => selected.has(id));
-    const next = new Set(selected);
-    for (const id of ids) {
-      if (all) next.delete(id);
-      else next.add(id);
-    }
-    onSelect(next);
-    if (ids.length) setAnchor(ids[0]);
-  };
+  const toggleSection = (ids: number[]) => selection.toggleGroup(ids);
 
   const row = (c: SuiteCase, i: number) => {
     const isOn = selected.has(c.id);

@@ -20,8 +20,10 @@
  * screen that keeps its anchor across tab changes passes its state pair as
  * `anchor` and the ref follows it.
  *
- * Arrow keys and Space are not here: `useRowKeys` turns them into the same
- * `select` call with the modifiers a click would carry.
+ * Keys: `useRowKeys` turns arrow keys and Space into the same `select` call
+ * with the modifiers a click would carry. A list with its own key handling
+ * uses `extendTo` for Shift+arrow (the selection runs from the anchor to the
+ * row reached) and `select` with `toggle` for Space.
  */
 import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 
@@ -42,7 +44,11 @@ export type RowSelectionOptions = {
   /** What a Shift-click range does to the rows already selected. `"replace"`
    * makes the range the selection (Ctrl+Shift still adds it); `"add"` always
    * adds it. Default `"replace"`. */
-  range?: "replace" | "add";
+  shiftRange?: "replace" | "add";
+  /** The rows a plain click judges "the only selected row" among, when the
+   * selected set can hold keys this list does not show. Without it the whole
+   * set is counted. */
+  soleAmong?: readonly unknown[];
 };
 
 /** The keys from `from` to `to` inclusive, in `order`, whichever comes first;
@@ -63,8 +69,9 @@ export function toggleKey<K>(sel: ReadonlySet<K>, key: K): Set<K> {
 }
 
 /** A plain click: just `key`, or nothing when it was already the only one. */
-export function replaceWithKey<K>(sel: ReadonlySet<K>, key: K): Set<K> {
-  return sel.size === 1 && sel.has(key) ? new Set() : new Set([key]);
+export function replaceWithKey<K>(sel: ReadonlySet<K>, key: K, among?: readonly unknown[]): Set<K> {
+  const count = among ? among.filter((k) => sel.has(k as K)).length : sel.size;
+  return count === 1 && sel.has(key) ? new Set() : new Set([key]);
 }
 
 /** A group header's tick: every key when any is missing, none when all are
@@ -85,8 +92,9 @@ export function selectionAfterClick<K>(
   key: K,
   how: ClickHow,
   plainClick: "replace" | "toggle" = "replace",
+  among?: readonly unknown[],
 ): Set<K> {
-  return how.toggle || plainClick === "toggle" ? toggleKey(sel, key) : replaceWithKey(sel, key);
+  return how.toggle || plainClick === "toggle" ? toggleKey(sel, key) : replaceWithKey(sel, key, among);
 }
 
 /** The selection after a Shift-click that found its `range`. */
@@ -104,7 +112,8 @@ export function useRowSelection<K extends number | string>({
   setSelected,
   anchor: keptAnchor,
   plainClick = "replace",
-  range = "replace",
+  shiftRange = "replace",
+  soleAmong,
 }: {
   /** Every row's key in the order on screen: what a Shift range runs over.
    * Rows the user cannot see should be left out. */
@@ -118,8 +127,8 @@ export function useRowSelection<K extends number | string>({
   if (keptAnchor) anchorRef.current = keptAnchor[0];
 
   // Read through a ref so the handlers below never change identity.
-  const latest = useRef({ order, setSelected, keptAnchor, plainClick, range });
-  latest.current = { order, setSelected, keptAnchor, plainClick, range };
+  const latest = useRef({ order, setSelected, keptAnchor, plainClick, shiftRange, soleAmong });
+  latest.current = { order, setSelected, keptAnchor, plainClick, shiftRange, soleAmong };
 
   const setAnchor = useCallback((key: K | null) => {
     anchorRef.current = key;
@@ -129,14 +138,14 @@ export function useRowSelection<K extends number | string>({
   /** A click, or a key press that stands for one, on `key`. */
   const select = useCallback(
     (key: K, how: ClickHow) => {
-      const { order, setSelected, plainClick, range } = latest.current;
+      const { order, setSelected, plainClick, shiftRange, soleAmong } = latest.current;
       const anchor = anchorRef.current;
       const run = how.range && anchor != null ? rangeBetween(order, anchor, key) : null;
       if (run) {
-        setSelected((s) => selectionAfterRange(s, run, how, range));
+        setSelected((s) => selectionAfterRange(s, run, how, shiftRange));
         return;
       }
-      setSelected((s) => selectionAfterClick(s, key, how, plainClick));
+      setSelected((s) => selectionAfterClick(s, key, how, plainClick, soleAmong));
       setAnchor(key);
     },
     [setAnchor],

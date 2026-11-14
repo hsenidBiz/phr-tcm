@@ -404,7 +404,7 @@ export default function RunPanel({
     setSelected,
     anchor,
     plainClick: "toggle",
-    range: "add",
+    shiftRange: "add",
   });
   const handleRowClick = (p: TestPoint, e: MouseEvent) => {
     if (p.test_case_id == null) return;
