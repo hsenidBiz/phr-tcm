@@ -3,6 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useRowKeys } from "../../lib/useRowKeys";
+import { clickHow, useRowSelection } from "../../lib/useRowSelection";
 import { WindowedList } from "../../components/ui/windowed-list";
 import { usePruneSelection, useScreenKeys, useScreenSet, useScreenState } from "../../lib/screenState";
 import { createPortal } from "react-dom";
@@ -146,7 +147,7 @@ export default function ExistingCases({
   );
   const [openId, setOpenId] = useScreenState<number | null>(keyOf("open"), null);
   const [selected, setSelected] = useScreenSet<number>(keyOf("selected"));
-  const [anchor, setAnchor] = useScreenState<number | null>(keyOf("anchor"), null);
+  const anchor = useScreenState<number | null>(keyOf("anchor"), null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -228,43 +229,14 @@ export default function ExistingCases({
   const openGroupNames = ordered.map((g) => g.group).filter((g) => g && !collapsedGroups.has(g));
   const collapsible = (openId != null ? 1 : 0) + openGroupNames.length;
 
-  const handleCardClick = (c: TestCaseFull, e: MouseEvent) => {
-    const idx = flat.findIndex((x) => x.id === c.id);
-    if (e.shiftKey && anchor != null) {
-      const a = flat.findIndex((x) => x.id === anchor);
-      if (a >= 0 && idx >= 0) {
-        const [lo, hi] = a < idx ? [a, idx] : [idx, a];
-        const range = flat.slice(lo, hi + 1).map((x) => x.id);
-        setSelected((s) => (e.ctrlKey || e.metaKey ? new Set([...s, ...range]) : new Set(range)));
-        return;
-      }
-    }
-    if (e.ctrlKey || e.metaKey) {
-      setSelected((s) => {
-        const next = new Set(s);
-        if (next.has(c.id)) next.delete(c.id);
-        else next.add(c.id);
-        return next;
-      });
-    } else {
-      // Clicking the sole highlighted case again deselects it.
-      setSelected((s) => (s.size === 1 && s.has(c.id) ? new Set() : new Set([c.id])));
-    }
-    setAnchor(c.id);
-  };
+  // A Shift range runs over every case the filter shows, folded groups
+  // included. Clicking the sole highlighted case again deselects it.
+  const flatIds = useMemo(() => flat.map((c) => c.id), [flat]);
+  const selection = useRowSelection({ order: flatIds, setSelected, anchor });
+  const handleCardClick = (c: TestCaseFull, e: MouseEvent) => selection.select(c.id, clickHow(e));
 
   /** Header click: select every case in the group (click again to clear). */
-  const toggleGroup = (items: TestCaseFull[]) => {
-    const ids = items.map((c) => c.id);
-    setSelected((s) => {
-      const all = ids.every((id) => s.has(id));
-      const next = new Set(s);
-      if (all) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => next.add(id));
-      return next;
-    });
-    if (ids.length) setAnchor(ids[0]);
-  };
+  const toggleGroup = (items: TestCaseFull[]) => selection.toggleGroup(items.map((c) => c.id));
 
   /** How many of a group's cases are highlighted - drives the collapsed
    * group's marker. Counted rather than a boolean so the label can say
