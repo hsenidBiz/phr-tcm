@@ -1,251 +1,74 @@
-import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
-import { isTauri } from "@tauri-apps/api/core";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useMemo,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentType,
-  useSyncExternalStore,
-} from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "./lib/toast";
-import { useActiveEnvironmentName, useEnvironments } from "./lib/environments";
-import { activeEnvIdSnapshot, subscribeActiveEnv } from "./lib/activeEnv";
+import { useActiveEnvironmentName } from "./lib/environments";
 import { Toaster } from "./components/ui/toaster";
-import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
-import { fileName, loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
-import { applyRateLevel } from "./lib/adoRate";
-import { formatByteProgress } from "./lib/bytes";
+import { commands, type PbiHit } from "./bindings";
 import { onlineSnapshot, subscribeOnline } from "./lib/network";
+import { clearSessionExpired } from "./lib/sessionExpired";
 import {
-  clearSessionExpired,
-  sessionExpiredSnapshot,
-  setSessionActive,
-  subscribeSessionExpired,
-} from "./lib/sessionExpired";
-import { authQuery } from "./lib/authQuery";
-import {
-  addWorkAlerts,
   clearWorkAlerts,
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import {
-  forgetAllNotifications,
-  noteAssigned,
-  noteInterruptedUploads,
-  noteWaiting,
-  type NotificationTarget,
-} from "./lib/notifications";
+import type { NotificationTarget } from "./lib/notifications";
 import { requestAutoRunFocus } from "./lib/autoRunFocus";
 import ActivityStrip from "./components/ActivityStrip";
-import { submitPhaseSnapshot } from "./lib/submitRun";
-import { forgetMentionBaselines } from "./lib/mentions";
-import { announce, summarize } from "./lib/assignedAlerts";
-import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
-import { dropRetiredAiSwitches } from "./lib/aiScope";
-import {
-  dbWritesSnapshot,
-  isDevLoginUser,
-  migrateLegacyDbConnection,
-  selectedDbSnapshot,
-  subscribeDbSettings,
-} from "./lib/dbServer";
-import { apiWritesSnapshot, askForFixturesView, subscribeApiWrites } from "./lib/apiTemplates";
-import { networkToolsSnapshot, subscribeNetworkTools } from "./lib/networkTools";
-import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "./lib/writingStyle";
-import {
-  clearTourRepositories,
-  setTourRepositories,
-  subscribeWorkingDir,
-  workingDirSnapshot,
-} from "./lib/workingDir";
-import { CACHE, cacheEntry, cacheKeys, claimCacheFor, persistentQuery, suspendCache } from "./lib/cache";
-import { clearTourExpanded, setTourExpanded } from "./lib/sidebarState";
-import { readSuiteSeed, type SuiteSeed, writeSuiteSeed } from "./lib/suiteSeed";
-import { saveNote } from "./lib/caseNotes";
-import { useFieldRefs } from "./hooks/useFieldRefs";
-// Only the helpers: the changelog's entries (lib/changelog.ts) are loaded
-// when an update has something to show, never at startup.
-import { isBetaVersion, markChangelogSeen, SHOW_CHANGELOG_EVENT, updatedFrom } from "./lib/changelogSeen";
-import type { ChangelogEntry } from "./lib/changelog";
+import { unwrap } from "./lib/ipc";
+import { isBetaVersion } from "./lib/changelogSeen";
 import type { RunFolderTarget } from "./screens/RunTests";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import RunPill from "./components/RunPill";
-import { clearReviewRequest, useBackgroundRun } from "./lib/backgroundRun";
+import { clearReviewRequest } from "./lib/backgroundRun";
 import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunDataSync } from "./hooks/useAutoRunDataSync";
-import { useWaitingItems } from "./lib/useWaitingItems";
 import { waitingRows } from "./lib/waitingRows";
 import { useEnvironmentChangeSync } from "./hooks/useEnvironmentChangeSync";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
-import BridgeStatusBadge from "./components/BridgeStatusBadge";
-import SpecsStatusPill from "./components/SpecsStatusPill";
 import ContextBar from "./components/ContextBar";
-import { seedCombinedRecents } from "./components/PbiPicker";
-import { effectiveProject, saveAllProjects, takeAllProjectsNotice, useAllProjects } from "./lib/projectScope";
-import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
-import { hydrateExtras, subscribeExtras } from "./lib/extras";
-import {
-  hydrateModules,
-  realModulesSnapshot,
-  sectionShown,
-  shouldLeaveHidden,
-  useModules,
-  useModulesHydrated,
-} from "./lib/modules";
-import { clearNewNav, pruneNewNav } from "./lib/newNav";
+import { effectiveProject, useAllProjects } from "./lib/projectScope";
+import Sidebar, { WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
+import { useModules, useModulesHydrated } from "./lib/modules";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
-import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
-import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT, TOUR_REPO_PATH } from "./tour/tourData";
 import { tourControl, tourStepsFor, type TourWhere } from "./tour/tourScript";
-import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from "./tour/tourState";
-import { Button } from "./components/ui/button";
-import { SpinHolder } from "./components/ui/spin-holder";
-import { unwrap } from "./lib/ipc";
 import { logUi } from "./lib/uiLog";
-import { hideSplash } from "./lib/splash";
-import { loadPrefs, savePrefs } from "./lib/prefs";
-import { initTheme } from "./lib/theme";
+import { loadPrefs } from "./lib/prefs";
 import { isCaptureMode } from "./dev/capture";
 import HalloweenDecor, { HalloweenWeb } from "./components/HalloweenDecor";
 import ChristmasDecor, { ChristmasCorner } from "./components/ChristmasDecor";
-// Every screen and the command palette load on demand: on a slow machine the
-// whole startup bundle is parsed before anything is drawn, and most of it is
-// screens nobody has opened yet. The tour waits for its anchors, so a screen
-// arriving a moment after the tab switch is fine there too.
-//
-// The sign-in screen too, with its animation libraries: a kept session never
-// shows it. App renders it from its first render, behind the loading screen,
-// so its code is on the way while the session check runs, and a signed-out
-// launch keeps the loading screen up until it has arrived (see `authKnown`).
-// One shared promise, so that wait and React's own load are the same load.
-let signInLoad: Promise<typeof import("./screens/SignIn")> | null = null;
-const loadSignIn = () => (signInLoad ??= import("./screens/SignIn"));
-const SignIn = lazy(loadSignIn);
-// Shown only after an update, so it loads with the entries it lists.
-const ChangelogModal = lazy(() => import("./components/ChangelogModal"));
-const EditCases = lazy(() => import("./screens/EditCases"));
-const ImportFile = lazy(() => import("./screens/ImportFile"));
-const ManualEntry = lazy(() => import("./screens/ManualEntry"));
-const CreateWorkItem = lazy(() => import("./screens/CreateWorkItem"));
-const PrPanel = lazy(() => import("./screens/PrPanel"));
-const RunTests = lazy(() => import("./screens/RunTests"));
-const ViewCases = lazy(() => import("./screens/ViewCases"));
-const CommandPalette = lazy(() => import("./components/CommandPalette"));
-/** Compile-time dev gate: statically false in `tauri build`, so everything
- * behind it (and the dev/ module itself) is dead-code-eliminated from
- * released builds. Test mode opts out so vitest sees the plain app. */
-const DEV_TOOLS = import.meta.env.DEV && import.meta.env.MODE !== "test";
+import {
+  ChangelogModal,
+  CommandPalette,
+  DEV_TOOLS,
+  DevPanel,
+  SignIn,
+} from "./app/lazyScreens";
+import CaseScreens from "./app/CaseScreens";
+import WorkScreens from "./app/WorkScreens";
+import UpdateBanner from "./app/UpdateBanner";
+import { RunWindowHost } from "./app/RunWindowHost";
+import type { AppContext, CaseSelection } from "./app/types";
+import { useAppTour, useTourLifecycle } from "./app/useAppTour";
+import { useAppNavigation } from "./app/useAppNavigation";
+import { useAppUpdate } from "./app/useAppUpdate";
+import {
+  useAssignedWork,
+  useGlobalBackendEvents,
+  useIntakeWatch,
+  useInterruptedUploadCheck,
+  useWaitingNotices,
+} from "./app/useBackendEvents";
+import { useBridgeContextSync } from "./app/useBridgeContextSync";
+import { useChangelog } from "./app/useChangelog";
+import { useHomeProject } from "./app/useHomeProject";
+import { useKeyboardShortcuts, useModuleGuards, usePersistPrefs, useStartupEffects } from "./app/useShellEffects";
+import { useAppSession } from "./app/useAppSession";
+import { useWarmCaches } from "./app/useWarmCaches";
 
-/** DevPanel must be a DYNAMIC import behind the gate: a static
- * `import DevPanel from "./dev/DevPanel"` bundles dev/demo's module-level
- * dataset into the release even though the render below is gated (the JSX
- * gets shaken, module side effects don't). Lazy inside the statically-false
- * branch drops the whole dev/ chunk from `tauri build`. */
-const DevPanel: ComponentType<{
-  org: string;
-  project: string;
-  pbi: PbiHit | null;
-  section: string;
-  workMode: boolean;
-  onShowSignIn: () => void;
-}> = DEV_TOOLS ? lazy(() => import("./dev/DevPanel")) : () => null;
-const AiBridge = lazy(() => import("./screens/AiBridge"));
-// Shown in development builds, and in a release build whose optional
-// extras are unlocked (lib/extras); lazy, so nobody who never opens it
-// loads it.
-const AutoRun = lazy(() => import("./screens/AutoRun"));
-// Offered exactly where Auto Run is, and lazy for the same reason.
-const ApiTemplates = lazy(() => import("./screens/ApiTemplates"));
-// The team's Playwright repo, offered exactly where Auto Run is.
-const Playwright = lazy(() => import("./screens/Playwright"));
-// The report an assistant is working on, previewed; Rust refuses its commands while the module is off.
-const CrystalReports = lazy(() => import("./screens/CrystalReports"));
-const Settings = lazy(() => import("./screens/Settings"));
-const Suites = lazy(() => import("./screens/Suites"));
-const ManageCases = lazy(() => import("./screens/ManageCases"));
-const WorkBoard = lazy(() => import("./screens/WorkBoard"));
-// The unattended run's window, with the step text renderer it shows cases
-// in (lib/markdown and its sanitiser): loaded the first time a run's window
-// opens, not at every launch. `RunWindowHost` below keeps it unrendered -
-// and so unloaded - until then.
-const RunWindow = lazy(() => import("./screens/AutoRun/ReplayPane"));
-import { IconRefresh } from "./lib/actionIcons";
-
-/** How often to look for a new release, in the background. */
-const UPDATE_CHECK_MS = 60 * 60 * 1000;
-
-/**
- * Floor between two slowdown toasts. Azure DevOps can ask the app to slow
- * down repeatedly over one long import - `note_server_delay` on the Rust
- * side only re-emits for a hold that is new or longer, but that promise
- * does not reach the wire, so the frontend debounces on its own rather
- * than trust it. One every five minutes is plenty to make the user aware
- * without burying them.
- */
-const SLOWDOWN_TOAST_MIN_GAP_MS = 5 * 60 * 1000;
-
-/**
- * Stop listening, without letting the teardown throw.
- *
- * The event plugin's `unlisten` reaches into
- * `window.__TAURI_EVENT_PLUGIN_INTERNALS__`, which only the Tauri runtime
- * fills in. Anywhere else - jsdom, a browser preview - calling it rejects,
- * and an unhandled rejection out of a React cleanup is attributed to
- * whatever test happened to be unmounting, so one listener took several
- * unrelated tests down with it.
- *
- * There is nothing to recover from here either way: the listener is going
- * away with the component.
- */
-function detach(unlisten: (() => void) | undefined): void {
-  if (!unlisten) return;
-  try {
-    // May return a promise (it does in @tauri-apps/api) or nothing.
-    void Promise.resolve(unlisten() as unknown).catch(() => {});
-  } catch {
-    // Threw synchronously instead - same conclusion.
-  }
-}
-
-const TITLES: Record<Section, string> = {
-  manual: "Manual Entry",
-  import: "Import Test Cases",
-  edit: "Update Test Cases",
-  view: "View Test Cases",
-  run: "Run Tests",
-  autorun: "Auto Run",
-  suites: "Search Suites",
-  manage: "Suite Management",
-  ai: "AI Bridge",
-  apitemplates: "API Templates",
-  playwright: "Playwright",
-  "crystal-reports": "Crystal Reports",
-  settings: "Settings",
-};
-
-/** Mounts the run window only while a run's window is open, so its code
- * loads on first use. Its own component, so a run's progress re-renders
- * this and not the whole of App. */
-export function RunWindowHost() {
-  const { run } = useBackgroundRun();
-  if (!run?.open) return null;
-  return (
-    <Suspense fallback={null}>
-      <RunWindow />
-    </Suspense>
-  );
-}
-
-/** Status pill beside the heading - features shipped before they are done. */
-const TITLE_NOTES: Partial<Record<Section, string>> = {};
+export { RunWindowHost };
 
 export default function App() {
   const qc = useQueryClient();
@@ -275,20 +98,16 @@ export default function App() {
   // Suite-browser handoff: edit an arbitrary set of cases (not persisted).
   // The cases belong to their plan's project, which may not be the effective
   // one: Update Test Cases deletes, edits and tags them there.
-  const [caseSelection, setCaseSelection] = useState<{
-    label: string;
-    caseIds: number[];
-    project: string;
-  } | null>(null);
+  const [caseSelection, setCaseSelection] = useState<CaseSelection | null>(null);
+  // A Test plan folder opened in Run Tests (from Test plans), so a static
+  // suite runs there like a PBI's does. Picking a PBI, or any direct
+  // navigation, drops it.
+  const [runFolder, setRunFolder] = useState<RunFolderTarget | null>(null);
   // A suite handed over from Search Suites' Manage option. Cleared once
   // Suite Management has it, so going back to the tab later shows the
   // ordinary PBI-driven view rather than reopening an old click. It carries
   // its plan's project: Suite Management opens and writes the plan there,
   // which with the projects together is not the effective project.
-  // A Test plan folder opened in Run Tests (from Test plans), so a static
-  // suite runs there like a PBI's does. Picking a PBI, or any direct
-  // navigation, drops it.
-  const [runFolder, setRunFolder] = useState<RunFolderTarget | null>(null);
   const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number; project: string } | null>(
     null,
   );
@@ -297,43 +116,41 @@ export default function App() {
   // clears this the moment it has.
   const [workFocus, setWorkFocus] = useState<NotificationTarget | null>(null);
 
+  // Read inside stable callbacks, so starting the tour does not depend on
+  // a fresh closure over seven pieces of state.
+  const ctx = useRef<AppContext>({ section, org, homeProject, pbi, workMode, workSection, caseSelection });
+  ctx.current = { section, org, homeProject, pbi, workMode, workSection, caseSelection };
+
   // First-run walkthrough: opens once after the first sign-in, and again
-  // whenever Settings asks for it. While it is up the app runs on sample
-  // data, saves nothing, and cannot be touched. Declared here, ahead of
-  // every other effect in this component, because several of them gate on
-  // `tourOpen` and a hook cannot read a binding declared after itself.
-  const [tourOpen, setTourOpen] = useState(false);
-  // A throw-away cache for the toured screens: the sample data never
-  // mixes with the real one, and dies with the tour.
-  const [tourQc, setTourQc] = useState<QueryClient | null>(null);
-  // The destination the current stop is waiting for the user to walk to,
-  // reported by the overlay - null while it is not waiting for anything.
-  const [tourAwaited, setTourAwaited] = useState<TourWhere | null>(null);
-  // ...and whether that stop is one the user is meant to ACT on (the
-  // theme). The screens below stop being inert for exactly those stops, so
-  // the real control inside the ring can be used; the overlay then
-  // swallows clicks everywhere except that ring.
-  const [tourActing, setTourActing] = useState(false);
+  // whenever Settings asks for it. Declared ahead of every other effect in
+  // this component, because several of them gate on `tourOpen`.
+  const {
+    tourOpen,
+    tourQc,
+    tourAwaited,
+    setTourAwaited,
+    tourActing,
+    setTourActing,
+    startTour,
+    endTour,
+    tourNavigate,
+  } = useAppTour({
+    qc,
+    ctx,
+    setOrgRaw,
+    setHomeProjectRaw,
+    setPbiRaw,
+    setSection,
+    setWorkMode,
+    setWorkSection,
+    setCaseSelection,
+  });
   // Where the app is - the overlay measures "is this stop a move?" against
   // it - and, while the tour waits, the ONE control that gets the user
   // from here to there. Every other rail row, and the whole context bar,
   // locks itself on `tourOpen` alone.
   const tourAt: TourWhere = workMode ? { area: "work", workSection } : { area: "cases", section };
   const tourControlNow = tourOpen && tourAwaited ? tourControl(tourAwaited, tourAt) : null;
-  // Where the user was before the tour took over.
-  const before = useRef<{
-    section: Section;
-    org: string;
-    homeProject: string;
-    pbi: PbiHit | null;
-    workMode: boolean;
-    workSection: WorkSection;
-    caseSelection: { label: string; caseIds: number[]; project: string } | null;
-  } | null>(null);
-  // Read inside stable callbacks, so starting the tour does not depend on
-  // a fresh closure over seven pieces of state.
-  const ctx = useRef({ section, org, homeProject, pbi, workMode, workSection, caseSelection });
-  ctx.current = { section, org, homeProject, pbi, workMode, workSection, caseSelection };
 
   // Turning the switch OFF while a PBI of another project is open: the
   // Project selector comes back pre-filled with that PBI's project, so the
@@ -355,210 +172,11 @@ export default function App() {
     }
   }
 
-  const startTour = useCallback(() => {
-    if (before.current) return; // already running
-    before.current = { ...ctx.current };
-    suspendCache(true);
-    setTourExpanded(true);
-    installTourBackend();
-    setTourRepositories([{ path: TOUR_REPO_PATH, enabled: true }], TOUR_REPO_PATH);
-    setTourQc(
-      new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } }),
-    );
-    // The context bar is not remounted by the tour (only the screens
-    // below it are, on their `key={section}`), and a mounted query keeps
-    // the client it started on - so the org list it is already holding
-    // stays the REAL one while everything around it turns to sample data.
-    // Northwind is then not in the list and the picker reads blank, which
-    // is exactly what the stop that rings it is pointing at. Dropping the
-    // entry makes it ask again, and the ask now reaches the stand-in.
-    // Dropped again when the tour ends, below, so the sample list does not
-    // outlive it.
-    qc.removeQueries({ queryKey: ["orgs"] });
-    setOrgRaw(TOUR_ORG);
-    setHomeProjectRaw(TOUR_PROJECT);
-    setPbiRaw(TOUR_PBI);
-    setTourRunning(true);
-    setTourOpen(true);
-  }, [qc]);
-
-  const endTour = useCallback(() => {
-    const back = before.current;
-    before.current = null;
-    setTourOpen(false);
-    setTourRunning(false);
-    setTourAwaited(null);
-    setTourActing(false);
-    restoreTourBackend();
-    clearTourRepositories();
-    clearTourExpanded();
-    suspendCache(false);
-    setTourQc(null);
-    // The ungated `can-delete` permission query re-keys itself to whatever
-    // org/project it is asked about, including the sample one - and it
-    // lives on the REAL query client, not the throw-away one, so it would
-    // otherwise sit there for the rest of the session. Dropping the whole
-    // prefix rather than just the sample key is deliberate: the real
-    // entry (if any) simply refetches next time it is needed.
-    qc.removeQueries({ queryKey: ["can-delete"] });
-    // Same for the org list the context bar was made to re-ask for at the
-    // start: it is holding Northwind now, and Northwind is not a place
-    // the user can work.
-    qc.removeQueries({ queryKey: ["orgs"] });
-    if (!back) return;
-    setOrgRaw(back.org);
-    setHomeProjectRaw(back.homeProject);
-    setPbiRaw(back.pbi);
-    setSection(back.section);
-    setWorkMode(back.workMode);
-    setWorkSection(back.workSection);
-    setCaseSelection(back.caseSelection);
-  }, [qc]);
-
-  // Each stop says where it lives; take the app there.
-  const tourNavigate = useCallback((where: TourWhere | undefined) => {
-    if (!where) return;
-    if (where.area === "cases") {
-      setWorkMode(false);
-      setCaseSelection(null);
-      setSection(where.section);
-    } else {
-      setWorkMode(true);
-      setWorkSection(where.workSection);
-    }
-  }, []);
-
-  // A tour that is still up when the window goes away must not leave the
-  // stand-ins installed for whatever mounts next.
-  useEffect(
-    () => () => {
-      restoreTourBackend();
-      clearTourRepositories();
-      clearTourExpanded();
-      suspendCache(false);
-      setTourRunning(false);
-    },
-    [],
-  );
-
-  // Also hourly, so a window left open past a season's end still gets
-  // its restore without a relaunch.
-  useEffect(() => {
-    initTheme();
-    const id = setInterval(() => initTheme(), 60 * 60 * 1000);
-    return () => clearInterval(id);
-  }, []);
-  // The extras flag arrives from Rust a moment after launch, and can change
-  // later: a held-back season follows it.
-  useEffect(() => subscribeExtras(() => initTheme()), []);
-  // Push the saved ADO pacing into the Rust limiter before anything fetches.
-  useEffect(() => applyRateLevel(), []);
-
-  // The hidden Extras switch and the modules both live in Rust; ask once,
-  // so the Extras card and every module's screens follow them.
-  useEffect(() => {
-    void hydrateExtras();
-    void hydrateModules();
-  }, []);
-
-  // If the open tab belongs to a module that is switched off (or gets
-  // switched off while it is open), move off it rather than leave its
-  // heading over a blank body. Gated on hydration: the set starts empty the
-  // same way a fresh install reads, so without the gate a restart with a
-  // saved Auto Run tab bounces straight to Manual Entry before
-  // hydrateModules' answer comes back.
-  useEffect(() => {
-    if (shouldLeaveHidden(section, sectionShown(section, modules), modulesHydrated)) setSection("manual");
-  }, [modules, section, modulesHydrated]);
-
-  // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
-  // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (tourRunningSnapshot()) return; // the tour drives, not the keyboard
-      if (!e.ctrlKey && !e.metaKey) return;
-      if (e.shiftKey && e.key.toLowerCase() === "m") {
-        e.preventDefault();
-        setWorkMode((w) => !w);
-        return;
-      }
-      // Read at the moment of the press: the rows close up around a
-      // module's hidden rows, and switching it on can add them while the
-      // app runs. The palette's hints read the same list, so they cannot
-      // drift.
-      const order = shortcutOrder();
-      const n = Number(e.key);
-      if (n >= 1 && n <= order.length) {
-        e.preventDefault();
-        setSection(order[n - 1]);
-        setWorkMode(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // Comments typed in the "View in browser" report autosave here over the
-  // loopback note listener - persist them into the local notes store.
-  useEffect(() => {
-    const un = events.caseNoteSaved.listen((e) =>
-      saveNote(e.payload.org, e.payload.case_id, e.payload.text),
-    );
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
-
-  // Azure DevOps throttles per USER, not per app - so once the account
-  // trips the limit, ADO can be slowing down the person's browser tabs and
-  // git operations too, with nothing telling them why. When the Rust pacer
-  // starts holding requests for that reason, say so here rather than leave
-  // it in the log panel nobody watches, and point at the one control that
-  // can hand some of that speed back.
-  //
-  // `lastSlowdownToastAt` is local to this one listener - nothing outside
-  // this effect needs it - so a ref (the same shape as `shownChangelogRef`
-  // further down) is simpler than a module-level store like
-  // sessionExpired.ts.
-  const lastSlowdownToastAt = useRef(0);
-  useEffect(() => {
-    const un = events.slowdownRequested.listen((e) => {
-      const now = Date.now();
-      if (now - lastSlowdownToastAt.current < SLOWDOWN_TOAST_MIN_GAP_MS) return;
-      lastSlowdownToastAt.current = now;
-      toast.info("Azure DevOps asked this app to slow down", {
-        description: `Requests are paused for ${e.payload.secs}s. If you're also working in Azure DevOps in your browser, the "Azure DevOps request rate" setting in Settings can hand back some speed.`,
-        duration: 8_000,
-      });
-    });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
-
-  // One writer for all prefs so no path forgets to persist. Silent during
-  // the tour: the sample scope is not the user's, and must not outlive it.
-  useEffect(() => {
-    if (tourOpen) return;
-    // The home project, not the effective one: a PBI picked from another
-    // project must not move where the person's own files live.
-    savePrefs({ org, project: homeProject, section, pbi, workMode });
-  }, [org, homeProject, section, pbi, workMode, tourOpen]);
-
-  // A sidebar row marked "new" (lib/newNav) is done with once its screen
-  // is open, however it was reached: a click, Ctrl+number, the palette, a
-  // redirect. Not while the tour drives the tabs - its stops are not the
-  // person's own visit.
-  useEffect(() => {
-    if (tourOpen || workMode || !sectionShown(section, modules)) return;
-    clearNewNav(section);
-  }, [section, workMode, tourOpen, modules]);
-
-  // Marks only ever come from a person's own switch-on; this only ever
-  // takes away the ones whose module is no longer on.
-  useEffect(() => {
-    if (modulesHydrated) pruneNewNav(realModulesSnapshot());
-  }, [modules, modulesHydrated]);
+  useStartupEffects();
+  useModuleGuards(section, modules, modulesHydrated, workMode, tourOpen, setSection);
+  useKeyboardShortcuts(setSection, setWorkMode);
+  useGlobalBackendEvents();
+  usePersistPrefs({ org, homeProject, section, pbi, workMode, tourOpen });
 
   // Changing scope drops the case selection too. It is a list of work item
   // ids handed over from Search Suites, and ids mean nothing in a different
@@ -607,62 +225,20 @@ export default function App() {
     if (effectiveProject(allProjects, pbi, p) !== project) setCaseSelection(null);
     setHomeProjectRaw(p);
   };
-  // Settings opens on Modules when the "Playwright is needed" dialog sent
-  // the person there; any other navigation clears it.
-  const [startOnModules, setStartOnModules] = useState(false);
-  const goToSection = (s: Section) => {
-    logUi(`nav: ${s}`);
-    setSection(s);
-    setStartOnModules(false);
-    setWorkMode(false); // any tab click exits Work Manager mode
-    setCaseSelection(null); // direct navigation returns Edit to PBI mode
-    setRunFolder(null); // ...and Run Tests to the PBI
-  };
-  // A bell notice about a PBI: open it, then land on `then`. The hit comes
-  // from the search so the title is the real one. Projects shown together:
-  // the PBI's own project decides where every later write goes, so the id is
-  // looked up across the organization and the PBI opens only under the
-  // project the hit names; no hit, no switch. One project at a time, a PBI
-  // the search does not return still opens under a plain title in the
-  // project that was searched. The values read after the search are the
-  // current ones: if the organization, the project or the scope moved while
-  // it ran, the notice is no longer what the person is looking at.
-  const latestScope = useRef({ org, project, allProjects });
-  latestScope.current = { org, project, allProjects };
-  const openPbiById = async (id: number, pbiProject: string, then: Section) => {
-    const started = latestScope.current;
-    let hit: PbiHit | null = null;
-    try {
-      if (started.allProjects) {
-        const found = await unwrap(commands.searchPbisAll(started.org, String(id)));
-        const f = found.find((h) => h.id === id);
-        hit = f?.project ? f : null;
-      } else {
-        const found = await unwrap(commands.searchPbis(started.org, pbiProject, String(id)));
-        const f = found.find((h) => h.id === id);
-        hit = f
-          ? { ...f, project: f.project || pbiProject }
-          : { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
-      }
-    } catch (e) {
-      logUi(`nav: PBI ${id} search failed: ${String(e)}`);
-      if (!started.allProjects) {
-        hit = { id, title: `PBI ${id}`, work_item_type: "Product Backlog Item", project: pbiProject };
-      }
-    }
-    const now = latestScope.current;
-    if (now.org !== started.org || now.allProjects !== started.allProjects) {
-      logUi(`nav: PBI ${id} not opened, the organization or project scope changed meanwhile`);
-      return;
-    }
-    if (!hit) {
-      logUi(`nav: PBI ${id} not opened, no project found for it`);
-      return;
-    }
-    if (!now.allProjects && hit.project && hit.project !== now.project) setProject(hit.project);
-    setPbi(hit);
-    goToSection(then);
-  };
+  const { startOnModules, setStartOnModules, goToSection, openPbiById, toggleSettings } = useAppNavigation({
+    section,
+    workMode,
+    tourOpen,
+    org,
+    project,
+    allProjects,
+    setSection,
+    setWorkMode,
+    setCaseSelection,
+    setRunFolder,
+    setProject,
+    setPbi,
+  });
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
   useOpenOnExportRequest(() => {
@@ -710,150 +286,15 @@ export default function App() {
     if (section !== "autorun" || workMode) goToSection("autorun");
   });
 
-  // Settings acts as a toggle: opening it remembers where you were (tab or
-  // Work Manager); clicking the gear again returns you there.
-  const beforeSettings = useRef<{ section: Section; workMode: boolean } | null>(null);
-  const toggleSettings = () => {
-    if (section === "settings" && !workMode) {
-      const back = beforeSettings.current;
-      beforeSettings.current = null;
-      setSection(back?.section ?? "manual");
-      setWorkMode(back?.workMode ?? false);
-      setCaseSelection(null);
-      return;
-    }
-    // Not while the tour is up: its Settings stops ask for this same
-    // click, and recording the sample tab it happened to be on would
-    // overwrite where the user's OWN visit to Settings goes back to. The
-    // tour puts the app back where it found it when it ends, so the
-    // earlier answer is still the right one.
-    if (!tourOpen) beforeSettings.current = { section, workMode };
-    goToSection("settings");
-  };
+  const { status, signIn, sessionExpired, reSignIn, signedIn, setDevAuth } = useAppSession();
 
-
-  // On launch this also tries the sign-in Stay signed in kept (lib/
-  // authQuery.ts), so the loading screen below stays up for that one
-  // round trip and a kept session opens straight into the app.
-  const status = useQuery(authQuery);
-
-  // The loading screen (index.html) stays until this answers: before it,
-  // `signedIn` reads false, so a signed-in person would see the sign-in
-  // screen flash past on every launch. An error answers too - the sign-in
-  // screen is the right thing to show then.
-  const authKnown = !status.isPending;
-  const signedInAtLaunch = Boolean(status.data?.signed_in);
-  useEffect(() => {
-    if (!authKnown) return;
-    const ready = () => {
-      hideSplash();
-      logUi(`startup: ready ${Math.round(performance.now())} ms after the page began loading`);
-    };
-    // Signed out, the sign-in screen is what shows next, and it loads on
-    // demand: the loading screen waits for it rather than uncovering an
-    // empty window. A failed load still lets the loading screen go.
-    if (signedInAtLaunch) ready();
-    else loadSignIn().then(ready, ready);
-    // Once, when the answer arrives: a later sign-in or sign-out has
-    // nothing to uncover, so `signedInAtLaunch` is read but not watched.
-  }, [authKnown]);
-
-  // Checked on launch and then quietly once an hour, because this app is
-  // left open for days at a time - a launch-only check means a release
-  // lands and nobody sees it until they next restart, which for some
-  // people is next week.
-  //
-  // Silent by design: no toast, no spinner, nothing moves. React Query
-  // holds the previous answer while a background refetch is in flight, so
-  // the only visible effect is the banner below appearing the first time
-  // there is genuinely something to say. `refetchIntervalInBackground`
-  // keeps it running while the window is minimised, which is exactly when
-  // an app left open all week is sitting.
-  const update = useQuery({
-    queryKey: ["update"],
-    queryFn: () => commands.checkUpdate(),
-    staleTime: UPDATE_CHECK_MS,
-    refetchInterval: UPDATE_CHECK_MS,
-    refetchIntervalInBackground: true,
-    // A check that fails is not news. It reports itself as `blocked`, the
-    // banner stays away, and the next hour tries again.
-    retry: false,
-  });
-
-  // How far the update package has got. Null until the first event, which
-  // is also the first moment the size is known - the backend has to re-ask
-  // the feed before it can say how big the download is.
-  const [dl, setDl] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
+  // The release check, and the download behind the banner below.
+  const { update, dl, applyUpdate } = useAppUpdate();
 
   // One shared signal for "the machine has no network". Reads pause via
   // React Query's own networkMode; the banner below is the part that
   // tells the HUMAN, and the write surfaces gate themselves on it.
   const online = useSyncExternalStore(subscribeOnline, onlineSnapshot);
-
-  const applyUpdate = useMutation({
-    mutationFn: async () => {
-      setDl(null);
-      // The byte fields cross as f64, which the bindings widen to
-      // `number | null` because a double can be NaN. A byte count cast from
-      // a u64 never is - the fallback is here so the display cannot be, not
-      // because it is expected to fire.
-      const un = await events.updateProgress.listen((e) =>
-        setDl({
-          percent: e.payload.percent,
-          downloaded: e.payload.downloaded ?? 0,
-          total: e.payload.total ?? 0,
-        }),
-      );
-      try {
-        const r = await commands.applyUpdate();
-        if (r.status === "error") throw new Error(r.error);
-      } finally {
-        // On success the app restarts into the new build, so this only
-        // really matters on the failure path - but leaking a listener per
-        // failed attempt is how a retry ends up updating state twice.
-        detach(un);
-      }
-    },
-    onError: (e) => {
-      setDl(null);
-      toast.error(`Update failed: ${e.message}`);
-    },
-  });
-
-  const signIn = useMutation({
-    mutationFn: async () => {
-      // A plain browser tab on the Vite dev server has no Tauri backend -
-      // the first IPC call used to surface as a raw "Cannot read
-      // properties of undefined (reading 'invoke')" toast. Sign-in can
-      // NEVER work there (MSAL and the ADO client live in the Rust
-      // process), so say what is going on and what to do instead.
-      if (!isTauri()) {
-        throw new Error(
-          "this page is running in a plain browser, where the app's backend isn't available. " +
-            "Use the desktop window (npm run tauri dev), or turn on Demo data in the Dev Panel " +
-            "to explore the UI with fake data.",
-        );
-      }
-      const r = await commands.signIn();
-      if (r.status === "error") throw new Error(r.error);
-      return r.data;
-    },
-    onSuccess: () => {
-      // A fresh token retires any pending "session expired" - including a
-      // latch parked by pre-sign-in Unauthorized errors racing the very
-      // first sign-in. Cleared HERE, on every successful sign-in, not only
-      // on the modal's own re-sign-in path.
-      clearSessionExpired();
-      qc.invalidateQueries({ queryKey: ["auth"] });
-    },
-    onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
-  });
-
-  // Raised by describeAdoError whenever a request came back 401 - silent
-  // token renewal has given up (days in hibernate does it), so every new
-  // fetch fails until the user signs in again. One prompt instead of a
-  // "Not authorized" on each screen.
-  const sessionExpired = useSyncExternalStore(subscribeSessionExpired, sessionExpiredSnapshot);
 
   // Assignments announced while the user was elsewhere, counted on the
   // Board rail item. Looking at the board IS the acknowledgement.
@@ -861,354 +302,41 @@ export default function App() {
   useEffect(() => {
     if (workMode && workSection === "board") clearWorkAlerts();
   }, [workMode, workSection, workAlerts]);
-  const reSignIn = () =>
-    signIn.mutate(undefined, {
-      onSuccess: () => {
-        clearSessionExpired();
-        // Every query that 401'd is sitting in an error state on cached
-        // data - refetch the lot now that the token works again.
-        qc.invalidateQueries();
-        toast.success("Signed back in.");
-      },
-    });
-
-  // Dev-only auth override: "out" shows the sign-in screen from a signed-in
-  // app (to iterate on it), "in" proceeds without any real session (demo
-  // data needs none). DEV_TOOLS is compile-time false in releases, so this
-  // state and every branch on it is dead-code-eliminated from client builds.
-  const [devAuth, setDevAuth] = useState<"real" | "out" | "in">("real");
-  const signedIn =
-    DEV_TOOLS && devAuth !== "real" ? devAuth === "in" : Boolean(status.data?.signed_in);
-
-  // The latch is armed only while a session exists. Signed out, the Rust
-  // side answers every command with Unauthorized (no token to send) and
-  // those flow through the same formatter as real expiries - unarmed, they
-  // no longer park a "Session expired" for the freshly signed-in user.
-  useEffect(() => {
-    setSessionActive(signedIn);
-  }, [signedIn]);
-
-  // The persistent cache is scoped by org and project, which is not the same
-  // as being scoped by person. Claim it for whoever is signed in NOW.
-  //
-  // During RENDER, not in an effect. An effect runs after the commit, so on
-  // the render where a new account first appears the screens below have
-  // already mounted and seeded their queries from the previous account's
-  // cache - the wipe then landed a beat too late to stop it being read.
-  // `claimCacheFor` is idempotent and guarded by its own owner key, so
-  // calling it every render costs a string compare. When it actually wipes
-  // (a different account just claimed the cache), the bell and the
-  // mentions first-run baseline are the previous person's too - and go
-  // with it, or the new account's bell would open showing someone else's
-  // notifications, mention bodies included.
-  if (claimCacheFor(status.data?.account ?? null)) {
-    forgetAllNotifications();
-    forgetMentionBaselines();
-  }
-
-  // Uploads that died before they finished (the app closed, the machine
-  // slept) left a journal behind; each raises one bell notice that opens
-  // its PBI. Once per account and organisation per session; an upload still
-  // running right now is not interrupted and is skipped.
-  const journalsChecked = useRef<string | null>(null);
-  const journalAccount = status.data?.account ?? "";
-  useEffect(() => {
-    if (!signedIn || !org || tourOpen || isCaptureMode()) return;
-    const checkKey = `${journalAccount}|${org}`;
-    if (journalsChecked.current === checkKey) return;
-    journalsChecked.current = checkKey;
-    void (async () => {
-      const r = await commands.uploadJournalList(org);
-      if (r.status === "error") {
-        logUi(`upload journals: could not list (${r.error})`);
-        return;
-      }
-      const running = submitPhaseSnapshot();
-      noteInterruptedUploads(
-        org,
-        r.data.filter((j) => !(running && running.org === org && running.pbiId === j.pbi_id)),
-      );
-    })().catch((e) => logUi(`upload journals: could not list (${String(e)})`));
-  }, [signedIn, org, tourOpen, journalAccount]);
+  // Uploads that died before they finished get one bell notice each.
+  useInterruptedUploadCheck(signedIn, org, tourOpen, status.data?.account ?? "");
 
   // What the assistants left for a person to decide, for the Auto Run rail's
   // count and the bell. Auto Run's files belong to the home project, so that
   // is the project asked about while the projects show together.
   const autoRunProject = allProjects ? homeProject : project;
-  const waiting = useWaitingItems(org, autoRunProject, signedIn && modules.has("auto_run") && !tourOpen);
-  useEffect(() => {
-    if (!waiting || !org || tourOpen || isCaptureMode()) return;
-    noteWaiting(org, autoRunProject, waiting);
-  }, [waiting, org, autoRunProject, tourOpen]);
+  const waiting = useWaitingNotices(
+    org,
+    autoRunProject,
+    signedIn && modules.has("auto_run") && !tourOpen,
+    tourOpen,
+  );
 
-  // Post-update "What's new": once per version change, after sign-in (so it
-  // never covers the sign-in screen). Fresh installs record the version
-  // silently - see `updatedFrom` in lib/changelogSeen.ts for the rules. The
-  // entries load only when this launch follows an update.
-  const [changelog, setChangelog] = useState<ChangelogEntry[] | null>(null);
-  const shownChangelogRef = useRef(false);
-  useEffect(() => {
-    // Capture mode: a "what's new" modal must never cover a shot.
-    if (!signedIn || shownChangelogRef.current || isCaptureMode()) return;
-    shownChangelogRef.current = true;
-    getVersion()
-      .then(async (v) => {
-        const seen = updatedFrom(v);
-        if (!seen) return;
-        const { entriesSince } = await import("./lib/changelog");
-        const pending = entriesSince(seen, v);
-        if (pending.length > 0) setChangelog(pending);
-      })
-      .catch(() => {
-        // version unavailable (tests) - skip quietly
-      });
-  }, [signedIn]);
+  // Post-update "What's new".
+  const { changelog, dismissChangelog } = useChangelog(signedIn);
 
-  // Keep the AI bridge's defaults in sync with what the user is looking at:
-  // org/project + the detected custom-field refs. Fire-and-forget; the
-  // bridge simply serves stale context until the next push.
-  //
-  // No tour special-case needed here: `saveFieldPrefs` (which this hook
-  // calls during render, not from an effect) refuses to write while the
-  // tour is running - see `lib/fieldPrefs.ts`. That covers every caller,
-  // this one included, so passing it the sample org/project during a tour
-  // is safe.
-  //
   // The project the bridge learns is the home project while the projects
   // show together: it stays put as PBIs of other projects are picked (the
   // assistant names a project when it means another one).
   const bridgeProject = allProjects ? homeProject : project;
-  const { prefs: bridgePrefs } = useFieldRefs(org, bridgeProject);
-  // Re-pushed when the AI Bridge tab toggles a tool, so the change reaches
-  // an assistant on its next tools/list rather than after a restart.
-  const disabledTools = useSyncExternalStore(subscribeDisabledTools, disabledToolsSnapshot);
-  // The working repository decides where a writing job's file goes, so the
-  // bridge learns of a change the moment the AI Bridge tab makes it.
-  const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
-  // The database the two database tools run on, by id, and whether they
-  // may write. Both live on the AI Bridge tab and both are pushed here, so
-  // choosing a different database takes effect on the assistant's next
-  // call rather than after a restart. Rust resolves the id to its login at
-  // that call - no login ever crosses from here.
-  const dbId = useSyncExternalStore(subscribeDbSettings, selectedDbSnapshot);
-  const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
-  // Whether the assistant may prove and run API templates - the AI Bridge
-  // tab's own switch, pushed the moment it changes for the same reason the
-  // database write switch is.
-  const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
-  // Whether an assistant gets the network tools - pushed the same way.
-  const networkTools = useSyncExternalStore(subscribeNetworkTools, networkToolsSnapshot);
-  // The switches above are the ACTIVE environment's, and every push
-  // says which environment that is: Rust allows no write from a push for
-  // any other one, so a push still on its way when the environment changes
-  // can never carry one environment's writes into the next. The list is
-  // read here, not only on the AI Bridge tab, so the switches are the
-  // active environment's from the start.
-  useEnvironments(signedIn);
-  const envId = useSyncExternalStore(subscribeActiveEnv, activeEnvIdSnapshot);
-  const lastPushedEnv = useRef<string | null>(null);
-  // Who each database signs in as - the same list, under the same key, the
-  // AI Bridge card reads and refreshes when a login is saved.
-  const databases = useQuery({
-    queryKey: ["db-databases"],
-    queryFn: async () => (await commands.dbDatabases()) ?? [],
-    enabled: signedIn,
-  });
-  // The write switch alone is only half the permission - the Rust side
-  // also requires the database's own user to be the dev login, and
-  // refuses a write when either is missing. Pushing the raw switch here
-  // would tell the assistant it may write on a read-only database, which
-  // is not true. `isDevLoginUser` is the same rule AiBridge uses to decide
-  // whether the switch may even be moved.
-  const devLogin = isDevLoginUser(databases.data?.find((d) => d.id === dbId)?.user ?? "");
-  // A connection string an older version kept in the webview moves into
-  // Rust first, so the very first push already names the database it
-  // became - and nothing is pushed until that has been tried.
-  const [dbMigrated, setDbMigrated] = useState(false);
-  useEffect(() => {
-    let live = true;
-    // Switches an older version kept for the AI Bridge tab, gone with the
-    // controls they drove.
-    dropRetiredAiSwitches();
-    // The old risk-tiered trial switch becomes the starting writing style
-    // switched on - here, not on the AI Bridge tab, so it moves over even
-    // if that tab is never opened.
-    void migrateOldTrialSwitch().then((saved) => {
-      if (saved) void qc.invalidateQueries({ queryKey: WRITING_STYLE_QUERY });
-    });
-    migrateLegacyDbConnection().finally(() => {
-      if (live) setDbMigrated(true);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-  // A burst of changes - the AI Bridge tab's fields write through the same
-  // store on every keystroke - used to push one `set_bridge_context` +
-  // `bridge_status` IPC pair per character typed. Debounced so a burst of
-  // edits becomes one push once typing pauses; the pending push is flushed
-  // on unmount rather than dropped, so App never silently skips the last
-  // edit.
-  const bridgePbiId = pbi?.id ?? null;
-  const bridgePbiTitle = pbi?.title ?? "";
-  const bridgePbiProject = pbi?.project || project;
-  // Nothing is pushed without an org and a project, so the PBI of the org
-  // just left (or of a signed-out session) would stay on the bridge: take it
-  // off at once.
-  useEffect(() => {
-    if (!signedIn || !org || !bridgeProject) void commands.clearBridgePbi().catch(() => {});
-  }, [signedIn, org, bridgeProject]);
-  const pushBridgeContextRef = useRef<() => void>(() => {});
-  const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (tourOpen || !dbMigrated) return;
-    if (!signedIn || !org || !bridgeProject) return;
-    const push = () => {
-      commands
-        .bridgeStatus()
-        .then(() =>
-          commands.setBridgeContext(
-            org,
-            bridgeProject,
-            bridgePrefs.moduleRef,
-            bridgePrefs.preconditionsRef,
-            disabledTools,
-            workingDir || null,
-            dbId || null,
-            {
-              dbWrites: dbWrites && devLogin,
-              apiWrites,
-              networkTools,
-              envId,
-              allProjects,
-              // The PBI in the top bar, for the assistants' get_current_pbi.
-              pbi: bridgePbiId == null ? null : { id: bridgePbiId, title: bridgePbiTitle, project: bridgePbiProject },
-            },
-          ),
-        )
-        .catch(() => {});
-    };
-    pushBridgeContextRef.current = push;
-    if (bridgeContextTimerRef.current) clearTimeout(bridgeContextTimerRef.current);
-    // A new environment is pushed at once rather than after the pause:
-    // Rust holds every write off from the switch until its switches arrive.
-    const envMoved = lastPushedEnv.current !== null && lastPushedEnv.current !== envId;
-    lastPushedEnv.current = envId;
-    bridgeContextTimerRef.current = setTimeout(push, envMoved ? 0 : 400);
-    return () => {
-      if (bridgeContextTimerRef.current) clearTimeout(bridgeContextTimerRef.current);
-    };
-  }, [
+  useBridgeContextSync({ signedIn, org, project, bridgeProject, allProjects, pbi, tourOpen });
+
+  // The organization's projects, and the home project nobody has to pick.
+  const projects = useHomeProject({
     signedIn,
     org,
-    bridgeProject,
-    allProjects,
-    bridgePrefs.moduleRef,
-    bridgePrefs.preconditionsRef,
-    disabledTools,
-    workingDir,
-    dbId,
-    dbWrites,
-    devLogin,
-    apiWrites,
-    networkTools,
-    envId,
-    bridgePbiId,
-    bridgePbiTitle,
-    bridgePbiProject,
     tourOpen,
-    dbMigrated,
-  ]);
-  // App itself effectively never unmounts, but a debounced push that IS
-  // still pending when it does must fire rather than vanish silently.
-  useEffect(() => {
-    return () => {
-      if (bridgeContextTimerRef.current) {
-        clearTimeout(bridgeContextTimerRef.current);
-        pushBridgeContextRef.current();
-      }
-    };
-  }, []);
-
-  // The organization's projects: the same key and options as the context
-  // bar's and the palette's, so it is one request. Not over the walkthrough,
-  // whose sample scope has its own list.
-  const projects = useQuery({
-    queryKey: ["projects", org],
-    ...persistentQuery({
-      key: cacheKeys.projects(org),
-      fetcher: () => unwrap(commands.listProjects(org)),
-      ...CACHE.reference,
-    }),
-    enabled: signedIn && Boolean(org) && !tourOpen,
+    allProjects,
+    homeProject,
+    hadProject: Boolean(initial.project),
+    ctx,
+    setHomeProjectRaw,
+    setProject,
   });
-
-  // A home project nobody has to pick. An organization with exactly one
-  // project: that project, in both modes (the selector hides). Projects shown
-  // together with several and no home yet: the one project that already has
-  // Auto Run files (asked once per organization, and only when exactly one
-  // does); otherwise the first PBI picked decides (setPbi).
-  const askedAutorunHome = useRef<string | null>(null);
-  useEffect(() => {
-    if (tourOpen || !signedIn || !org || !projects.data) return;
-    const names = projects.data.map((p) => p.name);
-    if (names.length === 1) {
-      if (homeProject !== names[0]) {
-        if (allProjects) setHomeProjectRaw(names[0]);
-        else setProject(names[0]);
-      }
-      return;
-    }
-    if (!allProjects || homeProject || names.length < 2) return;
-    if (askedAutorunHome.current === org) return;
-    askedAutorunHome.current = org;
-    const askedOrg = org;
-    commands
-      .projectsWithAutorunFiles(org, names)
-      .then((r) => {
-        // The answer belongs to the organization it was asked about: one
-        // that lands after the person moved on is dropped.
-        if (ctx.current.org !== askedOrg) return;
-        // An answer that is not exactly one project (or none at all, as
-        // from a stand-in) decides nothing. A home chosen meanwhile wins.
-        if (r?.status === "ok" && Array.isArray(r.data) && r.data.length === 1) {
-          const only = r.data[0];
-          setHomeProjectRaw((h) => h || only);
-        }
-      })
-      .catch(() => {});
-    // setProject is this component's own and changes identity every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tourOpen, signedIn, org, projects.data, homeProject, allProjects]);
-
-  // What a person saved as the home project's recent PBIs is copied to the
-  // organization-wide list the first time the projects show together (the
-  // per-project list is left exactly as it was).
-  useEffect(() => {
-    if (tourOpen || !signedIn || !allProjects || !org || !homeProject) return;
-    seedCombinedRecents(org, homeProject);
-  }, [tourOpen, signedIn, allProjects, org, homeProject]);
-
-  // An existing install is told once that its projects now show together.
-  // A fresh install (nothing chosen yet) never is, and neither is one whose
-  // organization has a single project: there is nothing to show together, so
-  // the notice would only puzzle (its key is still spent). It waits for the
-  // project list to know which. Not over a documentation capture, which must
-  // never carry a toast.
-  //
-  // The wording says only what holds from here on: later releases widen what
-  // shows together, and this notice is never shown again to correct it.
-  const hadProject = useRef(Boolean(initial.project));
-  useEffect(() => {
-    if (tourOpen || !signedIn || isCaptureMode() || !projects.data) return;
-    if (takeAllProjectsNotice(hadProject.current) && projects.data.length > 1) {
-      toast.info("Projects now show together", {
-        description:
-          "PBIs from every project now show in one search, and each PBI brings its own project, so the Project picker is gone. Auto Run, API Templates and Playwright stay on your home project, which you can change in Settings. To work in one project at a time, turn off Treat all projects as one in Settings, under General.",
-        duration: 12_000,
-      });
-    }
-  }, [tourOpen, signedIn, projects.data]);
 
   // Delete permission, asked ONCE at sign-in per org/project rather than
   // when the Update Test Cases screen opens. The screen reads this same
@@ -1225,42 +353,7 @@ export default function App() {
     retry: false,
   });
 
-  // Background check for work items newly assigned to you. Rust polls and
-  // emits; the choice of toast vs Windows notification is made here,
-  // because "can the user see the app" is a frontend question.
-  useEffect(() => {
-    if (tourOpen) return;
-    if (!signedIn || !org || !bridgeProject) return;
-    // Together, one watch over every project seeded from the home project,
-    // so it does not restart with every PBI picked; apart, the picked project.
-    (allProjects
-      ? commands.watchAssignedWorkAll(org, bridgeProject)
-      : commands.watchAssignedWork(org, bridgeProject)
-    ).catch(() => {});
-  }, [signedIn, org, bridgeProject, allProjects, tourOpen]);
-
-  useEffect(() => {
-    const un = events.workAssigned.listen((e) => {
-      const items = e.payload.items;
-      if (items.length === 0) return;
-      // Into the bell, where it stays until dismissed. Each item names its
-      // own project; the home or picked one only fills in for one that names
-      // none. The bell skips what it has raised before, which is what happens
-      // when the all-projects switch is flipped and the other scope reports
-      // an item again: only what it took in is announced.
-      const added = new Set(noteAssigned(org, bridgeProject, items).map((n) => n.id));
-      const news = items.filter((i) => added.has(`assigned:${i.id}`));
-      if (news.length === 0) return;
-      // A toast is gone in seconds - the Board badge is what remains
-      // until the user actually looks at the board.
-      addWorkAlerts(news.length);
-      const { title, body } = summarize(news);
-      announce(title, body);
-    });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, [org, bridgeProject]);
+  useAssignedWork(signedIn, org, bridgeProject, allProjects, tourOpen);
 
   // The title bar names the active environment once there are two or more.
   const environmentName = useActiveEnvironmentName();
@@ -1272,173 +365,11 @@ export default function App() {
     staleTime: Infinity,
   });
 
-  const dismissChangelog = () => {
-    getVersion()
-      .then(markChangelogSeen)
-      .catch(() => {});
-    setChangelog(null);
-  };
-  // Dev-only preview trigger (DevPanel -> window event). Two entries so the
-  // multi-version stacking is visible. Compile-time eliminated in releases.
-  useEffect(() => {
-    if (!DEV_TOOLS) return;
-    const fire = () => {
-      void import("./lib/changelog").then((m) => setChangelog(m.CHANGELOG.slice(0, 2)));
-    };
-    window.addEventListener(SHOW_CHANGELOG_EVENT, fire);
-    return () => window.removeEventListener(SHOW_CHANGELOG_EVENT, fire);
-  }, []);
+  useTourLifecycle(signedIn, tourOpen, startTour, endTour);
 
-  // First-run walkthrough: opens once after the first sign-in, and again
-  // whenever Settings asks for it (see the tour state block declared with
-  // the rest of App's own state, above, for why `tourOpen` has to exist
-  // before every effect that gates on it).
-  useEffect(() => {
-    // Capture mode: the guided tour must never auto-open over a shot.
-    if (signedIn && !tourDone() && !isCaptureMode()) {
-      // Asked again when it fires: a tour opened by hand and skipped inside
-      // the 800 ms has marked itself seen, and must not open a second time.
-      const t = setTimeout(() => {
-        if (!tourDone()) startTour();
-      }, 800);
-      return () => clearTimeout(t);
-    }
-  }, [signedIn, startTour]);
-
-  useEffect(() => {
-    window.addEventListener(START_TOUR_EVENT, startTour);
-    return () => window.removeEventListener(START_TOUR_EVENT, startTour);
-  }, [startTour]);
-
-  // A session that ends mid-tour (a dropped connection returning with an
-  // expired token, a manual sign-out) must not leave the tour up: `UiTour`
-  // only renders while `signedIn` too, so it would simply vanish - taking
-  // the Skip button with it, while the shell stayed inert and the
-  // stand-ins stayed installed. Ending the tour ourselves the moment
-  // `signedIn` goes false hands everything back exactly as every other
-  // exit path does.
-  useEffect(() => {
-    if (tourOpen && !signedIn) endTour();
-  }, [tourOpen, signedIn, endTour]);
-
-  // Warm the Search Suites data in the background so the screen is ready
-  // when the user navigates there (same key/staleTime as the screen).
-  useEffect(() => {
-    if (tourOpen) return;
-    if (!signedIn || !org || !project) return;
-    const key = cacheKeys.plansSuites(org, project);
-    // A fresh disk seed means the screen already has its data - warming
-    // over the network would spend an expensive scan for nothing.
-    const seed = cacheEntry<PlanWithSuites[]>(key, CACHE.structure.ttlMs);
-    if (seed && Date.now() - seed.at < CACHE.structure.staleMs) {
-      qc.setQueryData(["plans-suites", org, project], seed.data, { updatedAt: seed.at });
-      return;
-    }
-    qc.prefetchQuery({
-      queryKey: ["plans-suites", org, project],
-      ...persistentQuery({
-        key,
-        fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
-        ...CACHE.structure,
-      }),
-      // Without a long gcTime the unobserved prefetch is garbage-collected
-      // after 5 minutes and the screen loads from scratch again.
-      gcTime: 60 * 60_000,
-    });
-  }, [signedIn, org, project, qc, tourOpen]);
-
-  // Warm Run Tests: resolve the PBI's suite via the READ-ONLY finder
-  // (never creates a plan/suite - creation stays on the Run screen),
-  // seed the same cache RunPanel uses, then prefetch its test points.
   const pbiId = pbi?.id;
-  // `begin_test_case_writing` ends with the developer having said where
-  // the finished JSON goes. Register that path as a watched file NOW, so
-  // the assistant's first write folds into the queue on its own - the
-  // second and later writes already did, and needing to import the first
-  // one by hand was the only manual step left in the loop.
-  //
-  // Registration lives here rather than in ImportFile because only the
-  // active screen is mounted: intake usually finishes while the developer
-  // is on the AI Bridge tab, and a listener inside Import would never see
-  // the event. ImportFile arms the OS watcher and checks the file once on
-  // mount, so a file that lands while you are elsewhere is picked up when
-  // you open the tab.
-  useEffect(() => {
-    // Otherwise this would drop the user's real subscription for the
-    // tour's duration and re-subscribe as the sample org/PBI - and an
-    // event arriving while that stand-in subscription is live would call
-    // `saveWatches` with the sample scope. "No write" is the invariant,
-    // not "no Azure DevOps call", so this is gated the same as its four
-    // siblings even though it never reaches ADO itself.
-    if (tourOpen) return;
-    if (!signedIn || !org || !pbiId) return;
-    let unlisten: (() => void) | undefined;
-    let live = true;
-    void events.intakeOutputPath
-      .listen((e) => {
-        const path = e.payload.path?.trim();
-        if (!path) return;
-        const list = loadWatches(org, pbiId);
-        // Re-running begin with the same answers must not reset a file
-        // already being followed - that would drop its snapshot and make
-        // the next edit read as though the whole file were new.
-        if (list.some((w) => w.path === path)) return;
-        saveWatches(org, pbiId, upsertWatch(list, { path, stamp: "", snapshot: [] }));
-        toast.info(`Watching ${fileName(path)} - it will import itself when written.`);
-      })
-      .then((f) => {
-        if (live) unlisten = f;
-        else detach(f);
-      });
-    return () => {
-      live = false;
-      detach(unlisten);
-    };
-  }, [signedIn, org, pbiId, tourOpen]);
-
-  useEffect(() => {
-    if (tourOpen) return;
-    if (!signedIn || !org || !project || pbiId == null) return;
-    (async () => {
-      let suite: SuiteSeed | null = readSuiteSeed(org, pbiId) ?? null;
-      if (!suite) {
-        // Before asking the network: the Suites screen's plan tree is
-        // already on disk per PROJECT and carries every requirement
-        // suite's PBI id - switching PBIs must not re-list every plan's
-        // suites when one cached inventory answers for all of them.
-        const tree = cacheEntry<PlanWithSuites[]>(cacheKeys.plansSuites(org, project), CACHE.structure.ttlMs);
-        for (const { plan, suites } of tree?.data ?? []) {
-          const hit = suites.find(
-            (s) => s.requirement_id === pbiId && s.suite_type === "requirementTestSuite",
-          );
-          if (hit) {
-            suite = { plan_id: plan.id, plan_name: plan.name, suite_id: hit.id };
-            writeSuiteSeed(org, pbiId, suite);
-            break;
-          }
-        }
-        // A FRESH tree with no match is an answer, not a miss: this PBI
-        // has no suite yet, and scanning every plan again would only
-        // confirm that. (Run Tests still find-or-creates on demand.)
-        if (!suite && tree && Date.now() - tree.at < CACHE.structure.staleMs) return;
-      }
-      if (!suite) {
-        const r = await commands.findPbiSuite(org, project, pbiId).catch(() => null);
-        if (r && r.status === "ok" && r.data) {
-          suite = r.data;
-          writeSuiteSeed(org, pbiId, suite);
-        }
-      }
-      if (!suite) return;
-      const s = suite;
-      qc.setQueryData(["suite", org, project, pbiId], s);
-      qc.prefetchQuery({
-        queryKey: ["points", org, project, s.plan_id, s.suite_id],
-        queryFn: () => unwrap(commands.listTestPoints(org, project, s.plan_id, s.suite_id)),
-        gcTime: 30 * 60_000,
-      });
-    })();
-  }, [signedIn, org, project, pbiId, qc, tourOpen]);
+  useWarmCaches(signedIn, org, project, pbiId, tourOpen);
+  useIntakeWatch(signedIn, org, pbiId, tourOpen);
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
@@ -1594,68 +525,13 @@ export default function App() {
 
           {/* Capture mode: the update banner must never cover a shot. */}
           {update.data?.available && !isCaptureMode() && (
-            <div className="border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
-              {/* One row either way: the version line makes the offer, and
-                  once the button is clicked the progress bar takes its slot -
-                  the banner never grows a second row mid-download. */}
-              <div className="flex items-center justify-between gap-4">
-                {applyUpdate.isPending ? (
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div
-                      role="progressbar"
-                      aria-label={`Downloading version ${update.data.available}`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      // Omitted, not zero, until the first event: an indeterminate
-                      // bar is what "we do not know yet" means to a screen reader,
-                      // and 0% would be a claim.
-                      aria-valuenow={dl ? dl.percent : undefined}
-                      aria-valuetext={dl ? formatByteProgress(dl.downloaded, dl.total) : undefined}
-                      className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20"
-                    >
-                      <div
-                        className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
-                        style={{ width: `${dl?.percent ?? 0}%` }}
-                      />
-                    </div>
-                    {/* Tabular figures: the numerator changes every few seconds
-                        and proportional digits make the whole line jitter. */}
-                    <span className="shrink-0 tabular-nums text-xs text-muted">
-                      {!dl
-                        ? "Preparing…"
-                        : dl.percent >= 100
-                          ? "Installing…"
-                          : dl.total > 0
-                            ? formatByteProgress(dl.downloaded, dl.total)
-                            : `${dl.percent}%`}
-                    </span>
-                  </div>
-                ) : (
-                  <span>
-                    {update.data.failed_attempt ? (
-                      // The last click on this button did NOT work: the app
-                      // restarted still on the old version because Update.exe
-                      // could not swap the install folder while another
-                      // program sat in it. Saying so beats the banner
-                      // silently reappearing and looking like it did nothing.
-                      <>
-                        The last update couldn't finish - another program was using the app's files
-                        (usually a browser window that was opened from this app). Close your browser
-                        windows and try again, or restart Windows.
-                      </>
-                    ) : (
-                      <>Version {update.data.available} is available.</>
-                    )}
-                  </span>
-                )}
-                <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
-                  <SpinHolder spinning={applyUpdate.isPending}>
-                    <IconRefresh aria-hidden />
-                  </SpinHolder>
-                  {applyUpdate.isPending ? "Updating" : "Restart to update"}
-                </Button>
-              </div>
-            </div>
+            <UpdateBanner
+              available={update.data.available}
+              failedAttempt={Boolean(update.data.failed_attempt)}
+              applying={applyUpdate.isPending}
+              dl={dl}
+              onApply={() => applyUpdate.mutate()}
+            />
           )}
 
           {/* What the assistants are doing, on every screen: in the layout
@@ -1688,7 +564,7 @@ export default function App() {
                   "min-h-0 flex-1 overflow-y-auto px-6 pt-6 pb-24"
             }
           >
-            {/* Screens load on demand (see the imports). The boundary sits
+            {/* Screens load on demand (see app/lazyScreens). The boundary sits
                 outside the fade wrapper, so the fade-in plays when a screen
                 has arrived rather than on an empty box. */}
             <Suspense fallback={null}>
@@ -1705,195 +581,40 @@ export default function App() {
                 )}
               </SignIn>
             ) : workMode ? (
-              // Same fade-up as the Test Case Manager tabs below: key remounts
-              // on section switch; the flex classes keep the board's height
-              // chain intact (the wrapper sits inside a flex-col main).
-              // 120ms fade chosen for snappiness (user request 2026-08-22).
-              // `t-screen-in` lives in index.css.
-              <div key={workSection} className="t-screen-in flex min-h-0 flex-1 flex-col">
-                {workSection === "board" ? (
-                  <>
-                    <h1 className="mb-4 text-lg font-semibold">Board</h1>
-                    <div className="min-h-0 flex-1">
-                      <WorkBoard
-                        org={org}
-                        project={project}
-                        allProjects={allProjects}
-                        homeProject={homeProject}
-                        focusItem={workFocus?.kind === "work-item" ? workFocus.id : null}
-                        focusProject={workFocus?.kind === "work-item" ? workFocus.project : null}
-                        onFocusHandled={() => setWorkFocus(null)}
-                      />
-                    </div>
-                  </>
-                ) : workSection === "create" ? (
-                  <>
-                    <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      {/* An item with no parent belongs to the home project; a
-                          parent from another project moves it there (the
-                          screen decides). */}
-                      <CreateWorkItem
-                        org={org}
-                        project={allProjects ? homeProject : project}
-                        allProjects={allProjects}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      {/* Together the panel lists every project and the
-                          home project only fills in for what names none; a
-                          notification names its project in the focus. */}
-                      <PrPanel
-                        org={org}
-                        project={allProjects ? homeProject : project}
-                        allProjects={allProjects}
-                        focus={workFocus?.kind === "pr" ? workFocus : null}
-                        onFocusHandled={() => setWorkFocus(null)}
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
+              <WorkScreens
+                workSection={workSection}
+                org={org}
+                project={project}
+                homeProject={homeProject}
+                allProjects={allProjects}
+                workFocus={workFocus}
+                onFocusHandled={() => setWorkFocus(null)}
+              />
             ) : (
-              // key={section} remounts the wrapper on tab switch, so every
-              // screen fades up briefly (120ms) instead of snapping in.
-              // 120ms fade chosen for snappiness (user request 2026-08-22).
-              <div key={section} className={
-                section === "playwright" || section === "crystal-reports" || (section === "settings" && settingsFill)
-                  ? "t-screen-in flex min-h-0 flex-1 flex-col"
-                  : "t-screen-in"
-              }>
-                <div className="mb-4 flex items-center gap-2">
-                  <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
-                  {section === "ai" && <BridgeStatusBadge />}
-                  {section === "playwright" && <SpecsStatusPill />}
-                  {TITLE_NOTES[section] && (
-                    <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
-                      <span className="label-trim">{TITLE_NOTES[section]}</span>
-                    </span>
-                  )}
-                </div>
-                {section === "manual" && (
-                  <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
-                )}
-                {section === "import" && (
-                  <ImportFile org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
-                )}
-                {section === "edit" && (
-                  <EditCases
-                    org={org}
-                    // Cases handed over from Search Suites are edited in the
-                    // project of the plan they came from.
-                    project={caseSelection?.project ?? project}
-                    pbi={pbi}
-                    caseSelection={caseSelection}
-                    onClearSelection={() => setCaseSelection(null)}
-                    onPickPbi={setPbi}
-                  />
-                )}
-                {section === "view" && (
-                  <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
-                )}
-                {section === "run" && (
-                  <RunTests
-                    org={org}
-                    project={project}
-                    pbi={pbi}
-                    folder={runFolder}
-                    onPickPbi={setPbi}
-                    onCloseFolder={() => {
-                      // Back to the PBI's Run Tests, or to Test plans with
-                      // no PBI to go back to.
-                      if (pbi) setRunFolder(null);
-                      else goToSection("suites");
-                    }}
-                  />
-                )}
-                {section === "suites" && (
-                  <Suites
-                    org={org}
-                    project={project}
-                    allProjects={allProjects}
-                    onOpenPbi={(p, target) => {
-                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: p.project || project });
-                      goToSection(target === "edit" ? "edit" : "run");
-                    }}
-                    onEditCases={(label, caseIds, casesProject) => {
-                      setCaseSelection({ label, caseIds, project: casesProject || project });
-                      setSection("edit");
-                      setWorkMode(false);
-                    }}
-                    onRunFolder={(f) => {
-                      goToSection("run");
-                      setRunFolder({ ...f, project: f.project || project });
-                    }}
-                    onManageSuite={(planId, suiteId, planProject) => {
-                      setManageFocus({ planId, suiteId, project: planProject || project });
-                      goToSection("manage");
-                    }}
-                    onSetCurrentPbi={(p) =>
-                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: p.project || project })
-                    }
-                  />
-                )}
-                {modules.has("auto_run") && section === "autorun" && (
-                  <AutoRun
-                    org={org}
-                    // Auto Run's files belong to the application under test
-                    // (the home project); only the results sent to Azure
-                    // DevOps follow the PBI.
-                    project={allProjects ? homeProject : project}
-                    adoProject={project}
-                    pbi={pbi}
-                    onOpenPlaywright={() => goToSection("playwright")}
-                    onOpenFixtures={() => {
-                      askForFixturesView();
-                      goToSection("apitemplates");
-                    }}
-                    onOpenModules={() => {
-                      goToSection("settings");
-                      setStartOnModules(true);
-                    }}
-                  />
-                )}
-                {section === "manage" && (
-                  <ManageCases
-                    org={org}
-                    project={project}
-                    allProjects={allProjects}
-                    pbi={pbi}
-                    focus={manageFocus}
-                    onFocusHandled={() => setManageFocus(null)}
-                  />
-                )}
-                {section === "ai" && <AiBridge />}
-                {modules.has("api_templates") && section === "apitemplates" && (
-                  <ApiTemplates
-                    org={org}
-                    project={allProjects ? homeProject : project}
-                    onOpenAiBridge={() => goToSection("ai")}
-                  />
-                )}
-                {modules.has("playwright") && section === "playwright" && (
-                  <Playwright org={org} project={allProjects ? homeProject : project} />
-                )}
-                {modules.has("crystal_reports") && section === "crystal-reports" && <CrystalReports />}
-                {section === "settings" && (
-                  <Settings
-                    org={org}
-                    project={project}
-                    homeProject={homeProject}
-                    onHomeProjectChange={changeHomeProject}
-                    onAllProjectsChange={saveAllProjects}
-                    onFillChange={setSettingsFill}
-                    startOnModules={startOnModules}
-                  />
-                )}
-              </div>
+              <CaseScreens
+                section={section}
+                org={org}
+                project={project}
+                homeProject={homeProject}
+                allProjects={allProjects}
+                pbi={pbi}
+                modules={modules}
+                caseSelection={caseSelection}
+                runFolder={runFolder}
+                manageFocus={manageFocus}
+                settingsFill={settingsFill}
+                startOnModules={startOnModules}
+                setPbi={setPbi}
+                setCaseSelection={setCaseSelection}
+                setRunFolder={setRunFolder}
+                setManageFocus={setManageFocus}
+                setSection={setSection}
+                setWorkMode={setWorkMode}
+                setSettingsFill={setSettingsFill}
+                setStartOnModules={setStartOnModules}
+                goToSection={goToSection}
+                changeHomeProject={changeHomeProject}
+              />
             )}
             </Suspense>
           </main>

@@ -923,6 +923,9 @@ export default function ImportFile({
         // let a later save refill a queue already dealt with), the change
         // report describing edits that have now been written, and the
         // per-file general comments, which were notes for that review.
+        onQueueRestored={(dropped) =>
+          setWatches((prev) => [...prev, ...dropped.filter((d) => !prev.some((w) => w.path === d.path))])
+        }
         onQueueCleared={() => {
           if (watches.length > 0) dropWatch(watches, false);
           setReports([]);

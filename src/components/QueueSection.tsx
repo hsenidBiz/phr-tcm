@@ -1,172 +1,48 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, X } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "../lib/toast";
-import ActionDock from "./ActionDock";
-import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
-import {
-  commands,
-  events,
-  type DraftEdit,
-  type OrderHint,
-  type SubmitItemResult,
-  type TestCase,
-  type TestCaseFull,
-} from "../bindings";
+import PowerRenameDialog from "./PowerRenameDialog";
+import { commands, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import { diffCase, type CaseDiff } from "../lib/caseDiff";
-import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
-import { cn } from "../lib/cn";
-import { fileName, fileOwners, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type SyncChange, type WatchedFile } from "../lib/fileSync";
-import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
-import { keepUploaded } from "../lib/queueUploaded";
-import { summariseSubmit } from "../lib/submitSummary";
+import { diffCase } from "../lib/caseDiff";
+import { keysFor, patchWatch, type SyncChange, type WatchedFile } from "../lib/fileSync";
 import {
-  ambiguousRows,
-  checkExcludeIds,
-  claimsForCheck,
-  heldRows,
-  holdFromResults,
-  holdSignature,
-  loadHold,
-  narrowHold,
-  reconciledResults,
-  saveHold,
-  subscribeHold,
-  withClaimedFiles,
-} from "../lib/uploadHold";
-import {
-  queueWriterFor,
   registerQueueWriter,
-  submitFinished,
-  submitLabel,
   submitPhaseSnapshot,
-  submitProgressed,
-  submitStarted,
-  submitUploading,
   subscribeSubmit,
 } from "../lib/submitRun";
-import { finishJournal, recoverJournal } from "../lib/uploadJournal";
-import { logUi } from "../lib/uiLog";
-import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
-import { freshWatches, noteWritten, runOnFileChain } from "../lib/draftWriteQueue";
-import { cacheKeys, cacheRemove } from "../lib/cache";
-import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
+import { onlineSnapshot, subscribeOnline } from "../lib/network";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
-import { loadNotes, saveNote } from "../lib/caseNotes";
-import { setPbiGlow } from "../lib/pbiGlow";
-import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, qualityWarnings, validateCase } from "../lib/validate";
-import { pagePalette } from "../lib/reportTheme";
 import QueueBulkEditDialog from "./QueueBulkEditDialog";
 import QueueRow from "./QueueRow";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import ScanProgress from "./ScanProgress";
-import { Checkbox } from "./ui/checkbox";
-import { Collapse } from "./ui/collapse";
-import { Modal } from "./ui/modal";
-import { Switch } from "./ui/switch";
-import { usePersistedStringSet } from "../lib/collapsedGroups";
-import { buildAreaGroups, groupIndices, visibleOrder, type AreaGroup } from "../lib/areaGroups";
-import {
-  IconCollapseAll,
-  IconBack,
-  IconClear,
-  IconConfirm,
-  IconOpenInBrowser,
-  IconRemove,
-  IconReview,
-  IconCopy,
-  IconShare,
-  IconRename,
-  IconRefresh,
-  IconRelease,
-  IconCancel,
-} from "../lib/actionIcons";
+import { IconCollapseAll } from "../lib/actionIcons";
+import { applyOutcome, type Outcome } from "./queue/applyOutcome";
+import QueueActionBar from "./queue/QueueActionBar";
+import QueueAreaGroup from "./queue/QueueAreaGroup";
+import QueueBulkBar from "./queue/QueueBulkBar";
+import QueueHeader from "./queue/QueueHeader";
+import QueueHoldNotice, { ReleaseConfirmModal } from "./queue/QueueHoldNotice";
+import QueueOrderBar from "./queue/QueueOrderBar";
+import QueueResults from "./queue/QueueResults";
+import RecentImportRow from "./queue/RecentImportRow";
+import { useNoteSync } from "./queue/useNoteSync";
+import { useQueueEdits } from "./queue/useQueueEdits";
+import { useQueueReport } from "./queue/useQueueReport";
+import { useAreaGrouping, useQueueSelection } from "./queue/useQueueSelection";
+import { useQueueUpload } from "./queue/useQueueUpload";
+import { useReviewGate } from "./queue/useReviewGate";
+import { useRowViewState } from "./queue/useRowViewState";
+import { useUploadHold } from "./queue/useUploadHold";
 
-const HOLD_REFUSAL =
-  "Some cases from the last upload have an unknown outcome - check them before uploading again.";
+export { PLAIN_STEPS_REFUSAL } from "./queue/constants";
 
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import Test Cases both render this under their own
  * input areas (v1: every tab feeds one queue). */
-/** One recently imported file. The row asks the disk whether the file
- * still exists (fileStamp is null for a missing one) and says so instead
- * of offering a click that can only fail - deleted files happen, and the
- * row's job is to be honest about them. The X forgets the entry either
- * way. */
-function RecentImportRow({
-  path,
-  when,
-  onOpen,
-  onForget,
-}: {
-  path: string;
-  when: number;
-  onOpen: () => void;
-  onForget: () => void;
-}) {
-  const exists = useQuery({
-    queryKey: ["file-exists", path],
-    queryFn: () => commands.fileStamp(path),
-    // A file can come back (restored from the bin, a re-synced share) -
-    // re-ask on mount rather than trusting a stale "gone".
-    staleTime: 0,
-    retry: false,
-  });
-  const missing = exists.isSuccess && exists.data === null;
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs",
-        missing && "opacity-70",
-      )}
-    >
-      <span className="min-w-0 flex-1 truncate">
-        <span className="text-text">{fileName(path)}</span>
-        <span className="ml-2 text-faint" title={path}>
-          {path}
-        </span>
-      </span>
-      <span className="shrink-0 text-faint">{new Date(when).toLocaleDateString()}</span>
-      {missing ? (
-        <span className="shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
-          <span className="label-trim">File no longer exists</span>
-        </span>
-      ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          aria-label={`Reopen ${fileName(path)}`}
-          disabled={exists.isLoading}
-          onClick={onOpen}
-        >
-          Open
-        </Button>
-      )}
-      <button
-        aria-label={`Remove ${fileName(path)} from recent imports`}
-        title="Remove from recent imports"
-        className="shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
-        onClick={onForget}
-      >
-        <X size={13} />
-      </button>
-    </div>
-  );
-}
-
-
-/** Rust's `PLAIN_STEPS_REFUSAL` (commands/queue.rs), word for word: the
- * upload stopped before sending anything because the current steps of its
- * updates could not be read. Pinned on both sides by tests. */
-export const PLAIN_STEPS_REFUSAL =
-  "The current steps of the cases this upload updates could not be read, so nothing was sent. " +
-  "If you upload anyway, their steps are written as plain text and any formatting or pictures in them are lost.";
-
 export default function QueueSection({
   org,
   project,
@@ -177,6 +53,7 @@ export default function QueueSection({
   fileChanges,
   watches = [],
   onQueueCleared,
+  onQueueRestored,
   onWatchPatched,
   recentImports = [],
   onOpenRecent,
@@ -202,6 +79,9 @@ export default function QueueSection({
    * those watches existed, so leaving them armed means a later save to a
    * finished file quietly refills a queue the user deliberately emptied. */
   onQueueCleared?: () => void;
+  /** Called when Undo of Remove all puts the rows back, with the watches
+   * onQueueCleared dropped, so the owner can arm them again. */
+  onQueueRestored?: (dropped: WatchedFile[]) => void;
   /** Called after a bulk change is written back into a watched file, with
    * the file's new fingerprint and snapshot - the owner of the watch list
    * moves it forward so the watcher stays silent about our own write. */
@@ -238,7 +118,6 @@ export default function QueueSection({
   // them now carries and which does not shift as rows around it change.
   const [failedRows, setFailedRows] = useState<Set<string>>(() => new Set());
   const [uploadedIds, setUploadedIds] = useState<Set<number>>(() => new Set());
-  const [reviewing, setReviewing] = useState(false);
   // Progress lives at MODULE scope (lib/submitRun), not in this component:
   // the upload takes minutes and the person watching it is exactly the
   // person who wanders to another tab meanwhile. Any mount of this screen
@@ -246,35 +125,22 @@ export default function QueueSection({
   const phase = useSyncExternalStore(subscribeSubmit, submitPhaseSnapshot);
   const progress = phase && phase.org === org && phase.pbiId === pbiId ? phase : null;
 
-  // Creates from an interrupted upload that Azure DevOps could not confirm
-  // (lib/uploadHold). Persisted per PBI: a restart must not lift the one
-  // thing between the user and a duplicate.
-  const hold = useSyncExternalStore(subscribeHold, () => loadHold(org, pbiId));
-  const [checkingHold, setCheckingHold] = useState(false);
+  // Everything a finished submit owes the user, wherever they are now.
+  const finishUpload = (outcome: Outcome) =>
+    applyOutcome({ qc, org, project, setFailedRows, setUploadedIds }, outcome);
 
-  // A journal left by an upload that never finished becomes a hold: on
-  // mount, and again whenever an upload for this PBI ends (by any route).
-  // recoverJournal itself stands down while this window is uploading it.
-  useEffect(() => {
-    let live = true;
-    let unlisten: (() => void) | undefined;
-    void recoverJournal(org, pbiId).catch(() => {});
-    void events.uploadEnded
-      .listen((e) => {
-        if (e.payload.organization === org && e.payload.pbi_id === pbiId) {
-          void recoverJournal(org, pbiId).catch(() => {});
-        }
-      })
-      .then((u) => {
-        if (live) unlisten = u;
-        else detach(u);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-      detach(unlisten);
-    };
-  }, [org, pbiId]);
+  // Creates from an interrupted upload that Azure DevOps could not confirm,
+  // and the Check / Release that settle them.
+  const {
+    hold,
+    held,
+    ambiguous,
+    holdActive,
+    checkingHold,
+    checkHold,
+    releaseConfirm,
+    setReleaseConfirm,
+  } = useUploadHold({ org, project, pbiId, queue, applyOutcome: finishUpload });
 
   // An upload runs to the end once started - there is no Stop. The case
   // in flight could never be taken back (created cases cannot be deleted),
@@ -313,203 +179,11 @@ export default function QueueSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
   );
-  // Comments sync both ways between a file and the View Test Cases notes,
-  // joined on the work item id - a case imported for update IS the case
-  // the note is about.
-  //
-  // File -> notes: a case imported WITH its id and a comment, whose id has
-  // no note yet, gives the note its text. A note typed in View is never
-  // overwritten by an import.
-  //
-  // Notes -> card: the FIRST time a row with that id appears in this queue
-  // with an empty comment, the note fills it - onto the card and into the
-  // file the case came from. Only then: once the row has been seen, the
-  // card is the user's, and a comment they cleared stays cleared.
-  //
-  // Card -> notes: a later change to that comment (the editor, the browser
-  // page, a file sync) is written to the note, debounced, so View Test
-  // Cases shows what the queue shows.
-  const noteSeen = useRef<{ scope: string; comments: Map<number, string> }>({
-    scope: "",
-    comments: new Map(),
-  });
-  const pendingNotes = useRef<{ org: string; texts: Map<number, string> }>({ org, texts: new Map() });
-  const noteTimer = useRef<number | undefined>(undefined);
-  const flushNotes = useCallback(() => {
-    window.clearTimeout(noteTimer.current);
-    noteTimer.current = undefined;
-    const p = pendingNotes.current;
-    for (const [id, text] of p.texts) saveNote(p.org, id, text);
-    p.texts.clear();
-  }, []);
-  // An edit still waiting when the screen goes is written, not dropped.
-  useEffect(() => flushNotes, [flushNotes]);
-  useEffect(() => {
-    const scope = `${org}/${pbiId}`;
-    if (noteSeen.current.scope !== scope) {
-      flushNotes();
-      noteSeen.current = { scope, comments: new Map() };
-    }
-    const seen = noteSeen.current.comments;
-    const notes = loadNotes(org);
-    const fills = new Map<number, string>(); // queue index -> note
-    let edited = false;
-    const presentIds = new Set<number>();
-    queue.forEach((tc, i) => {
-      if (tc.update_id == null) return;
-      const id = tc.update_id;
-      presentIds.add(id);
-      const comment = (tc.comment ?? "").trim();
-      const before = seen.get(id);
-      if (before === undefined) {
-        const note = notes[String(id)];
-        if (comment && !note) saveNote(org, id, comment);
-        if (!comment && note) {
-          fills.set(i, note);
-          seen.set(id, note.trim());
-        } else {
-          seen.set(id, comment);
-        }
-        return;
-      }
-      if (comment === before) return;
-      seen.set(id, comment);
-      pendingNotes.current.org = org;
-      pendingNotes.current.texts.set(id, comment);
-      edited = true;
-    });
-    // A row that has left the queue (removed, kept-uploaded and swapped
-    // for a fresh copy, etc.) is forgotten here: if that id comes back
-    // later in this same mount, it is a first appearance again, not an
-    // edit of what it had - the stored note fills it instead of an empty
-    // comment being queued to blank the note out.
-    for (const id of seen.keys()) {
-      if (!presentIds.has(id)) seen.delete(id);
-    }
-    if (edited) {
-      window.clearTimeout(noteTimer.current);
-      noteTimer.current = window.setTimeout(flushNotes, 600);
-    }
-    if (fills.size === 0) return;
+  useNoteSync({ org, pbiId, queue, setQueue, watches, watchesRef, onWatchPatched });
 
-    // By work item id, not position: the queue can move between this
-    // effect and the updater, and an id is exact.
-    const fillById = new Map<number, string>();
-    for (const [i, text] of fills) fillById.set(queue[i].update_id as number, text);
-    setQueue((q) =>
-      q.map((c) =>
-        c.update_id != null && fillById.has(c.update_id) && !(c.comment ?? "").trim()
-          ? { ...c, comment: fillById.get(c.update_id)! }
-          : c,
-      ),
-    );
-    // The file learns it too, one targeted comment patch per case (never
-    // a whole-file rewrite for this), and the watch is told the stamp so
-    // the app's own write is not reported back as an outside edit.
-    //
-    // Each patch waits its turn on the file's write chain, like every
-    // write-back does. The snapshot it hands on is read from the watch as
-    // it stands AFTER the patch landed, not from the list captured when
-    // this effect ran: a Remove or an edit can finish on the same file
-    // while this loop is still going, and putting the older case list back
-    // at the file's newest stamp would make the next write pair same-titled
-    // rows with the wrong entries.
-    const known = watches ?? [];
-    if (known.length === 0) return;
-    const owners = ownerPaths(queue, known);
-    void (async () => {
-      for (const [i, text] of fills) {
-        const path = owners[i];
-        if (!path) continue;
-        const tc = queue[i];
-        try {
-          await runOnFileChain(path, async () => {
-            const r = await commands.saveDraftComment(path, tc.update_id, tc.title, text);
-            if (r.status !== "ok") return;
-            const w = freshWatches(watchesRef.current).find((x) => x.path === path);
-            if (!w) return;
-            const snapshot = w.snapshot.map((c) =>
-              c.update_id === tc.update_id ? { ...c, comment: text } : c,
-            );
-            noteWritten(path, { stamp: r.data, cases: snapshot });
-            const fields = { stamp: r.data, snapshot };
-            watchesRef.current = patchWatch(watchesRef.current, path, fields);
-            onWatchPatched?.(path, fields);
-          });
-        } catch {
-          // The note is still on the card and in View Test Cases; a patch
-          // that could not reach the file is not worth stopping the rest.
-        }
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, org, pbiId]);
-
-  // Final confirmation stage: the first Confirm click arms the submit and
-  // spotlights the PBI chip; only the explicit second click writes.
-  //
-  // Skipped for a queue that is NOTHING but updates: an update PATCHes its
-  // own work item where it already lives and never reads the selected PBI
-  // (only creates link to it, take its area/iteration, and populate its
-  // suite). The check-the-PBI stage exists to stop creates landing under
-  // the wrong PBI - for pure updates it is friction with nothing to catch.
-  const pureUpdates = queue.length > 0 && queue.every((tc) => tc.update_id != null);
-  const [armed, setArmed] = useState(false);
-  // The last safeguard before anything is written: titles of the CREATE
-  // rows that already exist on the PBI, checked FRESH against ADO at the
-  // final click. Set = the submit is stopped until the user explicitly
-  // chooses. The per-row hint was scrollable-past; 43 duplicates once
-  // sailed through it.
-  //
-  // Checked when REVIEW OPENS rather than at the final click. The review
-  // already showed a per-row duplicate hint, but computed off a cache the
-  // comment above admits can be minutes old - so it warned using data it
-  // did not trust and then re-asked properly at the worst moment, after a
-  // button that said it would create. Fetching once up front makes the
-  // hints true and puts the wait where someone is reading.
-  //
-  // Titles as the fetch last saw them; null until it has answered.
-  const [freshTitles, setFreshTitles] = useState<string[] | null>(null);
-  const [checkingDups, setCheckingDups] = useState(false);
-  // Titles the user has looked at and chosen to duplicate anyway.
-  const [acceptedDups, setAcceptedDups] = useState<string[]>([]);
-  const arm = (on: boolean) => {
-    setArmed(on);
-    setPbiGlow(on);
-  };
-  // Never leave the chip glowing if this screen unmounts mid-confirmation.
-  useEffect(() => () => setPbiGlow(false), []);
-
-  // An emptied queue (Clear queue, removing the last item) has nothing to
-  // review - leave review mode so the confirm controls disappear too.
-  //
-  // The duplicate answer needs no clearing here: `dupsPending` is derived
-  // from the current queue, so removing the offending row clears the
-  // warning by itself, and an acceptance stays attached to the title it
-  // was given for.
-  useEffect(() => {
-    // Clear queue stays enabled during review, so this is a real exit from
-    // the armed confirmation too - the chip must stop glowing with it.
-    if (queue.length === 0) {
-      arm(false);
-      setReviewing(false);
-    }
-  }, [queue.length]);
-
-  const existing = useQuery({
-    queryKey: ["pbi-tc-titles", org, pbiId],
-    queryFn: () => unwrap(commands.pbiTestCases(org, pbiId)),
-    retry: false,
-    // Cached-first: a tab flip inside a minute renders instantly from
-    // cache; after that the cached list still paints while a background
-    // refetch updates it. Refresh buttons and mutation invalidations
-    // bypass this and always hit the network.
-    staleTime: 60_000,
-  });
-  const existingCases = useMemo(
-    () => (existing.data ?? []).map((t) => ({ id: t.id, title: t.title })),
-    [existing.data],
-  );
+  // The review stage: arming, and the duplicate check before anything is written.
+  const gate = useReviewGate({ org, pbiId, queue });
+  const { reviewing, setReviewing, armed, arm, pureUpdates, existingCases } = gate;
 
   // Diff-preview (spec EDT-B): as soon as the queue holds an UPDATE,
   // fetch the current server values for every queued update in one batch
@@ -529,1099 +203,72 @@ export default function QueueSection({
     staleTime: 60_000,
     retry: false,
   });
-  const [expandedDiffs, setExpandedDiffs] = useState<Set<number>>(new Set());
-  const toggleDiff = useCallback(
-    (i: number) =>
-      setExpandedDiffs((s) => {
-        const next = new Set(s);
-        if (next.has(i)) next.delete(i);
-        else next.add(i);
-        return next;
-      }),
-    [],
-  );
-  // One row at a time is editable in place; queue-length changes (remove,
-  // import, submit) shift indices, so any of them closes the editor.
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
-  // Whether the browser report has been opened this session - see the
-  // re-export effect below.
-  const [reportOpen, setReportOpen] = useState(false);
-  useEffect(() => {
-    setEditingIdx(null);
-  }, [queue.length]);
-
-  // Group by area: a per-machine view choice, off until switched on. Only
-  // how the Queue is DRAWN - the queue array, its upload order and every
-  // index a row is keyed by stay exactly as they are.
-  const [areaGrouped, setAreaGrouped] = useState(() => {
-    try {
-      return localStorage.getItem("tcm-v2-queue-group") === "on";
-    } catch {
-      return false;
-    }
-  });
-  const [foldedAreas, toggleFoldedArea] = usePersistedStringSet("tcm-v2-queue-collapsed");
-
-  // Per-row steps preview (collapsed by default): check what will actually
-  // be written before submitting, for creates and updates alike.
-  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
-  const toggleSteps = useCallback(
-    (i: number) =>
-      setExpandedSteps((s) => {
-        const next = new Set(s);
-        if (next.has(i)) next.delete(i);
-        else next.add(i);
-        return next;
-      }),
-    [],
-  );
-
-
-  // Share-for-review: the draft travels through ADO as a PBI attachment
-  // (one-time-use link; nothing is created in ADO). The link lands on the
-  // clipboard, ready for Teams.
-  const share = useMutation({
-    mutationFn: async () => {
-      const r = await commands.shareQueue(org, project, pbiId, queue);
-      if (r.status === "error") throw new Error(r.error);
-      return r.data;
-    },
-    onSuccess: (link) => {
-      copyText(link)
-        .then(() => toast.success("Share link copied - send it to your reviewer."))
-        .catch(() => toast.success(`Share link ready: ${link}`));
-    },
-    onError: (e) => toast.error(`Could not share: ${e.message}`),
-  });
-
-  // v1's "View": render to a temp file and open the browser - no download.
-  //
-  // The draft page, not the one used for cases that already exist in Azure
-  // DevOps: here every case gets a comment box (a draft has no work item id
-  // to key an app-side note by), the text is the case's own `comment` -
-  // the same field the card below edits - and it is written back into the
-  // JSON file the case came from.
-  const viewHtml = useMutation({
-    mutationFn: async () => {
-      const r = await commands.viewDraftHtml(
-        queue,
-        `PBI #${pbiId}`,
-        ownerPaths(queue, watches),
-        // Each row's key and this PBI ride on the page, so a comment typed
-        // there comes back to exactly that row - and to nothing when the
-        // page is for a PBI no longer on screen.
-        keysFor(queue),
-        pbiId,
-        watches.map((w) => ({
-          path: w.path,
-          label: fileName(w.path),
-          comment: w.comment ?? "",
-          specs: w.specs ?? [],
-        })),
-        // Read at click time so the page opens in the theme in front of
-        // the user; it carries both schemes and its own switch.
-        pagePalette(),
-        // The page groups its cases the way the Queue is showing them.
-        areaGrouped,
-      );
-      if (r.status === "error") throw new Error(r.error);
-    },
-    onSuccess: () => setReportOpen(true),
-    onError: (e) => toast.error(`Could not open the report: ${e.message}`),
-  });
-
-  // Keep an already-open report in step with the queue.
-  //
-  // The page is a file on disk: nothing pushes to it, so the app rewrites
-  // the same file and bumps a revision the page polls; the page then
-  // pulls the fresh content over the loopback listener and swaps itself
-  // in place - no reload, no lost scroll position.
-  //
-  // REFRESH, never VIEW: this used to call the same command as the
-  // button, and the open_path at the end of that meant every comment
-  // save and every queue change opened ANOTHER browser tab on a file the
-  // reviewer already had open.
-  //
-  // Only after they have opened it once: re-exporting for a report
-  // nobody asked for would write a temp file on every keystroke.
-  useEffect(() => {
-    if (!reportOpen || queue.length === 0) return;
-    // Debounced, because a rename or a bulk edit lands as a burst of
-    // queue updates and each one would otherwise rewrite the file.
-    const t = window.setTimeout(() => {
-      void commands
-        .refreshDraftHtml(
-          queue,
-          `PBI #${pbiId}`,
-          ownerPaths(queue, watches),
-          // Each row's key and this PBI ride on the page, so a comment typed
-          // there comes back to exactly that row - and to nothing when the
-          // page is for a PBI no longer on screen.
-          keysFor(queue),
-          pbiId,
-          watches.map((w) => ({
-            path: w.path,
-            label: fileName(w.path),
-            comment: w.comment ?? "",
-            specs: w.specs ?? [],
-          })),
-          pagePalette(),
-          areaGrouped,
-        )
-        // Silent on failure: this is a background refresh of something
-        // the developer is not necessarily looking at, and the report
-        // they have is still readable.
-        .catch(() => {});
-    }, 800);
-    return () => window.clearTimeout(t);
-    // watches/pbiId are read, not depended on: a watch comment changing
-    // is not a reason to rewrite the page. Switching Group by area is: the
-    // open page regroups to match.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, reportOpen, areaGrouped]);
-
-
-  // A comment typed in that page comes back here, so the card and the
-  // browser tab never disagree. The file is already written by the time
-  // this fires - this is only the app catching up.
-  useEffect(() => {
-    const un = events.draftCommentSaved.listen((e) => {
-      const { key, pbi_id, text } = e.payload;
-      // A page for a PBI this screen is not showing: its rows are not here.
-      if (pbi_id !== pbiId || !key) return;
-      // The full occurrence key: two rows sharing a title are two rows.
-      setQueue((q) => {
-        const keys = keysFor(q);
-        return q.map((c, i) => (keys[i] === key ? { ...c, comment: text } : c));
-      });
-    });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, [setQueue, pbiId]);
-
-  // "Upload anyway" after PLAIN_STEPS_REFUSAL: the next submit (and only
-  // that one) tells Rust the person accepted plain-text steps.
-  const allowPlainNext = useRef(false);
-  const lastPreExisting = useRef<number[]>([]);
-  // The "Upload anyway" toast stays until dismissed, so it must not outlive
-  // what it was offered for: leaving the screen, or a change to the queue,
-  // the PBI or the organization, closes it (its action then never runs).
-  const plainToast = useRef<string | null>(null);
-  useEffect(() => {
-    return () => {
-      if (plainToast.current != null) toast.dismiss(plainToast.current);
-      plainToast.current = null;
-    };
-  }, [org, pbiId, queue]);
-  const submit = useMutation({
-    /** `preExisting`: the ids of the PBI's test cases before this upload. */
-    mutationFn: async (preExisting: number[] = []) => {
-      const allowPlainSteps = allowPlainNext.current;
-      allowPlainNext.current = false;
-      lastPreExisting.current = preExisting;
-      // A journal still on disk is an upload that never finished. Rust's
-      // next write would overwrite it, so it is turned into a hold FIRST,
-      // and if that hold marks a row here the upload does not start.
-      if ((await recoverJournal(org, pbiId)) === "recovered" && heldRows(queue, loadHold(org, pbiId)).some(Boolean)) {
-        throw new Error(HOLD_REFUSAL);
-      }
-      // The buttons are disabled while a hold stands; this is the backstop.
-      if (holdActive) throw new Error(HOLD_REFUSAL);
-      // Claimed BEFORE the pre-flight fetch below, not after it: a second
-      // mount whose OWN pre-flight outlasts this mount's whole upload must
-      // find the slot still taken when it gets there - claiming only after
-      // the pre-flight left a window where the slot read as free while this
-      // submit was still checking what to send, and a remount that reached
-      // its own (slower) pre-flight during that window could claim it AND
-      // resend the very creates this submit was about to make.
-      const run = submitStarted(org, pbiId, queue.length);
-      if (run == null) {
-        throw new Error("another upload is still running. Wait for it to finish, then try again.");
-      }
-      let unProgress: (() => void) | undefined;
-      let unPlan: (() => void) | undefined;
-      let unSuite: (() => void) | undefined;
-      let unRunOrder: (() => void) | undefined;
-      try {
-        // Rows this submit has nothing to write for. The review gate prints
-        // "no-op - nothing will change" per row; on a queue of 81 imported
-        // cases where ten had really changed, writing anyway meant 71
-        // pointless PATCHes plus 71 x the half-second pacing gap - a minute
-        // of waiting and rate-limit budget to say nothing.
-        //
-        // The check needs the server's CURRENT values, fetched HERE at
-        // submit time: the review's cached baseline can be minutes old, and
-        // the pure-update fast path (no check-the-PBI stage) can reach this
-        // point before the review's own diff fetch has landed at all.
-        // Fails SAFE in both directions that matter: only an UPDATE can be
-        // a no-op (a create always writes), and an unreadable baseline
-        // skips nothing - "we could not check" must never read as "nothing
-        // to do".
-        const idsToCheck = queue
-          .map((tc) => tc.update_id)
-          .filter((x): x is number => x != null);
-        const freshById = new Map<number, TestCaseFull>();
-        if (idsToCheck.length > 0) {
-          try {
-            const fresh = await unwrap(
-              commands.testCasesByIds(org, idsToCheck, prefs.moduleRef, prefs.preconditionsRef),
-            );
-            for (const c of fresh) freshById.set(c.id, c);
-          } catch {
-            // fail safe: skip nothing
-          }
-        }
-        const noopNow = (tc: TestCase): boolean => {
-          if (tc.update_id == null) return false;
-          const cur = freshById.get(tc.update_id);
-          if (!cur) return false;
-          return diffCase(tc, cur, {
-            moduleRef: prefs.moduleRef,
-            preconditionsRef: prefs.preconditionsRef,
-          }).noop;
-        };
-        // Everything that actually has something to write. The skipped rows
-        // are still in the queue and still on screen - they are just not
-        // sent, and they stay there afterwards like every other row.
-        //
-        // IN THE ORDER ON SCREEN, which is the order the user chose: the
-        // upload order is the suite order, and the "Order:" bar above the
-        // queue sorts the queue itself. This used to re-sort by tester_order
-        // here, which silently overrode a queue laid out any other way -
-        // pick "Down the spec", and the cases still landed in the suite in
-        // tester order with nothing on screen to explain it.
-        // `sent` below is THIS list, and every result index and the file
-        // stamping key off it.
-        const toSend = queue.filter((tc) => !noopNow(tc));
-        const skipped = queue.filter((tc) => noopNow(tc)).length;
-        // The rows left out still hold their place in the file. The order
-        // set after the upload needs them, or one new case in a re-uploaded
-        // file is ordered as if it were the only one - to the top of the
-        // suite. `index` is the row's place on screen before the filter.
-        const orderHint: OrderHint[] = queue.flatMap((tc, index) =>
-          tc.update_id != null && noopNow(tc)
-            ? [
-                {
-                  index,
-                  id: tc.update_id,
-                  spec_order: tc.spec_order ?? null,
-                  tester_order: tc.tester_order ?? null,
-                  area: tc.area ?? "",
-                },
-              ]
-            : [],
-        );
-        if (toSend.length === 0) {
-          return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
-        }
-        // Something to write: from here on the screen says it is uploading.
-        submitUploading(run);
-        // What each sent update is about to change, from the same fresh
-        // baseline - kept for the "Copy changes" note, since after the write
-        // the server already holds the new values.
-        const diffs: (CaseDiff | null)[] = toSend.map((tc) => {
-          const cur = tc.update_id != null ? freshById.get(tc.update_id) : undefined;
-          return cur
-            ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
-            : null;
-        });
-        // The lower bound for a later "what did this upload create" check,
-        // early by the same five minutes Rust allows for clock drift.
-        const since = new Date(Date.now() - 5 * 60_000).toISOString();
-        // Inside the try: a listen that rejects must still reach the
-        // finally, or the phase stays on "Processing" until a restart.
-        unProgress = await events.submitProgress.listen((e) => {
-          submitProgressed(e.payload.index + 1, e.payload.total, e.payload.title);
-        });
-        // Fired before the upload loop when the PBI had no test plan and one
-        // was created on the fly - surface it so plans never appear silently.
-        unPlan = await events.planCreated.listen((e) => {
-          toast.info(
-            `This PBI had no test plan - created "${e.payload.plan_name}" first, now uploading the test cases.`,
-          );
-        });
-        // The PBI had no requirement suite and one could not be created -
-        // typically no permission on the plans for its area. The cases still
-        // upload and link to the PBI, but Run Tests will not see them until a
-        // suite exists, so this stays up long enough to be read. It used to be
-        // a warning in the log only, which is how 197 cases once landed with
-        // no suite and nobody knew.
-        unSuite = await events.suiteNotCreated.listen((e) => {
-          toast.warning(`Uploaded, but no test suite could be created for this PBI. ${e.payload.reason}`, {
-            duration: 30000,
-          });
-        });
-        // The upload went through, but the suite's spec order or the
-        // suggested run order was not saved. The reason says which, and
-        // that Suite Management can set it.
-        unRunOrder = await events.runOrderNotSaved.listen((e) => {
-          toast.warning(e.payload.reason);
-        });
-        const r = await commands.submitQueue(
-          org,
-          project,
-          pbiId,
-          toSend,
-          prefs.moduleRef,
-          prefs.preconditionsRef,
-          // Always the PBI's own area and iteration. These were dropdown
-          // overrides once; cases landing anywhere but beside their PBI
-          // was never wanted, so null (= inherit) is now the only value.
-          null,
-          null,
-          {
-            order_hint: orderHint,
-            allow_plain_steps: allowPlainSteps,
-            pre_existing: preExisting,
-            hold_sigs: toSend.map(holdSignature),
-          },
-        );
-        if (r.status === "error") throw new Error(r.error);
-        // The outcome is applied HERE, inside the promise, not in
-        // onSuccess: the hook's callbacks die with the component, and the
-        // person who navigated away mid-upload still needs the created
-        // cases in their queue to carry their new ids when the loop
-        // finishes. `sent` is the FILTERED list: every result index is an
-        // index into it, and keepUploaded matches on that list.
-        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue, since, preExisting });
-        // The hold (if any) is saved by now, so the journal can go: until
-        // here it is what turns a crash into a hold.
-        // The upload already happened: a failure to tidy the journal up
-        // (an IPC error as much as an error result) must not turn it into a
-        // failed upload.
-        await finishJournal(
-          org,
-          pbiId,
-          toSend.filter((c) => c.update_id == null).map((c) => c.title),
-          r.data
-            .filter((x) => (x.action === "created" || x.action === "updated") && x.id != null)
-            .map((x) => x.id as number),
-        ).catch((e) => logUi(`upload journal not finished: ${String(e)}`));
-        return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
-      } finally {
-        // Inside the promise for the same reason: onSettled may never run.
-        // Covers the whole body, including the pre-flight above and the
-        // all-no-op early return: the run is claimed before either runs, so
-        // it must be released regardless of which path leaves by.
-        detach(unProgress);
-        detach(unPlan);
-        detach(unSuite);
-        detach(unRunOrder);
-        submitFinished(run);
-      }
-    },
-    // Only the parts a mounted screen can show. Everything that must
-    // happen - new ids, toasts, invalidations - already ran inside the
-    // mutation itself, because these callbacks die with the component.
-    onSuccess: ({ results, sent, sentFor, diffs }) => {
-      setResults(results);
-      setChangeNotes(
-        hasTesterNotes(results, diffs) ? testerNotes({ pbiId: sentFor, sent, results, diffs }) : null,
-      );
-      // The glow says "about to create on this PBI" - once the write has
-      // gone through there is nothing left to warn about.
-      arm(false);
-      setReviewing(false);
-    },
-    onError: (e) => {
-      // Nothing was sent: the current steps of the updates could not be
-      // read. The person decides whether plain-text steps are acceptable.
-      if (e.message === PLAIN_STEPS_REFUSAL) {
-        plainToast.current = toast.warning(PLAIN_STEPS_REFUSAL, {
-          duration: Infinity,
-          action: {
-            label: "Upload anyway",
-            onClick: () => {
-              plainToast.current = null;
-              allowPlainNext.current = true;
-              submit.mutate(lastPreExisting.current);
-            },
-          },
-        });
-        return;
-      }
-      toast.error(`Submit failed: ${e.message}`);
-    },
-  });
-
-  /** Ask ADO what titles it already has, and remember them.
-   *
-   * An unreachable ADO falls back to the cache rather than blocking: the
-   * submit itself would surface the outage anyway, and refusing to open a
-   * review because a check could not run helps nobody. */
-  const refreshTitles = useCallback(async (): Promise<{ id: number; title: string }[]> => {
-    setCheckingDups(true);
-    let cases = existingCases;
-    try {
-      const fresh = await existing.refetch();
-      if (fresh.data) cases = fresh.data.map((t) => ({ id: t.id, title: t.title }));
-    } catch {
-      // keep the cached list
-    }
-    setFreshTitles(cases.map((t) => t.title));
-    setCheckingDups(false);
-    return cases;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingCases]);
-
-  /** Which creates clash with a title already on the PBI, minus the ones
-   * the user has looked at and accepted.
-   *
-   * Derived, not stored, so editing or removing a row during the review
-   * updates it without another round trip - remove the offending case and
-   * the warning clears itself. */
-  const dupsPending = useMemo(() => {
-    if (!freshTitles) return [];
-    const have = new Set(freshTitles.map((t) => t.trim().toLowerCase()));
-    const ok = new Set(acceptedDups.map((t) => t.trim().toLowerCase()));
-    return queue
-      .filter((tc) => {
-        const key = tc.title.trim().toLowerCase();
-        return tc.update_id == null && have.has(key) && !ok.has(key);
-      })
-      .map((tc) => tc.title);
-  }, [queue, freshTitles, acceptedDups]);
-
-  /** Open the review: arm the PBI check for a queue that creates anything,
-   * and find out about duplicates now rather than after the last click. */
-  const openReview = () => {
-    setReviewing(true);
-    if (!pureUpdates) arm(true);
-    void refreshTitles();
-  };
-
-  /** The write. Re-verifies first: moving the check to the review opened a
-   * window - the queue can be edited, and someone else can create the same
-   * case, while a hundred cases are being read. It stops only for a clash
-   * nobody has been shown, so the common path never asks twice. */
-  const guardedSubmit = async () => {
-    if (holdActive) {
-      toast.warning(HOLD_REFUSAL);
-      return;
-    }
-    const onPbi = await refreshTitles();
-    const have = new Set(onPbi.map((t) => t.title.trim().toLowerCase()));
-    const ok = new Set(acceptedDups.map((t) => t.trim().toLowerCase()));
-    const surprises = queue.filter((tc) => {
-      const key = tc.title.trim().toLowerCase();
-      return tc.update_id == null && have.has(key) && !ok.has(key);
-    });
-    // The panel and the disabled button both read `dupsPending`, which the
-    // refresh above has just updated - there is nothing else to set.
-    if (surprises.length > 0) return;
-    // The PBI's cases as they stand before this upload: a hold it leaves
-    // records their ids, so a later Check can never claim one of them.
-    submit.mutate(onPbi.map((t) => t.id));
-  };
-
-  /** Ask Azure DevOps what an interrupted upload actually created. Found
-   * cases go through applyOutcome exactly as created results do: id on the
-   * row, the file and the notes learn it. The rest were never created and
-   * are ordinary queued rows again.
-   *
-   * Deviation from the brief (controller ruling): `reconcile_upload` cannot
-   * tell "not found" from "ambiguous" - a title with more unclaimed matches
-   * in Azure DevOps than rows being checked comes back in `ambiguous`
-   * rather than `found`. Those titles stay held (a new, smaller hold); a
-   * check that fails outright keeps the whole hold as it was.
-   *
-   * Fix round 1: `ambiguous` names a TITLE once (it comes from a Rust
-   * HashSet), not once per held ROW - a hold hit `titles: ["A", "A"]` still
-   * only gets `ambiguous: ["A"]` back even though both rows are ambiguous.
-   * The new hold is built by keeping every entry of the OLD `h.titles` whose
-   * trimmed text is in the answer's ambiguous set, so a repeated title keeps
-   * every one of its rows (and `missing` is counted per ROW, not per
-   * distinct title) instead of losing all but one to the rebuild. */
-  const checkHold = async () => {
-    const h = loadHold(org, pbiId);
-    if (!h) return;
-    setCheckingHold(true);
-    try {
-      // Never claimable for a held row: what the hold recorded (the PBI's
-      // cases before the upload, the upload's own ids) and every id a row
-      // in the queue already carries.
-      const r = await commands.reconcileUpload(org, project, pbiId, h.since, h.titles, checkExcludeIds(h, queue));
-      if (r.status === "error") {
-        toast.error(`Could not check with Azure DevOps: ${r.error} The cases stay marked - try again.`);
-        return;
-      }
-      const { found, ambiguous } = r.data;
-      const reconciled = reconciledResults(queue, heldRows(queue, h), found);
-      const { orphans } = reconciled;
-      // A claimed create may carry files the interrupted upload attached:
-      // ask which ones the case holds, so each path becomes its stored id and
-      // a second upload cannot attach it again. A failed read claims nothing.
-      let createdResults = reconciled.results;
-      const claims = claimsForCheck(queue, createdResults);
-      if (claims.length > 0) {
-        const got = await commands.claimCreatedStepFiles(org, claims);
-        if (got.status === "ok") createdResults = withClaimedFiles(createdResults, got.data);
-        else {
-          toast.warning(
-            "Could not check which step files those cases already have in Azure DevOps. Uploading them again would attach their files a second time.",
-            { duration: 20000 },
-          );
-        }
-      }
-      // A smaller hold keeps its ids, plus what this Check just claimed,
-      // and each still-held row keeps its own content signature.
-      const next = narrowHold(h, ambiguous, found.map((f) => f.id));
-      const stillHeld = next?.titles ?? [];
-      saveHold(org, pbiId, next);
-      if (createdResults.length > 0) {
-        applyOutcome({ results: createdResults, sent: queue, sentFor: pbiId, skipped: 0, prevQueue: queue });
-      }
-      const missing = h.titles.length - found.length - stillHeld.length;
-      toast.info(
-        `${found.length} of ${h.titles.length} case(s) had been created` +
-          (missing > 0 ? `; ${missing} had not and can be uploaded again.` : "."),
-      );
-      if (stillHeld.length > 0) {
-        toast.warning(
-          `${stillHeld.length} case(s) still cannot be confirmed - more than one test case with that ` +
-            `title exists in Azure DevOps. Check there, then release them here.`,
-          { duration: 20000 },
-        );
-      }
-      if (orphans > 0) {
-        toast.warning(`${orphans} created case(s) are no longer in the queue - View Test Cases has them.`, {
-          duration: 20000,
-        });
-      }
-    } finally {
-      setCheckingHold(false);
-    }
-  };
-
-  /** Everything a finished submit owes the user, wherever they are now.
-   * Runs inside the mutation promise, so navigating away cannot skip it. */
-  function applyOutcome({
-    results,
-    sent,
-    sentFor,
-    skipped,
-    prevQueue,
-    since,
-    preExisting,
-  }: {
-    results: SubmitItemResult[];
-    sent: TestCase[];
-    sentFor: number;
-    skipped: number;
-    prevQueue: TestCase[];
-    /** When this upload started - set by a submit, absent for a Check. */
-    since?: string;
-    /** The PBI's test case ids before this upload - set by a submit. */
-    preExisting?: number[];
-  }) {
-    // Only what Azure DevOps confirmed counts as done. "unknown" is neither
-    // done nor failed: it may exist, so it is held until someone checks.
-    const ok = results.filter((r) => r.action === "created" || r.action === "updated").length;
-    const failedCount = results.filter((r) => r.action === "failed").length;
-    const unknownCount = results.filter((r) => r.action === "unknown").length;
-    const newHold = since ? holdFromResults(results, sent, since, preExisting) : null;
-    if (newHold) saveHold(org, sentFor, newHold);
-
-    // The whole calculation lives in lib/queueUploaded.ts, with the ways
-    // matching a result back to its row has gone wrong written down as
-    // tests. Every row stays; created ones gain their new id.
-    let stranded = 0;
-    const keep = (q: TestCase[]) => {
-      const kept = keepUploaded(sent, q, results);
-      stranded = kept.unmatched;
-      return kept.queue;
-    };
-
-    // Which rows failed and which were uploaded, for the marks on the rows.
-    // Read off the sent list rather than from inside the state updater,
-    // which must stay pure: the queue as submitted is the sent rows plus the
-    // skipped no-ops, and those carry ids already, so title-keyed rows
-    // number the same way in both.
-    const marks = keepUploaded(sent, sent, results);
-    setFailedRows(marks.failed);
-    setUploadedIds(marks.uploadedIds);
-
-    const writer = queueWriterFor(org, sentFor);
-    if (writer) {
-      // The submitted queue is on screen (this mount or a fresh one):
-      // through React state, exactly as it always went.
-      writer.setQueue(keep);
-    } else {
-      // Nobody is looking at that queue right now - the user navigated
-      // away, or switched PBI. The persisted draft is the queue they will
-      // see on return; stamp THAT, so a created case is never sitting there
-      // without its id, one Upload away from a duplicate.
-      saveDraftQueue(org, sentFor, keep(loadDraftQueue(org, sentFor)));
-    }
-
-    if (failedCount === 0 && unknownCount === 0 && stranded === 0) {
-      toast.success(
-        skipped > 0
-          ? `${ok} test case(s) processed, ${skipped} already up to date.`
-          : `${ok} test case(s) processed.`,
-      );
-    } else if (failedCount > 0) {
-      toast.warning(`${ok} processed, ${failedCount} failed - the failed items are marked in the queue.`);
-    }
-    if (unknownCount > 0) {
-      toast.warning(
-        `${unknownCount} case(s) may or may not have been created - the upload was interrupted and ` +
-          `Azure DevOps could not be asked. They are marked in the queue; check them before uploading again.`,
-        { duration: 30000 },
-      );
-    }
-    if (stranded > 0) {
-      // Never silent: a created case still sitting in the queue is one
-      // Create away from a duplicate work item, and this app cannot
-      // delete one.
-      toast.warning(
-        `${stranded} case(s) were created but could not be matched back to the queue - ` +
-          `check the queue before creating again, or you will get duplicates.`,
-        { duration: 20000 },
-      );
-    }
-    // The FILES learn what the submit made real: every succeeded case is
-    // written back with its work item id and exactly the uploaded content,
-    // so re-importing the file yields no-op updates instead of a duplicate
-    // set. Failed cases stay as drafts. Comments are never the price:
-    // per-case comments ride on the cases, and the file-level comments
-    // block survives because merge_cases_into_draft keeps every top-level
-    // key it does not own.
-    const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id, attached: r.attached, error: r.error }));
-    // The watch list as it is at the moment of asking: the screen showing
-    // this queue, if one is mounted, and storage only when none is (or it
-    // watches nothing). Storage alone is not enough - a failed storage
-    // write is swallowed, so it can hold nothing, or a list from before an
-    // outside sync, and a row whose file it misses would silently go
-    // unstamped. The orphan check and every stamp write read THIS, so they
-    // always agree on which file owns a row.
-    const currentWatches = (): WatchedFile[] => {
-      const live = queueWriterFor(org, sentFor)?.watches?.() ?? [];
-      return live.length > 0 ? live : loadWatches(org, sentFor);
-    };
-    void (async () => {
-      const known = currentWatches();
-      // One pairing pass serves both the orphan check below and the stamp
-      // write-back after it, instead of computing it twice.
-      const owned = known.length > 0 ? fileOwners(prevQueue, known) : prevQueue.map(() => null);
-      // The other half of the promise "the file learns what the submit made
-      // real": say it LOUDLY when a created case's id could not be recorded
-      // anywhere - no owning file matched it, or there is no file at all.
-      // Both duplicate incidents to date were this situation, silent.
-      const owners = owned.map((o) => o?.path ?? "");
-      const orphaned = unstampedCreated(prevQueue, owners, sent, outcomes);
-      if (orphaned.length > 0) {
-        const named = orphaned.slice(0, 3).join("; ");
-        toast.warning(
-          `${orphaned.length} created case(s) have no file recording their new ids ` +
-            `(${named}${orphaned.length > 3 ? "; …" : ""}). Their ids exist only in Azure ` +
-            `DevOps now - importing the same drafts again will create duplicates. ` +
-            `View Test Cases has the created set.`,
-          { duration: 25000 },
-        );
-      }
-      if (known.length > 0) {
-        // Same rule as `writeBackOwned`: one write at a time per file, each
-        // one recomputing its own pairing against whatever the write ahead
-        // of it on that path actually returned - not against `known`,
-        // which this whole callback can be holding well after it was
-        // captured (a submit takes as long as the upload does).
-        for (const path of new Set(owners.filter((p): p is string => !!p))) {
-          try {
-            await runOnFileChain(path, async () => {
-              // Read fresh, not the closed-over `known`: this callback can
-              // run well after it was captured. Both sources are patched
-              // synchronously below the moment a write lands, which is
-              // what lets `freshWatches`' stamp check tell a write still
-              // queued behind another apart from one that is not.
-              const freshOwned = fileOwners(prevQueue, freshWatches(currentWatches()));
-              const files = stampFileSlices(
-                prevQueue,
-                freshOwned.map((o) => o.path),
-                sent,
-                outcomes,
-                freshOwned.map((o) => o.occurrence),
-              );
-              const f = files.get(path);
-              if (!f || !f.changed) return;
-              const r = await commands.saveDraftCases(path, f.edits);
-              if (r.status === "error") {
-                toast.warning(
-                  `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
-                    `Importing it again would create duplicates - fix the file before re-importing.`,
-                  { duration: 20000 },
-                );
-                return;
-              }
-              // Storage always: the mount that started this submit may be
-              // gone, and a setter on an unmounted screen never runs its
-              // persist step. Then the screen showing this queue NOW, if
-              // any - not this closure's own callback, which may belong to
-              // that gone mount.
-              //
-              // The snapshot is what Rust says is now IN THE FILE, in file
-              // order - not a queue-order slice of the rows this write
-              // touched. Recorded here, before this task's own promise
-              // resolves, so a write queued behind it on the same path is
-              // built from what THIS write actually did.
-              noteWritten(path, r.data);
-              const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
-              saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
-              queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
-            });
-          } catch (e) {
-            // A THROW must not skip the paths after it, nor leave this
-            // fire-and-forget callback with an unhandled rejection.
-            toast.warning(
-              `Uploaded, but ${fileName(path)} could not be updated with the new ids: ` +
-                `${e instanceof Error ? e.message : String(e)}. Importing it again would ` +
-                `create duplicates - fix the file before re-importing.`,
-              { duration: 20000 },
-            );
-          }
-        }
-      }
-      // And the same comment now shows on the case where it LIVES: the
-      // View Test Cases notes store learns every succeeded case's comment
-      // under its (new) work item id.
-      for (const pair of noteSyncPairs(sent, outcomes)) {
-        saveNote(org, pair.id, pair.comment);
-      }
-    })();
-
-    qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
-    qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
-    // The rows diff against the server's copy fetched for the review. An
-    // update just changed that copy, so drop it: read again, the updated
-    // rows show "no-op" instead of the changes they have already made.
-    if (results.some((r) => r.action === "updated")) {
-      qc.invalidateQueries({ queryKey: ["diff-cases", org] });
-    }
-    // A created case can move the suite's spec order and/or the PBI's
-    // suggested run order (design doc §4.1, §4.2). Run Tests and Suite
-    // Management must not go on serving what they cached before the
-    // upload - drop both the query and the persisted copy, and widen the
-    // suite-cases invalidation to every suite for this org/project since
-    // this screen does not know which suite the upload landed in.
-    if (results.some((r) => r.action === "created")) {
-      qc.invalidateQueries({ queryKey: ["run-order", org, project, sentFor] });
-      cacheRemove(cacheKeys.runOrder(org, project, sentFor));
-      qc.invalidateQueries({ queryKey: ["suite-cases", org, project] });
-    }
-  }
-
-  /** Stop listening without letting jsdom's missing event internals turn a
-   * cleanup into an unhandled rejection - same shape as App's detach. */
-  function detach(unlisten: (() => void) | undefined): void {
-    if (!unlisten) return;
-    try {
-      void Promise.resolve(unlisten() as unknown).catch(() => {});
-    } catch {
-      // threw synchronously - same conclusion
-    }
-  }
 
   // Same occurrence-aware keys the file sync reports changes under, so a
   // second case sharing a title still lights up its own row.
   const rowKeys = useMemo(() => keysFor(queue), [queue]);
-  // A NEW row's open diff belongs to the change report that put it there:
-  // once the report is dismissed the row has no diff to show, so its open
-  // flag goes too (it would otherwise still count towards Collapse all).
-  useEffect(() => {
-    setExpandedDiffs((s) => {
-      let next: Set<number> | null = null;
-      for (const i of s) {
-        const row = queue[i];
-        if (row && row.update_id == null && !fileChanges?.[rowKeys[i]]) {
-          next ??= new Set(s);
-          next.delete(i);
-        }
-      }
-      return next ?? s;
-    });
-  }, [fileChanges, queue, rowKeys]);
-  const held = useMemo(() => heldRows(queue, hold), [queue, hold]);
-  const ambiguous = useMemo(() => ambiguousRows(queue, hold), [queue, hold]);
-  // Fix round 1 (controller ruling): a hold refuses uploads only while one
-  // of its rows is still actually in the queue. Removing or renaming every
-  // held row lifts the refusal; the hold itself is left exactly as it was.
-  //
-  // Fix round 2 (CRITICAL): this used to also clear the hold from an effect
-  // watching (hold, queue) once no row matched it - but `useQueue`
-  // (src/hooks/useQueue.ts:60-93) delivers a PBI switch's new scope one
-  // render BEFORE its reload: `hold` already reads the new PBI (it is keyed
-  // on `pbiId` alone) while `queue` is still the OLD PBI's rows, or the
-  // tour fixture's, which can happen to pair with a real PBI. In that one
-  // render nothing in `queue` matches the new PBI's hold, so the effect
-  // deleted a hold whose rows simply had not arrived yet. There is no such
-  // effect now: a hold whose rows are absent is merely INERT (`holdActive`
-  // below is false, so nothing is blocked), and if a same-titled row comes
-  // back the hold applies again exactly as it was. Only a successful Check
-  // and a confirmed Release ever remove one.
-  const holdActive = hold != null && held.some(Boolean);
-  const [releaseConfirm, setReleaseConfirm] = useState(false);
+  const {
+    expandedDiffs,
+    setExpandedDiffs,
+    toggleDiff,
+    expandedSteps,
+    setExpandedSteps,
+    toggleSteps,
+    editingIdx,
+    setEditingIdx,
+    toggleEdit,
+    cancelEdit,
+  } = useRowViewState(queue, fileChanges, rowKeys);
+
+  const { areaGrouped, changeGrouped, foldedAreas, toggleFoldedArea } = useAreaGrouping();
+
+  const { share, viewHtml } = useQueueReport({ org, project, pbiId, queue, setQueue, watches, areaGrouped });
+
+  const { submit, guardedSubmit } = useQueueUpload({
+    org,
+    project,
+    pbiId,
+    queue,
+    prefs,
+    holdActive,
+    applyOutcome: finishUpload,
+    setResults,
+    setChangeNotes,
+    arm,
+    setReviewing,
+    refreshTitles: gate.refreshTitles,
+    acceptedDups: gate.acceptedDups,
+  });
+
   const [renameOpen, setRenameOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
-  // Selection is by POSITION, like Power Rename: drafts have no id, and a
-  // bulk edit can make two share a title, so the title is not an identity
-  // that survives the operation being applied. Any change in queue LENGTH
-  // drops the selection - after a removal or a file sync the indices point
-  // at different cases, and a stale selection silently bulk-edits the
-  // wrong rows.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  // Positions are only meaningful while the rows exist. When the queue
-  // shrinks beneath a selection (Clear queue, an import that replaces the
-  // queue, a single removal) the indices past its end are dropped.
-  useEffect(() => {
-    setSelected((prev) => {
-      if (![...prev].some((i) => i >= queue.length)) return prev;
-      return new Set([...prev].filter((i) => i < queue.length));
-    });
-  }, [queue.length]);
-  // The shift-click anchor is only ever read inside toggleSelect, so it
-  // lives in a ref: that keeps the callback's identity stable, which is
-  // what lets the rows below stay memoised.
-  const selAnchor = useRef<number | null>(null);
-  useEffect(() => {
-    setSelected(new Set());
-    selAnchor.current = null;
-  }, [queue.length]);
+  const {
+    selected,
+    setSelected,
+    toggleGroup,
+    areaGroups,
+    rowsOnScreen,
+    rowIds,
+    tabRow,
+    onRowFocus,
+    select,
+    onNavigate,
+  } = useQueueSelection({ queue, areaGrouped, foldedAreas, editingIdx });
 
-  // Group by area: the tree, and the rows it leaves on screen top to
-  // bottom. A Shift-click range runs over what the user SEES, so while the
-  // Queue is grouped it follows this order (folded groups' cases left out)
-  // rather than raw queue positions. Held in a ref for the same reason the
-  // anchor is: toggleSelect has to stay stable for the memoised rows.
-  const areaGroups = useMemo(() => (areaGrouped ? buildAreaGroups(queue) : null), [areaGrouped, queue]);
-  const shownOrder = useRef<number[] | null>(null);
-  // Every row on screen, top to bottom, grouped or flat: what the arrow
-  // keys walk. The row being edited counts even inside a folded group,
-  // because it is still drawn there.
-  const rowsOnScreen = useMemo(
-    () => (areaGroups ? visibleOrder(areaGroups, foldedAreas, editingIdx) : queue.map((_, i) => i)),
-    [areaGroups, foldedAreas, editingIdx, queue],
-  );
-  const rowOrder = useRef<number[]>([]);
-  useEffect(() => {
-    shownOrder.current = areaGroups ? rowsOnScreen : null;
-    rowOrder.current = rowsOnScreen;
-  }, [areaGroups, rowsOnScreen]);
-
-  // The grid's one Tab stop (a roving tabindex): the row focus was last in,
-  // while it is on screen, else the first row. The arrow keys move it.
-  const rowIds = useId();
-  const [focusRow, setFocusRow] = useState<number | null>(null);
-  useEffect(() => setFocusRow(null), [queue.length]);
-  const tabRow = focusRow != null && rowsOnScreen.includes(focusRow) ? focusRow : (rowsOnScreen[0] ?? null);
-  const onRowFocus = useCallback((i: number) => setFocusRow(i), []);
-
-  // Selection works the way Update Test Cases' does: a click selects that
-  // one case (and clears it if it was the only one), Ctrl/Cmd toggles one,
-  // Shift takes the range from the anchor in the order on screen, and
-  // Ctrl+Shift adds that range. A range leaves the anchor where it was.
-  const toggleSelect = useCallback((i: number, how: { range: boolean; toggle: boolean }) => {
-    const anchor = selAnchor.current;
-    if (how.range && anchor != null) {
-      const order = shownOrder.current;
-      let range: number[] | null = null;
-      if (order) {
-        const from = order.indexOf(anchor);
-        const to = order.indexOf(i);
-        if (from >= 0 && to >= 0) range = order.slice(Math.min(from, to), Math.max(from, to) + 1);
-      } else {
-        range = [];
-        for (let k = Math.min(anchor, i); k <= Math.max(anchor, i); k++) range.push(k);
-      }
-      if (range) {
-        const r = range;
-        setSelected((s) => (how.toggle ? new Set([...s, ...r]) : new Set(r)));
-        return;
-      }
-    }
-    if (how.toggle) {
-      setSelected((s) => {
-        const next = new Set(s);
-        if (next.has(i)) next.delete(i);
-        else next.add(i);
-        return next;
-      });
-    } else {
-      setSelected((s) => (s.size === 1 && s.has(i) ? new Set() : new Set([i])));
-    }
-    selAnchor.current = i;
-  }, []);
-
-  // Up and Down move to the row above or below in the order on screen
-  // (folded groups skipped), Home and End to the first and last. With
-  // Shift held the selection runs from the anchor to the row reached.
-  const onNavigate = useCallback(
-    (i: number, key: "ArrowUp" | "ArrowDown" | "Home" | "End", extend: boolean) => {
-      const order = rowOrder.current;
-      const at = order.indexOf(i);
-      if (order.length === 0) return;
-      const to =
-        key === "Home"
-          ? 0
-          : key === "End"
-            ? order.length - 1
-            : Math.min(order.length - 1, Math.max(0, (at < 0 ? 0 : at) + (key === "ArrowDown" ? 1 : -1)));
-      const next = order[to];
-      if (extend) {
-        if (selAnchor.current == null) selAnchor.current = i;
-        toggleSelect(next, { range: true, toggle: false });
-      }
-      setFocusRow(next);
-      document.getElementById(`${rowIds}-${next}-row`)?.focus();
-    },
-    [toggleSelect, rowIds],
-  );
-
-  /** Write bulk changes back into the files the cases came from, so the
-   * file says what the queue says - otherwise the next external save of
-   * that file would quietly revert the bulk edit.
-   *
-   * `next` is aligned with `prev` (null = removed); ownership is computed
-   * from the PRE-edit queue, because ownership is matched by title-derived
-   * keys and a rename is exactly the operation that breaks that match.
-   * Only files owning a changed case are written; each write returns the
-   * file's new fingerprint, and the watch snapshot moves forward with it
-   * so the watcher stays silent about our own write.
-   *
-   * One touched file at a time, through `runOnFileChain`: two write-backs
-   * on the SAME file - a Remove followed by the next row's Remove landing
-   * before the first one's IPC round trip has returned - must not both
-   * build their `occurrence`s from the snapshot this render started with.
-   * Each file's own task recomputes ownership right before it runs, against
-   * `freshWatches` (this module's `watches` plus whatever the last write on
-   * that path actually returned), so the SECOND write is paired against
-   * what the FIRST one really did to the file, not against a guess made
-   * before the first one had a chance to run. */
-  const writeBackOwned = async (
-    prev: TestCase[],
-    next: (TestCase | null)[],
-    changed: Set<number>,
-  ) => {
-    if (watches.length === 0) return;
-    // Only used to find which files are touched - not for occurrences.
-    // Ownership itself (WHICH file a row belongs to) does not shift when
-    // an unrelated row elsewhere in the same file is removed, so today's
-    // `watches` is fine for that; each path's own task below recomputes
-    // the occurrences that actually matter, fresh, from whatever the
-    // chain ahead of it has by then returned.
-    const paths = new Set(fileOwners(prev, watches).flatMap((o) => (o.path ? [o.path] : [])));
-    for (const path of paths) {
-      try {
-        await runOnFileChain(path, async () => {
-          const owners = fileOwners(prev, freshWatches(watchesRef.current));
-          const edits: DraftEdit[] = [];
-          let touched = false;
-          prev.forEach((before, i) => {
-            const o = owners[i];
-            if (!o || o.path !== path) return;
-            edits.push({ before, after: next[i], occurrence: o.occurrence });
-            if (changed.has(i)) touched = true;
-          });
-          if (!touched) return;
-          const r = await commands.saveDraftCases(path, edits);
-          if (r.status === "error") {
-            // The queue HAS changed - saying so beats pretending nothing did.
-            toast.warning(
-              `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
-                `The file still has the old values.`,
-              { duration: 15000 },
-            );
-            return;
-          }
-          // The snapshot is what Rust says is now IN THE FILE, in file
-          // order - not a queue-order slice of the rows this write touched.
-          // Recorded here, before this chained task's promise resolves, so
-          // a task queued behind it on this path sees it (`noteWritten`),
-          // and so does a task that reads `watchesRef.current` before this
-          // component has re-rendered with the parent's own state update.
-          noteWritten(path, r.data);
-          const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
-          watchesRef.current = patchWatch(watchesRef.current, path, fields);
-          onWatchPatched?.(path, fields);
-        });
-      } catch (e) {
-        // A THROW (not a `{status:"error"}` result) must not skip the
-        // paths after it, nor leave the caller's fire-and-forget
-        // `void writeBackOwned(...)` with an unhandled rejection.
-        toast.warning(
-          `The queue was updated, but ${fileName(path)} could not be written back: ` +
-            `${e instanceof Error ? e.message : String(e)}. The file still has the old values.`,
-          { duration: 15000 },
-        );
-      }
-    }
-  };
-
-  const bulkApply = async (edit: (tc: TestCase) => TestCase) => {
-    const prev = queue;
-    const chosen = new Set(selected);
-    const next: (TestCase | null)[] = prev.map((tc, i) => (chosen.has(i) ? edit(tc) : tc));
-    setQueue(next.filter((x): x is TestCase => x != null));
-    await writeBackOwned(prev, next, chosen);
-    toast.success(`Updated ${chosen.size} queued case${chosen.size === 1 ? "" : "s"}.`);
-  };
-
-  const bulkRemove = async () => {
-    const prev = queue;
-    const removing = new Set(selected);
-    const kept = prev.filter((_, i) => !removing.has(i));
-    setQueue(kept);
-    await writeBackOwned(
-      prev,
-      prev.map((tc, i) => (removing.has(i) ? null : tc)),
-      removing,
-    );
-    if (kept.length === 0) onQueueCleared?.();
-    toast.info(`Removed ${removing.size} queued case${removing.size === 1 ? "" : "s"}.`);
-  };
-
-  /** Renaming drafts touches only this list and the files they came from,
-   *  so undo here can never fail against Azure DevOps.
-   *
-   *  Rows are matched back to drafts by POSITION. A draft has no work item
-   *  id and a rename can make two of them share a title, so the title is
-   *  not an identity that survives the very operation being applied. The
-   *  dialog covers just the selected rows, and the scope list maps the dialog's row indices back to queue positions. */
-  // Only positions that still exist: the selection is a set of indices,
-  // and "Clear queue" with rows selected emptied the queue under it - the
-  // white window of 1.23.11 was `queue[qi].update_id` on the next render.
-  const renameScope = [...selected].filter((i) => i < queue.length).sort((a, b) => a - b);
-  const renameTarget: RenameTarget = {
-    label: `${renameScope.length} selected draft${renameScope.length === 1 ? "" : "s"}`,
-    cases: renameScope.map((qi) => ({ id: queue[qi].update_id, title: queue[qi].title })),
-    undoable: true,
-    apply: async (rows) => {
-      // Every row must be accounted for: one that no longer maps to a
-      // draft, or whose draft no longer carries the title the preview
-      // showed - the queue can move under an open dialog - is reported,
-      // never written onto whatever sits there now.
-      const failed: typeof rows = [];
-      const prev = queue;
-      const next: (TestCase | null)[] = prev.map((tc) => tc);
-      const changed = new Set<number>();
-      for (const row of rows) {
-        const qi = renameScope[row.index];
-        const tc = qi != null ? prev[qi] : undefined;
-        if (!tc || tc.title !== row.before) {
-          failed.push(row);
-          continue;
-        }
-        next[qi] = { ...tc, title: row.after };
-        changed.add(qi);
-      }
-      setQueue(next.filter((x): x is TestCase => x != null));
-      // The rename reaches the files too - Undo comes back through here
-      // with the rows reversed, so it writes the files back as well.
-      await writeBackOwned(prev, next, changed);
-      return failed;
-    },
-  };
+  const { bulkApply, bulkRemove, clearQueue, renameTarget, removeRow, saveRow } = useQueueEdits({
+    queue,
+    setQueue,
+    watches,
+    watchesRef,
+    onWatchPatched,
+    onQueueCleared,
+    onQueueRestored,
+    selected,
+    setEditingIdx,
+    uploading: submit.isPending || progress != null,
+    scope: `${org}/${pbiId}`,
+  });
 
   const problems = useMemo(() => queue.map((tc) => validateCase(tc)), [queue]);
   const duplicates = useMemo(
@@ -1633,58 +280,6 @@ export default function QueueSection({
   // it by value.
   const qualities = useMemo(() => queue.map((tc) => qualityWarnings(tc).join("\n")), [queue]);
 
-  // Row callbacks. All stable: a row is memoised on its props, and a
-  // callback that changed identity every render would re-render every
-  // row on every render - which is exactly what made a 100-case queue
-  // slow to switch to. The two that need the current queue and file
-  // list read them through a ref instead of closing over them.
-  const latest = useRef({ queue, writeBackOwned });
-  latest.current = { queue, writeBackOwned };
-  const toggleEdit = useCallback((i: number) => setEditingIdx((cur) => (cur === i ? null : i)), []);
-  const cancelEdit = useCallback(() => setEditingIdx(null), []);
-  // The owning FILE follows a single removal exactly as it follows a bulk
-  // one: otherwise the next outside save of that file sees the case in
-  // both snapshots, not in the queue, and puts it back.
-  //
-  // By identity, not position: a second click that lands before the first
-  // has re-rendered still carries index i, which by then names the NEXT
-  // row. The row object is the identity; a row already on its way out is
-  // not removed twice.
-  const removing = useRef(new WeakSet<TestCase>());
-  const removeRow = useCallback(
-    (i: number) => {
-      const { queue: prev, writeBackOwned: writeBack } = latest.current;
-      const target = prev[i];
-      if (!target || removing.current.has(target)) return;
-      removing.current.add(target);
-      setQueue((q) => q.filter((t) => t !== target));
-      void writeBack(
-        prev,
-        prev.map((t) => (t === target ? null : t)),
-        new Set([i]),
-      );
-    },
-    [setQueue],
-  );
-  const saveRow = useCallback(
-    (i: number, next: TestCase) => {
-      const { queue: prev, writeBackOwned: writeBack } = latest.current;
-      setQueue((q) => q.map((t, j) => (j === i ? next : t)));
-      setEditingIdx(null);
-      // The owning FILE follows the edit, through the same machinery as
-      // bulk edits. This closes a real duplicate trap: ownership is
-      // matched by title, so a rename that only the queue knew about
-      // orphaned the row at stamp time - its created id was never written
-      // back, and the next import of the file created the case again.
-      void writeBack(
-        prev,
-        prev.map((t, j) => (j === i ? next : t)),
-        new Set([i]),
-      );
-      toast.success("Queued case updated.");
-    },
-    [setQueue],
-  );
   const hasBlockers = problems.some(Boolean);
 
   // What the primary action is about to do, in words. Lifted out of the
@@ -1786,7 +381,7 @@ export default function QueueSection({
         diff={diff}
         diffFailed={diffFailed}
         busy={submit.isPending}
-        onToggleSelect={toggleSelect}
+        onToggleSelect={select}
         idBase={rowIds}
         tabStop={tabRow === i}
         onNavigate={onNavigate}
@@ -1798,94 +393,6 @@ export default function QueueSection({
         onSave={saveRow}
         onCancelEdit={cancelEdit}
       />
-    );
-  };
-
-  /** One area group: its heading, its own cases, then its subgroups, each
-   * level indented under the last. `hidden` is true inside a folded
-   * ancestor.
-   *
-   * Folding never unmounts an open editor - folding away unsaved edits
-   * would be a silent discard (the rule Edit Existing's groups follow). So
-   * a folded group still shows the one row being edited, and the path of
-   * headings down to it, and nothing else. */
-  const renderAreaGroup = (g: AreaGroup, hidden: boolean) => {
-    const folded = foldedAreas.has(g.key);
-    const away = hidden || folded;
-    const all = groupIndices(g);
-    const keep = (i: number) => !away || i === editingIdx;
-    const rows = g.indices.filter(keep);
-    const kids = away ? g.children.filter((c) => editingIdx != null && groupIndices(c).includes(editingIdx)) : g.children;
-    const picked = all.filter((i) => selected.has(i)).length;
-    // The group's tick box selects every case in it, nested included, and
-    // clears them when they are all selected - Update Test Cases' group
-    // tick box (its toggleGroup).
-    const pickGroup = () => {
-      setSelected((s) => {
-        const next = new Set(s);
-        const every = all.every((i) => s.has(i));
-        for (const i of all) {
-          if (every) next.delete(i);
-          else next.add(i);
-        }
-        return next;
-      });
-      if (all.length) selAnchor.current = all[0];
-    };
-    return (
-      <div key={g.key} className="space-y-1">
-        <div className="flex w-full items-center gap-3 pb-1 pt-2">
-          <button
-            type="button"
-            aria-label={`${folded ? "Expand" : "Collapse"} area ${g.path}`}
-            aria-expanded={!folded}
-            title={folded ? "Expand group" : "Collapse group"}
-            className="text-muted transition-colors hover:text-accent"
-            onClick={() => toggleFoldedArea(g.key)}
-          >
-            {folded ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-          </button>
-          {/* As on Update Test Cases: the tick box selects the group, and
-              the name folds it, same as the chevron. */}
-          <Checkbox
-            ariaLabel={`Select all in ${g.path}`}
-            checked={all.length > 0 && picked === all.length}
-            indeterminate={picked > 0 && picked < all.length}
-            onCheckedChange={pickGroup}
-          />
-          <button
-            type="button"
-            className="group flex items-center gap-2"
-            title={folded ? "Expand group" : "Collapse group"}
-            onClick={() => toggleFoldedArea(g.key)}
-          >
-            <span className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
-              {/* The bucket for cases with no area, in the faint colour, so
-                  a real area that happens to be called "No area" reads apart. */}
-              <span
-                className={g.key === "" ? "text-faint" : undefined}
-                title={g.key === "" ? "Cases with no area" : undefined}
-              >
-                {g.name}
-              </span>{" "}
-              ({g.count})
-            </span>
-          </button>
-          {/* A folded group says how much of the selection it hides. */}
-          {folded && picked > 0 && <span className="text-xs text-accent">{picked} selected</span>}
-          <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
-        </div>
-        <Collapse open={rows.length + kids.length > 0} animateIn={false}>
-          <div className="space-y-1 pl-4">
-            {rows.length > 0 && (
-              <div role="grid" aria-multiselectable="true" aria-label={`Cases in ${g.path}`} className="space-y-1">
-                {rows.map(renderRow)}
-              </div>
-            )}
-            {kids.map((c) => renderAreaGroup(c, away))}
-          </div>
-        </Collapse>
-      </div>
     );
   };
 
@@ -1923,53 +430,26 @@ export default function QueueSection({
 
   return (
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text">
-          Queue for PBI #{pbiId} ({queue.length} queued)
-        </h2>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queue.length === 0 || viewHtml.isPending}
-            onClick={() => viewHtml.mutate()}
-          >
-            <IconOpenInBrowser aria-hidden />
-            View in browser
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queue.length === 0 || share.isPending || !online}
-            title={online ? "Upload the draft as a one-time share link a colleague can import for review" : OFFLINE_HINT}
-            onClick={() => share.mutate()}
-          >
-            <IconShare aria-hidden />
-            {share.isPending ? "Sharing" : "Share for review"}
-          </Button>
-          {/* Last on purpose, and red on approach: this is the destroy
-              action in a row of build actions, so it sits at the far end
-              where a fast hand does not land on it by habit, and announces
-              itself before the click. */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="hover:border-danger hover:bg-danger/10 hover:text-danger"
-            disabled={queue.length === 0 || submit.isPending}
-            onClick={() => {
-              const n = queue.length;
-              setQueue([]);
-              setFailedRows(new Set());
-              setUploadedIds(new Set());
-              onQueueCleared?.();
-              toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
-            }}
-          >
-            <IconRemove aria-hidden />
-            Clear queue
-          </Button>
-        </div>
-      </div>
+      <QueueHeader
+        pbiId={pbiId}
+        queueLength={queue.length}
+        online={online}
+        viewPending={viewHtml.isPending}
+        sharePending={share.isPending}
+        submitPending={submit.isPending}
+        onView={() => viewHtml.mutate()}
+        onShare={() => share.mutate()}
+        onClear={() => {
+          const failed = failedRows;
+          const uploaded = uploadedIds;
+          clearQueue(() => {
+            setFailedRows((cur) => new Set([...cur, ...failed]));
+            setUploadedIds((cur) => new Set([...cur, ...uploaded]));
+          });
+          setFailedRows(new Set());
+          setUploadedIds(new Set());
+        }}
+      />
 
       {renameOpen && (
         <PowerRenameDialog
@@ -1992,117 +472,26 @@ export default function QueueSection({
         />
       )}
 
-      {/* The two readings of an optimized file: grouped so a tester changes
-          environment as little as possible, or walking down the spec so a
-          reviewer scrolls the document and the queue together. Only offered
-          when EVERY case carries the field - a partial sort would interleave
-          ordered cases with ones that have no opinion, which is neither
-          reading. Reordering is real, not a view: the queue's order is the
-          order the cases are created in. */}
-      {/* Shown as soon as ANY case carries an order - a bar that only
-          appears when everything is already stamped would hide the reason
-          the buttons are disabled, which is the one thing a mixed queue
-          needs explained. */}
-      {/* Group by area sits on the same line, at its far end: both change
-          how the list reads, but only the Order buttons change the queue.
-          A single case has nothing to group, so the switch waits for a
-          second - unless grouping is already on, when it stays to be
-          switched off. */}
-      {(queue.length > 1 || (queue.length > 0 && areaGrouped)) && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-          {queue.length > 1 &&
-            (["tester_order", "spec_order"] as const).some((k) => queue.some((tc) => tc[k] != null)) && (
-          <>
-            <span>Order:</span>
-            {(
-              [
-                ["tester_order", "For testing", "Cases sharing a setup run together"],
-                ["spec_order", "Down the spec", "Cases follow the specification document"],
-              ] as const
-            ).map(([key, label, hint]) => {
-              const available = queue.every((tc) => tc[key] != null);
-              const active =
-                available && queue.every((tc, i) => i === 0 || (queue[i - 1][key] ?? 0) <= (tc[key] ?? 0));
-              return (
-                <Button
-                  key={key}
-                  variant="outline"
-                  size="sm"
-                  disabled={!available}
-                  aria-pressed={active}
-                  title={available ? hint : "Not every queued case has this order yet - it's added when an AI assistant optimizes the draft"}
-                  className={active ? "border-accent text-accent" : undefined}
-                  onClick={() =>
-                    setQueue((q) => [...q].sort((a, b) => (a[key] ?? 0) - (b[key] ?? 0)))
-                  }
-                >
-                  {label}
-                </Button>
-              );
-            })}
-          </>
-          )}
-          <label className="ml-auto flex items-center gap-1.5">
-            <Switch
-              checked={areaGrouped}
-              ariaLabel="Group by area"
-              onCheckedChange={(on) => {
-                setAreaGrouped(on);
-                try {
-                  localStorage.setItem("tcm-v2-queue-group", on ? "on" : "off");
-                } catch {
-                  // storage unavailable -> session-only
-                }
-              }}
-            />
-            Group by area
-          </label>
-        </div>
-      )}
+      <QueueOrderBar
+        queue={queue}
+        setQueue={setQueue}
+        areaGrouped={areaGrouped}
+        onGroupedChange={changeGrouped}
+      />
 
       {/* No empty-state island: with zero cases (and no submit running)
           the whole section early-returns above, so this point is only
           reached with cases to show or a submit in flight. */}
 
-      {/* Bulk actions over a selection. Shift+click a checkbox to select a
-          range. Every action here also updates the .json file each case
-          came from - the file and the queue must not disagree. */}
       {queue.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-2/50 px-3 py-1.5 text-xs">
-          <label className="flex items-center gap-2 text-muted">
-            <Checkbox
-              ariaLabel="Select all queued cases"
-              checked={selected.size === queue.length && queue.length > 0}
-              onCheckedChange={(v) =>
-                setSelected(v ? new Set(queue.map((_, i) => i)) : new Set())
-              }
-            />
-            {selected.size > 0
-              ? `${selected.size} of ${queue.length} selected`
-              : "Select cases for bulk actions"}
-          </label>
-          {selected.size > 0 && (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
-                <IconConfirm aria-hidden />
-                Bulk edit
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setRenameOpen(true)}>
-                <IconRename aria-hidden />
-                Rename {selected.size}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="hover:border-danger hover:bg-danger/10 hover:text-danger"
-                onClick={() => bulkRemove()}
-              >
-                <IconRemove aria-hidden />
-                Remove {selected.size}
-              </Button>
-            </>
-          )}
-        </div>
+        <QueueBulkBar
+          queueLength={queue.length}
+          selected={selected}
+          setSelected={setSelected}
+          onBulkEdit={() => setBulkOpen(true)}
+          onRename={() => setRenameOpen(true)}
+          onRemove={() => bulkRemove()}
+        />
       )}
 
       {/* Click a case to select it, Ctrl+click to add or remove one,
@@ -2117,7 +506,21 @@ export default function QueueSection({
           their area. Display only - each row is handed its real queue
           index, so selection, editing and upload order never notice. */}
       {queue.length > 0 && areaGroups && (
-        <div className="space-y-1">{areaGroups.map((g) => renderAreaGroup(g, false))}</div>
+        <div className="space-y-1">
+          {areaGroups.map((g) => (
+            <QueueAreaGroup
+              key={g.key}
+              group={g}
+              hidden={false}
+              foldedAreas={foldedAreas}
+              toggleFoldedArea={toggleFoldedArea}
+              editingIdx={editingIdx}
+              selected={selected}
+              toggleGroup={toggleGroup}
+              renderRow={renderRow}
+            />
+          ))}
+        </div>
       )}
 
       {/* The same glowing bar the test-suite scan uses. Before the first
@@ -2139,324 +542,52 @@ export default function QueueSection({
       )}
 
       {hold && !progress && (
-        <div className="space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3">
-          {hold.ambiguous && hold.ambiguous.length > 0 ? (
-            <>
-              <p className="text-sm font-semibold text-text">
-                More than one test case with these titles exists in Azure DevOps. Check there, then
-                release them here.
-              </p>
-              <p className="text-xs text-muted">
-                Azure DevOps has more matches for {hold.ambiguous.length === 1 ? "this title" : "these titles"}{" "}
-                than rows waiting on it, so this app cannot tell which one is genuinely this upload's.
-                Once you have confirmed it there, Release lets{" "}
-                {hold.ambiguous.length === 1 ? "that case" : "those cases"} be uploaded again.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-sm font-semibold text-text">
-                Outcome unknown for {hold.titles.length} case{hold.titles.length === 1 ? "" : "s"} - check
-                before uploading again.
-              </p>
-              <p className="text-xs text-muted">
-                The last upload was interrupted and Azure DevOps could not be asked what it had created.
-                Uploading again before checking could create {hold.titles.length === 1 ? "it" : "them"} twice.
-              </p>
-            </>
-          )}
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={checkingHold || !online}
-              title={online ? undefined : OFFLINE_HINT}
-              onClick={() => void checkHold()}
-            >
-              <IconRefresh aria-hidden />
-              {checkingHold ? "Checking" : "Check with Azure DevOps"}
-            </Button>
-            {hold.ambiguous && hold.ambiguous.length > 0 && (
-              <Button size="sm" variant="outline" onClick={() => setReleaseConfirm(true)}>
-                <IconRelease aria-hidden />
-                Release
-              </Button>
-            )}
-          </div>
-        </div>
+        <QueueHoldNotice
+          hold={hold}
+          online={online}
+          checkingHold={checkingHold}
+          onCheck={() => void checkHold()}
+          onRelease={() => setReleaseConfirm(true)}
+        />
       )}
 
       {releaseConfirm && (
-        <Modal onClose={() => setReleaseConfirm(false)} className="w-full max-w-md space-y-4 p-5">
-          <h2 className="text-sm font-semibold text-text">Release held cases?</h2>
-          <p className="text-xs text-muted">
-            I have checked in Azure DevOps — release these cases so they can be uploaded again?
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setReleaseConfirm(false)}>
-              <IconCancel aria-hidden />
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                saveHold(org, pbiId, null);
-                setReleaseConfirm(false);
-              }}
-            >
-              <IconRelease aria-hidden />
-              Release
-            </Button>
-          </div>
-        </Modal>
+        <ReleaseConfirmModal org={org} pbiId={pbiId} onClose={() => setReleaseConfirm(false)} />
       )}
 
-      <ActionDock
-        label="Queue actions"
-        // The tour rings this row, not the Review button inside it: the
-        // row is what holds Review before review and the confirm/upload
-        // button during it, so the stop makes sense either way.
-        rowProps={{ "data-tour": "queue-review" }}
-        rowRef={(el) => {
-          actionRowEl.current = el;
-        }}
-        // The dock's default row is right-aligned for the standard case;
-        // this row has always read left-to-right instead, and Import Test Cases
-        // has to look unchanged.
-        className="justify-start gap-3"
-        // The floating copy stands down for the armed warning and the
-        // duplicate gate on purpose, since those have to be read - the row
-        // comes to the reader for those instead (see the scroll effect
-        // below).
-        active={queue.length > 0 && !armed && dupsPending.length === 0}
-      >
-        {(floating) =>
-          progress ? (
-            <Button tabIndex={floating ? -1 : undefined} disabled>
-              <IconConfirm aria-hidden />
-              {submitLabel(progress)}
-            </Button>
-          ) : !reviewing ? (
-            <Button
-              tabIndex={floating ? -1 : undefined}
-              disabled={!floating && queue.length === 0}
-              onClick={openReview}
-            >
-              <IconReview aria-hidden />
-              Review {queue.length} test case{queue.length === 1 ? "" : "s"}
-            </Button>
-          ) : floating ? (
-            // Simplified on purpose: the floating copy skips Back, the
-            // blockers hint and the duplicate/armed panels - those need
-            // the full row, which the scroll effect below brings back.
-            // Arms rather than submitting outright unless every row is a
-            // pure update - a floating corner button is an easy accident,
-            // and creating something needs the fuller row read first.
-            <Button
-              tabIndex={-1}
-              disabled={holdActive || hasBlockers || submit.isPending || !online}
-              title={online ? undefined : OFFLINE_HINT}
-              onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
-            >
-              <IconConfirm aria-hidden />
-              {submit.isPending
-                ? progress
-                  ? submitLabel(progress)
-                  : "Checking"
-                : `Confirm & ${actionLabel || "create 0"}`}
-            </Button>
-          ) : (
-            <div className="w-full space-y-2">
-              {/* The duplicate warning sits ABOVE the way on rather than
-                  replacing it, and the button below is disabled while it
-                  stands - the per-row hint it replaced was scrollable-past,
-                  and 43 duplicates once sailed through that. */}
-              {dupsPending.length > 0 && (
-                <div className="space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
-                  <p className="text-sm font-semibold text-text">
-                    Stopped: {dupsPending.length} case{dupsPending.length === 1 ? "" : "s"} with the
-                    same title already exist{dupsPending.length === 1 ? "s" : ""} on PBI #{pbiId}.
-                  </p>
-                  <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
-                    {dupsPending.map((t) => (
-                      <li key={t}>• {t}</li>
-                    ))}
-                  </ul>
-                  <p className="text-xs text-muted">
-                    If you meant to update the existing cases, import a file that includes their
-                    ids (View Test Cases → Export JSON has them). Creating anyway makes
-                    duplicates - and cleaning those up needs delete permission.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        // Backing out here abandons the armed confirmation
-                        // too - the chip must stop glowing, same as Back.
-                        arm(false);
-                        setReviewing(false);
-                      }}
-                    >
-                      <IconBack aria-hidden />
-                      Go back
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      disabled={submit.isPending || !online}
-                      // Accepting does NOT write. It records the choice and
-                      // frees the button, so the last click is still the one
-                      // that creates and still says so.
-                      onClick={() => setAcceptedDups((prev) => [...prev, ...dupsPending])}
-                    >
-                      Create duplicates anyway
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {armed && (
-                <div className="rounded-md border border-warning/50 bg-warning/10 p-3">
-                  <p className="text-sm text-text">
-                    Check the highlighted PBI above — everything here will be written to{" "}
-                    <span className="font-semibold">PBI #{pbiId}</span>. Removing them afterwards{" "}
-                    <span className="font-semibold">needs delete permission</span> in Azure DevOps,
-                    and deleting a test case in Azure DevOps is permanent.
-                  </p>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <Button
-                  disabled={
-                    queue.length === 0 ||
-                    holdActive ||
-                    hasBlockers ||
-                    submit.isPending ||
-                    !online ||
-                    // While the check is in flight, and while a duplicate is
-                    // waiting to be looked at.
-                    checkingDups ||
-                    dupsPending.length > 0
-                  }
-                  title={online ? undefined : OFFLINE_HINT}
-                  onClick={() => void guardedSubmit()}
-                >
-                  <IconConfirm aria-hidden />
-                  {submit.isPending
-                    ? progress
-                      ? submitLabel(progress)
-                      : "Checking"
-                    : armed
-                      ? `Yes — ${actionLabel}`
-                      : `Confirm & ${actionLabel || "create 0"}`}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    arm(false);
-                    setReviewing(false);
-                  }}
-                >
-                  <IconBack aria-hidden />
-                  Back
-                </Button>
-                {hasBlockers && (
-                  <span className="text-xs text-danger">Fix the flagged items first.</span>
-                )}
-                {holdActive && (
-                  <span className="text-xs text-warning">Check the cases marked "Outcome unknown" first.</span>
-                )}
-              </div>
-            </div>
-          )
-        }
-      </ActionDock>
+      <QueueActionBar
+        pbiId={pbiId}
+        queueLength={queue.length}
+        progress={progress}
+        reviewing={reviewing}
+        armed={armed}
+        arm={arm}
+        setReviewing={setReviewing}
+        holdActive={holdActive}
+        hasBlockers={hasBlockers}
+        submitPending={submit.isPending}
+        online={online}
+        pureUpdates={pureUpdates}
+        checkingDups={gate.checkingDups}
+        dupsPending={gate.dupsPending}
+        setAcceptedDups={gate.setAcceptedDups}
+        actionLabel={actionLabel}
+        actionRowEl={actionRowEl}
+        onOpenReview={gate.openReview}
+        onSubmit={() => void guardedSubmit()}
+      />
 
-      {/* What just happened, as a panel rather than a paragraph of coloured
-          text pasted under the queue. The headline answers "did it work"
-          on its own; the rows below are for finding one case. */}
       {results && (
-        <div className="space-y-2 rounded-md border border-border bg-surface-2 p-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <h3 className="text-sm font-semibold text-text">
-              {summariseSubmit(results).headline}
-            </h3>
-            {/* Dismiss the results once read - the button goes with them,
-                and so do the marks on the rows: once the results are
-                gone, the queue reads as a plain queue again. */}
-            <div className="flex shrink-0 items-center gap-2">
-              {/* For the tester: every updated case by id with what changed,
-                  then the new ones - so they can tell whether a case they
-                  already ran needs running again. */}
-              {changeNotes && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  title="Copy the updated test case ids and what changed, to send to a tester"
-                  onClick={() => {
-                    copyText(changeNotes)
-                      .then(() => toast.success("Changes copied."))
-                      .catch(() => toast.error("Could not copy to clipboard."));
-                  }}
-                >
-                  <IconCopy aria-hidden />
-                  Copy changes
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setResults(null);
-                  setChangeNotes(null);
-                  setFailedRows(new Set());
-                  setUploadedIds(new Set());
-                }}
-              >
-                <IconClear aria-hidden />
-                Clear results
-              </Button>
-            </div>
-          </div>
-          <ul className="space-y-1 text-sm">
-            {results.map((r) => (
-              <li key={r.index} className="flex items-baseline gap-2">
-                <Badge
-                  className={cn(
-                    "shrink-0",
-                    r.action === "created"
-                      ? "bg-success/20 text-success"
-                      : r.action === "updated" || r.action === "unknown"
-                        ? "bg-warning/20 text-warning"
-                        : "bg-danger/20 text-danger",
-                  )}
-                >
-                  {r.action === "created"
-                    ? "New"
-                    : r.action === "updated"
-                      ? "Updated"
-                      : r.action === "unknown"
-                        ? "Unknown"
-                        : "Failed"}
-                </Badge>
-                {r.id != null && <span className="id-mono shrink-0 text-faint">#{r.id}</span>}
-                <span className="min-w-0 break-words text-text">{r.title}</span>
-                {/* A case that WAS written and then hit trouble afterwards
-                    still exists in Azure DevOps, so its note is a warning
-                    beside it, not a failure badge in front of it. */}
-                {r.error && (
-                  <span
-                    className={cn(
-                      "min-w-0 break-words",
-                      r.action === "failed" ? "text-danger" : "text-warning",
-                    )}
-                  >
-                    {r.error}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <QueueResults
+          results={results}
+          changeNotes={changeNotes}
+          onClear={() => {
+            setResults(null);
+            setChangeNotes(null);
+            setFailedRows(new Set());
+            setUploadedIds(new Set());
+          }}
+        />
       )}
 
       {/* Sticky Collapse all, bottom LEFT like every other screen's, once

@@ -20,7 +20,7 @@ import QueueSection from "./QueueSection";
 
 vi.mock("../hooks/useOnScreen", () => ({ useOnScreen: () => [() => {}, true] }));
 vi.mock("../lib/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
 }));
 
 let viewArgs: Record<string, unknown> | null = null;
