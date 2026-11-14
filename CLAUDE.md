@@ -58,9 +58,10 @@ Rust and regenerate.
 
 CI: `.github/workflows/ci.yml` runs on push and pull requests to `main`
 (Windows runner): `tsc --noEmit`, `npm test`, `npm run build`,
-`cargo test --tests`, then fails if `src/bindings.ts` is stale. It cannot
-run the tests marked `#[ignore]` (they start a real Edge). Run the suites
-above before pushing anyway.
+`cargo test --tests`, then fails if `src/bindings.ts` is stale. It does
+not run the tests marked `#[ignore]`: they need a real Edge browser or the
+network (`suite/updater.rs` reaches github.com). Run the suites above
+before pushing anyway.
 
 ## Architecture
 
@@ -73,9 +74,13 @@ above before pushing anyway.
   removes it. Database logins also live there (`db/credentials.rs`, behind
   `SecretStore`) and only their public view reaches the webview.
   `tests/bindings.rs` fails the build if a token-shaped field ever appears
-  in the generated TypeScript. The one deliberate exception to "no secret
-  on disk": Auto Run test-account passwords sit in a plain JSON file beside
-  the scripts (`autorun/accounts.rs` explains why) - never log them.
+  in the generated TypeScript. Rust owns every other secret. The one
+  deliberate exception is Auto Run test-account passwords: stored on disk
+  in a plain JSON file beside the scripts, and sent to the webview by one
+  IPC call (`autoRunListAccounts`) for the Accounts dialog, because
+  `Account` in `autorun/accounts.rs` derives `specta::Type`. Proposed
+  accounts keep their database-read passwords in that same JSON. Never log
+  them, and never add a second call that carries a password.
 - **All Azure DevOps calls go through `src-tauri/src/ado/`.** The client
   issues GET / POST / PATCH only, with ONE audited exception:
   `ado/deletion.rs` permanently deletes a Test Case (permission-checked,

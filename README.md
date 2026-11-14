@@ -231,8 +231,9 @@ the board's test count.
 ### API Templates
 - A template is a recipe for creating or changing test data through the
   site's own requests: create a user, lock an account, add an address. An
-  assistant builds each one from the application's code and proves it on
-  your site before it is listed.
+  assistant builds each one from the application's code. A template that
+  is new or imported shows as Unconfirmed until it has worked on the
+  active environment, and each environment confirms it separately.
 - The screen lists templates by module with what each does and when it
   last ran, shows their parameters, requests and run history, and lets you
   read and remove them. Flows chain templates in the order the application
@@ -302,11 +303,14 @@ are enforced in code and by tests.
   nowhere else. Sign out, or turning the setting off, removes it. A test
   fails the build if a token-shaped field appears in the generated
   bindings.
-- Database logins and the sign-in live in Windows Credential Manager. The
-  database password never reaches the web layer, only whether one is saved.
-  The exception is Auto Run's test-account passwords: they are saved in a
-  plain JSON file beside your scripts, on this machine, so every tester can
-  run the same scripts with their own logins. They are never logged.
+- Windows Credential Manager holds the refresh token, the database
+  logins and each environment's default password. A database password
+  never reaches the web layer, only whether one is saved. The exception is
+  Auto Run's test-account passwords: they are saved in a plain JSON file
+  beside your scripts, on this machine, so every tester can run the same
+  scripts with their own logins, and the Accounts dialog receives them
+  through one IPC call. Proposed accounts keep the passwords read from the
+  database in that same file. They are never logged.
 - Confirm before every write. A review gate precedes any create or update.
   Reads happen freely.
 - Rate-limited writes. A pacer spaces writes to the budget you set, and
@@ -360,8 +364,8 @@ and by hand from the Actions tab, on a Windows runner (some Rust tests need
 Windows). It runs `npx tsc --noEmit`, `npm test`, `npm run build` and
 `cargo test --tests`, then fails if `src/bindings.ts` is not what the Rust
 now generates. A newer push on the same branch cancels the older run. The
-tests marked `#[ignore]` start a real Edge and are not run there; run them
-on purpose with `cargo test --test suite <module>:: -- --ignored`.
+tests marked `#[ignore]` need a real Edge browser or the network and are
+not run there; run them on purpose with `cargo test --test suite <module>:: -- --ignored`.
 
 ### Dev-only features
 
@@ -426,7 +430,7 @@ src-tauri/                  Rust core
     ado_testplan/           Test plans and suites, runs and results, history
     work_board/             Board pipeline, item detail, process layout
     import_parser/          Parsing (golden-tested), exports, HTML report
-    ai_bridge.rs, mcp.rs    The local bridge and the MCP server the
+    ai_bridge/, mcp.rs      The local bridge and the MCP server the
                             assistants talk to
     db/                     Database Access: sqlcmd, statement guard, logins
     modules.rs              The optional modules and their tree

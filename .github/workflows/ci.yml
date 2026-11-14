@@ -10,22 +10,21 @@ on:
 # A newer push to the same branch or pull request replaces the run in flight.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 env:
   # src-tauri/.cargo/config.toml is tuned for the owner's 24-core desktop:
-  # it links with rust-lld and leaves four cores free (`jobs = -4`), and its
-  # [env] table sets RUST_TEST_THREADS to 20 (an [env] entry never overrides
-  # a variable that is already set). A hosted runner has 4 cores and no
-  # reason to keep any free, so the real values go in here: Cargo reads
-  # CARGO_* variables ahead of the config file, and the linker is the stock
-  # MSVC one that every Windows runner has.
+  # it leaves four cores free (`jobs = -4`), and its [env] table sets
+  # RUST_TEST_THREADS to 20 (an [env] entry never overrides a variable that
+  # is already set). A hosted runner has 4 cores and no reason to keep any
+  # free, so the real values go in here: Cargo reads CARGO_* variables ahead
+  # of the config file. The linker stays the configured rust-lld, as on the
+  # owner's machine.
   CARGO_BUILD_JOBS: 4
   RUST_TEST_THREADS: 4
-  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: link.exe
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -62,6 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Rust tests
         working-directory: src-tauri
