@@ -64,8 +64,8 @@ export default function QueueActionBar({
     className="justify-start gap-3"
     // The floating copy stands down for the armed warning and the
     // duplicate gate on purpose, since those have to be read - the row
-    // comes to the reader for those instead (see the scroll effect
-    // below).
+    // comes to the reader for those instead (see the scroll effect in
+    // QueueSection.tsx).
     active={queueLength > 0 && !armed && dupsPending.length === 0}
   >
     {(floating) =>
@@ -86,7 +86,7 @@ export default function QueueActionBar({
       ) : floating ? (
         // Simplified on purpose: the floating copy skips Back, the
         // blockers hint and the duplicate/armed panels - those need
-        // the full row, which the scroll effect below brings back.
+        // the full row, which the scroll effect in QueueSection.tsx brings back.
         // Arms rather than submitting outright unless every row is a
         // pure update - a floating corner button is an easy accident,
         // and creating something needs the fuller row read first.
