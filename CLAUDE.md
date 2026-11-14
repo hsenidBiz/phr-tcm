@@ -56,20 +56,32 @@ that must move the working directory runs in a child copy of the binary
 Rust command signatures via tauri-specta. Never hand-edit it; change the
 Rust and regenerate.
 
-There is currently **no CI on `main`** — the workflow that existed tested
-v1 and went with it. The suites above are the gate.
+CI: `.github/workflows/ci.yml` runs on push and pull requests to `main`
+(Windows runner): `tsc --noEmit`, `npm test`, `npm run build`,
+`cargo test --tests`, then fails if `src/bindings.ts` is stale. It cannot
+run the tests marked `#[ignore]` (they start a real Edge). Run the suites
+above before pushing anyway.
 
 ## Architecture
 
 `README.md` has the full picture. The essentials:
 
-- **Rust owns every secret.** Tokens live in `AuthState` in memory only,
-  never persisted, never crossing the IPC boundary. `tests/bindings.rs`
-  fails the build if a token-shaped field ever appears in the generated
-  TypeScript.
+- **Rust owns every secret, and no token crosses the IPC boundary.** The
+  access token lives in `AuthState` in memory only. The refresh token is
+  kept in Windows Credential Manager (per user, encrypted by Windows) while
+  Stay signed in is on - `saved_session.rs`; sign-out or turning it off
+  removes it. Database logins also live there (`db/credentials.rs`, behind
+  `SecretStore`) and only their public view reaches the webview.
+  `tests/bindings.rs` fails the build if a token-shaped field ever appears
+  in the generated TypeScript. The one deliberate exception to "no secret
+  on disk": Auto Run test-account passwords sit in a plain JSON file beside
+  the scripts (`autorun/accounts.rs` explains why) - never log them.
 - **All Azure DevOps calls go through `src-tauri/src/ado/`.** The client
-  issues GET / POST / PATCH only — **there are no DELETE calls anywhere**,
-  and that is a safety invariant, not an accident. Preserve it.
+  issues GET / POST / PATCH only, with ONE audited exception:
+  `ado/deletion.rs` permanently deletes a Test Case (permission-checked,
+  fails closed, confirm dialog says "permanent"). `tests/suite/ado.rs`
+  scans every other source file and fails the build on `.delete(` or
+  `Method::DELETE`. Preserve that: never add another DELETE anywhere.
 - **Commands live in `src-tauri/src/commands/`**, one module per area,
   exposed to the frontend through the generated bindings.
 - **Screens live in `src/screens/`**, shared UI in `src/components/`,
