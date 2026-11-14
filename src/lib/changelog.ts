@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.2",
+    date: "2026-11-14",
+    items: [
+      "Test Runner: a shared step now shows the steps inside it, with their expected results, under its line (read-only).",
+    ],
+  },
+  {
     version: "2.4.7-beta.1",
     date: "2026-11-13",
     items: [
