@@ -1188,24 +1188,34 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   propose them. Look in the database with the read-only database tools
   (`db_lookup`, `db_query`), which use the active environment's database,
   and in seed scripts and specs. Then call `propose_accounts` with a key,
-  a label and a username for each, a role when you know it and, on a test
-  environment, its password (or `no_password`). The tools only read:
-  never write to the database to create or change a user.
-- On a test environment, look up each login's password in the same query
-  that finds the login, and propose it with the account.
-- The user accounts are generally in the HS_SM_USER_ACCOUNT table: look
-  there first (with `db_query`) for the logins and their passwords.
-- Every account's password can be different, so take each account's
-  password from the same lookup and put it in the proposal, but
-  never a hash: if the stored value is clearly a hash or an encrypted
-  value, do not propose it as a password; give `no_password` with the
-  reason in words instead (at most 200 characters, never the stored
-  value: one that looks like a password or hash is refused). On a test
-  environment every account must carry `password` or `no_password`, or the
-  whole proposal is refused naming the accounts that lack one; `password`
-  and `no_password` together is refused. Passwords can only be proposed
-  for an environment marked as a test environment; otherwise propose the
-  logins without them.
+  a label and a username for each, and a role when you know it. The tools
+  only read: never write to the database to create or change a user.
+- Find the logins WITHOUT reading or sending passwords. On a test
+  environment the app looks each login's password up itself, in the
+  environment's account lookup table (HS_SM_USER_ACCOUNT in PeoplesHR; the
+  table and its columns are set per environment in Edit environments), so
+  a password never passes through you. The user accounts are generally in
+  that table: look there first (with `db_query`) for usernames, roles and
+  statuses - never select a password column.
+- The answer to `propose_accounts` says how many passwords the app found
+  ("N of M passwords found in <table>; no row for: a, b; hash only: c"),
+  never the passwords. A value that is clearly a hash or an encrypted blob
+  is never used: that login is shown with the reason. A password you
+  already have from a seed script may still be sent as `password`, or a
+  reason in words as `no_password` (at most 200 characters, never the
+  stored value); the table wins, and yours is used only where the table has
+  nothing usable. `password` and `no_password` together is refused, and a
+  password is refused on an environment that is not marked as a test
+  environment.
+- When the answer says the lookup did not run (the Database Access module
+  is off, the table or a column was not found, the password column could
+  not be told apart), the proposal is still saved without looked-up
+  passwords. Find the right table or columns with `db_query` on non-secret
+  columns (the table list, `INFORMATION_SCHEMA.COLUMNS`, usernames), call
+  `set_account_lookup` with the table, the username column and, if
+  detection cannot choose, the password column, and propose again. It
+  changes the active environment's setting directly, on a test environment
+  only.
 - A proposal is only a suggestion. The person sees it in Auto Run, under
   Accounts, ticks the ones they want and adds them, and can type another
   password over a proposed one. Each call replaces your previous proposal

@@ -63,6 +63,11 @@ pub struct Environment {
     /// nothing on an environment that is not marked a test environment.
     #[serde(default)]
     pub reset_expired_passwords: bool,
+    /// Where this environment's test logins and their passwords are kept, so
+    /// the app can look the passwords up itself (see
+    /// `autorun::account_lookup`). A file from before has the defaults.
+    #[serde(default)]
+    pub account_lookup: crate::autorun::account_lookup::AccountLookup,
 }
 
 /// What a new environment, and one saved before prefixes existed, uses.
@@ -225,6 +230,7 @@ pub fn validate(file: &EnvFile, known_db_ids: &[String]) -> Result<(), String> {
             .map_err(|why| format!("the password expiry query of \"{name}\": {why}"))?;
         crate::autorun::active_login::check_query(&e.active_session_query)
             .map_err(|why| format!("the active session query of \"{name}\": {why}"))?;
+        e.account_lookup.check().map_err(|why| format!("the account lookup of \"{name}\": {why}"))?;
         if !known_db_ids.iter().any(|k| *k == e.db_id) {
             return Err(format!("\"{name}\" uses a database that is not set up - pick one"));
         }
@@ -341,6 +347,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             password_expiry_query: String::new(),
             active_session_query: String::new(),
             reset_expired_passwords: false,
+            account_lookup: Default::default(),
         }],
         auto_approve_adopted: false,
         playwright_export: Some(first_id.clone()),
@@ -435,6 +442,28 @@ pub fn set_reset_expired_passwords(root: &Path, id: &str, on: bool) -> Result<En
         .find(|e| e.id == id)
         .ok_or_else(|| "that environment is not there any more".to_string())?;
     env.reset_expired_passwords = on;
+    write(root, &file)?;
+    Ok(file)
+}
+
+/// Change one environment's account lookup (`autorun::account_lookup`).
+/// Nothing else in the file changes. Validated first; the caller decides
+/// whether the environment may have one (only a test environment does).
+pub fn set_account_lookup(
+    root: &Path,
+    id: &str,
+    lookup: crate::autorun::account_lookup::AccountLookup,
+) -> Result<EnvFile, String> {
+    let lookup = lookup.tidy();
+    lookup.check()?;
+    let _held = lock();
+    let mut file = load_or_init_locked(root, None)?;
+    let env = file
+        .environments
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| "that environment is not there any more".to_string())?;
+    env.account_lookup = lookup;
     write(root, &file)?;
     Ok(file)
 }
@@ -696,6 +725,7 @@ fn tidy(mut env: Environment) -> Environment {
     env.test_prefix = env.test_prefix.trim().to_string();
     env.password_expiry_query = env.password_expiry_query.trim().to_string();
     env.active_session_query = env.active_session_query.trim().to_string();
+    env.account_lookup = env.account_lookup.tidy();
     env
 }
 
@@ -950,15 +980,6 @@ pub fn no_password_is_a_value(reason: &str) -> bool {
     let reason = reason.trim();
     (reason.chars().count() >= 16 && !reason.chars().any(char::is_whitespace))
         || crate::autorun::capture_redact::holds_opaque_token(reason)
-}
-
-/// Said, with the keys that lack one, when a proposal for a test environment
-/// has an account with neither a password nor a reason for having none.
-pub fn proposed_password_missing(keys: &[&str]) -> String {
-    format!(
-        "This is a test environment: give each account its password from the same database lookup that found its login (never a hash), or say why there is none with no_password. Missing for: {}.",
-        keys.join(", ")
-    )
 }
 
 /// Said when a proposal carries a password and the active environment is

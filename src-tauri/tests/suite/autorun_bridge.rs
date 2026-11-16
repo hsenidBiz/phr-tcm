@@ -2778,7 +2778,7 @@ async fn the_autorun_guide_explains_environments_and_names_the_active_one() {
         assert!(body.contains("get_accounts") && body.contains("propose_accounts"), "{body}");
         assert!(body.contains("never invent a password"), "{body}");
         assert!(!body.contains("never put one in a proposal"), "{body}");
-        assert!(body.contains("put it in the proposal") && body.contains("never a hash"), "{body}");
+        assert!(body.contains("up itself") && body.contains("set_account_lookup"), "{body}");
         assert!(body.contains("read-only") && body.contains("never write"), "{body}");
         assert!(body.contains("not marked as a test environment"), "{body}");
     }
@@ -3513,6 +3513,7 @@ fn the_active_environment_says_when_it_has_no_database_or_address() {
         password_expiry_query: String::new(),
         active_session_query: String::new(),
         reset_expired_passwords: false,
+        account_lookup: Default::default(),
     };
     let text = active_environment_section(&env, None);
     assert!(text.contains("\"Scratch\""), "{text}");
@@ -3538,6 +3539,7 @@ fn the_active_environment_says_when_its_database_is_gone() {
         password_expiry_query: String::new(),
         active_session_query: String::new(),
         reset_expired_passwords: false,
+        account_lookup: Default::default(),
     };
     let text = active_environment_section(&env, None);
     assert!(text.contains("Its database is not set up any more."), "{text}");

@@ -279,6 +279,38 @@ fn save_unlocked(
     Ok(dropped)
 }
 
+/// One password change made from a value read earlier: the account (`key`,
+/// `username`), the password it had when that was read (`was`), and the one
+/// to give it (`new`).
+pub struct PasswordChange {
+    pub key: String,
+    pub username: String,
+    pub was: String,
+    pub new: String,
+}
+
+/// Gives each account its new password the way a person's change is saved
+/// (its saved session goes, a password held pending is let go), but only when
+/// the account is still as it was when the new password was read: a change
+/// made meanwhile wins. The list is read again under the accounts lock.
+/// Answers how many were applied.
+pub fn apply_password_changes_for(root: &Path, env_id: &str, changes: &[PasswordChange]) -> Result<usize, String> {
+    let _held = files();
+    let mut all = load_accounts_for(root, env_id)?;
+    let mut applied = 0;
+    for c in changes {
+        if let Some(a) = all.iter_mut().find(|a| a.key == c.key && a.username == c.username && a.password == c.was) {
+            a.password = c.new.clone();
+            applied += 1;
+        }
+    }
+    if applied == 0 {
+        return Ok(0);
+    }
+    save_unlocked(root, env_id, &all, None, true)?;
+    Ok(applied)
+}
+
 /// Give one account of one environment a new password. Everything else in
 /// the list stays as it is, and the account's saved session goes, as it does
 /// whenever a login changes. Never says either password.

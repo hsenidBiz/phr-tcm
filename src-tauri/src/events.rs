@@ -72,6 +72,9 @@ pub enum AutorunDataKind {
     Proposals,
     SignInProposal,
     Divergences,
+    /// The environments list: an assistant changed an environment's account
+    /// lookup, so an open Edit environments shows it.
+    Environments,
 }
 
 /// Emitted after a successful write to that data, whoever made it, so the

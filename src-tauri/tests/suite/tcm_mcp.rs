@@ -133,6 +133,7 @@ fn tools_list_names_every_tool() {
             "clear_autorun_suspected_defect",
             "set_autorun_order",
             "propose_accounts",
+            "set_account_lookup",
             "get_accounts",
             "check_autorun_sign_in",
             "inspect_sign_in_page",
@@ -1583,7 +1584,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
 /// filled in.
 #[test]
 fn with_only_the_api_templates_row_on_a_quirk_without_from_is_the_api_assistants() {
-    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#;
+    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","set_account_lookup","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#;
     let posted = |tools: &'static str, args: &str| -> (String, serde_json::Value) {
         let calls = std::cell::RefCell::new(vec![]);
         let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
@@ -1645,7 +1646,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
 
     // Every module on, the Auto Run row switched off: no autorun topic, its
     // parts gone, the others there.
-    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","get_autorun_network_wait","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
+    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","set_account_lookup","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","get_autorun_network_wait","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
     let g = guide_of(ROW_OFF);
     assert_eq!(g["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing", "api_templates", "reports"]));
     assert!(g["inputSchema"]["properties"].get("quick").is_none(), "{g}");
@@ -1731,7 +1732,7 @@ fn the_merged_tools_refuse_the_mixes_they_used_to_ignore() {
 /// "not available" where Auto Run is not offered at all.
 #[test]
 fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_offered() {
-    const ACCOUNT_TOOLS: [&str; 2] = ["propose_accounts", "get_accounts"];
+    const ACCOUNT_TOOLS: [&str; 3] = ["propose_accounts", "set_account_lookup", "get_accounts"];
     let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
     for name in ACCOUNT_TOOLS {
         assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
@@ -1742,7 +1743,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","set_account_lookup","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1774,24 +1775,24 @@ fn the_account_tools_reach_their_routes() {
     assert_eq!(item["properties"]["password"]["type"], "string", "{item}");
     assert_eq!(item["properties"]["password"]["maxLength"], 256, "{item}");
     let description = propose["description"].as_str().unwrap();
-    assert!(description.contains("never a hash"), "{description}");
+    // The app looks passwords up itself: the assistant is told not to read or send them.
+    assert!(description.contains("WITHOUT reading or sending passwords"), "{description}");
     assert!(description.contains("test environment"), "{description}");
-    // On a test environment each account carries its password or a reason.
+    assert!(description.contains("hash"), "{description}");
     assert_eq!(item["properties"]["no_password"]["type"], "string", "{item}");
     assert_eq!(item["properties"]["no_password"]["maxLength"], 200, "{item}");
     assert!(description.contains("no_password"), "{description}");
-    assert!(
-        description.contains(
-            "On a test environment each account's password from the same database lookup that found its login is required"
-        ),
-        "{description}"
-    );
+    assert!(description.contains("set_account_lookup"), "{description}");
     assert!(
         description.ends_with(
-            "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords."
+            "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with db_query, on the username, role and status columns only) for the logins."
         ),
         "{description}"
     );
+    assert!(!description.contains("is required"), "no password is required of the assistant: {description}");
+    let set = tools.iter().find(|t| t["name"] == "set_account_lookup").unwrap();
+    assert_eq!(set["inputSchema"]["required"], serde_json::json!(["table", "username_column"]));
+    assert!(set["inputSchema"]["properties"]["password_column"].is_object());
     assert_eq!(item["required"], serde_json::json!(["key", "label", "username"]));
 
     let calls = std::cell::RefCell::new(vec![]);
@@ -1802,6 +1803,12 @@ fn the_account_tools_reach_their_routes() {
     let args = serde_json::json!({ "accounts": [{ "key": "hr.sup", "label": "Supervisor", "username": "sup1" }] });
     for (name, args, method, path) in [
         ("propose_accounts", args.clone(), "POST", "/accounts-propose"),
+        (
+            "set_account_lookup",
+            serde_json::json!({ "table": "dbo.Users", "username_column": "Login" }),
+            "POST",
+            "/accounts-lookup-set",
+        ),
         ("get_accounts", serde_json::json!({}), "GET", "/accounts"),
     ] {
         let req = serde_json::json!({
@@ -2802,7 +2809,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 71, "{names:?}");
+        assert_eq!(names.len(), 72, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));

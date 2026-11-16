@@ -886,7 +886,7 @@ export const autoRun: Screen = {
       locate: { role: "heading", nameRe: "^Proposed by the assistant" },
       name: "Proposed by the assistant",
       does:
-        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the assistant found in the database, or type one. **Dismiss** drops the list.",
+        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the app read from the environment's database, or type one. On a test environment the app looks each password up itself, so a password never passes through the assistant, and **Fill passwords from database** reads them again, for example after a reset. The **Accounts** tab has the same button for the accounts you have saved: it changes only the passwords that differ. **Dismiss** drops the list.",
     },
     {
       id: "add-account",

@@ -21,6 +21,7 @@ fn env_named(name: &str) -> Environment {
         password_expiry_query: String::new(),
         active_session_query: String::new(),
         reset_expired_passwords: false,
+        account_lookup: Default::default(),
     }
 }
 

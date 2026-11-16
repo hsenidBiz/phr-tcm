@@ -6,7 +6,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import EnvironmentsDialog from "./EnvironmentsDialog";
+import EnvironmentsDialog, { LOOKUP_COLUMN_RULE, LOOKUP_NEEDED, LOOKUP_TABLE_RULE, lookupProblems } from "./EnvironmentsDialog";
 
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 afterEach(() => {
@@ -32,17 +32,18 @@ type Env = {
   password_expiry_query: string;
   active_session_query: string;
   reset_expired_passwords: boolean;
+  account_lookup: { table?: string; username_column?: string; password_column?: string };
 };
 
 const DEFAULT: Env = {
   id: "env-00000001", name: "Default", start_url: "", allowed_origins: [],
   db_id: "dev-read", test_environment: false, test_prefix: "AUTOTEST", has_default_password: false,
-  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false,
+  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
 };
 const QA: Env = {
   id: "env-00000002", name: "QA", start_url: "https://qa.example.internal/", allowed_origins: [],
   db_id: "qa-read", test_environment: false, test_prefix: "QATEST", has_default_password: false,
-  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false,
+  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
 };
 
 /** A small stand-in for the Rust side: the list, plus whatever each command
@@ -64,12 +65,13 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
     return null;
   });
   const onClose = vi.fn();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qc}>
       <EnvironmentsDialog onClose={onClose} />
     </QueryClientProvider>,
   );
-  return { calls, onClose };
+  return { calls, onClose, qc };
 }
 
 test("lists each environment with its address, database and default-password state", async () => {
@@ -121,6 +123,7 @@ test("a new environment is saved with an empty id and the form's fields", async 
     test_prefix: "AUTOTEST",
     password_expiry_query: "",
     active_session_query: "",
+    account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
   });
 });
 
@@ -453,4 +456,85 @@ test("the reset switch shows only for a saved test environment, is off by defaul
   fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
   await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
   expect(Object.keys(calls.find((c) => c.cmd === "env_save")!.args.env as object)).not.toContain("reset_expired_passwords");
+});
+
+// ---- Account lookup ---------------------------------------------------------
+
+test("the account lookup starts with PeoplesHR's table, shows an edited environment's own, and is saved as typed", async () => {
+  const withLookup: Env = {
+    ...QA,
+    account_lookup: { table: "dbo.Users", username_column: "Login", password_column: "Secret" },
+  };
+  const { calls } = mount({ env_save: () => ({ active: DEFAULT.id, environments: [DEFAULT, withLookup] }) }, [DEFAULT, withLookup]);
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
+  expect(((await screen.findByRole("textbox", { name: "Account table" })) as HTMLInputElement).value).toBe("PeoplesHR.HS_SM_USER_ACCOUNT");
+  expect((screen.getByRole("textbox", { name: "Username column" }) as HTMLInputElement).value).toBe("USRACC_USER_ID");
+  expect((screen.getByRole("textbox", { name: "Password column" }) as HTMLInputElement).value).toBe("");
+  // What is detected when it is empty is said under it.
+  expect(screen.getByText(/Leave empty to detect it/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  expect(((await screen.findByRole("textbox", { name: "Account table" })) as HTMLInputElement).value).toBe("dbo.Users");
+  fireEvent.change(screen.getByRole("textbox", { name: "Password column" }), { target: { value: " [Pwd] " } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
+  const sent = calls.find((c) => c.cmd === "env_save")!.args.env as { account_lookup: unknown };
+  expect(sent.account_lookup).toEqual({ table: "dbo.Users", username_column: "Login", password_column: "[Pwd]" });
+});
+
+test("a table or column that is not a plain name is said inline and cannot be saved", async () => {
+  const { calls } = mount();
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
+  const save = await screen.findByRole("button", { name: "Save environment" });
+  expect(save).toBeEnabled();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Account table" }), { target: { value: "x; DROP TABLE y" } });
+  expect(screen.getByText(LOOKUP_TABLE_RULE)).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Account table" })).toHaveAttribute("aria-invalid", "true");
+  expect(save).toBeDisabled();
+  fireEvent.change(screen.getByRole("textbox", { name: "Account table" }), { target: { value: "[dbo].[Users]" } });
+  expect(screen.queryByText(LOOKUP_TABLE_RULE)).not.toBeInTheDocument();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Username column" }), { target: { value: "a b" } });
+  expect(screen.getByText(LOOKUP_COLUMN_RULE)).toBeInTheDocument();
+  expect(save).toBeDisabled();
+  fireEvent.change(screen.getByRole("textbox", { name: "Username column" }), { target: { value: "" } });
+  expect(screen.getByText(LOOKUP_NEEDED)).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Username column" }), { target: { value: "Login" } });
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Password column" }), { target: { value: "p'" } });
+  expect(screen.getByText(LOOKUP_COLUMN_RULE)).toBeInTheDocument();
+  expect(save).toBeDisabled();
+  fireEvent.change(screen.getByRole("textbox", { name: "Password column" }), { target: { value: "" } });
+  expect(save).toBeEnabled();
+  expect(calls.filter((c) => c.cmd === "env_save")).toHaveLength(0);
+});
+
+test("the lookup rules are the app's: schema.table or database.schema.table, bracketed or not", () => {
+  const ok = (t: string, u = "Login", p = "") =>
+    lookupProblems({ lookup_table: t, lookup_username_column: u, lookup_password_column: p });
+  for (const good of ["PeoplesHR.HS_SM_USER_ACCOUNT", "[dbo].[Users]", "Db1.dbo.Users"]) expect(ok(good)).toEqual({});
+  for (const bad of ["Users", "a.b.c.d", "dbo.", "dbo.Us ers", "dbo.Users;", "dbo.'Users'", "dbo.1Users"]) {
+    expect(ok(bad).table, bad).toBe(LOOKUP_TABLE_RULE);
+  }
+  expect(ok("dbo.Users", "[Login]").username).toBeUndefined();
+  expect(ok("dbo.Users", "a.b").username).toBe(LOOKUP_COLUMN_RULE);
+});
+
+test("an account lookup changed while the dialog is open reaches the fields the person has not touched", async () => {
+  let current: Env = { ...QA, account_lookup: { table: "dbo.Users", username_column: "Login", password_column: "" } };
+  const { qc } = mount({ env_list: () => ({ active: DEFAULT.id, environments: [DEFAULT, current] }) });
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  const table = (await screen.findByRole("textbox", { name: "Account table" })) as HTMLInputElement;
+  const pwd = screen.getByRole("textbox", { name: "Password column" }) as HTMLInputElement;
+  // The person edits the password column; the assistant changes all three.
+  fireEvent.change(pwd, { target: { value: "Mine" } });
+  current = { ...QA, account_lookup: { table: "dbo.Accounts", username_column: "UserName", password_column: "Pw" } };
+  await qc.invalidateQueries({ queryKey: ["environments"] });
+  await waitFor(() => expect(table.value).toBe("dbo.Accounts"));
+  expect((screen.getByRole("textbox", { name: "Username column" }) as HTMLInputElement).value).toBe("UserName");
+  expect(pwd.value).toBe("Mine");
 });

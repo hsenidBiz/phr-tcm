@@ -6,6 +6,7 @@
 //! never reach Azure DevOps. The one door out is `publish`, used only when
 //! a person has reviewed a run and presses Send.
 
+pub mod account_lookup;
 pub mod accounts;
 pub mod active_login;
 pub mod action_help;

@@ -582,6 +582,7 @@ fn each_tool_belongs_to_its_module() {
             "clear_autorun_suspected_defect",
             "set_autorun_order",
             "propose_accounts",
+            "set_account_lookup",
             "get_accounts",
             "check_autorun_sign_in",
             "inspect_sign_in_page",
@@ -866,6 +867,7 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
         "db_lookup",
         "db_query",
         "propose_accounts",
+        "set_account_lookup",
         "get_accounts",
         "list_api_templates",
     ] {
@@ -895,22 +897,22 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     ] {
         assert!(flat.contains(control), "the routine does not name {control:?}: {flat}");
     }
-    assert!(flat.contains("Never use a hash"), "{flat}");
     assert!(!flat.contains("HR_SM_USER_ACCOUNT"), "the table is HS_SM_USER_ACCOUNT: {flat}");
     for line in [
-        "On a test environment, look up each login's password in the same query that finds the login, and propose it with the account.",
-        "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with `db_query`) for the logins and their passwords.",
+        "without reading or sending passwords: on a test environment the app looks each password up itself",
+        "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with `db_query`, on usernames and roles only, never a password column).",
+        "If it says the lookup did not run, find the right table or columns with `db_query` on non-secret columns and call `set_account_lookup`",
     ] {
         assert!(flat.contains(line), "{line}: {flat}");
     }
-    assert!(flat.contains("no_password"), "{flat}");
     assert!(flat.contains("You cannot record an area yourself"), "{flat}");
     assert!(flat.contains("Scripts never run templates"), "{flat}");
     assert!(flat.contains("supervised run of a single case"), "{flat}");
 }
 
-/// Everywhere the assistant is told to propose accounts it is also told to
-/// take each login's password in the same query, and where the logins are.
+/// Everywhere the assistant is told to propose accounts it is also told that
+/// the app looks the passwords up itself, where the logins are, and how to
+/// fix the lookup.
 /// (The writer role is at its size cap and only points at `propose_accounts`;
 /// the guide it reads holds the lines.)
 #[test]
@@ -926,8 +928,10 @@ fn every_place_that_proposes_accounts_names_the_password_lookup_and_the_user_tab
     for (name, text) in &places {
         assert!(text.contains("HS_SM_USER_ACCOUNT"), "{name} does not name the user table");
         assert!(!text.contains("HR_SM_USER_ACCOUNT"), "{name} misspells the user table");
-        assert!(text.contains("look there first (with `db_query`) for the logins and their passwords"), "{name}");
-        assert!(text.contains("propose it with the account"), "{name}");
+        assert!(text.contains("up itself"), "{name} does not say the app looks passwords up itself");
+        assert!(text.contains("set_account_lookup"), "{name} does not name set_account_lookup");
+        assert!(text.contains("look there first (with `db_query`"), "{name}");
+        assert!(!text.contains("their passwords"), "{name} still sends the assistant to read passwords");
     }
 }
 

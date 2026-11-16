@@ -7,7 +7,7 @@
 // the moment Set succeeds, and a row only ever learns whether one is set.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
 import { IconAdd, IconCancel, IconClear, IconConfirm, IconCopyFromEnvironment, IconEdit, IconRemove } from "../lib/actionIcons";
 import { saveSelectedDb } from "../lib/dbServer";
@@ -51,6 +51,11 @@ type Form = {
   password_expiry_query: string;
   /** One read-only SELECT that says whether a login is signed in elsewhere. */
   active_session_query: string;
+  /** Where the environment's test logins and their passwords are kept. */
+  lookup_table: string;
+  lookup_username_column: string;
+  /** Empty: the app detects it. */
+  lookup_password_column: string;
 };
 
 /** What each query box says under it. */
@@ -61,6 +66,46 @@ export const ACTIVE_SESSION_HINT =
 
 /** The prefix a new environment starts with, as Rust's own default. */
 export const DEFAULT_TEST_PREFIX = "AUTOTEST";
+
+/** The account lookup a new environment starts with, as Rust's own default. */
+export const DEFAULT_LOOKUP_TABLE = "PeoplesHR.HS_SM_USER_ACCOUNT";
+export const DEFAULT_LOOKUP_USERNAME_COLUMN = "USRACC_USER_ID";
+
+/** What sits under the account lookup fields. */
+export const ACCOUNT_LOOKUP_HELP =
+  "Where this environment keeps its test logins. On a test environment the app reads each login's password from this table itself, so a password never passes through the AI assistant.";
+export const PASSWORD_COLUMN_HELP =
+  "Leave empty to detect it: the one text column of the table whose name has pass or pwd and is not a date or a flag. If there is none, or several, the lookup says so and asks you to set the column.";
+
+/** Said under a table or column name that is not a plain name. */
+export const LOOKUP_TABLE_RULE =
+  "Write the table as schema.table or database.schema.table, with letters, digits and underscores only.";
+export const LOOKUP_COLUMN_RULE = "A column is one name of letters, digits and underscores.";
+export const LOOKUP_NEEDED = "This is needed.";
+
+const NAME_PART = /^(?:\[[A-Za-z_][A-Za-z0-9_]*\]|[A-Za-z_][A-Za-z0-9_]*)$/;
+
+/** What is wrong with the account lookup fields, as Rust judges them: a
+ * sentence for each field that is, none for one that is fine. */
+export function lookupProblems(f: {
+  lookup_table: string;
+  lookup_username_column: string;
+  lookup_password_column: string;
+}): { table?: string; username?: string; password?: string } {
+  const out: { table?: string; username?: string; password?: string } = {};
+  const table = f.lookup_table.trim();
+  if (table === "") out.table = LOOKUP_NEEDED;
+  else {
+    const parts = table.split(".");
+    if (parts.length < 2 || parts.length > 3 || !parts.every((p) => NAME_PART.test(p))) out.table = LOOKUP_TABLE_RULE;
+  }
+  const user = f.lookup_username_column.trim();
+  if (user === "") out.username = LOOKUP_NEEDED;
+  else if (!NAME_PART.test(user)) out.username = LOOKUP_COLUMN_RULE;
+  const pwd = f.lookup_password_column.trim();
+  if (pwd !== "" && !NAME_PART.test(pwd)) out.password = LOOKUP_COLUMN_RULE;
+  return out;
+}
 
 function formFor(env: EnvView): Form {
   return {
@@ -73,6 +118,9 @@ function formFor(env: EnvView): Form {
     test_prefix: env.test_prefix,
     password_expiry_query: env.password_expiry_query,
     active_session_query: env.active_session_query,
+    lookup_table: env.account_lookup.table ?? DEFAULT_LOOKUP_TABLE,
+    lookup_username_column: env.account_lookup.username_column ?? DEFAULT_LOOKUP_USERNAME_COLUMN,
+    lookup_password_column: env.account_lookup.password_column ?? "",
   };
 }
 
@@ -94,6 +142,11 @@ function inputFor(form: Form): EnvInput {
     test_prefix: form.test_prefix.trim(),
     password_expiry_query: form.password_expiry_query,
     active_session_query: form.active_session_query,
+    account_lookup: {
+      table: form.lookup_table.trim(),
+      username_column: form.lookup_username_column.trim(),
+      password_column: form.lookup_password_column.trim(),
+    },
   };
 }
 
@@ -117,10 +170,42 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
 
   const list = envs.data?.environments ?? [];
   const active = envs.data?.active ?? "";
+  const lookup = form ? lookupProblems(form) : {};
+  const lookupInvalid = Object.keys(lookup).length > 0;
   const dbLabel = (id: string) =>
     databases.data?.find((d) => d.id === id)?.label ?? "database not set up any more";
 
   const take = (view: EnvListView) => qc.setQueryData(envKeys.list, view);
+
+  // The account lookup as the open form last read it from the saved list. An
+  // assistant can change it while the dialog is open (set_account_lookup):
+  // the fields the person has not touched follow the change, so a Save never
+  // writes the old lookup back over it.
+  const loadedLookup = useRef<{ table: string; user: string; pwd: string } | null>(null);
+  const formId = form?.id ?? "";
+  useEffect(() => {
+    if (formId === "") return;
+    const saved = envs.data?.environments.find((e) => e.id === formId)?.account_lookup;
+    if (!saved) return;
+    const now = {
+      table: saved.table ?? DEFAULT_LOOKUP_TABLE,
+      user: saved.username_column ?? DEFAULT_LOOKUP_USERNAME_COLUMN,
+      pwd: saved.password_column ?? "",
+    };
+    const was = loadedLookup.current;
+    loadedLookup.current = now;
+    if (!was || (was.table === now.table && was.user === now.user && was.pwd === now.pwd)) return;
+    setForm((f) =>
+      f && f.id === formId
+        ? {
+            ...f,
+            lookup_table: f.lookup_table === was.table ? now.table : f.lookup_table,
+            lookup_username_column: f.lookup_username_column === was.user ? now.user : f.lookup_username_column,
+            lookup_password_column: f.lookup_password_column === was.pwd ? now.pwd : f.lookup_password_column,
+          }
+        : f,
+    );
+  }, [envs.data, formId]);
 
   /** Runs one command: shows its refusal in the dialog, and nothing else. */
   const run = async (work: () => Promise<void>) => {
@@ -150,6 +235,9 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       test_prefix: DEFAULT_TEST_PREFIX,
       password_expiry_query: "",
       active_session_query: "",
+      lookup_table: DEFAULT_LOOKUP_TABLE,
+      lookup_username_column: DEFAULT_LOOKUP_USERNAME_COLUMN,
+      lookup_password_column: "",
     });
   };
 
@@ -157,6 +245,11 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
     setProblem("");
     setPassword("");
     setRemoving(null);
+    loadedLookup.current = {
+      table: env.account_lookup.table ?? DEFAULT_LOOKUP_TABLE,
+      user: env.account_lookup.username_column ?? DEFAULT_LOOKUP_USERNAME_COLUMN,
+      pwd: env.account_lookup.password_column ?? "",
+    };
     setForm(formFor(env));
   };
 
@@ -392,6 +485,50 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
               />
               <span className="block text-xs text-faint">{ACTIVE_SESSION_HINT}</span>
             </label>
+            <fieldset className="space-y-2 rounded-md border border-border p-2">
+              <legend className="px-1 text-xs font-medium text-muted">Account lookup</legend>
+              <p className="text-xs text-faint">{ACCOUNT_LOOKUP_HELP}</p>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted">Account table</span>
+                <Input
+                  aria-label="Account table"
+                  aria-invalid={lookup.table ? true : undefined}
+                  className="w-full font-mono text-xs"
+                  placeholder={DEFAULT_LOOKUP_TABLE}
+                  value={form.lookup_table}
+                  onChange={(e) => setForm({ ...form, lookup_table: e.target.value })}
+                />
+                {lookup.table && <span className="block text-xs text-danger">{lookup.table}</span>}
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted">Username column</span>
+                <Input
+                  aria-label="Username column"
+                  aria-invalid={lookup.username ? true : undefined}
+                  className="w-full font-mono text-xs"
+                  placeholder={DEFAULT_LOOKUP_USERNAME_COLUMN}
+                  value={form.lookup_username_column}
+                  onChange={(e) => setForm({ ...form, lookup_username_column: e.target.value })}
+                />
+                {lookup.username && <span className="block text-xs text-danger">{lookup.username}</span>}
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted">Password column</span>
+                <Input
+                  aria-label="Password column"
+                  aria-invalid={lookup.password ? true : undefined}
+                  className="w-full font-mono text-xs"
+                  placeholder="Detected"
+                  value={form.lookup_password_column}
+                  onChange={(e) => setForm({ ...form, lookup_password_column: e.target.value })}
+                />
+                {lookup.password ? (
+                  <span className="block text-xs text-danger">{lookup.password}</span>
+                ) : (
+                  <span className="block text-xs text-faint">{PASSWORD_COLUMN_HELP}</span>
+                )}
+              </label>
+            </fieldset>
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <Switch
@@ -466,7 +603,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 <IconCancel aria-hidden />
                 Discard
               </Button>
-              <Button size="sm" disabled={busy} onClick={save}>
+              <Button size="sm" disabled={busy || lookupInvalid} onClick={save}>
                 <IconConfirm aria-hidden />
                 Save environment
               </Button>

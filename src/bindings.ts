@@ -496,6 +496,13 @@ export const commands = {
 	 *  need the person's confirmation (resend them in `replace`).
 	 */
 	envAddProposals: (picks: AccountInput[], replace: string[]) => typedError<string[], string>(__TAURI_INVOKE("env_add_proposals", { picks, replace })),
+	/**  "Fill passwords from database" on the Proposed tab. */
+	envFillProposalPasswords: (dbRead: boolean) => typedError<FillCounts, string>(__TAURI_INVOKE("env_fill_proposal_passwords", { dbRead })),
+	/**
+	 *  "Fill passwords from database" on the Accounts tab: the named accounts, or
+	 *  every saved one when `keys` is empty.
+	 */
+	envFillAccountPasswords: (keys: string[], dbRead: boolean) => typedError<FillCounts, string>(__TAURI_INVOKE("env_fill_account_passwords", { keys, dbRead })),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -1989,6 +1996,16 @@ export type AccountInput = {
 	password: string,
 };
 
+/**
+ *  The environment's account lookup: where its test logins and their
+ *  passwords are kept. `password_column` empty means "detect it".
+ */
+export type AccountLookup = {
+	table?: string,
+	username_column?: string,
+	password_column?: string,
+};
+
 /**  What uses one account, from `npm run users -- list --json`. */
 export type AccountRefs = {
 	key: string,
@@ -3115,7 +3132,12 @@ export type AutorunDataChanged = {
  *  Which of the data an assistant adds through the AI bridge changed. The
  *  Auto Run screen reads each kind from its own queries.
  */
-export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences";
+export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences" | 
+/**
+ *  The environments list: an assistant changed an environment's account
+ *  lookup, so an open Edit environments shows it.
+ */
+"environments";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Run browser: while
@@ -4716,6 +4738,8 @@ export type EnvInput = {
 	password_expiry_query?: string | null,
 	/**  Left out, an edit keeps the environment's active session query. */
 	active_session_query?: string | null,
+	/**  Left out, an edit keeps the environment's account lookup. */
+	account_lookup?: AccountLookup | null,
 };
 
 export type EnvListView = {
@@ -4768,6 +4792,8 @@ export type EnvView = {
 	 *  while it is marked a test environment.
 	 */
 	reset_expired_passwords: boolean,
+	/**  Where this environment's logins and passwords are looked up. */
+	account_lookup: AccountLookup,
 };
 
 export type Expect = Expect_Serialize | Expect_Deserialize;
@@ -4915,6 +4941,21 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
+};
+
+/**
+ *  What a "Fill passwords from database" did, in counts and nothing else:
+ *  no password and no login is in it.
+ */
+export type FillCounts = {
+	/**  Logins whose password is now the one in the table (it differed). */
+	updated: number,
+	/**  Logins whose password already was the one in the table. */
+	unchanged: number,
+	/**  Logins with no row in the table, or a row with no password. */
+	no_row: number,
+	/**  Logins whose value in the table is only a hash. */
+	hash_only: number,
 };
 
 /**  One object that matched. */
