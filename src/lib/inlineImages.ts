@@ -81,9 +81,9 @@ export function swapInlineImages(text: string, images: InlineImage[]): string {
  * pointing at what looks like an ADO attachment - fetch failed, refused by
  * the token-host guard, or the fetch has not finished - becomes a small
  * note instead of a broken image icon. `kind` picks the placeholder's own
- * syntax: the Astryx Markdown island PR threads render through does not
- * accept raw HTML, so its placeholder has to be markdown too. A non-ADO
- * image is left exactly alone. */
+ * syntax: markdown text (PR threads) gets a markdown placeholder, HTML
+ * (work item comments) an HTML one, so each renders through its own
+ * pipeline unchanged. A non-ADO image is left exactly alone. */
 export function markUnavailableImages(text: string, kind: "html" | "md"): string {
   if (kind === "html") {
     return text.replace(IMG_TAG_RE, (whole, url: string) =>
@@ -95,31 +95,4 @@ export function markUnavailableImages(text: string, kind: "html" | "md"): string
   return text.replace(MD_IMG_RE, (whole, url: string) =>
     looksLikeAdoAttachment(unescapeAmp(url)) ? "*Image unavailable*" : whole,
   );
-}
-
-/** A `data:` image URI in `data`, converted to a `blob:` object URL.
- *
- * Astryx's Markdown island refuses to render a `data:` image src at all -
- * `sanitizeUrl` blocks it outright, in the same list as `javascript:` and
- * `vbscript:`, so swapping one into the markdown text before it reaches
- * `<Markdown>` would just fall back to the `[alt]` bracket forever. A
- * `blob:` URL is not on that list, and Chromium (the WebView) renders it
- * exactly like any other image src - so PR threads swap to one of these
- * instead of the data: URI CommentsPanel uses directly in HTML. */
-function toBlobUrl(data: string): string {
-  const match = /^data:([^;,]+)?(?:;charset=[^;,]+)?;base64,(.*)$/s.exec(data);
-  if (!match) return data;
-  const [, mime, base64] = match;
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: mime || "application/octet-stream" }));
-}
-
-/** `commentImages`'s result, with each data: URI swapped for a `blob:`
- * object URL - what PR threads need before handing text to `swapInlineImages`
- * (see `toBlobUrl` for why). Not used by CommentsPanel, which renders HTML
- * via `dangerouslySetInnerHTML` and has no such restriction. */
-export function toBlobImages(images: InlineImage[]): InlineImage[] {
-  return images.map((img) => ({ url: img.url, data: toBlobUrl(img.data) }));
 }

@@ -9,19 +9,16 @@
 // from right here, and it is the thing you otherwise leave the app to do.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, MessageSquare, RotateCcw } from "lucide-react";
-import { useLayoutEffect, useState } from "react";
 import { toast } from "../lib/toast";
-import { Markdown } from "@astryxdesign/core/Markdown";
-import { commands, type InlineImage, type PrThread } from "../bindings";
-import AstryxIsland from "./AstryxIsland";
+import { commands, type PrThread } from "../bindings";
+import MarkdownView from "./MarkdownView";
 import { Skeleton } from "./ui/skeleton";
 import { cn } from "../lib/cn";
 import { relativeTime } from "../lib/history";
 import { unwrap } from "../lib/ipc";
 import { isResolved } from "../lib/threadStatus";
-import { attachmentUrls, markUnavailableImages, swapInlineImages, toBlobImages } from "../lib/inlineImages";
+import { attachmentUrls, markUnavailableImages, swapInlineImages } from "../lib/inlineImages";
 
 /** What Azure DevOps calls it, in words a reader recognises. */
 function statusLabel(status: string): string {
@@ -96,23 +93,9 @@ function Thread({
               {c.published && <span className="text-faint">{relativeTime(c.published)}</span>}
               {c.edited && <span className="text-faint">(edited)</span>}
             </p>
-            {/* Remote-authored text, so it goes through the Markdown island
-                like the PR description does - never dangerouslySetInnerHTML.
-                Links leave for the system browser. */}
-            <AstryxIsland>
-              <Markdown
-                density="compact"
-                autolink="gfm"
-                contentWidth="100%"
-                className="text-text"
-                onLinkClick={(href) => {
-                  openUrl(href).catch(() => toast.error("Could not open the browser."));
-                  return false;
-                }}
-              >
-                {withImages(c.content)}
-              </Markdown>
-            </AstryxIsland>
+            {/* Remote-authored text: the app's one markdown renderer, which
+                sanitises it. Links leave for the system browser. */}
+            <MarkdownView text={withImages(c.content)} />
           </div>
         ))}
       </div>
@@ -196,34 +179,12 @@ export default function PrThreads({
     enabled: imageUrls.length > 0,
     staleTime: Infinity,
   });
-  // Astryx's Markdown island refuses a data: image src outright, so - only
-  // here, not in the shared cache above - each one becomes a blob: object
-  // URL. Minted and revoked in ONE effect, keyed on the query data: a batch
-  // minted anywhere else (a useMemo) outlives StrictMode's rehearsal
-  // cleanup, which revokes it while the memo keeps handing it out - every
-  // image of a cached PR broken on reopen. Layout rather than passive, so
-  // the batch is in state before the frame that would show the raw URL.
-  // Each batch is tagged with the data it was minted from; until the tag
-  // matches the current data the new batch is not ready yet.
-  const [blob, setBlob] = useState<{ src: InlineImage[] | undefined; imgs: InlineImage[] }>({
-    src: undefined,
-    imgs: [],
-  });
-  useLayoutEffect(() => {
-    const imgs = toBlobImages(images.data ?? []);
-    setBlob({ src: images.data, imgs });
-    return () => {
-      for (const img of imgs) URL.revokeObjectURL(img.data);
-    };
-  }, [images.data]);
-  const minted = blob.src === images.data;
   /** Swap in what came back; anything still unswapped once the fetch has
-   * settled becomes the unavailable note. While still loading - or while
-   * this data's batch is still being minted - the text is left unchanged,
-   * so an image that is on its way never flashes as unavailable. */
+   * settled becomes the unavailable note. While still loading the text is
+   * left unchanged, so an image that is on its way never flashes as
+   * unavailable. */
   const withImages = (md: string) => {
-    if (!minted) return md;
-    const swapped = swapInlineImages(md, blob.imgs);
+    const swapped = swapInlineImages(md, images.data ?? []);
     return images.isPending ? swapped : markUnavailableImages(swapped, "md");
   };
 

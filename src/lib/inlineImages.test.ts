@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { attachmentUrls, markUnavailableImages, swapInlineImages, toBlobImages } from "./inlineImages";
+import { attachmentUrls, markUnavailableImages, swapInlineImages } from "./inlineImages";
 
 const RAW_URL = "https://dev.azure.com/acme/Web/_apis/wit/attachments/att-1?fileName=x.png&download=true";
 const ESCAPED_URL = "https://dev.azure.com/acme/Web/_apis/wit/attachments/att-1?fileName=x.png&amp;download=true";
@@ -63,17 +63,4 @@ test("a markdown URL with one level of balanced parens is captured and swapped w
 
   expect(attachmentUrls([md])).toEqual([url]);
   expect(swapInlineImages(md, [{ url, data: DATA_URI }])).toBe(`![shot](${DATA_URI})`);
-});
-
-/** Astryx's Markdown island (PR threads) blocks a `data:` image src
- * outright - `toBlobImages` swaps it for a `blob:` object URL first, which
- * `swapInlineImages` can then put straight into the markdown text. */
-test("toBlobImages converts each data: URI to a blob: object URL, keeping the url unchanged", () => {
-  const images = [
-    { url: "https://dev.azure.com/x/_apis/wit/attachments/1", data: "data:image/png;base64,aGVsbG8=" },
-  ];
-  const out = toBlobImages(images);
-  expect(out).toHaveLength(1);
-  expect(out[0].url).toBe(images[0].url);
-  expect(out[0].data.startsWith("blob:")).toBe(true);
 });
