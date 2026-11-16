@@ -1,5 +1,5 @@
 //! The page read behind a refusal: what a page newly shows after an action.
-//! The read itself is JavaScript, tested in `src/lib/pageMessages.test.ts`;
+//! The read itself is JavaScript, tested in `tests/lib/pageMessages.test.ts`;
 //! here are the comparison and the page that cannot be read.
 
 use crate::common::ScriptedDriver;

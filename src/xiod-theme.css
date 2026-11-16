@@ -11,7 +11,7 @@
    palette to keep in step.
 
    A new XiodUI part means a new @source line below and an entry in
-   VETTED_PARTS (src/xiod.test.ts), which fails until every colour the part
+   VETTED_PARTS (tests/xiod.test.ts), which fails until every colour the part
    uses is mapped here. */
 
 /* 1. Tailwind generates the utilities used inside the XiodUI parts the app

@@ -1058,7 +1058,7 @@ fn a_single_value_json_expectation_is_refused_with_its_own_sentence() {
 
 /// Compares `got` with a golden file under `tests/fixtures/pw_export/`, or
 /// rewrites the file when PW_EXPORT_BLESS is set (then read the diff).
-/// `src/lib/pwExportGolden.test.ts` type-checks every golden, so each one
+/// `tests/lib/pwExportGolden.test.ts` type-checks every golden, so each one
 /// must stay what the translator writes today.
 fn golden(name: &str, got: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw_export").join(name);

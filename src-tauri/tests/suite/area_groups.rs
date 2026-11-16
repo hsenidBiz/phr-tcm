@@ -1,5 +1,5 @@
 //! Group by area: the tree `import_parser::area_groups` builds (the same
-//! cases `src/lib/areaGroups.test.ts` checks on the app's side), and the
+//! cases `tests/lib/areaGroups.test.ts` checks on the app's side), and the
 //! review page View in browser writes from it while the Queue is grouped.
 
 use v2_lib::import_parser::area_groups::{build, AreaGroup};

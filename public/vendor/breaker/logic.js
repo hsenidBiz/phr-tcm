@@ -3,7 +3,7 @@
 // Written for the app; nothing here is third-party.
 //
 // A plain script, not a module: the page loads it with a <script> tag and
-// finds it at globalThis.BreakerLogic. src/components/breakerLogic.test.ts
+// finds it at globalThis.BreakerLogic. tests/components/breakerLogic.test.ts
 // runs this same file in a bare context and tests it the same way.
 (function (root) {
   "use strict";
