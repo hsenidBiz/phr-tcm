@@ -29,6 +29,9 @@ env:
 
 jobs:
   test:
+    # The same main is pushed to the owner's private copy too, where Windows
+    # minutes are billed; the suites run on phr-tcm only.
+    if: github.repository == 'hsenidBiz/phr-tcm'
     # Some Rust tests only run on Windows (the Common-Controls manifest note
     # at the top of src-tauri/tests/bindings.rs, PowerShell, cmd.exe).
     runs-on: windows-latest

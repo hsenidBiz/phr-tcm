@@ -57,6 +57,8 @@ Rust command signatures via tauri-specta. Never hand-edit it; change the
 Rust and regenerate.
 
 CI: `.github/workflows/ci.yml` runs on push and pull requests to `main`
+in `hsenidBiz/phr-tcm` only (the private copy skips it - its Windows
+minutes are billed; SonarQube Cloud analyses that copy automatically)
 (Windows runner): `tsc --noEmit`, `npm test`, `npm run build`,
 `cargo test --tests`, then fails if `src/bindings.ts` is stale. It does
 not run the tests marked `#[ignore]`: they need a real Edge browser or the

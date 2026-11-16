@@ -298,7 +298,8 @@ export default function Settings({
     void askGuideStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const downloadGuide = async () => {
+  /** `open`: the first download opens the guide; Update Guide only updates it. */
+  const downloadGuide = async (open: boolean) => {
     if (guideBusy.current) return;
     guideBusy.current = true;
     setDownloadingGuide(true);
@@ -308,8 +309,9 @@ export default function Settings({
       unlisten = await events.guideProgress.listen((e) => {
         if (alive.current) setGuideProgress(e.payload);
       });
-      const r = await commands.guideDownload();
+      const r = await commands.guideDownload(open);
       if (r.status === "error") toast.error(r.error);
+      else if (!open) toast.success("How to Use updated.");
     } catch {
       toast.error("Could not download How to Use. Check your connection and try again - Settings, Logs has the details.");
     } finally {
@@ -590,7 +592,7 @@ export default function Settings({
           control={
             <>
               {guide.state === "NotDownloaded" ? (
-                <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide()}>
+                <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide(true)}>
                   <IconDownload aria-hidden />
                   {downloadingGuide
                     ? "Downloading..."
@@ -628,7 +630,7 @@ export default function Settings({
                     {openingHelp ? "Opening" : "How To Use"}
                   </Button>
                   {guide.state === "UpdateAvailable" && (
-                    <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide()}>
+                    <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide(false)}>
                       <IconRefresh aria-hidden />
                       {downloadingGuide ? "Downloading..." : "Update Guide"}
                     </Button>

@@ -39,14 +39,17 @@ pub async fn guide_status(app: tauri::AppHandle) -> GuideStatus {
 /// 31 MB zip arrives in thousands of chunks.
 const PROGRESS_STEP: u64 = 256 * 1024;
 
-/// Download this version's How To Use, install it, and open it (as the
-/// button did when the guide shipped inside the app). Streams
-/// `GuideProgress`. Errors are the guide's sentences; the raw reason is in
-/// the log.
+/// Download this version's How To Use, install it, and - when `open` - open
+/// it. The first download opens it (that click is someone who wants to read
+/// it); Update Guide only updates it. Streams `GuideProgress`. Errors are
+/// the guide's sentences; the raw reason is in the log.
 #[tauri::command]
 #[specta::specta]
-pub async fn guide_download(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn guide_download(app: tauri::AppHandle, open: bool) -> Result<(), String> {
     if crate::ai_tools::dev_build() {
+        if !open {
+            return Ok(());
+        }
         return crate::help::open_guide(std::path::Path::new(crate::help::DEV_INDEX));
     }
     let root = help_root(&app).ok_or_else(|| guide::DOWNLOAD_FAILED.to_string())?;
@@ -67,5 +70,8 @@ pub async fn guide_download(app: tauri::AppHandle) -> Result<(), String> {
         }
     })
     .await?;
+    if !open {
+        return Ok(());
+    }
     crate::help::open_guide(&index)
 }

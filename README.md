@@ -360,7 +360,8 @@ npm run docs:build       # build docs-site/ into src-tauri/help/ (the How To Use
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs on every push and pull request to `main`,
+`.github/workflows/ci.yml` runs on every push and pull request to `main` of
+`hsenidBiz/phr-tcm` (the job is skipped in other copies of the repository),
 and by hand from the Actions tab, on a Windows runner (some Rust tests need
 Windows). It runs `npx tsc --noEmit`, `npm test`, `npm run build` and
 `cargo test --tests`, then fails if `src/bindings.ts` is not what the Rust

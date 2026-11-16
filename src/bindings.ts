@@ -1639,12 +1639,12 @@ export const commands = {
 	/**  Whether How To Use is on disk and current, and the download's size. */
 	guideStatus: () => __TAURI_INVOKE<GuideStatus>("guide_status"),
 	/**
-	 *  Download this version's How To Use, install it, and open it (as the
-	 *  button did when the guide shipped inside the app). Streams
-	 *  `GuideProgress`. Errors are the guide's sentences; the raw reason is in
-	 *  the log.
+	 *  Download this version's How To Use, install it, and - when `open` - open
+	 *  it. The first download opens it (that click is someone who wants to read
+	 *  it); Update Guide only updates it. Streams `GuideProgress`. Errors are
+	 *  the guide's sentences; the raw reason is in the log.
 	 */
-	guideDownload: () => typedError<null, string>(__TAURI_INVOKE("guide_download")),
+	guideDownload: (open: boolean) => typedError<null, string>(__TAURI_INVOKE("guide_download", { open })),
 	/**  The settings as the app is using them now. */
 	getAppSettings: () => __TAURI_INVOKE<AppSettings>("get_app_settings"),
 	/**  Whether closing the main window keeps the app running in the tray. */

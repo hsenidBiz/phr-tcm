@@ -1513,11 +1513,16 @@ test("downloading_shows_progress_then_the_guide_is_ready", async () => {
   });
   let state: "NotDownloaded" | "Ready" = "NotDownloaded";
   const calls: string[] = [];
+  const opened: unknown[] = [];
   mockIPC(
-    (cmd) => {
+    (cmd, args) => {
       calls.push(String(cmd));
       if (cmd === "guide_status") return { state, size: GUIDE_SIZE };
-      if (cmd === "guide_download") return download;
+      if (cmd === "guide_download") {
+        // The first download opens the guide when it is in.
+        opened.push((args as { open: boolean }).open);
+        return download;
+      }
       return undefined;
     },
     { shouldMockEvents: true },
@@ -1559,6 +1564,7 @@ test("downloading_shows_progress_then_the_guide_is_ready", async () => {
   expect(screen.getByRole("status")).toHaveTextContent(/^$/);
   expect(calls.filter((c) => c === "guide_status")).toHaveLength(2);
   expect(calls.filter((c) => c === "guide_download")).toHaveLength(1);
+  expect(opened).toEqual([true]);
 });
 
 test("two quick clicks on Download start one download", async () => {
@@ -1595,10 +1601,14 @@ test("a_changed_guide_offers_update_guide", async () => {
     resolveDownload = r;
   });
   let state: "UpdateAvailable" | "Ready" = "UpdateAvailable";
+  const asked: unknown[] = [];
   mockIPC(
-    (cmd) => {
+    (cmd, args) => {
       if (cmd === "guide_status") return { state, size: GUIDE_SIZE };
-      if (cmd === "guide_download") return download;
+      if (cmd === "guide_download") {
+        asked.push((args as { open: boolean }).open);
+        return download;
+      }
       return undefined;
     },
     { shouldMockEvents: true },
@@ -1607,6 +1617,8 @@ test("a_changed_guide_offers_update_guide", async () => {
 
   expect(await screen.findByRole("button", { name: "How To Use" })).toBeEnabled();
   fireEvent.click(await screen.findByRole("button", { name: "Update Guide" }));
+  // Update Guide only updates: the guide is not opened afterwards.
+  await waitFor(() => expect(asked).toEqual([false]));
 
   // Both buttons wait while the update runs.
   expect(await screen.findByRole("button", { name: "Downloading..." })).toBeDisabled();
@@ -1616,6 +1628,8 @@ test("a_changed_guide_offers_update_guide", async () => {
   resolveDownload({ status: "ok", data: null });
   await waitFor(() => expect(screen.queryByRole("button", { name: "Update Guide" })).toBeNull());
   expect(screen.getByRole("button", { name: "How To Use" })).toBeEnabled();
+  // A short message says it is done.
+  expect(toast.success).toHaveBeenCalledWith("How to Use updated.");
 });
 
 test("a_failed_download_says_why", async () => {
