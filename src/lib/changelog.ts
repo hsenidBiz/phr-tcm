@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.5",
+    date: "2026-11-17",
+    items: [
+      "Auto Run accounts: on a test environment TCM now looks up each proposed login's password in the environment's database itself, so the assistant never reads or sends passwords. The table and columns it reads are set per environment in Edit environments (PeoplesHR's user table by default), and the assistant can change them when they differ.",
+      "Accounts: Fill passwords from database, on both the Accounts and Proposed tabs, fetches the current passwords again - for example after a password was reset.",
+    ],
+  },
+  {
     version: "2.4.7-beta.4",
     date: "2026-11-17",
     items: [
