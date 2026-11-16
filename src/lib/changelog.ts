@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.4",
+    date: "2026-11-17",
+    items: [
+      "Pull Requests: descriptions and review comments are shown the same way as work item text everywhere else in the app. Code blocks keep their language label and Copy button, links open in your browser, and pictures in comments show directly.",
+    ],
+  },
+  {
     version: "2.4.7-beta.3",
     date: "2026-11-14",
     items: [

@@ -77,7 +77,7 @@
     </ul>
     <p><b>Maintainability and engineering</b></p>
     <ul>
-      <li><b>M5 One markdown renderer, one UI kit.</b> Two markdown paths (<code>marked</code> + DOMPurify, and Astryx <code>Markdown</code>) and two kits (xiod-ui and Astryx), plus hand-made controls.</li>
+      <li><b>M5 One UI kit.</b> One markdown renderer since 2.4.7-beta.4; still two kits (xiod-ui and Astryx), plus hand-made controls.</li>
       <li><b>M8 Code signing.</b> The release script has no signing step and update trust rests on HTTPS to GitHub. Signing also removes SmartScreen warnings and the antivirus block each new build meets on this machine. Skipped by an earlier decision; worth revisiting as users grow.</li>
       <li><b>M9 Product coupling.</b> PeoplesHR is named in 23 Rust files (sign-in recipe, single-session rule, Playwright layout, WebForms postback). A cost only if another product must be tested.</li>
       <li><b>M10 A scripted smoke run for hand checks.</b> Most features since 2.3 owe live-site checks. One fixed test project and environment covering sign-in, a run, an upload and a proposal would replace most of them.</li>
@@ -141,120 +141,34 @@
     <p>In Settings' sign-in recipe: the clicks that open the Preferences dialog, its close button and the Group Menu Items checkbox, and how the page shows Admin or Self Service with the control that switches to each. Nothing uses them until they are filled in.</p>
   </div>
 
-  <h2>Open follow-ups from built work</h2>
+  <h2>Agreed 17 November 2026, being built</h2>
   <div class="item">
-    <div class="head"><span class="title">Sign-in built by the assistant</span><span class="status todo">Follow-ups</span></div>
+    <div class="head"><span class="title">Follow-ups the owner picked to build</span><span class="status todo">Building</span></div>
     <ul>
-      <li>A project still on the built-in sign-in cannot propose a change-password part on its own (it needs a recorded sign-in first).</li>
-      <li>Approve says "not saved" if removing the proposal fails after saving.</li>
-      <li>The notice matches one Rust sentence by hand.</li>
-      <li>No sign in the app of a trial that is running.</li>
-      <li>A draft that types fixed text into a password field during a trial is not refused yet.</li>
-      <li>A second sign-in inside one app is F12 above.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">API templates and WebForms postbacks</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Record-and-replay of postbacks (turning a person's clicks on a WebForms page into a template). Parked.</li>
-      <li>A cross-origin SSO redirect on a postback is not recognised as signed out (it fails as "the request did not complete"). Parked.</li>
-      <li>A saved template (a plain POST or a postback) is not checked for a step that deletes against its declared effect; only one-off requests are.</li>
-      <li>Writes caught by what changed rather than by verb are not built, and a marked writing GET is not noted for the GET steps of a template run or a prove (79).</li>
-      <li>No template-string transform; base64 and JSON only (81).</li>
-      <li>A later working call replaces the latest same-route auto-save, whether or not the earlier one failed, and keeps the old run history (77).</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Auto Run runs and reports</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Raise bug: the filed bug number shows only until the review closes (the run record has no field for it).</li>
+      <li>Underline from Azure DevOps reads back as plain text, so editing a case strips it; an old draft of an underlined step saves without it.</li>
       <li>Flaky cases: the HTML run report and the Test cases tab still count a flaky-marked failure as failed; the review has no Flaky filter.</li>
-      <li>A verdict set later in Review (Failed or Blocked on a watched run) may not clear a script's checked mark; only a run's first save does.</li>
-      <li>A step-by-step run's later steps do not re-check whether the case was rewritten; the first step does.</li>
-      <li>A Rewrite ruling made while Azure DevOps cannot be read takes the case's fingerprint at the next read, so a case rewritten before that is not noticed.</li>
-      <li>A guard the case itself asks for ("if a banner shows, close it") still needs a quirk classed app quirk in a repair.</li>
-      <li>Whether a removed precondition is really replaced by steps that create that state is not checked; a precondition put back from the editor goes to the end of the list.</li>
+      <li>Raise bug: the filed bug number shows only until the review closes (the run record has no field for it).</li>
+      <li>A sign-in page served in place at the same URL is not caught as signed out (84); a cross-origin SSO redirect on a postback fails as "the request did not complete" instead of signed out.</li>
+      <li>A saved API template (a plain POST or a postback) is not checked for a step that deletes against its declared effect; only one-off requests are.</li>
+      <li>Opaque tokens in lower case, or as dashed GUIDs, in a request body are not recognised as secrets unless their field name says so; a server name written without a path or port is not hidden in notes the assistant writes.</li>
       <li>Run-result attachments are checked in the app before upload; only the bug dialog's upload checks again on the Rust side.</li>
+      <li>Two real-browser tests fail: an unattended selection's saved run lacks the page path the run in memory has; a second response check in one step reads "not run: an earlier action in this step failed" against a real page.</li>
+      <li>A rule Claude Code writes into the same settings file at the moment TCM writes it can be lost, and TCM rewrites the file's formatting; a failed allow-file write is retried only when the tool list, repository or modules change.</li>
+      <li>The Playwright specs pill turns red if a spec listing fails because a run holds the Playwright slot.</li>
       <li>The run window's dialog has no accessible name.</li>
     </ul>
   </div>
+
+  <h2>Open follow-ups from built work, yours to pick</h2>
   <div class="item">
-    <div class="head"><span class="title">Auto Run checks and locators</span><span class="status todo">Follow-ups</span></div>
+    <div class="head"><span class="title">Kept for the owner to decide (17 November 2026)</span><span class="status todo">Your call</span></div>
     <ul>
-      <li>A sign-in page served in place at the same URL is not caught as signed out; only a move to another path, or landing on the start page (84).</li>
-      <li>A sign-in reached by a click-through redirect is not detected by the print retake.</li>
-      <li><code>fill</code> on a Knockout list is unchanged (use <code>select_option</code>); <code>press_key</code> takes named keys only (87).</li>
-      <li>sqlcmd still cuts long text at about 256 characters (89); lifting the cut needs measuring against the real database.</li>
-      <li>The component-aware timing placement check runs only when the assistant saves a script, not on a script imported on the Auto Run screen.</li>
-      <li>A timed check whose first matching request starts out of window still waits its full timeout before failing.</li>
-      <li>A repair that renames a button the case itself names is refused: report it as a divergence.</li>
-      <li>"no &lt;something&gt;" in a step counts as stating 0 for every count in that step.</li>
-      <li>A page that polls with a POST every second fails expect_no_change.</li>
-      <li>Drag and file uploads found by text drawn in other capitals do not say "matched as written".</li>
-      <li>A locator with nth can say "as written" when a sibling it trimmed away was the one that matched that way (never a false pass).</li>
-      <li>page_until knows a page has turned from the whole page's text; a Next that changes nothing visible reads as "did not turn".</li>
-      <li>A pattern's letters and digits classes match English ones only; a position check does not undo CSS transforms.</li>
-      <li>The note about a record named without a precondition does not look inside components or API requests that make the record.</li>
-      <li>Text repeated in several pieces under one line of a page read is counted once, so a save can pass that a replay then finds matching several.</li>
-      <li>What a component's checks find is filed under the page the browser is on after the component ran.</li>
-      <li>An application with no HttpOnly sign-in cookie signs in again on every replay.</li>
-      <li>A stop is heard between actions, not inside one long wait.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Discovery, explore and refusals</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Explore: a create is verified only when its id is new to the session; a first write sent with effect read is saved as a read template; saves no action answer reported are not swept into the unrecorded list; a one-off call uses the recipe's first site for its diagnostics.</li>
-      <li>Menu preferences are matched only after a sign-in, not on a trip from an already signed-in page; reading the mode can take up to 2 seconds per trip on a page that shows none; a blocked save's typed text is cleaned two slightly different ways; an older app cannot read a recipe saved with the new fields; "saved something" can overclaim when the save record was too full; an area repair keeps the area's mode and menu preferences without re-reading them.</li>
-      <li>Typing into a field also does the two page reads; a request the page starts after the action's own check is found only later; a page with more than a thousand message-like items can hide a toast; a refusal read right after the 250 ms wait can pick up a request started during it; a return to an area made inside a "when visible" guard does not move the area a rule is filed under.</li>
-      <li>Calls the assistant's connection refuses on its own (wrong argument shape, unknown or old tool name, a guide topic that is off) are not in the call log.</li>
-      <li>A server name written without a path or port is not hidden in notes the assistant writes.</li>
-      <li>The "Not in an area" row fills up during a /tcm:map-menus run and always looks stale.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Network, cookie and element tools</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Opaque tokens in lower case, or as dashed GUIDs, in a request body are not recognised as secrets unless their field name says so.</li>
-      <li>If the environment's address is the sign-in provider's page, nothing is captured until a page of the application shows signed in.</li>
-      <li>A sign-in made by hand where the address redirects to a different application address never confirms the site, so nothing is captured.</li>
-      <li>A very large response (near 2 MB) can be skipped on a busy machine; the request itself is still listed.</li>
-      <li>An imported HAR file is capped on its bodies, not on its header values and addresses.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Playwright export and repo rules</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>A request that never answers reports "had not finished" rather than a start-time failure; the exported expect_no_change does not wait for the control to hold still and looks for a covering control only in its own frame.</li>
-      <li>The specs pill turns red if a spec listing fails because a run holds the Playwright slot; Refresh clears it.</li>
-      <li>Replacing a case the repo wrote from the ticket keeps the repo's own Preconditions rows beside TCM's.</li>
-      <li>docs/app-quirks.md: a blank line between a quirk's title and its tag line, or a changed heading level, makes the next export add a second title.</li>
-      <li>Editing the protected-records list does not mark exported cases Out of date; an export made before 2.2.3-beta.9 stays Current until something else changes; "Run A before B" lines only count for the case they are written in.</li>
-      <li>Smaller: a search field named with "search" inside another word is skipped; the Protected records dialog drops blank or repeated rows silently; a quirk warning is left out silently if the quirks file can't be read; the needs warning also looks at unticked cases.</li>
-      <li>A rule Claude Code writes into the same settings file at the moment TCM writes it can be lost, and TCM rewrites the file's formatting; an allow file that cannot be written is retried only when the tool list, repository or modules change.</li>
-      <li>A case handed back to its area's folder still has its suggestion worked out from its old folder until the mappings are saved.</li>
-      <li>The app starting Claude Code itself for Finish in the repo (option B): on hold.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">Test case text and screens</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>Underline from Azure DevOps reads back as plain text, and an old draft of an underlined step saves without it.</li>
-      <li>A case exported to JSON before 2.2.3-beta.13 and re-imported with its id can get a formatting warning for text that was always there (warnings only); old queue drafts can show a*b*c in italics until the case is read again.</li>
-      <li>Very long steps with many stars or underscores take a little longer to read and save.</li>
+      <li>A page that polls with a POST every second fails expect_no_change. Worth it only if PeoplesHR pages poll like that.</li>
       <li>Not searchable without new requests: state, assignee and area on Update and View Test Cases; the cases inside a suite on Search Suites; Suite Management has no search box.</li>
-      <li>In a blue accent theme the three assistant figures are all shades of blue.</li>
-      <li>Pull Requests: the tracked-repository line cannot name the repository (only its id was saved).</li>
-      <li>In the app's dropdowns, the down arrow on an empty list and then Enter has nothing to pick.</li>
-    </ul>
-  </div>
-  <div class="item">
-    <div class="head"><span class="title">How To Use</span><span class="status todo">Follow-ups</span></div>
-    <ul>
-      <li>The Playwright page and the report module's page have no screenshots.</li>
-      <li>No mention of the Playwright specs pill or the Undo ruling button.</li>
-      <li>The settings-more screenshot no longer scrolls, so it looks the same as settings-main.</li>
-      <li>A full capture run moves controls between the light and dark passes on Auto Run's Selected, Setup and Past runs; those routes need a fixed scroll.</li>
+      <li>sqlcmd still cuts long text at about 256 characters (89); lifting the cut needs measuring against the real database.</li>
+      <li>No sign in the app of a sign-in trial that is running; a draft that types fixed text into a password field during a trial is not refused yet.</li>
+      <li>Editing the protected-records list does not mark exported cases Out of date; docs/app-quirks.md reformatted by hand (a blank line between a quirk's title and its tag line, or a changed heading level) makes the next export add a second title.</li>
+      <li>How To Use: no mention of the Playwright specs pill or the Undo ruling button; a full capture run moves controls between the light and dark passes on Auto Run's Selected, Setup and Past runs, so those routes need a fixed scroll; the Playwright page and the report module's page have no screenshots.</li>
     </ul>
   </div>
   <div class="item">
@@ -278,19 +192,7 @@
       <li>Open in the report designer says "no program" for any opener failure; the screen re-fetches the whole PDF on every change; a file deleted while open is noticed only on the next change; a new report whose write fails can leave a partial file.</li>
     </ul>
   </div>
-  <div class="item">
-    <div class="head"><span class="title">Smaller edge cases</span><span class="status todo">Optional</span></div>
-    <ul>
-      <li>Two real-browser tests fail: an unattended selection's saved run lacks the page path the run in memory has; a second response check in one step reads "not run: an earlier action in this step failed" against a real page.</li>
-      <li>A drag the browser hands over after the last mouse move is lost without a message.</li>
-      <li>Key combinations in a second tab have no test of their own.</li>
-      <li>A page error during a sign-in part-way through a case is not counted; a dialog that opens during sign-in or the trip to the area never fails a step.</li>
-      <li>A PDF's compressed contents can use more memory than its 50 MB size suggests.</li>
-      <li>AI Bridge per environment: right after start-up, the always-allow entry is brought in line with the active environment only at the first environment-list read, so a stale entry could be live for a moment.</li>
-      <li>Cache: with the Runner window open beside the main window, both can save the entry-age list at once, so an entry may be fetched again early; a crash can lose the last fraction of a second of cache changes.</li>
-    </ul>
-  </div>
-
+  <p class="done">Dropped 17 November 2026 at the owner's word: the remaining follow-ups (record-and-replay of postbacks, locator and check wording, explore/discovery/menu timing edge cases, capture limits, old-format warnings, cosmetic and rare race items, smaller Playwright export notes). The commit before this one still lists them.</p>
   <h2>To investigate</h2>
   <div class="item"><div class="head"><span class="title">Edge stall after long role-lookup polling</span><span class="status todo">To investigate</span></div></div>
 
