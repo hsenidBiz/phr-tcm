@@ -706,6 +706,8 @@ body {
   background: currentColor;
 }
 .md-compact ol > li { counter-increment: md-ol; }
+/* A task-list item has its checkbox for a marker. */
+.md-compact li:has(> input[type="checkbox"])::before { content: none; }
 .md-compact ol > li::before {
   content: counter(md-ol) ".";
   position: absolute;
@@ -760,10 +762,11 @@ body {
 }
 .md-compact blockquote > :first-child { margin-top: 0; }
 .md-compact blockquote > :last-child { margin-bottom: 0; }
+.md-compact .md-table-scroll { margin: 0.5rem 0; max-width: 100%; overflow-x: auto; }
 .md-compact table {
   display: table;
   width: 100%;
-  margin: 0.5rem 0;
+  margin: 0;
   font-size: 1em;
 }
 .md-compact th, .md-compact td {

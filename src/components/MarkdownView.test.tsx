@@ -48,3 +48,23 @@ test("copy failure toasts instead of throwing", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Copy code" }));
   await waitFor(() => expect(h.copyText).toHaveBeenCalled());
 });
+
+test("only http(s), mailto and tel links reach the system browser", () => {
+  const { container } = render(
+    <MarkdownView
+      text={"[web](https://e.example) [mail](mailto:a@e.example) [tel](tel:+1) [rel](/docs/x) [hash](#top) [rel2](other.md)"}
+    />,
+  );
+  const link = (name: string) => screen.getByRole("link", { name });
+  for (const name of ["web", "mail", "tel"]) expect(fireEvent.click(link(name))).toBe(false);
+  expect(openUrl).toHaveBeenCalledTimes(3);
+  vi.mocked(openUrl).mockClear();
+  for (const name of ["rel", "hash", "rel2"]) expect(fireEvent.click(link(name))).toBe(false);
+  expect(openUrl).not.toHaveBeenCalled();
+  expect(container.querySelector("a")).not.toBeNull();
+});
+
+test("a table scrolls inside its own wrapper", () => {
+  const { container } = render(<MarkdownView text={"| a | b |\n|---|---|\n| 1 | 2 |"} />);
+  expect(container.querySelector(".md-table-scroll > table")).not.toBeNull();
+});

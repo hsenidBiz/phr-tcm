@@ -102,15 +102,53 @@ export function renderMarkdown(md: string, options: { breaks?: boolean } = {}): 
   return sanitize(marked.parse(md || "", { async: false, breaks }) as string);
 }
 
+/** This module's own DOMPurify instance, so the attribute rules below are
+ * not hooks on the shared default one. */
+const purify = DOMPurify(window);
+
+/** The one class marked writes: the language of a fenced block. */
+const LANGUAGE_CLASS = /^language-[\w+#.-]+$/;
+
+/**
+ * `class` and `type` are in ALLOWED_ATTR because markdown needs them on two
+ * elements, but DOMPurify matches attributes globally, so a remote author's
+ * raw HTML could carry them anywhere: `<a class="fixed inset-0 z-50">` is a
+ * click-catching overlay over the whole app, `<input type="password">` a
+ * field. Narrow them to exactly what marked emits.
+ */
+purify.addHook("uponSanitizeAttribute", (node, data) => {
+  const el = node as Element;
+  const tag = el.tagName.toLowerCase();
+  const value = data.attrValue.trim();
+  switch (data.attrName) {
+    case "class":
+      if (!(tag === "code" && value.length > 0 && value.split(/\s+/).every((t) => LANGUAGE_CLASS.test(t)))) {
+        data.keepAttr = false;
+      }
+      break;
+    case "type":
+      if (!(tag === "input" && value.toLowerCase() === "checkbox")) data.keepAttr = false;
+      break;
+    case "checked":
+    case "disabled":
+      if (!(tag === "input" && el.getAttribute("type")?.toLowerCase() === "checkbox")) data.keepAttr = false;
+      break;
+  }
+});
+
 function sanitize(html: string): string {
-  return DOMPurify.sanitize(html, {
+  const body = purify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
     // Keep the text of anything dropped: a stripped tag should lose its
     // markup, not the sentence it was wrapped around.
     KEEP_CONTENT: true,
-  });
+    RETURN_DOM: true,
+  }) as unknown as HTMLElement;
+  // The only input markdown makes is a task-list checkbox.
+  body.querySelectorAll("input:not([type='checkbox'])").forEach((el) => el.remove());
+  return body.innerHTML;
 }
 
 // ---------------------------------------------------------------------------

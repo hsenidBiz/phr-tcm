@@ -68,6 +68,15 @@ export default function MarkdownView({ text, className }: { text: string; classN
       hosts.push(host);
       found.push({ host, language, code });
     });
+    // A wide table scrolls sideways inside its own box, as it did under
+    // Astryx, instead of widening the panel.
+    el.querySelectorAll("table").forEach((table) => {
+      if (table.parentElement?.classList.contains("md-table-scroll")) return;
+      const wrap = document.createElement("div");
+      wrap.className = "md-table-scroll";
+      table.replaceWith(wrap);
+      wrap.append(table);
+    });
     // An ordered list that starts above 1 counts from there (the marker is
     // a CSS counter, which does not read the start attribute itself).
     el.querySelectorAll<HTMLElement>("ol[start]").forEach((ol) => {
@@ -85,7 +94,9 @@ export default function MarkdownView({ text, className }: { text: string; classN
     if (!anchor || !e.currentTarget.contains(anchor)) return;
     e.preventDefault();
     const href = anchor.getAttribute("href");
-    if (href) openUrl(href).catch(() => toast.error("Could not open the browser."));
+    // Only places the system browser or mail/phone handler can take; a
+    // relative or `#` link goes nowhere and says nothing.
+    if (href && /^(?:https?:|mailto:|tel:)/i.test(href.trim())) openUrl(href.trim()).catch(() => toast.error("Could not open the browser."));
   };
 
   return (
