@@ -2636,17 +2636,18 @@ fn the_guide_explains_assistant_rulings() {
     assert!(!wrong.contains('\u{2014}') && !wrong.contains('\u{2013}'), "no em or en dashes");
 }
 
-/// The first thing the guide says about `propose_accounts` already carries the
-/// password rule, and a `no_password` is said to be words, never the value.
+/// The first thing the guide says about `propose_accounts` is to leave passwords
+/// to the app, and a `no_password` is said to be words, never the value.
 #[test]
 fn the_guide_says_the_password_rule_in_its_first_propose_accounts_sentence() {
     let g = autorun_guide();
     let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        flat.contains("call `propose_accounts` with a key, a label and a username for each, a role when you know it and, on a test environment, its password (or `no_password`)"),
+        flat.contains("call `propose_accounts` with a key, a label and a username for each, and a role when you know it"),
         "{flat}"
     );
-    assert!(flat.contains("never the stored value: one that looks like a password or hash is refused"), "{flat}");
+    assert!(flat.contains("WITHOUT reading or sending passwords"), "{flat}");
+    assert!(flat.contains("never the stored value"), "{flat}");
 }
 
 /// A step whose checks leave out part of its expected result lists each part
