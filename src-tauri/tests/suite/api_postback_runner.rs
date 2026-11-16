@@ -396,3 +396,39 @@ async fn a_one_off_postback_carries_if_the_browser_holds_the_page() {
     let body = out.answer.unwrap().body;
     assert!(body.contains("(page state)") && !body.contains("SECRETSTATE"), "{body}");
 }
+
+#[tokio::test]
+async fn a_postback_the_page_found_sent_to_another_sites_sign_in_is_signed_out() {
+    let _act = crate::serial::activity_log();
+    // The page could not read a cross-origin redirect and looked at the step's page again: it sends the
+    // browser away. The post had gone out, so the sentence says it may have saved - and not "did not complete".
+    let mut r = rig(vec![], None);
+    replies(&r, vec![json!({ "refused": "signed_out", "posted": true })]);
+    let report = run(&mut r, one_step()).await;
+    assert!(!report.ok);
+    assert_eq!(last_detail(&report), format!("{SENT_ELSEWHERE}{MAY_HAVE_SAVED}"));
+    assert_eq!(r.sign_ins(), 1, "it signed in again and posted twice");
+    assert_eq!(posted(&r).len(), 1);
+    // Any other failure to complete keeps its sentence.
+    let mut r = rig(vec![], None);
+    replies(&r, vec![json!({ "error": "TypeError: Failed to fetch", "posted": true })]);
+    let report = run(&mut r, one_step()).await;
+    assert!(last_detail(&report).starts_with("the request did not complete"), "{}", last_detail(&report));
+}
+
+#[tokio::test]
+async fn the_page_is_told_the_sign_in_pages_fields_except_for_the_sign_in_page_itself() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![], None);
+    replies(&r, vec![page_reply(200, json!({}))]);
+    let report = run(&mut r, one_step()).await;
+    assert!(report.ok, "{report:?}");
+    // The test recipe fills #pass with the password and #user with the login.
+    assert_eq!(posted(&r)[0][0]["signIn"], json!(["#pass", "#user"]));
+    // A step whose page is the sign-in page (the recipe starts at the site root) asks nothing of it.
+    let mut r = rig(vec![], None);
+    replies(&r, vec![page_reply(200, json!({}))]);
+    let report = run(&mut r, template(vec![step("Save", "/", json!({}))])).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(posted(&r)[0][0]["signIn"], json!([]));
+}

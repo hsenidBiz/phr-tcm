@@ -515,22 +515,54 @@ fn is_sign_in_answer_cases() {
     let html = Some("text/html; charset=utf-8");
     let form = r#"<form><input name="u"><input id="p" TYPE='Password'></form>"#;
     // Ended on the sign-in page's path (a start path that is not the root).
-    assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login")));
+    assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login"), None));
     // Redirected to another page that has a password input.
-    assert!(is_sign_in_answer(Some("/account/in"), html, form, "/hr/x", Some("/")));
-    assert!(is_sign_in_answer(Some("/"), html, form, "/hr/x", Some("/")));
+    assert!(is_sign_in_answer(Some("/account/in"), html, form, "/hr/x", Some("/"), None));
+    assert!(is_sign_in_answer(Some("/"), html, form, "/hr/x", Some("/"), None));
     // The site root as the start page alone is not enough: a save that redirects home.
-    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
-    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/"), None));
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/"), None));
     // A page with a password field that answers in place (change password) is an answer.
-    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
-    assert!(!is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login"), None));
+    assert!(!is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None, None));
     // A redirect to the same page is not a move.
-    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login"), None));
     // The sign-in page asked for on purpose is not a signed-out account.
-    assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login")));
+    assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login"), None));
     // JSON, a text field, or an attribute that only ends in type is not a sign-in page.
-    assert!(!is_sign_in_answer(Some("/a"), Some("application/json"), form, "/hr/x", Some("/")));
-    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/")));
-    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input data-type="password">"#, "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/a"), Some("application/json"), form, "/hr/x", Some("/"), None));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/"), None));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input data-type="password">"#, "/hr/x", Some("/"), None));
+}
+
+#[test]
+fn a_sign_in_page_served_in_place_is_signed_out_but_a_change_password_page_is_not() {
+    use v2_lib::api_templates::one_off::page_is_sign_in;
+    let recipe = crate::common::recipe();
+    let fields = recipe.sign_in_fields().expect("the recipe fills a password");
+    let html = Some("text/html; charset=utf-8");
+    let sign_in = r#"<form><input id="user" type="text"><input id="pass" type="password"></form>"#;
+    let change = r#"<form><input id="oldpass" type="password"><input id="newpass" type="password"></form>"#;
+    // The address asked for is the address answered: only the page's own fields can say.
+    assert!(is_sign_in_answer(Some("/hr/x"), html, sign_in, "/hr/x", Some("/"), Some(&fields)));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, change, "/hr/x", Some("/"), Some(&fields)));
+    // Without the recipe's fields, nothing changes: an in-place answer stays an answer.
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, sign_in, "/hr/x", Some("/"), None));
+    // Not HTML, no password input, or the sign-in page asked for on purpose.
+    assert!(!is_sign_in_answer(Some("/hr/x"), Some("application/json"), sign_in, "/hr/x", Some("/"), Some(&fields)));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, r#"<input id="user"><input id="pass">"#, "/hr/x", Some("/"), Some(&fields)));
+    assert!(!is_sign_in_answer(Some("/login"), html, sign_in, "/login", Some("/login"), Some(&fields)));
+    // A username field the page lacks keeps it from matching.
+    assert!(!page_is_sign_in(r#"<input id="pass" type="password">"#, &fields));
+    // Quotes, case and class selectors read as a browser would.
+    assert!(page_is_sign_in(r#"<INPUT ID='user'><input type="password" id=pass>"#, &fields));
+}
+
+#[test]
+fn the_sign_in_fields_come_from_the_recipes_password_and_username_steps() {
+    let fields = crate::common::recipe().sign_in_fields().unwrap();
+    assert_eq!(fields.css_selectors(), vec!["#pass".to_string(), "#user".to_string()]);
+    let mut none = crate::common::recipe();
+    none.steps.clear();
+    assert!(none.sign_in_fields().is_none());
 }

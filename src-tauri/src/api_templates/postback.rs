@@ -147,6 +147,12 @@ pub struct PostbackRequest {
     pub hides: Vec<String>,
     pub rows: Option<RowCheck>,
     pub captures: BTreeMap<String, HtmlCapture>,
+    /// The CSS selectors of the sign-in page's own fields (the recipe's
+    /// password and username fields), so a page loaded in place that holds
+    /// them is the sign-in page, not an answer. Empty when the recipe names
+    /// them in no way a page can look for, or when this step's page IS the
+    /// sign-in page. Set by the runner (`build_postback` leaves it empty).
+    pub sign_in: Vec<String>,
 }
 
 /// `s` with each `{{name}}` replaced by its value percent-encoded as one
@@ -238,6 +244,7 @@ pub fn build_postback(
             has: substitute_str(&r.has, vars),
         }),
         captures,
+        sign_in: Vec::new(),
     })
 }
 
@@ -624,6 +631,11 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     // the application that has a password field of its own (change password) is not. A held page
     // is never the sign-in page: an answer that was is not kept.
     if (!source.carried && source.redirected && sourceKey !== req.key && sourceHadPassword) return { refused: 'signed_out' };
+    // The sign-in page served where the page should be (no move to another address): it is the
+    // recipe's own sign-in fields on it, not just a password field, that say so.
+    const looksSignIn = (d) => !!req.signIn && req.signIn.length > 0 && !!d.querySelector('input[type="password"]') &&
+      req.signIn.every((s) => { try { return !!d.querySelector(s); } catch (e) { return false; } });
+    if (!source.carried && sourceKey === req.key && looksSignIn(doc)) return { refused: 'signed_out' };
     const vs = doc.querySelector('input[name="__VIEWSTATE"]');
     const form = vs && (vs.form || vs.closest('form'));
     if (!form) return { refused: 'not_webforms' };
@@ -728,7 +740,7 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     const ans = parse(text);
     // Signed out: the answer has a password field and the page posted from had none, or the post
     // was sent to a different page.
-    if (ans.querySelector('input[type="password"]') && (!sourceHadPassword || (r.redirected && finalKey !== sourceKey))) {
+    if (ans.querySelector('input[type="password"]') && (!sourceHadPassword || (r.redirected && finalKey !== sourceKey) || (looksSignIn(ans) && !looksSignIn(doc)))) {
       out.signedOut = true;
       return out;
     }
@@ -801,7 +813,16 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     out.excerpt = html.slice(0, answerLimit);
     return out;
   } catch (e) {
-    return { error: e && e.name === 'AbortError' ? 'timeout' : String(e), posted: posted };
+    if (e && e.name === 'AbortError') return { error: 'timeout', posted: posted };
+    // A request that failed outright may have gone to another site: an SSO redirect the page
+    // may not read, which is what an ended session does. The step's own page, looked at again
+    // with redirects left alone (never followed, so no cookie goes anywhere), says whether it
+    // sends the browser away (an opaque redirect). The post is never sent again.
+    try {
+      const probe = await fetch(req.url, { credentials: 'same-origin', redirect: 'manual', signal: AbortSignal.timeout(5000) });
+      if (probe.type === 'opaqueredirect') return { refused: 'signed_out', posted: posted };
+    } catch (ignored) { /* not a redirect */ }
+    return { error: String(e), posted: posted };
   } finally {
     clearTimeout(timer);
   }

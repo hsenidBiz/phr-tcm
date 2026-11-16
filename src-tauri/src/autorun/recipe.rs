@@ -604,7 +604,72 @@ pub fn signed_in_check(in_menu: bool) -> crate::browser::expect::Check<'static> 
     }
 }
 
+/// The fields of the sign-in page as the recipe fills them in: the one that
+/// takes `{{password}}`, and the one that takes `{{username}}` when there is
+/// one. How an answer that is the sign-in page is told from a page of the
+/// application that merely has a password field of its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignInFields {
+    pub password: Target,
+    pub username: Option<Target>,
+}
+
+impl SignInFields {
+    /// The plain CSS selectors of these fields, for a page to look for
+    /// (`querySelector`): the password field's and the username field's.
+    /// Empty when the password field is not named by CSS, or the username
+    /// field (which the recipe has) is not: nothing then says a page is the
+    /// sign-in page without reading its accessible names.
+    pub fn css_selectors(&self) -> Vec<String> {
+        let Some(password) = css_of(&self.password) else { return vec![] };
+        match &self.username {
+            None => vec![password],
+            Some(u) => match css_of(u) {
+                Some(u) => vec![password, u],
+                None => vec![],
+            },
+        }
+    }
+}
+
+/// The CSS selector a target is, when it is nothing but one.
+fn css_of(t: &Target) -> Option<String> {
+    use crate::browser::locator::LocatorStep;
+    match t {
+        Target::Legacy(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Target::One(LocatorStep { css: Some(c), role: None, text: None, nth: None, has_text: None, .. }) => {
+            Some(c.trim().to_string())
+        }
+        _ => None,
+    }
+}
+
 impl SignInRecipe {
+    /// The sign-in page's fields as the recipe's steps fill them in (also
+    /// inside a `when_visible`), or `None` when no step fills a
+    /// `{{password}}`: the recipe then says nothing of what its page holds.
+    pub fn sign_in_fields(&self) -> Option<SignInFields> {
+        let mut password = None;
+        let mut username = None;
+        let mut look = |a: &Action| {
+            if let Action::Fill { selector, value } = a {
+                let v = value.to_lowercase();
+                if v.contains("{{password}}") && password.is_none() {
+                    password = Some(selector.clone());
+                } else if v.contains("{{username}}") && username.is_none() {
+                    username = Some(selector.clone());
+                }
+            }
+        };
+        for step in &self.steps {
+            match step {
+                RecipeStep::Do(a) => look(a),
+                RecipeStep::WhenVisible(w) => w.then.iter().for_each(&mut look),
+            }
+        }
+        password.map(|password| SignInFields { password, username })
+    }
+
     /// How this recipe's `signed_in` is checked on every replay.
     pub fn signed_in_check(&self) -> crate::browser::expect::Check<'static> {
         signed_in_check(self.signed_in_in_menu)

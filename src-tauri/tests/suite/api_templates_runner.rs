@@ -3122,3 +3122,113 @@ fn a_run_for_a_long_step_has_room_for_a_token_page_and_a_retry() {
     assert_eq!(run_too_long(RUN_LIMIT), "the run took longer than 3 minutes");
     assert_eq!(run_too_long(Duration::from_secs(420)), "the run took longer than 420 seconds");
 }
+
+// Two sign-outs the run did not recognise, and a step that deletes.
+
+const SAME_PAGE: &str = "https://hr.example.internal/hr/pmsv10/performancecycle?handler=SaveProgress";
+
+/// An answer at the very address asked, the way a page served in place answers.
+fn in_place(body: &str) -> Value {
+    json!({ "status": 200, "contentType": "text/html; charset=utf-8", "finalUrl": SAME_PAGE, "redirected": false, "text": body })
+}
+
+#[tokio::test]
+async fn the_sign_in_page_served_in_place_is_signed_out() {
+    let _act = crate::serial::activity_log();
+    // The recipe's own fields (#user, #pass), no move to another address.
+    let form = r#"<form><input id="user" type="text"><input id="pass" type="password"></form>"#;
+    let mut r = rig(vec![in_place(form)], None);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    let step = &report.steps[0];
+    assert!(step.detail.contains("was sent to another page - the session may have ended"), "{}", step.detail);
+    assert_eq!(r.sign_ins(), 1, "it signed in again and sent the step twice");
+    assert_eq!(r.fetched().len(), 1);
+}
+
+#[tokio::test]
+async fn a_change_password_page_answered_in_place_is_not_signed_out() {
+    let _act = crate::serial::activity_log();
+    // A password field of the application's own, none of the recipe's sign-in fields.
+    let page = r#"<form><input id="oldpass" type="password"><input id="newpass" type="password"></form>"#;
+    let mut r = rig(vec![in_place(page)], None);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    let step = &report.steps[0];
+    assert!(!step.detail.contains("session may have ended"), "{}", step.detail);
+}
+
+#[tokio::test]
+async fn a_request_sent_to_another_sites_sign_in_is_signed_out_not_incomplete() {
+    let _act = crate::serial::activity_log();
+    // The page could not read the cross-origin redirect; it looked at the address again and saw the redirect.
+    let mut r = rig(vec![json!({ "signedOut": true })], None);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    let step = &report.steps[0];
+    assert_eq!(step.detail, "was sent to another page - the session may have ended");
+    assert!(!step.detail.contains("did not complete"), "{}", step.detail);
+    assert_eq!(r.sign_ins(), 1);
+    assert_eq!(r.fetched().len(), 1);
+    // A request that failed for any other reason is still the old sentence.
+    let mut r = rig(vec![json!({ "error": "TypeError: Failed to fetch" })], None);
+    let report = run(&mut r, template()).await;
+    assert!(report.steps[0].detail.starts_with("the request did not complete"), "{}", report.steps[0].detail);
+}
+
+fn deleting(effect: &str) -> ApiTemplate {
+    let mut t = template();
+    t.effect = serde_json::from_value(json!(effect)).unwrap();
+    t.steps[1].path = "/hr/pmsv10/performancecycle/DeleteRule".to_string();
+    t
+}
+
+#[test]
+fn a_saved_template_with_a_delete_step_is_refused_at_every_run_until_fixed() {
+    use v2_lib::api_templates::deletes_against_effect;
+    let r = rig(vec![], None);
+    let sentence = deletes_against_effect("Evaluation rules", Effect::Create);
+    for mode in [Mode::Run, prove()] {
+        let mut t = deleting("create");
+        // A saved template carries its proof; the refusal is the same.
+        t.proven = Some(Proven {
+            at: "2026-09-28T10:14:00Z".into(),
+            origin: "https://hr.example.internal".into(),
+            account: "admin".into(),
+            outputs: BTreeMap::new(),
+            environment: None,
+            via: None,
+        });
+        let problems = preflight(r.root.path(), &request(t, mode.clone()), None).unwrap_err();
+        assert!(problems.contains(&sentence), "{mode:?}: {problems:?}");
+    }
+    assert!(sentence.contains("will not save, prove or run until that is fixed"), "{sentence}");
+    // The same steps under a template that deletes pass this check (it is refused for other reasons).
+    let mut t = deleting("delete");
+    t.deletes_kind = Some("rule".into());
+    let problems = preflight(r.root.path(), &request(t, Mode::Cleanup), None).err().unwrap_or_default();
+    assert!(problems.iter().all(|p| !p.contains("looks like a delete")), "{problems:?}");
+}
+
+#[test]
+fn a_postback_whose_argument_a_value_makes_a_delete_is_refused_at_run() {
+    use v2_lib::api_templates::deletes_against_effect;
+    let r = rig(vec![], None);
+    let mut t = template();
+    t.steps = vec![serde_json::from_value(json!({
+        "name": "Grid", "postback": { "page": "/Perf/List.aspx", "button": "grid", "argument": "{{command}}" }
+    }))
+    .unwrap()];
+    t.params = vec![serde_json::from_value(json!({ "name": "command", "type": "string", "required": true })).unwrap()];
+    t.outputs = vec![];
+    // Nothing in the template says delete; the value does.
+    assert!(v2_lib::api_templates::check(&t).iter().all(|p| !p.contains("looks like a delete")));
+    let mut req = request(t.clone(), Mode::Run);
+    req.values.clear();
+    req.values.insert("command".into(), json!("Select$0"));
+    let problems = preflight(r.root.path(), &req, None).err().unwrap_or_default();
+    assert!(problems.iter().all(|p| !p.contains("looks like a delete")), "{problems:?}");
+    req.values.insert("command".into(), json!("Delete$0"));
+    let problems = preflight(r.root.path(), &req, None).unwrap_err();
+    assert!(problems.contains(&deletes_against_effect("Grid", Effect::Create)), "{problems:?}");
+}

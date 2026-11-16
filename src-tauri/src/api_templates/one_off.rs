@@ -4,6 +4,8 @@
 //! touches a file; `ai_bridge::send_in` does the sending.
 
 use super::{ApiTemplate, Antiforgery, Effect, Method, Param, Step};
+use crate::autorun::recipe::SignInFields;
+use crate::browser::locator::{fold_name, Target};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -166,19 +168,130 @@ fn has_password_input(body: &str) -> bool {
     false
 }
 
+/// Whether a page's HTML is the sign-in page the recipe describes: it has a
+/// password input, and the recipe's password field (and its username field,
+/// when it names one) are on it. A page of the application with a password
+/// field of its own (change password) does not hold the recipe's fields, so
+/// it is not the sign-in page. A field the recipe names in a way this cannot
+/// read from HTML (an accessible name alone) is read as its name appearing on
+/// the page; a recipe with no `{{password}}` step never matches.
+pub fn page_is_sign_in(body: &str, fields: &SignInFields) -> bool {
+    if !has_password_input(body) {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    target_in_html(&fields.password, &lower) && fields.username.as_ref().is_none_or(|u| target_in_html(u, &lower))
+}
+
+/// Whether the (lower-cased) HTML holds what `t` points at. A CSS selector
+/// is read when it is one compound (`#id`, `.class`, `[attr=value]`, a tag,
+/// in any mix); a longer one is not read and holds nothing. A locator with a
+/// name or text holds it when that wording is on the page.
+fn target_in_html(t: &Target, lower: &str) -> bool {
+    use crate::browser::locator::LocatorStep;
+    match t {
+        Target::Legacy(s) => css_in_html(s, lower),
+        Target::One(LocatorStep { css: Some(c), .. }) => css_in_html(c, lower),
+        Target::One(step) => {
+            let words = step.name.as_deref().or(step.text.as_deref()).map(fold_name).unwrap_or_default();
+            !words.is_empty() && lower.contains(&words)
+        }
+        Target::Chain(_) => false,
+    }
+}
+
+/// Every value `attr` has in the HTML, quoted either way or not at all.
+fn attr_values(lower: &str, attr: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let needle = format!("{attr}=");
+    let mut from = 0;
+    while let Some(i) = lower[from..].find(&needle) {
+        let at = from + i;
+        let before = lower[..at].chars().last();
+        from = at + needle.len();
+        if !before.is_some_and(|c| c.is_whitespace() || c == '<') && !before.is_some_and(|c| c == '"' || c == '\'') {
+            continue;
+        }
+        let rest = &lower[from..];
+        let value = match rest.chars().next() {
+            Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or(""),
+            _ => rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or(""),
+        };
+        out.push(value.to_string());
+    }
+    out
+}
+
+/// One compound CSS selector against the HTML (see `target_in_html`).
+fn css_in_html(selector: &str, lower: &str) -> bool {
+    let sel = selector.trim().to_ascii_lowercase();
+    if sel.is_empty() || sel.contains(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~' | ',' | ':' | '(')) {
+        return false;
+    }
+    let mut rest = sel.as_str();
+    let tag_len = rest.find(['#', '.', '[']).unwrap_or(rest.len());
+    let tag = &rest[..tag_len];
+    if !tag.is_empty() && tag != "*" && !lower.contains(&format!("<{tag}")) {
+        return false;
+    }
+    rest = &rest[tag_len..];
+    while !rest.is_empty() {
+        let (kind, after) = rest.split_at(1);
+        let end = after.find(['#', '.', '[']).unwrap_or(after.len());
+        match kind {
+            "#" | "." => {
+                let name = &after[..end];
+                if name.is_empty() {
+                    return false;
+                }
+                let found = if kind == "#" {
+                    attr_values(lower, "id").iter().any(|v| v == name)
+                } else {
+                    attr_values(lower, "class").iter().any(|v| v.split_whitespace().any(|c| c == name))
+                };
+                if !found {
+                    return false;
+                }
+                rest = &after[end..];
+            }
+            "[" => {
+                let Some(close) = after.find(']') else { return false };
+                let inner = &after[..close];
+                let found = match inner.split_once('=') {
+                    Some((attr, value)) => {
+                        let value = value.trim().trim_matches(['"', '\'']);
+                        attr_values(lower, attr.trim()).iter().any(|v| v == value)
+                    }
+                    None => lower.contains(&format!("{} ", inner.trim())) || lower.contains(&format!("{}=", inner.trim())),
+                };
+                if !found {
+                    return false;
+                }
+                rest = &after[close + 1..];
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// Whether an answer is the app's sign-in page served in place of the page
 /// asked for. Either it ended on the sign-in recipe's start path (unless that
 /// is the site root, which a save may redirect to for other reasons), or the
-/// call was moved to a different page and that page has a password input.
-/// A page with a password field that answers in place (change password) is
-/// an answer, and so is the sign-in page asked for on purpose. A postback is
-/// judged by `api_templates::postback`, not here.
+/// call was moved to a different page and that page has a password input, or
+/// it answered at the very address asked and its HTML is the recipe's own
+/// sign-in page (`page_is_sign_in`: the session ended and the app served its
+/// sign-in form where the page was). A page with a password field that
+/// answers in place without being the recipe's sign-in page (change
+/// password) is an answer, and so is the sign-in page asked for on purpose.
+/// A postback is judged by `api_templates::postback`, not here.
 pub fn is_sign_in_answer(
     final_path: Option<&str>,
     content_type: Option<&str>,
     body: &str,
     request_path: &str,
     start_path: Option<&str>,
+    fields: Option<&SignInFields>,
 ) -> bool {
     let asked = compared_path(request_path);
     let start = start_path.map(compared_path);
@@ -191,9 +304,11 @@ pub fn is_sign_in_answer(
     if start.as_deref().is_some_and(|s| s != "/" && s == ended) {
         return true;
     }
-    ended != asked
-        && content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"))
-        && has_password_input(body)
+    let html = content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"));
+    if ended != asked {
+        return html && has_password_input(body);
+    }
+    html && fields.is_some_and(|f| page_is_sign_in(body, f))
 }
 
 /// The path of the sign-in recipe's start address, for `is_sign_in_answer`.
@@ -404,15 +519,9 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET
     // cannot be sent as a delete, so only a POST is judged.)
-    if one.step.method() == Method::Post && one.effect != Effect::Delete {
-        let address = request_path(&one).to_ascii_lowercase();
-        let button = one.step.postback.as_ref().map(|p| p.button.to_ascii_lowercase()).unwrap_or_default();
-        // The grid's own delete command is `__doPostBack('grid','Delete$0')`.
-        let argument = one.step.postback.as_ref().map(|p| super::exec::substitute_str(&p.argument, &sent_vars(&one)).trim().to_ascii_lowercase()).unwrap_or_default();
-        let says = |s: &str| s.contains("delete") || s.contains("remove");
-        if says(&address) || says(&button) || argument.starts_with("delete") || argument.starts_with("remove") {
-            return bad(LOOKS_LIKE_A_DELETE);
-        }
+    // A saved template's steps are held to the same rule (`ApiTemplateStep::says_delete`).
+    if one.effect != Effect::Delete && one.step.says_delete(&sent_vars(&one)) {
+        return bad(LOOKS_LIKE_A_DELETE);
     }
     Ok(one)
 }

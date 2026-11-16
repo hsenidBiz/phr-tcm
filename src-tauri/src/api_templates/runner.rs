@@ -167,7 +167,15 @@ pub const FETCH_FN: &str = r#"async function (req, token, limitMs) {
     const text = (await r.text()).slice(0, 65536);
     return { status: r.status, contentType: r.headers.get("content-type"), finalUrl: r.url, redirected: r.redirected, text };
   } catch (e) {
-    return { error: e && e.name === "AbortError" ? "timeout" : String(e) };
+    if (e && e.name === "AbortError") return { error: "timeout" };
+    // A request that failed outright may have been sent to another site: an SSO redirect
+    // the page may not read. The address asked for, looked at again with redirects left
+    // alone, says whether it sends the browser away (an opaque redirect). Never sent again.
+    try {
+      const probe = await fetch(req.url, { method: "GET", credentials: "same-origin", redirect: "manual", signal: AbortSignal.timeout(5000) });
+      if (probe.type === "opaqueredirect") return { signedOut: true };
+    } catch (ignored) { /* not a redirect */ }
+    return { error: String(e) };
   } finally {
     clearTimeout(timer);
   }
@@ -383,6 +391,17 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
         problems.push(format!("template {} does not delete, so Clean up does not run it", t.id));
     }
     problems.extend(check_values(t, &req.values));
+    // A step whose own words are placeholders (a button or argument a value
+    // fills in) says delete only once the values are in: judged here too.
+    if t.effect != Effect::Delete {
+        let vars: BTreeMap<String, Value> = super::with_defaults(t, &req.values).into_iter().collect();
+        for step in t.steps.iter().filter(|s| s.says_delete(&vars)) {
+            let sentence = super::deletes_against_effect(&step.name, t.effect);
+            if !problems.contains(&sentence) {
+                problems.push(sentence);
+            }
+        }
+    }
     if !is_safe_relative_path(&t.antiforgery.page) {
         problems.push(format!(
             "antiforgery page '{}' is not a safe relative path on this origin",
@@ -1619,6 +1638,19 @@ async fn run_step<D: Driver>(
         ));
         return Err((None, "the request did not complete - see Settings, Logs".to_string()).into());
     }
+    // The request was sent to another site and the page could not read what
+    // came back: the application's own SSO redirect, which is what an ended
+    // session does. Nothing was followed with the app's cookies.
+    if answer["signedOut"].as_bool() == Some(true) {
+        applog::warn(format!("api template {}: step {} was redirected to another site's sign-in", ctx.id(), step.name));
+        return Err(StepFailure {
+            status: None,
+            detail: SENT_ELSEWHERE.to_string(),
+            unread: false,
+            session_ended: true,
+            posted: false,
+        });
+    }
     let Some(status) = status else {
         // Only the answer's shape: whatever it carries may be the body.
         let keys = match answer.as_object() {
@@ -1647,6 +1679,27 @@ async fn run_step<D: Driver>(
             step.name,
             path_of(final_url)
         ));
+        return Err(StepFailure {
+            status: Some(status),
+            detail: SENT_ELSEWHERE.to_string(),
+            unread: false,
+            session_ended: true,
+            posted: false,
+        });
+    }
+    // Answered at the very address asked, with the recipe's own sign-in page
+    // (the session ended and the app served its form in place of the page).
+    // A page with a password field of its own (change password) is no match.
+    let start = origin_of(&ctx.recipe.start_url).map(|_| super::one_off::sign_in_path(&ctx.recipe.start_url));
+    if super::one_off::is_sign_in_answer(
+        Some(path_of(if final_url.is_empty() { built.url.as_str() } else { final_url }).as_str()),
+        answer["contentType"].as_str(),
+        text,
+        &built.url,
+        start.as_deref(),
+        ctx.recipe.sign_in_fields().as_ref(),
+    ) {
+        applog::warn(format!("api template {}: step {} was answered by the sign-in page in place", ctx.id(), step.name));
         return Err(StepFailure {
             status: Some(status),
             detail: SENT_ELSEWHERE.to_string(),
@@ -1773,6 +1826,12 @@ async fn run_postback<D: Driver>(
     let adapted = adapt_path_case(d, ctx, step, &mut stand_in).await;
     req.key = super::postback::page_key(&stand_in.url);
     req.url = stand_in.url.clone();
+    // The sign-in page's own fields, for a page loaded in place to be told
+    // from an answer - none when this step's page is the sign-in page.
+    let start_key = super::postback::page_key(&super::one_off::sign_in_path(&ctx.recipe.start_url));
+    if req.key != start_key {
+        req.sign_in = ctx.recipe.sign_in_fields().map(|f| f.css_selectors()).unwrap_or_default();
+    }
     let wire = serde_json::to_value(&req).map_err(|e| (None, format!("the request could not be built: {e}")))?;
     let cookies_sent = cookies_for(d, ctx, &format!("{}{}", ctx.origin, req.url))
         .await
@@ -1857,13 +1916,16 @@ async fn run_postback<D: Driver>(
         Some(Reply::Refused { why, status, count, names }) => {
             return Err(StepFailure {
                 status: None,
-                detail: super::exec::hide_text(
-                    &refusal_sentence(why, &req.url, &button, status, count, &names),
-                    &hide_of(ctx),
+                // A refusal after the post went out (the answer was another
+                // site's sign-in) says it may have saved, as a signed-out
+                // answer does; before it, nothing was sent.
+                detail: format!(
+                    "{}{after_post}",
+                    super::exec::hide_text(&refusal_sentence(why, &req.url, &button, status, count, &names), &hide_of(ctx))
                 ),
                 unread: false,
                 session_ended: why == Refusal::SignedOut,
-                posted: false,
+                posted: reply_posted(&raw),
             });
         }
         Some(Reply::Answered(a)) => a,

@@ -225,6 +225,59 @@ impl ApiTemplateStep {
     pub fn is_postback(&self) -> bool {
         self.postback.is_some()
     }
+
+    /// Whether this step, as the values fill it in, is a POST that says it
+    /// deletes: its address (the `handler` query included), its postback
+    /// button says delete or remove, or its postback argument begins with
+    /// either (the grid's own command is `__doPostBack('grid','Delete$0')`).
+    /// A placeholder no value fills in is not read as a word. A GET cannot
+    /// delete, so only a POST is judged.
+    pub fn says_delete(&self, vars: &BTreeMap<String, Value>) -> bool {
+        if self.method() != Method::Post {
+            return false;
+        }
+        let filled = |s: &str| without_placeholders(&exec::substitute_str(s.trim(), vars)).to_ascii_lowercase();
+        let says = |s: &str| s.contains("delete") || s.contains("remove");
+        let handler = self.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")).map(|(_, v)| filled(v));
+        if says(&filled(self.address())) || handler.as_deref().is_some_and(says) {
+            return true;
+        }
+        self.postback.as_ref().is_some_and(|p| {
+            let argument = filled(&p.argument);
+            says(&filled(&p.button)) || argument.starts_with("delete") || argument.starts_with("remove")
+        })
+    }
+}
+
+/// `s` with every `{{...}}` left in it taken out.
+fn without_placeholders(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find("}}") {
+            Some(end) => rest = &rest[start + end + 2..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Said of a step of a template whose effect does not admit deleting but
+/// whose step says it deletes: names the step and the way out. A saved
+/// template that fails this is refused at every run until it is fixed; it
+/// is never changed or removed for the person.
+pub fn deletes_against_effect(step: &str, effect: Effect) -> String {
+    let declared = match effect {
+        Effect::Create => "create",
+        Effect::Edit => "edit",
+        Effect::Read => "read",
+        Effect::Delete => "delete",
+    };
+    format!(
+        "step '{step}' looks like a delete (its address, button or argument says delete or remove), but this template's effect is {declared} - it will not save, prove or run until that is fixed: make it a delete template (effect delete, run only by Clean up) or take the delete out of the step"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -632,6 +685,14 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
     }
     if t.effect == Effect::Delete && !delete_shape_ok(t) {
         problems.push(DELETE_SHAPE.to_string());
+    }
+    // A step that deletes belongs to a template that says it deletes, the
+    // same rule a one-off call is held to (`one_off::LOOKS_LIKE_A_DELETE`).
+    if t.effect != Effect::Delete {
+        let none = BTreeMap::new();
+        for step in t.steps.iter().filter(|s| s.says_delete(&none)) {
+            problems.push(deletes_against_effect(&step.name, t.effect));
+        }
     }
 
     // Names visible to a placeholder: every declared param, plus every
