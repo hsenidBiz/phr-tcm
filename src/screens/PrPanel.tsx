@@ -156,7 +156,7 @@ function PrDescription({ pr, org, project }: { pr: PullRequest; org: string; pro
     // A description that fits on first paint can still reflow past the
     // clamp later - the window narrows, a markdown image finishes loading -
     // and that reflow needs to be caught too, not just the first layout.
-    // jsdom's ResizeObserver (see test-setup.ts) is a no-op, matching the
+    // jsdom's ResizeObserver (see tests/test-setup.ts) is a no-op, matching the
     // scrollHeight/clientHeight-are-both-0 reality noted above: it neither
     // fires in a test nor needs to.
     if (typeof ResizeObserver === "undefined") return;

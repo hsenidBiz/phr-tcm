@@ -28,6 +28,7 @@ All of these run from the repository root:
 npm install                  # install frontend deps
 npm run tauri dev            # run the app
 npm test                     # vitest (jsdom) - the frontend suite
+                             # frontend tests live in tests/, mirroring src/
 npx tsc --noEmit             # typecheck
 npm run build                # production frontend build (tsc + vite)
 npm run tauri build          # build the desktop binary
@@ -110,11 +111,11 @@ before pushing anyway.
   swallowed every click while 655 tests passed, because `fireEvent.click`
   reaches an element a real browser has completely covered. Tests cannot
   catch that class of bug — a manual walk-through can.
-- `src/App.test.tsx` mounts the whole app and is slow; it raises both
+- `tests/App.test.tsx` mounts the whole app and is slow; it raises both
   vitest's `testTimeout` and Testing Library's `asyncUtilTimeout`, and it
   still has a documented load-induced flake. One failure that passes on a
   re-run is usually that; two different ones are not.
-- `src/ui-consistency.test.ts` is a gate on this app's own UI
+- `tests/ui-consistency.test.ts` is a gate on this app's own UI
   conventions. Never weaken it to make code pass.
 
 ## Important conventions
@@ -138,7 +139,7 @@ before pushing anyway.
   `src-tauri/src/cache/` - `cache::get/fresh/put/update/forget` for data
   that survives a restart, `session_fresh/session_put` for memory-only
   values; every key and TTL in `cache/keys.rs`. Both wipe themselves when a
-  different account signs in. `src/lib/cache.test.ts` and
+  different account signs in. `tests/lib/cache.test.ts` and
   `tests/suite/cache.rs` catch the common ways of adding a private cache - they
   are a tripwire, not proof.
 - **Icons** come from the shared vocabulary in `src/lib/actionIcons.ts`,
