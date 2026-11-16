@@ -93,10 +93,13 @@ const ALLOWED_ATTR = [
 ];
 
 /** Render markdown to HTML for display in a `.md-preview` container.
- * `breaks: true` matches Azure DevOps, which treats single newlines as
- * line breaks in work-item and PR descriptions. */
-export function renderMarkdown(md: string): string {
-  return sanitize(marked.parse(md || "", { async: false, breaks: true }) as string);
+ * `breaks: true` (the default) matches Azure DevOps, which treats single
+ * newlines as line breaks in work-item descriptions. Pull request text
+ * passes `breaks: false`: there a single newline runs the lines together,
+ * as it always has in the pull request panel. */
+export function renderMarkdown(md: string, options: { breaks?: boolean } = {}): string {
+  const breaks = options.breaks ?? true;
+  return sanitize(marked.parse(md || "", { async: false, breaks }) as string);
 }
 
 function sanitize(html: string): string {

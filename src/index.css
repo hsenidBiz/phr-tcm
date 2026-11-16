@@ -689,19 +689,70 @@ body {
 .md-compact del { color: var(--color-muted); }
 /* Astryx drew links blue, not in the accent. */
 .md-compact a { color: var(--color-info); }
-.md-compact ul, .md-compact ol { margin: 0.25rem 0; padding-left: 1.5rem; }
-.md-compact li { padding: 0.25rem 0; }
-.md-compact li > ul, .md-compact li > ol { margin: 0.375rem 0 0; }
+.md-compact ul, .md-compact ol { margin: 0.25rem 0; padding-left: 1.5rem; list-style: none; }
+.md-compact ol { counter-reset: md-ol; }
+.md-compact li { position: relative; padding: 0.25rem 0; }
+/* Markers as Astryx drew them: a 6px dot, or the number and a full stop,
+   in a 16px column that ends 8px before the text. MarkdownView moves the
+   counter for a list that starts above 1. */
+.md-compact ul > li::before {
+  content: "";
+  position: absolute;
+  left: -1.1875rem;
+  top: 0.6875rem;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.md-compact ol > li { counter-increment: md-ol; }
+.md-compact ol > li::before {
+  content: counter(md-ol) ".";
+  position: absolute;
+  left: -1.5rem;
+  top: 0.25rem;
+  width: 1rem;
+}
+.md-compact li + li { margin-top: 2px; }
+.md-compact li > ul, .md-compact li > ol { margin: 0.25rem 0 0; }
 .md-compact li > p { margin: 0; }
 .md-compact code { font-size: 1em; padding: 0 0.25rem; }
 .md-compact pre {
   margin: 0.5rem 0;
-  padding: 0.75rem 1rem;
+  padding: 0;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 1em;
+  overflow: hidden;
 }
-.md-compact pre code { padding: 0; }
+.md-compact pre code { display: block; padding: 0.75rem 1rem; overflow-x: auto; }
+/* The language label and Copy button MarkdownView puts on a fenced block
+   that names a language: a 32px bar on the block's own background. */
+.md-codebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  color: var(--color-muted);
+}
+.md-codebar-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-codebar-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: -0.5rem;
+  padding: 0.25rem;
+  border-radius: 4px;
+  line-height: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.md-codebar-copy svg { width: 1rem; height: 1rem; }
+.md-codebar-copy:hover { background: color-mix(in srgb, currentColor 12%, transparent); color: var(--color-text); }
 .md-compact blockquote {
   border-left-width: 2px;
   margin: 0.5rem 0;
@@ -721,6 +772,7 @@ body {
   padding: 0.5rem 0.75rem;
   overflow-wrap: anywhere;
 }
+.md-compact tbody tr:last-child td { border-bottom: 0; }
 .md-compact th:first-child, .md-compact td:first-child { padding-left: 0.5rem; }
 .md-compact th:last-child, .md-compact td:last-child { padding-right: 0.5rem; }
 .md-compact th { background: transparent; color: var(--color-muted); }
