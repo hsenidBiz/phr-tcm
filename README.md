@@ -351,7 +351,7 @@ need no toolchain.
 npm install
 npm run tauri dev        # run the app (Rust + Vite HMR)
 
-npm test                 # vitest (frontend)
+npm test                 # vitest (frontend; tests are in tests/, mirroring src/)
 npx tsc --noEmit         # typecheck
 npm run build            # type-check + Vite build
 cargo test --tests       # Rust (run inside src-tauri/)
@@ -477,7 +477,7 @@ src/                        React and TypeScript frontend
   list, keyboard-key hints and toasts. Each sits behind the app's own
   wrapper in `src/components/ui/` (toasts through `src/lib/toast.ts`), and
   its colours are the app's tokens, mapped in `src/xiod-theme.css`.
-  `src/xiod.test.ts` holds the pin, the vetted versions, the import
+  `tests/xiod.test.ts` holds the pin, the vetted versions, the import
   allowlist and the licence notices (`public/THIRD-PARTY-NOTICES.txt`).
 - A render crash shows a fallback with a Reload button and writes the
   stack to the app log.

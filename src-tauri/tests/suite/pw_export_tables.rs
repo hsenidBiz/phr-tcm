@@ -203,7 +203,7 @@ fn the_settling_rule_is_the_apps() {
 }
 
 /// Compares `got` with a golden file under `tests/fixtures/pw_export/`, or
-/// rewrites the file when PW_EXPORT_BLESS is set. `src/lib/pwExportGolden.test.ts`
+/// rewrites the file when PW_EXPORT_BLESS is set. `tests/lib/pwExportGolden.test.ts`
 /// type-checks every golden.
 fn golden(name: &str, got: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw_export").join(name);

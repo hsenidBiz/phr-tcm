@@ -8,7 +8,7 @@ import type { Box, ShotPositions, SiteContent } from "./types";
 const main = (controls: Record<string, Box>): ShotPositions => ({ size: { w: 1440, h: 900 }, controls });
 
 // jsdom has no IntersectionObserver and no Element.scrollIntoView. The app's
-// src/test-setup.ts stubs both for every test, but these tests must not
+// tests/test-setup.ts stubs both for every test, but these tests must not
 // depend on another suite's setup, so they stub them here too.
 beforeAll(() => {
   vi.stubGlobal(

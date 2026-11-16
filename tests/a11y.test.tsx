@@ -1,0 +1,188 @@
+/**
+ * Accessibility / usability gate - axe-core over rendered screens.
+ *
+ * This is the "is the app understandable" layer the behavioral tests
+ * don't cover: every control must have a name a screen reader (or a
+ * confused user hovering for a tooltip) can read, headings must nest in
+ * order, form fields must be labelled. Color-contrast is excluded ONLY
+ * because jsdom does not paint - the token system + the consistency gate
+ * carry that concern, and the palettes were chosen against WCAG AA.
+ *
+ * When this fails: give the control an aria-label/title, or fix the
+ * heading order - do not disable the rule.
+ */
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import axe from "axe-core";
+import { afterEach, expect, test, vi } from "vitest";
+import type { ReactElement } from "react";
+import AiBridge from "../src/screens/AiBridge";
+import PrPanel from "../src/screens/PrPanel";
+import Settings from "../src/screens/Settings";
+import SignIn from "../src/screens/SignIn";
+import WorkBoard from "../src/screens/WorkBoard";
+import QueueSection from "../src/components/QueueSection";
+import SpecsStatusPill from "../src/components/SpecsStatusPill";
+import { setSpecsPill } from "../src/lib/pwSpecs";
+
+// axe walks the whole rendered tree of a real screen, which is slow by
+// nature: Settings sits around 4.5s idle and has crossed vitest's 5s
+// default under full-suite load more than once - always as a timeout,
+// never as a violation. Raised for this file only, for the same reason as
+// App.test.tsx: a release gate that fails at random teaches people to
+// ignore it.
+vi.setConfig({ testTimeout: 15_000 });
+
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+});
+
+/** `before` runs once the screen has settled, for a test that has to put
+ * the screen into a state (a selection, a fold) before it is audited. */
+async function expectAccessible(ui: ReactElement, before?: () => void) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { container } = render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  // Let initial queries settle so the real content (not just skeletons)
+  // is what gets audited.
+  await new Promise((r) => setTimeout(r, 50));
+  if (before) {
+    before();
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const results = await axe.run(container, {
+    rules: { "color-contrast": { enabled: false } }, // jsdom cannot paint
+  });
+  const problems = results.violations.map(
+    (v) => `${v.id}: ${v.help} -> ${v.nodes.map((n) => n.html.slice(0, 80)).join(" | ")}`,
+  );
+  expect(problems).toEqual([]);
+}
+
+test("SignIn is accessible", async () => {
+  await expectAccessible(<SignIn signingIn={false} onSignIn={() => {}} />);
+});
+
+test("Settings is accessible", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "app_logs") return [];
+    if (cmd === "app_log_dir") return "C:\\logs";
+    return undefined;
+  });
+  await expectAccessible(
+    <Settings
+      org="acme"
+      project="Web"
+      homeProject="Web"
+      onHomeProjectChange={() => {}}
+      onAllProjectsChange={() => {}}
+    />,
+  );
+});
+
+test("AI Bridge is accessible", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm"] },
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: [] },
+      ];
+  });
+  await expectAccessible(<AiBridge />);
+});
+
+test("Pull Requests panel is accessible", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview")
+      return {
+        awaiting: [
+          {
+            id: 1, title: "A change", repo: "web", repo_id: "g1", status: "active",
+            closed: "", merge_commit: "", author: "Sam", source_branch: "f/x",
+            target_branch: "main", created: "2026-07-18T01:00:00Z", description: "",
+            is_draft: false, has_conflicts: false, my_vote: 0,
+            reviewers: [{ display_name: "Kim", vote: 10 }],
+            web_url: "https://example.invalid/pr",
+          },
+        ],
+        mine: [],
+      };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "repo_pull_requests") return [];
+  });
+  await expectAccessible(<PrPanel org="acme" project="Web" allProjects={false} />);
+});
+
+test("Work Manager board with swimlanes is accessible", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const item = (id: number, title: string, parent: unknown) => ({
+    id, title, work_item_type: "Task", state: "To Do", state_color: "b2b2b2", column: "To Do",
+    assigned_to: "Avin", tags: "", priority: 2, changed_date: "2026-09-24T00:00:00Z", parent,
+  });
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board")
+      return {
+        items: [
+          item(21, "Draft the form", { id: 500, title: "Leave requests", work_item_type: "Product Backlog Item" }),
+          item(22, "Loose task", null),
+        ],
+        states_by_type: {},
+      };
+    if (cmd === "classification_paths") return [];
+    if (cmd === "board_pr_links") return [];
+  });
+  await expectAccessible(<WorkBoard org="acme" project="Web" allProjects={false} homeProject="Web" />);
+});
+
+test("the Queue, grouped by area with a case selected, is accessible", async () => {
+  // Rows are selected by clicking them: a multi-select grid of rows, each
+  // holding one cell with the row's own buttons in it.
+  localStorage.setItem("tcm-v2-queue-group", "on");
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd.startsWith("list_") || cmd.endsWith("_values") || cmd === "pbi_test_cases") return [];
+    return undefined;
+  });
+  const tc = (title: string, area: string) => ({
+    title, area, steps: [{ action: "Open page", expected: "Page shown" }], tags: "",
+    automation_status: "Not Automated", module_value: "", preconditions: "",
+    update_id: null, spec_order: null, tester_order: null,
+  });
+  const queue = [
+    tc("Create an event", "Events / Create"),
+    tc("List events", "Events"),
+    tc("Sign in", ""),
+    tc("Sign out", ""),
+  ];
+  await expectAccessible(
+    <QueueSection org="acme" project="Web" pbiId={42} queue={queue} setQueue={() => {}} />,
+    () => {
+      // A row selected by clicking it, a whole group by its tick box (the
+      // parent then shows the mixed state), and a folded group that holds
+      // part of the selection.
+      fireEvent.click(screen.getByRole("row", { name: /^Sign in / }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Events / Create" }));
+      fireEvent.click(screen.getByRole("button", { name: "Collapse area No area" }));
+      expect(screen.getByRole("row", { name: /^Create an event / })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("checkbox", { name: "Select all in Events" })).toHaveAttribute("aria-checked", "mixed");
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    },
+  );
+});
+
+test("the Playwright pipeline pill is accessible in each of its states", async () => {
+  for (const pill of [
+    { tone: "success" as const, label: "11 pipeline files ready", why: "11 files the script pipeline follows were found in the clone." },
+    { tone: "warning" as const, label: "1 pipeline file missing", why: "CLAUDE.md is not in the clone." },
+    { tone: "warning" as const, label: "Updating specs�", why: "The spec files changed." },
+    { tone: "danger" as const, label: "No specs found", why: "The clone has no suites folder." },
+  ]) {
+    setSpecsPill(pill);
+    await expectAccessible(<SpecsStatusPill />);
+    expect(screen.getByRole("status", { name: `Playwright pipeline: ${pill.label}. ${pill.why}` })).toBeInTheDocument();
+    cleanup();
+  }
+  setSpecsPill(null);
+});

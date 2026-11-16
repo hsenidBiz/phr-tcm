@@ -1,0 +1,192 @@
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
+import CommandPalette from "../../src/components/CommandPalette";
+import { sectionShortcut, shortcutOrder, visibleCaseItems } from "../../src/components/Sidebar";
+import { ALL_MODULES, resetModulesStore, setModulesForTest } from "../../src/lib/modules";
+
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+  resetModulesStore();
+});
+
+function renderPalette(
+  onNavigate = vi.fn(),
+  onSwitchProject = vi.fn(),
+  onToggleWork = vi.fn(),
+  allProjects = false,
+) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <CommandPalette
+        onNavigate={onNavigate}
+        org="acme"
+        allProjects={allProjects}
+        onSwitchProject={onSwitchProject}
+        onToggleWork={onToggleWork}
+      />
+    </QueryClientProvider>,
+  );
+  return { onNavigate, onSwitchProject, onToggleWork };
+}
+
+test("Ctrl+K opens the palette and navigation fires", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  const { onNavigate, onToggleWork } = renderPalette();
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  expect(await screen.findByPlaceholderText(/Type a command/)).toBeInTheDocument();
+
+  fireEvent.click(await screen.findByText("Run Tests"));
+  expect(onNavigate).toHaveBeenCalledWith("run");
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  fireEvent.click(await screen.findByText("Toggle Work Manager"));
+  expect(onToggleWork).toHaveBeenCalled();
+});
+
+test("switch-project entries come from the current org", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  const { onSwitchProject } = renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  fireEvent.click(await screen.findByText("Web"));
+  expect(onSwitchProject).toHaveBeenCalledWith("Web");
+});
+
+// While the projects show together there is no project to switch to: each
+// PBI carries its own.
+test("combined mode offers no Switch project", async () => {
+  const asked: string[] = [];
+  mockIPC((cmd) => {
+    asked.push(cmd);
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  renderPalette(vi.fn(), vi.fn(), vi.fn(), true);
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await screen.findByPlaceholderText(/Type a command/);
+  await waitFor(() => expect(asked).toContain("list_projects"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByText("Switch project")).not.toBeInTheDocument();
+  expect(screen.queryByText("Web")).not.toBeInTheDocument();
+});
+
+// The hints were once literals and drifted the moment a tab was added:
+// "mod+4" said Run Tests while Ctrl+4 opened View Test Cases. Each row's
+// digit must be its 1-based slot in the same order App's Ctrl+N uses.
+test("every Go-to hint is the section's 1-based slot in the shortcut order", async () => {
+  setModulesForTest(ALL_MODULES);
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await screen.findByPlaceholderText(/Type a command/);
+
+  expect(visibleCaseItems().length).toBeGreaterThan(0);
+  for (const item of visibleCaseItems()) {
+    const slot = shortcutOrder().indexOf(item.id) + 1;
+    // Ctrl+1..9 is all there is: a row past the ninth, or one left out of
+    // the order (Playwright), has no number, so it carries no hint rather
+    // than one for a key that does nothing.
+    if (slot === 0 || slot > 9) {
+      expect(sectionShortcut(item.id)).toBeUndefined();
+      continue;
+    }
+    expect(sectionShortcut(item.id)).toBe(`mod+${slot}`);
+    // The Kbd badge sits beside the label inside the same row, and the
+    // digit is the last thing in it.
+    const row = screen.getByText(item.label).closest('[data-slot="command-item"]');
+    expect(row?.textContent?.trim().endsWith(String(slot))).toBe(true);
+  }
+  expect(sectionShortcut("settings")).toBeUndefined();
+});
+
+// A module that is off has no item in the palette, and switching one on adds
+// its item without reopening anything.
+test("Go-to items follow the modules", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await screen.findByPlaceholderText(/Type a command/);
+  expect(screen.getByText("Suite Management")).toBeInTheDocument();
+  expect(screen.queryByText("Auto Run")).not.toBeInTheDocument();
+  expect(screen.queryByText("API Templates")).not.toBeInTheDocument();
+  expect(screen.queryByText("Playwright")).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
+  expect(await screen.findByText("Auto Run")).toBeInTheDocument();
+  expect(screen.getByText("Playwright")).toBeInTheDocument();
+  expect(screen.queryByText("API Templates")).not.toBeInTheDocument();
+});
+
+test("typing narrows the list; a query nothing matches says so, and Enter then runs nothing", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  const { onNavigate, onToggleWork } = renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByPlaceholderText(/Type a command/);
+
+  fireEvent.change(input, { target: { value: "sett" } });
+  expect(await screen.findByText("Settings")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("Toggle Work Manager")).not.toBeInTheDocument());
+
+  fireEvent.change(input, { target: { value: "zzzz" } });
+  expect(await screen.findByText("No results.")).toBeInTheDocument();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onNavigate).not.toHaveBeenCalled();
+  expect(onToggleWork).not.toHaveBeenCalled();
+});
+
+test("Enter runs the highlighted row - the first, as the palette opens - and closes it", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  const { onNavigate } = renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByPlaceholderText(/Type a command/);
+  const first = visibleCaseItems()[0];
+  await waitFor(() =>
+    expect(screen.getByText(first.label).closest('[data-slot="command-item"]')).toHaveAttribute("data-highlighted"),
+  );
+
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onNavigate).toHaveBeenCalledWith(first.id);
+  await waitFor(() => expect(screen.queryByPlaceholderText(/Type a command/)).not.toBeInTheDocument());
+});
+
+// cmdk matched a query's letters as a subsequence of a row's label, gaps
+// allowed - "chk upd" found "Check for updates" without typing it out. The
+// move to XiodUI's Command must keep that, not fall back to a plain
+// substring search that only prefixes or exact fragments would pass.
+test("a query's letters find a row as a subsequence, in order, gaps allowed", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByPlaceholderText(/Type a command/);
+
+  fireEvent.change(input, { target: { value: "chk upd" } });
+  expect(await screen.findByText("Check for updates")).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { value: "tgl theme" } });
+  expect(await screen.findByText("Toggle theme")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("Check for updates")).not.toBeInTheDocument());
+
+  // Same letters as "Toggle theme", reversed: present in the row, but not
+  // in order, so no row should match.
+  fireEvent.change(input, { target: { value: "emeht elggot" } });
+  expect(await screen.findByText("No results.")).toBeInTheDocument();
+});

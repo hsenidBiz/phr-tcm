@@ -1,0 +1,1571 @@
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { emit } from "@tauri-apps/api/event";
+import { toast } from "../../src/lib/toast";
+import { afterEach, expect, test, vi } from "vitest";
+import { writeSuiteSeed } from "../../src/lib/suiteSeed";
+import RunPanel from "../../src/screens/RunPanel";
+
+vi.mock("../../src/lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+  vi.clearAllMocks();
+});
+
+function renderPanel() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <RunPanel org="acme" project="Web" pbiId={42} pbiTitle="Login flow" />
+    </QueryClientProvider>,
+  );
+}
+
+function mockAll() {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [
+          {
+            test_case_id: 201,
+            outcomes: [
+              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7, result_id: 70 },
+              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6, result_id: 60 },
+            ],
+          },
+        ];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 3,
+            last_result_id: 30,
+            tags: "Smoke; Regression",
+          },
+          {
+            point_id: 8,
+            test_case_id: 202,
+            test_case_name: "Invalid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "",
+            last_run_id: null,
+            last_result_id: null,
+            tags: "",
+          },
+        ];
+    }
+  });
+}
+
+test("the search finds a point by its outcome word and two words narrow", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const box = screen.getByLabelText("Filter points");
+  expect(box).toHaveAttribute("placeholder", "Search by name, id, tag, outcome…");
+
+  fireEvent.change(box, { target: { value: "failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "never run" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+
+  // Both are on Windows 10; the second word narrows to one.
+  fireEvent.change(box, { target: { value: "windows" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "windows failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+});
+
+test("the search finds a point by one of its tags", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const box = screen.getByLabelText("Filter points");
+
+  fireEvent.change(box, { target: { value: "regression" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+});
+
+test("loads suite + points as a read-only overview (outcomes live in the runner)", async () => {
+  mockAll();
+  renderPanel();
+
+  expect(await screen.findByText(/Auth - Test Plan/)).toBeInTheDocument();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  // Last-outcome cell shows the capitalized display value ("failed" from
+  // ADO renders as "Failed"); the outcome filter options also say
+  // "Failed", so assert specifically on a table cell.
+  expect(screen.getAllByText("Failed").some((el) => el.tagName === "TD")).toBe(true);
+
+  // History dots render for case 201 (newest first, tooltip carries date).
+  expect(await screen.findByTitle("Failed · 2026-07-12 (run #7)")).toBeInTheDocument();
+  expect(await screen.findByTitle("Passed · 2026-07-11 (run #6)")).toBeInTheDocument();
+
+  // The quick-record flow is gone: no per-row outcome select, no comment
+  // box, no Record button - the runner is the only way to set outcomes.
+  expect(screen.queryByLabelText("Outcome for Valid login")).not.toBeInTheDocument();
+  expect(screen.queryByPlaceholderText("Optional comment")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Record .* outcome/ })).not.toBeInTheDocument();
+});
+
+test("expanding a row shows the case steps and the last failure detail", async () => {
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 3,
+            last_result_id: 30,
+          },
+        ];
+      case "test_cases_by_ids": {
+        const a = args as { ids: number[] };
+        expect(a.ids).toEqual([201]);
+        return [
+          {
+            id: 201,
+            title: "Valid login",
+            tags: "",
+            automation_status: "Not Automated",
+            steps: [{ action: "Open login page", expected: "Form shown" }],
+            step_ids: ["2"],
+            module_value: "",
+            preconditions: "",
+          },
+        ];
+      }
+      case "result_failure_detail":
+        return { comment: "Timed out waiting for redirect", bug_ids: [900] };
+    }
+  });
+  renderPanel();
+
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText(/^Expand test case #/));
+
+  // Steps and the last result comment + bug both appear.
+  expect(await screen.findByText("Open login page")).toBeInTheDocument();
+  expect(screen.getByText("Form shown")).toBeInTheDocument();
+  expect(screen.getByText("Timed out waiting for redirect")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "#900" })).toBeInTheDocument();
+
+  // Collapsing hides it again.
+  fireEvent.click(screen.getByLabelText(/^Collapse test case #/));
+  expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
+});
+
+/// "Similar to what we did for pipeline": the dots summarize, and a
+/// button inside the expansion opens the runs behind them - each prior
+/// result with its own comment, fetched only when the panel is opened.
+test("an expanded row can open the execution history behind the dots", async () => {
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [
+          {
+            test_case_id: 201,
+            outcomes: [
+              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7, result_id: 70, run_by: "Avin Alwis" },
+              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6, result_id: 60, run_by: "Buddhima Kaushalya" },
+              { outcome: "Blocked", completed_date: "2026-07-10T10:00:00Z", run_id: 5, result_id: 50, run_by: "" },
+            ],
+          },
+        ];
+      case "result_screenshots": {
+        const a = args as { runId: number; resultId: number };
+        // Run 6's result carries one screenshot; the others carry none.
+        return a.runId === 6 && a.resultId === 60 ? ["aGVsbG8="] : [];
+      }
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 7,
+            last_result_id: 70,
+          },
+        ];
+      case "test_cases_by_ids":
+        return [
+          {
+            id: 201,
+            title: "Valid login",
+            tags: "",
+            automation_status: "Not Automated",
+            steps: [{ action: "Open login page", expected: "Form shown" }],
+            step_ids: ["2"],
+            module_value: "",
+            preconditions: "",
+          },
+        ];
+      case "result_failure_detail": {
+        const a = args as { runId: number; resultId: number };
+        // The latest result's detail is the danger box; the PRIOR ones are
+        // what the history panel fetches - each by its own result id.
+        if (a.runId === 6 && a.resultId === 60)
+          return { comment: "Passed after the hotfix", bug_ids: [] };
+        if (a.runId === 5 && a.resultId === 50) return { comment: "", bug_ids: [] };
+        return { comment: "Timed out waiting for redirect", bug_ids: [] };
+      }
+    }
+  });
+  renderPanel();
+
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText(/^Expand test case #/));
+  await screen.findByText("Open login page");
+
+  // Two results predate the current one; the newest is NOT in the list.
+  const toggle = screen.getByRole("button", { name: /Execution history \(2 earlier results\)/ });
+  fireEvent.click(toggle);
+  expect(await screen.findByText("Passed after the hotfix")).toBeInTheDocument();
+  // Each entry carries the same details ADO's own execution history shows:
+  // outcome, date, run, and who ran it - "by" omitted when unknown.
+  expect(screen.getByText(/2026-07-11 · run #6 · by Buddhima Kaushalya/)).toBeInTheDocument();
+  expect(screen.getByText(/2026-07-10 · run #5$/)).toBeInTheDocument();
+  expect(await screen.findByText("No comment recorded.")).toBeInTheDocument();
+  // ...plus the screenshots uploaded with that result, as zoomable thumbs
+  // (the fullscreen viewer holds a second copy of the same image).
+  expect((await screen.findAllByAltText("Run 6 screenshot 1")).length).toBeGreaterThan(0);
+
+  // And it folds away again.
+  fireEvent.click(screen.getByRole("button", { name: /Hide execution history/ }));
+  expect(screen.queryByText("Passed after the hotfix")).not.toBeInTheDocument();
+});
+
+/// A case with exactly one result has no past to show - the button
+/// would only ever open an empty list, so it never renders.
+test("a single-result case offers no execution history button", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getAllByLabelText(/^Expand test case #/)[1]); // case 202: no history at all
+  expect(screen.queryByRole("button", { name: /Execution history/ })).not.toBeInTheDocument();
+});
+
+test("row clicks select cases for a targeted runner session", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+
+  // Clicking again deselects.
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
+});
+
+test("clearing the selection collapses the Run button without ever reading Run 0", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.getByLabelText("Filter points")).toHaveFocus();
+  // Still mounted for the collapse, hidden from the a11y tree, last count kept.
+  const reveal = document.querySelector("[data-width-reveal]") as HTMLElement;
+  expect(reveal).toBeInTheDocument();
+  expect(reveal).toHaveAttribute("aria-hidden", "true");
+  expect(reveal.textContent).toContain("Run 1 in runner");
+  expect(reveal.textContent).not.toContain("Run 0");
+  expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+
+  fireEvent.transitionEnd(reveal);
+  expect(document.querySelector("[data-width-reveal]")).not.toBeInTheDocument();
+  expect(document.body.textContent).not.toContain("Run 0 in runner");
+});
+
+test("the floating copy stays down while the toolbar actions animate in and out", async () => {
+  // Off screen as far as the observer is concerned (the animating wrapper clips the row).
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      cb: (e: { isIntersecting: boolean }[]) => void;
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+        this.cb = cb;
+      }
+      observe() {
+        this.cb([{ isIntersecting: false }]);
+      }
+      disconnect() {}
+    },
+  );
+  try {
+    mockAll();
+    renderPanel();
+    await screen.findByText("Valid login");
+    fireEvent.click(screen.getByText("Valid login"));
+    const dock = () => document.body.querySelector("[data-sticky-action]") as HTMLElement;
+    // Entering: not settled yet.
+    expect(dock()).toHaveAttribute("inert");
+    fireEvent.transitionEnd(document.querySelector("[data-width-reveal]") as HTMLElement);
+    await waitFor(() => expect(dock()).not.toHaveAttribute("inert"));
+    // Clearing: down at once, before the collapse ends.
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(dock()).toHaveAttribute("inert");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+/// The selection's Run button sits at the right end of the filter row,
+/// directly above the list it acts on - not up beside Set execution order.
+test("the Run in runner button sits in the filter row above the list", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByText("Valid login"));
+  const run = screen.getByRole("button", { name: /Run 1 in runner/ });
+  expect(toolbarOf("Filter points")).toContainElement(run);
+  expect(
+    screen.getByRole("button", { name: /Set execution order/ }).parentElement,
+  ).not.toContainElement(run);
+});
+
+/// The toolbar line a search box sits in: input -> search span -> the
+/// search slot -> the toolbar.
+const toolbarOf = (searchLabel: string) =>
+  screen.getByLabelText(searchLabel).parentElement!.parentElement!.parentElement as HTMLElement;
+
+test("the header carries the run explanation as an info button and the actions on the right", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const info = screen.getByRole("button", { name: /Outcomes are recorded through the runner window/ });
+  expect(info).toHaveAttribute("title", expect.stringContaining("step-by-step"));
+  const actions = screen.getByRole("button", { name: /Execution report/ }).parentElement as HTMLElement;
+  expect(actions).toHaveClass("ml-auto");
+  expect(actions).toContainElement(screen.getByRole("button", { name: /Set execution order/ }));
+  // The sentence no longer sits in the page body.
+  expect(screen.queryByText(/Outcomes are recorded through the runner window/)).not.toBeInTheDocument();
+});
+
+test("the filters share the wrapping toolbar with the wide search", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const toolbar = toolbarOf("Filter points");
+  expect(toolbar).toHaveClass("flex-wrap");
+  expect(toolbar).toContainElement(screen.getByLabelText("Filter by last outcome"));
+});
+
+/// Re-testing after a fix goes filter -> select -> run, on purpose: the
+/// dedicated re-run button lasted one release before it came out again.
+/// One path into a selective run is easier to trust than two, so this
+/// pins that the path actually works for the failure case.
+test("filtering by Failed and selecting the rows starts a failures-only run", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  expect(screen.queryByRole("button", { name: /Re-run/ })).not.toBeInTheDocument();
+
+  // Filter to failures: the never-run case leaves the table.
+  fireEvent.click(screen.getByLabelText("Filter by last outcome"));
+  fireEvent.click(screen.getByRole("option", { name: "Failed" }));
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+
+  // Select what's left and run it.
+  fireEvent.click(screen.getByText("Valid login"));
+  fireEvent.click(screen.getByRole("button", { name: /Run 1 in runner/ }));
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([201]);
+  expect(session.planId).toBe(9);
+});
+
+/// The runner walks cases in the order this list shows them, whatever
+/// order they were clicked in - selection is a set, the run is a sequence.
+test("Run selected hands the runner the list's order, not the click order", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  // Click bottom row first, top row second.
+  fireEvent.click(screen.getByText("Invalid login"));
+  fireEvent.click(screen.getByText("Valid login"));
+  fireEvent.click(screen.getByRole("button", { name: /Run 2 in runner/ }));
+
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([201, 202]);
+});
+
+/// The run-everything button is gone: the runner opens only from a
+/// selection, so an idle panel offers no way to start a 50-case session
+/// by mis-click. Selecting rows surfaces the (only) way in.
+test("the runner opens only from a selection", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  // The header's info button names the runner window too, so look for the
+  // run buttons themselves ("Run N in runner").
+  expect(screen.queryByRole("button", { name: /^Run .*runner/i })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+});
+
+/// The selection's actions sit in place at the end of the filter row (the
+/// keyboard path) and float bottom-right only once that row scrolls away -
+/// the shared ActionDock, not a bar that floats whether or not the real
+/// buttons are already in view.
+test("the selection's actions sit in the toolbar and float once it scrolls away", async () => {
+  const watched: ((e: { isIntersecting: boolean }[]) => void)[] = [];
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      cb: (e: { isIntersecting: boolean }[]) => void;
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+        this.cb = cb;
+      }
+      observe() {
+        watched.push(this.cb);
+      }
+      disconnect() {
+        watched.splice(watched.indexOf(this.cb), 1);
+      }
+    },
+  );
+  try {
+    mockAll();
+    renderPanel();
+    await screen.findByText("Valid login");
+    expect(document.querySelector("[data-sticky-action]")).toBeNull();
+
+    fireEvent.click(screen.getByText("Valid login"));
+    // In place: in the filter row, directly above the list.
+    const run = screen.getByRole("button", { name: /Run 1 in runner/ });
+    expect(toolbarOf("Filter points")).toContainElement(run);
+
+    // Assumed on screen until told otherwise, so the floating copy starts hidden.
+    const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
+    expect(dock).toHaveAttribute("aria-label", "Run selection");
+    expect(dock.className).toContain("opacity-0");
+
+    // The reveal has to finish before a floating copy may show.
+    act(() => {
+      fireEvent.transitionEnd(document.querySelector("[data-width-reveal]") as HTMLElement);
+    });
+    act(() => watched.forEach((cb) => cb([{ isIntersecting: false }])));
+    expect(dock.className).toContain("opacity-100");
+    expect(dock.className).toContain("bg-surface"); // the surface pill it always had
+    fireEvent.click(within(dock).getByRole("button", { name: "Clear selection", hidden: true }));
+    expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+/** The header checkbox is the one selection indicator - dash for partial,
+ * tick for the whole group - and it keeps saying so while the group is
+ * collapsed. The pulsing dot that used to ride beside collapsed headings
+ * is gone: it repeated what the checkbox already shows. */
+test("the header checkbox carries the selection state through a collapse", async () => {
+  localStorage.setItem("tcm-v2-group-mode", "title");
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  // Select one case: partial reads as the checkbox's mixed state.
+  fireEvent.click(screen.getByText("Valid login"));
+  const box = () => screen.getByRole("checkbox", { name: /Select all in/ });
+  expect(box()).toHaveAttribute("aria-checked", "mixed");
+
+  // Collapse the group: rows and highlight vanish, the checkbox stays
+  // mixed - and no dot marker appears.
+  fireEvent.click(screen.getByLabelText(/Collapse group/));
+  expect(box()).toHaveAttribute("aria-checked", "mixed");
+  expect(screen.queryByRole("status", { name: /selected in/ })).not.toBeInTheDocument();
+
+  // Complete the selection: the dash becomes a tick, still collapsed.
+  fireEvent.click(box());
+  expect(box()).toHaveAttribute("aria-checked", "true");
+
+  // Clear it: empty box.
+  fireEvent.click(box());
+  expect(box()).toHaveAttribute("aria-checked", "false");
+});
+
+/** Same model as View Test Cases: previews are plural, an open one
+ * survives its group being collapsed, and the sticky Collapse all clears
+ * the lot. */
+test("open previews survive a group collapse until Collapse all", async () => {
+  localStorage.setItem("tcm-v2-group-mode", "title");
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  // Grouping alone gives the sticky its first fold target: the one open
+  // group, before any preview is expanded.
+  expect(screen.getByRole("button", { name: /Collapse all \(1\)/ })).toBeInTheDocument();
+
+  // Open both previews at once.
+  fireEvent.click(screen.getAllByLabelText(/^Expand test case #/)[0]);
+  fireEvent.click(screen.getAllByLabelText(/^Expand test case #/)[0]);
+  expect(screen.getByRole("button", { name: /Collapse all \(3\)/ })).toBeInTheDocument();
+
+  // Collapse the group: both held-open rows stay on screen.
+  fireEvent.click(screen.getByLabelText(/Collapse group/));
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+
+  // Collapse all folds the previews AND the group, then retires.
+  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(2\)/ }));
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
+});
+
+test("shift+click selects the whole range between two rows", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByText("Valid login"));
+  fireEvent.click(screen.getByText("Invalid login"), { shiftKey: true });
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+});
+
+test("suite is resolved once, then every later mount reuses the seed", async () => {
+  let ensured = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "ensure_pbi_suite") {
+      ensured++;
+      return { plan_id: 9, plan_name: "Fresh Plan", suite_id: 91 };
+    }
+    if (cmd === "list_test_points") return [];
+  });
+
+  // First visit: no seed -> one real resolve that writes the seed.
+  const first = renderPanel();
+  expect(await screen.findByText(/Fresh Plan/)).toBeInTheDocument();
+  expect(ensured).toBe(1);
+  first.unmount();
+
+  // Tab switch back - even with a brand-new QueryClient (no in-memory
+  // cache), the queryFn short-circuits to the localStorage seed.
+  renderPanel();
+  expect(await screen.findByText(/Fresh Plan/)).toBeInTheDocument();
+  expect(ensured).toBe(1);
+});
+
+test("suite resolution is cached in localStorage and reused", async () => {
+  writeSuiteSeed("acme", 42, { plan_id: 9, plan_name: "Cached Plan", suite_id: 91 });
+  let ensured = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "ensure_pbi_suite") {
+      ensured++;
+      return { plan_id: 9, plan_name: "Fresh Plan", suite_id: 91 };
+    }
+    if (cmd === "list_test_points") return [];
+  });
+  renderPanel();
+  expect(await screen.findByText(/Cached Plan/)).toBeInTheDocument();
+  expect(ensured).toBe(0);
+});
+
+
+
+/** The execution report is about the cases the tester picked: dead until
+ * something is highlighted, and the IPC call carries exactly those ids.
+ * Self-contained handler - mockIPC keeps ONE handler, so this cannot
+ * layer a capture on top of mockAll(). */
+test("Execution report arms on selection and reports only the highlighted cases", async () => {
+  const reported: number[][] = [];
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "",
+            last_run_id: null,
+            last_result_id: null,
+          },
+        ];
+      case "view_execution_report":
+        reported.push((args as { caseIds: number[] }).caseIds);
+        return null;
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  const btn = screen.getByRole("button", { name: /Execution report/ });
+  expect(btn).toBeDisabled();
+
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(btn).toBeEnabled();
+  fireEvent.click(btn);
+  await vi.waitFor(() => expect(reported).toHaveLength(1));
+  expect(reported[0]).toEqual([201]);
+});
+
+/// Refresh means "the outcomes moved", not "find the suite again": suite
+/// resolution scans every test plan in the project, so the button must
+/// refetch points without a second ensure_pbi_suite. Shift-click is the
+/// deliberate full re-detect.
+test("Refresh refetches points without re-resolving the suite; Shift-click re-detects", async () => {
+  const counts = { ensure: 0, points: 0 };
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        counts.ensure += 1;
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        counts.points += 1;
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "",
+            last_run_id: null,
+            last_result_id: null,
+          },
+        ];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+  expect(counts.ensure).toBe(1);
+  const pointsBefore = counts.points;
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh outcomes" }));
+  await vi.waitFor(() => expect(counts.points).toBeGreaterThan(pointsBefore));
+  expect(counts.ensure).toBe(1); // no re-scan on a plain refresh
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh outcomes" }), { shiftKey: true });
+  await vi.waitFor(() => expect(counts.ensure).toBe(2));
+});
+
+/// Bulk selection without a mouse marathon: ungrouped mode gets a Select
+/// all button (grouped mode already has the per-group checkboxes), and
+/// Ctrl+A selects every visible case - except while typing in a field,
+/// where select-all must keep meaning the text.
+test("Select all button (ungrouped) and Ctrl+A both select every case", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+
+  // By role, not label: the dock's floating copy carries the same label,
+  // but it is aria-hidden, so only the in-place button matches a role query.
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+});
+
+test("grouped mode hides the Select all button and Ctrl+A skips text fields", async () => {
+  localStorage.setItem("tcm-v2-group-mode", "title");
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  expect(screen.queryByRole("button", { name: "Select all" })).not.toBeInTheDocument();
+
+  const filter = screen.getByLabelText("Filter points");
+  fireEvent.keyDown(filter, { key: "a", ctrlKey: true });
+  expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+});
+
+// ---- Run order (design doc §5.1, as amended by the execution-order-modal design) ----
+
+type OrderMock = {
+  points: Array<{ point_id: number; test_case_id: number; name: string; config?: string }>;
+  entries?: number[];
+  /** What get_run_order answers. A function is asked on every read, so a
+   * save can change what the next read sees, as the real backend does. */
+  runOrder?: unknown;
+  /** get_run_order fails with this AdoError instead of answering. */
+  runOrderError?: unknown;
+  /** Answers save_run_order, given its arguments. */
+  onSave?: (args: unknown) => unknown;
+  calls?: string[];
+};
+
+const RUN_ORDER_FILE = (cases: Array<{ id: number; group?: string }>) => ({
+  state: "found",
+  file: {
+    format: "tcm-run-order",
+    version: 1,
+    saved_by: "lead@example.com",
+    saved_at: "2026-09-23T10:15:00Z",
+    cases,
+  },
+});
+
+// Events are mocked for real here (shouldMockEvents), so an emit reaches
+// the screen's listeners the way another window's save would.
+function mockOrder({ points, entries, runOrder, runOrderError, onSave, calls }: OrderMock) {
+  mockIPC((cmd, args) => {
+    calls?.push(cmd);
+    switch (cmd) {
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return points.map((p) => ({
+          point_id: p.point_id,
+          test_case_id: p.test_case_id,
+          test_case_name: p.name,
+          config_name: p.config ?? "Windows 10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        }));
+      case "list_suite_entries":
+        return (entries ?? points.map((p) => p.test_case_id)).map((id, i) => ({
+          id,
+          sequence_number: i + 1,
+          entry_type: "testCase",
+        }));
+      case "get_run_order":
+        if (runOrderError) return Promise.reject(runOrderError);
+        return (typeof runOrder === "function" ? runOrder() : runOrder) ?? { state: "none" };
+      case "save_run_order":
+        return onSave?.(args);
+    }
+  }, { shouldMockEvents: true });
+}
+
+const ABC = [
+  { point_id: 1, test_case_id: 301, name: "Alpha check" },
+  { point_id: 2, test_case_id: 302, name: "Bravo check" },
+  { point_id: 3, test_case_id: 303, name: "Charlie check" },
+];
+
+/** The rows' titles top to bottom, as the table shows them. A fold's
+ * closing copy (lib/exitGhost, e.g. after the modal's grouping regroups
+ * the list) is a picture, not rows, so it is skipped. */
+const rowNames = () =>
+  Array.from(document.querySelectorAll("tbody tr .id-mono"))
+    .filter((el) => !el.closest("[data-exit-ghost]"))
+    .map((el) => (el.parentElement?.textContent ?? "").replace(/^#\d+\s*/, ""));
+
+const openOrderModal = () => fireEvent.click(screen.getByRole("button", { name: "Set execution order" }));
+const startFrom = () => screen.getByRole("combobox", { name: "Start from" });
+const groupCases = () => screen.getByRole("combobox", { name: "Group cases" });
+const modalList = () => screen.getByRole("list", { name: "Execution order" });
+const rowOf = (title: string) => screen.getByText(title).closest("tr")!;
+const MY_KEY = "tcm-v2-run-order:acme/9/91";
+const VIEW_KEY = "tcm-v2-run-order-view:acme/9/91";
+const CONFIRM = "Every tester will see this as the suggested run order for this PBI.";
+
+/** Remembers a watched draft for PBI 42 the way the Import tab does. */
+function watchDraft(path: string, cases: Array<{ id: number | null; order: number | null; area?: string }>) {
+  const snapshot = cases.map((c, i) => ({
+    title: `Case ${i}`,
+    steps: [],
+    tags: "",
+    automation_status: "Not Automated",
+    module_value: "",
+    preconditions: "",
+    update_id: c.id,
+    tester_order: c.order,
+    area: c.area ?? "",
+  }));
+  localStorage.setItem("tcm-v2-watch:acme/42", JSON.stringify([{ path, stamp: "s1", snapshot }]));
+}
+
+test("opens in the suggested run order when the PBI has one, not the points' order", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  renderPanel();
+  await screen.findByText("Alpha check");
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Suggested run order");
+});
+
+test("the Set execution order button explains itself while the run order is still loading", async () => {
+  // get_run_order never resolves - the button stays disabled by
+  // order.loading for as long as that read is outstanding.
+  mockOrder({ points: ABC, runOrder: () => new Promise(() => {}) });
+  renderPanel();
+  await screen.findByText("Alpha check");
+
+  const button = screen.getByRole("button", { name: "Set execution order" });
+  expect(button).toBeDisabled();
+  expect(button).toHaveAttribute("title", "Loading the run order…");
+});
+
+test("the list has no order controls of its own; one button opens the modal", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+
+  expect(screen.queryByRole("combobox", { name: "Order" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Move / })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Reset to/ })).not.toBeInTheDocument();
+  expect(rowOf("Alpha check")).not.toHaveAttribute("draggable");
+
+  openOrderModal();
+  expect(screen.getByRole("heading", { name: "Execution order" })).toBeInTheDocument();
+  expect(startFrom()).toHaveTextContent("Suggested run order");
+});
+
+test("with no suggested order the list follows spec order and the modal offers only Spec order", async () => {
+  mockOrder({ points: ABC, entries: [303, 301, 302] });
+  renderPanel();
+  await screen.findByText("Alpha check");
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]));
+
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
+  expect(await within(screen.getByRole("dialog")).findByText("No suggested run order yet.")).toBeInTheDocument();
+  fireEvent.click(startFrom());
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Spec order"]);
+});
+
+/// The disk seed (design doc §4.4's reconciled order) is fresh the moment
+/// the screen mounts, so a plain Refresh must still force a real re-read
+/// of both the run-order file and the suite's cases - otherwise Refresh
+/// looks like it worked but keeps serving what was cached before an
+/// upload or a save for everyone landed.
+test("Refresh outcomes also re-reads the suggested run order and the suite's cases", async () => {
+  const calls: string[] = [];
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]), calls });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+
+  const before = {
+    order: calls.filter((c) => c === "get_run_order").length,
+    entries: calls.filter((c) => c === "list_suite_entries").length,
+  };
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh outcomes" }));
+
+  await vi.waitFor(() => {
+    expect(calls.filter((c) => c === "get_run_order").length).toBeGreaterThan(before.order);
+    expect(calls.filter((c) => c === "list_suite_entries").length).toBeGreaterThan(before.entries);
+  });
+});
+
+test("an unreadable run-order file says why, and the modal greys out Suggested", async () => {
+  mockOrder({ points: ABC, runOrder: { state: "unreadable", reason: "the run-order file is damaged" } });
+  renderPanel();
+  const note = "The suggested run order could not be read: the run-order file is damaged. See Settings → Logs.";
+  expect(await screen.findByText(note)).toBeInTheDocument();
+
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
+  expect(within(screen.getByRole("dialog")).getByText(note)).toBeInTheDocument();
+  fireEvent.click(startFrom());
+  const suggested = screen.getByRole("option", { name: "Suggested run order" });
+  expect(suggested).toBeDisabled();
+  fireEvent.click(suggested);
+  expect(startFrom()).toHaveTextContent("Spec order");
+});
+
+test("a reason that already points at the logs is not told to go there twice", async () => {
+  mockOrder({
+    points: ABC,
+    runOrder: { state: "unreadable", reason: "the file is damaged; Settings → Logs has the details." },
+  });
+  renderPanel();
+  expect(
+    await screen.findByText(
+      "The suggested run order could not be read: the file is damaged; Settings → Logs has the details.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/See Settings/)).not.toBeInTheDocument();
+});
+
+test("a failed read of the run order shows the note, and the modal greys out Suggested", async () => {
+  mockOrder({ points: ABC, runOrderError: { kind: "Forbidden" } });
+  renderPanel();
+  expect(
+    await screen.findByText(
+      "The suggested run order could not be read: You don't have permission for this resource. See Settings → Logs.",
+    ),
+  ).toBeInTheDocument();
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
+  fireEvent.click(startFrom());
+  expect(screen.getByRole("option", { name: "Suggested run order" })).toBeDisabled();
+});
+
+test("Start from lists My order and an uploaded draft's tester order", async () => {
+  localStorage.setItem(MY_KEY, JSON.stringify([303, 301, 302]));
+  watchDraft("C:/work/login.json", [
+    { id: 301, order: 2 },
+    { id: 303, order: 1 },
+  ]);
+  mockOrder({ points: ABC });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+  openOrderModal();
+  fireEvent.click(startFrom());
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+    "Spec order",
+    "My order",
+    "Tester order from login.json",
+  ]);
+});
+
+test("Use this order on an unchanged Suggested run order sets the view only; My order is kept", async () => {
+  localStorage.setItem(MY_KEY, JSON.stringify([303, 301, 302]));
+  localStorage.setItem(VIEW_KEY, "spec");
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
+  fireEvent.click(startFrom());
+  fireEvent.click(screen.getByRole("option", { name: "Suggested run order" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]);
+  expect(localStorage.getItem(VIEW_KEY)).toBe("suggested");
+  expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 301, 302]);
+});
+
+test("a reorder in the modal becomes My order on this machine and never writes a shared order", async () => {
+  const calls: string[] = [];
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]), calls });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+
+  openOrderModal();
+  fireEvent.click(within(modalList()).getByRole("button", { name: "Move #302 down" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+
+  expect(rowNames()).toEqual(["Charlie check", "Bravo check", "Alpha check"]);
+  expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 302, 301]);
+  expect(localStorage.getItem(VIEW_KEY)).toBe("mine");
+  expect(calls).not.toContain("reorder_suite_cases");
+  expect(calls).not.toContain("save_run_order");
+});
+
+test("Use this order on a tester-order start saves it as My order", async () => {
+  watchDraft("C:/work/login.json", [
+    { id: 301, order: 2 },
+    { id: 303, order: 1 },
+  ]);
+  mockOrder({ points: ABC });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+
+  openOrderModal();
+  fireEvent.click(startFrom());
+  fireEvent.click(screen.getByRole("option", { name: "Tester order from login.json" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+
+  expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 301, 302]);
+  expect(localStorage.getItem(VIEW_KEY)).toBe("mine");
+  expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]);
+});
+
+test("Save for everyone asks first; Cancel sends nothing", async () => {
+  const calls: string[] = [];
+  mockOrder({ points: ABC, calls });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+
+  openOrderModal();
+  fireEvent.click(screen.getByRole("button", { name: "Save for everyone" }));
+  expect(screen.getByText(CONFIRM)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByText(CONFIRM)).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(calls).not.toContain("save_run_order");
+});
+
+test("Save for everyone sends the list with the saved groups, toasts, and switches the list to Suggested", async () => {
+  const NEW = RUN_ORDER_FILE([{ id: 301, group: "Auth" }, { id: 303 }, { id: 302 }]);
+  let current: unknown = RUN_ORDER_FILE([{ id: 301, group: "Auth" }, { id: 302 }, { id: 303 }]);
+  const saved: unknown[] = [];
+  localStorage.setItem(VIEW_KEY, "spec");
+  mockOrder({
+    points: ABC,
+    runOrder: () => current,
+    onSave: (args) => {
+      saved.push(args);
+      current = NEW;
+      return NEW.file;
+    },
+  });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
+  fireEvent.click(within(modalList()).getByRole("button", { name: "Move #303 up" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save for everyone" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await vi.waitFor(() => expect(toast.success).toHaveBeenCalledWith("Suggested run order saved."));
+  expect(saved).toEqual([
+    {
+      organization: "acme",
+      project: "Web",
+      pbiId: 42,
+      cases: [{ id: 301, group: "Auth" }, { id: 303 }, { id: 302 }],
+    },
+  ]);
+  await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(localStorage.getItem(VIEW_KEY)).toBe("suggested");
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
+});
+
+test("a failed Save for everyone keeps the modal open and says why", async () => {
+  mockOrder({
+    points: ABC,
+    onSave: () => Promise.reject({ kind: "Network", detail: "Could not reach Azure DevOps." }),
+  });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+
+  openOrderModal();
+  fireEvent.click(screen.getByRole("button", { name: "Save for everyone" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await vi.waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("Could not save the suggested run order: Could not reach Azure DevOps."),
+  );
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(startFrom()).toHaveTextContent("Spec order");
+});
+
+test("choosing By area in the modal groups the list by the suggested file's areas, and groups have no move buttons", async () => {
+  mockOrder({
+    points: ABC,
+    runOrder: RUN_ORDER_FILE([
+      { id: 301, group: "Web\\Sign in" },
+      { id: 302, group: "Web\\Checkout" },
+      { id: 303, group: "Web\\Sign in" },
+    ]),
+  });
+  renderPanel();
+  await screen.findByText("Alpha check");
+
+  openOrderModal();
+  fireEvent.click(groupCases());
+  fireEvent.click(screen.getByRole("option", { name: "By area" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+
+  expect(screen.getByText("Web\\Sign in (2)")).toBeInTheDocument();
+  expect(screen.getByText("Web\\Checkout (1)")).toBeInTheDocument();
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
+  expect(screen.queryByRole("button", { name: /^Move group / })).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-group-mode")).toBe("area");
+});
+
+test("choosing By title in the modal groups the list by title and remembers the choice", async () => {
+  mockOrder({
+    points: [
+      { point_id: 1, test_case_id: 301, name: "Auth - Login" },
+      { point_id: 2, test_case_id: 302, name: "Billing - Invoice" },
+      { point_id: 3, test_case_id: 303, name: "Auth - Logout" },
+    ],
+  });
+  renderPanel();
+  await screen.findByText("Auth - Login");
+
+  openOrderModal();
+  fireEvent.click(groupCases());
+  fireEvent.click(screen.getByRole("option", { name: "By title" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+
+  expect(screen.getByText("Auth (2)")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-group-mode")).toBe("title");
+});
+
+test("no Group by title checkbox and no active-order status text beside Set execution order", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  expect(screen.queryByText("Group by title")).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("button", { name: "Set execution order" }).parentElement as HTMLElement).queryByRole(
+      "status",
+    ),
+  ).not.toBeInTheDocument();
+});
+
+test("a case run on two configurations keeps both rows together", async () => {
+  mockOrder({
+    points: [
+      { point_id: 1, test_case_id: 301, name: "Alpha check", config: "Windows" },
+      { point_id: 2, test_case_id: 302, name: "Bravo check" },
+      { point_id: 3, test_case_id: 301, name: "Alpha check", config: "Mac" },
+    ],
+    entries: [302, 301],
+  });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Alpha check", "Alpha check"]));
+});
+
+test("the runner opens with the selection in the order on screen", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 303 }, { id: 301 }, { id: 302 }]) });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]));
+
+  fireEvent.click(screen.getByText("Alpha check"));
+  fireEvent.click(screen.getByText("Charlie check"));
+  fireEvent.click(screen.getByRole("button", { name: /Run 2 in runner/ }));
+
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([303, 301]);
+});
+
+test("the chosen order is remembered for the suite across a remount, and My order is kept", async () => {
+  localStorage.setItem(MY_KEY, JSON.stringify([303, 302, 301]));
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  const first = renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+
+  openOrderModal();
+  fireEvent.click(startFrom());
+  fireEvent.click(screen.getByRole("option", { name: "Spec order" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+  first.unmount();
+
+  // No findByText on a title here: the closed modal's fading copy still
+  // shows the same titles for a moment. rowNames reads the table only.
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+  expect(localStorage.getItem(VIEW_KEY)).toBe("spec");
+  expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 302, 301]);
+});
+
+/// Paused and Not Applicable are different verdicts and must not read as
+/// the same grey: Paused is the muted tone, Not Applicable the theme's ink
+/// (the colours the runner gives each).
+test("a Paused case and a Not Applicable case are not the same colour", async () => {
+  const point = (id: number, last_outcome: string) => ({
+    point_id: id,
+    test_case_id: 300 + id,
+    test_case_name: `Case ${id}`,
+    config_name: "Windows 10",
+    tester: "",
+    last_outcome,
+    last_run_id: null,
+    last_result_id: null,
+  });
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [point(1, "Paused"), point(2, "NotApplicable")];
+    }
+  });
+  renderPanel();
+
+  await screen.findByText("Case 1");
+  const cell = (label: string) => screen.getAllByText(label).find((el) => el.tagName === "TD")!;
+  expect(cell("Paused")).toHaveClass("text-muted");
+  expect(cell("Not Applicable")).toHaveClass("text-text");
+  expect(cell("Not Applicable")).not.toHaveClass("text-muted");
+});
+
+test("the plan line names the plan and no suite number", async () => {
+  mockAll();
+  renderPanel();
+  const line = (await screen.findByText(/Auth - Test Plan/)).closest("p");
+  expect(line).not.toBeNull();
+  expect(line!.textContent).toContain('Plan "Auth - Test Plan"');
+  expect(line!.textContent).not.toMatch(/suite\s*91/);
+  expect(line!.textContent).not.toContain("/ suite");
+});
+
+/// Two screens hear one scan event; each shows only its own walk. This
+/// screen's wait is the search for the PBI's suite ("suite"), never the
+/// plans tree another screen is reading ("plans").
+test("the scan bar follows the suite search only, and says so when one large plan is being paged", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "ensure_pbi_suite") return new Promise(() => {});
+      if (cmd === "run_history") return [];
+    },
+    { shouldMockEvents: true },
+  );
+  renderPanel();
+  expect(await screen.findByText("Resolving test suite")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans", pbi_id: null, project: "Web" });
+  });
+  expect(screen.getByText("Resolving test suite")).toBeInTheDocument();
+  expect(screen.queryByText("Scanning test plans")).not.toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite", pbi_id: 42, project: "Web" });
+  });
+  expect(screen.getByText("Scanning test plans")).toBeInTheDocument();
+  expect(screen.getByText("3 / 12")).toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 11, total: 12, pages: 7, kind: "suite", pbi_id: 42, project: "Web" });
+  });
+  expect(screen.getByText("Reading a large plan (page 7)")).toBeInTheDocument();
+  expect(screen.queryByText("11 / 12")).not.toBeInTheDocument();
+});
+
+/// The person can move to another PBI while an earlier PBI's search is
+/// still walking (the background finder cannot be stopped): its progress
+/// is not this PBI's, and a PBI the walk never reports for must not keep
+/// the last PBI's bar.
+test("the scan bar shows only this PBI's search, and starts over when the PBI changes", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "ensure_pbi_suite") return new Promise(() => {});
+      if (cmd === "run_history") return [];
+    },
+    { shouldMockEvents: true },
+  );
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const panel = (pbiId: number) => (
+    <QueryClientProvider client={qc}>
+      <RunPanel org="acme" project="Web" pbiId={pbiId} pbiTitle="Login flow" />
+    </QueryClientProvider>
+  );
+  const view = render(panel(42));
+  expect(await screen.findByText("Resolving test suite")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+  const send = (pbi: number, done: number, total: number) =>
+    act(async () => {
+      await emit("suite-scan-progress", { done, total, pages: null, kind: "suite", pbi_id: pbi, project: "Web" });
+    });
+
+  // Another PBI's walk does not move this bar.
+  await send(43, 300, 482);
+  expect(screen.getByText("Resolving test suite")).toBeInTheDocument();
+  expect(screen.queryByText("300 / 482")).not.toBeInTheDocument();
+
+  await send(42, 2, 5);
+  expect(screen.getByText("2 / 5")).toBeInTheDocument();
+  await send(43, 301, 482);
+  expect(screen.getByText("2 / 5")).toBeInTheDocument();
+
+  // Moving to the other PBI drops the first one's bar, and shows its own.
+  view.rerender(panel(43));
+  expect(await screen.findByText("Resolving test suite")).toBeInTheDocument();
+  expect(screen.queryByText("2 / 5")).not.toBeInTheDocument();
+  await send(43, 302, 482);
+  expect(screen.getByText("302 / 482")).toBeInTheDocument();
+});
+
+test("run history is asked for the suite's own cases", async () => {
+  let seen: unknown = null;
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        seen = args;
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          { point_id: 7, test_case_id: 201, test_case_name: "Valid login", config_name: "Windows 10", tester: "", last_outcome: "failed", last_run_id: 3, last_result_id: 30 },
+          { point_id: 8, test_case_id: 202, test_case_name: "Invalid login", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+        ];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+  await waitFor(() =>
+    expect(seen).toEqual({ organization: "acme", project: "Web", planId: 9, testCaseIds: [201, 202] }),
+  );
+});
+
+test("a suite with no cases never starts a history sweep", async () => {
+  let historyCalls = 0;
+  let pointCalls = 0;
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        historyCalls += 1;
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        pointCalls += 1;
+        return [];
+    }
+  });
+  renderPanel();
+  await waitFor(() => expect(pointCalls).toBeGreaterThan(0));
+  await screen.findByText(/Auth - Test Plan/);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(historyCalls).toBe(0);
+});
+
+// The runner window saves an outcome and announces it; this window must show
+// it at once, from the announcement alone - the result is already saved, so
+// nothing may wait for a fetch from Azure DevOps.
+test("an outcome recorded in the runner repaints its row without fetching the points again", async () => {
+  let pointFetches = 0;
+  mockIPC(
+    (cmd) => {
+      switch (cmd) {
+        case "run_history":
+          return [];
+        case "ensure_pbi_suite":
+          return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+        case "list_test_points":
+          pointFetches += 1;
+          return [
+            {
+              point_id: 7,
+              test_case_id: 201,
+              test_case_name: "Valid login",
+              config_name: "Windows 10",
+              tester: "",
+              last_outcome: "Passed",
+              last_run_id: 3,
+              last_result_id: 30,
+            },
+            {
+              point_id: 8,
+              test_case_id: 202,
+              test_case_name: "Invalid login",
+              config_name: "Windows 10",
+              tester: "",
+              last_outcome: "",
+              last_run_id: null,
+              last_result_id: null,
+            },
+          ];
+      }
+    },
+    { shouldMockEvents: true },
+  );
+  renderPanel();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  const cell = (name: string) => within(screen.getByText(name).closest("tr") as HTMLElement).getAllByRole("cell")[1];
+  expect(cell("Valid login")).toHaveTextContent("Passed");
+  // The panel may read the points more than once while it loads; what matters
+  // is that the announcement itself causes no read.
+  await vi.waitFor(() => expect(pointFetches).toBeGreaterThan(0));
+  const fetchedBefore = pointFetches;
+
+  const recorded = (testCaseId: number, outcome: string, resultId: number) =>
+    emit("runner:point-recorded", { org: "acme", project: "Web", planId: 9, suiteId: 91, testCaseId, outcome, runId: 11, resultId });
+
+  // Passed -> Failed on a case that was already run, and a first result on one that never was.
+  await act(async () => {
+    await recorded(201, "Failed", 110);
+    await recorded(202, "Passed", 111);
+  });
+  await vi.waitFor(() => expect(cell("Valid login")).toHaveTextContent("Failed"));
+  expect(cell("Invalid login")).toHaveTextContent("Passed");
+  expect(pointFetches).toBe(fetchedBefore);
+});
+
+/// A Test plan folder (a static suite) as the target: no PBI behind it, so
+/// the suite is the one handed in and the runner/report carry pbi id 0.
+test("a folder target lists its own points, never resolves a PBI suite, and runs the ticked cases", async () => {
+  const asked: { cmd: string; args: Record<string, unknown> }[] = [];
+  mockIPC((cmd, args) => {
+    asked.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "view_execution_report":
+        return "report.html";
+      case "list_test_points":
+        return [
+          { point_id: 1, test_case_id: 301, test_case_name: "Widget opens", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+          { point_id: 2, test_case_id: 302, test_case_name: "Widget closes", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+          { point_id: 3, test_case_id: 303, test_case_name: "Widget resizes", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+        ];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPanel
+        org="acme"
+        project="Web"
+        folder={{ planId: 9, suiteId: 93, planName: "Auth - Test Plan", title: "Regression" }}
+        onCloseFolder={onClose}
+        closeLabel="Back to PBI #42"
+      />
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText("Widget opens")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Regression/ })).toBeInTheDocument();
+  expect(screen.getByText(/Auth - Test Plan/)).toBeInTheDocument();
+  expect(asked.some((a) => a.cmd === "ensure_pbi_suite")).toBe(false);
+  expect(asked.some((a) => a.cmd === "get_run_order")).toBe(false);
+  expect(asked.find((a) => a.cmd === "list_test_points")?.args).toMatchObject({
+    project: "Web",
+    planId: 9,
+    suiteId: 93,
+  });
+
+  fireEvent.click(screen.getByText("Widget opens"));
+  fireEvent.click(screen.getByText("Widget resizes"));
+  fireEvent.click(screen.getByRole("button", { name: "Execution report" }));
+  await waitFor(() => expect(asked.some((a) => a.cmd === "view_execution_report")).toBe(true));
+  expect(asked.find((a) => a.cmd === "view_execution_report")?.args).toMatchObject({
+    planId: 9,
+    suiteIds: [93],
+    title: "Regression",
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Run 2 in runner" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-runner-session")).toBeTruthy());
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.pbi).toMatchObject({ id: 0, title: "Regression" });
+  expect(session.caseIds).toEqual([301, 303]);
+  expect(session.planId).toBe(9);
+  expect(session.suiteId).toBe(93);
+
+  fireEvent.click(screen.getByRole("button", { name: "Back to PBI #42" }));
+  expect(onClose).toHaveBeenCalled();
+});
+
+test("a folder with no cases of its own says so", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_points") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPanel org="acme" project="Web" folder={{ planId: 9, suiteId: 93, planName: "P", title: "Empty" }} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText("No test cases in this folder.")).toBeInTheDocument();
+});
+
+/// Backlog A1.8: arrow keys and Space in Run Tests, as in the queue.
+test("arrow keys move through the rows and Space selects one", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const row = (name: string) => screen.getByText(name).closest<HTMLElement>("[data-row-key]")!;
+  row("Valid login").focus();
+  fireEvent.keyDown(row("Valid login"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Invalid login"));
+  fireEvent.keyDown(row("Invalid login"), { key: " " });
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+  fireEvent.keyDown(row("Invalid login"), { key: "ArrowUp", shiftKey: true });
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+});
+
+/// Backlog A1.8: while the points load, the table keeps its shape with
+/// skeleton rows, and a screen reader hears what is loading.
+test("loading test points shows skeleton rows with a status", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "ensure_pbi_suite") return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+    if (cmd === "list_test_points") return new Promise(() => {});
+    if (cmd === "run_history") return [];
+  });
+  renderPanel();
+  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("Loading test points");
+  expect(screen.getAllByTestId("skeleton").length).toBeGreaterThanOrEqual(6);
+});

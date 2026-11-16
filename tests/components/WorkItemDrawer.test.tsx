@@ -1,0 +1,234 @@
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
+import { cacheEntry, cacheKeys } from "../../src/lib/cache";
+import WorkItemDrawer from "../../src/components/WorkItemDrawer";
+
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+});
+
+function renderDrawer(states: string[] = ["To Do", "In Progress", "Done"]) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <WorkItemDrawer
+        org="acme"
+        project="Web"
+        itemId={2003}
+        states={states}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+const detail = (title: string) => ({
+  id: 2003,
+  title,
+  work_item_type: "Bug",
+  state: "To Do",
+  assigned_to: "Avin Alwis",
+  assigned_to_unique: "avin@acme.com",
+  activity: "",
+  tags: "",
+  area_path: "Web",
+  iteration_path: "Web\\Sprint 9",
+  remaining_work: null,
+  completed_work: null,
+  original_estimate: null,
+  start_date: "",
+  target_date: "",
+  description_text: "It broke",
+  description_html: "<div>It broke</div>",
+  description_field: "Microsoft.VSTS.TCM.ReproSteps",
+  extra_pages: [
+    {
+      name: "RCA",
+      fields: [
+        {
+          label: "Root Cause",
+          reference_name: "Custom.RootCause",
+          section: 0,
+          kind: "html",
+          allowed: [],
+          value: "<div>TBD</div>",
+        },
+      ],
+    },
+  ],
+  extra_pages_error: null,
+  inline_images: [],
+});
+
+/// Saving invalidates the detail query, and fresh data used to run the
+/// same reset that greets a DIFFERENT item - yanking whoever saved from
+/// the RCA tab back to Description. The refetch must re-seed the draft
+/// (the saved item is the new dirty-baseline) while the tabs stay put.
+test("saving from the RCA tab stays on the RCA tab", async () => {
+  let title = "Session timeout not enforced";
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail(title);
+      case "list_team_members":
+        return [{ display_name: "Avin Alwis", unique_name: "avin@acme.com" }];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+      case "update_work_item": {
+        // The refetch after this save returns the edited title.
+        const patches = (args as { patches: { reference_name: string; value: string }[] })
+          .patches;
+        title = patches.find((p) => p.reference_name === "System.Title")?.value ?? title;
+        return null;
+      }
+    }
+  });
+  renderDrawer();
+
+  // Open the RCA tab, then make the save button live with a title edit.
+  fireEvent.click(await screen.findByRole("button", { name: "RCA" }));
+  expect(screen.getByText("Root Cause")).toBeInTheDocument();
+  fireEvent.change(screen.getByDisplayValue("Session timeout not enforced"), {
+    target: { value: "Session timeout not enforced (repro'd)" },
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+  // The refetched detail landed (new title seeded the draft)...
+  await waitFor(() =>
+    expect(
+      screen.getByDisplayValue("Session timeout not enforced (repro'd)"),
+    ).toBeInTheDocument(),
+  );
+  // ...and the drawer is still on RCA, not bounced to Description.
+  expect(screen.getByText("Root Cause")).toBeInTheDocument();
+});
+
+/// The detail a drawer loads is remembered on disk, so reopening the same
+/// item paints instantly instead of a skeleton - the same seed-then-
+/// revalidate treatment the suite tree and PR chips already get.
+test("a loaded work item is cached for the next open", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Session timeout not enforced");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+    }
+  });
+  renderDrawer();
+  await screen.findByDisplayValue("Session timeout not enforced");
+
+  const entry = cacheEntry<{ title: string }>(cacheKeys.workItemDetail("acme", "Web", 2003), Infinity);
+  expect(entry).toBeTruthy();
+  expect(entry!.data.title).toBe("Session timeout not enforced");
+});
+
+// The State field is `ui/select.tsx`'s themed combobox (button + listbox),
+// not a native <select>, so its choices only exist in the DOM while open:
+// open it, read the option labels, then close it back to how it started.
+const optionsOf = () => {
+  const trigger = screen.getByLabelText("State");
+  fireEvent.click(trigger);
+  const opts = screen.getAllByRole("option").map((o) => o.textContent);
+  fireEvent.click(trigger);
+  return opts;
+};
+
+/// A swimlane's parent that is not itself a card (or an item a notification
+/// opened from outside the loaded board) arrives with no states. The drawer
+/// reads its own type's instead of offering nothing.
+test("an item that arrives with no states reads its own type's", async () => {
+  const asked: unknown[] = [];
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Parent feature");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+      case "work_item_type_states":
+        asked.push(args);
+        return [
+          { name: "To Do", color: "b2b2b2", category: "Proposed" },
+          { name: "Doing", color: "007acc", category: "InProgress" },
+          { name: "Done", color: "339933", category: "Completed" },
+        ];
+    }
+  });
+  renderDrawer([]);
+  await waitFor(() => expect(optionsOf()).toEqual(["To Do", "Doing", "Done"]));
+  expect(asked).toEqual([{ organization: "acme", project: "Web", workItemType: "Bug" }]);
+});
+
+/// A failed states lookup must not leave the drawer unable to open: the
+/// item's own current state is always a valid choice.
+test("a lane parent whose type's states cannot be read still opens, offering its own state", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Parent feature");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+      case "work_item_type_states":
+        throw { kind: "Network", detail: "Can't reach Azure DevOps." };
+    }
+  });
+  renderDrawer([]);
+  await waitFor(() => expect(optionsOf()).toEqual(["To Do"]));
+});
+
+/// Azure DevOps names the fields a state change is blocked on, and the
+/// drawer rings each one it has - the dates too. They were listed in the
+/// banner with nothing ringed below it.
+test("every field Azure DevOps names as required is ringed, the dates included", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Report 2");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return ["Development"];
+      case "work_item_comments":
+        return [];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <WorkItemDrawer
+        org="acme"
+        project="Web"
+        itemId={2003}
+        states={["To Do", "Done"]}
+        highlightFields={["Target Date", "Start Date", "Activity", "Assigned To"]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  const target = await screen.findByRole("button", { name: "Target date" });
+  expect(target.className).toContain("ring-danger");
+  expect(screen.getByRole("button", { name: "Start date" }).className).toContain("ring-danger");
+  expect(screen.getByRole("combobox", { name: "Assigned to" }).className).toContain("ring-danger");
+  // Not named: not ringed.
+  expect(screen.getByRole("textbox", { name: "Title" }).className).not.toContain("ring-danger");
+});
