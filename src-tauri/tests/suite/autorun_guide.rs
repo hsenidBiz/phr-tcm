@@ -2761,6 +2761,7 @@ fn active_environment_section_says_its_scripts_are_its_own() {
         password_expiry_query: String::new(),
         active_session_query: String::new(),
         reset_expired_passwords: false,
+        account_lookup: Default::default(),
     };
     let text = v2_lib::autorun::guide::active_environment_section(&env, None);
     assert!(
@@ -2784,6 +2785,7 @@ fn the_live_environment_section_promises_no_password() {
             password_expiry_query: String::new(),
             active_session_query: String::new(),
             reset_expired_passwords: false,
+            account_lookup: Default::default(),
         };
         let text = v2_lib::autorun::guide::active_environment_section(&env, None);
         assert!(!text.to_lowercase().contains("password"), "{text}");

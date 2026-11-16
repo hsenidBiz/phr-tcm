@@ -22,6 +22,7 @@ mod common;
 mod serial;
 mod serial_order;
 
+mod account_lookup;
 mod action_help;
 mod activity_log;
 mod assistant_activity;

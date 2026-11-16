@@ -8,10 +8,10 @@ under the writer's rules, with Test Case Manager's tools:
 - the refactor into page objects, the data file and the linter: none here; the app checks a script
   when it is saved.
 - running the spec, npx playwright test, npm run qa: `replay_autorun_to_step`, or a run in the app.
-- users and test data: `get_accounts`, `propose_accounts`, `save_test_file`. On a test environment,
-  look up each login's password in the same query that finds the login, and propose it with the
-  account. The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with
-  `db_query`) for the logins and their passwords.
+- users and test data: `get_accounts`, `propose_accounts`, `save_test_file`. Find the logins without
+  reading or sending passwords: on a test environment the app looks each password up itself. The user
+  accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with `db_query`, usernames
+  and roles only). If `propose_accounts` says the lookup did not run, fix it with `set_account_lookup`.
 - handing a case to playwright-test-healer: never dispatch that agent. Follow the healer's rules
   (`get_guide`, role healer) with `get_autorun_failures` and `replay_autorun_to_step`.
 - test.fixme(): never. A stuck case stays failed: report a divergence (`report_case_divergence`) and

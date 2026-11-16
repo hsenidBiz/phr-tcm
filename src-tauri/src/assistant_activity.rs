@@ -84,6 +84,7 @@ pub fn route_action(method: &str, path: &str, body: &str) -> Option<(ActivityGro
         "/api-template-flow-save" => (Saved, "Saved an API flow"),
         "/autorun-order" => (Saved, "Saved the run order"),
         "/accounts-propose" => (Proposed, "Proposed accounts"),
+        "/accounts-lookup-set" => (Saved, "Changed the account lookup"),
         "/autorun-propose-sign-in" => (Proposed, "Proposed a sign-in"),
         "/autorun-divergence" => (Proposed, "Reported a divergence"),
         "/autorun-divergence-ruling" => (Proposed, "Ruled on a divergence"),

@@ -30,6 +30,7 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
         password_expiry_query: String::new(),
         active_session_query: String::new(),
         reset_expired_passwords: false,
+        account_lookup: Default::default(),
     }
 }
 
@@ -48,6 +49,7 @@ fn input(name: &str) -> EnvInput {
         test_prefix: None,
         password_expiry_query: None,
         active_session_query: None,
+        account_lookup: None,
     }
 }
 
@@ -646,6 +648,7 @@ fn edit(root: &Path, id: &str, start_url: &str, allowed: &[&str]) -> EnvInput {
         test_prefix: None,
         password_expiry_query: None,
         active_session_query: None,
+        account_lookup: None,
     }
 }
 
@@ -1277,36 +1280,31 @@ mod accounts_for_the_assistant {
     // ---- A test environment: each account has its password, or says why not
 
     #[tokio::test]
-    async fn on_a_test_environment_a_proposal_missing_a_password_is_refused_naming_the_keys() {
+    async fn on_a_test_environment_a_proposal_missing_a_password_is_saved_and_the_failed_lookup_is_named() {
         let _root = crate::serial::autorun();
         let dir = bridge_root();
         let root = dir.path();
         mark_test_environment(root);
 
-        // An earlier proposal stands untouched by a refused one.
-        let kept = json!({ "accounts": [with_password("hr.old", "old1", "Db-Pw-0")] });
-        assert_eq!(call("POST", "/accounts-propose", &kept.to_string()).await.0, 200);
-        let before = proposals_text(root);
-
+        // The app looks passwords up itself, so a proposal need not carry
+        // one. Here there is no database to ask: the proposal is saved all the
+        // same, and the answer says why nothing was looked up and how to fix it.
         let body = json!({ "accounts": [
             with_password("hr.sup", "sup1", "Db-Pw-7731"),
             proposal("hr.emp", "emp1"),
             proposal("hr.adm", "adm1"),
         ] });
         let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
-        assert_eq!(status, 400, "{out}");
-        assert_eq!(
-            out,
-            "This is a test environment: give each account its password from the same database lookup that found its login (never a hash), or say why there is none with no_password. Missing for: hr.emp, hr.adm."
-        );
+        assert_eq!(status, 200, "{out}");
+        assert!(out.contains("the account lookup did not run"), "{out}");
+        assert!(out.contains("Edit environments") && out.contains("set_account_lookup"), "{out}");
         assert!(!out.contains("Db-Pw-7731"), "{out}");
-        assert_eq!(proposals_text(root), before, "nothing of the refused call is saved");
+        assert!(!out.contains(".."), "{out}");
 
-        // With no earlier proposal, nothing is written at all.
-        dismiss_proposals_with(root).unwrap();
-        let (status, _) = call("POST", "/accounts-propose", &json!({ "accounts": [proposal("hr.emp", "emp1")] }).to_string()).await;
-        assert_eq!(status, 400);
-        assert!(proposals_text(root).is_empty());
+        let stored = load_proposals(root, &active_id(root).unwrap()).unwrap();
+        assert_eq!(stored.len(), 3);
+        assert_eq!(stored[0].password.as_deref(), Some("Db-Pw-7731"), "a password the assistant gave still applies");
+        assert!(stored[1].password.is_none() && stored[1].no_password.is_none());
     }
 
     #[tokio::test]
@@ -1755,6 +1753,7 @@ mod accounts_for_the_assistant {
             test_prefix: None,
             password_expiry_query: None,
             active_session_query: None,
+            account_lookup: None,
         }
     }
 

@@ -36,6 +36,8 @@ pub struct EnvView {
     /// "Reset expired passwords", this environment's own. Matters only
     /// while it is marked a test environment.
     pub reset_expired_passwords: bool,
+    /// Where this environment's logins and passwords are looked up.
+    pub account_lookup: crate::autorun::account_lookup::AccountLookup,
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -66,6 +68,9 @@ pub struct EnvInput {
     /// Left out, an edit keeps the environment's active session query.
     #[serde(default)]
     pub active_session_query: Option<String>,
+    /// Left out, an edit keeps the environment's account lookup.
+    #[serde(default)]
+    pub account_lookup: Option<crate::autorun::account_lookup::AccountLookup>,
 }
 
 /// Said while an Auto Run browser holds a signed-in account: the person
@@ -115,6 +120,7 @@ fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
                 password_expiry_query: e.password_expiry_query,
                 active_session_query: e.active_session_query,
                 reset_expired_passwords: e.reset_expired_passwords,
+                account_lookup: e.account_lookup,
             })
             .collect(),
     }
@@ -197,6 +203,11 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         .clone()
         .or_else(|| before.as_ref().map(|b| b.active_session_query.clone()))
         .unwrap_or_default();
+    let account_lookup = env
+        .account_lookup
+        .clone()
+        .or_else(|| before.as_ref().map(|b| b.account_lookup.clone()))
+        .unwrap_or_default();
     let env = Environment {
         id: env.id,
         name: env.name,
@@ -212,6 +223,7 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         active_session_query,
         // Not the form's to set either (`set_reset_expired_passwords`).
         reset_expired_passwords: false,
+        account_lookup,
     };
     let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
@@ -656,6 +668,177 @@ pub fn add_proposals_with(
         crate::applog::warn(format!("Environments: the added accounts stayed among the proposed ones: {e}"));
     }
     Ok(confirm)
+}
+
+/// What a "Fill passwords from database" did, in counts and nothing else:
+/// no password and no login is in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct FillCounts {
+    /// Logins whose password is now the one in the table (it differed).
+    pub updated: u32,
+    /// Logins whose password already was the one in the table.
+    pub unchanged: u32,
+    /// Logins with no row in the table, or a row with no password.
+    pub no_row: u32,
+    /// Logins whose value in the table is only a hash.
+    pub hash_only: u32,
+}
+
+/// The environment the fill works on and what the lookup found for `users`,
+/// or the sentence for why not: not a test environment, or the lookup did not
+/// run (database off, no connection, a table or column missing, an ambiguous
+/// password column). Never carries a value.
+async fn fill_lookup<S: crate::autorun::setup_find::RowSource>(
+    root: &Path,
+    rows: Result<&S, String>,
+    users: &[String],
+) -> Result<(Environment, crate::autorun::account_lookup::LookedUp), String> {
+    use crate::autorun::account_lookup::{failure_sentence, look_up, FIX_IN_APP, NOT_TEST};
+    let env = environments::active(root)?;
+    if !env.test_environment {
+        return Err(format!("{NOT_TEST} - mark it in Edit environments first"));
+    }
+    let looked = match rows {
+        Ok(rows) => look_up(rows, &env.account_lookup, users).await,
+        Err(why) => Err(why),
+    };
+    match looked {
+        Ok(found) => Ok((env, found)),
+        Err(why) => {
+            crate::applog::info(format!("Environments: the account lookup for {} did not run", env.name));
+            Err(failure_sentence(&why, FIX_IN_APP))
+        }
+    }
+}
+
+/// Fills the active environment's PROPOSED logins from the account table:
+/// a found password replaces what the proposal holds, a hash or an empty
+/// value becomes its reason, and a login with no row keeps what it has (or
+/// gets "no row" as its reason). Answers counts only.
+pub async fn fill_proposals_in<S: crate::autorun::setup_find::RowSource>(
+    root: &Path,
+    rows: Result<&S, String>,
+) -> Result<FillCounts, String> {
+    use crate::autorun::account_lookup::{settle_proposal, Found};
+    let env = environments::active(root)?;
+    let mut list = environments::load_proposals(root, &env.id)?;
+    if list.is_empty() {
+        return Err("there are no proposed logins to fill".to_string());
+    }
+    let users: Vec<String> = list.iter().map(|p| p.username.clone()).collect();
+    let (_, found) = fill_lookup(root, rows, &users).await?;
+    let mut counts = FillCounts::default();
+    let before = list.clone();
+    for p in &mut list {
+        let seen = found.of(&p.username);
+        let (password, reason) = settle_proposal(seen, p.password.clone(), p.no_password.clone(), &found.table);
+        match seen {
+            Some(Found::Password(_)) if password == p.password => counts.unchanged += 1,
+            Some(Found::Password(_)) => counts.updated += 1,
+            Some(Found::Hash) => counts.hash_only += 1,
+            Some(Found::Empty) | None => counts.no_row += 1,
+        }
+        p.password = password;
+        p.no_password = reason;
+    }
+    if list != before {
+        environments::save_proposals(root, &env.id, &list)?;
+    }
+    crate::applog::info(format!(
+        "Environments: filled the proposed logins from the account table ({} updated, {} unchanged, {} with no row, {} hash only)",
+        counts.updated, counts.unchanged, counts.no_row, counts.hash_only
+    ));
+    Ok(counts)
+}
+
+/// Fills the active environment's SAVED accounts from the account table:
+/// `keys` names the accounts (empty means every one). A password that
+/// differs is saved the way a person's change of it is
+/// (`accounts::merge_accounts_for`: its saved session goes with it, and any
+/// password held pending is let go); an account whose password did not
+/// change is not written. Answers counts only.
+pub async fn fill_accounts_in<S: crate::autorun::setup_find::RowSource>(
+    root: &Path,
+    rows: Result<&S, String>,
+    keys: &[String],
+) -> Result<FillCounts, String> {
+    use crate::autorun::account_lookup::Found;
+    let env = environments::active(root)?;
+    let all = crate::autorun::accounts::load_accounts_for(root, &env.id)?;
+    let targets: Vec<&crate::autorun::accounts::Account> =
+        all.iter().filter(|a| keys.is_empty() || keys.iter().any(|k| k.trim() == a.key)).collect();
+    if targets.is_empty() {
+        return Err("there are no saved accounts to fill".to_string());
+    }
+    let users: Vec<String> = targets.iter().map(|a| a.username.clone()).collect();
+    let (_, found) = fill_lookup(root, rows, &users).await?;
+    let mut counts = FillCounts::default();
+    let mut changed = vec![];
+    for a in targets {
+        match found.of(&a.username) {
+            Some(Found::Password(p)) if *p == a.password => counts.unchanged += 1,
+            Some(Found::Password(p)) => {
+                counts.updated += 1;
+                changed.push(crate::autorun::accounts::Account { password: p.clone(), ..a.clone() });
+            }
+            Some(Found::Hash) => counts.hash_only += 1,
+            Some(Found::Empty) | None => counts.no_row += 1,
+        }
+    }
+    if !changed.is_empty() {
+        crate::autorun::accounts::merge_accounts_for(root, &env.id, changed)?;
+    }
+    crate::applog::info(format!(
+        "Environments: filled saved accounts from the account table ({} updated, {} unchanged, {} with no row, {} hash only)",
+        counts.updated, counts.unchanged, counts.no_row, counts.hash_only
+    ));
+    Ok(counts)
+}
+
+/// The active environment's database as the place the fill reads, or the
+/// sentence for why there is none. `db_read` is the Database Access module as
+/// the webview holds it.
+fn fill_db(
+    root: &Path,
+    store: &dyn SecretStore,
+    db_read: bool,
+) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, String> {
+    if !crate::autorun::preconditions::read_access(db_read) {
+        return Err(crate::autorun::account_lookup::DB_OFF.to_string());
+    }
+    crate::autorun::preconditions::environment_db(root, Some(store))
+}
+
+/// "Fill passwords from database" on the Proposed tab.
+#[tauri::command]
+#[specta::specta]
+pub async fn env_fill_proposal_passwords(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    db_read: bool,
+) -> Result<FillCounts, String> {
+    let root = super::autorun::root(&app)?;
+    match fill_db(&root, &*secrets.0, db_read) {
+        Ok(db) => fill_proposals_in(&root, Ok(&crate::autorun::active_login::StageRows(&db))).await,
+        Err(why) => fill_proposals_in::<crate::autorun::account_lookup::NoRows>(&root, Err(why)).await,
+    }
+}
+
+/// "Fill passwords from database" on the Accounts tab: the named accounts, or
+/// every saved one when `keys` is empty.
+#[tauri::command]
+#[specta::specta]
+pub async fn env_fill_account_passwords(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    keys: Vec<String>,
+    db_read: bool,
+) -> Result<FillCounts, String> {
+    let root = super::autorun::root(&app)?;
+    match fill_db(&root, &*secrets.0, db_read) {
+        Ok(db) => fill_accounts_in(&root, Ok(&crate::autorun::active_login::StageRows(&db)), &keys).await,
+        Err(why) => fill_accounts_in::<crate::autorun::account_lookup::NoRows>(&root, Err(why), &keys).await,
+    }
 }
 
 /// The environments and which is active. `current_db` is the database the

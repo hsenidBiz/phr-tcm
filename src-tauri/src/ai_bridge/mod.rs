@@ -908,6 +908,9 @@ pub async fn route_as(
         // for a person to add, and reads the ones there - key, label,
         // username and whether a password is set, never the password.
         ("POST", "/accounts-propose") => accounts_propose(ctx, body).await,
+        // The account lookup the app reads passwords with on a test
+        // environment: the assistant may change the table and columns.
+        ("POST", "/accounts-lookup-set") => accounts_lookup_set(ctx, body).await,
         // Check sign-in: each account signed in once, in a browser of its own,
         // and walked as far as an area. Uses no slot: the person's Auto Run
         // browser and the assistant's own are left alone.

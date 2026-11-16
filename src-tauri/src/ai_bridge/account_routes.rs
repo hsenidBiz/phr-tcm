@@ -7,16 +7,31 @@ use super::*;
 pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and a username as text, and a password as text when one is given - and no other field";
 
 /// `POST /accounts-propose`: the assistant's proposed logins for the active
-/// environment, REPLACING whatever it proposed before, passwords included.
-/// Each may carry the password the assistant read in the same database
-/// lookup - accepted only for an environment marked as a test environment,
-/// and otherwise the whole call is refused. A password is never logged or
-/// repeated in an answer, and nothing reaches the accounts until a person
-/// adds it in the app.
+/// environment, REPLACING whatever it proposed before. On a test environment
+/// the app itself looks each login's password up in the environment's
+/// account table (`autorun::account_lookup`), so the assistant neither reads
+/// nor sends one; a password it still gives (from a seed script, say) is used
+/// only for a login the table has nothing usable for. On any other
+/// environment a password is refused. A password is never logged or repeated
+/// in an answer, and nothing reaches the accounts until a person adds it in
+/// the app.
 pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    use crate::environments::{
-        active, proposed_password_missing, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST,
-    };
+    use crate::autorun::account_lookup::{db_refusal, NoRows};
+    match stage_db(ctx) {
+        Ok(db) => accounts_propose_in(ctx, Ok(&crate::autorun::active_login::StageRows(&db)), body).await,
+        Err(refused) => accounts_propose_in::<NoRows>(ctx, Err(db_refusal(refused)), body).await,
+    }
+}
+
+/// `accounts_propose` with the place the passwords are looked up given (or the
+/// sentence for why there is none), so a test can drive it.
+pub async fn accounts_propose_in<S: crate::autorun::setup_find::RowSource>(
+    ctx: &BridgeContext,
+    rows: Result<&S, String>,
+    body: &str,
+) -> (u16, String) {
+    use crate::autorun::account_lookup::{failure_sentence, look_up, settle_proposal, Tally, FIX_BY_TOOL};
+    use crate::environments::{active, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST};
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Proposal {
@@ -31,7 +46,7 @@ pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, S
         #[serde(default)]
         no_password: Option<String>,
     }
-    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(test environments only)\", \"no_password\"?: \"why there is none\" }] }";
+    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(only one you already have from a script; the app looks passwords up itself)\", \"no_password\"?: \"why there is none\" }] }";
     let raw = match body_field(body, "accounts", shape) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -76,7 +91,6 @@ pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, S
             }
         })
         .collect();
-    let with_password = proposals.iter().filter(|p| p.password.is_some()).count();
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
@@ -85,18 +99,35 @@ pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, S
         Ok(e) => e,
         Err(e) => return (500, e),
     };
+    // What the lookup said, in words, for the answer.
+    let mut lookup_said: Option<String> = None;
     if env.test_environment {
-        // Every account says what its password is, or why it has none.
-        let missing: Vec<&str> = proposals
-            .iter()
-            .filter(|p| p.password.is_none() && p.no_password.is_none())
-            .map(|p| p.key.as_str())
-            .collect();
-        if !missing.is_empty() {
-            return (400, proposed_password_missing(&missing));
+        // The app reads each login's password itself: the assistant need not,
+        // and an account with neither is simply shown without one.
+        let users: Vec<String> = proposals.iter().map(|p| p.username.clone()).collect();
+        let looked = match rows {
+            Ok(rows) => look_up(rows, &env.account_lookup, &users).await,
+            Err(why) => Err(why),
+        };
+        match looked {
+            Ok(found) => {
+                let mut tally = Tally::default();
+                for p in &mut proposals {
+                    let seen = found.of(&p.username);
+                    tally.add(&p.key, seen);
+                    let (password, reason) = settle_proposal(seen, p.password.take(), p.no_password.take(), &found.table);
+                    p.password = password;
+                    p.no_password = reason;
+                }
+                lookup_said = Some(tally.sentence(&found.table));
+            }
+            Err(why) => {
+                crate::applog::info(format!("Environments: the account lookup for {} did not run", env.name));
+                lookup_said = Some(failure_sentence(&why, FIX_BY_TOOL));
+            }
         }
     } else {
-        if with_password > 0 {
+        if proposals.iter().any(|p| p.password.is_some()) {
             return (400, PROPOSED_PASSWORD_NOT_TEST.to_string());
         }
         // Only a test environment keeps passwords, so only there is a
@@ -105,6 +136,7 @@ pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, S
             p.no_password = None;
         }
     }
+    let with_password = proposals.iter().filter(|p| p.password.is_some()).count();
     // Which logins can sign in at all: expired ones and ones someone is
     // signed in as are marked, and the usable ones come first. A mark never
     // carries a password.
@@ -144,6 +176,9 @@ pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, S
         proposals.len(),
         env.name
     );
+    if let Some(l) = &lookup_said {
+        said.push_str(&format!(" {}.", l.trim_end_matches('.')));
+    }
     if let Some(m) = &marks {
         let marked: Vec<String> = m
             .marks
@@ -170,6 +205,88 @@ pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, S
             " Checked earlier with check_autorun_sign_in: {}. The ones that reached the area asked for (`area`) are listed first; a check for another area, or over a week old, does not rank.",
             earlier.join("; ")
         ));
+    }
+    (200, said)
+}
+
+/// `POST /accounts-lookup-set`: the assistant changes the ACTIVE environment's
+/// account lookup (table, username column, optional password column) -
+/// directly, with no approval step (the owner's ruling), and only on a test
+/// environment. The answer says what was saved and, from the table's column
+/// list alone (never a value), whether the lookup can work.
+pub(crate) async fn accounts_lookup_set(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::autorun::account_lookup::{db_refusal, NoRows};
+    match stage_db(ctx) {
+        Ok(db) => accounts_lookup_set_in(Ok(&crate::autorun::active_login::StageRows(&db)), body).await,
+        Err(refused) => accounts_lookup_set_in::<NoRows>(Err(db_refusal(refused)), body).await,
+    }
+}
+
+/// What `POST /accounts-lookup-set` reads.
+pub const SET_LOOKUP_SHAPE: &str =
+    "{ \"table\": \"PeoplesHR.HS_SM_USER_ACCOUNT\", \"username_column\": \"USRACC_USER_ID\", \"password_column\"?: \"leave out to detect it\" }";
+
+/// `accounts_lookup_set` with the place to check the table in given.
+pub async fn accounts_lookup_set_in<S: crate::autorun::setup_find::RowSource>(
+    rows: Result<&S, String>,
+    body: &str,
+) -> (u16, String) {
+    use crate::autorun::account_lookup::{resolve_password_column, AccountLookup, NOT_TEST};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Asked {
+        table: String,
+        username_column: String,
+        #[serde(default)]
+        password_column: Option<String>,
+    }
+    let asked: Asked = match serde_json::from_str(if body.trim().is_empty() { "{}" } else { body }) {
+        Ok(a) => a,
+        Err(_) => return (400, format!("that is not what set_account_lookup reads. Expected {SET_LOOKUP_SHAPE}.")),
+    };
+    let lookup = AccountLookup {
+        table: asked.table,
+        username_column: asked.username_column,
+        password_column: asked.password_column.unwrap_or_default(),
+    }
+    .tidy();
+    if let Err(why) = lookup.check() {
+        return (400, why);
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let env = match crate::environments::active(&root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    if !env.test_environment {
+        return (400, format!("{NOT_TEST} - mark it in Edit environments first"));
+    }
+    if let Err(why) = crate::environments::set_account_lookup(&root, &env.id, lookup.clone()) {
+        return (400, why);
+    }
+    let pwd_words =
+        if lookup.password_column.is_empty() { "detected from the table".to_string() } else { lookup.password_column.clone() };
+    // Names only: no value is read here, and none is logged.
+    crate::applog::info(format!(
+        "Environments: the assistant changed the account lookup of {}: table {}, username column {}, password column {}",
+        env.name, lookup.table, lookup.username_column, pwd_words
+    ));
+    let mut said = format!(
+        "saved the account lookup for the environment {}: table {}, username column {}, password column {}.",
+        env.name, lookup.table, lookup.username_column, pwd_words
+    );
+    let checked = match rows {
+        Ok(rows) => resolve_password_column(rows, &lookup).await,
+        Err(why) => Err(why),
+    };
+    match checked {
+        Ok(pwd) => said.push_str(&format!(
+            " The lookup can work: the table and both columns were found (password column: {pwd}). Only the table's column list was read; no value was."
+        )),
+        Err(why) => said.push_str(&format!(" The lookup cannot work yet: {why}.")),
     }
     (200, said)
 }
