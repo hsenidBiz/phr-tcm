@@ -52,7 +52,7 @@
     <ul>
       <li><s><b>F1 Excel/CSV import and export.</b></s> Declined 11 November 2026: JSON is the chosen import and export format and stays the only one.</li>
       <li><s><b>F2 Scheduled and unattended Auto Run.</b></s> Declined 14 November 2026: not needed.</li>
-      <li><s><b>F3 Trend and traceability reports.</b></s> Declined 14 November 2026: not needed.</li>
+      <li><s><b>F3 Trend and traceability reports.</b></s> Declined 14 November 2026; on 17 November 2026 the owner asked for trends inside the smart Auto Run report (below). The PBI-to-case-to-bug matrix and the sprint coverage view stay declined.</li>
       <li><b>F4 Azure DevOps test features.</b> Shared steps are kept but cannot be edited or expanded (<code>steps_xml.rs</code>). Test parameters (data-driven cases) and test configurations are not supported.</li>
       <li><b>F5 A screen for saved setups.</b> Only an assistant can use saved setups today (<code>get_kept_actions</code>, <code>save_setup</code>, <code>list_setups</code>, <code>run_setup</code>).</li>
       <li><b>F7 Optional usage counts.</b> No telemetry, so nobody knows which features are used. A local count the user can turn off is enough.</li>
@@ -63,27 +63,22 @@
     </ul>
     <p><b>UI and UX</b></p>
     <ul>
-      <li><b>U1b Undo for removing rows that came from a watched file.</b> Undo for queue removals, Remove all and bulk edits shipped; removing rows that came from a watched import file still has no Undo, because the file write-back can edit or remove an entry but not put one back. Needs the Rust write-back to re-insert at the old position.</li>
       <li><b>U2 Actions in the command palette.</b> Ctrl+K only goes to screens. Add actions (import a file, upload the queue, new case, refresh) and a search for PBIs and case ids.</li>
       <li><b>U3 Simpler navigation.</b> Up to 12 tabs; Manual Entry, Import, Update, View, Search Suites and Suite Management overlap, and Run Tests and Auto Run are easy to confuse. Think about one Cases screen with modes.</li>
       <li><b>U4 Fixed Ctrl+number shortcuts.</b> The Ctrl+1 to 9 slots move when a module is turned on or off (<code>App.tsx</code>). Give each screen a fixed number.</li>
       <li><b>U5 Arrow keys in Search Suites.</b> A1.8 added them to View, Update and Run Tests; the Search Suites tree still takes clicks only.</li>
       <li><b>U7 Translation.</b> All text is English in the code. Only if teams outside English-speaking ones will use the app.</li>
       <li><b>U8 An Auto Run readiness checklist.</b> Environment, address, accounts, sign-in, areas and test files are separate rows; one checklist that says what is missing and what to do next.</li>
-      <li><b>U9 Explain the jargon where it appears.</b> Recipe, fixture, flow, area, component, quirk, divergence and ruling: an inline definition on first use.</li>
       <li><b>U10 Show tags in Run Tests.</b> Search matches tags but the rows show none; add tag chips or a tag filter, and say so when the tag read failed instead of silently matching nothing.</li>
       <li><b>U11 Error messages with a next step.</b> The sign-in errors now say what to do; give the older ones (for example "The signed-in check never appeared") the same pass.</li>
-      <li><b>U12 Shorter changelog in Settings.</b> The full history renders about 24,000 px tall; show the last ten versions and load the rest on demand.</li>
     </ul>
     <p><b>Maintainability and engineering</b></p>
     <ul>
       <li><b>M5 One UI kit.</b> One markdown renderer since 2.4.7-beta.4; still two kits (xiod-ui and Astryx), plus hand-made controls.</li>
       <li><b>M8 Code signing.</b> The release script has no signing step and update trust rests on HTTPS to GitHub. Signing also removes SmartScreen warnings and the antivirus block each new build meets on this machine. Skipped by an earlier decision; worth revisiting as users grow.</li>
       <li><b>M9 Product coupling.</b> PeoplesHR is named in 23 Rust files (sign-in recipe, single-session rule, Playwright layout, WebForms postback). A cost only if another product must be tested.</li>
-      <li><b>M10 A scripted smoke run for hand checks.</b> Most features since 2.3 owe live-site checks. One fixed test project and environment covering sign-in, a run, an upload and a proposal would replace most of them.</li>
       <li><b>M11 Smaller assistant guides.</b> <code>autorun/guide.rs</code> is about 205 KB; log which sections agents request and serve smaller per-job guides.</li>
       <li><b>M12 A flaky-test log.</b> Two load-related failures this session (<code>App.test.tsx</code>, <code>bridge_per_env</code>); a short record stops each being re-diagnosed.</li>
-      <li><b>M13 Dev app beside the installed app.</b> Give development builds their own single-instance identity so TCM need not be closed to debug.</li>
       <li><b>M15 Check the Run Tests tag read goes through the cache</b> rather than fetching on every list load.</li>
     </ul>
     <p><b>Minor findings from the A1 review (deferred)</b></p>
@@ -156,6 +151,21 @@
       <li>A rule Claude Code writes into the same settings file at the moment TCM writes it can be lost, and TCM rewrites the file's formatting; a failed allow-file write is retried only when the tool list, repository or modules change.</li>
       <li>The Playwright specs pill turns red if a spec listing fails because a run holds the Playwright slot.</li>
       <li>The run window's dialog has no accessible name.</li>
+    </ul>
+  </div>
+
+  <h2>Agreed 17 November 2026, queued in this order</h2>
+  <div class="item">
+    <div class="head"><span class="title">After the eleven follow-ups above</span><span class="status todo">Queued</span></div>
+    <ul>
+      <li><b>U12 Shorter changelog in Settings.</b> Built with the eleven follow-ups (the small-fixes group): the latest ten versions, then Show older versions.</li>
+      <li><b>U1b Undo for removing rows that came from a watched file.</b> The Rust file write-back gains insert-at-position, so Undo restores the row and its file entry together.</li>
+      <li><b>U9 Explain the jargon where it appears.</b> One glossary file (recipe, fixture, flow, area, component, quirk, divergence, ruling) and a Term component: a dotted underline with the definition on hover or focus, at each term&#39;s first appearance on a screen; the guides use the same wording.</li>
+      <li><b>M13 Dev app beside the installed app.</b> Development builds get their own single-instance identity, a window-title marker and a separate data folder (owner ruling: never share the installed app&#39;s settings, cache or Auto Run data).</li>
+      <li><b>Video of failed Auto Run cases.</b> Record each case with the browser&#39;s own recorder (CDP Page.startScreenRecording, Chromium 153 and later, AV1 MP4), called from TCM&#39;s Rust browser code, not the chrome-capture package. Keep the video only for failed cases; show it in Past runs and the run review; Raise bug can attach it. Off by default. Experimental API: check support and skip quietly, never fail a run over it; confirm the Edge version first. The manual Test Runner is unchanged.</li>
+      <li><b>Smart Auto Run report.</b> Rebuild the best ideas of playwright-smart-reporter (MIT) into Auto Run&#39;s run report, not the package: failures grouped by cause (same failing step and error); a timeline per failed case with the first anomaly marked; Copy failure summary and Copy AI prompt; search, filter tokens and keyboard navigation (the report gains a script but stays one self-contained, printable file that fetches nothing); a gallery of screenshots and, later, videos; and trends: a stability grade and outcome strip per case, flakiness across runs, and a History view (pass rate, duration and flaky count per run, run-to-run compare). Left out: CI gates, quarantine, PR comments, Slack or Teams, JUnit exports, coverage, accessibility scans and the reporter&#39;s own AI calls.</li>
+      <li><b>M10 A scripted smoke run for hand checks.</b> Agreed, design first: which Azure DevOps project, PBI and test environment it uses, what it may create and how test-made items are kept apart, how it signs in without credentials passing through the assistant, and when it runs.</li>
+      <li><b>SonarQube findings.</b> SonarQube Cloud now analyses the private copy automatically; once it has analysed current code, go through its issues with the owner (the shipped database passwords are an owner decision to accept or remove).</li>
     </ul>
   </div>
 

@@ -11,7 +11,7 @@ const host = process.env.TAURI_DEV_HOST;
  * as woff2 first and woff second. WebView2 is Chromium, which uses the first
  * source it can read - always the woff2 - so the woff files were never
  * fetched, yet each one was copied into dist/ and so embedded in the exe
- * (about 0.7 MB of the frontend's 2.6 MB there; docs/bundle-check-2026-10.md).
+ * (about 0.7 MB of the frontend's 2.6 MB there, measured October 2026).
  * This drops a face's woff sources when it has a woff2 one.
  *
  * `Once`, not an `AtRule` visitor: Vite's own url() step is a `Once` that
