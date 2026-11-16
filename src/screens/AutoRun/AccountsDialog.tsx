@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
 import { cn } from "../../lib/cn";
-import { commands, type Account, type AccountInput, type ProposedAccount } from "../../bindings";
+import { commands, type Account, type AccountInput, type FillCounts, type ProposedAccount } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -28,7 +28,15 @@ import { matchesQuery } from "../../lib/search";
 import { Select } from "../../components/ui/select";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
-import { IconAdd, IconCancel, IconClear, IconConfirm, IconRemove, IconSignIn } from "../../lib/actionIcons";
+import {
+  IconAdd,
+  IconCancel,
+  IconClear,
+  IconConfirm,
+  IconFillFromDatabase,
+  IconRemove,
+  IconSignIn,
+} from "../../lib/actionIcons";
 import { runIsGoing, useBackgroundRun } from "../../lib/backgroundRun";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import { activeEnvironment, envKeys, useEnvironments } from "../../lib/environments";
@@ -79,6 +87,19 @@ export function reseedRows(cur: Account[], baseline: Account[], fresh: Account[]
   return out;
 }
 
+/** What a Fill passwords from database did, in words: "3 passwords updated,
+ * 1 unchanged, 1 with no row". Counts only - the app never sends a password
+ * to this screen for it. */
+export function fillSentence(c: FillCounts): string {
+  const parts = [
+    `${c.updated} ${c.updated === 1 ? "password" : "passwords"} updated`,
+    `${c.unchanged} unchanged`,
+    `${c.no_row} with no row`,
+  ];
+  if (c.hash_only > 0) parts.push(`${c.hash_only} hash only`);
+  return parts.join(", ");
+}
+
 /** A last check older than this is shown as stale and does not rank. */
 const STALE_MS = 7 * 24 * 3600 * 1000;
 
@@ -127,7 +148,12 @@ export default function AccountsDialog({
     staleTime: 0,
     refetchOnMount: "always",
   });
-  const hasDefaultPassword = activeEnvironment(useEnvironments().data)?.has_default_password ?? false;
+  const environment = activeEnvironment(useEnvironments().data);
+  const hasDefaultPassword = environment?.has_default_password ?? false;
+  // Passwords are looked up from the environment's database only on a test
+  // environment: the fill buttons are not there on any other.
+  const testEnvironment = environment?.test_environment ?? false;
+  const [filling, setFilling] = useState(false);
 
   // Check sign-in: the saved accounts ticked, the area to walk to, and the
   // words for each. One account at a time, in order - never two sign-ins at
@@ -304,6 +330,41 @@ export default function AccountsDialog({
       setBusy(false);
     }
   };
+
+  /** Fill passwords from database: runs the lookup in the app and says what
+   * it did. The failure sentence (which points at Edit environments) is shown
+   * as it comes. The lists are read again by the screen's own queries, so no
+   * password crosses here as part of it. */
+  const fill = async (run: () => Promise<FillCounts>, reload: () => Promise<unknown>, onProblem: (m: string) => void) => {
+    onProblem("");
+    setFilling(true);
+    try {
+      const counts = await run();
+      toast.success(fillSentence(counts));
+      await reload();
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      onProblem(m);
+      toast.error(m);
+    } finally {
+      setFilling(false);
+    }
+  };
+
+  const fillProposals = () =>
+    fill(
+      () => unwrapStr(commands.envFillProposalPasswords(dbReadAccessOn())),
+      () => qc.invalidateQueries({ queryKey: PROPOSALS_KEY }),
+      setProposalProblem,
+    );
+
+  /** Every saved account: this tab has no selection, so none picked means all. */
+  const fillAccounts = () =>
+    fill(
+      () => unwrapStr(commands.envFillAccountPasswords([], dbReadAccessOn())),
+      () => qc.invalidateQueries({ queryKey: ["autorun-accounts"] }),
+      setProblem,
+    );
 
   const dismiss = async () => {
     setProposalProblem("");
@@ -825,6 +886,18 @@ export default function AccountsDialog({
                 <IconAdd aria-hidden />
                 Add selected ({pickedCount})
               </Button>
+              {testEnvironment && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || filling}
+                  title="Reads each proposed login's password from the environment's database again"
+                  onClick={fillProposals}
+                >
+                  <IconFillFromDatabase aria-hidden />
+                  {filling ? "Filling" : "Fill passwords from database"}
+                </Button>
+              )}
               <Button size="sm" variant="ghost" disabled={busy} onClick={dismiss}>
                 <IconClear aria-hidden />
                 Dismiss
@@ -839,6 +912,22 @@ export default function AccountsDialog({
             onClick={() => setRows((r) => [...(r ?? []), { key: "", label: "", username: "", password: "" }])}>
             <IconAdd aria-hidden />
             Add account
+          </Button>
+        )}
+        {view === "accounts" && testEnvironment && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={blocked || changed || filling}
+            title={
+              changed
+                ? "Save your changes first - this fills the saved accounts"
+                : "Reads every saved account's password from the environment's database again"
+            }
+            onClick={fillAccounts}
+          >
+            <IconFillFromDatabase aria-hidden />
+            {filling ? "Filling" : "Fill passwords from database"}
           </Button>
         )}
         {/* Only where a password field is: Accounts, and the proposed logins. */}

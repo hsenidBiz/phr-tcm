@@ -215,7 +215,12 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "propose_accounts",
     label: "Propose test logins",
-    summary: "Suggest logins for the active environment - with their passwords only in a test environment - for you to add as accounts.",
+    summary: "Suggest logins for the active environment for you to add as accounts. In a test environment the app looks each password up itself; the assistant never reads or sends one.",
+  },
+  {
+    name: "set_account_lookup",
+    label: "Set the account lookup",
+    summary: "Change the table and columns the app reads test-account passwords from, in a test environment. You can see it in Edit environments.",
   },
   {
     name: "get_accounts",
@@ -396,6 +401,7 @@ export const AUTORUN_TOOLS = [
   "clear_autorun_suspected_defect",
   "set_autorun_order",
   "propose_accounts",
+  "set_account_lookup",
   "get_accounts",
   "check_autorun_sign_in",
   "inspect_sign_in_page",

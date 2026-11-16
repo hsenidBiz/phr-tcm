@@ -5,7 +5,8 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import AccountsDialog, { reseedRows } from "./AccountsDialog";
+import { toast } from "../../lib/toast";
+import AccountsDialog, { fillSentence, reseedRows } from "./AccountsDialog";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 // Whether a run or a discovery has the Auto Run browser, as the tests say.
@@ -113,6 +114,10 @@ function mountWithProposals(opts: {
   accounts?: Saved[];
   proposals?: Proposal[];
   hasDefault?: boolean;
+  /** Whether the active environment is marked as a test environment. */
+  testEnvironment?: boolean;
+  /** Answers the two Fill passwords from database commands. */
+  fill?: (cmd: string, args: unknown) => unknown;
   addProposals?: (args: { picks: Saved[]; replace: string[] }) => unknown;
 }) {
   const state = { proposals: opts.proposals ?? PROPOSED, accounts: opts.accounts ?? [] };
@@ -131,13 +136,17 @@ function mountWithProposals(opts: {
             start_url: "",
             allowed_origins: [],
             db_id: "db",
-            test_environment: false,
+            test_environment: opts.testEnvironment ?? false,
             has_default_password: opts.hasDefault ?? true,
           },
         ],
       };
     }
     if (cmd === "env_proposals") return state.proposals?.map((p) => ({ marks: [], ...p }));
+    if (cmd === "env_fill_proposal_passwords" || cmd === "env_fill_account_passwords") {
+      if (!opts.fill) throw new Error("no fill answer given");
+      return opts.fill(cmd, args);
+    }
     if (cmd === "env_dismiss_proposals") {
       state.proposals = [];
       return null;
@@ -960,4 +969,89 @@ test("dismissing the last proposal falls back to Accounts, focuses its tab, and 
   await m.qc.invalidateQueries({ queryKey: ["env-proposals"] });
   expect(await screen.findByRole("tab", { name: "Proposed 2" })).toHaveAttribute("aria-selected", "false");
   expect(screen.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
+});
+
+// ---- Fill passwords from database ------------------------------------------
+
+test("the fill sentence is counts only, with hash only added when there is one", () => {
+  expect(fillSentence({ updated: 3, unchanged: 1, no_row: 1, hash_only: 0 })).toBe(
+    "3 passwords updated, 1 unchanged, 1 with no row",
+  );
+  expect(fillSentence({ updated: 1, unchanged: 0, no_row: 0, hash_only: 2 })).toBe(
+    "1 password updated, 0 unchanged, 0 with no row, 2 hash only",
+  );
+});
+
+test("Fill passwords from database is offered only on a test environment", async () => {
+  mountWithProposals({ testEnvironment: false, accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }] });
+  await screen.findByDisplayValue("kim");
+  expect(screen.queryByRole("button", { name: "Fill passwords from database" })).not.toBeInTheDocument();
+  await openTab("Proposed");
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  expect(screen.queryByRole("button", { name: "Fill passwords from database" })).not.toBeInTheDocument();
+});
+
+test("filling the proposed logins runs the lookup, says what it did and reads the proposals again", async () => {
+  const calls: unknown[] = [];
+  const { log } = mountWithProposals({
+    testEnvironment: true,
+    fill: (cmd, args) => {
+      calls.push([cmd, args]);
+      return { updated: 3, unchanged: 1, no_row: 1, hash_only: 0 };
+    },
+  });
+  await openTab("Proposed");
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  const reads = log.filter((c) => c === "env_proposals").length;
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("3 passwords updated, 1 unchanged, 1 with no row"));
+  expect(calls).toEqual([["env_fill_proposal_passwords", { dbRead: false }]]);
+  await waitFor(() => expect(log.filter((c) => c === "env_proposals").length).toBeGreaterThan(reads));
+});
+
+test("a lookup that did not run is said as the app words it, pointing at Edit environments", async () => {
+  const why = "the account lookup did not run: the table PeoplesHR.HS_SM_USER_ACCOUNT was not found in the database. To fix it, check the account lookup in Edit environments.";
+  mountWithProposals({
+    testEnvironment: true,
+    fill: () => {
+      throw new Error(why);
+    },
+  });
+  await openTab("Proposed");
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  expect(await screen.findByText(why)).toBeInTheDocument();
+  expect(toast.error).toHaveBeenCalledWith(why);
+  expect(toast.success).not.toHaveBeenCalled();
+});
+
+test("filling the saved accounts asks for every account and reads the list again", async () => {
+  const calls: unknown[] = [];
+  const { log } = mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
+    fill: (cmd, args) => {
+      calls.push([cmd, args]);
+      return { updated: 1, unchanged: 0, no_row: 0, hash_only: 0 };
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  const reads = log.filter((c) => c === "auto_run_list_accounts").length;
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 password updated, 0 unchanged, 0 with no row"));
+  expect(calls).toEqual([["env_fill_account_passwords", { keys: [], dbRead: false }]]);
+  await waitFor(() => expect(log.filter((c) => c === "auto_run_list_accounts").length).toBeGreaterThan(reads));
+});
+
+test("the saved accounts are not filled over edits that are not saved yet", async () => {
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
+    fill: () => ({ updated: 0, unchanged: 0, no_row: 0, hash_only: 0 }),
+  });
+  await screen.findByDisplayValue("kim");
+  const button = screen.getByRole("button", { name: "Fill passwords from database" });
+  expect(button).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("Name for account 1"), { target: { value: "Changed" } });
+  expect(button).toBeDisabled();
 });

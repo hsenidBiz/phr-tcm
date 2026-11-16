@@ -156,6 +156,10 @@ export {
   Braces as IconModuleApiTemplates,
   FlaskConical as IconModulePlaywright,
 
+  // Re-reading a login's password from the environment's database table
+  // (Accounts' Fill passwords from database): a database with an arrow down.
+  DatabaseArrowDown as IconFillFromDatabase,
+
   // Everything else
   // Opening the calendar to choose a date (DateField).
   CalendarDays as IconPickDate,
