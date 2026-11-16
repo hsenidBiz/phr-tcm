@@ -78,7 +78,7 @@ pub const EMPTY_PASSWORD: &str = "the database holds no password for this login"
 /// database layer hides that password in every answer, so it cannot be read.
 pub const SAME_AS_DB_LOGIN: &str = "the same as the database login's password, which TCM never reads back";
 /// What the database layer writes in place of the connection's own password.
-const HIDE_MARKER: &str = "(hidden)";
+pub const HIDE_MARKER: &str = "(hidden)";
 /// Said when the assistant's database tool is switched off.
 pub const DB_TOOL_OFF: &str =
     "the database tool (db_query) is switched off for assistants in this environment - turn it on on the AI Bridge tab";
@@ -500,10 +500,9 @@ pub fn settle_proposal(
             (Some(p), _) => (Some(p), None),
             (None, r) => (None, Some(r.unwrap_or_else(|| EMPTY_PASSWORD.to_string()))),
         },
-        Some(Found::Masked) => match (agent_password, agent_reason) {
-            (Some(p), _) => (Some(p), None),
-            (None, _) => (None, Some(SAME_AS_DB_LOGIN.to_string())),
-        },
+        // The table holds the database login's own password: whatever the
+        // assistant sent, it can only have read the same masked value.
+        Some(Found::Masked) => (None, Some(SAME_AS_DB_LOGIN.to_string())),
         None => match (agent_password, agent_reason) {
             (Some(p), _) => (Some(p), None),
             (None, Some(r)) => (None, Some(r)),

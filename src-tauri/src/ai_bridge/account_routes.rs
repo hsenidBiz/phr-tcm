@@ -78,13 +78,21 @@ pub async fn accounts_propose_in<S: crate::autorun::setup_find::RowSource>(
             };
             let role = p.role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
             // Kept exactly as read: a password's spaces are its own.
-            let no_password = p.no_password.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+            let mut no_password = p.no_password.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+            // A password the assistant read through db_query that the
+            // database layer masked is not a password: never keep it, on any
+            // path (lookup found, no row, or lookup failed).
+            let mut password = p.password;
+            if password.as_deref().is_some_and(|v| v.contains(crate::autorun::account_lookup::HIDE_MARKER)) {
+                password = None;
+                no_password = Some(crate::autorun::account_lookup::SAME_AS_DB_LOGIN.to_string());
+            }
             StoredProposal {
                 key,
                 label,
                 username: p.username.trim().to_string(),
                 role,
-                password: p.password,
+                password,
                 no_password,
                 marks: vec![],
                 proposed_ms: Some(crate::autorun::sessions::now_ms()),

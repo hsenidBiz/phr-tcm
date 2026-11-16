@@ -817,6 +817,34 @@ async fn a_password_the_database_layer_hides_is_never_used() {
     assert!(!format!("{found:?}").contains(&db_password));
 }
 
+/// An assistant that read the table through db_query saw the masked value
+/// too: sent back as a password, it is never kept - not when the lookup
+/// finds the same masked row, and not when the lookup cannot run at all.
+#[tokio::test]
+async fn a_masked_value_the_assistant_sends_as_a_password_is_never_kept() {
+    let _root = crate::serial::autorun();
+    let dir = bridge_root();
+    let root = dir.path();
+    mark_test_environment(root);
+    let db_password = parse_connection(DB_PRESETS[0].connection_string).unwrap().password;
+    let rows = through_run_query(Process::new(vec![("sup1".into(), db_password.clone())]));
+
+    let (status, out) = propose(Ok(&rows), vec![with_password("hr.sup", "sup1", "(hidden)")]).await;
+    assert_eq!(status, 200, "{out}");
+    let list = stored(root);
+    assert_eq!(list[0].password, None);
+    assert_eq!(list[0].no_password.as_deref(), Some(SAME_AS_DB_LOGIN));
+
+    // The lookup failing does not let it through either.
+    let failed: Result<&SqlcmdRows<Process>, String> = Err("no database connection is chosen".into());
+    let (status, out) = propose(failed, vec![with_password("hr.sup", "sup1", "x(hidden)y")]).await;
+    assert_eq!(status, 200, "{out}");
+    let list = stored(root);
+    assert_eq!(list[0].password, None);
+    assert_eq!(list[0].no_password.as_deref(), Some(SAME_AS_DB_LOGIN));
+    assert!(!out.contains("(hidden)"), "{out}");
+}
+
 #[tokio::test]
 async fn a_masked_login_is_proposed_with_its_reason_and_filled_without_touching_the_saved_password() {
     let _root = crate::serial::autorun();
