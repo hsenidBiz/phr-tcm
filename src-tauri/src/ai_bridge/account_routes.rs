@@ -16,10 +16,10 @@ pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and 
 /// in an answer, and nothing reaches the accounts until a person adds it in
 /// the app.
 pub(crate) async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    use crate::autorun::account_lookup::{db_refusal, NoRows};
+    use crate::autorun::account_lookup::NoRows;
     match stage_db(ctx) {
         Ok(db) => accounts_propose_in(ctx, Ok(&crate::autorun::active_login::StageRows(&db)), body).await,
-        Err(refused) => accounts_propose_in::<NoRows>(ctx, Err(db_refusal(refused)), body).await,
+        Err(refused) => accounts_propose_in::<NoRows>(ctx, Err(lookup_refusal(refused)), body).await,
     }
 }
 
@@ -215,11 +215,24 @@ pub async fn accounts_propose_in<S: crate::autorun::setup_find::RowSource>(
 /// environment. The answer says what was saved and, from the table's column
 /// list alone (never a value), whether the lookup can work.
 pub(crate) async fn accounts_lookup_set(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    use crate::autorun::account_lookup::{db_refusal, NoRows};
+    use crate::autorun::account_lookup::NoRows;
     match stage_db(ctx) {
         Ok(db) => accounts_lookup_set_in(Ok(&crate::autorun::active_login::StageRows(&db)), body).await,
-        Err(refused) => accounts_lookup_set_in::<NoRows>(Err(db_refusal(refused)), body).await,
+        Err(refused) => accounts_lookup_set_in::<NoRows>(Err(lookup_refusal(refused)), body).await,
     }
+}
+
+/// Why the lookup has no database, in the right words. `stage_db` refuses with
+/// one sentence both when the Database Access module is off and when the
+/// assistant's `db_query` tool is switched off, so which it was is told here.
+/// (The app's own Fill passwords from database does not go through the
+/// assistant's tool switch.)
+fn lookup_refusal(refused: (u16, String)) -> String {
+    use crate::autorun::account_lookup::{db_refusal, DB_TOOL_OFF};
+    if refused.1 == FLOW_NEEDS_READING && crate::modules::on(crate::modules::Module::DbAccess) {
+        return DB_TOOL_OFF.to_string();
+    }
+    db_refusal(refused)
 }
 
 /// What `POST /accounts-lookup-set` reads.
@@ -269,6 +282,8 @@ pub async fn accounts_lookup_set_in<S: crate::autorun::setup_find::RowSource>(
     }
     let pwd_words =
         if lookup.password_column.is_empty() { "detected from the table".to_string() } else { lookup.password_column.clone() };
+    // An open Edit environments reads the list again.
+    crate::autorun::data_changed::notify(&root, crate::events::AutorunDataKind::Environments);
     // Names only: no value is read here, and none is logged.
     crate::applog::info(format!(
         "Environments: the assistant changed the account lookup of {}: table {}, username column {}, password column {}",

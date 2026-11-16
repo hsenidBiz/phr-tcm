@@ -74,6 +74,19 @@ pub const CUT_SHORT: &str = "the database's answer was cut short - look up fewer
 pub const HASH_ONLY: &str = "the database holds only a hash";
 /// Said where a login's row holds no password.
 pub const EMPTY_PASSWORD: &str = "the database holds no password for this login";
+/// Said where the value read back is the database login's own password: the
+/// database layer hides that password in every answer, so it cannot be read.
+pub const SAME_AS_DB_LOGIN: &str = "the same as the database login's password, which TCM never reads back";
+/// What the database layer writes in place of the connection's own password.
+const HIDE_MARKER: &str = "(hidden)";
+/// Said when the assistant's database tool is switched off.
+pub const DB_TOOL_OFF: &str =
+    "the database tool (db_query) is switched off for assistants in this environment - turn it on on the AI Bridge tab";
+/// The most logins asked about in one statement: under the 200 rows one
+/// answer holds, with room for the header, rule and footer.
+pub const CHUNK_LOGINS: usize = 150;
+/// The longest statement built for one chunk, under the guard's 20,000.
+const CHUNK_SQL_CHARS: usize = 15_000;
 /// How a failed lookup is fixed, for a person.
 pub const FIX_IN_APP: &str = "check the account lookup in Edit environments";
 /// How a failed lookup is fixed, for an assistant.
@@ -232,6 +245,9 @@ pub enum Found {
     Hash,
     /// The row's password is empty.
     Empty,
+    /// The value is the database login's own password, which the database
+    /// layer replaces with a marker: it cannot be read, and must not be used.
+    Masked,
 }
 
 /// Hand-written so a password cannot reach a log line through `{:?}`.
@@ -241,6 +257,7 @@ impl std::fmt::Debug for Found {
             Found::Password(_) => f.write_str("Password(hidden)"),
             Found::Hash => f.write_str("Hash"),
             Found::Empty => f.write_str("Empty"),
+            Found::Masked => f.write_str("Masked"),
         }
     }
 }
@@ -298,7 +315,7 @@ pub fn looks_like_hash(value: &str) -> bool {
 /// A database error as one fixed sentence. The database's own words are
 /// dropped: they can quote a value.
 fn failure_of(said: &str, table: &str) -> String {
-    if crate::api_templates::gate::unreachable(said) {
+    if said.contains(query::DB_UNREACHABLE) || crate::api_templates::gate::unreachable(said) {
         return DID_NOT_ANSWER.to_string();
     }
     let lower = said.to_lowercase();
@@ -315,6 +332,10 @@ fn failure_of(said: &str, table: &str) -> String {
 pub async fn read_columns<S: RowSource>(rows: &S, lookup: &AccountLookup) -> Result<Vec<(String, String)>, String> {
     let sql = lookup.columns_sql()?;
     let text = rows.select(&sql).await.map_err(|said| failure_of(&said, &lookup.table))?;
+    let first = text.lines().next().map(str::trim).unwrap_or("");
+    if first.starts_with("rows:") && first.ends_with("(capped)") {
+        return Err(format!("{} has too many columns to list - set the password column", lookup.table));
+    }
     let (header, body) = parse_table(&text).map_err(|_| UNREADABLE.to_string())?;
     let (Some(name), Some(kind)) = (column(&header, "column_name"), column(&header, "data_type")) else {
         return Err(UNREADABLE.to_string());
@@ -364,28 +385,44 @@ pub async fn look_up<S: RowSource>(rows: &S, lookup: &AccountLookup, users: &[St
             detect_password_column(&columns, &lookup.table)?
         }
     };
-    let sql = lookup.select_sql(&pwd, &asked)?;
-    let text = rows.select(&sql).await.map_err(|said| failure_of(&said, &lookup.table))?;
-    let first = text.lines().next().map(str::trim).unwrap_or("");
-    if first.starts_with("rows:") && first.ends_with("(capped)") {
-        return Err(CUT_SHORT.to_string());
-    }
-    let (header, body) = parse_table(&text).map_err(|_| UNREADABLE.to_string())?;
-    let user_at = column(&header, &column_name(&lookup.username_column)?.to_lowercase()).ok_or_else(|| UNREADABLE.to_string())?;
-    let pwd_at = column(&header, &pwd.to_lowercase()).ok_or_else(|| UNREADABLE.to_string())?;
+    let user_name = column_name(&lookup.username_column)?.to_lowercase();
     let mut found: HashMap<String, Found> = HashMap::new();
-    for row in &body {
-        let Some(user) = cell(row, user_at) else { continue };
-        let got = match cell(row, pwd_at) {
-            None => Found::Empty,
-            Some(v) if looks_like_hash(&v) => Found::Hash,
-            Some(v) => Found::Password(v),
-        };
-        let slot = found.entry(user.to_lowercase()).or_insert_with(|| got.clone());
-        // Two rows for one login (names differing only in case): a usable
-        // password wins over a hash or an empty one.
-        if matches!(got, Found::Password(_)) && !matches!(slot, Found::Password(_)) {
-            *slot = got;
+    // In chunks, so more logins than one answer holds (200 rows) still work
+    // and no statement outgrows the guard's length limit.
+    let mut at = 0;
+    while at < asked.len() {
+        let mut end = at;
+        let mut chars = 0;
+        while end < asked.len() && end - at < CHUNK_LOGINS && (end == at || chars + asked[end].len() + 8 < CHUNK_SQL_CHARS) {
+            chars += asked[end].len() + 8;
+            end += 1;
+        }
+        let sql = lookup.select_sql(&pwd, &asked[at..end])?;
+        at = end;
+        let text = rows.select(&sql).await.map_err(|said| failure_of(&said, &lookup.table))?;
+        let first = text.lines().next().map(str::trim).unwrap_or("");
+        if first.starts_with("rows:") && first.ends_with("(capped)") {
+            return Err(CUT_SHORT.to_string());
+        }
+        let (header, body) = parse_table(&text).map_err(|_| UNREADABLE.to_string())?;
+        let user_at = column(&header, &user_name).ok_or_else(|| UNREADABLE.to_string())?;
+        let pwd_at = column(&header, &pwd.to_lowercase()).ok_or_else(|| UNREADABLE.to_string())?;
+        for row in &body {
+            let Some(user) = cell(row, user_at) else { continue };
+            let got = match cell(row, pwd_at) {
+                None => Found::Empty,
+                // The database layer hides the connection's own password in
+                // every answer; a login that shares it reads as the marker.
+                Some(v) if v.contains(HIDE_MARKER) => Found::Masked,
+                Some(v) if looks_like_hash(&v) => Found::Hash,
+                Some(v) => Found::Password(v),
+            };
+            let slot = found.entry(user.to_lowercase()).or_insert_with(|| got.clone());
+            // Two rows for one login (names differing only in case): a usable
+            // password wins over a hash or an empty one.
+            if matches!(got, Found::Password(_)) && !matches!(slot, Found::Password(_)) {
+                *slot = got;
+            }
         }
     }
     Ok(LookedUp { table: lookup.table.trim().to_string(), password_column: pwd, found })
@@ -410,6 +447,7 @@ pub struct Tally {
     pub no_row: Vec<String>,
     pub hash_only: Vec<String>,
     pub empty: Vec<String>,
+    pub masked: Vec<String>,
 }
 
 impl Tally {
@@ -420,6 +458,7 @@ impl Tally {
             Some(Found::Password(_)) => self.found += 1,
             Some(Found::Hash) => self.hash_only.push(key.to_string()),
             Some(Found::Empty) => self.empty.push(key.to_string()),
+            Some(Found::Masked) => self.masked.push(key.to_string()),
             None => self.no_row.push(key.to_string()),
         }
     }
@@ -435,6 +474,9 @@ impl Tally {
         }
         if !self.empty.is_empty() {
             s.push_str(&format!("; no password stored for: {}", self.empty.join(", ")));
+        }
+        if !self.masked.is_empty() {
+            s.push_str(&format!("; same as the database login's password (never read back): {}", self.masked.join(", ")));
         }
         s
     }
@@ -457,6 +499,10 @@ pub fn settle_proposal(
         Some(Found::Empty) => match (agent_password, agent_reason) {
             (Some(p), _) => (Some(p), None),
             (None, r) => (None, Some(r.unwrap_or_else(|| EMPTY_PASSWORD.to_string()))),
+        },
+        Some(Found::Masked) => match (agent_password, agent_reason) {
+            (Some(p), _) => (Some(p), None),
+            (None, _) => (None, Some(SAME_AS_DB_LOGIN.to_string())),
         },
         None => match (agent_password, agent_reason) {
             (Some(p), _) => (Some(p), None),

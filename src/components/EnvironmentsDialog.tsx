@@ -7,7 +7,7 @@
 // the moment Set succeeds, and a row only ever learns whether one is set.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
 import { IconAdd, IconCancel, IconClear, IconConfirm, IconCopyFromEnvironment, IconEdit, IconRemove } from "../lib/actionIcons";
 import { saveSelectedDb } from "../lib/dbServer";
@@ -177,6 +177,36 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
 
   const take = (view: EnvListView) => qc.setQueryData(envKeys.list, view);
 
+  // The account lookup as the open form last read it from the saved list. An
+  // assistant can change it while the dialog is open (set_account_lookup):
+  // the fields the person has not touched follow the change, so a Save never
+  // writes the old lookup back over it.
+  const loadedLookup = useRef<{ table: string; user: string; pwd: string } | null>(null);
+  const formId = form?.id ?? "";
+  useEffect(() => {
+    if (formId === "") return;
+    const saved = envs.data?.environments.find((e) => e.id === formId)?.account_lookup;
+    if (!saved) return;
+    const now = {
+      table: saved.table ?? DEFAULT_LOOKUP_TABLE,
+      user: saved.username_column ?? DEFAULT_LOOKUP_USERNAME_COLUMN,
+      pwd: saved.password_column ?? "",
+    };
+    const was = loadedLookup.current;
+    loadedLookup.current = now;
+    if (!was || (was.table === now.table && was.user === now.user && was.pwd === now.pwd)) return;
+    setForm((f) =>
+      f && f.id === formId
+        ? {
+            ...f,
+            lookup_table: f.lookup_table === was.table ? now.table : f.lookup_table,
+            lookup_username_column: f.lookup_username_column === was.user ? now.user : f.lookup_username_column,
+            lookup_password_column: f.lookup_password_column === was.pwd ? now.pwd : f.lookup_password_column,
+          }
+        : f,
+    );
+  }, [envs.data, formId]);
+
   /** Runs one command: shows its refusal in the dialog, and nothing else. */
   const run = async (work: () => Promise<void>) => {
     setProblem("");
@@ -215,6 +245,11 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
     setProblem("");
     setPassword("");
     setRemoving(null);
+    loadedLookup.current = {
+      table: env.account_lookup.table ?? DEFAULT_LOOKUP_TABLE,
+      user: env.account_lookup.username_column ?? DEFAULT_LOOKUP_USERNAME_COLUMN,
+      pwd: env.account_lookup.password_column ?? "",
+    };
     setForm(formFor(env));
   };
 

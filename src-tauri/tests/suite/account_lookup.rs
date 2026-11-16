@@ -738,3 +738,226 @@ async fn filling_named_accounts_leaves_the_others_alone() {
     // Only the named one was asked about.
     assert!(fake.asked().iter().filter(|q| !q.contains("INFORMATION_SCHEMA")).all(|q| q.contains("N'a1'") && !q.contains("N'b1'")), "{:?}", fake.asked());
 }
+
+// ---- Review fixes -----------------------------------------------------------
+
+use std::path::PathBuf;
+use std::time::Duration;
+use v2_lib::autorun::account_lookup::{DB_TOOL_OFF, SAME_AS_DB_LOGIN};
+use v2_lib::autorun::setup_find::SqlcmdRows;
+use v2_lib::db::{parse_connection, Output, Runner};
+use v2_lib::db_defaults::DB_PRESETS;
+
+/// A stand-in for the sqlcmd process: whatever it prints goes through the real
+/// `run_query` (the guard, the row cap, the connection's password hidden, the
+/// unreachable mapping) before the lookup sees it.
+struct Process {
+    users: Vec<(String, String)>,
+    unreachable: bool,
+    asked: Mutex<Vec<String>>,
+}
+
+impl Process {
+    fn new(users: Vec<(String, String)>) -> Process {
+        Process { users, unreachable: false, asked: Mutex::new(vec![]) }
+    }
+    fn selects(&self) -> Vec<String> {
+        self.asked.lock().unwrap().iter().filter(|q| !q.contains("INFORMATION_SCHEMA")).cloned().collect()
+    }
+}
+
+impl Runner for Process {
+    async fn run(&self, _exe: &std::path::Path, args: &[String], _env: &[(String, String)], _t: Duration) -> Result<Output, String> {
+        let sql = args.iter().find(|a| a.starts_with("SELECT")).cloned().unwrap_or_default();
+        self.asked.lock().unwrap().push(sql.clone());
+        if self.unreachable {
+            return Ok(Output {
+                status: 1,
+                stdout: String::new(),
+                stderr: "Sqlcmd: Error: Microsoft ODBC Driver: Login timeout expired.".into(),
+            });
+        }
+        let out = if sql.contains("INFORMATION_SCHEMA") {
+            columns_answer(&[("USRACC_USER_ID", "nvarchar"), ("USRACC_PWD", "nvarchar")])
+        } else {
+            let wanted: Vec<String> = sql
+                .split("N'")
+                .skip(1)
+                .map(|p| p.split('\'').next().unwrap_or("").to_lowercase())
+                .collect();
+            let rows: Vec<(&str, &str)> = self
+                .users
+                .iter()
+                .filter(|(u, _)| wanted.contains(&u.to_lowercase()))
+                .map(|(u, p)| (u.as_str(), p.as_str()))
+                .collect();
+            rows_answer(&rows)
+        };
+        Ok(Output { status: 0, stdout: out, stderr: String::new() })
+    }
+}
+
+fn through_run_query(process: Process) -> SqlcmdRows<Process> {
+    SqlcmdRows { runner: process, exe: PathBuf::from("sqlcmd"), conn: parse_connection(DB_PRESETS[0].connection_string).unwrap() }
+}
+
+#[tokio::test]
+async fn a_password_the_database_layer_hides_is_never_used() {
+    let db_password = parse_connection(DB_PRESETS[0].connection_string).unwrap().password;
+    assert!(!db_password.is_empty());
+    let rows = through_run_query(Process::new(vec![
+        ("sup1".into(), db_password.clone()),
+        ("adm1".into(), format!("pre-{db_password}-post")),
+        ("emp1".into(), SECRET.into()),
+    ]));
+    let found = look_up(&rows, &AccountLookup::default(), &users(&["sup1", "adm1", "emp1"])).await.unwrap();
+    assert_eq!(found.of("sup1"), Some(&Found::Masked));
+    assert_eq!(found.of("adm1"), Some(&Found::Masked));
+    assert_eq!(found.of("emp1"), Some(&Found::Password(SECRET.into())));
+    assert!(!format!("{found:?}").contains(&db_password));
+}
+
+#[tokio::test]
+async fn a_masked_login_is_proposed_with_its_reason_and_filled_without_touching_the_saved_password() {
+    let _root = crate::serial::autorun();
+    let dir = bridge_root();
+    let root = dir.path();
+    mark_test_environment(root);
+    let db_password = parse_connection(DB_PRESETS[0].connection_string).unwrap().password;
+    let rows = through_run_query(Process::new(vec![("sup1".into(), db_password.clone()), ("emp1".into(), SECRET.into())]));
+
+    let (status, out) = propose(Ok(&rows), vec![proposal("hr.sup", "sup1"), proposal("hr.emp", "emp1")]).await;
+    assert_eq!(status, 200, "{out}");
+    let list = stored(root);
+    assert_eq!(list[0].password, None);
+    assert_eq!(list[0].no_password.as_deref(), Some(SAME_AS_DB_LOGIN));
+    assert_eq!(list[1].password.as_deref(), Some(SECRET));
+    assert!(!out.contains(&db_password) && !out.contains("(hidden)"), "{out}");
+
+    // The saved account that shares the database login's password keeps its own.
+    save_accounts(root, &[account("hr.sup", "sup1", "Good-Saved-Pw"), account("hr.emp", "emp1", "Old")]).unwrap();
+    let env_id = active_id(root).unwrap();
+    std::fs::create_dir_all(session_path_for(root, &env_id, "hr.sup").parent().unwrap()).unwrap();
+    std::fs::write(session_path_for(root, &env_id, "hr.sup"), "{}").unwrap();
+    let counts = fill_accounts_in(root, Ok(&rows), &[]).await.unwrap();
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 0, hash_only: 0 });
+    let now = load_accounts(root).unwrap();
+    assert_eq!(now[0].password, "Good-Saved-Pw");
+    assert_eq!(now[1].password, SECRET);
+    assert!(session_path_for(root, &env_id, "hr.sup").exists(), "an untouched account keeps its session");
+}
+
+#[tokio::test]
+async fn an_unreachable_database_is_said_as_not_answering_through_the_real_mapping() {
+    let mut process = Process::new(vec![]);
+    process.unreachable = true;
+    let rows = through_run_query(process);
+    let err = look_up(&rows, &AccountLookup { password_column: "USRACC_PWD".into(), ..AccountLookup::default() }, &users(&["a"]))
+        .await
+        .unwrap_err();
+    assert!(err.contains("did not answer"), "{err}");
+    let err = look_up(&rows, &AccountLookup::default(), &users(&["a"])).await.unwrap_err();
+    assert!(err.contains("did not answer"), "also while reading the column list: {err}");
+}
+
+#[tokio::test]
+async fn more_logins_than_one_answer_holds_are_looked_up_in_chunks() {
+    let all: Vec<(String, String)> = (0..450).map(|i| (format!("user{i:04}"), format!("pw-{i}"))).collect();
+    let rows = through_run_query(Process::new(all.clone()));
+    let lookup = AccountLookup { password_column: "USRACC_PWD".into(), ..AccountLookup::default() };
+    let names: Vec<String> = all.iter().map(|(u, _)| u.clone()).collect();
+    let found = look_up(&rows, &lookup, &names).await.unwrap();
+    for (u, p) in &all {
+        assert_eq!(found.of(u), Some(&Found::Password(p.clone())), "{u}");
+    }
+    let selects = rows.runner.selects();
+    assert_eq!(selects.len(), 3, "450 logins in chunks of at most 150");
+    assert!(selects.iter().all(|q| q.chars().count() < 15_500), "each statement stays well under the guard's limit");
+}
+
+#[tokio::test]
+async fn very_long_usernames_chunk_by_statement_length() {
+    let all: Vec<(String, String)> = (0..80).map(|i| (format!("{}{i:03}", "x".repeat(400)), format!("pw-{i}"))).collect();
+    let rows = through_run_query(Process::new(all.clone()));
+    let lookup = AccountLookup { password_column: "USRACC_PWD".into(), ..AccountLookup::default() };
+    let names: Vec<String> = all.iter().map(|(u, _)| u.clone()).collect();
+    let found = look_up(&rows, &lookup, &names).await.unwrap();
+    assert!(all.iter().all(|(u, p)| found.of(u) == Some(&Found::Password(p.clone()))));
+    assert!(rows.runner.selects().len() >= 3);
+}
+
+#[tokio::test]
+async fn a_table_with_too_many_columns_to_list_asks_for_the_column() {
+    let many: Vec<(String, String)> = (0..300).map(|i| (format!("COL_{i}"), "nvarchar".to_string())).collect();
+    let pairs: Vec<(&str, &str)> = many.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    struct Wide(String);
+    impl Runner for Wide {
+        async fn run(&self, _e: &std::path::Path, _a: &[String], _env: &[(String, String)], _t: Duration) -> Result<Output, String> {
+            Ok(Output { status: 0, stdout: self.0.clone(), stderr: String::new() })
+        }
+    }
+    let rows = SqlcmdRows {
+        runner: Wide(columns_answer(&pairs)),
+        exe: PathBuf::from("sqlcmd"),
+        conn: parse_connection(DB_PRESETS[0].connection_string).unwrap(),
+    };
+    let err = look_up(&rows, &AccountLookup::default(), &users(&["a"])).await.unwrap_err();
+    assert!(err.contains("too many columns") && err.contains("set the password column"), "{err}");
+}
+
+#[tokio::test]
+async fn filling_the_saved_accounts_loses_to_a_change_made_during_the_lookup() {
+    struct Hooked<'a>(Fake, &'a Path);
+    impl RowSource for Hooked<'_> {
+        async fn select(&self, sql: &str) -> Result<String, String> {
+            let answer = self.0.select(sql).await;
+            if !sql.contains("INFORMATION_SCHEMA") {
+                // The person saves a new password for hr.a while the lookup runs.
+                v2_lib::autorun::accounts::set_password_for(self.1, &active_id(self.1).unwrap(), "hr.a", "Typed-Meanwhile").unwrap();
+            }
+            answer
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("hr.a", "a1", "Old-A"), account("hr.b", "b1", "Old-B")]).unwrap();
+    let hooked = Hooked(Fake::standard(&[("a1", "From-Db-A"), ("b1", "From-Db-B")]), root);
+    let counts = fill_accounts_in(root, Ok(&hooked), &[]).await.unwrap();
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 0, hash_only: 0 });
+    let now = load_accounts(root).unwrap();
+    assert_eq!(now[0].password, "Typed-Meanwhile", "the change made during the lookup wins");
+    assert_eq!(now[1].password, "From-Db-B");
+}
+
+#[tokio::test]
+async fn filling_proposals_checks_the_environment_before_reading_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    let path = v2_lib::environments::proposals_path_for(root, &active_id(root).unwrap());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "not json").unwrap();
+    let fake = Fake::standard(&[]);
+    let err = fill_proposals_in(root, Ok(&fake)).await.unwrap_err();
+    assert!(err.contains("test environment"), "the environment is judged first: {err}");
+    let err = fill_accounts_in(root, Ok(&fake), &[]).await.unwrap_err();
+    assert!(err.contains("test environment"), "{err}");
+}
+
+#[tokio::test]
+async fn a_switched_off_database_tool_is_not_called_the_module_being_off() {
+    use v2_lib::ai_bridge::route;
+    let _root = crate::serial::autorun();
+    let dir = bridge_root();
+    mark_test_environment(dir.path());
+    let ctx = BridgeContext { disabled_tools: vec!["db_query".to_string()], ..BridgeContext::default() };
+    let body = json!({ "accounts": [proposal("hr.sup", "sup1")] }).to_string();
+    let (status, out) = route(&ctx, None, "POST", "/accounts-propose", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    if v2_lib::modules::on(v2_lib::modules::Module::DbAccess) {
+        assert!(out.contains(DB_TOOL_OFF), "{out}");
+        assert!(!out.contains("Database Access module"), "{out}");
+    }
+}

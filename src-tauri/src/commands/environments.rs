@@ -684,6 +684,15 @@ pub struct FillCounts {
     pub hash_only: u32,
 }
 
+/// A fill works only on a test environment.
+fn require_test(env: &Environment) -> Result<(), String> {
+    if env.test_environment {
+        Ok(())
+    } else {
+        Err(format!("{} - mark it in Edit environments first", crate::autorun::account_lookup::NOT_TEST))
+    }
+}
+
 /// The environment the fill works on and what the lookup found for `users`,
 /// or the sentence for why not: not a test environment, or the lookup did not
 /// run (database off, no connection, a table or column missing, an ambiguous
@@ -693,11 +702,9 @@ async fn fill_lookup<S: crate::autorun::setup_find::RowSource>(
     rows: Result<&S, String>,
     users: &[String],
 ) -> Result<(Environment, crate::autorun::account_lookup::LookedUp), String> {
-    use crate::autorun::account_lookup::{failure_sentence, look_up, FIX_IN_APP, NOT_TEST};
+    use crate::autorun::account_lookup::{failure_sentence, look_up, FIX_IN_APP};
     let env = environments::active(root)?;
-    if !env.test_environment {
-        return Err(format!("{NOT_TEST} - mark it in Edit environments first"));
-    }
+    require_test(&env)?;
     let looked = match rows {
         Ok(rows) => look_up(rows, &env.account_lookup, users).await,
         Err(why) => Err(why),
@@ -721,6 +728,8 @@ pub async fn fill_proposals_in<S: crate::autorun::setup_find::RowSource>(
 ) -> Result<FillCounts, String> {
     use crate::autorun::account_lookup::{settle_proposal, Found};
     let env = environments::active(root)?;
+    // Said before anything is read.
+    require_test(&env)?;
     let mut list = environments::load_proposals(root, &env.id)?;
     if list.is_empty() {
         return Err("there are no proposed logins to fill".to_string());
@@ -735,6 +744,9 @@ pub async fn fill_proposals_in<S: crate::autorun::setup_find::RowSource>(
         match seen {
             Some(Found::Password(_)) if password == p.password => counts.unchanged += 1,
             Some(Found::Password(_)) => counts.updated += 1,
+            // The database login's own password cannot be read back: the
+            // proposal keeps what it had.
+            Some(Found::Masked) => counts.unchanged += 1,
             Some(Found::Hash) => counts.hash_only += 1,
             Some(Found::Empty) | None => counts.no_row += 1,
         }
@@ -764,6 +776,7 @@ pub async fn fill_accounts_in<S: crate::autorun::setup_find::RowSource>(
 ) -> Result<FillCounts, String> {
     use crate::autorun::account_lookup::Found;
     let env = environments::active(root)?;
+    require_test(&env)?;
     let all = crate::autorun::accounts::load_accounts_for(root, &env.id)?;
     let targets: Vec<&crate::autorun::accounts::Account> =
         all.iter().filter(|a| keys.is_empty() || keys.iter().any(|k| k.trim() == a.key)).collect();
@@ -773,21 +786,34 @@ pub async fn fill_accounts_in<S: crate::autorun::setup_find::RowSource>(
     let users: Vec<String> = targets.iter().map(|a| a.username.clone()).collect();
     let (_, found) = fill_lookup(root, rows, &users).await?;
     let mut counts = FillCounts::default();
-    let mut changed = vec![];
+    let mut changes = vec![];
     for a in targets {
         match found.of(&a.username) {
             Some(Found::Password(p)) if *p == a.password => counts.unchanged += 1,
-            Some(Found::Password(p)) => {
-                counts.updated += 1;
-                changed.push(crate::autorun::accounts::Account { password: p.clone(), ..a.clone() });
-            }
+            Some(Found::Password(p)) => changes.push(crate::autorun::accounts::PasswordChange {
+                key: a.key.clone(),
+                username: a.username.clone(),
+                was: a.password.clone(),
+                new: p.clone(),
+            }),
+            // The database login's own password cannot be read back: the
+            // saved one stays, as if it had not changed.
+            Some(Found::Masked) => counts.unchanged += 1,
             Some(Found::Hash) => counts.hash_only += 1,
             Some(Found::Empty) | None => counts.no_row += 1,
         }
     }
-    if !changed.is_empty() {
-        crate::autorun::accounts::merge_accounts_for(root, &env.id, changed)?;
-    }
+    // The accounts are read again just before the write, and only an account
+    // still as it was when the lookup began is changed: one changed during
+    // the lookup keeps its newer password and counts as unchanged.
+    let asked = changes.len();
+    let applied = if changes.is_empty() {
+        0
+    } else {
+        crate::autorun::accounts::apply_password_changes_for(root, &env.id, &changes)?
+    };
+    counts.updated += applied as u32;
+    counts.unchanged += (asked - applied) as u32;
     crate::applog::info(format!(
         "Environments: filled saved accounts from the account table ({} updated, {} unchanged, {} with no row, {} hash only)",
         counts.updated, counts.unchanged, counts.no_row, counts.hash_only

@@ -3132,7 +3132,12 @@ export type AutorunDataChanged = {
  *  Which of the data an assistant adds through the AI bridge changed. The
  *  Auto Run screen reads each kind from its own queries.
  */
-export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences";
+export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences" | 
+/**
+ *  The environments list: an assistant changed an environment's account
+ *  lookup, so an open Edit environments shows it.
+ */
+"environments";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Run browser: while

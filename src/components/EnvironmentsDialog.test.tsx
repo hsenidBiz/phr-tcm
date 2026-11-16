@@ -65,12 +65,13 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
     return null;
   });
   const onClose = vi.fn();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qc}>
       <EnvironmentsDialog onClose={onClose} />
     </QueryClientProvider>,
   );
-  return { calls, onClose };
+  return { calls, onClose, qc };
 }
 
 test("lists each environment with its address, database and default-password state", async () => {
@@ -521,4 +522,19 @@ test("the lookup rules are the app's: schema.table or database.schema.table, bra
   }
   expect(ok("dbo.Users", "[Login]").username).toBeUndefined();
   expect(ok("dbo.Users", "a.b").username).toBe(LOOKUP_COLUMN_RULE);
+});
+
+test("an account lookup changed while the dialog is open reaches the fields the person has not touched", async () => {
+  let current: Env = { ...QA, account_lookup: { table: "dbo.Users", username_column: "Login", password_column: "" } };
+  const { qc } = mount({ env_list: () => ({ active: DEFAULT.id, environments: [DEFAULT, current] }) });
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  const table = (await screen.findByRole("textbox", { name: "Account table" })) as HTMLInputElement;
+  const pwd = screen.getByRole("textbox", { name: "Password column" }) as HTMLInputElement;
+  // The person edits the password column; the assistant changes all three.
+  fireEvent.change(pwd, { target: { value: "Mine" } });
+  current = { ...QA, account_lookup: { table: "dbo.Accounts", username_column: "UserName", password_column: "Pw" } };
+  await qc.invalidateQueries({ queryKey: ["environments"] });
+  await waitFor(() => expect(table.value).toBe("dbo.Accounts"));
+  expect((screen.getByRole("textbox", { name: "Username column" }) as HTMLInputElement).value).toBe("UserName");
+  expect(pwd.value).toBe("Mine");
 });
