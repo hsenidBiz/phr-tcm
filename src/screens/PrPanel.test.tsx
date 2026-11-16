@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 import { cacheEntry, cacheKeys } from "../lib/cache";
 import type { ComponentProps } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "../lib/toast";
 import { setTourRunning } from "../tour/tourState";
 import PrPanel from "./PrPanel";
@@ -14,6 +15,8 @@ import ProjectChip from "../components/ProjectChip";
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 const h = vi.hoisted(() => ({ copyText: vi.fn(() => Promise.resolve()) }));
 vi.mock("../lib/clipboard", () => ({ copyText: h.copyText }));
@@ -399,6 +402,49 @@ test("the description renders markdown like Azure DevOps", async () => {
   const summary = await screen.findByText("Issue Summary");
   expect(summary.tagName).toBe("STRONG");
   expect(screen.getByText("one").closest("li")).toBeInTheDocument();
+});
+
+test("a link in the description opens in the system browser, and a bare URL is a link", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview")
+      return {
+        awaiting: [
+          pr(8, { description: "See [the guide](https://example.com/guide) or https://example.com/bare now" }),
+        ],
+        mine: [],
+      };
+    if (cmd === "list_repos") return [];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!8")).closest("[aria-expanded]")!);
+
+  const guide = await screen.findByRole("link", { name: "the guide" });
+  expect(fireEvent.click(guide)).toBe(false); // default prevented: the webview never navigates
+  expect(openUrl).toHaveBeenCalledWith("https://example.com/guide");
+
+  const bare = screen.getByRole("link", { name: "https://example.com/bare" });
+  fireEvent.click(bare);
+  expect(openUrl).toHaveBeenCalledWith("https://example.com/bare");
+});
+
+test("script and event handlers in a description are stripped", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview")
+      return {
+        awaiting: [
+          pr(9, { description: 'Safe text <script>window.__d = 1</script><img src="x" onerror="window.__d = 2">' }),
+        ],
+        mine: [],
+      };
+    if (cmd === "list_repos") return [];
+  });
+  const { container } = renderPanel();
+  fireEvent.click((await screen.findByText("!9")).closest("[aria-expanded]")!);
+
+  await screen.findByText(/Safe text/);
+  expect(container.querySelector("script")).toBeNull();
+  expect(container.querySelector("[onerror]")).toBeNull();
+  expect((window as unknown as { __d?: number }).__d).toBeUndefined();
 });
 
 // ---- "View more" and the full description ------------------------------

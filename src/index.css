@@ -667,6 +667,125 @@ body {
   color: var(--color-muted);
 }
 
+/* Compact variant for read-only remote markdown (a pull request's
+   description and review comments, MarkdownView). It reproduces the look
+   those had when they were drawn by Astryx's compact Markdown - 14px body,
+   16 / 8 and 12 / 4 heading rhythm, 4px paragraph gaps, 28px list rows,
+   bordered code blocks, rule-only tables - from the app's own tokens, so
+   it follows every theme. */
+.md-compact { font-size: 0.875rem; line-height: 1.25rem; overflow-wrap: break-word; min-width: 0; }
+.md-compact > :first-child { margin-top: 0; }
+.md-compact > :last-child { margin-bottom: 0; }
+.md-compact p { margin: 0.25rem 0; }
+.md-compact h1, .md-compact h2, .md-compact h3 { margin: 1rem 0 0.5rem; font-weight: 600; }
+.md-compact h4, .md-compact h5, .md-compact h6 { margin: 0.75rem 0 0.25rem; font-weight: 600; }
+.md-compact h1 { font-size: 1.5rem; line-height: 2rem; }
+.md-compact h2 { font-size: 1.25rem; line-height: 1.75rem; }
+.md-compact h3 { font-size: 1.0625rem; line-height: 1.5rem; }
+.md-compact h4 { font-size: 0.875rem; line-height: 1.25rem; }
+.md-compact h5 { font-size: 0.75rem; line-height: 1.25rem; }
+.md-compact h6 { font-size: 0.625rem; line-height: 1rem; }
+.md-compact strong { font-weight: 600; }
+.md-compact del { color: var(--color-muted); }
+/* Astryx drew links blue, not in the accent. */
+.md-compact a { color: var(--color-info); }
+.md-compact ul, .md-compact ol { margin: 0.25rem 0; padding-left: 1.5rem; list-style: none; }
+.md-compact ol { counter-reset: md-ol; }
+.md-compact li { position: relative; padding: 0.25rem 0; }
+/* Markers as Astryx drew them: a 6px dot, or the number and a full stop,
+   in a 16px column that ends 8px before the text. MarkdownView moves the
+   counter for a list that starts above 1. */
+.md-compact ul > li::before {
+  content: "";
+  position: absolute;
+  left: -1.1875rem;
+  top: 0.6875rem;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.md-compact ol > li { counter-increment: md-ol; }
+/* A task-list item has its checkbox for a marker. */
+.md-compact li:has(> input[type="checkbox"])::before { content: none; }
+.md-compact ol > li::before {
+  content: counter(md-ol) ".";
+  position: absolute;
+  left: -1.5rem;
+  top: 0.25rem;
+  width: 1rem;
+}
+.md-compact li + li { margin-top: 2px; }
+.md-compact li > ul, .md-compact li > ol { margin: 0.25rem 0 0; }
+.md-compact li > p { margin: 0; }
+.md-compact code { font-size: 1em; padding: 0 0.25rem; }
+.md-compact pre {
+  margin: 0.5rem 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 1em;
+  overflow: hidden;
+}
+.md-compact pre code { display: block; padding: 0.75rem 1rem; overflow-x: auto; }
+/* The language label and Copy button MarkdownView puts on a fenced block
+   that names a language: a 32px bar on the block's own background. */
+.md-codebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  color: var(--color-muted);
+}
+.md-codebar-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-codebar-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: -0.5rem;
+  padding: 0.25rem;
+  border-radius: 4px;
+  line-height: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.md-codebar-copy svg { width: 1rem; height: 1rem; }
+.md-codebar-copy:hover { background: color-mix(in srgb, currentColor 12%, transparent); color: var(--color-text); }
+.md-compact blockquote {
+  border-left-width: 2px;
+  margin: 0.5rem 0;
+  padding-left: 1rem;
+}
+.md-compact blockquote > :first-child { margin-top: 0; }
+.md-compact blockquote > :last-child { margin-bottom: 0; }
+.md-compact .md-table-scroll { margin: 0.5rem 0; max-width: 100%; overflow-x: auto; }
+.md-compact table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  font-size: 1em;
+}
+.md-compact th, .md-compact td {
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.5rem 0.75rem;
+  overflow-wrap: anywhere;
+}
+.md-compact tbody tr:last-child td { border-bottom: 0; }
+.md-compact th:first-child, .md-compact td:first-child { padding-left: 0.5rem; }
+.md-compact th:last-child, .md-compact td:last-child { padding-right: 0.5rem; }
+.md-compact th { background: transparent; color: var(--color-muted); }
+.md-compact hr {
+  margin: 0.75rem 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+.md-compact img { border-radius: 6px; }
+
 /* Work Manager detail modal scales in gently instead of popping. */
 @keyframes modal-in {
   from {

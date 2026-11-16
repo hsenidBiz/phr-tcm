@@ -48,8 +48,7 @@ import { cn } from "../lib/cn";
 import { IconStopWatching } from "../lib/actionIcons";
 import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
-import AstryxIsland from "../components/AstryxIsland";
-import { Markdown } from "@astryxdesign/core/Markdown";
+import MarkdownView from "../components/MarkdownView";
 import { SpinHolder } from "../components/ui/spin-holder";
 
 /** Mirrors AdoClient::PR_PAGE_SIZE - a full page implies a next page. */
@@ -123,26 +122,11 @@ function WorkItemChip({ wi }: { wi: PrWorkItem }) {
  * it was almost certainly cut mid-word. */
 const DESCRIPTION_TRUNCATION_CAP = 380;
 
-/** Same Markdown, same props, wherever a PR description renders - this is
- * the security-relevant bit (Astryx renders remote-authored text as React,
- * never dangerouslySetInnerHTML) as much as a style one. */
+/** Same renderer, same look, wherever a PR description renders: the app's
+ * marked + DOMPurify pipeline, which never lets remote-authored text
+ * become live markup. */
 function DescriptionMarkdown({ text }: { text: string }) {
-  return (
-    <AstryxIsland>
-      <Markdown
-        density="compact"
-        autolink="gfm"
-        contentWidth="100%"
-        className="text-text"
-        onLinkClick={(href) => {
-          openUrl(href).catch(() => toast.error("Could not open the browser."));
-          return false;
-        }}
-      >
-        {text}
-      </Markdown>
-    </AstryxIsland>
-  );
+  return <MarkdownView text={text} />;
 }
 
 /**
