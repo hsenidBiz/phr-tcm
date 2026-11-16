@@ -1,0 +1,464 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import "fake-indexeddb/auto";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import {
+  CACHE,
+  cacheKeys,
+  cacheRead,
+  cacheRemove,
+  cacheStoredKeys,
+  cacheWrite,
+  claimCacheFor,
+  clearCache,
+  flushCacheForTests,
+  initCache,
+  persistentQuery,
+  resetCacheForTests,
+  suspendCache,
+} from "../../src/lib/cache";
+
+afterEach(async () => {
+  suspendCache(false);
+  clearCache();
+  await flushCacheForTests();
+  resetCacheForTests();
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
+
+/** Moves the clock, so an entry written now reads as `ms` old. */
+function age(ms: number) {
+  const real = Date.now();
+  vi.spyOn(Date, "now").mockReturnValue(real + ms);
+}
+
+test("round-trips within the TTL and expires after it", () => {
+  cacheWrite("k", { a: 1 });
+  expect(cacheRead<{ a: number }>("k", 60_000)).toEqual({ a: 1 });
+  // An entry older than the TTL reads as a miss.
+  age(120_000);
+  expect(cacheRead("k", 60_000)).toBeNull();
+});
+
+test("demo mode never reads or writes the cache", () => {
+  cacheWrite("real", "data");
+  localStorage.setItem("tcm-v2-dev-demo", "on");
+  expect(cacheRead("real", 60_000)).toBeNull(); // real data hidden from demo
+  cacheWrite("demo-key", "demo-data");
+  localStorage.setItem("tcm-v2-dev-demo", "off");
+  expect(cacheRead("demo-key", 60_000)).toBeNull(); // demo data never stored
+  expect(cacheRead("real", 60_000)).toBe("data"); // real data intact
+});
+
+test("an earlier version's unreadable entries are dropped, not served", async () => {
+  localStorage.setItem("tcm-v2-cache:bad", "{not json");
+  await initCache();
+  expect(cacheRead("bad", 60_000)).toBeNull();
+  expect(localStorage.getItem("tcm-v2-cache:bad")).toBeNull();
+});
+
+test("a suspended cache neither reads nor writes", () => {
+  cacheWrite("tour-check", { a: 1 });
+  expect(cacheRead("tour-check", 60_000)).toEqual({ a: 1 });
+
+  suspendCache(true);
+  expect(cacheRead("tour-check", 60_000)).toBeNull();
+  cacheWrite("tour-check", { a: 2 });
+
+  suspendCache(false);
+  // The write while suspended was dropped - the earlier value survives.
+  expect(cacheRead("tour-check", 60_000)).toEqual({ a: 1 });
+});
+
+/** Cache keys carry org and project, which is not the same as carrying the
+ * PERSON. Two accounts on one Windows profile used to read each other's
+ * plans, suites and outcomes - fetched with a token the second one never
+ * held, and painted instantly from the seed before a request could have
+ * been refused. */
+test("signing in as someone else drops the previous account's cache", () => {
+  claimCacheFor("first@example.com");
+  cacheWrite("plans-suites:acme/Payments", ["Plan A"]);
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toEqual(["Plan A"]);
+
+  // Same person again, however many times: their cache survives.
+  claimCacheFor("first@example.com");
+  claimCacheFor("first@example.com");
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toEqual(["Plan A"]);
+
+  // Someone else: gone, even though org and project are identical.
+  claimCacheFor("second@example.com");
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toBeNull();
+
+  // Signed out (no account yet) must not wipe what the signed-in user has.
+  cacheWrite("plans-suites:acme/Payments", ["Plan B"]);
+  claimCacheFor(null);
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toEqual(["Plan B"]);
+
+  // The address itself is never written to disk.
+  expect(JSON.stringify(localStorage)).not.toContain("example.com");
+  expect(JSON.stringify(cacheStoredKeys())).not.toContain("example.com");
+});
+
+/** Callers with their own per-account state (the notification bell, the
+ * mentions baseline) key off the return value to forget theirs at exactly
+ * the moment the cache is actually wiped - not merely whenever an account
+ * is given. */
+test("claimCacheFor reports true only when it actually wiped for a different account", () => {
+  expect(claimCacheFor(null)).toBe(false);
+  expect(claimCacheFor("first@example.com")).toBe(true);
+  expect(claimCacheFor("first@example.com")).toBe(false);
+  expect(claimCacheFor("first@example.com")).toBe(false);
+  expect(claimCacheFor("second@example.com")).toBe(true);
+  expect(claimCacheFor(null)).toBe(false);
+});
+
+/** Only this module's own entries are its to drop. */
+test("claiming the cache leaves everything else in storage alone", () => {
+  localStorage.setItem("tcm-v2-draft", "the user's queue");
+  localStorage.setItem("tcm-v2-theme", "dark");
+  claimCacheFor("first@example.com");
+  cacheWrite("points:acme/Payments/1/2", [1, 2, 3]);
+  claimCacheFor("second@example.com");
+  expect(localStorage.getItem("tcm-v2-draft")).toBe("the user's queue");
+  expect(localStorage.getItem("tcm-v2-theme")).toBe("dark");
+});
+
+test("a fetch writes the result to disk for the next launch", async () => {
+  const opts = persistentQuery({
+    key: "k",
+    fetcher: async () => ["a", "b"],
+    ...CACHE.structure,
+  });
+  expect(opts.initialData()).toBeUndefined(); // cold: nothing seeded
+  await opts.queryFn();
+  expect(cacheRead<string[]>("k", CACHE.structure.ttlMs)).toEqual(["a", "b"]);
+});
+
+test("a stored entry seeds initialData WITH its real age", () => {
+  cacheWrite("k", ["seeded"]);
+  const opts = persistentQuery({
+    key: "k",
+    fetcher: async () => ["fresh"],
+    ...CACHE.structure,
+  });
+  expect(opts.initialData()).toEqual(["seeded"]);
+  // The age is the write time, not "now" - otherwise React Query would
+  // treat a week-old seed as freshly fetched and never revalidate.
+  const at = opts.initialDataUpdatedAt();
+  expect(at).toBeTypeOf("number");
+  expect(Math.abs(Date.now() - at!)).toBeLessThan(5_000);
+});
+
+test("an entry older than the TTL is not served at all", () => {
+  cacheWrite("k", ["ancient"]);
+  age(CACHE.structure.ttlMs + 60_000);
+
+  const opts = persistentQuery({ key: "k", fetcher: async () => [], ...CACHE.structure });
+  expect(opts.initialData()).toBeUndefined();
+});
+
+/** Work-item details carry inline images as data: URIs; one multi-megabyte
+ * write would trip the quota handler, which clears the whole cache. */
+test("a store predicate keeps oversized results off the disk but still returns them", async () => {
+  const big = "x".repeat(50);
+  const opts = persistentQuery({
+    key: "k",
+    fetcher: async () => big,
+    ...CACHE.outcomes,
+    store: (d) => d.length <= 10,
+  });
+  expect(await opts.queryFn()).toBe(big);
+  expect(cacheStoredKeys()).not.toContain("k");
+
+  const small = persistentQuery({
+    key: "k2",
+    fetcher: async () => "tiny",
+    ...CACHE.outcomes,
+    store: (d) => d.length <= 10,
+  });
+  await small.queryFn();
+  expect(cacheRead("k2", CACHE.outcomes.ttlMs)).toBe("tiny");
+});
+
+test("shelf lives say what the data does", () => {
+  // Structure should not refetch on every visit; run results should.
+  expect(CACHE.structure.staleMs).toBeGreaterThan(60 * 60_000);
+  expect(CACHE.outcomes.staleMs).toBe(0);
+  // Org/project lists and members: a day from disk with no request at all.
+  expect(CACHE.reference).toEqual({ ttlMs: 24 * 60 * 60_000, staleMs: 24 * 60 * 60_000 });
+  // Pipelines of a finished PR never change: a month, never stale.
+  expect(CACHE.finished).toEqual({ ttlMs: 30 * 24 * 60 * 60_000, staleMs: Infinity });
+});
+
+/** These strings are what earlier versions wrote. Changing one silently
+ * throws away every user's cache for that data on upgrade. */
+test("cache keys are the strings earlier versions stored", () => {
+  expect(cacheKeys.orgs()).toBe("orgs");
+  expect(cacheKeys.projects("acme")).toBe("projects:acme");
+  expect(cacheKeys.members("acme", "Web")).toBe("members:acme/Web");
+  expect(cacheKeys.workItemDetail("acme", "Web", 2003)).toBe("wi-detail:acme/Web/2003");
+  expect(cacheKeys.workItemComments("acme", "Web", 2003)).toBe("wi-comments:acme/Web/2003");
+  expect(cacheKeys.plansSuites("acme", "Web")).toBe("plans-suites:acme/Web");
+  // New in this release, so not an earlier version's string - but pinned
+  // from now on, since changing it throws away every reader's copy.
+  expect(cacheKeys.suiteCases("acme", "Web", 9, 91)).toBe("suite-cases:acme/Web/9/91");
+  expect(cacheKeys.runHistory("acme", "Web", 7)).toBe("run-history:acme/Web/7");
+  expect(cacheKeys.suiteRunHistory("acme", "Web", 7, 71)).toBe("run-history:acme/Web/7/71");
+  expect(cacheKeys.points("acme", "Web", 7, 71)).toBe("points:acme/Web/7/71");
+  expect(cacheKeys.boardPrs("acme", "Web")).toBe("board-prs:acme/Web");
+  expect(cacheKeys.boardPrsAll("acme")).toBe("board-prs-all:acme");
+  expect(cacheKeys.prPipeline("acme", "Web", 42, "abc")).toBe("pipe:acme/Web:42:abc");
+  // NEW key, not one an earlier version stored: the old `tcm-v2-suite:`
+  // seeds are deliberately abandoned, since App rebuilds a seed from
+  // `plans-suites` without a request of its own.
+  expect(cacheKeys.suiteSeed("acme", 42)).toBe("suite-seed:acme/42");
+  // NEW key: the suggested run order read from a PBI's run-order file.
+  expect(cacheKeys.runOrder("acme", "Web", 42)).toBe("run-order:acme/Web/42");
+  // New key, pinned from now on.
+  expect(cacheKeys.sharedStepTitle("acme", 812)).toBe("shared-step:acme/812");
+});
+
+test("cacheRemove deletes an entry that was written", () => {
+  cacheWrite("k", { a: 1 });
+  expect(cacheRead("k", 60_000)).toEqual({ a: 1 });
+  cacheRemove("k");
+  expect(cacheRead("k", 60_000)).toBeNull();
+});
+
+/** Plants an entry with a given age (its `at`), as a launch would load it. */
+function plant(key: string, at: number, data: unknown = 1) {
+  const real = Date.now;
+  vi.spyOn(Date, "now").mockReturnValue(at);
+  cacheWrite(key, data);
+  Date.now = real;
+  vi.restoreAllMocks();
+}
+
+describe("the entry limit", () => {
+  test("a write past 150 entries drops the oldest", () => {
+    // k0 and k1 the oldest, whatever order the same-millisecond writes land in.
+    plant("k0", 1);
+    plant("k1", 2);
+    for (let i = 2; i < 150; i++) cacheWrite(`k${i}`, i);
+    cacheWrite("k-new", "x");
+    cacheWrite("k-newer", "y");
+    expect(cacheStoredKeys()).toHaveLength(150);
+    expect(cacheRead("k0", Infinity)).toBeNull();
+    expect(cacheRead("k1", Infinity)).toBeNull();
+    expect(cacheRead("k-new", Infinity)).toBe("x");
+    expect(cacheRead("k-newer", Infinity)).toBe("y");
+  });
+
+  /** The combined plans walk writes one `plans-suites:` entry per project
+   * (up to 100). They count against a cap of their own, so a big
+   * organization's walk never pushes out the entries of other screens. */
+  test("plan trees have their own cap and never evict other entries", () => {
+    // 30 other entries, the oldest of all; 130 plan trees, p0 the oldest of them.
+    for (let i = 0; i < 30; i++) plant(`other${i}`, 1 + i);
+    for (let i = 0; i < 130; i++) plant(cacheKeys.plansSuites("acme", `p${i}`), 1_000 + i);
+    cacheWrite(cacheKeys.plansSuites("acme", "newest"), []);
+
+    for (let i = 0; i < 30; i++) expect(cacheRead(`other${i}`, Infinity)).toBe(1);
+    const trees = cacheStoredKeys().filter((k) => k.startsWith("plans-suites:"));
+    expect(trees).toHaveLength(120);
+    // 131 written, the 11 oldest are gone.
+    for (let i = 0; i < 11; i++) expect(cacheRead(cacheKeys.plansSuites("acme", `p${i}`), Infinity)).toBeNull();
+    expect(cacheRead(cacheKeys.plansSuites("acme", "p11"), Infinity)).toBe(1);
+    expect(cacheRead(cacheKeys.plansSuites("acme", "newest"), Infinity)).toEqual([]);
+  });
+
+  test("plan trees do not count toward the 150 for everything else", () => {
+    for (let i = 0; i < 100; i++) plant(cacheKeys.plansSuites("acme", `p${i}`), 1_000 + i);
+    for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
+    expect(cacheStoredKeys().filter((k) => !k.startsWith("plans-suites:"))).toHaveLength(150);
+    expect(cacheStoredKeys().filter((k) => k.startsWith("plans-suites:"))).toHaveLength(100);
+  });
+
+  /** The point of the move: the cache no longer takes room in localStorage,
+   * which the queue drafts need. */
+  test("a write touches no localStorage at all", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    cacheWrite("one", { big: "x".repeat(1000) });
+    expect(setItem.mock.calls.filter(([k]) => String(k).startsWith("tcm-v2-cache:"))).toEqual([]);
+  });
+
+  test("signing in as someone else drops every entry", () => {
+    claimCacheFor("first@example.com");
+    for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
+    claimCacheFor("second@example.com");
+    cacheWrite("mine", 1);
+    expect(cacheStoredKeys()).toEqual(["mine"]);
+  });
+});
+
+describe("IndexedDB", () => {
+  test("an entry survives a restart", async () => {
+    await initCache();
+    cacheWrite("k", ["kept"]);
+    await flushCacheForTests();
+    resetCacheForTests(); // a restart: memory gone, the database stays
+    expect(cacheRead("k", Infinity)).toBeNull();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toEqual(["kept"]);
+  });
+
+  test("a removed entry stays removed after a restart", async () => {
+    await initCache();
+    cacheWrite("k", 1);
+    await flushCacheForTests();
+    cacheRemove("k");
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("another account's wipe reaches the database", async () => {
+    await initCache();
+    claimCacheFor("first@example.com");
+    cacheWrite("k", 1);
+    await flushCacheForTests();
+    claimCacheFor("second@example.com");
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheStoredKeys()).toEqual([]);
+  });
+
+  test("an earlier version's localStorage entries move over and leave localStorage", async () => {
+    localStorage.setItem("tcm-v2-cache:old", JSON.stringify({ at: Date.now(), data: "moved" }));
+    localStorage.setItem("tcm-v2-cache-index", "{}");
+    await initCache();
+    expect(cacheRead("old", Infinity)).toBe("moved");
+    expect(localStorage.getItem("tcm-v2-cache:old")).toBeNull();
+    expect(localStorage.getItem("tcm-v2-cache-index")).toBeNull();
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("old", Infinity)).toBe("moved");
+  });
+
+  test("a wipe made while the cache loads is not undone by the disk", async () => {
+    await initCache();
+    claimCacheFor("first@example.com");
+    cacheWrite("k", "first account's");
+    await flushCacheForTests();
+    resetCacheForTests();
+    const loading = initCache();
+    claimCacheFor("second@example.com");
+    await loading;
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("a remove made while the cache loads is not undone by the disk", async () => {
+    await initCache();
+    cacheWrite("k", 1);
+    await flushCacheForTests();
+    resetCacheForTests();
+    const loading = initCache();
+    cacheRemove("k");
+    await loading;
+    expect(cacheRead("k", Infinity)).toBeNull();
+    await flushCacheForTests();
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("a wipe whose database write fails is tried again, so the old account never reloads", async () => {
+    await initCache();
+    claimCacheFor("first@example.com");
+    cacheWrite("k", "first account's");
+    await flushCacheForTests();
+    const real = IDBObjectStore.prototype.clear;
+    let failed = false;
+    IDBObjectStore.prototype.clear = function (this: IDBObjectStore) {
+      if (!failed) {
+        failed = true;
+        throw new DOMException("quota", "QuotaExceededError");
+      }
+      return real.call(this);
+    };
+    try {
+      claimCacheFor("second@example.com");
+      await flushCacheForTests(); // the clear fails here
+      cacheWrite("other", 1);
+      await flushCacheForTests(); // and is tried again with the next write
+    } finally {
+      IDBObjectStore.prototype.clear = real;
+    }
+    resetCacheForTests();
+    await initCache();
+    expect(cacheRead("k", Infinity)).toBeNull();
+  });
+
+  test("a write made while the cache loads is not overwritten by the disk", async () => {
+    await initCache();
+    cacheWrite("k", "old");
+    await flushCacheForTests();
+    resetCacheForTests();
+    const loading = initCache();
+    cacheWrite("k", "new");
+    await loading;
+    expect(cacheRead("k", Infinity)).toBe("new");
+  });
+});
+
+test("demo mode neither seeds nor stores", async () => {
+  localStorage.setItem("tcm-v2-dev-demo", "on");
+  const fetcher = vi.fn(async () => ["real"]);
+  const opts = persistentQuery({ key: "k", fetcher, ...CACHE.structure });
+  await opts.queryFn();
+  expect(opts.initialData()).toBeUndefined();
+  expect(cacheStoredKeys()).not.toContain("k");
+});
+
+/**
+ * One cache means one. A screen that needs cached data uses lib/cache.ts;
+ * it does not reach into localStorage, seed a query by hand, invent a key
+ * string, or pick a shelf life of its own. Fix a failure by using
+ * persistentQuery / cacheKeys / CACHE - add the key or preset there if it
+ * is new.
+ */
+describe("one cache", () => {
+  // import.meta.url, not __dirname: this file is ESM under vitest.
+  const SRC = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "src");
+  const files: { file: string; text: string }[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.(tsx|ts)$/.test(e.name) || /\.test\.(tsx|ts)$/.test(e.name)) continue;
+      if (e.name === "bindings.ts") continue; // generated
+      const file = relative(SRC, p).replace(/\\/g, "/");
+      if (file === "lib/cache.ts") continue;
+      files.push({ file, text: readFileSync(p, "utf8") });
+    }
+  };
+  walk(SRC);
+
+  const offenders = (pattern: RegExp) => files.filter((f) => pattern.test(f.text)).map((f) => f.file);
+
+  test("only lib/cache.ts touches the cache's storage or seeds a query from disk", () => {
+    expect(offenders(/tcm-v2-cache|tcm-v2-suite:|initialDataUpdatedAt/)).toEqual([]);
+  });
+
+  test("cache keys come from cacheKeys, never a hand-written string", () => {
+    // A literal passed straight in, or any string opening with one of the
+    // prefixes cacheKeys owns (React Query keys are arrays - no colon).
+    expect(
+      offenders(
+        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe|suite-cases|suite-seed|shared-step|pw-ticks):/,
+      ),
+    ).toEqual([]);
+  });
+
+  test("shelf lives come from CACHE, never a number at the call site", () => {
+    expect(offenders(/ttlMs:\s*\d/)).toEqual([]);
+  });
+});

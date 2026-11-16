@@ -1,0 +1,262 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { raise, resetForTests } from "../../src/lib/notifications";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import NotificationBell from "../../src/components/NotificationBell";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
+
+beforeEach(() => {
+  localStorage.clear();
+  resetForTests();
+  vi.mocked(openUrl).mockClear();
+});
+afterEach(() => {
+  localStorage.clear();
+  resetForTests();
+});
+
+function seed() {
+  raise("acme", [
+    { id: "pr-conflict:Web:10", kind: "pr-conflict", title: "PR #10 has merge conflicts", body: "Fix login (Web)", href: "https://x/10" },
+    { id: "assigned:501", kind: "assigned", title: "Task #501 assigned to you", body: "Wire the login flow" },
+  ]);
+}
+
+/// The badge counts what you have not seen; opening the panel is seeing
+/// it, so the badge goes while the items stay.
+test("the badge shows the unread count and opening the panel clears it", () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+
+  const bell = screen.getByRole("button", { name: "Notifications, 2 unread" });
+  expect(bell).toHaveTextContent("2");
+  fireEvent.click(bell);
+
+  expect(screen.getByRole("dialog", { name: "Notifications" })).toBeInTheDocument();
+  expect(screen.getByText("PR #10 has merge conflicts")).toBeInTheDocument();
+  expect(screen.getByText("Task #501 assigned to you")).toBeInTheDocument();
+  // Read now: the badge is gone, the items are not.
+  expect(screen.getByRole("button", { name: "Notifications" })).not.toHaveTextContent("2");
+});
+
+/// Fira Sans's 1 carries its weight right of its box (the stem), so the
+/// badge nudges it LEFT to look centred; a 2 is not nudged.
+test("the badge's 1 is nudged left to look centred, a 2 is not", () => {
+  raise("acme", [{ id: "assigned:501", kind: "assigned", title: "Task #501 assigned to you", body: "x" }]);
+  const { unmount } = render(<NotificationBell org="acme" />);
+  const one = screen.getByRole("button", { name: "Notifications, 1 unread" }).querySelector(".label-trim")!;
+  expect(one).toHaveTextContent("1");
+  expect(one).toHaveClass("relative", "left-[-0.4px]");
+  unmount();
+
+  resetForTests();
+  seed();
+  render(<NotificationBell org="acme" />);
+  const two = screen.getByRole("button", { name: "Notifications, 2 unread" }).querySelector(".label-trim")!;
+  expect(two.className).not.toMatch(/left-\[/);
+});
+
+/// The panel opens the way the app's other dropdowns do - growing from the
+/// bell's corner - and reduced motion switches it off with them (index.css).
+test("the panel opens with the dropdown motion, from the bell's right-hand corner", () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  const panel = screen.getByRole("dialog", { name: "Notifications" });
+  expect(panel).toHaveClass("t-dropdown");
+  expect(panel).toHaveAttribute("data-origin", "top-right");
+});
+
+test("X dismisses one item; Clear all empties the panel", () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss: PR #10 has merge conflicts" }));
+  expect(screen.queryByText("PR #10 has merge conflicts")).not.toBeInTheDocument();
+  expect(screen.getByText("Task #501 assigned to you")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+  expect(screen.getByText(/all caught up/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Clear all" })).not.toBeInTheDocument();
+});
+
+/// A new notification raised while the panel is closed lights the badge
+/// again - the store publishes, the bell repaints.
+test("a notification raised later lights the badge again", async () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  // Raised from outside React (a poll, an event): the store publishes and
+  // the bell repaints on the next flush.
+  raise("acme", [{ id: "pr-review:Web:20", kind: "pr-review", title: "PR #20 is waiting for your review", body: "" }]);
+  expect(await screen.findByRole("button", { name: "Notifications, 1 unread" })).toBeInTheDocument();
+});
+
+/// The title is the way IN - the app opens the thing itself - and the
+/// browser is still there, one small button along.
+test("a notification with a target opens in the app and closes the panel; the browser stays one click away", () => {
+  raise("acme", [
+    {
+      id: "assigned:501",
+      kind: "assigned",
+      title: "Task #501 assigned to you",
+      body: "Wire the login flow",
+      href: "https://x/501",
+      target: { kind: "work-item", id: 501, project: "Web" },
+    },
+  ]);
+  const opened: unknown[] = [];
+  render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Task #501 assigned to you" }));
+  expect(opened).toEqual([{ kind: "work-item", id: 501, project: "Web" }]);
+  expect(openUrl).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  const toBrowser = screen.getByRole("button", { name: "Open in Azure DevOps: Task #501 assigned to you" });
+  // It sits in the kind-and-time line, beside the time - not on the title's
+  // line, where it read as part of the title.
+  expect(toBrowser.parentElement).toHaveTextContent("Assigned");
+  expect(toBrowser.parentElement).not.toHaveTextContent("Task #501 assigned to you");
+  fireEvent.click(toBrowser);
+  expect(openUrl).toHaveBeenCalledWith("https://x/501");
+});
+
+/// Entries saved before targets existed keep working exactly as they did.
+test("a stored notification without a target still opens the browser", () => {
+  seed(); // pr-conflict:Web:10 has href only
+  render(
+    <NotificationBell
+      org="acme"
+      onOpen={() => {
+        throw new Error("must not be called");
+      }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 2 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "PR #10 has merge conflicts" }));
+  expect(openUrl).toHaveBeenCalledWith("https://x/10");
+});
+
+/// A target saved by a build between the field's addition and the project
+/// guard has no project on it - it must not be treated as an in-app
+/// target (there is nowhere safe to navigate), only as the browser link.
+test("a stored target with no project falls back to the browser, not the app", () => {
+  raise("acme", [
+    {
+      id: "assigned:501",
+      kind: "assigned",
+      title: "Task #501 assigned to you",
+      body: "Wire the login flow",
+      href: "https://x/501",
+      target: { kind: "work-item", id: 501 } as unknown as { kind: "work-item"; id: number; project: string },
+    },
+  ]);
+  render(
+    <NotificationBell
+      org="acme"
+      onOpen={() => {
+        throw new Error("must not be called");
+      }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Task #501 assigned to you" }));
+  expect(openUrl).toHaveBeenCalledWith("https://x/501");
+});
+
+test("renders nothing without an organisation", () => {
+  const { container } = render(<NotificationBell org="" />);
+  expect(container).toBeEmptyDOMElement();
+});
+
+test("a mention wears the Mention label and opens its work item in the app", () => {
+  raise("acme", [
+    {
+      id: "mention:wi:41:7",
+      kind: "mention",
+      title: "Sam mentioned you on Product Backlog Item #41",
+      body: "@Avin can you check this?",
+      href: "https://x/41",
+      target: { kind: "work-item", id: 41, project: "Web" },
+    },
+  ]);
+  const opened: unknown[] = [];
+  render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  // The label sits in its centring span; the chip is that span's parent.
+  expect(screen.getByText("Mention").parentElement).toHaveClass("text-danger");
+  expect(screen.getByText("@Avin can you check this?")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Sam mentioned you on Product Backlog Item #41" }));
+  expect(opened).toEqual([{ kind: "work-item", id: 41, project: "Web" }]);
+});
+
+test("a PR mention opens its pull request in the app", () => {
+  raise("acme", [
+    {
+      id: "mention:pr:web:12:3:9",
+      kind: "mention",
+      title: "Sam mentioned you on PR #12",
+      body: "@you please look",
+      href: "https://x/pr/12",
+      target: { kind: "pr", repo: "web", id: 12, project: "Web" },
+    },
+  ]);
+  const opened: unknown[] = [];
+  render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sam mentioned you on PR #12" }));
+  expect(opened).toEqual([{ kind: "pr", repo: "web", id: 12, project: "Web" }]);
+});
+
+/// Each click swings the bell once more (index.css, ico-bell-swing): the
+/// icon is a fresh element per click, so a click mid-swing starts it over.
+test("the bell rings when it is clicked, every time", () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+  const bell = screen.getByRole("button", { name: /Notifications/ });
+  expect(bell.querySelector("svg")).not.toHaveClass("ico-bell-ring");
+  fireEvent.click(bell);
+  const first = bell.querySelector("svg");
+  expect(first).toHaveClass("ico-bell-ring");
+  fireEvent.click(bell);
+  const second = bell.querySelector("svg");
+  expect(second).toHaveClass("ico-bell-ring");
+  expect(second).not.toBe(first);
+});
+
+/// The bell is two parts, so a ring can swing the housing and let the
+/// clapper follow on its own momentum (index.css, "ico-bell-ring") - a
+/// single lucide <svg> could only swing as one piece.
+test("the bell's housing and clapper are separate parts, and a click rings them", () => {
+  render(<NotificationBell org="acme" />);
+  const button = screen.getByRole("button", { name: /Notifications/ });
+  const svg = () => button.querySelector("svg")!;
+  expect(svg().querySelector(".ng-bell-housing")).not.toBeNull();
+  expect(svg().querySelector(".ng-bell-clapper")).not.toBeNull();
+  // At rest it does not ring.
+  expect(svg()).not.toHaveClass("ico-bell-ring");
+  fireEvent.click(button);
+  expect(svg()).toHaveClass("ico-bell-ring");
+});
+
+/// A long title or context line wraps instead of being cut off with an
+/// ellipsis: the whole text is the point of the notification.
+test("long titles and context lines wrap rather than being cut off", () => {
+  const title = "Task #158269 assigned to you with a title long enough to need a second line";
+  const body = "[DEV] Performance Assessment | Demo comments for the goal alignment and cascading report";
+  raise("acme", [{ id: "assigned:158269", kind: "assigned", title, body, href: "https://x/158269" }]);
+  render(<NotificationBell org="acme" />);
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  for (const text of [title, body]) {
+    const el = screen.getByText(text);
+    expect(el).not.toHaveClass("truncate");
+    expect(el).toHaveClass("break-words");
+  }
+});

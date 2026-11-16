@@ -1,0 +1,335 @@
+// The rail's badge: a small dot on an item when something arrived (the count
+// is in the accessible name, not drawn), nothing at all when it is zero.
+
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type Section, type WorkSection } from "../../src/components/Sidebar";
+import { clearTourExpanded, setTourExpanded } from "../../src/lib/sidebarState";
+import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest, shouldLeaveHidden, type Module } from "../../src/lib/modules";
+import { isNewNav, noteModuleSwitch, resetNewNavForTest } from "../../src/lib/newNav";
+
+afterEach(() => {
+  clearTourExpanded();
+  localStorage.clear();
+  resetModulesStore();
+  resetNewNavForTest();
+  clearMocks();
+});
+
+test("the tour override renders the sidebar expanded over a stored collapsed setting", () => {
+  localStorage.setItem("tcm-v2-sidebar", "collapsed");
+  setTourExpanded(true);
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  // Expanded: the label text is present in the DOM (collapsed only fades it).
+  expect(screen.getByText("Manual Entry")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close sidebar" })).toBeInTheDocument();
+});
+
+test("a badge count lands on its item and reaches the accessible name", () => {
+  render(
+    <Sidebar<WorkSection>
+      section="prs"
+      onSelect={() => {}}
+      items={WORK_ITEMS}
+      badges={{ board: 3 }}
+    />,
+  );
+  const row = screen.getByRole("button", { name: "Board (3 new)" });
+  // A dot, not a number: a count bubble was cut off by the collapsed rail.
+  expect(row.querySelector("[data-badge-dot]")).not.toBeNull();
+  expect(screen.queryByText("3")).not.toBeInTheDocument();
+});
+
+/// Auto Run is no longer marked as in development: no row carries a
+/// status pill.
+test("no sidebar row carries an In Dev pill", () => {
+  setModulesForTest(ALL_MODULES);
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: "Auto Run" })).not.toHaveTextContent("In Dev");
+  expect(screen.queryByText("In Dev")).not.toBeInTheDocument();
+});
+
+/// Each module's rows appear when it is switched on and go again when it is
+/// switched off - live, without a reload, because the rail subscribes to the
+/// modules. A fresh install (none on) shows neither.
+test("Auto Run, API Templates and Playwright follow their own modules, live", async () => {
+  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+  expect(shortcutOrder()).not.toContain("autorun");
+
+  act(() => setModulesForTest(["db_access", "auto_run"]));
+  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+  expect(shortcutOrder()).toContain("autorun");
+  expect(sectionShortcut("autorun")).toBe("mod+9");
+
+  act(() => setModulesForTest(["db_access", "auto_run", "api_templates"]));
+  expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
+  // Playwright takes no Ctrl number.
+  expect(shortcutOrder()).not.toContain("playwright");
+  expect(sectionShortcut("playwright")).toBeUndefined();
+  expect(sectionShortcut("ai")).toBe("mod+8");
+
+  await act(() => setModule("db_access", false));
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(sectionShortcut("autorun")).toBeUndefined();
+  expect(shouldLeaveHidden("playwright", false, true)).toBe(true);
+});
+
+/// Crystal Reports hangs off Core on its own: its row follows its module
+/// alone, and takes no Ctrl number so no other tab's moves.
+test("the Crystal Reports row follows its own module and takes no Ctrl number", () => {
+  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: "Crystal Reports" })).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["crystal_reports"]));
+  expect(screen.getByRole("button", { name: "Crystal Reports" })).toBeInTheDocument();
+  expect(shortcutOrder()).not.toContain("crystal-reports");
+  expect(sectionShortcut("crystal-reports")).toBeUndefined();
+  expect(sectionShortcut("ai")).toBe("mod+8");
+
+  act(() => setModulesForTest([]));
+  expect(screen.queryByRole("button", { name: "Crystal Reports" })).not.toBeInTheDocument();
+});
+
+/// Capture mode (the screenshot script) reports every module on: the help
+/// site documents Auto Run, API Templates and Playwright. Off, the rail
+/// follows the modules.
+test("capture mode shows every module's rows; off, the rail follows the modules", () => {
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
+  expect(shortcutOrder()).toContain("autorun");
+  unmount();
+
+  localStorage.removeItem("tcm-v2-dev-capture");
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+});
+
+const ON = new Set<Module>(ALL_MODULES);
+const NONE = new Set<Module>();
+
+/// The Ctrl+N order closes up around a hidden Auto Run row, whichever way
+/// the answer comes.
+test("the shortcut order with and without Auto Run", () => {
+  expect(shortcutOrder(ON)).toEqual([
+    "manual",
+    "import",
+    "edit",
+    "view",
+    "run",
+    "suites",
+    "manage",
+    "ai",
+    "autorun",
+    "apitemplates",
+  ]);
+  expect(shortcutOrder(NONE)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
+});
+
+/// Playwright sits right under Auto Run in the rail, but has no Ctrl number.
+/// The everyday screens above the Advanced group keep the low numbers.
+test("Playwright sits under Auto Run and takes no Ctrl number", () => {
+  const rows = visibleCaseItems(ON).map((i) => i.id);
+  expect(rows.indexOf("playwright")).toBe(rows.indexOf("autorun") + 1);
+  expect(sectionShortcut("playwright", ON)).toBeUndefined();
+  expect(sectionShortcut("suites", ON)).toBe("mod+6");
+  expect(sectionShortcut("manage", ON)).toBe("mod+7");
+  expect(sectionShortcut("ai", ON)).toBe("mod+8");
+});
+
+/// API Templates is the tenth numbered row, and gets no number: App's
+/// handler only reaches Ctrl+1..9, and a hint for a key that does nothing
+/// would be a lie.
+test("API Templates has no Ctrl number", () => {
+  expect(sectionShortcut("apitemplates", ON)).toBeUndefined();
+  expect(sectionShortcut("autorun", ON)).toBe("mod+9");
+  expect(sectionShortcut("apitemplates", NONE)).toBeUndefined();
+});
+
+/// The everyday screens sit under a "Test Case Management" heading; Auto
+/// Run, Playwright, API Templates and Crystal Reports sit together at the
+/// bottom under one "Advanced" heading, shown only while one of them is.
+test("the rail's rows sit under two headings, the advanced tools last", () => {
+  const rows = visibleCaseItems(ON).map((i) => i.id);
+  expect(rows.slice(-4)).toEqual(["autorun", "playwright", "apitemplates", "crystal-reports"]);
+
+  setModulesForTest([...ALL_MODULES]);
+  const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getAllByText("Advanced")).toHaveLength(1);
+  expect(screen.getAllByText("Test Case Management")).toHaveLength(1);
+  // That one comes before the first row, Manual Entry.
+  expect(
+    screen.getByText("Test Case Management").compareDocumentPosition(screen.getByRole("button", { name: "Manual Entry" })) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  // The heading comes right before Auto Run, after AI Bridge.
+  const heading = screen.getByText("Advanced");
+  const ai = screen.getByRole("button", { name: "AI Bridge" });
+  const autorun = screen.getByRole("button", { name: "Auto Run" });
+  expect(ai.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(heading.compareDocumentPosition(autorun) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  unmount();
+
+  setModulesForTest([]);
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.queryByText("Advanced")).not.toBeInTheDocument();
+  expect(screen.getByText("Test Case Management")).toBeInTheDocument();
+});
+
+/// API Templates and Playwright are separate modules under Auto Run: either
+/// can be on without the other.
+test("API Templates and Playwright are separate rows", () => {
+  const base: Module[] = ["db_access", "auto_run"];
+  expect(visibleCaseItems(new Set<Module>([...base, "api_templates"])).map((i) => i.id)).toContain("apitemplates");
+  expect(visibleCaseItems(new Set<Module>([...base, "api_templates"])).map((i) => i.id)).not.toContain("playwright");
+  expect(visibleCaseItems(new Set<Module>([...base, "playwright"])).map((i) => i.id)).toContain("playwright");
+  expect(visibleCaseItems(new Set<Module>([...base, "playwright"])).map((i) => i.id)).not.toContain("apitemplates");
+});
+
+test("zero and absent counts render no bubble", () => {
+  render(
+    <Sidebar<WorkSection>
+      section="prs"
+      onSelect={() => {}}
+      items={WORK_ITEMS}
+      badges={{ board: 0 }}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Board" }).querySelector("[data-badge-dot]")).toBeNull();
+  expect(screen.queryByText("0")).not.toBeInTheDocument();
+});
+
+// The guided tour moves the rail OUT of the app's inert region so the one
+// tab it is asking for can be clicked. Everything else in the rail has to
+// lock itself, including the collapse toggle - which writes the user's own
+// stored setting, and the tour promised not to touch it.
+
+test("while the tour runs only the row it is waiting for answers", () => {
+  const picked: string[] = [];
+  render(<Sidebar section="manual" onSelect={(s) => picked.push(s)} locked liveItem="import" />);
+
+  const importRow = screen.getByRole("button", { name: "Import Test Cases" });
+  const update = screen.getByRole("button", { name: "Update Test Cases" });
+  expect(importRow).toBeEnabled();
+  expect(update).toBeDisabled();
+
+  fireEvent.click(update);
+  fireEvent.keyDown(update, { key: "Enter" });
+  expect(picked).toEqual([]);
+
+  fireEvent.click(importRow);
+  expect(picked).toEqual(["import"]);
+});
+
+test("the collapse toggle is dead while the tour runs, and writes nothing", () => {
+  const wrote: string[] = [];
+  const setItem = Storage.prototype.setItem;
+  const spy = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, k: string, v: string) {
+      wrote.push(k);
+      setItem.call(this, k, v);
+    });
+  try {
+    setTourExpanded(true);
+    render(<Sidebar section="manual" onSelect={() => {}} locked />);
+    const toggle = screen.getByRole("button", { name: "Close sidebar" });
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(wrote).not.toContain("tcm-v2-sidebar");
+    // ...and it is still expanded, so nothing moved behind the overlay.
+    expect(screen.getByRole("button", { name: "Close sidebar" })).toBeInTheDocument();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("nothing is locked when the tour is not running", () => {
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: "Update Test Cases" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Close sidebar" })).toBeEnabled();
+});
+
+/// A row a person has just revealed from the Modules page carries a ring
+/// and sparkles until they open it, and its name says so.
+function markAutoRun() {
+  setModulesForTest(["db_access", "auto_run"]);
+  act(() => noteModuleSwitch(new Set<Module>(["db_access"]), new Set<Module>(["db_access", "auto_run"])));
+}
+
+test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
+  markAutoRun();
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  const row = screen.getByRole("button", { name: "Auto Run (new)" });
+  expect(row).toHaveClass("nav-new");
+  const sparkles = row.querySelectorAll("[data-sparkle]");
+  expect(sparkles.length).toBeGreaterThan(0);
+  for (const s of sparkles) {
+    expect(s).toHaveAttribute("aria-hidden");
+    expect(s).toHaveClass("nav-sparkle");
+  }
+  // The label is still there to read, and no other row is marked.
+  expect(row).toHaveTextContent("Auto Run");
+  expect(screen.getByRole("button", { name: "AI Bridge" })).not.toHaveClass("nav-new");
+});
+
+test("a marked row that also has a count does not say new twice", () => {
+  markAutoRun();
+  render(<Sidebar<Section> section="manual" onSelect={() => {}} badges={{ autorun: 93 }} />);
+  const row = screen.getByRole("button", { name: "Auto Run (93 new)" });
+  expect(row).toHaveClass("nav-new");
+});
+
+test("the mark shows on the collapsed icon rail too", () => {
+  localStorage.setItem("tcm-v2-sidebar", "collapsed");
+  markAutoRun();
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: "Auto Run (new)" })).toHaveClass("nav-new");
+});
+
+test("clicking the marked row clears the mark and still navigates", () => {
+  markAutoRun();
+  const onSelect = vi.fn();
+  render(<Sidebar section="manual" onSelect={onSelect} />);
+  fireEvent.click(screen.getByRole("button", { name: "Auto Run (new)" }));
+  expect(onSelect).toHaveBeenCalledWith("autorun");
+  expect(isNewNav("autorun")).toBe(false);
+  const row = screen.getByRole("button", { name: "Auto Run" });
+  expect(row).not.toHaveClass("nav-new");
+  expect(row.querySelector("[data-sparkle]")).toBeNull();
+});
+
+test("under reduced motion the ring stays and no sparkle is drawn", () => {
+  const was = window.matchMedia;
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes("prefers-reduced-motion"),
+    media: q,
+    addEventListener() {},
+    removeEventListener() {},
+  })) as unknown as typeof window.matchMedia;
+  try {
+    markAutoRun();
+    render(<Sidebar section="manual" onSelect={() => {}} />);
+    const row = screen.getByRole("button", { name: "Auto Run (new)" });
+    expect(row).toHaveClass("nav-new");
+    expect(row.querySelector("[data-sparkle]")).toBeNull();
+  } finally {
+    window.matchMedia = was;
+  }
+});

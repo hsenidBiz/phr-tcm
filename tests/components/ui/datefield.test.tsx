@@ -1,0 +1,148 @@
+// DateField: the app's date input - a button showing the date that opens
+// XiodUI's calendar in an inline panel. Value is "" or "YYYY-MM-DD".
+
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { expect, test, vi } from "vitest";
+import DateField from "../../../src/components/ui/datefield";
+
+function Host({ initial = "", onChange = () => {} }: { initial?: string; onChange?: (v: string) => void }) {
+  const [v, setV] = useState(initial);
+  return (
+    <DateField
+      ariaLabel="Target date"
+      value={v}
+      onChange={(next) => {
+        setV(next);
+        onChange(next);
+      }}
+    />
+  );
+}
+
+const iso = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+test("empty, it says so, and the field is named for what it holds", () => {
+  render(<Host />);
+  expect(screen.getByRole("button", { name: "Target date" })).toHaveTextContent("Pick a date");
+});
+
+test("it opens on the value's month, weeks starting Monday; picking a day sets it, closes, and hands focus back", () => {
+  const onChange = vi.fn();
+  render(<Host initial="2026-09-10" onChange={onChange} />);
+  const field = screen.getByRole("button", { name: "Target date" });
+  fireEvent.click(field);
+  expect(screen.getByText("September 2026")).toBeInTheDocument();
+  expect(screen.getAllByText(/^(Mo|Tu|We|Th|Fr|Sa|Su)$/)[0]).toHaveTextContent("Mo");
+
+  fireEvent.click(screen.getByRole("button", { name: "Tuesday, September 15, 2026" }));
+  expect(onChange).toHaveBeenLastCalledWith("2026-09-15");
+  expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+  // The calendar held focus and is gone: focus comes back to the field.
+  expect(field).toHaveFocus();
+});
+
+test("Clear empties it", () => {
+  const onChange = vi.fn();
+  render(<Host initial="2026-09-10" onChange={onChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(onChange).toHaveBeenLastCalledWith("");
+  expect(screen.getByRole("button", { name: "Target date" })).toHaveTextContent("Pick a date");
+});
+
+// One footer row: Today at the start and Clear at the end, under one
+// divider. The calendar's own Today row is hidden (it stays in the DOM:
+// jsdom does not apply the class), so the live Today is the one beside Clear.
+function footerToday() {
+  const clear = screen.getByRole("button", { name: "Clear" });
+  return within(clear.parentElement!).getByRole("button", { name: "Today" });
+}
+
+test("Today and Clear share one footer row, and the calendar's own row is hidden", () => {
+  render(<Host initial="2026-09-10" />);
+  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  const row = screen.getByRole("button", { name: "Clear" }).parentElement!;
+  expect(row).toHaveClass("justify-between");
+  expect(row.firstElementChild).toBe(footerToday());
+  const others = screen.getAllByRole("button", { name: "Today" }).filter((b) => b !== footerToday());
+  for (const b of others) expect(b.closest(".hidden")).not.toBeNull();
+});
+
+test("Today sets today, closes the panel, and returns focus", () => {
+  const onChange = vi.fn();
+  render(<Host onChange={onChange} />);
+  const field = screen.getByRole("button", { name: "Target date" });
+  fireEvent.click(field);
+  fireEvent.click(footerToday());
+  expect(onChange).toHaveBeenLastCalledWith(iso(new Date()));
+  expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
+  expect(field).toHaveFocus();
+});
+
+// The field lives in the work-item drawer, whose window-level Escape closes
+// the drawer - and its unsaved draft. With the calendar open (and holding
+// focus), Escape must close the calendar only.
+test("Escape closes the calendar and nothing behind it", () => {
+  const behind = vi.fn();
+  window.addEventListener("keydown", behind);
+  try {
+    render(<Host initial="2026-09-10" />);
+    const field = screen.getByRole("button", { name: "Target date" });
+    fireEvent.click(field);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Thursday, September 10, 2026" }), { key: "Escape" });
+    expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+    expect(field).toHaveFocus();
+    expect(behind).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", behind);
+  }
+});
+
+// A Shift+Tab from the calendar's prev-month button lands back on the
+// trigger while the panel is still open. Escape there must still close
+// only the panel, not bubble to the drawer's window-level listener.
+test("Escape on the trigger, while the panel is open, closes only the panel", () => {
+  const behind = vi.fn();
+  window.addEventListener("keydown", behind);
+  try {
+    render(<Host initial="2026-09-10" />);
+    const field = screen.getByRole("button", { name: "Target date" });
+    fireEvent.click(field);
+    expect(screen.getByText("September 2026")).toBeInTheDocument();
+
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+    expect(field).toHaveFocus();
+    expect(behind).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", behind);
+  }
+});
+
+test("a mousedown outside closes it", () => {
+  render(
+    <>
+      <Host initial="2026-09-10" />
+      <p>elsewhere</p>
+    </>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  fireEvent.mouseDown(screen.getByText("elsewhere"));
+  expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+});
+
+test("a field Azure DevOps named as required is ringed", () => {
+  const { rerender } = render(<DateField ariaLabel="Target date" value="" onChange={() => {}} />);
+  expect(screen.getByRole("button", { name: "Target date" }).className).not.toContain("ring-danger");
+  rerender(<DateField ariaLabel="Target date" value="" onChange={() => {}} flagged />);
+  expect(screen.getByRole("button", { name: "Target date" }).className).toContain("ring-danger");
+});
+
+test("the open panel is placed against the window, so a narrow column cannot clip it", () => {
+  render(<Host />);
+  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  const panel = screen.getByRole("button", { name: "Clear" }).closest(".fixed");
+  expect(panel).not.toBeNull();
+});
