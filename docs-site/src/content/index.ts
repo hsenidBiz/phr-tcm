@@ -46,7 +46,7 @@ export const screens: Screen[] = [
 /** The hero and the Quick start strip. A step links to its section once
  *  that section exists; until then it shows as plain text. */
 export const intro: Intro = {
-  promise: "Every screen and every button, in plain words.",
+  promise: "How to use Test Case Manager",
   lead:
     "Write test cases by hand or import them, review the queue, upload them to your Product Backlog Item, then run them and follow the work. " +
     "Pick a screen from the contents, or press [[Ctrl+K]] to search.",

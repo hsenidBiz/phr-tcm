@@ -45,7 +45,7 @@ export function renderHero(
     h(
       "div",
       { class: "hero-copy" },
-      h("p", { class: "hero-eyebrow" }, h("span", { class: "hero-dot", "aria-hidden": "true" }), `How To Use ${PRODUCT}`),
+      // The title names the guide itself; no label above it repeats it.
       h("h1", {}, rich(intro.promise)),
       h("p", { class: "hero-lead" }, rich(intro.lead)),
       h(
