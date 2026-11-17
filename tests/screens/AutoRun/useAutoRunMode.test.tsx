@@ -33,3 +33,11 @@ test("setMode asks Rust and the hook follows the answer", async () => {
   expect(calls).toEqual([{ mode: "simple" }]);
   await waitFor(() => expect(result.current.mode).toBe("simple"));
 });
+
+test("loading is true until the settings have answered", async () => {
+  mockIPC((cmd) => (cmd === "get_app_settings" ? { autorun_mode: "simple" } : undefined));
+  const { result } = renderHook(() => useAutoRunMode(), { wrapper: wrapper() });
+  expect(result.current.loading).toBe(true);
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.mode).toBe("simple");
+});

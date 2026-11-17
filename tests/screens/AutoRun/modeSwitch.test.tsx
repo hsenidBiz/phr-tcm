@@ -58,3 +58,23 @@ test("the switch is disabled, with a reason, while an unattended run is going", 
   expect(advanced).toBeDisabled();
   expect(advanced).toHaveAttribute("title", expect.stringMatching(/run/i));
 });
+
+test("neither option is pressed, and clicks are ignored, until the settings answer", async () => {
+  let answer!: (v: unknown) => void;
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "get_app_settings") return new Promise((r) => (answer = r));
+    if (cmd === "list_test_case_fields" || cmd === "pbi_test_cases_full") return [];
+  });
+  renderScreen();
+  const simple = screen.getByRole("button", { name: "Simple" });
+  const advanced = screen.getByRole("button", { name: "Advanced" });
+  expect(simple).toHaveAttribute("aria-pressed", "false");
+  expect(advanced).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(simple);
+  expect(calls).not.toContain("set_autorun_mode");
+  answer({ autorun_mode: "simple" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-pressed", "false");
+});
