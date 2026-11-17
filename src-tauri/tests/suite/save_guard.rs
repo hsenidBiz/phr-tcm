@@ -758,7 +758,7 @@ fn a_blocked_save_proposes_failed_and_is_never_retried() {
     let p = propose(&script, &steps, None, false);
     assert_eq!(p.verdict, "Failed");
     assert_eq!(p.reason, format!("step 1: {SENTENCE}"));
-    let record = CaseRecord {
+    let record = CaseRecord { video: None,
         bugs: vec![],
         case_id: 7,
         title: "t".into(),

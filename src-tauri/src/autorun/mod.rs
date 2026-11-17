@@ -688,6 +688,12 @@ pub struct CaseRecord {
     /// record saved before this field reads as having none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bugs: Vec<CaseBug>,
+    /// The video of the case's steps, kept only for a case that failed or
+    /// was blocked and only when "Keep a video of failed cases" was on
+    /// (`browser::recording`): its name in the shots folder, never a path.
+    /// Left out when there is none, so older run files read the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<String>,
 }
 
 /// A bug filed from a run's review for one case (`CaseRecord::bugs`).

@@ -2443,7 +2443,7 @@ async fn protected_shots_survive_the_end_of_run_prune() {
     let root = dir.path();
     seed_old_shots(root, 1005);
     let mut earlier = new_run("run-earlier");
-    earlier.cases.push(v2_lib::autorun::CaseRecord {
+    earlier.cases.push(v2_lib::autorun::CaseRecord { video: None,
         bugs: vec![],
         case_id: 9,
         title: "t".into(),

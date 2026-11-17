@@ -44,7 +44,7 @@ impl Drop for TempDir {
 /// A case with only what `latest_run` cares about: its id. Everything else
 /// is filler that no assertion in this file looks at.
 fn minimal_case(case_id: i32) -> CaseRecord {
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id,
         title: "filler".to_string(),
@@ -65,7 +65,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
 /// A case with nothing set beyond the fields every test below overrides -
 /// so each test only spells out what it actually cares about.
 fn empty_case() -> CaseRecord {
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id: 1,
         title: "A case".to_string(),
@@ -85,7 +85,7 @@ fn empty_case() -> CaseRecord {
 
 #[test]
 fn stop_reason_is_some_when_the_sign_in_step_failed() {
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         steps: vec![StepRecord {
             step_number: 0,
             outcomes: vec![ActionOutcome::failed("wrong password")],
@@ -109,7 +109,7 @@ fn stop_reason_is_some_when_the_sign_in_step_failed() {
 #[test]
 fn stop_reason_names_an_expired_password_apart_from_a_failed_sign_in() {
     let detail = format!("{} - the browser ended on /hr/security/PasswordReset", v2_lib::autorun::signin::PASSWORD_EXPIRED);
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         steps: vec![StepRecord {
             step_number: 0,
             outcomes: vec![ActionOutcome::failed(&detail)],
@@ -130,7 +130,7 @@ fn stop_reason_names_an_expired_password_apart_from_a_failed_sign_in() {
 #[test]
 fn stop_reason_says_when_the_recipe_does_not_describe_the_change_password_page() {
     let detail = format!("{} - the browser ended on /account/ChangePassword", v2_lib::autorun::signin::CHANGE_PASSWORD_UNKNOWN);
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         steps: vec![StepRecord {
             step_number: 0,
             outcomes: vec![ActionOutcome::failed(&detail)],
@@ -150,12 +150,12 @@ fn stop_reason_says_when_the_recipe_does_not_describe_the_change_password_page()
 
 #[test]
 fn stop_reason_is_some_when_the_browser_stopped_answering() {
-    let starts_with_the_browser = CaseRecord {
+    let starts_with_the_browser = CaseRecord { video: None,
         reason: "the browser did not open: connection refused".to_string(),
         ..empty_case()
     };
     // What `propose` writes for any action whose browser gave up.
-    let stopped_answering = CaseRecord {
+    let stopped_answering = CaseRecord { video: None,
         reason: "the browser stopped answering at step 3: the browser did not answer: timed out".to_string(),
         verdict: "Blocked".to_string(),
         ..empty_case()
@@ -174,14 +174,14 @@ fn a_failed_step_that_quotes_did_not_answer_is_not_the_browser_stopping() {
         "step 2: page does NOT contain did not answer",
         "step 3: button \"Save\" not found (the page showed alert: the server did not answer and it was accepted)",
     ] {
-        let case = CaseRecord { verdict: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
+        let case = CaseRecord { video: None, verdict: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
         assert_eq!(stop_reason(&case), None, "{reason}");
     }
 }
 
 #[test]
 fn stop_reason_is_some_when_the_person_marked_the_case_blocked() {
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         verdict: "Blocked".to_string(),
         reason: "a precondition was missing".to_string(),
         ..empty_case()
@@ -194,7 +194,7 @@ fn stop_reason_is_some_when_the_person_marked_the_case_blocked() {
 
 #[test]
 fn stop_reason_is_none_for_an_ordinary_script_failure() {
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         verdict: "Failed".to_string(),
         reason: "step 2: button \"Save\" not found".to_string(),
         ..empty_case()
@@ -213,7 +213,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         pbi_id: 555,
         started_at: "1700000000000".to_string(),
         cases: vec![
-            CaseRecord {
+            CaseRecord { video: None,
                 bugs: vec![],
                 case_id: 7,
                 title: "Leave request".to_string(),
@@ -255,7 +255,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
-            CaseRecord {
+            CaseRecord { video: None,
                 bugs: vec![],
                 case_id: 8,
                 title: "Something else".to_string(),
@@ -286,7 +286,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
-            CaseRecord {
+            CaseRecord { video: None,
                 bugs: vec![],
                 case_id: 9,
                 title: "Passed case, never mentioned".to_string(),
@@ -365,7 +365,7 @@ fn describe_failures_names_the_run_when_no_case_failed() {
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
-        cases: vec![CaseRecord { proposed: "Passed".to_string(), verdict: "Passed".to_string(), ..empty_case() }],
+        cases: vec![CaseRecord { video: None, proposed: "Passed".to_string(), verdict: "Passed".to_string(), ..empty_case() }],
         mode: String::new(),
         published: None,
         environment: None,
@@ -381,7 +381,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
         id: "run-2".to_string(),
         pbi_id: 1,
         started_at: "2".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             verdict: "Blocked".to_string(),
             proposed: "Blocked".to_string(),
             reason: "a precondition was missing".to_string(),
@@ -414,7 +414,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         id: "run-3".to_string(),
         pbi_id: 1,
         started_at: "3".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             proposed: "Failed".to_string(),
             steps: vec![StepRecord {
                 step_number: 1,
@@ -476,7 +476,7 @@ fn describe_failures_omits_proposed_when_proposed_is_empty() {
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
-        cases: vec![CaseRecord { verdict: "Failed".to_string(), proposed: String::new(), ..empty_case() }],
+        cases: vec![CaseRecord { video: None, verdict: "Failed".to_string(), proposed: String::new(), ..empty_case() }],
         mode: String::new(),
         published: None,
         environment: None,
@@ -498,7 +498,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             proposed: "Failed".to_string(),
             steps: vec![StepRecord {
                 step_number: 1,
@@ -535,7 +535,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             proposed: "Failed".to_string(),
             steps: vec![StepRecord {
                 step_number: 1,
@@ -617,7 +617,7 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
 #[test]
 fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     let unreached = "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - waited 300ms: link \"Apply Leave\" not found.";
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         proposed: "Blocked".to_string(),
         reason: unreached.to_string(),
         steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
@@ -631,7 +631,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     );
     assert_eq!(stop_reason(&case), expected);
     // The other setup problems keep the line that sends the person to the app.
-    let no_module = CaseRecord { reason: v2_lib::autorun::nav::NO_MODULE.to_string(), steps: vec![], ..case.clone() };
+    let no_module = CaseRecord { video: None, reason: v2_lib::autorun::nav::NO_MODULE.to_string(), steps: vec![], ..case.clone() };
     assert_eq!(
         stop_reason(&no_module).as_deref(),
         Some("the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script")
@@ -651,7 +651,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     assert!(out.contains(&format!("module: {unreached}")), "{out}");
     assert!(!out.contains("step -1"), "{out}");
 
-    let no_path_case = CaseRecord { proposed: "Blocked".to_string(), reason: no_path("Payroll"), ..empty_case() };
+    let no_path_case = CaseRecord { video: None, proposed: "Blocked".to_string(), reason: no_path("Payroll"), ..empty_case() };
     assert_eq!(
         stop_reason(&no_path_case).as_deref(),
         Some("the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script")
@@ -663,7 +663,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
 #[test]
 fn a_failed_check_that_quotes_the_unreached_sentence_is_not_a_setup_problem() {
     let reason = "step 1: page does NOT contain Could not reach module \"Payroll\": click 2, link \"Pay\" - gone.";
-    let case = CaseRecord { proposed: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
+    let case = CaseRecord { video: None, proposed: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
     assert_eq!(stop_reason(&case), None);
 }
 
@@ -671,7 +671,7 @@ fn a_failed_check_that_quotes_the_unreached_sentence_is_not_a_setup_problem() {
 /// starts in, under the account - and a script with no area says nothing.
 #[test]
 fn describe_failures_names_the_scripts_area_when_it_has_one() {
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         verdict: "Failed".to_string(),
         proposed: "Failed".to_string(),
         reason: "step 1: button \"Save\" not found".to_string(),
@@ -738,7 +738,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
         id: "run-dl".to_string(),
         pbi_id: 1,
         started_at: "4".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             proposed: "Failed".to_string(),
             steps: vec![
                 StepRecord {
@@ -869,7 +869,7 @@ fn a_failure_line_names_the_picture_by_a_path_that_exists() {
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             case_id: 7,
             title: "Leave request".to_string(),
             verdict: "Failed".to_string(),
@@ -925,7 +925,7 @@ fn run_ago(id: &str, ago: u64, cases: &[(i32, &str, &str)]) -> LocalRun {
         started_at: (NOW - ago).to_string(),
         cases: cases
             .iter()
-            .map(|(case_id, verdict, proposed)| CaseRecord {
+            .map(|(case_id, verdict, proposed)| CaseRecord { video: None,
                 verdict: verdict.to_string(),
                 proposed: proposed.to_string(),
                 ..minimal_case(*case_id)
@@ -1050,7 +1050,7 @@ fn a_passed_case_whose_clean_up_failed_is_listed_for_its_clean_up() {
 #[test]
 fn a_needs_a_ruling_case_is_a_stop() {
     use v2_lib::autorun::failures::NEEDS_RULING_STOP;
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         proposed: "Blocked".to_string(),
         reason: "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run".to_string(),
         ..empty_case()
@@ -1064,7 +1064,7 @@ fn a_needs_a_ruling_case_is_a_stop() {
 
 #[test]
 fn a_case_waiting_for_a_repair_is_not_a_stop() {
-    let case = CaseRecord {
+    let case = CaseRecord { video: None,
         proposed: "Blocked".to_string(),
         reason: "waits for a repair: step 2: the person is rewriting the case - repair the script to the case as it now reads"
             .to_string(),

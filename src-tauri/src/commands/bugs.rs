@@ -268,6 +268,49 @@ pub async fn attach_screenshots(
     failed
 }
 
+/// Attach a failed case's video to a bug already filed: read from the shots
+/// folder (a name `store::safe_video_name` accepts, never a path), checked by
+/// the same `refuse_attachment` every other file passes, then uploaded and
+/// linked - POST and PATCH only. Called after `file_bug`, so a video that
+/// cannot go up never costs a duplicate bug; the sentence says why.
+pub async fn attach_video_with(
+    client: &ado::AdoClient,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    id: i32,
+    video: &str,
+) -> Result<(), String> {
+    let size = crate::autorun::store::video_size(root, video).ok_or_else(|| "The video is no longer on this machine.".to_string())?;
+    let name = format!("bug-{id}-video.mp4");
+    refuse_attachment(&name, size, MAX_PICKED_FILE)?;
+    let bytes = crate::autorun::store::load_video(root, video)?;
+    let att_url = client.upload_wi_attachment(organization, project, &name, bytes).await.map_err(|e| {
+        crate::applog::warn(format!("bug {id}: {name} did not upload: {e}"));
+        "The video did not upload.".to_string()
+    })?;
+    client.add_wi_attachment_relation(organization, project, id, &att_url).await.map_err(|e| {
+        crate::applog::warn(format!("bug {id}: {name} uploaded but not linked: {e}"));
+        "The video uploaded but could not be linked to the bug.".to_string()
+    })
+}
+
+/// `attach_video_with` for the signed-in user, from the bug dialog.
+#[tauri::command]
+#[specta::specta]
+pub async fn attach_case_video(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    bug_id: i32,
+    video: String,
+) -> Result<(), String> {
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let client = ado::AdoClient::new(token);
+    let root = super::autorun::root(&app)?;
+    attach_video_with(&client, &root, &organization, &project, bug_id, &video).await
+}
+
 /// The most a file picked for attaching may be.
 pub const MAX_PICKED_FILE: u64 = 25 * 1024 * 1024;
 

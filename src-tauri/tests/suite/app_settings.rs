@@ -24,6 +24,7 @@ fn a_missing_file_is_the_defaults() {
             stay_signed_in: true,
             playwright_clone: String::new(),
             autorun_highlight: true,
+            autorun_failed_video: false,
             page_size: DEFAULT_PAGE,
         }
     );
@@ -53,6 +54,7 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             stay_signed_in: true,
             playwright_clone: String::new(),
             autorun_highlight: true,
+            autorun_failed_video: false,
             page_size: DEFAULT_PAGE,
         }
     );
@@ -70,6 +72,7 @@ fn saved_settings_read_back() {
         stay_signed_in: false,
         playwright_clone: "C:/clone".into(),
         autorun_highlight: false,
+        autorun_failed_video: true,
         page_size: PageSize { width: 1920, height: 1080 },
     };
     save(d.path(), &s).unwrap();
@@ -118,4 +121,13 @@ fn highlight_defaults_on() {
     let d = dir();
     std::fs::write(d.path().join("app-settings.json"), r#"{"beta_updates":true}"#).unwrap();
     assert!(load(d.path()).autorun_highlight);
+}
+
+#[test]
+fn failed_case_video_defaults_off() {
+    assert!(!AppSettings::default().autorun_failed_video);
+    // A file written before the setting existed reads as off.
+    let d = dir();
+    std::fs::write(d.path().join("app-settings.json"), r#"{"beta_updates":true}"#).unwrap();
+    assert!(!load(d.path()).autorun_failed_video);
 }

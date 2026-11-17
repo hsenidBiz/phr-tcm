@@ -108,7 +108,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
         id: "run-1".to_string(),
         pbi_id: 42,
         started_at: "1786000000000".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             bugs: vec![],
             case_id: 201,
             title: "Valid login".to_string(),
@@ -674,7 +674,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
         started_at: "1".into(),
         mode: "unattended".into(),
         published: None,
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             bugs: vec![],
             case_id: 1,
             title: "t".into(),
@@ -900,7 +900,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
         started_at: "1".into(),
         mode: "unattended".into(),
         published: None,
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             bugs: vec![],
             case_id: 1,
             title: "t".into(),

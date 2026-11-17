@@ -433,6 +433,12 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
         lines.push(format!("STOP: {reason}"));
     }
 
+    // The video kept of a failed case: its name, as the pictures are named,
+    // never a path.
+    if let Some(video) = &case.video {
+        lines.push(format!("video of the case: {video}"));
+    }
+
     // A case listed only for its clean-up says so before anything else.
     if !is_failed(case) && case.cleanup_line().is_some() {
         lines.push(CLEANUP_ONLY.to_string());

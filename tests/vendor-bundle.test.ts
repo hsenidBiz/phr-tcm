@@ -153,6 +153,20 @@ test("the app's CSP allows a blob: image but no remote scheme", () => {
   }
 });
 
+// A failed case's video plays from a blob: object URL, which Chromium does not
+// treat as 'self' for media either - without this the video element is a
+// securitypolicyviolation in the real app, and no jsdom test can see it.
+test("the app's CSP allows a blob: video but no remote scheme", () => {
+  const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
+  for (const policy of [conf.app.security.csp, conf.app.security.devCsp] as string[]) {
+    const media = policy
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("media-src"));
+    expect(media).toBe("media-src 'self' blob:");
+  }
+});
+
 // The BSD notice both licences require has to actually be in the notices
 // file, not just a filename check that the licences themselves are still
 // bundled - an edit to the notices file could otherwise quietly drop it.

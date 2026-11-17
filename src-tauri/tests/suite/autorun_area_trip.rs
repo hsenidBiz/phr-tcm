@@ -292,7 +292,7 @@ async fn an_unattended_run_reads_the_named_areas_before_step_1() {
     let mut lease = Held::new(Holder::Case { run: String::new() }, quick().lease_wait());
     let cancel = AtomicBool::new(false);
     let record = v2_lib::autorun::replay::run_case_as(
-        &mut d, dir.path(), ORG, PROJECT, &mut lease, &s, None, Some(&route), &quick(), &cancel, &mut |_| {},
+        &mut d, dir.path(), ORG, PROJECT, &mut lease, &s, None, Some(&route), &quick(), &cancel, false, &mut |_| {},
     )
     .await;
     let step = |n: i32| record.steps.iter().find(|r| r.step_number == n).unwrap_or_else(|| panic!("no step {n}"));

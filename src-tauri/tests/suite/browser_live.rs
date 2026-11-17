@@ -4804,3 +4804,94 @@ async fn page_until_waits_for_a_page_that_turns_late() {
     assert!(!out.ok, "{}", out.detail);
     assert_eq!(out.detail, "Next did not turn the page (page 1).");
 }
+
+async fn run_recorded(live: &mut Live, root: &Path, script: CaseScript) -> v2_lib::autorun::CaseRecord {
+    use v2_lib::autorun::lease::{Held, Holder};
+    let mut lease = Held::new(Holder::Case { run: String::new() }, timing().lease_wait());
+    v2_lib::autorun::replay::run_case_as(
+        &mut live.cdp, root, "acme", "PMS", &mut lease, &script, None, None, &timing(), &AtomicBool::new(false), true, &mut |_| {},
+    )
+    .await
+}
+
+/// The browser's own recorder, end to end: a case that fails keeps an MP4
+/// beside the run's pictures, and one that passes keeps none. Needs Edge 153
+/// or newer; on an older one the test says so and stops, as a run would.
+#[tokio::test]
+#[ignore = "starts a real headless Edge 153 or newer"]
+async fn a_failed_case_keeps_a_video_in_a_real_browser() {
+    use v2_lib::browser::recording;
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let support = recording::support(&mut live.cdp).await;
+    if !support.is_yes() {
+        eprintln!("skipped: this Edge cannot record ({support:?})");
+        return;
+    }
+    let case = |case_id: i32, text: &str| -> CaseScript {
+        serde_json::from_value(json!({
+            "case_id": case_id,
+            "title": "video",
+            "steps": [
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": fixture_url() }] },
+                { "step_number": 2, "actions": [{ "kind": "check_text", "value": text }] }
+            ]
+        }))
+        .expect("the test wrote an invalid case script")
+    };
+    let failed = run_recorded(&mut live, root.path(), case(1, "text that is nowhere on this page")).await;
+    assert_eq!(failed.proposed, "Failed", "{failed:?}");
+    let name = failed.video.as_deref().expect("a failed case keeps its video");
+    let bytes = std::fs::read(root.path().join("shots").join(name)).expect("the video is on disk");
+    eprintln!("a short failed case: {} bytes", bytes.len());
+    assert!(bytes.len() > 100, "an empty video: {} bytes", bytes.len());
+    assert_eq!(&bytes[4..8], b"ftyp", "not an MP4");
+
+    // The file plays in the browser's own video element - the engine the
+    // app's WebView2 is built on - so the AV1 inside needs nothing installed.
+    let url = format!("file:///{}", root.path().join("shots").join(name).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/").replace(' ', "%20"));
+    let js = format!(
+        "new Promise(res => {{ const v = document.createElement('video'); v.muted = true;          v.onloadeddata = () => res({{ ok: true, w: v.videoWidth, h: v.videoHeight }});          v.onerror = () => res({{ ok: false, err: String(v.error && v.error.message) }});          setTimeout(() => res({{ ok: false, err: 'timeout' }}), 8000);          v.src = '{url}'; document.body.appendChild(v); }})"
+    );
+    let played = live.cdp.call("Runtime.evaluate", json!({ "expression": js, "awaitPromise": true, "returnByValue": true })).await.unwrap();
+    eprintln!("the video element says: {}", played["result"]["value"]);
+    assert_eq!(played["result"]["value"]["ok"], true, "the video does not play: {played}");
+
+    let videos = |root: &Path| {
+        std::fs::read_dir(root.join("shots")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".mp4")).count()
+    };
+    let passed = run_recorded(&mut live, root.path(), case(2, "Fixture")).await;
+    assert_ne!(passed.proposed, "Failed", "{passed:?}");
+    assert_eq!(passed.video, None);
+    assert_eq!(videos(root.path()), 1, "a passed case left a video");
+}
+
+/// How large the recorder's file is for a quiet page and for one that
+/// repaints the whole page ten times a second, over eight seconds each, so
+/// the size per minute can be read off the output (`--nocapture`).
+#[tokio::test]
+#[ignore = "starts a real headless Edge 153 or newer"]
+async fn how_large_a_recording_is_for_a_quiet_and_a_busy_page() {
+    use v2_lib::browser::recording;
+    use serde_json::json;
+    let mut live = open().await;
+    if !recording::support(&mut live.cdp).await.is_yes() {
+        eprintln!("skipped: this Edge cannot record");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    for (label, busy) in [("quiet", false), ("busy", true)] {
+        if busy {
+            let _ = live
+                .cdp
+                .call("Runtime.evaluate", json!({ "expression": "setInterval(() => { document.body.style.background = '#' + Math.floor(Math.random() * 16777215).toString(16); }, 100)" }))
+                .await;
+        }
+        let rec = recording::start(&mut live.cdp, "size test").await.expect("recording started");
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let stopped = recording::stop(&mut live.cdp, rec, "size test").await.expect("recording stopped");
+        let name = recording::keep(&mut live.cdp, stopped, root.path(), "size test").await.expect("video kept");
+        let len = std::fs::metadata(root.path().join("shots").join(name)).unwrap().len();
+        eprintln!("{label}: {len} bytes for 8 s = about {:.1} MB per minute", len as f64 * 7.5 / 1_048_576.0);
+    }
+}

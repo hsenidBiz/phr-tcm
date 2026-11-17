@@ -21,7 +21,7 @@ fn fill(name: &str, value: &str) -> Action {
 }
 
 fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id,
         title: format!("case {case_id}"),

@@ -101,6 +101,17 @@ pub fn set_autorun_highlight(on: bool) -> Result<AppSettings, String> {
     })
 }
 
+/// Whether an unattended Auto Run run keeps a video of each case that fails
+/// or is blocked. Read when a run starts.
+#[tauri::command]
+#[specta::specta]
+pub fn set_autorun_failed_video(on: bool) -> Result<AppSettings, String> {
+    app_settings::update(|s| s.autorun_failed_video = on).map_err(|e| {
+        crate::applog::warn(format!("saving the failed-case video setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}
+
 /// The page size every browser the app drives shows.
 #[tauri::command]
 #[specta::specta]

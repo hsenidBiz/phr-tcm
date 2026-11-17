@@ -88,7 +88,7 @@ fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
 /// Case `case_id` as a run recorded it: steps 1 and 2 passed, step 3's
 /// check failed on what the application showed.
 fn failed_at_3(case_id: i32) -> CaseRecord {
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id,
         title: "Save a rating".into(),

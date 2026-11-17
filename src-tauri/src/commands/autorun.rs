@@ -3077,6 +3077,71 @@ pub fn auto_run_shot(app: tauri::AppHandle, name: String) -> Result<String, Stri
     ))
 }
 
+/// What the screens need to know about a failed case's video before they
+/// offer to play, save or attach it. The limits live here, so the webview
+/// never carries a copy of them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct VideoInfo {
+    /// Bytes; a video past 4 GB reads as `u32::MAX`.
+    pub size: u32,
+    /// Small enough to play inside the app (`PLAY_MAX_BYTES`).
+    pub playable: bool,
+    /// Small enough to attach to a bug (`bugs::MAX_PICKED_FILE`).
+    pub attachable: bool,
+}
+
+/// The most a video may be to be handed to the webview to play; a larger
+/// one can still be saved to disk.
+pub const PLAY_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// A video's `VideoInfo` for a data root, or `None` when the name is not a
+/// video's or the file is gone.
+pub fn video_info_at(root: &std::path::Path, name: &str) -> Option<VideoInfo> {
+    let size = store::video_size(root, name)?;
+    Some(VideoInfo {
+        size: u32::try_from(size).unwrap_or(u32::MAX),
+        playable: size <= PLAY_MAX_BYTES,
+        attachable: size <= super::bugs::MAX_PICKED_FILE,
+    })
+}
+
+/// Whether a failed case's video is on this machine, and how large.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_video_info(app: tauri::AppHandle, name: String) -> Option<VideoInfo> {
+    video_info_at(&root(&app).ok()?, &name)
+}
+
+/// A failed case's video, base64, for the webview's video element. The name
+/// is checked in `store::load_video`; nothing outside the shots folder can
+/// be read through here, and a video past `PLAY_MAX_BYTES` is refused (it
+/// can still be saved).
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_video(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    use base64::Engine;
+    let root = root(&app)?;
+    match video_info_at(&root, &name) {
+        None => return Err("that video is gone".to_string()),
+        Some(info) if !info.playable => return Err("that video is too large to play here - save it instead".to_string()),
+        Some(_) => {}
+    }
+    let bytes = store::load_video(&root, &name)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Save a failed case's video to a path the person chose. The bytes go from
+/// the shots folder to that path and never through the webview.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_save_video(app: tauri::AppHandle, name: String, dest_path: String) -> Result<(), String> {
+    let bytes = store::load_video(&root(&app)?, &name)?;
+    super::bugs::write_file_atomically(std::path::Path::new(&dest_path), &bytes).map_err(|e| {
+        crate::applog::warn(format!("saving a case video failed: {e}"));
+        format!("Could not save the file: {e}")
+    })
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_script(
