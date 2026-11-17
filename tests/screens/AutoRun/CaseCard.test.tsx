@@ -419,7 +419,7 @@ test("a case with no script still shows its divergence", () => {
   renderCard({ open: true, script: null, divergences: [DIV] });
   expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Rule the case is right for #7 step 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "The app is wrong for #7 step 2" })).toBeInTheDocument();
 });
 
 /** A script whose step 2 leaves one expectation unchecked, with a stand-in. */

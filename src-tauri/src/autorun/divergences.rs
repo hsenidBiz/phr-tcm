@@ -374,7 +374,7 @@ pub fn rule_in(list: &mut [Divergence], id: &str, ruling: Ruling, now_ms: u64) -
         return Err("that divergence was already ruled on".to_string());
     }
     if ruling == Ruling::DataFixed && d.kind != DivergenceKind::Data {
-        return Err("Data fixed is for a data divergence".to_string());
+        return Err("That ruling is for a data divergence".to_string());
     }
     d.status = if ruling == Ruling::Rewrite { DivergenceStatus::AwaitingRepair } else { DivergenceStatus::Ruled };
     d.ruling = Some(ruling);
@@ -484,13 +484,13 @@ pub fn ruling_answer(list: &[Divergence], picks: &[(i32, String)], ruling: Rulin
         let (c, s) = (d.case_id, d.step);
         lines.push(match ruling {
             Ruling::CaseStands => format!(
-                "Ruled {id} (case {c} step {s}): the case is right, on the person's words. Its runs are no longer Blocked by it, and the script's check stays as the case says."
+                "Ruled {id} (case {c} step {s}): the person said the app is wrong, so the case stands, on the person's words. Its runs are no longer Blocked by it, and the script's check stays as the case says."
             ),
             Ruling::DataFixed => format!(
-                "Ruled {id} (case {c} step {s}): the data was fixed, on the person's words. Replay the whole case with replay_autorun_to_step: the script counts as checked only after a replay passes."
+                "Ruled {id} (case {c} step {s}): the person fixed the data, on the person's words. Replay the whole case with replay_autorun_to_step: the script counts as checked only after a replay passes."
             ),
             Ruling::Rewrite => format!(
-                "Ruled {id} (case {c} step {s}): the case is being rewritten, on the person's words. It stays Blocked until the rewrite is in Azure DevOps and the script is repaired to the case as it then reads."
+                "Ruled {id} (case {c} step {s}): the person said the app is right and the case is being updated, on the person's words. It stays Blocked until the rewrite is in Azure DevOps and the script is repaired to the case as it then reads."
             ),
         });
     }

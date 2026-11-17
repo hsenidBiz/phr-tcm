@@ -1,8 +1,8 @@
 // A reported divergence on a case card: where the test case and the live
 // application disagree. An assistant reports it instead of fitting a check
-// to the page; the person rules here - the case is right, the data is
-// fixed, or the case is rewritten in Azure DevOps. A ruling touches only
-// the divergence record; nothing is written to Azure DevOps.
+// to the page; the person rules here on which is right, the case or the
+// app (or says the data was fixed). A ruling touches only the divergence
+// record; nothing is written to Azure DevOps.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -56,9 +56,11 @@ export function DivergenceBadge({ divergence }: { divergence: Divergence }) {
 }
 
 const SENTENCE: Record<Ruling, (step: number) => string> = {
-  case_stands: (step) => `The script keeps the case's value at step ${step}, and the case runs again.`,
-  data_fixed: () => "You changed the environment so it matches the case; the case runs again.",
-  rewrite: () => "Azure DevOps opens on the case. The case waits until its script is repaired to what you write.",
+  case_stands: (step) =>
+    `The script keeps the case's value at step ${step}, so the run fails there until the app is fixed.`,
+  data_fixed: () => "You changed the environment's data to match the case; the case runs again.",
+  rewrite: () =>
+    "Azure DevOps opens on the case so you can update it; the case waits until its script is repaired to match.",
 };
 
 export function DivergenceRow({
@@ -105,7 +107,7 @@ export function DivergenceRow({
     }
   };
 
-  // Takes a "Rewrite the case" ruling back: the divergence needs a ruling again.
+  // Takes an "update the case" ruling back: the divergence needs a ruling again.
   const undo = async () => {
     setBusy(true);
     setProblem(null);
@@ -142,37 +144,42 @@ export function DivergenceRow({
       </span>
       {divergence.status === "open" && (
         <>
+          {divergence.kind !== "app" && (
+            <span className="w-full text-xs font-medium text-text">
+              The case and the app disagree at step {step}. Which is right?
+            </span>
+          )}
           <Button
             size="sm"
             variant="outline"
             className="shrink-0"
-            aria-label={`Rule the case is right for #${caseId} step ${step}`}
+            aria-label={`The app is wrong for #${caseId} step ${step}`}
             onClick={() => setAsking("case_stands")}
           >
             <IconConfirm aria-hidden />
-            The case is right
+            The app is wrong
           </Button>
           {divergence.kind === "data" && (
             <Button
               size="sm"
               variant="outline"
               className="shrink-0"
-              aria-label={`Rule the data fixed for #${caseId} step ${step}`}
+              aria-label={`I fixed the data for #${caseId} step ${step}`}
               onClick={() => setAsking("data_fixed")}
             >
               <IconDataFixed aria-hidden />
-              Data fixed
+              I fixed the data
             </Button>
           )}
           <Button
             size="sm"
             variant="outline"
             className="shrink-0"
-            aria-label={`Rewrite case #${caseId} in Azure DevOps`}
+            aria-label={`The app is right, update case #${caseId} for step ${step}`}
             onClick={() => setAsking("rewrite")}
           >
             <IconOpenInBrowser aria-hidden />
-            Rewrite the case
+            The app is right, update the case
           </Button>
         </>
       )}

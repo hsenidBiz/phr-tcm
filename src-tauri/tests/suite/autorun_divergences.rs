@@ -285,7 +285,7 @@ fn a_proposal_is_stored_capped_and_listed_with_the_divergence() {
 fn rulings() {
     let mut list = vec![];
     report_in(&mut list, 147556, 2, "exactly 4 levels", "6 levels", DivergenceKind::App, NOW).unwrap();
-    assert_eq!(rule_in(&mut list, "d1", Ruling::DataFixed, NOW).unwrap_err(), "Data fixed is for a data divergence");
+    assert_eq!(rule_in(&mut list, "d1", Ruling::DataFixed, NOW).unwrap_err(), "That ruling is for a data divergence");
     assert_eq!(rule_in(&mut list, "d9", Ruling::CaseStands, NOW).unwrap_err(), "no divergence d9");
 
     let mut list = vec![];
@@ -754,7 +754,7 @@ fn the_app_rules_a_divergence_and_loads_the_rest() {
     assert!(rule_at(root, "org", "proj", &id, Ruling::CaseStands, now + 2000).is_err());
 }
 
-// ------------------------------------- "Rewrite the case" must have ways out
+// ------------------------------------- "The app is right, update the case" must have ways out
 
 fn awaiting(id: &str, step: i32) -> Divergence {
     Divergence {
@@ -1034,9 +1034,9 @@ mod assistant {
         as_assistant.note = None;
         assert_eq!(as_assistant, persons[0]);
 
-        // Data fixed is for a data divergence.
+        // That ruling is for a data divergence.
         let err = rule_by_assistant_in(&mut list, &[pick(147556, "d4")], Ruling::DataFixed, SAID, None, NOW).unwrap_err();
-        assert!(err.contains("Data fixed is for a data divergence"), "{err}");
+        assert!(err.contains("That ruling is for a data divergence"), "{err}");
         assert_eq!(list[3].status, DivergenceStatus::Open);
         assert!(rule_by_assistant_in(&mut list, &[pick(147556, "d2")], Ruling::DataFixed, SAID, None, NOW).is_ok());
 
@@ -1056,7 +1056,7 @@ mod assistant {
         assert_eq!(list[2].status, DivergenceStatus::Ruled);
         let answer = ruling_answer(&list, &picks, Ruling::CaseStands);
         assert_eq!(answer.matches("Ruled d1 ").count(), 1, "a duplicate counts once: {answer}");
-        assert!(answer.contains("Ruled d3 (case 147556 step 4): the case is right, on the person's words."), "{answer}");
+        assert!(answer.contains("Ruled d3 (case 147556 step 4): the person said the app is wrong, so the case stands, on the person's words."), "{answer}");
         assert!(answer.ends_with("The person can undo each of these on the case card in Auto Run."), "{answer}");
     }
 
@@ -1354,7 +1354,7 @@ mod ruling_route {
         )
         .await;
         assert_eq!(status, 200, "{out}");
-        assert!(out.starts_with("Ruled d1 (case 147556 step 2): the case is right"), "{out}");
+        assert!(out.starts_with("Ruled d1 (case 147556 step 2): the person said the app is wrong"), "{out}");
         assert_eq!(needs_ruling(dir.path(), "acme", "Web", 147556), None);
         assert!(!load_script(dir.path(), 147556).unwrap().unwrap().checked, "checked only after a pass");
         note_outcome(dir.path(), 147556, Outcome::Green);

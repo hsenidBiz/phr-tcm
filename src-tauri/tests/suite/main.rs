@@ -247,6 +247,7 @@ mod pw_repo_timing;
 mod pw_repo_users;
 mod relink;
 mod report;
+mod ruling_words;
 mod run_order;
 mod save_guard;
 mod saved_session;

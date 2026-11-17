@@ -23,7 +23,7 @@ export const GLOSSARY = {
   divergence:
     "A place where a test case and the live application disagree, such as a different value at a step. An assistant reports it instead of bending the check to fit the page.",
   ruling:
-    "Your decision about a divergence: the case is right, the data is fixed, or the case is rewritten.",
+    "Your decision about a divergence: the app is wrong, the app is right and the case needs updating, or you fixed the data.",
 } as const;
 
 export type TermName = keyof typeof GLOSSARY;
