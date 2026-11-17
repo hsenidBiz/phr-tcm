@@ -208,7 +208,10 @@ export function diffCase(
         : q.trim() === c.trim() ||
           (name === "Preconditions" &&
             ((current.preconditions_legacy != null && q.trim() === current.preconditions_legacy.trim()) ||
-              q.trim() === withoutUnderline(c).trim()));
+              // A copy read before underline was kept: only for a field
+              // stored as HTML, as `prereq_patch` does - a Markdown-stored
+              // field's old copies hold its raw value already.
+              (current.preconditions_stored?.markdown !== true && q.trim() === withoutUnderline(c).trim())));
     if (!equal) fields.push({ name, old: c, new: q });
   }
 

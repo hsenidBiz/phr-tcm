@@ -371,3 +371,12 @@ test("a bold step and a list saved before underline was kept are no change, and 
   expect(edited.steps.changed).toBe(1);
   expect(edited.fields.some((f) => f.name === "Preconditions")).toBe(true);
 });
+
+test("removing underline from preconditions stored as Markdown shows as a change, as the save writes it", () => {
+  // A Markdown-stored field's old copies hold its raw value, so only the
+  // HTML-stored field reads a copy without underline as unchanged.
+  const stored = { value: "Log in as <u>admin</u>", markdown: true };
+  const cur = current({ preconditions: "Log in as <u>admin</u>", preconditions_stored: stored });
+  const d = diffCase(queued({ preconditions: "Log in as admin" }), cur);
+  expect(d.fields.some((f) => f.name === "Preconditions")).toBe(true);
+});
