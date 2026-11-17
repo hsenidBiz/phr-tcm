@@ -617,3 +617,62 @@ test("Clear results refreshes the Flaky cases list, which reads the same run fil
   fireEvent.click(await screen.findByRole("button", { name: "Clear 1 run" }));
   await waitFor(() => expect(screen.queryByRole("listitem", { name: "Flaky case Valid login" })).toBeNull());
 });
+
+test("only a case with a kept video shows Play and Download for it", async () => {
+  const asked: unknown[] = [];
+  renderPastRuns(
+    [
+      runOf({
+        pbi_id: 42,
+        cases: [
+          { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Failed", steps: [], video: "video-1700000000000-000001.mp4" },
+          { case_id: 202, title: "No video", verdict: "", note: "", proposed: "Failed", steps: [] },
+        ],
+      }),
+    ],
+    42,
+    (cmd, args) => {
+      if (cmd === "auto_run_video_info") {
+        asked.push(args);
+        return { size: 3000, playable: true, attachable: true };
+      }
+      return undefined;
+    },
+  );
+  const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  expect(await within(row).findByRole("button", { name: "Play video" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Download video" })).toBeInTheDocument();
+  const other = screen.getByRole("listitem", { name: "Run of No video" });
+  expect(within(other).queryByRole("button", { name: "Play video" })).not.toBeInTheDocument();
+  expect(within(other).queryByRole("button", { name: "Download video" })).not.toBeInTheDocument();
+  // Only the video's own name was asked about.
+  expect(asked).toEqual([{ name: "video-1700000000000-000001.mp4" }]);
+});
+
+test("a run in a browser that cannot record says so once as quiet text, never as a Not checked badge", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        pbi_id: 42,
+        video_unavailable: true,
+        cases: [
+          { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Passed", steps: [] },
+          { case_id: 202, title: "Locked account", verdict: "", note: "", proposed: "Failed", steps: [] },
+        ],
+      }),
+    ],
+    42,
+  );
+  await screen.findByRole("listitem", { name: "Run of Valid login" });
+  expect(screen.getAllByText("Video was not recorded: this browser version cannot record.")).toHaveLength(1);
+  expect(screen.queryByText("Not checked")).not.toBeInTheDocument();
+});
+
+test("a run that could record shows no such line", async () => {
+  renderPastRuns(
+    [runOf({ pbi_id: 42, cases: [{ case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Passed", steps: [] }] })],
+    42,
+  );
+  await screen.findByRole("listitem", { name: "Run of Valid login" });
+  expect(screen.queryByText(/Video was not recorded/)).not.toBeInTheDocument();
+});

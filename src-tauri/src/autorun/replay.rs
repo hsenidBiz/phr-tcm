@@ -22,6 +22,7 @@ use super::{store, CasePhases, CaseRecord, CaseScript, LocalRun, NetworkPauseRec
 use crate::api_templates::gate::StageDb;
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
+use crate::browser::recording;
 use crate::browser::save_guard;
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
@@ -122,6 +123,12 @@ fn who(case_id: i32) -> String {
 /// fakes.
 pub trait Browsers {
     type D: Driver;
+    /// Whether a failed case's video is wanted ("Keep a video of failed
+    /// cases"). Read once when the run starts. The tests' fakes say what
+    /// the test needs.
+    fn keep_failed_video(&self) -> bool {
+        crate::app_settings::current().autorun_failed_video
+    }
     fn open(&mut self) -> impl std::future::Future<Output = Result<Self::D, String>>;
     fn close(&mut self, d: Self::D) -> impl std::future::Future<Output = ()>;
 }
@@ -344,7 +351,7 @@ pub async fn run_case<D: Driver>(
 ) -> CaseRecord {
     let mut lease = Held::new(Holder::Case { run: String::new() }, timing.lease_wait());
     let account = script.account.as_deref();
-    run_case_as(d, root, organization, project, &mut lease, script, account, None, timing, cancel, on_step).await
+    run_case_as(d, root, organization, project, &mut lease, script, account, None, timing, cancel, false, on_step).await
 }
 
 /// Run one whole case: an optional sign-in as `account` (step
@@ -358,6 +365,12 @@ pub async fn run_case<D: Driver>(
 /// that cannot get it is Blocked with the sentence that says who had it,
 /// and never signs in. The caller owns `lease` and lets it go once the
 /// case's browser is closed (`one_go`).
+///
+/// With `record_video` the page is recorded from just before step 1 (after
+/// the sign-in, so no typed account name is ever on it) and the video is
+/// kept, as `CaseRecord::video`, only when the case is proposed Failed or
+/// Blocked. A recording that cannot start, stop or be read only means no
+/// video: it never changes the case's result.
 ///
 /// However the case ends - passed, failed, stopped, or never started -
 /// every tab but `main` is closed before this returns: no tab carries over
@@ -374,9 +387,10 @@ pub async fn run_case_as<D: Driver>(
     route: Option<&Route>,
     timing: &Timing,
     cancel: &AtomicBool,
+    record_video: bool,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
-    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, on_step).await;
+    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, on_step).await;
     d.close_other_tabs().await;
     record
 }
@@ -393,6 +407,7 @@ async fn run_case_in<D: Driver>(
     route: Option<&Route>,
     timing: &Timing,
     cancel: &AtomicBool,
+    record_video: bool,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
     let began = Instant::now();
@@ -545,6 +560,11 @@ async fn run_case_in<D: Driver>(
     // step: a failure names what the page answered the step before.
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
+    // The video of the steps, when one is wanted and they will run.
+    let recording = match (record_video, skip) {
+        (true, None) => recording::start(d, &who(script.case_id)).await,
+        _ => None,
+    };
     let stepping = Instant::now();
     // Whether a step of the case itself began, and whether the browser
     // stopped answering in one: the clean-up runs only after the first and
@@ -678,6 +698,14 @@ async fn run_case_in<D: Driver>(
         }
     }
 
+    // The recording stops with the steps; its video is read only once the
+    // case's proposal says it is wanted. A browser that stopped answering is
+    // not asked.
+    let stopped_video = match recording {
+        Some(r) if !gone => recording::stop(d, r, &who(script.case_id)).await,
+        _ => None,
+    };
+
     // The case's one wait for a download still arriving (`one_go` does not
     // wait again), then each file is put on the step it started in.
     let took = began.elapsed();
@@ -699,7 +727,15 @@ async fn run_case_in<D: Driver>(
     // A file that does not read leaves a component's outcomes unpaired.
     let components = super::components::load_components(root, organization, project).unwrap_or_default();
     let p = propose_with(script, &steps, signed_in, stopped, &components);
-    let mut record = CaseRecord {
+    let video = match stopped_video {
+        Some(v) if matches!(p.verdict, "Failed" | "Blocked") => recording::keep(d, v, root, &who(script.case_id)).await,
+        Some(v) => {
+            recording::discard(d, v).await;
+            None
+        }
+        None => None,
+    };
+    let mut record = CaseRecord { video: None,
         bugs: vec![],
         case_id: script.case_id,
         title: script.title.clone(),
@@ -717,6 +753,7 @@ async fn run_case_in<D: Driver>(
         phases: Some(CasePhases { sign_in_ms: sign_in_took, area_ms: area_took, steps_ms: steps_took, total_ms: ms(took), ..Default::default() }),
         cleanup,
     };
+    record.video = video;
     // A case that passed and whose clean-up failed says both.
     if record.proposed == "Passed" && record.cleanup_line().is_some() {
         record.reason = format!("{}{CLEANUP_FAILED}", record.reason);
@@ -773,7 +810,7 @@ async fn stop_asked(cancel: &AtomicBool) {
 const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecord {
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id,
         title: title.to_string(),
@@ -863,7 +900,7 @@ fn leave_for_network(
 /// verdict proposed is Blocked, and no browser was opened for it.
 fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: String) -> CaseRecord {
     let why = format!("not run: {reason}");
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id: script.case_id,
         title: script.title.clone(),
@@ -919,8 +956,56 @@ struct Place<'a> {
     count: u32,
 }
 
+/// Whether this run records a video of each case, settled once: wanted by
+/// the setting, then (by the first browser opened) possible. A browser found
+/// unable to record is said once on the run (`LocalRun::video_unavailable`).
+struct VideoPlan {
+    wanted: bool,
+    /// 0 not asked yet, 1 can record, 2 cannot.
+    supported: std::sync::atomic::AtomicU8,
+}
+
+impl VideoPlan {
+    fn new(wanted: bool) -> VideoPlan {
+        VideoPlan { wanted, supported: std::sync::atomic::AtomicU8::new(0) }
+    }
+
+    /// Whether to record the case that has this browser. The first browser
+    /// is asked what it can do; the answer holds for the run.
+    async fn decide<D: Driver>(&self, d: &mut D, case_id: i32) -> bool {
+        if !self.wanted {
+            return false;
+        }
+        match self.supported.load(Ordering::SeqCst) {
+            1 => return true,
+            2 => return false,
+            _ => {}
+        }
+        let support = recording::support(d).await;
+        if let recording::Support::No(why) = &support {
+            crate::applog::info(format!("{}: no video of failed cases: {why}", who(case_id)));
+        }
+        self.supported.store(if support.is_yes() { 1 } else { 2 }, Ordering::SeqCst);
+        support.is_yes()
+    }
+
+    /// The browser was found unable to record.
+    fn found_unable(&self) -> bool {
+        self.supported.load(Ordering::SeqCst) == 2
+    }
+}
+
+/// Let go of the video a record that is not kept wrote: a case run again
+/// (the network came back) or a run that ends at a network wait.
+fn drop_video(root: &Path, record: &CaseRecord) {
+    if let Some(v) = record.video.as_deref() {
+        store::discard_video(root, v);
+    }
+}
+
 /// What one go at a case needs.
 struct Go<'a> {
+    video: &'a VideoPlan,
     root: &'a Path,
     organization: &'a str,
     project: &'a str,
@@ -988,6 +1073,7 @@ async fn one_go<B: Browsers>(
             // here, so an end, a stop (this future dropped) and a panic all
             // let it go too.
             let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait());
+            let record_video = go.video.decide(&mut d, case_id).await;
             let mut rec = run_case_as(
                 &mut d,
                 go.root,
@@ -999,6 +1085,7 @@ async fn one_go<B: Browsers>(
                 go.route,
                 go.timing,
                 go.cancel,
+                record_video,
                 &mut on_step,
             )
             .await;
@@ -1174,6 +1261,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
     let first = run.cases.len();
     // Read once: the product bugs a case works around ride on its result.
     let quirks = quirks::load_quirks(root, organization, project).unwrap_or_default();
+    let video = VideoPlan::new(browsers.keep_failed_video());
 
     'cases: for (i, case) in cases.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
@@ -1286,7 +1374,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             // says what to add, so no route is needed.
                             let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
                             let at = Place { run_id: &run_id, index, total, case_id, title, count };
-                            let go = Go { root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
+                            let go = Go { video: &video, root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
                             let first = one_go(browsers, &go, &at, progress)
                                 .await
                                 .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
@@ -1307,7 +1395,13 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                         Ok(again) => {
                                             let go = Go { script: &again.script, ..go };
                                             match one_go(browsers, &go, &at, progress).await {
-                                                Ok(second) => transient::after_retry(why, first.duration_ms, second),
+                                                Ok(second) => {
+                                                    // The first go's video is of a try that is no longer the record.
+                                                    if let Some(v) = first.video.as_deref() {
+                                                        store::discard_video(root, v);
+                                                    }
+                                                    transient::after_retry(why, first.duration_ms, second)
+                                                }
                                                 // No second go to keep: the first go's
                                                 // steps and evidence stay the record.
                                                 Err(open) => transient::retry_not_started(
@@ -1340,6 +1434,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             {
                 if network_reruns < MAX_NETWORK_RERUNS {
                     network_reruns += 1;
+                    // This record is dropped: so is the video it wrote.
+                    drop_video(root, &record);
                     let end = pause_for_network(gate, run, case_id, cancel).await;
                     if let Some(why) = network_end_reason(end) {
                         if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {
@@ -1366,6 +1462,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             super::proven::note_outcome(root, case_id, o);
         }
         run.cases.push(record);
+        run.video_unavailable |= video.found_unable();
         if let Err(e) = store::save_run(root, run) {
             save_error.get_or_insert(e);
         }

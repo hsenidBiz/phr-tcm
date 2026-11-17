@@ -840,6 +840,13 @@ pub fn place_runs(flat: &Path, envs: &[(String, String)], active: &str) -> Resul
         };
         let target = run_target(run.environment.as_deref(), envs, active);
         for case in &run.cases {
+            // A failed case's video lives beside the pictures and goes where its run goes.
+            if let Some(video) = case.video.as_deref().filter(|v| !v.is_empty()) {
+                let at = placed.shots.entry(shot_key(video)).or_default();
+                if !at.contains(&target) {
+                    at.push(target.clone());
+                }
+            }
             for step in case.steps.iter().chain(case.cleanup.iter()) {
                 // A failure picture lives on the action's outcome, not the step.
                 let named = step

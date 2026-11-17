@@ -16,7 +16,7 @@ const T1: u64 = 1_800_000_000_000;
 fn case_failing(step: i32, action: usize, words: &str) -> CaseRecord {
     let mut outcomes: Vec<ActionOutcome> = (0..action).map(|_| ActionOutcome::passed("done")).collect();
     outcomes.push(ActionOutcome::failed(words));
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id: ID,
         title: "Save a request".into(),
@@ -46,7 +46,7 @@ fn case_failing(step: i32, action: usize, words: &str) -> CaseRecord {
 }
 
 fn run_at(at: u64, case: CaseRecord) -> LocalRun {
-    LocalRun {
+    LocalRun { video_unavailable: false,
         id: format!("run-{at}"),
         pbi_id: 1,
         started_at: at.to_string(),

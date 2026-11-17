@@ -1404,11 +1404,13 @@ pub fn safe_shot_name(name: &str) -> bool {
 }
 
 /// Whether a screenshot of that name is in the shots folder. Only a name
-/// `safe_shot_name` accepts is looked up at all.
+/// `safe_shot_name` accepts is looked up at all - or one `safe_video_name`
+/// does: a failed case's video is kept beside the pictures and linked the
+/// same way.
 /// It must be a regular file: a name that is a link to somewhere else is not
 /// a picture of the run and is never linked.
 pub fn shot_exists(root: &Path, name: &str) -> bool {
-    safe_shot_name(name)
+    (safe_shot_name(name) || safe_video_name(name))
         && std::fs::symlink_metadata(shots_dir(root).join(name)).is_ok_and(|m| m.file_type().is_file())
 }
 
@@ -1448,6 +1450,7 @@ pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
 /// an unpublished run still references. Called once when a run ends.
 pub fn prune_old_shots(root: &Path) {
     prune_shots_to(root, MAX_SHOTS);
+    prune_videos_to(root, MAX_VIDEOS);
 }
 
 /// `prune_old_shots` with the budget named. Best effort: a folder that
@@ -1506,6 +1509,123 @@ fn prune_shots(root: &Path, dir: &Path, keep: usize) {
             let _ = std::fs::remove_file(dir.join(old));
         }
     }
+}
+
+/// How many failed-case videos are kept. A video is evidence like a
+/// picture, but a minute of one is megabytes, so the budget is smaller.
+const MAX_VIDEOS: usize = 100;
+
+/// The most a video may be to be played in the app or read for a bug.
+pub const MAX_VIDEO_BYTES: u64 = 200 * 1024 * 1024;
+
+/// `video-<digits>-<digits>.mp4` and nothing else, the shape of a failed
+/// case's video (`save_video`). The name comes back from the webview, so it
+/// is checked, not trusted.
+pub fn safe_video_name(name: &str) -> bool {
+    let Some(middle) = name.strip_prefix("video-").and_then(|n| n.strip_suffix(".mp4")) else {
+        return false;
+    };
+    let mut parts = middle.split('-');
+    let ok = |p: Option<&str>| p.is_some_and(|s| !s.is_empty() && s.len() <= 20 && s.bytes().all(|b| b.is_ascii_digit()));
+    ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
+}
+
+/// The full path of a video, spelled out for the report and an assistant;
+/// not checked for existence or for a safe name (as `shot_path`).
+pub fn video_path(root: &Path, name: &str) -> PathBuf {
+    shots_dir(root).join(name)
+}
+
+/// Write one failed case's video beside the pictures and return its name,
+/// created new the way `save_shot` does. Pruned with the pictures
+/// (`prune_old_shots`).
+pub fn save_video(root: &Path, bytes: &[u8]) -> Result<String, String> {
+    let _held = super::roots::guard(root)?;
+    let dir = shots_dir(root);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    loop {
+        let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let name = format!("video-{ms}-{seq:06}.mp4");
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(&name)) {
+            Ok(mut f) => {
+                if let Err(e) = std::io::Write::write_all(&mut f, bytes) {
+                    drop(f);
+                    let _ = std::fs::remove_file(dir.join(&name));
+                    return Err(e.to_string());
+                }
+                return Ok(name);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+/// A video's bytes, for playing or saving it. Only a name `safe_video_name`
+/// accepts, and only a file no larger than `MAX_VIDEO_BYTES`.
+pub fn load_video(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+    if !safe_video_name(name) {
+        return Err("that is not a video name".to_string());
+    }
+    let path = shots_dir(root).join(name);
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| "that video is gone".to_string())?;
+    if !meta.file_type().is_file() {
+        return Err("that video is gone".to_string());
+    }
+    if meta.len() > MAX_VIDEO_BYTES {
+        return Err("that video is too large to open here".to_string());
+    }
+    std::fs::read(&path).map_err(|_| "that video is gone".to_string())
+}
+
+/// A video's size in bytes, or `None` when it is not on this machine.
+pub fn video_size(root: &Path, name: &str) -> Option<u64> {
+    if !safe_video_name(name) {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(shots_dir(root).join(name)).ok()?;
+    meta.file_type().is_file().then_some(meta.len())
+}
+
+/// Drop the oldest videos beyond the newest `keep`, never one an
+/// unpublished run still names (as `prune_shots`).
+pub fn prune_videos_to(root: &Path, keep: usize) {
+    let dir = shots_dir(root);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let protected: std::collections::HashSet<String> = list_runs(root)
+        .into_iter()
+        .filter(|r| r.published.is_none())
+        .flat_map(|r| r.cases)
+        .filter_map(|c| c.video)
+        .collect();
+    let mut all: Vec<String> = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| safe_video_name(n))
+        .filter(|n| !protected.contains(n))
+        .collect();
+    all.sort();
+    if all.len() > keep {
+        for old in &all[..all.len() - keep] {
+            let _ = std::fs::remove_file(dir.join(old));
+        }
+    }
+}
+
+/// Delete a video that was written but is not kept (its case's record does
+/// not name it). Best effort.
+pub fn discard_video(root: &Path, name: &str) {
+    if !safe_video_name(name) {
+        return;
+    }
+    // Held across the removal: a switch waits for it, and a root that has
+    // stopped being the active one's is left alone.
+    let Ok(_held) = super::roots::guard(root) else { return };
+    let _ = std::fs::remove_file(shots_dir(root).join(name));
 }
 
 pub fn load_shot(root: &Path, name: &str) -> Result<Vec<u8>, String> {

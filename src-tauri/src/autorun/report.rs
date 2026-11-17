@@ -516,6 +516,21 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
     h
 }
 
+/// A link to the video kept of a failed case, beside its pictures: relative
+/// like they are (`../shots/<name>`) and never embedded, so the page loads
+/// nothing and stays as small as it was. A name the video guard does not
+/// accept is never linked; a video no longer on this machine is said so.
+fn video_line(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
+    let Some(name) = case.video.as_deref() else { return String::new() };
+    if !super::store::safe_video_name(name) {
+        return format!("<p class=\"note\">A video was skipped: {} is not a video name.</p>", esc_attr(name));
+    }
+    if !exists(name) {
+        return format!("<p class=\"note\">The video {} was not found - it is no longer on this machine.</p>", esc_attr(name));
+    }
+    format!("<p class=\"video\"><strong>Video:</strong> <a href=\"../shots/{0}\">{0}</a></p>", esc_attr(name))
+}
+
 /// The files a case's steps saved, in the order the steps ran.
 pub fn case_downloads(case: &CaseRecord) -> Vec<&str> {
     case.steps.iter().flat_map(|s| s.downloads.iter().map(String::as_str)).collect()
@@ -618,6 +633,7 @@ fn case_section(
     if let Some(phases) = &case.phases {
         h.push_str(&format!("<p class=\"took\">{}</p>", esc_attr(&phases.line())));
     }
+    h.push_str(&video_line(case, exists));
     h.push_str(&downloads_line(case, size_of));
     h.push_str(&steps_block(case, exists));
     h.push_str("</details>");

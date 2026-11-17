@@ -19,6 +19,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import { invalidateRuns, useFlakyMarks } from "./flaky";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
+import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import PageErrorsBadge from "./PageErrorsBadge";
@@ -256,6 +257,7 @@ export default function PastRuns({
                   {(run.network_pauses ?? []).length} network pause{(run.network_pauses ?? []).length === 1 ? "" : "s"}
                 </p>
               )}
+              <VideoUnavailableNote run={run} />
               <ul className="space-y-1">
                 {run.cases.filter((c) => matchesFilter(c, filter, flakyIds)).map((c, i, shown) => {
                   const replayTo = onReplay && !otherPbi ? replayStep(c) : null;
@@ -314,6 +316,7 @@ export default function PastRuns({
                         {c.note && <p className="mt-0.5 text-xs text-muted">{c.note}</p>}
                         {/* The files its steps saved; nothing for a case that saved none. */}
                         <RunDownloads runId={run.id} steps={c.steps} className="mt-1" />
+                        <CaseVideo name={c.video} className="mt-1" />
                       </li>
                     </Fragment>
                   );

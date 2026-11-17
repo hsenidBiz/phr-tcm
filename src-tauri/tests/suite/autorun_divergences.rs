@@ -555,11 +555,11 @@ fn see(root: &std::path::Path, body: &str) {
 fn failed_run_of_7() -> v2_lib::autorun::LocalRun {
     use v2_lib::autorun::{CaseRecord, LocalRun, StepRecord};
     use v2_lib::browser::actions::ActionOutcome;
-    LocalRun {
+    LocalRun { video_unavailable: false,
         id: "run-1700000000000".to_string(),
         pbi_id: 42,
         started_at: "1700000000000".to_string(),
-        cases: vec![CaseRecord {
+        cases: vec![CaseRecord { video: None,
             bugs: vec![],
             case_id: 7,
             title: "Save a rating".to_string(),

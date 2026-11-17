@@ -1260,3 +1260,33 @@ test("an unmarked failure is counted as failed and carries no flaky tag", async 
   expect(screen.getByRole("button", { name: "Failed (1)" })).toBeInTheDocument();
   expect(screen.queryByText(/marked as flaky/)).toBeNull();
 });
+
+test("a failed case's kept video shows Play and Download, and Raise bug offers it as an attachment", async () => {
+  const VIDEO = "video-1700000000000-000009.mp4";
+  const withVideo = {
+    ...BUG_RUN,
+    cases: [{ ...BUG_RUN.cases[0], video: VIDEO }, BUG_RUN.cases[1]],
+  };
+  const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  renderReview(withVideo, {
+    extra: (cmd, args) => {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      if (cmd === "test_cases_by_ids") return [BUG_CASE];
+      if (cmd === "auto_run_video_info") return { size: 2048, playable: true, attachable: true };
+      if (cmd === "file_bug") return { id: 778, url: "https://x/bug/778", screenshots_total: 2, screenshots_failed: 0 };
+      return null;
+    },
+  });
+  await screen.findByText("Valid login");
+  expect(await within(caseCard(201)).findByRole("button", { name: "Play video" })).toBeInTheDocument();
+  expect(within(caseCard(201)).getByRole("button", { name: "Download video" })).toBeInTheDocument();
+  expect(within(caseCard(202)).queryByRole("button", { name: "Play video" })).toBeNull();
+
+  fireEvent.click(within(caseCard(201)).getByRole("button", { name: /Raise bug/ }));
+  const box = await screen.findByRole("checkbox", { name: "Attach the video of the failure" });
+  expect(box).toHaveAttribute("aria-checked", "true");
+  await waitFor(() => expect(screen.getByRole("button", { name: /File bug/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: /File bug/ }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "attach_case_video")).toBe(true));
+  expect(calls.find((c) => c.cmd === "attach_case_video")?.args).toMatchObject({ bugId: 778, video: VIDEO });
+});

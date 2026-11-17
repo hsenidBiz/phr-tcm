@@ -219,6 +219,37 @@ test("the highlight box saves the setting", async () => {
   expect(screen.getByRole("checkbox", { name: "Pause before each action" })).toHaveAttribute("aria-checked", "false");
 });
 
+test("the failed-case video box starts off, saves the setting, and shows what was saved", async () => {
+  const saved: boolean[] = [];
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "get_app_settings") return { autorun_highlight: true, autorun_failed_video: false };
+      if (cmd === "set_autorun_failed_video") {
+        saved.push((args as { on: boolean }).on);
+        return { autorun_failed_video: (args as { on: boolean }).on };
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  mountPane([{ id: 1, title: "A" }]);
+  const box = await screen.findByRole("checkbox", { name: "Keep a video of failed cases" });
+  expect(box).toHaveAttribute("aria-checked", "false");
+  fireEvent.click(box);
+  await waitFor(() => expect(saved).toEqual([true]));
+  expect(screen.getByRole("checkbox", { name: "Keep a video of failed cases" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("the failed-case video box reads a saved on", async () => {
+  mockIPC(
+    (cmd) => (cmd === "get_app_settings" ? { autorun_highlight: true, autorun_failed_video: true } : null),
+    { shouldMockEvents: true },
+  );
+  mountPane([{ id: 1, title: "A" }]);
+  const box = await screen.findByRole("checkbox", { name: "Keep a video of failed cases" });
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+});
+
 test("progress moves the rows and the finished run is handed on", async () => {
   let resolveReplay: (run: { id: string }) => void = () => {};
   mockIPC(

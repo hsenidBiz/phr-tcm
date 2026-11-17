@@ -314,6 +314,8 @@ export const commands = {
 	 *  Related links to the test case + PBI, screenshots attached. POST only.
 	 */
 	fileBug: (organization: string, project: string, title: string, reproText: string, testCaseId: number, pbiId: number, screenshotsB64: string[], fieldValues: BugFieldValue[]) => typedError<FiledBug, FileBugError>(__TAURI_INVOKE("file_bug", { organization, project, title, reproText, testCaseId, pbiId, screenshotsB64, fieldValues })),
+	/**  `attach_video_with` for the signed-in user, from the bug dialog. */
+	attachCaseVideo: (organization: string, project: string, bugId: number, video: string) => typedError<null, string>(__TAURI_INVOKE("attach_case_video", { organization, project, bugId, video })),
 	listTeams: (organization: string, project: string) => typedError<TeamRef[], AdoError>(__TAURI_INVOKE("list_teams", { organization, project })),
 	listTeamMembers: (organization: string, project: string) => typedError<Member[], AdoError>(__TAURI_INVOKE("list_team_members", { organization, project })),
 	workItemDetail: (organization: string, project: string, id: number) => typedError<WorkItemDetail, AdoError>(__TAURI_INVOKE("work_item_detail", { organization, project, id })),
@@ -964,6 +966,12 @@ export const commands = {
 	 *  how it ended. Written only when there are any.
 	 */
 	network_pauses?: NetworkPauseRecord[],
+	/**
+	 *  "Keep a video of failed cases" was on, but the browser cannot record
+	 *  (`browser::recording::NOT_AVAILABLE`): said once for the run, not on
+	 *  any case. Left out when false, so older run files read the same.
+	 */
+	video_unavailable?: boolean,
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**
 	 *  Writes one run's report and opens it in the default browser. `ran_at` is
@@ -992,6 +1000,27 @@ export const commands = {
 	 *  read through here.
 	 */
 	autoRunShot: (name: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_shot", { name })),
+	/**  Whether a failed case's video is on this machine, and how large. */
+	autoRunVideoInfo: (name: string) => __TAURI_INVOKE<{
+	/**  Bytes; a video past 4 GB reads as `u32::MAX`. */
+	size: number,
+	/**  Small enough to play inside the app (`PLAY_MAX_BYTES`). */
+	playable: boolean,
+	/**  Small enough to attach to a bug (`bugs::MAX_PICKED_FILE`). */
+	attachable: boolean,
+} | null>("auto_run_video_info", { name }),
+	/**
+	 *  A failed case's video, base64, for the webview's video element. The name
+	 *  is checked in `store::load_video`; nothing outside the shots folder can
+	 *  be read through here, and a video past `PLAY_MAX_BYTES` is refused (it
+	 *  can still be saved).
+	 */
+	autoRunVideo: (name: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_video", { name })),
+	/**
+	 *  Save a failed case's video to a path the person chose. The bytes go from
+	 *  the shots folder to that path and never through the webview.
+	 */
+	autoRunSaveVideo: (name: string, destPath: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_video", { name, destPath })),
 	/**
 	 *  The tester's accounts, passwords included: the Accounts dialog edits
 	 *  them in place. This is the one IPC call that carries a password, by the
@@ -1859,6 +1888,11 @@ export const commands = {
 	 *  and in the supervised browser. Read when a run or a supervised step starts.
 	 */
 	setAutorunHighlight: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_highlight", { on })),
+	/**
+	 *  Whether an unattended Auto Run run keeps a video of each case that fails
+	 *  or is blocked. Read when a run starts.
+	 */
+	setAutorunFailedVideo: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_failed_video", { on })),
 	/**  The page size every browser the app drives shows. */
 	getPageSize: () => __TAURI_INVOKE<PageSize>("get_page_size"),
 	/**
@@ -3034,6 +3068,13 @@ export type AppSettings = {
 	 */
 	autorun_highlight?: boolean,
 	/**
+	 *  Keep a video of an unattended Auto Run case that failed or was
+	 *  blocked (`browser::recording`). Off by default: a recording is only
+	 *  made while it is on, and a case that passes keeps none. A machine-wide
+	 *  choice like the highlight, read once when a run starts.
+	 */
+	autorun_failed_video?: boolean,
+	/**
 	 *  The page every browser the app drives shows (`browser::viewport`).
 	 *  A missing, unreadable or out-of-range value reads as the default, and
 	 *  leaves the rest of the file alone.
@@ -3690,6 +3731,13 @@ export type CaseRecord_Deserialize = {
 	 *  record saved before this field reads as having none.
 	 */
 	bugs?: CaseBug[],
+	/**
+	 *  The video of the case's steps, kept only for a case that failed or
+	 *  was blocked and only when "Keep a video of failed cases" was on
+	 *  (`browser::recording`): its name in the shots folder, never a path.
+	 *  Left out when there is none, so older run files read the same.
+	 */
+	video?: string | null,
 };
 
 /**
@@ -3759,6 +3807,13 @@ export type CaseRecord_Serialize = {
 	 *  record saved before this field reads as having none.
 	 */
 	bugs?: CaseBug[],
+	/**
+	 *  The video of the case's steps, kept only for a case that failed or
+	 *  was blocked and only when "Keep a video of failed cases" was on
+	 *  (`browser::recording`): its name in the shots folder, never a path.
+	 *  Left out when there is none, so older run files read the same.
+	 */
+	video?: string | null,
 };
 
 /**
@@ -5542,6 +5597,12 @@ export type LocalRun_Deserialize = {
 	 *  how it ended. Written only when there are any.
 	 */
 	network_pauses?: NetworkPauseRecord[],
+	/**
+	 *  "Keep a video of failed cases" was on, but the browser cannot record
+	 *  (`browser::recording::NOT_AVAILABLE`): said once for the run, not on
+	 *  any case. Left out when false, so older run files read the same.
+	 */
+	video_unavailable?: boolean,
 };
 
 export type LocalRun_Serialize = {
@@ -5574,6 +5635,12 @@ export type LocalRun_Serialize = {
 	 *  how it ended. Written only when there are any.
 	 */
 	network_pauses?: NetworkPauseRecord[],
+	/**
+	 *  "Keep a video of failed cases" was on, but the browser cannot record
+	 *  (`browser::recording::NOT_AVAILABLE`): said once for the run, not on
+	 *  any case. Left out when false, so older run files read the same.
+	 */
+	video_unavailable?: boolean,
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -9338,6 +9405,20 @@ export type UploadJournal = {
 	sigs: string[],
 	/**  Ids of the PBI's linked cases that existed before the upload. */
 	ids: number[],
+};
+
+/**
+ *  What the screens need to know about a failed case's video before they
+ *  offer to play, save or attach it. The limits live here, so the webview
+ *  never carries a copy of them.
+ */
+export type VideoInfo = {
+	/**  Bytes; a video past 4 GB reads as `u32::MAX`. */
+	size: number,
+	/**  Small enough to play inside the app (`PLAY_MAX_BYTES`). */
+	playable: boolean,
+	/**  Small enough to attach to a bug (`bugs::MAX_PICKED_FILE`). */
+	attachable: boolean,
 };
 
 /**  What the app shows of a run waiting for the network. */

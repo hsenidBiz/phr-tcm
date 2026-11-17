@@ -257,7 +257,7 @@ fn record_write_stores_the_path_only() {
 }
 
 fn run_case(case_id: i32, proposed: &str) -> CaseRecord {
-    CaseRecord {
+    CaseRecord { video: None,
         bugs: vec![],
         case_id,
         title: "a case".into(),

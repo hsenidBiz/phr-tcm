@@ -50,6 +50,11 @@ pub struct AppSettings {
     /// (`Timing::supervised`). Off skips the pause. An unwatched run never
     /// pauses.
     pub autorun_highlight: bool,
+    /// Keep a video of an unattended Auto Run case that failed or was
+    /// blocked (`browser::recording`). Off by default: a recording is only
+    /// made while it is on, and a case that passes keeps none. A machine-wide
+    /// choice like the highlight, read once when a run starts.
+    pub autorun_failed_video: bool,
     /// The page every browser the app drives shows (`browser::viewport`).
     /// A missing, unreadable or out-of-range value reads as the default, and
     /// leaves the rest of the file alone.
@@ -67,6 +72,7 @@ impl Default for AppSettings {
             stay_signed_in: true,
             playwright_clone: String::new(),
             autorun_highlight: true,
+            autorun_failed_video: false,
             page_size: DEFAULT_PAGE,
         }
     }

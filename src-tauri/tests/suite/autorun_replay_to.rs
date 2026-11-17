@@ -1163,7 +1163,7 @@ fn a_saved_sign_in_failure_is_a_sign_in_stop_not_a_step_1_defect() {
         stop_reason(&case).as_deref(),
         Some("the sign-in failed - fix the account or the recipe in the app, not the script")
     );
-    let run = v2_lib::autorun::LocalRun {
+    let run = v2_lib::autorun::LocalRun { video_unavailable: false,
         id: "run-1".into(),
         pbi_id: 1,
         started_at: "1".into(),

@@ -410,7 +410,7 @@ impl Browsers for One {
 async fn run_case(root: &Path, script: &CaseScript, d: ScriptedDriver) -> LocalRun {
     store::save_script(root, script).unwrap();
     let mut browsers = One(Some(d), vec![]);
-    let mut run = LocalRun {
+    let mut run = LocalRun { video_unavailable: false,
         id: "run-d".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),

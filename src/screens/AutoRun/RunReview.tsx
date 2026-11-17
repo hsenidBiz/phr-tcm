@@ -26,6 +26,7 @@ import { IconBug, IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } 
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
+import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import OutcomeGroups from "./OutcomeGroups";
@@ -229,6 +230,8 @@ export default function RunReview(props: {
     title: string;
     repro: string;
     shots: string[];
+    /** The video kept of the failure, offered to the bug as an attachment. */
+    video: string | null;
     testCase: TestCaseFull;
   } | null>(null);
   const [raiseBusy, setRaiseBusy] = useState<number | null>(null);
@@ -289,7 +292,7 @@ export default function RunReview(props: {
       const repro = autoRunRepro(c, testCase.steps, run, (s, n) =>
         `${n}. ${sharedStepText(s.shared!, queryClient.getQueryData<string>(sharedStepQueryKey(props.org, s.shared!)))}`,
       );
-      setRaising({ caseId: c.case_id, title: c.title, repro, shots, testCase });
+      setRaising({ caseId: c.case_id, title: c.title, repro, shots, video: c.video ?? null, testCase });
     } catch (e) {
       toast.error(`Could not raise a bug: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -491,6 +494,7 @@ export default function RunReview(props: {
 
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
+      <VideoUnavailableNote run={run} />
       <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto">
         {shown.map((c, i) => {
           const isExpanded = expanded.has(c.case_id);
@@ -639,6 +643,8 @@ export default function RunReview(props: {
                 {/* The files the case's steps saved, shown whether or not the
                     steps are unfolded; nothing for a case that saved none. */}
                 <RunDownloads runId={run.id} steps={c.steps} />
+                {/* The video kept of a failed case, when "Keep a video of failed cases" was on. */}
+                <CaseVideo name={c.video} />
               </li>
             </Fragment>
           );
@@ -777,6 +783,7 @@ export default function RunReview(props: {
           testCase={raising.testCase}
           pbiId={run.pbi_id}
           screenshots={raising.shots}
+          video={raising.video}
           initialTitle={`Bug: ${raising.title}`}
           initialRepro={raising.repro}
           onClose={() => setRaising(null)}
