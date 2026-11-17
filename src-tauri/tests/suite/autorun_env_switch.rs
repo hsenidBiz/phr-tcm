@@ -294,6 +294,8 @@ fn per_env_stores_write_only_through_roots() {
         ("autorun/explore.rs", "remove_file(session_path", "undoes begin's own new file"),
         ("pw_export/mapping.rs", "std::fs::create_dir_all(dir)", "prepare: always called after the guard"),
         ("autorun/store.rs", "OpenOptions", "save_shot, guard held across"),
+        ("autorun/store.rs", "remove_file(dir.join(&name))", "save_video: removes the half-written file it just created, guard held across"),
+        ("autorun/store.rs", "remove_file(shots_dir(root).join(name))", "discard_video: a video the record does not name, guard held across"),
         ("autorun/explore.rs", "OpenOptions", "begin: guarded at its top, cleaned up if refused"),
         ("autorun/explore.rs", "create_dir_all(&dir)", "begin: guarded at its top"),
     ];

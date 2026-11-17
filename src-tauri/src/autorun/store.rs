@@ -1619,9 +1619,13 @@ pub fn prune_videos_to(root: &Path, keep: usize) {
 /// Delete a video that was written but is not kept (its case's record does
 /// not name it). Best effort.
 pub fn discard_video(root: &Path, name: &str) {
-    if safe_video_name(name) {
-        let _ = std::fs::remove_file(shots_dir(root).join(name));
+    if !safe_video_name(name) {
+        return;
     }
+    // Held across the removal: a switch waits for it, and a root that has
+    // stopped being the active one's is left alone.
+    let Ok(_held) = super::roots::guard(root) else { return };
+    let _ = std::fs::remove_file(shots_dir(root).join(name));
 }
 
 pub fn load_shot(root: &Path, name: &str) -> Result<Vec<u8>, String> {
