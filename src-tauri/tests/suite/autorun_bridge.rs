@@ -3354,6 +3354,7 @@ async fn get_accounts_names_who_holds_each_account() {
         label: format!("{key} label"),
         username: format!("{key}_login"),
         password: format!("{key}_secret"),
+        password_source: None,
     };
     save_accounts(dir.path(), &[account("hr_admin"), account("hr_user"), account("batch"), account("free_one")]).unwrap();
     let env = v2_lib::environments::active_id(dir.path()).unwrap();

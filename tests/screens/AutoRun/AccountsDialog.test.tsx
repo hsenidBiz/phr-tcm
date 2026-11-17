@@ -118,6 +118,9 @@ function mountWithProposals(opts: {
   testEnvironment?: boolean;
   /** Answers the two Fill passwords from database commands. */
   fill?: (cmd: string, args: unknown) => unknown;
+  /** What the check made before a Fill answers: the environment's database
+   * is not the one the last Fill read. Absent: it is the same one. */
+  dbChange?: { from: string; to: string };
   addProposals?: (args: { picks: Saved[]; replace: string[] }) => unknown;
 }) {
   const state = { proposals: opts.proposals ?? PROPOSED, accounts: opts.accounts ?? [] };
@@ -143,6 +146,7 @@ function mountWithProposals(opts: {
       };
     }
     if (cmd === "env_proposals") return state.proposals?.map((p) => ({ marks: [], ...p }));
+    if (cmd === "env_fill_db_change") return opts.dbChange ?? null;
     if (cmd === "env_fill_proposal_passwords" || cmd === "env_fill_account_passwords") {
       if (!opts.fill) throw new Error("no fill answer given");
       return opts.fill(cmd, args);
@@ -974,12 +978,106 @@ test("dismissing the last proposal falls back to Accounts, focuses its tab, and 
 // ---- Fill passwords from database ------------------------------------------
 
 test("the fill sentence is counts only, with hash only added when there is one", () => {
-  expect(fillSentence({ updated: 3, unchanged: 1, no_row: 1, hash_only: 0 })).toBe(
+  expect(fillSentence({ updated: 3, unchanged: 1, no_row: 1, hash_only: 0, other_database: 0 })).toBe(
     "3 passwords updated, 1 unchanged, 1 with no row",
   );
-  expect(fillSentence({ updated: 1, unchanged: 0, no_row: 0, hash_only: 2 })).toBe(
+  expect(fillSentence({ updated: 1, unchanged: 0, no_row: 0, hash_only: 2, other_database: 0 })).toBe(
     "1 password updated, 0 unchanged, 0 with no row, 2 hash only",
   );
+});
+
+test("the fill sentence says how many updated passwords came from a different database", () => {
+  expect(fillSentence({ updated: 3, unchanged: 1, no_row: 1, hash_only: 0, other_database: 2 })).toBe(
+    "3 passwords updated - 2 of them came from a different database than before, 1 unchanged, 1 with no row",
+  );
+  expect(fillSentence({ updated: 1, unchanged: 0, no_row: 0, hash_only: 0, other_database: 1 })).toBe(
+    "1 password updated - 1 of them came from a different database than before, 0 unchanged, 0 with no row",
+  );
+});
+
+const SAME_COUNTS = { updated: 1, unchanged: 0, no_row: 0, hash_only: 0, other_database: 0 };
+const ACCOUNTS_ONE = [{ key: "hr.a", label: "A", username: "kim", password: "p" }];
+
+test("a Fill after the environment's database changed asks first, naming both databases by label", async () => {
+  const calls: unknown[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: ACCOUNTS_ONE,
+    dbChange: { from: "Dev - read only", to: "QA - read only" },
+    fill: (cmd, args) => {
+      calls.push([cmd, args]);
+      return SAME_COUNTS;
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
+  expect(ask).toHaveTextContent(
+    "This environment now uses QA - read only instead of Dev - read only. Fill passwords from the new database?",
+  );
+  // Nothing has been read yet.
+  expect(calls).toEqual([]);
+});
+
+test("cancelling the question fills nothing and changes nothing", async () => {
+  const calls: unknown[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: ACCOUNTS_ONE,
+    dbChange: { from: "Dev - read only", to: "QA - read only" },
+    fill: (cmd) => {
+      calls.push(cmd);
+      return SAME_COUNTS;
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
+  fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Fill passwords from the new database?" })).not.toBeInTheDocument(),
+  );
+  expect(calls).toEqual([]);
+  expect(toast.success).not.toHaveBeenCalled();
+});
+
+test("confirming the question runs the Fill, on the Proposed tab too", async () => {
+  const calls: unknown[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    dbChange: { from: "Dev - read only", to: "QA - read only" },
+    fill: (cmd) => {
+      calls.push(cmd);
+      return { updated: 2, unchanged: 0, no_row: 0, hash_only: 0, other_database: 2 };
+    },
+  });
+  await openTab("Proposed");
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
+  fireEvent.click(within(ask).getByRole("button", { name: "Fill passwords" }));
+  await waitFor(() =>
+    expect(toast.success).toHaveBeenCalledWith(
+      "2 passwords updated - 2 of them came from a different database than before, 0 unchanged, 0 with no row",
+    ),
+  );
+  expect(calls).toEqual(["env_fill_proposal_passwords"]);
+});
+
+test("with the same database as the last Fill there is no question", async () => {
+  const calls: unknown[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: ACCOUNTS_ONE,
+    fill: (cmd) => {
+      calls.push(cmd);
+      return SAME_COUNTS;
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  await waitFor(() => expect(calls).toEqual(["env_fill_account_passwords"]));
+  expect(screen.queryByRole("dialog", { name: "Fill passwords from the new database?" })).not.toBeInTheDocument();
 });
 
 test("Fill passwords from database is offered only on a test environment", async () => {
@@ -997,7 +1095,7 @@ test("filling the proposed logins runs the lookup, says what it did and reads th
     testEnvironment: true,
     fill: (cmd, args) => {
       calls.push([cmd, args]);
-      return { updated: 3, unchanged: 1, no_row: 1, hash_only: 0 };
+      return { updated: 3, unchanged: 1, no_row: 1, hash_only: 0, other_database: 0 };
     },
   });
   await openTab("Proposed");
@@ -1032,7 +1130,7 @@ test("filling the saved accounts asks for every account and reads the list again
     accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
     fill: (cmd, args) => {
       calls.push([cmd, args]);
-      return { updated: 1, unchanged: 0, no_row: 0, hash_only: 0 };
+      return { updated: 1, unchanged: 0, no_row: 0, hash_only: 0, other_database: 0 };
     },
   });
   await screen.findByDisplayValue("kim");
@@ -1047,7 +1145,7 @@ test("the saved accounts are not filled over edits that are not saved yet", asyn
   mountWithProposals({
     testEnvironment: true,
     accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
-    fill: () => ({ updated: 0, unchanged: 0, no_row: 0, hash_only: 0 }),
+    fill: () => ({ updated: 0, unchanged: 0, no_row: 0, hash_only: 0, other_database: 0 }),
   });
   await screen.findByDisplayValue("kim");
   const button = screen.getByRole("button", { name: "Fill passwords from database" });

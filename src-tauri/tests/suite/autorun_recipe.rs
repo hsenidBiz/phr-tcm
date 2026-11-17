@@ -199,7 +199,7 @@ fn origin_of_refuses_an_address_with_hidden_characters_inside() {
 
 #[test]
 fn placeholders_are_filled_in_for_one_account_everywhere_they_appear() {
-    let account = Account { key: "admin".into(), label: "Admin".into(), username: "kim".into(), password: "p\"w".into() };
+    let account = Account { key: "admin".into(), label: "Admin".into(), username: "kim".into(), password: "p\"w".into(), password_source: None };
     let mut v = sample();
     v["steps"][3]["then"] = json!([{ "kind": "fill", "selector": "#again", "value": "{{password}}" }]);
     let steps = for_account(&recipe(v).steps, &account);

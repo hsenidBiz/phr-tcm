@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct Account {
     /// What a script writes: `"account": "hr.supervisor"`.
     pub key: String,
@@ -21,6 +21,12 @@ pub struct Account {
     pub label: String,
     pub username: String,
     pub password: String,
+    /// The database id the password was filled from (Fill passwords from
+    /// database, or a proposal filled that way and then added). Absent for a
+    /// password somebody typed, and in files from before this existed. It
+    /// names a database in the list, never a connection or a password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_source: Option<String>,
 }
 
 impl std::fmt::Debug for Account {
@@ -287,6 +293,8 @@ pub struct PasswordChange {
     pub username: String,
     pub was: String,
     pub new: String,
+    /// The database the new password was read from.
+    pub source: Option<String>,
 }
 
 /// Gives each account its new password the way a person's change is saved
@@ -295,20 +303,48 @@ pub struct PasswordChange {
 /// made meanwhile wins. The list is read again under the accounts lock.
 /// Answers how many were applied.
 pub fn apply_password_changes_for(root: &Path, env_id: &str, changes: &[PasswordChange]) -> Result<usize, String> {
+    apply_password_changes_keyed(root, env_id, changes).map(|keys| keys.len())
+}
+
+/// `apply_password_changes_for`, answering the keys of the accounts it
+/// changed. Each takes `source` as where its password came from.
+pub fn apply_password_changes_keyed(
+    root: &Path,
+    env_id: &str,
+    changes: &[PasswordChange],
+) -> Result<Vec<String>, String> {
     let _held = files();
     let mut all = load_accounts_for(root, env_id)?;
-    let mut applied = 0;
+    let mut applied = vec![];
     for c in changes {
         if let Some(a) = all.iter_mut().find(|a| a.key == c.key && a.username == c.username && a.password == c.was) {
             a.password = c.new.clone();
-            applied += 1;
+            a.password_source = c.source.clone();
+            applied.push(c.key.clone());
         }
     }
-    if applied == 0 {
-        return Ok(0);
+    if applied.is_empty() {
+        return Ok(applied);
     }
     save_unlocked(root, env_id, &all, None, true)?;
     Ok(applied)
+}
+
+/// The list a person saved, with where each password came from put back as
+/// the app knows it: a password that is the one already saved keeps its
+/// source, and one the person typed - a new account, or a changed password -
+/// has none. The source belongs to the app, not to what the screen sends.
+pub fn with_known_sources(before: &[Account], incoming: &[Account]) -> Vec<Account> {
+    incoming
+        .iter()
+        .map(|a| {
+            let source = before
+                .iter()
+                .find(|o| o.key == a.key && o.password == a.password)
+                .and_then(|o| o.password_source.clone());
+            Account { password_source: source, ..a.clone() }
+        })
+        .collect()
 }
 
 /// Give one account of one environment a new password. Everything else in
@@ -337,6 +373,8 @@ fn change_password_unlocked(root: &Path, env_id: &str, key: &str, new: &str, kee
         return Err(format!("there is no account \"{key}\" on this machine"));
     };
     account.password = new.to_string();
+    // The app set this one on the site: it is not from a database.
+    account.password_source = None;
     save_unlocked(root, env_id, &all, keep_session.then_some(key), false).map(|_| ())
 }
 

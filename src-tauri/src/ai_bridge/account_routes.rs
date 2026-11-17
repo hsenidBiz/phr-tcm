@@ -96,6 +96,7 @@ pub async fn accounts_propose_in<S: crate::autorun::setup_find::RowSource>(
                 no_password,
                 marks: vec![],
                 proposed_ms: Some(crate::autorun::sessions::now_ms()),
+                password_source: None,
             }
         })
         .collect();
@@ -120,14 +121,47 @@ pub async fn accounts_propose_in<S: crate::autorun::setup_find::RowSource>(
         match looked {
             Ok(found) => {
                 let mut tally = Tally::default();
+                // Saved accounts whose password came from another database
+                // than the one read now: a proposal for the same login is a
+                // different password's worth of trouble, so it is counted.
+                let saved = crate::autorun::accounts::load_accounts_for(&root, &env.id).unwrap_or_default();
+                let mut elsewhere = 0;
                 for p in &mut proposals {
                     let seen = found.of(&p.username);
                     tally.add(&p.key, seen);
                     let (password, reason) = settle_proposal(seen, p.password.take(), p.no_password.take(), &found.table);
+                    if let Some(crate::autorun::account_lookup::Found::Password(_)) = seen {
+                        p.password_source = Some(env.db_id.clone());
+                        if saved.iter().any(|a| {
+                            a.username == p.username && a.password_source.as_deref().is_some_and(|s| s != env.db_id)
+                        }) {
+                            elsewhere += 1;
+                        }
+                    }
                     p.password = password;
                     p.no_password = reason;
                 }
-                lookup_said = Some(tally.sentence(&found.table));
+                let mut said = tally.sentence(&found.table);
+                if elsewhere > 0 {
+                    said.push_str(&format!(
+                        ". {elsewhere} of them match saved accounts whose password came from a different database than this environment uses now"
+                    ));
+                }
+                // No person is here to ask, so the change is said instead.
+                if let Some(was) = crate::environments::last_fill_db(&root, &env.id).filter(|w| *w != env.db_id) {
+                    let label = |id: &str| {
+                        ctx.db_secrets
+                            .as_deref()
+                            .and_then(|s| crate::db::credentials::label_of(s, id))
+                            .unwrap_or_else(|| "a database no longer in the list".to_string())
+                    };
+                    said.push_str(&format!(
+                        ". This environment now uses {} instead of {}, the database its last Fill passwords from database read",
+                        label(&env.db_id),
+                        label(&was)
+                    ));
+                }
+                lookup_said = Some(said);
             }
             Err(why) => {
                 crate::applog::info(format!("Environments: the account lookup for {} did not run", env.name));

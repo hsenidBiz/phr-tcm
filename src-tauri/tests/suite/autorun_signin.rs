@@ -757,7 +757,7 @@ fn next_password_skips_current_and_refused() {
 }
 
 fn reset_account() -> Account {
-    Account { key: KEY.into(), label: "Automation 51".into(), username: "kim".into(), password: PASSWORD.into() }
+    Account { key: KEY.into(), label: "Automation 51".into(), username: "kim".into(), password: PASSWORD.into(), password_source: None }
 }
 
 /// A data folder whose active environment is (or is not) marked a test

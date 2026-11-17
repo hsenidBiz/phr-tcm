@@ -6,7 +6,7 @@ use v2_lib::autorun::accounts::{
 };
 
 fn account(key: &str, username: &str, password: &str) -> Account {
-    Account { key: key.into(), label: format!("{key} label"), username: username.into(), password: password.into() }
+    Account { key: key.into(), label: format!("{key} label"), username: username.into(), password: password.into(), password_source: None }
 }
 
 #[test]
@@ -286,4 +286,21 @@ fn merging_added_accounts_keeps_a_password_changed_meanwhile_and_races_lose_noth
     let all = load_accounts(dir.path()).unwrap();
     assert_eq!(all.len(), 10);
     assert_eq!(all.iter().find(|a| a.key == "keep").unwrap().password, "Abc@123");
+}
+
+#[test]
+fn where_a_password_came_from_is_kept_while_it_is_the_one_saved_and_dropped_when_a_person_changes_it() {
+    use v2_lib::autorun::accounts::with_known_sources;
+    let from_db = Account { password_source: Some("dev-read".into()), ..account("hr.a", "a1", "Db-Pw") };
+    let before = vec![from_db.clone(), account("hr.b", "b1", "Typed")];
+    // What the screen sends back never carries a source; the app puts it back.
+    let sent = vec![account("hr.a", "a1", "Db-Pw"), account("hr.b", "b1", "Typed")];
+    let kept = with_known_sources(&before, &sent);
+    assert_eq!(kept[0].password_source.as_deref(), Some("dev-read"));
+    assert_eq!(kept[1].password_source, None);
+    // A changed password is typed by hand: no source, even if the screen claims one.
+    let edited = vec![Account { password_source: Some("dev-read".into()), ..account("hr.a", "a1", "Typed-Now") }];
+    assert_eq!(with_known_sources(&before, &edited)[0].password_source, None);
+    // A new account has none.
+    assert_eq!(with_known_sources(&before, &[account("hr.new", "n1", "x")])[0].password_source, None);
 }

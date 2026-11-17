@@ -3942,6 +3942,9 @@ pub fn auto_run_save_accounts(
 ) -> Result<Vec<String>, String> {
     let root = root(&app)?;
     let env_id = crate::environments::active_id(&root)?;
+    // Where a password came from is the app's to say, not the screen's.
+    let before = crate::autorun::accounts::load_accounts_for(&root, &env_id).unwrap_or_default();
+    let accounts = crate::autorun::accounts::with_known_sources(&before, &accounts);
     let dropped =
         crate::autorun::accounts::save_accounts_checked(&root, &env_id, &accounts, loaded_version.as_deref())?;
     crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));

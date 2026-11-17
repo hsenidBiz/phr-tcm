@@ -158,6 +158,12 @@ fn shipped(id: &str) -> Option<&'static DbPreset> {
     DB_PRESETS.iter().find(|p| p.id == id)
 }
 
+/// The label the databases list gives `id`, or `None` for an id it does not
+/// list. Never a connection string or a password.
+pub fn label_of(store: &dyn SecretStore, id: &str) -> Option<String> {
+    databases(store).into_iter().find(|d| d.id == id).map(|d| d.label)
+}
+
 /// Whether `id` names a database this build knows: a shipped one, or one
 /// in the store's list. An id saved by an older release can name a preset
 /// since removed, and one saved before a removal a database since removed;

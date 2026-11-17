@@ -1112,11 +1112,11 @@ fn recipe_for(app: &App) -> SignInRecipe {
 }
 
 fn kim() -> Account {
-    Account { key: "kim".into(), label: "Kim".into(), username: "kim".into(), password: "p\"w 1".into() }
+    Account { key: "kim".into(), label: "Kim".into(), username: "kim".into(), password: "p\"w 1".into(), password_source: None }
 }
 
 fn lee() -> Account {
-    Account { key: "lee".into(), label: "Lee".into(), username: "lee".into(), password: "s3cret".into() }
+    Account { key: "lee".into(), label: "Lee".into(), username: "lee".into(), password: "s3cret".into(), password_source: None }
 }
 
 async fn who(live: &mut Live) -> String {

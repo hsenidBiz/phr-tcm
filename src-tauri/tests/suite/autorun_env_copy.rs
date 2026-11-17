@@ -152,7 +152,7 @@ fn copy_keeps_the_targets_api_state_and_run_histories() {
 }
 
 fn acct(key: &str) -> Account {
-    Account { key: key.into(), label: format!("{key} label"), username: format!("{key}-user"), password: "pw".into() }
+    Account { key: key.into(), label: format!("{key} label"), username: format!("{key}-user"), password: "pw".into(), password_source: None }
 }
 
 fn keys(list: &[Account]) -> Vec<&str> {

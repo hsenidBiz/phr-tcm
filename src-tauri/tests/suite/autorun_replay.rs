@@ -1638,6 +1638,7 @@ fn lee() -> v2_lib::autorun::accounts::Account {
         label: "Lee".into(),
         username: "lee".into(),
         password: common::PASSWORD.into(),
+        password_source: None,
     }
 }
 

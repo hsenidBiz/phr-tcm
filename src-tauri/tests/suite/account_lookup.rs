@@ -616,6 +616,7 @@ fn seed_proposals(root: &Path, list: &[(&str, &str, Option<&str>, Option<&str>)]
             no_password: r.map(str::to_string),
             marks: vec![],
             proposed_ms: None,
+            password_source: None,
         })
         .collect();
     save_proposals(root, &active_id(root).unwrap(), &list).unwrap();
@@ -640,7 +641,7 @@ async fn filling_the_proposals_updates_their_passwords_and_reasons_and_answers_c
     let fake = Fake::standard(&[("sup1", SECRET), ("same1", "Same-Pw"), ("adm1", "5f4dcc3b5aa765d61d8327deb882cf99")]);
 
     let counts = fill_proposals_in(root, Ok(&fake)).await.unwrap();
-    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 2, hash_only: 1 });
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 2, hash_only: 1, other_database: 0 });
     let list = load_proposals(root, &active_id(root).unwrap()).unwrap();
     let by = |k: &str| list.iter().find(|p| p.key == k).unwrap().clone();
     assert_eq!((by("hr.sup").password.as_deref(), by("hr.sup").no_password.clone()), (Some(SECRET), None));
@@ -672,7 +673,7 @@ async fn filling_needs_a_test_environment_and_names_why_a_lookup_failed() {
 }
 
 fn account(key: &str, user: &str, password: &str) -> Account {
-    Account { key: key.into(), label: key.into(), username: user.into(), password: password.into() }
+    Account { key: key.into(), label: key.into(), username: user.into(), password: password.into(), password_source: None }
 }
 
 #[tokio::test]
@@ -702,7 +703,7 @@ async fn filling_saved_accounts_changes_only_what_differs_the_way_a_person_would
 
     let fake = Fake::standard(&[("SUP1", SECRET), ("same1", "Same-Pw"), ("adm1", "5f4dcc3b5aa765d61d8327deb882cf99")]);
     let counts = fill_accounts_in(root, Ok(&fake), &[]).await.unwrap();
-    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 1, hash_only: 1 });
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 1, hash_only: 1, other_database: 0 });
 
     let now = load_accounts(root).unwrap();
     let pw = |k: &str| now.iter().find(|a| a.key == k).unwrap().password.clone();
@@ -718,7 +719,7 @@ async fn filling_saved_accounts_changes_only_what_differs_the_way_a_person_would
     // Nothing differs now: nothing is written.
     let before = v2_lib::autorun::accounts::accounts_version(root, &env_id);
     let again = fill_accounts_in(root, Ok(&fake), &[]).await.unwrap();
-    assert_eq!(again, FillCounts { updated: 0, unchanged: 2, no_row: 1, hash_only: 1 });
+    assert_eq!(again, FillCounts { updated: 0, unchanged: 2, no_row: 1, hash_only: 1, other_database: 0 });
     assert_eq!(v2_lib::autorun::accounts::accounts_version(root, &env_id), before);
 }
 
@@ -731,7 +732,7 @@ async fn filling_named_accounts_leaves_the_others_alone() {
     save_accounts(root, &[account("hr.a", "a1", "Old-A"), account("hr.b", "b1", "Old-B")]).unwrap();
     let fake = Fake::standard(&[("a1", "New-A"), ("b1", "New-B")]);
     let counts = fill_accounts_in(root, Ok(&fake), &["hr.a".to_string()]).await.unwrap();
-    assert_eq!(counts, FillCounts { updated: 1, unchanged: 0, no_row: 0, hash_only: 0 });
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 0, no_row: 0, hash_only: 0, other_database: 0 });
     let now = load_accounts(root).unwrap();
     assert_eq!(now[0].password, "New-A");
     assert_eq!(now[1].password, "Old-B");
@@ -868,7 +869,7 @@ async fn a_masked_login_is_proposed_with_its_reason_and_filled_without_touching_
     std::fs::create_dir_all(session_path_for(root, &env_id, "hr.sup").parent().unwrap()).unwrap();
     std::fs::write(session_path_for(root, &env_id, "hr.sup"), "{}").unwrap();
     let counts = fill_accounts_in(root, Ok(&rows), &[]).await.unwrap();
-    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 0, hash_only: 0 });
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 0, hash_only: 0, other_database: 0 });
     let now = load_accounts(root).unwrap();
     assert_eq!(now[0].password, "Good-Saved-Pw");
     assert_eq!(now[1].password, SECRET);
@@ -953,7 +954,7 @@ async fn filling_the_saved_accounts_loses_to_a_change_made_during_the_lookup() {
     save_accounts(root, &[account("hr.a", "a1", "Old-A"), account("hr.b", "b1", "Old-B")]).unwrap();
     let hooked = Hooked(Fake::standard(&[("a1", "From-Db-A"), ("b1", "From-Db-B")]), root);
     let counts = fill_accounts_in(root, Ok(&hooked), &[]).await.unwrap();
-    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 0, hash_only: 0 });
+    assert_eq!(counts, FillCounts { updated: 1, unchanged: 1, no_row: 0, hash_only: 0, other_database: 0 });
     let now = load_accounts(root).unwrap();
     assert_eq!(now[0].password, "Typed-Meanwhile", "the change made during the lookup wins");
     assert_eq!(now[1].password, "From-Db-B");
@@ -988,4 +989,182 @@ async fn a_switched_off_database_tool_is_not_called_the_module_being_off() {
         assert!(out.contains(DB_TOOL_OFF), "{out}");
         assert!(!out.contains("Database Access module"), "{out}");
     }
+}
+
+// ---- Fill passwords from database: two safeguards ----
+
+use v2_lib::commands::environments::{add_proposals_with, fill_db_change_in, AccountInput, FillDbChange};
+
+fn point_environment_at(root: &Path, db_id: &str) {
+    let mut e = first_env(root);
+    e.db_id = db_id.to_string();
+    save_env(root, e, &known()).unwrap();
+}
+
+fn sourced(key: &str, user: &str, password: &str, source: Option<&str>) -> Account {
+    Account { password_source: source.map(str::to_string), ..account(key, user, password) }
+}
+
+#[tokio::test]
+async fn a_fill_records_the_database_each_password_came_from_and_a_hand_typed_one_has_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(
+        root,
+        &[account("hr.sup", "sup1", "Old-Pw"), account("hr.same", "same1", "Same-Pw"), account("hr.gone", "gone1", "Gone-Pw")],
+    )
+    .unwrap();
+    let fake = Fake::standard(&[("sup1", SECRET), ("same1", "Same-Pw")]);
+    fill_accounts_in(root, Ok(&fake), &[]).await.unwrap();
+    let now = load_accounts(root).unwrap();
+    let source = |k: &str| now.iter().find(|a| a.key == k).unwrap().password_source.clone();
+    assert_eq!(source("hr.sup").as_deref(), Some("dev-read"), "a filled password remembers its database");
+    assert_eq!(source("hr.same"), None, "a password that was not written is not claimed");
+    assert_eq!(source("hr.gone"), None);
+    // The source is an id in the list, never a secret: nothing but the id is kept.
+    let file = std::fs::read_to_string(v2_lib::autorun::accounts::accounts_path_for(root, &active_id(root).unwrap())).unwrap();
+    assert!(file.contains("\"password_source\": \"dev-read\""), "{file}");
+    assert!(!file.contains("Server="), "{file}");
+}
+
+#[tokio::test]
+async fn a_fill_counts_the_updated_passwords_that_came_from_a_different_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    point_environment_at(root, "qa-read");
+    save_accounts(
+        root,
+        &[
+            sourced("hr.a", "a1", "Old-A", Some("dev-read")),
+            sourced("hr.b", "b1", "Old-B", Some("qa-read")),
+            // Typed by hand: no source, never counted.
+            sourced("hr.c", "c1", "Old-C", None),
+            // From elsewhere, but the same in this database: not updated, not counted.
+            sourced("hr.d", "d1", "Same-D", Some("dev-read")),
+        ],
+    )
+    .unwrap();
+    let fake = Fake::standard(&[("a1", "New-A"), ("b1", "New-B"), ("c1", "New-C"), ("d1", "Same-D")]);
+    let counts = fill_accounts_in(root, Ok(&fake), &[]).await.unwrap();
+    assert_eq!(counts, FillCounts { updated: 3, unchanged: 1, no_row: 0, hash_only: 0, other_database: 1 });
+    let now = load_accounts(root).unwrap();
+    for k in ["hr.a", "hr.b", "hr.c"] {
+        assert_eq!(now.iter().find(|a| a.key == k).unwrap().password_source.as_deref(), Some("qa-read"), "{k}");
+    }
+    // Filling again from the same database counts none.
+    save_accounts(root, &[sourced("hr.a", "a1", "Old-A", Some("qa-read"))]).unwrap();
+    assert_eq!(fill_accounts_in(root, Ok(&fake), &[]).await.unwrap().other_database, 0);
+}
+
+#[tokio::test]
+async fn proposals_filled_from_the_database_carry_their_source_to_the_account_when_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    seed_proposals(root, &[("hr.sup", "sup1", Some("Old-Pw"), None), ("hr.typed", "typed1", None, None)]);
+    let fake = Fake::standard(&[("sup1", SECRET), ("typed1", "Db-Typed")]);
+    let counts = fill_proposals_in(root, Ok(&fake)).await.unwrap();
+    assert_eq!((counts.updated, counts.other_database), (2, 0));
+    assert_eq!(stored(root).iter().find(|p| p.key == "hr.sup").unwrap().password_source.as_deref(), Some("dev-read"));
+
+    // The environment moves to another database and the proposals are filled again.
+    point_environment_at(root, "qa-read");
+    let other = Fake::standard(&[("sup1", "Qa-Sup"), ("typed1", "Db-Typed")]);
+    let again = fill_proposals_in(root, Ok(&other)).await.unwrap();
+    assert_eq!((again.updated, again.unchanged, again.other_database), (1, 1, 1));
+
+    // Accepted: the password the proposal held keeps its source; a typed one has none.
+    let store = MemoryStore::default();
+    let pick = |key: &str, user: &str, password: &str| AccountInput {
+        key: key.into(),
+        label: key.into(),
+        username: user.into(),
+        password: password.into(),
+    };
+    add_proposals_with(root, &store, vec![pick("hr.sup", "sup1", ""), pick("hr.typed", "typed1", "Typed-By-Hand")], vec![])
+        .unwrap();
+    let now = load_accounts(root).unwrap();
+    let find = |k: &str| now.iter().find(|a| a.key == k).unwrap().clone();
+    assert_eq!(find("hr.sup").password, "Qa-Sup");
+    assert_eq!(find("hr.sup").password_source.as_deref(), Some("qa-read"));
+    assert_eq!(find("hr.typed").password, "Typed-By-Hand");
+    assert_eq!(find("hr.typed").password_source, None, "typed by hand has no source");
+}
+
+#[tokio::test]
+async fn the_environments_last_fill_database_is_recorded_and_a_change_is_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("hr.a", "a1", "Old-A")]).unwrap();
+    let env_id = active_id(root).unwrap();
+
+    // Before any Fill there is nothing to compare with: no question.
+    assert_eq!(v2_lib::environments::last_fill_db(root, &env_id), None);
+    assert_eq!(fill_db_change_in(root, &store).unwrap(), None);
+
+    let fake = Fake::standard(&[("a1", "New-A")]);
+    fill_accounts_in(root, Ok(&fake), &[]).await.unwrap();
+    assert_eq!(v2_lib::environments::last_fill_db(root, &env_id).as_deref(), Some("dev-read"));
+    assert_eq!(fill_db_change_in(root, &store).unwrap(), None, "the same database asks nothing");
+
+    // The environment's database changes (the AI Bridge card, or Edit environments).
+    point_environment_at(root, "qa-read");
+    let change: FillDbChange = fill_db_change_in(root, &store).unwrap().expect("a change is found");
+    let label = |id: &str| DB_PRESETS.iter().find(|p| p.id == id).map(|p| p.label.to_string()).unwrap();
+    assert_eq!(change, FillDbChange { from: label("dev-read"), to: label("qa-read") });
+    assert!(!change.from.contains("Server=") && !change.to.contains("Password"), "labels only: {change:?}");
+    // Asking is not a Fill: cancelling leaves the record as it was.
+    assert_eq!(v2_lib::environments::last_fill_db(root, &env_id).as_deref(), Some("dev-read"));
+    assert!(fill_db_change_in(root, &store).unwrap().is_some());
+
+    // A Fill that ran against the new database records it, and the question is over.
+    fill_accounts_in(root, Ok(&fake), &[]).await.unwrap();
+    assert_eq!(v2_lib::environments::last_fill_db(root, &env_id).as_deref(), Some("qa-read"));
+    assert_eq!(fill_db_change_in(root, &store).unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_fill_that_did_not_run_records_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("hr.a", "a1", "Old-A")]).unwrap();
+    let env_id = active_id(root).unwrap();
+    let _ = fill_accounts_in::<NoRows>(root, Err("the database module is off".to_string()), &[]).await.unwrap_err();
+    assert_eq!(v2_lib::environments::last_fill_db(root, &env_id), None);
+}
+
+#[tokio::test]
+async fn proposing_reports_a_changed_database_and_counts_saved_passwords_from_another_one() {
+    let _log = crate::serial::log_tail();
+    let _root = crate::serial::autorun();
+    let dir = bridge_root();
+    let root = dir.path();
+    mark_test_environment(root);
+    let env_id = active_id(root).unwrap();
+    save_accounts(root, &[sourced("hr.sup", "sup1", "Old-Pw", Some("dev-read"))]).unwrap();
+    // A Fill read dev-read earlier; the environment uses qa-read now.
+    v2_lib::environments::set_last_fill_db(root, &env_id, "dev-read");
+    point_environment_at(root, "qa-read");
+    let ctx = BridgeContext { db_secrets: Some(std::sync::Arc::new(MemoryStore::default())), ..BridgeContext::default() };
+    let fake = Fake::standard(&[("sup1", SECRET)]);
+    let (status, out) =
+        accounts_propose_in(&ctx, Ok(&fake), &json!({ "accounts": [proposal("hr.sup", "sup1")] }).to_string()).await;
+    assert_eq!(status, 200, "{out}");
+    let label = |id: &str| DB_PRESETS.iter().find(|p| p.id == id).map(|p| p.label.to_string()).unwrap();
+    assert!(out.contains(&format!("now uses {} instead of {}", label("qa-read"), label("dev-read"))), "{out}");
+    assert!(out.contains("1 of them match saved accounts whose password came from a different database"), "{out}");
+    assert!(!out.contains(SECRET), "{out}");
+    // No person is there to ask, and a proposal is not a Fill: nothing is recorded.
+    assert_eq!(v2_lib::environments::last_fill_db(root, &env_id).as_deref(), Some("dev-read"));
+    assert_eq!(stored(root)[0].password_source.as_deref(), Some("qa-read"));
 }

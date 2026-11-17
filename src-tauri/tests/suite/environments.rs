@@ -767,6 +767,7 @@ fn acct(key: &str, user: &str) -> v2_lib::autorun::accounts::Account {
         label: key.into(),
         username: user.into(),
         password: "pw-Zq9".into(),
+        password_source: None,
     }
 }
 
@@ -1107,6 +1108,7 @@ mod accounts_for_the_assistant {
                 no_password: None,
                 marks: vec![],
                 proposed_ms: None,
+                password_source: None,
             })
             .collect();
         save_proposals(root, &active_id(root).unwrap(), &list).unwrap();

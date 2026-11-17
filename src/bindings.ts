@@ -503,6 +503,16 @@ export const commands = {
 	 *  every saved one when `keys` is empty.
 	 */
 	envFillAccountPasswords: (keys: string[], dbRead: boolean) => typedError<FillCounts, string>(__TAURI_INVOKE("env_fill_account_passwords", { keys, dbRead })),
+	/**
+	 *  Whether the Fill should first ask: the environment's database is not the
+	 *  one its last Fill read.
+	 */
+	envFillDbChange: () => typedError<{
+	/**  The database the last Fill read. */
+	from: string,
+	/**  The database the environment uses now. */
+	to: string,
+} | null, string>(__TAURI_INVOKE("env_fill_db_change")),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -987,13 +997,13 @@ export const commands = {
 	 *  them in place. This is the one IPC call that carries a password, by the
 	 *  owner's decision (see `autorun::accounts`). It is never logged.
 	 */
-	autoRunListAccounts: () => typedError<Account[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
+	autoRunListAccounts: () => typedError<Account_Serialize[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
 	/**
 	 *  Replace the accounts list. Returns the keys whose saved session was
 	 *  dropped, so the screen can say so. With `loaded_version` (from
 	 *  `auto_run_accounts_version`) a list that changed since is refused.
 	 */
-	autoRunSaveAccounts: (accounts: Account[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
+	autoRunSaveAccounts: (accounts: Account_Deserialize[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
 	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
@@ -1973,14 +1983,7 @@ export const events = {
 };
 
 /* Types */
-export type Account = {
-	/**  What a script writes: `"account": "hr.supervisor"`. */
-	key: string,
-	/**  What a person reads in the app. */
-	label: string,
-	username: string,
-	password: string,
-};
+export type Account = Account_Serialize | Account_Deserialize;
 
 /**
  *  A change to the registry. Deliberately not `Debug`: it can hold a
@@ -2034,6 +2037,38 @@ export type AccountRefs = {
 	 *  pointers. Any reference at all refuses a delete.
 	 */
 	other_refs: number,
+};
+
+export type Account_Deserialize = {
+	/**  What a script writes: `"account": "hr.supervisor"`. */
+	key: string,
+	/**  What a person reads in the app. */
+	label: string,
+	username: string,
+	password: string,
+	/**
+	 *  The database id the password was filled from (Fill passwords from
+	 *  database, or a proposal filled that way and then added). Absent for a
+	 *  password somebody typed, and in files from before this existed. It
+	 *  names a database in the list, never a connection or a password.
+	 */
+	password_source?: string | null,
+};
+
+export type Account_Serialize = {
+	/**  What a script writes: `"account": "hr.supervisor"`. */
+	key: string,
+	/**  What a person reads in the app. */
+	label: string,
+	username: string,
+	password: string,
+	/**
+	 *  The database id the password was filled from (Fill passwords from
+	 *  database, or a proposal filled that way and then added). Absent for a
+	 *  password somebody typed, and in files from before this existed. It
+	 *  names a database in the list, never a connection or a password.
+	 */
+	password_source?: string | null,
 };
 
 export type Action = Action_Serialize | Action_Deserialize;
@@ -5045,6 +5080,24 @@ export type FillCounts = {
 	no_row: number,
 	/**  Logins whose value in the table is only a hash. */
 	hash_only: number,
+	/**
+	 *  Of the passwords updated, how many came from a different database
+	 *  than the one this Fill read (the account remembers where its
+	 *  password came from). A password nobody filled has no source and is
+	 *  not counted.
+	 */
+	other_database: number,
+};
+
+/**
+ *  What the Fill button asks about when the environment's database is not
+ *  the one the last Fill read: the two databases' labels.
+ */
+export type FillDbChange = {
+	/**  The database the last Fill read. */
+	from: string,
+	/**  The database the environment uses now. */
+	to: string,
 };
 
 /**  One object that matched. */

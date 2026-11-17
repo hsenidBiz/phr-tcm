@@ -467,6 +467,7 @@ fn a_browser_find_rules_actions_get_the_build_checks() {
         label: "Admin".into(),
         username: "hr.admin".into(),
         password: "Sup3rSecret".into(),
+        password_source: None,
     }];
     let input = InputAsked { names_the_record: false, ..name_input() };
     let rule = |actions: Vec<Value>| FindRule { database: None, browser: Some(actions.into_iter().map(act).collect()) };
