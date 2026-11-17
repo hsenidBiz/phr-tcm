@@ -88,8 +88,13 @@ export function setActiveEnvId(id: string): void {
 /** Where a per-environment switch is stored for the active environment
  * (`base:<id>`), or `base` itself while none is known. */
 export function envScopedKey(base: string): string {
-  const id = activeEnvIdSnapshot();
-  return id ? `${base}:${id}` : base;
+  return envKeyFor(base, activeEnvIdSnapshot());
+}
+
+/** Where a per-environment switch is stored for the environment `envId`
+ * (`base:<id>`), or `base` itself for an empty id. */
+export function envKeyFor(base: string, envId: string): string {
+  return envId ? `${base}:${envId}` : base;
 }
 
 /** Move the single values older versions kept to the environments, once:

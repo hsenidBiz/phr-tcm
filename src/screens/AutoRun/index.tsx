@@ -36,6 +36,7 @@ import {
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
+import { useAutoRunMode } from "./useAutoRunMode";
 import { logUi } from "../../lib/uiLog";
 import {
   cancelRunSetup,
@@ -339,6 +340,7 @@ export default function AutoRun({
   /** Why every way of starting a run here waits, when it does: a run going,
    * or the assistant's discovery holding the browser. Said in the title. */
   const runBlocked = runBlockedReason(background, discovering);
+  const { mode, setMode } = useAutoRunMode();
   /** The plan the supervised pane pauses by at each reset point. */
   const [runPlan, setRunPlan] = useState<PlanView | null>(null);
   /** An unattended run paused at a reset point that the store does not
@@ -780,9 +782,34 @@ export default function AutoRun({
     );
   };
 
+  /** Simple or Advanced: which Auto Run screen is shown. */
+  const modeSwitch = (
+    <div className="flex justify-end">
+      <div role="group" aria-label="Auto Run mode" className="flex gap-1">
+        {(["simple", "advanced"] as const).map((m) => (
+          <Button
+            key={m}
+            variant="outline"
+            size="sm"
+            aria-pressed={mode === m}
+            disabled={runGoing}
+            title={runGoing ? "Wait for the run that is going to finish before changing mode" : undefined}
+            className={mode === m ? "border-accent text-accent" : undefined}
+            onClick={() => {
+              if (mode !== m) void setMode(m).catch((e: Error) => toast.error(`Could not change the mode: ${e.message}`));
+            }}
+          >
+            {m === "simple" ? "Simple" : "Advanced"}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+
   if (!org || !pbi) {
     return (
       <div className="space-y-4">
+        {modeSwitch}
         {/* What the assistants left for a person to decide. */}
         <WaitingForYou org={org} project={project} />
         {/* Assistants work whatever PBI is open, or none. */}
@@ -817,6 +844,7 @@ export default function AutoRun({
       <div className="space-y-4">
         {/* Who is connected and what each assistant is doing, above the tabs
             (and before a PBI is picked); nothing at all while none is. */}
+        {modeSwitch}
         <WaitingForYou org={org} project={project} />
         <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the

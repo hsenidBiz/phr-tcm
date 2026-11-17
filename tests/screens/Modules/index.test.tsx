@@ -1,4 +1,5 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetExtrasStore, setExtrasForTest } from "../../../src/lib/extras";
@@ -55,7 +56,15 @@ function show(on: Module[], onBack = vi.fn(), unlocked = true) {
     setExtrasForTest(unlocked);
     setModulesForTest(on);
   });
-  return { onBack, ...render(<Modules onBack={onBack} />) };
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return {
+    onBack,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <Modules onBack={onBack} />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 const sw = (name: RegExp | string) => screen.getByRole("switch", { name });
@@ -614,4 +623,51 @@ test("an unlocked machine shows it", () => {
   expect(screen.getAllByRole("switch")).toHaveLength(6);
   expect(sw(/^Crystal Reports/)).toBeInTheDocument();
   expect(document.querySelector('[data-edge-line="crystal_reports"]')).not.toBeNull();
+});
+
+const ENVS = {
+  active: "e1",
+  playwright_export: "",
+  environments: [
+    { id: "e1", name: "Default", start_url: "", allowed_origins: [], db_id: "", test_environment: false },
+    { id: "e2", name: "QA", start_url: "", allowed_origins: [], db_id: "", test_environment: false },
+  ],
+};
+
+function firstSwitchOn(recommended: Record<string, boolean>) {
+  mockIPC((cmd) => {
+    if (cmd === "modules_set") return { on: ["db_access", "auto_run"], recommended };
+    if (cmd === "env_list") return ENVS;
+    return undefined;
+  });
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+}
+
+test("the first switch-on applies the Network tools per environment and names all three", async () => {
+  firstSwitchOn({ api_templates: true, video: true, network_tools: true, mode_simple: true });
+  expect(
+    await screen.findByText("Also turned on API Templates, the Network tools and videos of failed cases. You can switch each off."),
+  ).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-network-tools:e1")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-network-tools:e2")).toBe("1");
+});
+
+test("the note leaves out what was already on", async () => {
+  firstSwitchOn({ api_templates: false, video: true, network_tools: true, mode_simple: true });
+  expect(
+    await screen.findByText("Also turned on the Network tools and videos of failed cases. You can switch each off."),
+  ).toBeInTheDocument();
+});
+
+test("one turned-on item is worded in the singular", async () => {
+  firstSwitchOn({ api_templates: false, video: true, network_tools: false, mode_simple: true });
+  expect(await screen.findByText("Also turned on videos of failed cases. You can switch it off.")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-network-tools:e1")).toBeNull();
+});
+
+test("a machine that had Auto Run on before gets no note", async () => {
+  firstSwitchOn({ api_templates: false, video: false, network_tools: false, mode_simple: false });
+  await waitFor(() => expect(sw(/^Auto Run/)).toHaveAttribute("aria-checked", "true"));
+  expect(screen.queryByText(/Also turned on/)).not.toBeInTheDocument();
 });

@@ -78,3 +78,14 @@ export function joinNames(names: readonly string[]): string {
 export function switchOffWarning(name: string, below: readonly string[]): string {
   return `Switching off ${name} also switches off ${joinNames(below)}.`;
 }
+
+/** The note under the Auto Run row after its first switch-on: only what was
+ * actually turned on, in this order, or null when nothing was. */
+export function recommendedNote(on: { api_templates: boolean; network_tools: boolean; video: boolean }): string | null {
+  const items: string[] = [];
+  if (on.api_templates) items.push("API Templates");
+  if (on.network_tools) items.push("the Network tools");
+  if (on.video) items.push("videos of failed cases");
+  if (items.length === 0) return null;
+  return `Also turned on ${joinNames(items)}. You can switch ${items.length === 1 ? "it" : "each"} off.`;
+}
