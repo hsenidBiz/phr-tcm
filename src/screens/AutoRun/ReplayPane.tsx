@@ -316,8 +316,8 @@ function RunWindow({ run }: { run: BackgroundRun }) {
   // carries on, and the title-bar pill brings it back), a setup is
   // cancelled. Only Stop ends a run.
   return (
-    <Modal onClose={closeRunWindow} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
-      <h2 className="text-sm font-semibold text-text">Unattended run</h2>
+    <Modal onClose={closeRunWindow} labelledBy={`${idPrefix}-title`} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
+      <h2 id={`${idPrefix}-title`} className="text-sm font-semibold text-text">Unattended run</h2>
 
       {settingUp ? (
         <div className="space-y-3">

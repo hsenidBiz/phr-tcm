@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands } from "../../bindings";
 import { unwrapStr } from "../../lib/ipc";
-import { SPECS_CHECK_MS, setSpecsPill, specsPill, type SpecsView } from "../../lib/pwSpecs";
+import { SPECS_CHECK_MS, isRunSlotBusy, setSpecsPill, specsPill, type SpecsView } from "../../lib/pwSpecs";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -27,6 +27,7 @@ export function useSpecsWatch({
   clone,
   ready,
   busy,
+  slotBusy,
   process,
 }: {
   /** The clone folder; empty for none. */
@@ -35,6 +36,10 @@ export function useSpecsWatch({
   ready: boolean;
   /** Something is writing or reading the clone: a change waits for it. */
   busy: boolean;
+  /** A run or an accounts command started in this window holds the Playwright
+   * slot. Only this (never `busy`, which includes the re-read's own fetching)
+   * ends a wait for the slot, so a refused re-read cannot start the next. */
+  slotBusy: boolean;
   /** Reads the clone's data again; rejects when that failed. */
   process: () => Promise<void>;
 }): { reprocess: () => Promise<void> } {
@@ -53,6 +58,10 @@ export function useSpecsWatch({
   const patch = useCallback((forClone: string, p: Partial<SpecsView>) => {
     setState((s) => ({ ...(s.clone === forClone ? s : empty(forClone)), ...p }));
   }, []);
+
+  /** Whether a refused re-read is waiting for the slot (read by `look`). */
+  const waitingRef = useRef(false);
+  waitingRef.current = view.waiting === true;
 
   /** One look at the clone, and the re-read when it changed. `force` is the
    * Refresh button: it reads again whatever the look says. */
@@ -89,7 +98,10 @@ export function useSpecsWatch({
           return;
         }
         patch(forClone, { processed: was });
-        if (was === print) return;
+        // Unchanged files need no re-read - unless a refused one is still
+        // waiting (a Refresh, or a holder of the slot this window never saw,
+        // such as a folder rename): each timer look tries it once more.
+        if (was === print && !waitingRef.current) return;
         const failed = failedAt.current;
         if (failed && failed.clone === forClone && failed.fingerprint === print) return;
         // Waiting on a running command, or on a re-read already going.
@@ -107,13 +119,17 @@ export function useSpecsWatch({
       }
       inFlight.current = false;
       if (latest.current.clone !== forClone) return;
-      if (failure === null) {
+      if (failure !== null && isRunSlotBusy(failure)) {
+        // A run holds the slot: not a failure. Tried again at the next look,
+        // or as soon as the slot frees.
+        patch(forClone, { processing: false, waiting: true });
+      } else if (failure === null) {
         failedAt.current = null;
         if (print !== null) qc.setQueryData(processedKey(forClone), print);
-        patch(forClone, { processing: false, failed: null, ...(print !== null ? { processed: print } : {}) });
+        patch(forClone, { processing: false, waiting: false, failed: null, ...(print !== null ? { processed: print } : {}) });
       } else if (print !== null) {
         failedAt.current = { clone: forClone, fingerprint: print };
-        patch(forClone, { processing: false, failed: { fingerprint: print, error: failure } });
+        patch(forClone, { processing: false, waiting: false, failed: { fingerprint: print, error: failure } });
       } else {
         patch(forClone, { processing: false });
       }
@@ -132,6 +148,16 @@ export function useSpecsWatch({
       window.removeEventListener("focus", check);
     };
   }, [clone, ready, look]);
+
+  // The slot freed (a run ended): a re-read that was waiting for it goes now.
+  const waiting = view.waiting === true;
+  const wasSlotBusy = useRef(slotBusy);
+  useEffect(() => {
+    const freed = wasSlotBusy.current && !slotBusy;
+    wasSlotBusy.current = slotBusy;
+    // Forced: a Refresh that was refused has no changed fingerprint to go on.
+    if (freed && waiting) void look(true);
+  }, [waiting, slotBusy, look]);
 
   const pill = clone && ready ? specsPill(view) : null;
   useEffect(() => {

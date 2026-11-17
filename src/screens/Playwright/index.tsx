@@ -160,6 +160,7 @@ export default function Playwright({ org, project }: { org: string; project: str
     clone,
     ready: settings.isSuccess,
     busy: runnerBusy || accountsBusy || structure.isFetching,
+    slotBusy: runnerBusy || accountsBusy,
     process: rereadAll,
   });
   const refreshAll = () => void specs.reprocess();

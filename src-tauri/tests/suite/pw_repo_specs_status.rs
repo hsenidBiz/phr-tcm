@@ -222,3 +222,16 @@ fn editing_a_spec_leaves_the_pipeline_fingerprint_alone() {
     put(d.path(), "suites/sl/admin/rating/specs/a.spec.ts", "test('a'); test('a2');");
     assert_eq!(read(d.path()).unwrap().pipeline, before.pipeline);
 }
+
+/// The webview (`isRunSlotBusy` in src/lib/pwSpecs.ts) tells "a run holds the
+/// slot" from a real failure by these exact sentences, so the specs pill is
+/// never red for a busy slot. tests/lib/pwSpecs.test.ts checks the same strings.
+#[test]
+fn the_slot_busy_sentences_are_what_the_specs_pill_recognises() {
+    use v2_lib::pw_repo::{process::busy_sentence, runner::PREPARING_ALREADY};
+    assert_eq!(
+        busy_sentence("The test run"),
+        "The test run is still running. Stop it, or wait for it to finish, before starting another."
+    );
+    assert!(PREPARING_ALREADY.starts_with("Another run is being prepared."));
+}

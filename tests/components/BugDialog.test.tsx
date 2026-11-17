@@ -534,3 +534,15 @@ test("a failed refetch keeps the fields already shown and filled", async () => {
     { reference_name: "Custom.Build", value: "1.2" },
   ]);
 });
+
+// The dialog the run window opens is named by its visible title.
+test("the dialog has an accessible name: its title", () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <BugDialog org="acme" project="Web" testCase={testCase} pbiId={42} screenshots={[]} onClose={vi.fn()} onFiled={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByRole("dialog", { name: "File a bug" })).toBeInTheDocument();
+});

@@ -161,7 +161,7 @@ export const settings: Screen = {
       group: "changelog-logs",
       locate: { role: "button", nameRe: "^Show more \\(" },
       name: "Show more",
-      does: "Opens the notes of every earlier version, in a box of their own. **Show less** folds them away again.",
+      does: "Opens the notes of the latest ten versions, in a box of their own. **Show older versions** at the end of the list loads the rest. **Show less** folds them away again.",
     },
     {
       id: "export-backup",
