@@ -69,7 +69,13 @@ Each of these applies only when the person has never set that switch themselves.
 - the video setting is a plain bool;
 - API Templates being off is just its absence.
 
-So the recommended features are applied only on a machine where Auto Run has never been on: no Auto Run data folder (`autorun`), the same check `modules::existing_install` uses. A machine that has used Auto Run before is treated as having made its own choices, and nothing is switched on for it. From this version on, every change to these three switches records "set by the person".
+So the recommended features are applied only on a machine where Auto Run has never been on. A new app setting, `auto_run_ever_on`, records this.
+
+It is worked out once at start-up, before Auto Run's own start-up code runs, because a release start-up creates the empty `autorun` folder on every machine. It becomes true when either:
+- the Auto Run module is on; or
+- the `autorun` data folder holds any file at all (empty folders do not count).
+
+Switching Auto Run on sets it true, after the recommended features are applied. Once true, it never goes back. A machine that has used Auto Run before is treated as having made its own choices, and nothing is switched on for it. From this version on, every change to these three switches records "set by the person".
 
 **Where it happens.** The Network tools switch lives in the webview's per-environment storage (`src/lib/networkTools.ts`), so the webview turns it on after a successful `modules_set(auto_run, true)`. Rust handles API Templates, the video setting and the mode. The "set by the person" record for the Network tools also lives in the webview.
 
