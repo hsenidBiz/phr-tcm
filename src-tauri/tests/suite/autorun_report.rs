@@ -1107,3 +1107,126 @@ fn a_report_for_an_environment_that_was_left_is_refused_and_makes_no_folder() {
     assert_eq!(err, roots::ENVIRONMENT_SWITCHED);
     assert!(!roots::env_root(dir.path(), &a).join("reports").exists());
 }
+
+/// A failure of a case whose script is marked flaky is counted as flaky, not
+/// as failed, the way Past runs and the review count it. It stays a failure
+/// in every other way: the case's result says Failed, its section is open
+/// and shows the step that stopped it.
+#[test]
+fn a_flaky_marked_failure_is_counted_as_flaky_and_keeps_its_details() {
+    use v2_lib::autorun::report::flaky_count;
+    let run = run_of(SHOT);
+    let mut marked = script_201();
+    marked.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1786000000000".into() });
+
+    // Not marked: as before - one failed, no Flaky column.
+    let plain = build(&run, &[script_201()], "", &no_shots);
+    assert_eq!(flaky_count(&run, &[script_201()]), 0);
+    assert!(!plain.contains("<th>Flaky</th>") && !plain.contains("class=\"flaky\""), "{plain}");
+    assert!(plain.contains("<td class=\"b-failed\">1</td>"), "{plain}");
+
+    // Marked: the Failed column drops to 0 and the Flaky column holds the case.
+    assert_eq!(flaky_count(&run, &[marked.clone()]), 1);
+    let html = build(&run, &[marked], "", &no_shots);
+    assert!(html.contains("<th>Not run</th><th>Flaky</th><th>Total</th>"), "{html}");
+    assert!(html.contains("<td class=\"b-failed\">0</td>"), "{html}");
+    assert!(html.contains("<td class=\"b-flaky\">1</td>"), "{html}");
+    assert!(html.contains("<td>4</td></tr></tbody></table>"), "the total is every case: {html}");
+    assert!(html.contains("marked as flaky, so it is not counted as failed above"), "{html}");
+    // The case still reads Failed, flagged, open, with its raw failure.
+    assert!(html.contains("<td class=\"b-failed\">Failed <span class=\"flaky\""), "{html}");
+    assert!(html.contains("<details class=\"case\" open><summary><span class=\"id\">#201</span>"), "{html}");
+    assert!(html.contains("button &quot;Save&quot; not found"), "{html}");
+    // Only a failure is flaky: a mark on a passing case changes nothing.
+    let mut mark_204: CaseScript =
+        serde_json::from_value(serde_json::json!({ "case_id": 204, "title": "Logout", "steps": [] })).unwrap();
+    mark_204.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
+    assert_eq!(flaky_count(&run, &[mark_204]), 0);
+}
+
+/// Raise bug keeps the bug it filed on the run's case, so the review and
+/// Past runs show it after the review closes. A record saved before the
+/// field reads as having none, and the field is left out when empty.
+#[test]
+fn a_filed_bug_is_kept_on_the_cases_record() {
+    use v2_lib::commands::autorun::record_bug_at;
+    let tmp = TempDir::new();
+    let run = run_of(SHOT);
+    save_run(tmp.path(), &run).unwrap();
+
+    // Nothing is written for a case with no bug: old files stay as they were.
+    let before = std::fs::read_to_string(tmp.path().join("runs").join("run-1786000200000.json")).unwrap();
+    assert!(!before.contains("\"bugs\""), "{before}");
+
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 777, "org", "Proj").unwrap();
+    // Filing it again records it once; another bug is added.
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 777, "org", "Proj").unwrap();
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 778, "org", "Proj").unwrap();
+
+    let back = v2_lib::autorun::store::load_run(tmp.path(), "run-1786000200000").unwrap().unwrap();
+    let case = back.cases.iter().find(|c| c.case_id == 201).unwrap();
+    let ids: Vec<i32> = case.bugs.iter().map(|b| b.id).collect();
+    assert_eq!(ids, vec![777, 778]);
+    assert_eq!((case.bugs[0].org.as_str(), case.bugs[0].project.as_str()), ("org", "Proj"));
+    assert!(back.cases.iter().filter(|c| c.case_id != 201).all(|c| c.bugs.is_empty()));
+    // Everything else about the run is as it was.
+    assert_eq!(back.cases.len(), run.cases.len());
+    assert_eq!(back.cases[0].proposed, "Failed");
+
+    // The saved record reads back through the listing the screens use.
+    let listed = v2_lib::autorun::store::list_runs(tmp.path());
+    assert_eq!(listed[0].cases[0].bugs.len(), 2);
+
+    // A record from before the field has no `bugs` key and reads as none.
+    let old: LocalRun = serde_json::from_str(&before).unwrap();
+    assert!(old.cases.iter().all(|c| c.bugs.is_empty()));
+
+    // A run that is gone, a case it does not hold, and a nonsense number are refused.
+    assert!(record_bug_at(tmp.path(), "run-1", 201, 1, "o", "p").is_err());
+    assert!(record_bug_at(tmp.path(), "run-1786000200000", 999, 1, "o", "p").is_err());
+    assert!(record_bug_at(tmp.path(), "run-1786000200000", 201, 0, "o", "p").is_err());
+}
+
+/// A run already sent to Azure DevOps still takes the bug, and stays sent.
+#[test]
+fn a_bug_can_be_recorded_on_a_run_that_was_already_sent() {
+    use v2_lib::commands::autorun::record_bug_at;
+    let tmp = TempDir::new();
+    let mut run = run_of(SHOT);
+    run.published = Some(serde_json::from_value(serde_json::json!({
+        "run_id": 9, "web_url": "https://dev.azure.com/o/p/_testManagement/runs?runId=9", "at": "1786000300000"
+    })).unwrap());
+    save_run(tmp.path(), &run).unwrap();
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 31, "o", "p").unwrap();
+    let back = v2_lib::autorun::store::load_run(tmp.path(), "run-1786000200000").unwrap().unwrap();
+    assert!(back.published.is_some());
+    assert_eq!(back.cases[0].bugs.len(), 1);
+}
+
+/// The flaky rule is held to one table, tests/fixtures/flaky_buckets.json, which the Auto Run
+/// screens' test reads too (`isFlakyFailure`), so the report and the screens count alike.
+#[test]
+fn the_flaky_rule_matches_the_table_the_screens_are_held_to() {
+    use v2_lib::autorun::report::{case_bucket, is_flaky_failure};
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky_buckets.json"),
+    )
+    .unwrap();
+    let table: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = table["cases"].as_array().unwrap();
+    assert!(rows.len() > 5);
+    for row in rows {
+        let case: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+            "case_id": 1, "title": "t", "note": "", "steps": [],
+            "verdict": row["verdict"], "proposed": row["proposed"],
+        }))
+        .unwrap();
+        let mut script: CaseScript =
+            serde_json::from_value(serde_json::json!({ "case_id": 1, "title": "t", "steps": [] })).unwrap();
+        if row["marked"].as_bool().unwrap() {
+            script.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
+        }
+        let got = if is_flaky_failure(&case, Some(&script)) { "flaky".to_string() } else { case_bucket(&case).to_lowercase() };
+        assert_eq!(got, row["counts_as"].as_str().unwrap(), "{row}");
+    }
+}

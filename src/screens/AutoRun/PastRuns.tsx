@@ -12,6 +12,7 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
+import FiledBugs from "./FiledBugs";
 import FlakyBadge from "./FlakyBadge";
 import FlakyCases from "./FlakyCases";
 import ResultFilterRow from "./ResultFilterRow";
@@ -55,6 +56,7 @@ function when(startedAt: string): string {
 function runsTitle(f: ResultFilter): string {
   if (f === "All") return "Every run on this machine";
   if (f === "Not run") return "Runs with a case that was not run";
+  if (f === "Flaky") return "Runs with a failed case marked as flaky";
   return `Runs with a ${f.toLowerCase()} case`;
 }
 
@@ -116,9 +118,11 @@ export default function PastRuns({
    * the whole run. */
   const allRuns = runs.data ?? [];
   const runsWith: Record<ResultBucket, number> = { Passed: 0, Failed: 0, Blocked: 0, "Not run": 0 };
+  let runsWithFlaky = 0;
   for (const run of allRuns) {
     const counts = countBuckets(run.cases, flakyIds);
     for (const b of RESULT_BUCKETS) if (counts[b] > 0) runsWith[b] += 1;
+    if (countFlaky(run.cases, flakyIds) > 0) runsWithFlaky += 1;
   }
   const shownRuns = allRuns.filter((run) => run.cases.some((c) => matchesFilter(c, filter, flakyIds)));
 
@@ -175,6 +179,7 @@ export default function PastRuns({
           onChange={onFilterChange}
           total={runCount}
           counts={runsWith}
+          flaky={runsWithFlaky}
           titleFor={runsTitle}
         />
       )}
@@ -291,6 +296,7 @@ export default function PastRuns({
                             <span className="text-xs font-medium text-faint">unset</span>
                           )}
                           {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
+                          <FiledBugs bugs={c.bugs} />
                           {replayTo !== null && (
                             <Button
                               size="sm"

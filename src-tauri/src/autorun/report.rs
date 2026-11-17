@@ -52,6 +52,24 @@ pub fn case_bucket(case: &CaseRecord) -> &'static str {
     bucket(&case.verdict, &case.proposed)
 }
 
+/// Whether a case's failure is a flaky one: it is a Failed result and the
+/// person marked the case's script flaky. It is still a failure - sent to
+/// Azure DevOps as failed, its details shown in full - but the summary
+/// counts it as flaky rather than failed, as Past runs and the review do
+/// (`isFlakyFailure` in src/screens/AutoRun/verdicts.ts).
+pub fn is_flaky_failure(case: &CaseRecord, script: Option<&CaseScript>) -> bool {
+    case_bucket(case) == "Failed" && script.is_some_and(|s| s.flaky.is_some())
+}
+
+/// How many of the run's cases are flaky failures, given the scripts on
+/// this machine.
+pub fn flaky_count(run: &LocalRun, scripts: &[CaseScript]) -> usize {
+    run.cases
+        .iter()
+        .filter(|c| is_flaky_failure(c, scripts.iter().find(|s| s.case_id == c.case_id)))
+        .count()
+}
+
 /// How many of the run's cases fall in each bucket, in `BUCKETS` order.
 pub fn counts(run: &LocalRun) -> [usize; 4] {
     let mut out = [0usize; 4];
@@ -532,6 +550,9 @@ fn result_words(bucket: &str, unchecked: usize) -> String {
     }
 }
 
+/// The label beside a flaky failure's result (see `is_flaky_failure`).
+const FLAKY_TAG: &str = " <span class=\"flaky\" title=\"Marked as flaky: it passes and fails on its own. The failure is still sent as failed.\">Flaky</span>";
+
 /// One case's collapsible section. Open for Failed and Blocked, closed for
 /// Passed and Not run - a reader lands on what needs them and can still
 /// expand the rest. `<details>` needs no script.
@@ -547,6 +568,7 @@ fn case_section(
     let unchecked = script.map(expectations).unwrap_or_default();
     let result = result_words(b, unchecked.len());
     let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
+    let flaky = if is_flaky_failure(case, script) { FLAKY_TAG } else { "" };
     let mut h = String::new();
     h.push_str(&format!("<details class=\"case\"{open}>"));
     // Run a second time after a transient failure (`transient`).
@@ -557,7 +579,7 @@ fn case_section(
         n => format!(" <span class=\"retried\">page errors seen: {n}</span>"),
     };
     h.push_str(&format!(
-        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{}</span>{retried}{flagged}</summary>",
+        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{}</span>{flaky}{retried}{flagged}</summary>",
         case.case_id,
         esc_attr(&case.title),
         css_key(b),
@@ -758,7 +780,7 @@ h1{font-size:22px;margin:0 0 12px}h2{font-size:17px;margin:24px 0 8px;border-bot
 h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0 0 8px}\
 dt{color:#59636e}dd{margin:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:4px 8px;text-align:left;vertical-align:top}\
 th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed{color:#1a7f37;font-weight:600}\
-.b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
+.b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}.b-flaky{color:#9a6700;font-weight:600}.flaky{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .took{color:#59636e;font-size:12px;font-weight:400}.bugs{color:#9a6700;font-weight:600}.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
 .note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.batch{text-align:left;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
@@ -856,16 +878,33 @@ pub fn build_with_extras(
     h.push_str("</dl>");
     h.push_str(&product_bugs_section(run));
 
-    let c = counts(run);
+    let mut c = counts(run);
+    // A failure of a case marked flaky is counted as flaky, not as failed;
+    // the column shows only when there is one, as Past runs does.
+    let flaky = flaky_count(run, scripts);
+    c[1] -= flaky;
     h.push_str("<h2>Summary</h2><table class=\"summary\"><thead><tr>");
     for b in BUCKETS {
         h.push_str(&format!("<th>{b}</th>"));
+    }
+    if flaky > 0 {
+        h.push_str("<th>Flaky</th>");
     }
     h.push_str("<th>Total</th></tr></thead><tbody><tr>");
     for (i, b) in BUCKETS.iter().enumerate() {
         h.push_str(&format!("<td class=\"b-{}\">{}</td>", css_key(b), c[i]));
     }
+    if flaky > 0 {
+        h.push_str(&format!("<td class=\"b-flaky\">{flaky}</td>"));
+    }
     h.push_str(&format!("<td>{}</td></tr></tbody></table>", run.cases.len()));
+    if flaky > 0 {
+        h.push_str(&format!(
+            "<p class=\"note\">{flaky} failed case{} marked as flaky, so {} not counted as failed above. Still sent as failed.</p>",
+            if flaky == 1 { " is" } else { "s are" },
+            if flaky == 1 { "it is" } else { "they are" }
+        ));
+    }
     // How much of what the passes claim their checks leave out.
     let (mut total, mut passed_with) = (0usize, 0usize);
     for case in run.cases.iter().filter(|c| case_bucket(c) == "Passed") {
@@ -896,8 +935,9 @@ pub fn build_with_extras(
         };
         let area = script_for(case.case_id).and_then(CaseScript::area_name).unwrap_or("");
         let result = result_words(b, script_for(case.case_id).map(|s| expectations(s).len()).unwrap_or(0));
+        let flaky_mark = if is_flaky_failure(case, script_for(case.case_id)) { FLAKY_TAG } else { "" };
         h.push_str(&format!(
-            "<tr><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{}</td><td>{decided}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{}{flaky_mark}</td><td>{decided}</td><td>{}</td><td>{}</td></tr>",
             case.case_id,
             esc_attr(&case.title),
             css_key(b),

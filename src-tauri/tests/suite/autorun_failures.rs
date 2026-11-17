@@ -45,6 +45,7 @@ impl Drop for TempDir {
 /// is filler that no assertion in this file looks at.
 fn minimal_case(case_id: i32) -> CaseRecord {
     CaseRecord {
+        bugs: vec![],
         case_id,
         title: "filler".to_string(),
         verdict: String::new(),
@@ -65,6 +66,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
 /// so each test only spells out what it actually cares about.
 fn empty_case() -> CaseRecord {
     CaseRecord {
+        bugs: vec![],
         case_id: 1,
         title: "A case".to_string(),
         verdict: String::new(),
@@ -212,6 +214,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         started_at: "1700000000000".to_string(),
         cases: vec![
             CaseRecord {
+                bugs: vec![],
                 case_id: 7,
                 title: "Leave request".to_string(),
                 verdict: "Failed".to_string(),
@@ -253,6 +256,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
+                bugs: vec![],
                 case_id: 8,
                 title: "Something else".to_string(),
                 verdict: String::new(),
@@ -283,6 +287,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
+                bugs: vec![],
                 case_id: 9,
                 title: "Passed case, never mentioned".to_string(),
                 verdict: "Passed".to_string(),

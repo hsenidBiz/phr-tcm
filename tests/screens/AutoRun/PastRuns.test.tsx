@@ -553,6 +553,33 @@ test("a run whose only failure is flaky does not count under the Failed filter",
   expect(screen.getByRole("group", { name: "Results" })).not.toHaveTextContent("failed");
 });
 
+test("Past runs' Flaky filter shows the runs and cases with a flaky failure", async () => {
+  renderPastRuns([FLAKY_RUN], 7, (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null));
+
+  const flakyPill = await screen.findByRole("button", { name: "Flaky (1)" });
+  fireEvent.click(flakyPill);
+  expect(flakyPill).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Locked account")).toBeNull();
+});
+
+test("a bug filed for a case shows on its row in Past runs", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          { case_id: 201, title: "Valid login", verdict: "Failed", note: "", proposed: "", bugs: [{ id: 777, org: "acme", project: "Web" }] },
+          { case_id: 203, title: "Password reset", verdict: "Passed", note: "", proposed: "" },
+        ],
+      }),
+    ],
+    7,
+  );
+  const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  expect(within(row).getByRole("button", { name: "Bug #777" })).toBeInTheDocument();
+  expect(within(screen.getByRole("listitem", { name: "Run of Password reset" })).queryByText(/^Bug #/)).toBeNull();
+});
+
 test("without a mark the same failure counts as failed", async () => {
   renderPastRuns([FLAKY_RUN], 7);
 

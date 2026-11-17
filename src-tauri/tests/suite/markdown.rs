@@ -314,3 +314,17 @@ fn a_prerequisites_list_typed_with_a_paren_is_numbered_as_azure_devops_numbers_i
     let css = include_str!("../../web/cases-page.css");
     assert!(!css.contains("::marker"), "no rule may redraw the list's markers");
 }
+
+/// Underline shows on the review page, and a stray tag never leaves the
+/// page underlining what comes after the field.
+#[test]
+fn underline_shows_and_cannot_leak_past_its_field() {
+    assert_eq!(case_text_to_html("a <u>b</u> c", Field::Step), "a <u>b</u> c");
+    assert_eq!(case_text_to_html("a <u>b</u> c", Field::Prereq), "<p>a <u>b</u> c</p>\n");
+    // Unclosed: closed at the end. Unmatched close: dropped.
+    assert_eq!(case_text_to_html("a <u>b", Field::Step), "a <u>b</u>");
+    assert_eq!(case_text_to_html("a</u> b", Field::Step), "a b");
+    // Attributes make it another tag, which is dropped as any other.
+    let html = case_text_to_html("a <u style=\"x\">b</u>", Field::Step);
+    assert!(!html.contains("style") && !html.contains("<u"), "{html}");
+}

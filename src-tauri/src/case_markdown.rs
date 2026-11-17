@@ -7,7 +7,8 @@
 //! for both: a step's editor offers bold, italic and underline only, so a
 //! step is written as `<B>`, `<I>` and `<BR/>` and nothing else; the
 //! prerequisites field is a full rich-text field and gets paragraphs,
-//! lists and code. This module is both directions for both fields.
+//! lists and code. Underline, which Markdown has no form for, is an inline
+//! `<u>...</u>` in the Markdown and `<U>`/`<u>` in the HTML, both ways. This module is both directions for both fields.
 //!
 //! # One shape in the middle
 //!
@@ -37,7 +38,8 @@
 //!
 //! As in `markdown.rs`, raw HTML in the Markdown never reaches the output
 //! as markup. A tag Azure DevOps' editor could have produced (the list in
-//! `steps_xml::HTML_TAGS`) is dropped and its text kept; anything else in
+//! `steps_xml::HTML_TAGS`, except a bare `<u>` pair) is dropped and its
+//! text kept; anything else in
 //! angle brackets - `<cycleId>`, `<next assessment stage>` - is a
 //! placeholder somebody typed, and is kept as escaped text, for the reason
 //! `steps_xml::strip_tags` gives.
@@ -83,6 +85,9 @@ struct Style {
     italic: bool,
     /// Inline code. Only the prerequisites keep it; a step shows its text.
     code: bool,
+    /// Underline. Markdown has none, so it is written as an inline `<u>`
+    /// pair and read back from one (see `underline_tag`).
+    underline: bool,
 }
 
 impl Style {
@@ -92,6 +97,7 @@ impl Style {
             bold: self.bold && other.bold,
             italic: self.italic && other.italic,
             code: self.code && other.code,
+            underline: self.underline && other.underline,
         }
     }
 }
@@ -143,7 +149,7 @@ pub fn prereq_md_to_html(md: &str) -> String {
 
 /// A step's HTML, as Azure DevOps holds it, back to Markdown. Lists read
 /// back as the "• " lines a step shows, a `<pre>` as plain lines, `<U>` as
-/// plain text. Plain text comes back exactly as written.
+/// `<u>`. Plain text comes back exactly as written.
 pub fn step_html_to_md(html: &str) -> String {
     protect(&step_html_lines(html), ser_step, step_md_lines, plainer_lines)
 }
@@ -170,7 +176,30 @@ pub fn unchanged(new_md: &str, current_html: &str, field: Field) -> bool {
         Field::Step => step_html_to_md(current_html),
         Field::Prereq => prereq_html_to_md(current_html),
     };
-    new_md == read || new_md == legacy_text(current_html, field)
+    new_md == read || new_md == without_underline(&read) || new_md == legacy_text(current_html, field)
+}
+
+/// `md` with its bare `<u>` and `</u>` taken out: the reading of a field that
+/// a copy saved after Markdown but before underline was kept holds
+/// (`**Open** the Save menu` for `<B>Open</B> the <U>Save</U> menu`). Such a
+/// copy is no edit either, so `unchanged` accepts it as a third reading.
+pub fn without_underline(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut rest = md;
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let len = [3usize, 4].into_iter().find(|n| rest.get(..*n).is_some_and(|t| underline_tag(t).is_some()));
+        match len {
+            Some(n) => rest = &rest[n..],
+            None => {
+                out.push('<');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A field's HTML as TCM read it before case text was Markdown: for a
@@ -389,10 +418,19 @@ struct Change {
 /// line, so a line break inside bold is written `**a**` / `**b**`.
 fn ser_line(o: &mut Out, line: &Line) {
     let mut open: Vec<Mark> = vec![];
+    // Underline is a `<u>` pair, outside any emphasis that starts or ends
+    // with it (`<u>**a**</u>`), where a `**` beside the tag still flanks as
+    // it must. Unlike bold and italic it needs no nesting: it is read back
+    // from the tags, not from the parse tree, so it may overlap them.
+    let mut underlined = false;
     for (run, step) in line.iter().zip(emphasis_steps(line)) {
         for m in step.close {
             o.raw(m.delim());
             open.retain(|x| *x != m);
+        }
+        if underlined != run.style.underline {
+            o.raw(if underlined { "</u>" } else { "<u>" });
+            underlined = run.style.underline;
         }
         for m in step.open {
             o.raw(m.delim());
@@ -406,6 +444,9 @@ fn ser_line(o: &mut Out, line: &Line) {
     }
     for m in open.iter().rev() {
         o.raw(m.delim());
+    }
+    if underlined {
+        o.raw("</u>");
     }
 }
 
@@ -512,6 +553,38 @@ fn ser_blocks(o: &mut Out, blocks: &[Block], first: &str, cont: &str) {
 // Markdown -> model
 // ---------------------------------------------------------------------------
 
+/// `Some(true)` for a bare `<u>` met in Markdown, `Some(false)` for `</u>`:
+/// the one raw tag that is kept, because it is how underline is written in
+/// Markdown here. A `<u>` with attributes is not it - that stays dropped.
+pub(crate) fn underline_tag(h: &str) -> Option<bool> {
+    match h.to_ascii_lowercase().as_str() {
+        "<u>" => Some(true),
+        "</u>" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether `text` holds a real HTML tag that Markdown here DROPS - every one
+/// `steps_xml::contains_html_markup` finds except the bare `<u>` pair, which
+/// is how underline is written and survives.
+pub fn drops_html_markup(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    (0..chars.len()).any(|i| {
+        chars[i] == '<'
+            && html_tag_end(&chars, i)
+                .is_some_and(|end| underline_tag(&chars[i..=end].iter().collect::<String>()).is_none())
+    })
+}
+
+/// An underline depth after the tag `h` (see `underline_tag`).
+fn count_underline(depth: usize, h: &str) -> usize {
+    match underline_tag(h) {
+        Some(true) => depth + 1,
+        Some(false) => depth.saturating_sub(1),
+        None => depth,
+    }
+}
+
 /// Raw HTML met in Markdown, as the text it leaves: a real tag leaves
 /// nothing, anything else in angle brackets is kept as typed.
 fn inline_html_text(h: &str) -> Option<&str> {
@@ -538,16 +611,19 @@ fn without_newline(src: &str, range: Range<usize>) -> usize {
 /// leaving a gap.
 fn step_md_lines(md: &str) -> Vec<Line> {
     let mut acc = StepLines { src: md, lines: vec![], cur: vec![], prev_end: None };
-    let (mut bold, mut italic) = (0usize, 0usize);
+    let (mut bold, mut italic, mut underline) = (0usize, 0usize, 0usize);
     let mut in_code = false;
     let mut lists: Vec<Option<u64>> = vec![];
     for (ev, r) in Parser::new_ext(md, CASE_MARKDOWN_OPTIONS).into_offset_iter() {
-        let style = Style { bold: bold > 0, italic: italic > 0, code: false };
+        let style = Style { bold: bold > 0, italic: italic > 0, code: false, underline: underline > 0 };
         match ev {
             Event::Start(Tag::Strong) => bold += 1,
             Event::End(TagEnd::Strong) => bold = bold.saturating_sub(1),
             Event::Start(Tag::Emphasis) => italic += 1,
             Event::End(TagEnd::Emphasis) => italic = italic.saturating_sub(1),
+            Event::InlineHtml(h) if underline_tag(&h).is_some() => {
+                underline = count_underline(underline, &h);
+            }
             Event::Start(Tag::List(start)) => lists.push(start),
             Event::End(TagEnd::List(_)) => {
                 lists.pop();
@@ -656,15 +732,18 @@ impl StepLines<'_> {
 /// The prerequisites' blocks from their Markdown.
 fn prereq_md_blocks(md: &str) -> Vec<Block> {
     let mut b = Builder::new();
-    let (mut bold, mut italic) = (0usize, 0usize);
+    let (mut bold, mut italic, mut underline) = (0usize, 0usize, 0usize);
     let mut code: Option<String> = None;
     for ev in Parser::new_ext(md, CASE_MARKDOWN_OPTIONS) {
-        let style = Style { bold: bold > 0, italic: italic > 0, code: false };
+        let style = Style { bold: bold > 0, italic: italic > 0, code: false, underline: underline > 0 };
         match ev {
             Event::Start(Tag::Strong) => bold += 1,
             Event::End(TagEnd::Strong) => bold = bold.saturating_sub(1),
             Event::Start(Tag::Emphasis) => italic += 1,
             Event::End(TagEnd::Emphasis) => italic = italic.saturating_sub(1),
+            Event::InlineHtml(h) if underline_tag(&h).is_some() => {
+                underline = count_underline(underline, &h);
+            }
             Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::BlockQuote(_))
             | Event::End(
                 TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_) | TagEnd::HtmlBlock,
@@ -943,7 +1022,7 @@ impl Builder {
 /// older writers) stays text.
 fn html_blocks(html: &str) -> Vec<Block> {
     let chars: Vec<char> = html.chars().collect();
-    let mut w = Walker { b: Builder::new(), bold: 0, italic: 0, code: 0, pre: None };
+    let mut w = Walker { b: Builder::new(), bold: 0, italic: 0, code: 0, underline: 0, pre: None };
     let mut text = String::new();
     let mut i = 0;
     while i < chars.len() {
@@ -975,6 +1054,7 @@ struct Walker {
     bold: usize,
     italic: usize,
     code: usize,
+    underline: usize,
     /// Inside a `<pre>`: its text, verbatim.
     pre: Option<String>,
 }
@@ -1007,7 +1087,7 @@ fn list_start(tag: &str) -> u64 {
 
 impl Walker {
     fn style(&self) -> Style {
-        Style { bold: self.bold > 0, italic: self.italic > 0, code: self.code > 0 }
+        Style { bold: self.bold > 0, italic: self.italic > 0, code: self.code > 0, underline: self.underline > 0 }
     }
 
     fn tag(&mut self, tag: &str) {
@@ -1037,6 +1117,7 @@ impl Walker {
             "b" | "strong" => count(&mut self.bold, closing, self_closing),
             "i" | "em" => count(&mut self.italic, closing, self_closing),
             "code" => count(&mut self.code, closing, self_closing),
+            "u" => count(&mut self.underline, closing, self_closing),
             "br" => self.b.newline(),
             "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" => self.b.para_break(),
             "div" | "tr" | "table" | "tbody" | "thead" | "caption" | "dl" | "dt" | "dd"
@@ -1066,8 +1147,7 @@ impl Walker {
                     self.pre = Some(String::new());
                 }
             }
-            // Underline has no Markdown form; links, spans and fonts are
-            // their text; an image leaves nothing.
+            // Links, spans and fonts are their text; an image leaves nothing.
             _ => {}
         }
     }
@@ -1408,6 +1488,9 @@ fn step_html(lines: &[Line]) -> String {
                     if r.style.bold {
                         t = format!("<B>{t}</B>");
                     }
+                    if r.style.underline {
+                        t = format!("<U>{t}</U>");
+                    }
                     t
                 })
                 .collect::<String>()
@@ -1431,6 +1514,9 @@ fn lines_html(lines: &[Line]) -> String {
                     }
                     if r.style.bold {
                         t = format!("<strong>{t}</strong>");
+                    }
+                    if r.style.underline {
+                        t = format!("<u>{t}</u>");
                     }
                     t
                 })

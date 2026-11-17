@@ -340,3 +340,43 @@ test("a removal is still shown when the case's files could not be read", () => {
   const q = queued({ steps: twoSteps([]), removed_attachments: ["gone"] });
   expect(diffCase(q, cur).noop).toBe(false);
 });
+
+test("a draft saved before underline was kept is no change", () => {
+  // Azure DevOps holds an underlined word; the old reader's draft lost it.
+  // The save leaves the step alone (the old copy is read as unchanged), so
+  // does the review; a real edit still shows.
+  const cur = current({
+    steps: [{ action: "Click <u>Save</u>", expected: "The <u>list</u> shows" }],
+    steps_legacy: [{ action: "Click Save", expected: "The list shows" }],
+  });
+  expect(diffCase(queued({ steps: [{ action: "Click Save", expected: "The list shows" }] }), cur).noop).toBe(true);
+  expect(diffCase(queued({ steps: cur.steps }), cur).noop).toBe(true);
+  expect(diffCase(queued({ steps: [{ action: "Click Save", expected: "The list is shown" }] }), cur).steps.changed).toBe(1);
+});
+
+test("a bold step and a list saved before underline was kept are no change, and an edit still is", () => {
+  const cur = current({
+    steps: [{ action: "**Open** the <u>Save</u> menu", expected: "Shown" }],
+    preconditions: "- Account <u>Alpha</u>\n- **Admin** role",
+  });
+  const same = diffCase(
+    queued({ steps: [{ action: "**Open** the Save menu", expected: "Shown" }], preconditions: "- Account Alpha\n- **Admin** role" }),
+    cur,
+  );
+  expect(same.noop).toBe(true);
+  const edited = diffCase(
+    queued({ steps: [{ action: "**Open** the Save menus", expected: "Shown" }], preconditions: "- Account Beta\n- **Admin** role" }),
+    cur,
+  );
+  expect(edited.steps.changed).toBe(1);
+  expect(edited.fields.some((f) => f.name === "Preconditions")).toBe(true);
+});
+
+test("removing underline from preconditions stored as Markdown shows as a change, as the save writes it", () => {
+  // A Markdown-stored field's old copies hold its raw value, so only the
+  // HTML-stored field reads a copy without underline as unchanged.
+  const stored = { value: "Log in as <u>admin</u>", markdown: true };
+  const cur = current({ preconditions: "Log in as <u>admin</u>", preconditions_stored: stored });
+  const d = diffCase(queued({ preconditions: "Log in as admin" }), cur);
+  expect(d.fields.some((f) => f.name === "Preconditions")).toBe(true);
+});

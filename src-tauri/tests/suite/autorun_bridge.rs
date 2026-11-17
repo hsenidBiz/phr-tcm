@@ -2483,6 +2483,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         pbi_id: 42,
         started_at: "1700000000000".to_string(),
         cases: vec![CaseRecord {
+            bugs: vec![],
             case_id,
             title: "Save a rating".to_string(),
             verdict: "Failed".to_string(),

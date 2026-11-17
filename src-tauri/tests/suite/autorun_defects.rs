@@ -89,6 +89,7 @@ fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
 /// check failed on what the application showed.
 fn failed_at_3(case_id: i32) -> CaseRecord {
     CaseRecord {
+        bugs: vec![],
         case_id,
         title: "Save a rating".into(),
         verdict: String::new(),

@@ -790,6 +790,29 @@ test("the Last result row counts every case, and pressing buckets shows only the
   expect(visibleTitles()).toHaveLength(6);
 });
 
+test("a last failure on a flaky-marked case counts and shows as Flaky, and the Flaky filter shows only those", async () => {
+  mockList(
+    [caseRow(1, "Login - alpha"), caseRow(2, "Login - bravo"), caseRow(3, "Reports - charlie")],
+    [1, 2, 3],
+    [savedRun("a", "1000", [rec(1, "Failed"), rec(2, "Failed"), rec(3, "Passed")])],
+    (cmd) => (cmd === "auto_run_flaky_marks" ? [1, 3] : null),
+  );
+  renderScreen();
+  const group = await lastResultGroup();
+  // Case 1 failed and is marked: it leaves Failed (2 -> 1) and is Flaky. Case 3 passed: a mark changes nothing.
+  await waitFor(() => expect(within(group).getByRole("button", { name: "Flaky (1)" })).toBeInTheDocument());
+  expect(within(group).getByRole("button", { name: "Failed (1)" })).toBeInTheDocument();
+  expect(within(group).getByRole("button", { name: "Passed (1)" })).toBeInTheDocument();
+  expect(within(rowOf("Login - alpha")).getByText("Flaky")).toBeInTheDocument();
+  expect(within(rowOf("Login - bravo")).getByText("Failed")).toBeInTheDocument();
+
+  await press("Flaky (1)");
+  expect(visibleTitles()).toEqual(["Login - alpha"]);
+  await press("Flaky (1)");
+  await press("Failed (1)");
+  expect(visibleTitles()).toEqual(["Login - bravo"]);
+});
+
 test("Suspected defect shows only the marked cases, together with the result filters", async () => {
   mockList(
     [caseRow(1, "Login - alpha"), caseRow(2, "Login - bravo"), caseRow(3, "Reports - charlie")],

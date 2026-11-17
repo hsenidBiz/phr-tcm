@@ -14,15 +14,20 @@ export const verdictTone: Record<string, string> = {
 /** The four results a case can be filtered by and counted in. */
 export const RESULT_BUCKETS = ["Passed", "Failed", "Blocked", "Not run"] as const;
 export type ResultBucket = (typeof RESULT_BUCKETS)[number];
-/** A filter: every case, or the cases in one bucket. */
-export type ResultFilter = "All" | ResultBucket;
+/** A filter: every case, the cases in one bucket, or the flaky failures
+ * (a Failed case whose script is marked Flaky - see `isFlakyFailure`). */
+export type ResultFilter = "All" | ResultBucket | "Flaky";
+/** A case's last result as the Test cases tab words it: its bucket, except
+ * that a failure of a case marked Flaky reads Flaky. */
+export type LastResult = ResultBucket | "Flaky";
 
 /** How each bucket's count is coloured - text only, like a Past runs row. */
-export const bucketTone: Record<ResultBucket, string> = {
+export const bucketTone: Record<LastResult, string> = {
   Passed: "text-success",
   Failed: "text-danger",
   Blocked: "text-warning",
   "Not run": "text-faint",
+  Flaky: "text-warning",
 };
 
 /**
@@ -76,14 +81,21 @@ export function countFlaky(
   return cases.filter((c) => isFlakyFailure(c, flaky)).length;
 }
 
-/** Whether a case shows under `filter`. A flaky failure shows under All only, not under Failed. */
+/** A case's last result for the Test cases tab: a Failed bucket on a case marked Flaky reads Flaky. */
+export function lastResultWithFlaky(bucket: ResultBucket, caseId: number, flaky?: FlakyIds): LastResult {
+  return bucket === "Failed" && flaky !== undefined && flaky.has(caseId) ? "Flaky" : bucket;
+}
+
+/** Whether a case shows under `filter`. A flaky failure shows under All and Flaky, not under Failed. */
 export function matchesFilter(
   c: { case_id?: number; verdict: string; proposed?: string | null },
   filter: ResultFilter,
   flaky?: FlakyIds,
 ): boolean {
   if (filter === "All") return true;
-  if (c.case_id !== undefined && isFlakyFailure({ ...c, case_id: c.case_id }, flaky)) return false;
+  const flakyFailure = c.case_id !== undefined && isFlakyFailure({ ...c, case_id: c.case_id }, flaky);
+  if (filter === "Flaky") return flakyFailure;
+  if (flakyFailure) return false;
   return resultBucket(c) === filter;
 }
 

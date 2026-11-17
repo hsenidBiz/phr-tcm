@@ -560,6 +560,7 @@ fn failed_run_of_7() -> v2_lib::autorun::LocalRun {
         pbi_id: 42,
         started_at: "1700000000000".to_string(),
         cases: vec![CaseRecord {
+            bugs: vec![],
             case_id: 7,
             title: "Save a rating".to_string(),
             verdict: "Failed".to_string(),

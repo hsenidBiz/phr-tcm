@@ -546,12 +546,12 @@ pub(crate) async fn validate_json(
                 let mut hits: Vec<String> = Vec::new();
                 for (n, s) in tc.steps.iter().enumerate() {
                     for (what, text) in [("action", &s.action), ("expected", &s.expected)] {
-                        if crate::steps_xml::contains_html_markup(text) {
+                        if crate::case_markdown::drops_html_markup(text) {
                             hits.push(format!("step {} {what}", n + 1));
                         }
                     }
                 }
-                if crate::steps_xml::contains_html_markup(&tc.preconditions) {
+                if crate::case_markdown::drops_html_markup(&tc.preconditions) {
                     hits.push("preconditions".to_string());
                 }
                 // A new file must exist and fit the cap, judged by the same

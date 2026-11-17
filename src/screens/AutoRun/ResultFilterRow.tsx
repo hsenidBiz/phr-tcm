@@ -13,7 +13,7 @@
 // accessible name stays "Failed (2)": the badge is a look, not new words.
 
 import { cn } from "../../lib/cn";
-import { RESULT_BUCKETS, type ResultBucket, type ResultFilter } from "./verdicts";
+import { RESULT_BUCKETS, type LastResult, type ResultBucket, type ResultFilter } from "./verdicts";
 
 /** Each filter's colours: outlined at rest, filled while pressed, and the
  * count badge's tint at rest. Tokens only, the ones `bucketTone` uses. */
@@ -25,6 +25,8 @@ const PILL_TONE: Record<PillName, { rest: string; on: string; badge: string }> =
   Failed: { rest: "border-danger/60 text-danger", on: "border-danger bg-danger text-on-status", badge: "bg-danger/15" },
   Blocked: { rest: "border-warning/60 text-warning", on: "border-warning bg-warning text-on-status", badge: "bg-warning/15" },
   "Not run": { rest: "border-border-strong text-muted", on: "border-muted bg-muted text-on-status", badge: "bg-surface-2" },
+  // A failure of a case marked Flaky: warning-toned, like its badge.
+  Flaky: { rest: "border-warning/60 text-warning", on: "border-warning bg-warning text-on-status", badge: "bg-warning/15" },
   // The case row's Suspected defect badge is warning-toned; the pill matches it.
   "Suspected defects": { rest: "border-warning/60 text-warning", on: "border-warning bg-warning text-on-status", badge: "bg-warning/15" },
   // Not a result: the screen's own accent, like All.
@@ -83,6 +85,7 @@ export default function ResultFilterRow({
   onChange,
   total,
   counts,
+  flaky = 0,
   titleFor,
 }: {
   value: ResultFilter;
@@ -91,11 +94,15 @@ export default function ResultFilterRow({
   total: number;
   /** What each bucket shows. */
   counts: Record<ResultBucket, number>;
+  /** What Flaky shows: the failures of cases marked Flaky, which the Failed
+   * count leaves out. The button appears while there is one, and while it
+   * is pressed so it can always be let go of. */
+  flaky?: number;
   /** A tooltip per button, when the counts are not of what the list shows
    * one-to-one (Past runs counts runs, not cases). */
   titleFor?: (f: ResultFilter) => string;
 }) {
-  const options: ResultFilter[] = ["All", ...RESULT_BUCKETS];
+  const options: ResultFilter[] = ["All", ...RESULT_BUCKETS, ...(flaky > 0 || value === "Flaky" ? (["Flaky"] as const) : [])];
   return (
     <div role="group" aria-label="Filter by result" className="flex flex-wrap gap-1.5">
       {options.map((f) => (
@@ -103,7 +110,7 @@ export default function ResultFilterRow({
           key={f}
           filter={f}
           on={value === f}
-          count={f === "All" ? total : counts[f]}
+          count={f === "All" ? total : f === "Flaky" ? flaky : counts[f]}
           title={titleFor?.(f)}
           onClick={() => onChange(f)}
         />
@@ -123,16 +130,17 @@ export function ResultToggleRow({
 }: {
   /** The group's accessible name. */
   label: string;
-  pressed: ReadonlySet<ResultBucket>;
-  onToggle: (b: ResultBucket) => void;
+  pressed: ReadonlySet<LastResult>;
+  onToggle: (b: LastResult) => void;
   /** Left out while the numbers are not known yet: the buttons name just
-   * the bucket. */
-  counts?: Record<ResultBucket, number>;
+   * the bucket. `Flaky`, when there is one, is a bucket of its own: the
+   * failures of cases marked Flaky, which `Failed` leaves out. */
+  counts?: Record<LastResult, number>;
   disabled?: boolean;
 }) {
   return (
     <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
-      {RESULT_BUCKETS.map((b) => (
+      {[...RESULT_BUCKETS, ...(counts?.Flaky || pressed.has("Flaky") ? (["Flaky"] as const) : [])].map((b) => (
         <Pill
           key={b}
           filter={b}

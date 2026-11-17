@@ -655,17 +655,26 @@ struct OldField {
     html: String,
     md: String,
     legacy: String,
+    /// `md` without its `<u>` pairs: what a copy saved before underline was
+    /// kept holds (`case_markdown::without_underline`).
+    no_underline: String,
 }
 
 impl OldField {
     fn of(html: String) -> OldField {
         use crate::case_markdown::{legacy_text, step_html_to_md, Field};
-        OldField { md: step_html_to_md(&html), legacy: legacy_text(&html, Field::Step), html }
+        let md = step_html_to_md(&html);
+        OldField {
+            no_underline: crate::case_markdown::without_underline(&md),
+            md,
+            legacy: legacy_text(&html, Field::Step),
+            html,
+        }
     }
 
     /// `case_markdown::unchanged` for this field, with its readings at hand.
     fn unchanged(&self, new: &str) -> bool {
-        new == self.md || new == self.legacy
+        new == self.md || new == self.no_underline || new == self.legacy
     }
 }
 

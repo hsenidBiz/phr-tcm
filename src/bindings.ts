@@ -853,6 +853,13 @@ export const commands = {
 	 *  published to Azure DevOps.
 	 */
 	autoRunSetFlaky: (caseId: number, flaky: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_set_flaky", { caseId, flaky })),
+	/**
+	 *  A bug just filed from a run's review for one of its cases, kept on the case's record
+	 *  (`CaseRecord::bugs`) so the review and Past runs still show it once the review is closed.
+	 *  Writes only the saved run on this machine: the bug itself was made in Azure DevOps by Raise
+	 *  bug, and nothing more is sent. Filing the same bug twice records it once.
+	 */
+	autoRunRecordBug: (runId: string, caseId: number, bugId: number, org: string, project: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_bug", { runId, caseId, bugId, org, project })),
 	autoRunLoadDivergences: (organization: string, project: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_load_divergences", { organization, project })),
 	autoRunRuleDivergence: (organization: string, project: string, id: string, ruling: Ruling) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_rule_divergence", { organization, project, id, ruling })),
 	/**
@@ -3436,6 +3443,18 @@ export type BuildStage = {
 	jobs: BuildJob[],
 };
 
+/**  A bug filed from a run's review for one case (`CaseRecord::bugs`). */
+export type CaseBug = {
+	/**  The bug's work item id. */
+	id: number,
+	/**
+	 *  The organization and project it was filed in, so it can be opened
+	 *  later without guessing which one the review was in.
+	 */
+	org: string,
+	project: string,
+};
+
 /**
  *  What copying one case would do, or did. Names only: nothing here holds a
  *  path, a password or a script body.
@@ -3616,6 +3635,15 @@ export type CaseRecord_Deserialize = {
 	 *  for a script without one.
 	 */
 	cleanup?: StepRecord_Deserialize | null,
+	/**
+	 *  Bugs filed for this case from the run's review (Raise bug), so the
+	 *  review and Past runs still show "Bug #123" after the review closes.
+	 *  Only what Raise bug already made in Azure DevOps is recorded: the
+	 *  id, and the organization and project it was filed in, which are
+	 *  what opening it needs. Left out of a record that has none, and a
+	 *  record saved before this field reads as having none.
+	 */
+	bugs?: CaseBug[],
 };
 
 /**
@@ -3676,6 +3704,15 @@ export type CaseRecord_Serialize = {
 	 *  for a script without one.
 	 */
 	cleanup?: StepRecord_Serialize | null,
+	/**
+	 *  Bugs filed for this case from the run's review (Raise bug), so the
+	 *  review and Past runs still show "Bug #123" after the review closes.
+	 *  Only what Raise bug already made in Azure DevOps is recorded: the
+	 *  id, and the organization and project it was filed in, which are
+	 *  what opening it needs. Left out of a record that has none, and a
+	 *  record saved before this field reads as having none.
+	 */
+	bugs?: CaseBug[],
 };
 
 /**

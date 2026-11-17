@@ -8,8 +8,10 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import {
   countBuckets,
+  isFlakyFailure,
   failingStep,
   lastResultFor,
+  lastResultWithFlaky,
   lastResults,
   matchesFilter,
   replayStep,
@@ -158,4 +160,33 @@ test("a replay is offered only on a Failed or Blocked case with a failing step",
   expect(replayStep({ verdict: "", proposed: "", steps })).toBeNull();
   // Failed, but no step is known to have failed.
   expect(replayStep({ verdict: "Failed", steps: [] })).toBeNull();
+});
+
+test("a failure on a flaky-marked case is Flaky, not Failed, in every reading", () => {
+  const flaky = new Set([5]);
+  const failed = { case_id: 5, verdict: "", proposed: "Failed" };
+  const other = { case_id: 6, verdict: "", proposed: "Failed" };
+  const passed = { case_id: 5, verdict: "Passed", proposed: "" };
+  expect(lastResultWithFlaky("Failed", 5, flaky)).toBe("Flaky");
+  expect(lastResultWithFlaky("Failed", 6, flaky)).toBe("Failed");
+  expect(lastResultWithFlaky("Passed", 5, flaky)).toBe("Passed");
+  expect(matchesFilter(failed, "Flaky", flaky)).toBe(true);
+  expect(matchesFilter(failed, "Failed", flaky)).toBe(false);
+  expect(matchesFilter(other, "Flaky", flaky)).toBe(false);
+  expect(matchesFilter(passed, "Flaky", flaky)).toBe(false);
+  expect(matchesFilter(failed, "All", flaky)).toBe(true);
+  expect(countBuckets([failed, other, passed], flaky)).toEqual({ Passed: 1, Failed: 1, Blocked: 0, "Not run": 0 });
+});
+
+test("a flaky mark counts a failure as flaky and nothing else (the Rust report reads the same table)", () => {
+  const rows = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../src-tauri/tests/fixtures/flaky_buckets.json"), "utf-8"),
+  ).cases as { verdict: string; proposed: string; marked: boolean; counts_as: string }[];
+  expect(rows.length).toBeGreaterThan(5);
+  for (const row of rows) {
+    const flaky = row.marked ? new Set([1]) : new Set<number>();
+    const c = { case_id: 1, verdict: row.verdict, proposed: row.proposed };
+    const got = isFlakyFailure(c, flaky) ? "flaky" : resultBucket(c).toLowerCase();
+    expect([row, got]).toEqual([row, row.counts_as]);
+  }
 });

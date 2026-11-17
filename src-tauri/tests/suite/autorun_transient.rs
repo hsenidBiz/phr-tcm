@@ -32,6 +32,7 @@ fn api_get() -> serde_json::Value {
 fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
     let reason = format!("step 2: {}", failed.detail);
     CaseRecord {
+        bugs: vec![],
         case_id: 7,
         title: "Save a cycle".into(),
         verdict: String::new(),

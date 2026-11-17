@@ -8,7 +8,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Toaster } from "../../../src/components/ui/toaster";
 import { afterEach, expect, test, vi } from "vitest";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import RunReview, { stepLabel } from "../../../src/screens/AutoRun/RunReview";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 afterEach(() => {
   clearMocks();
@@ -1135,6 +1138,7 @@ const BUG_CASE = {
 
 test("Raise bug is offered on a failed case only and opens a filled-in bug", async () => {
   let filed: Record<string, unknown> = {};
+  let kept: Record<string, unknown> | null = null;
   renderReview(BUG_RUN, {
     extra: (cmd, args) => {
       if (cmd === "test_cases_by_ids") return [BUG_CASE];
@@ -1142,6 +1146,7 @@ test("Raise bug is offered on a failed case only and opens a filled-in bug", asy
         filed = args as Record<string, unknown>;
         return { id: 777, url: "https://x/bug/777", screenshots_total: 2, screenshots_failed: 0 };
       }
+      if (cmd === "auto_run_record_bug") kept = args as Record<string, unknown>;
       return null;
     },
   });
@@ -1166,6 +1171,39 @@ test("Raise bug is offered on a failed case only and opens a filled-in bug", asy
   expect(filed.screenshotsB64).toEqual(["shot-201-2.png", "out-201-2.png"]);
   expect(await within(caseCard(201)).findByText("Bug #777")).toBeTruthy();
   expect(screen.queryByLabelText("Bug title")).toBeNull();
+  // The bug is kept on the case's saved record, with where it was filed.
+  await waitFor(() => expect(kept).not.toBeNull());
+  expect(kept).toEqual({ runId: "run-1", caseId: 201, bugId: 777, org: "acme", project: "Web" });
+});
+
+test("a bug filed earlier shows when the review is opened again, and opens its work item", async () => {
+  const withBug = {
+    ...BUG_RUN,
+    cases: BUG_RUN.cases.map((c) =>
+      c.case_id === 201 ? { ...c, bugs: [{ id: 777, org: "acme", project: "Web App" }] } : c,
+    ),
+  };
+  renderReview(withBug);
+  await screen.findByText("Valid login");
+  const bug = await within(caseCard(201)).findByRole("button", { name: "Bug #777" });
+  expect(within(caseCard(202)).queryByText(/^Bug #/)).toBeNull();
+  fireEvent.click(bug);
+  expect(openUrl).toHaveBeenCalledWith("https://dev.azure.com/acme/Web%20App/_workitems/edit/777");
+});
+
+test("a run saved before bugs were kept shows no bug, and saving it adds no bugs field", async () => {
+  let saved: { cases: { bugs?: unknown }[] } | null = null;
+  renderReview(BUG_RUN, {
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_save_run") saved = (args as { run: { cases: { bugs?: unknown }[] } }).run;
+      return null;
+    },
+  });
+  await screen.findByText("Valid login");
+  expect(screen.queryByText(/^Bug #/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Save review/ }));
+  await waitFor(() => expect(saved).not.toBeNull());
+  expect(saved!.cases.every((c) => c.bugs === undefined)).toBe(true);
 });
 
 test("Raise bug still opens when one of the failure's screenshots is gone", async () => {
@@ -1192,6 +1230,26 @@ test("a flaky-marked failure is tagged and counted as flaky, not failed", async 
   expect(await within(row).findByText("Flaky")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Failed (0)" })).toBeInTheDocument();
   expect(screen.getByText(/1 failed case is marked as flaky/)).toBeInTheDocument();
+});
+
+test("the Flaky filter shows only the flaky-marked failures, and is offered only while there is one", async () => {
+  renderReview(RUN, { extra: (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null) });
+  await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  const flakyButton = await screen.findByRole("button", { name: "Flaky (1)" });
+  expect(flakyButton).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(flakyButton);
+  expect(flakyButton).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("listitem", { name: "Case #201 Valid login" })).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem", { name: /^Case #/ })).toHaveLength(1);
+  // The raw failure is still there.
+  expect(screen.getByText(/button "Save" not found/)).toBeInTheDocument();
+});
+
+test("no Flaky filter while no failure is marked flaky", async () => {
+  renderReview(RUN);
+  await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(screen.queryByRole("button", { name: /^Flaky/ })).toBeNull();
 });
 
 test("an unmarked failure is counted as failed and carries no flaky tag", async () => {
