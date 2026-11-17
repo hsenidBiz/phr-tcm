@@ -190,7 +190,7 @@ export const autoRun: Screen = {
         "Chooses how much of Auto Run you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
         "It hides the Discovery, Components and Fixtures rows of the Setup panel, the sign-in recipe tools, and the buttons **Replay to step**, **Import scripts** and **Clear scripts**; a script opens to read only, and says **Switch to Advanced to edit.** " +
         "A script card shows one header line, with the steps Auto Run does itself marked **Done by Auto Run** and the assistant's notes folded away under **Assistant notes**. " +
-        "When a difference is found, Simple asks **The case and the app disagree at step N. Which is right?** " +
+        "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
         "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going.",
       tips: [
         "If something Simple hides is what stops a run, Auto Run shows it anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
@@ -1021,7 +1021,7 @@ export const autoRun: Screen = {
       steps: [
         "Open Settings with the gear at the top right.",
         "Under **General**, press **Modules**. Switch on **Database Access** if it is off, then **Auto Run**.",
-        "**Auto Run** appears in the group at the bottom of the sidebar. Switch on **Playwright** or **API Templates** on the same page when you need them: they join it in that group.",
+        "**Auto Run** appears in the group at the bottom of the sidebar. The first time you switch it on, it also turns on **API Templates**, the Network tools and videos of failed cases; each can be switched off again. Switch on **Playwright** on the same page when you need it: it joins them in that group.",
       ],
     },
     {
