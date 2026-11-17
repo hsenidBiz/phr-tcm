@@ -1562,12 +1562,18 @@ fn bare_hosts_with_a_path_or_port_are_hidden_but_ordinary_words_are_not() {
     assert_eq!(hide("on 10.0.0.5, again"), "on /, again");
     assert_eq!(hide("on 10.0.0.5."), "on /.");
     assert_eq!(hide("got hr-test.example.co.uk/a#frag"), "got /a");
+    // A host written alone, a dotted name or an internal machine's.
+    assert_eq!(hide("version 1.2.3 of example.com"), "version 1.2.3 of /");
+    assert_eq!(hide("opened hr.example.com."), "opened /.");
+    assert_eq!(hide("the db on qa-server01 was down"), "the db on / was down");
+    assert_eq!(hide("qa-server01:1433 refused"), "/ refused");
     let words = [
         "v2.2.3 shipped, e.g. the menu, i.e. the old one",
         "see cv.txt and notes.md, or Index.cshtml.cs:40 and main.rs:12",
         "Leave > Apply at 12.30 on 3.5 of 4",
         "the Save & Continue button (Pages/Leave/Index.cshtml.cs:95)",
-        "version 1.2.3 of example.com", // no path or port: a word
+        "ASP.NET and Class.Method and report.pdf and Sign.In",
+        "see step test-3 and utf-8 and e.g. covid-19",
     ];
     for w in words {
         assert_eq!(hide(w), w, "{w}");

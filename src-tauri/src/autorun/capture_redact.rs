@@ -247,8 +247,56 @@ fn token_shaped(text: &str, min: usize) -> bool {
     let lower = text.chars().any(|c| c.is_ascii_lowercase());
     let digit = text.chars().any(|c| c.is_ascii_digit());
     let marker = text.contains('+') || text.contains('/') || text.ends_with('=');
-    (upper && lower && digit) || (marker && upper && lower)
+    (upper && lower && digit) || (marker && upper && lower) || (n >= LOWER_MIN && lower_token(text))
 }
+
+/// A lower-case opaque token is hidden from this length: shorter, a plain
+/// word-and-number run (a slug, an id) is far likelier data than a secret.
+const LOWER_MIN: usize = 32;
+
+/// A run of lower-case letters and digits only, with enough of each and of
+/// distinct characters to be random and not a word with a number on it
+/// (`lower_case_session_token_4f9a...`). Separators (`-`, `_`) disqualify
+/// it: that is a slug or a name.
+fn lower_token(text: &str) -> bool {
+    if !text.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    let digits = text.chars().filter(char::is_ascii_digit).count();
+    let letters = text.len() - digits;
+    let mut seen: Vec<char> = text.chars().collect();
+    seen.sort_unstable();
+    seen.dedup();
+    digits >= 4 && letters >= 4 && seen.len() >= 12
+}
+
+/// Whether `text` is a GUID: 8-4-4-4-12 hex digits, dashed.
+pub fn is_guid(text: &str) -> bool {
+    let t = text.as_bytes();
+    t.len() == 36
+        && t.iter().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { *b == b'-' } else { b.is_ascii_hexdigit() })
+}
+
+/// Words that make a name one whose GUID value is a secret: a session id, a
+/// ticket, a nonce, a reset or invitation link's id. A GUID under any other
+/// name (a record's `id`, `userId`) is data a template may need, so stays.
+const GUID_WORDS: [&str; 17] = [
+    "sid", "ticket", "nonce", "state", "handle", "reset", "invite", "invitation", "activation", "verification",
+    "verify", "confirmation", "challenge", "magic", "grant", "jti", "sig",
+];
+
+/// Whether a name carries a GUID value as a secret (`GUID_WORDS`).
+fn guid_name(name: &str) -> bool {
+    segments(name).iter().any(|w| GUID_WORDS.contains(&w.as_str()))
+}
+
+/// `value` is a GUID held under a name that makes it a secret.
+fn hidden_guid(name: &str, value: &str) -> bool {
+    guid_name(name) && is_guid(value.trim().trim_matches(|c| matches!(c, '"' | '\'' | '\\')))
+}
+
+/// Header names whose GUID is an identifier for tracing, not a secret.
+const TRACE_WORDS: [&str; 7] = ["request", "correlation", "trace", "activity", "span", "operation", "transaction"];
 
 /// `token_shaped` for one decoded path segment or value. Dots separate names
 /// (`Company.Module.SomeLongTypeName2026`), so each part is judged alone. A
@@ -334,7 +382,7 @@ static COOKIE_VALUE: LazyLock<Regex> = LazyLock::new(|| {
 fn hide_cookie_values(text: &str) -> String {
     COOKIE_VALUE
         .replace_all(text, |c: &Captures| {
-            if opaque(&c[3]) {
+            if opaque(&c[3]) || is_guid(&c[3]) {
                 format!("{}{}{HIDDEN}", &c[1], &c[2])
             } else {
                 c[0].to_string()
@@ -481,7 +529,8 @@ fn redact_value(v: &Value, depth: u8) -> Value {
                         let code = k.eq_ignore_ascii_case("code");
                         let hide = secret_name(k)
                             || (oauth && code)
-                            || (code && x.as_str().is_some_and(opaque_code));
+                            || (code && x.as_str().is_some_and(opaque_code))
+                            || x.as_str().is_some_and(|v| hidden_guid(k, v));
                         let x = if hide { Value::String(REDACTED.to_string()) } else { redact_value(x, depth) };
                         (k.clone(), x)
                     })
@@ -515,7 +564,7 @@ fn field_at(pair: &str, depth: u8, force: bool) -> String {
     let Some((name, value)) = pair.split_once('=') else { return pair.to_string() };
     let plain_value = decoded(value);
     let opaque_code_value = decoded(name).eq_ignore_ascii_case("code") && opaque_code(&plain_value);
-    if force || opaque_code_value || secret_name(&decoded(name)) {
+    if force || opaque_code_value || secret_name(&decoded(name)) || hidden_guid(&decoded(name), &plain_value) {
         return format!("{name}={REDACTED}");
     }
     match redact_text_value(&plain_value, depth) {
@@ -555,7 +604,7 @@ pub fn redact_path_query(pq: &str) -> String {
 /// One field (a HAR `params` entry, say): its value hidden when `name` is a
 /// secret's, otherwise redacted inside.
 pub fn redact_field(name: &str, value: &str) -> String {
-    if secret_name(name) {
+    if secret_name(name) || hidden_guid(name, value) {
         return REDACTED.to_string();
     }
     finish(redact_text_value(value, 0).unwrap_or_else(|| value.to_string()))
@@ -567,7 +616,18 @@ pub fn redact_header(name: &str, value: &str) -> String {
     if secret_name(name) || name.eq_ignore_ascii_case("authorization") {
         return HIDDEN.to_string();
     }
-    redact_text(value)
+    let trace = segments(name).iter().any(|w| TRACE_WORDS.contains(&w.as_str()));
+    let shown = if trace { value.to_string() } else { hide_guids(value) };
+    redact_text(&shown)
+}
+
+/// `text` with every GUID in it hidden (a header's: a session id under an
+/// innocent name).
+fn hide_guids(text: &str) -> String {
+    static GUID: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b").unwrap()
+    });
+    GUID.replace_all(text, REDACTED).into_owned()
 }
 
 /// Free text (a failure, a tab name, an id) with the secrets in it hidden.
@@ -625,7 +685,7 @@ fn page_text(body: &str) -> String {
     let text = AUTH_HEADER.replace_all(&text, format!("${{1}}{REDACTED}").as_str()).into_owned();
     let text = LINE_FIELD
         .replace_all(&text, |c: &Captures| {
-            if secret_name(&c[2]) && !c[4].is_empty() {
+            if (secret_name(&c[2]) || hidden_guid(&c[2], &c[4])) && !c[4].is_empty() {
                 format!("{}{}{}{REDACTED}", &c[1], &c[2], &c[3])
             } else {
                 c[0].to_string()
@@ -643,7 +703,7 @@ fn hide_assignments(text: &str, depth: u8) -> String {
     ASSIGN
         .replace_all(text, |c: &Captures| {
             let value = &c[3];
-            if !secret_name(&c[1]) {
+            if !secret_name(&c[1]) && !hidden_guid(&c[1], value) {
                 let quote = value.chars().next().filter(|q| matches!(q, '"' | '\''));
                 return match quote {
                     Some(q) if depth < MAX_NESTING && value.len() > 2 && value.ends_with(q) => {

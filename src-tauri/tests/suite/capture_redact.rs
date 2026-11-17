@@ -526,3 +526,38 @@ fn ordinary_text_is_not_taken_for_an_authenticator_secret() {
     assert_eq!(redact_path_query("/x?type=LV-ANNUAL-2026-FULLDAY&dept=DEPARTMENT"),
         "/x?type=LV-ANNUAL-2026-FULLDAY&dept=DEPARTMENT");
 }
+
+#[test]
+fn guids_are_hidden_in_secret_positions_and_kept_as_record_ids() {
+    use v2_lib::autorun::capture_redact::{redact_field, redact_header};
+    let guid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    // A header whose name says nothing, a ticket field, a nonce in a query.
+    assert!(!redact_header("X-Device", guid).contains("3f2504e0"));
+    assert!(!redact_body(Some("application/json"), &format!(r#"{{"ticket":"{guid}","user":"avin"}}"#)).contains("3f2504e0"));
+    assert!(!redact_body(Some("text/plain"), &format!("sid = '{guid}'")).contains("3f2504e0"));
+    assert!(!redact_path_query(&format!("/cb?nonce={guid}&x=1")).contains("3f2504e0"));
+    assert!(!redact_field("resetId", guid).contains("3f2504e0"));
+    // A trace header, and a record's id in a body, a URL and a query, stay: a
+    // template captures them as placeholders.
+    assert_eq!(redact_header("X-Request-Id", guid), guid);
+    let body = format!(r#"{{"id":"{guid}","employeeId":"{guid}"}}"#);
+    assert_eq!(redact_body(Some("application/json"), &body), body);
+    assert_eq!(redact_path_query(&format!("/api/employees/{guid}?parent={guid}")), format!("/api/employees/{guid}?parent={guid}"));
+}
+
+#[test]
+fn long_lower_case_tokens_are_hidden_but_words_are_not() {
+    let token = "k3j9x0q7w2m5z8c1v4b6n9a2s5d8f1g4h7j0l3p6";
+    assert_eq!(token.len(), 40);
+    let out = redact_body(Some("application/json"), &format!(r#"{{"blob":"{token}","user":"avin"}}"#));
+    assert!(!out.contains("k3j9x0q7") && out.contains("avin"), "{out}");
+    assert!(!redact_body(Some("text/plain"), &format!("see {token} now")).contains("k3j9x0q7"));
+    assert!(!redact_path_query(&format!("/x?v={token}")).contains("k3j9x0q7"));
+    for plain in [
+        "the quick brown fox jumps over the lazy dog and keeps running",
+        "leave-request-approval-workflow-step-two-2026-final",
+        "employeeleaverequestapprovalworkflowstepnames",
+    ] {
+        assert_eq!(redact_body(Some("text/plain"), plain), plain);
+    }
+}
