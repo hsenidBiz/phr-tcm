@@ -44,6 +44,9 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
     // Writes start held: each AI tool's own "always allow" is first made to
     // match the active environment (an app that stopped halfway through a
     // switch left the last one's), and only then can a push turn one on.
+    // From here a settings file that could not be written is tried again on
+    // a timer, not only when something else changes.
+    super::ai_tools::enable_allow_retry();
     let mut first = BridgeContext::default();
     hold_writes(&mut first);
     let shared = BridgeState::new(first, app.package_info().version.to_string());

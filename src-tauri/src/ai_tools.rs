@@ -1397,9 +1397,7 @@ pub fn migrate_claude_permissions(settings: &str) -> Result<Option<String>, Stri
     if !changed {
         return Ok(None);
     }
-    serde_json::to_string_pretty(&root)
-        .map(Some)
-        .map_err(|e| format!("failed to serialize settings: {e}"))
+    pretty_like(settings, &root).map(Some)
 }
 
 /// A Claude Code settings file's text with `rule` in `permissions.allow`
@@ -1465,9 +1463,34 @@ pub fn set_claude_allow(settings: &str, rule: &str, on: bool) -> Result<Option<S
             }
         }
     }
-    serde_json::to_string_pretty(&root)
-        .map(Some)
-        .map_err(|e| format!("failed to serialize settings: {e}"))
+    pretty_like(settings, &root).map(Some)
+}
+
+/// `root` as JSON text laid out the way `original` was: its indent (a tab,
+/// or the number of spaces its first indented line has; two spaces when it
+/// has none), its line endings (CRLF when it has any) and a line break at
+/// the end when it had one. Key order is the parsed order. A file the
+/// person or Claude Code laid out is not reformatted by the app writing one
+/// rule.
+pub fn pretty_like(original: &str, root: &serde_json::Value) -> Result<String, String> {
+    use serde::Serialize;
+    let indent: String = original
+        .lines()
+        .find(|l| l.starts_with([' ', '\t']) && !l.trim().is_empty())
+        .map(|l| l.chars().take_while(|c| *c == ' ' || *c == '\t').collect())
+        .unwrap_or_else(|| "  ".to_string());
+    let mut out = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    let mut ser = serde_json::Serializer::with_formatter(&mut out, formatter);
+    root.serialize(&mut ser).map_err(|e| format!("failed to serialize settings: {e}"))?;
+    let mut text = String::from_utf8(out).map_err(|e| format!("failed to serialize settings: {e}"))?;
+    if original.contains("\r\n") {
+        text = text.replace('\n', "\r\n");
+    }
+    if original.ends_with('\n') {
+        text.push_str(if original.contains("\r\n") { "\r\n" } else { "\n" });
+    }
+    Ok(text)
 }
 
 /// Cursor's allowlist entry that lets our `db_query` run without asking:
@@ -1692,9 +1715,7 @@ pub fn migrate_cursor_permissions(permissions: &str) -> Result<Option<String>, S
     if !changed {
         return Ok(None);
     }
-    serde_json::to_string_pretty(&root)
-        .map(Some)
-        .map_err(|e| format!("failed to serialize permissions: {e}"))
+    pretty_like(permissions, &root).map(Some)
 }
 
 /// A Cursor `permissions.json`'s text with `entry` in `mcpAllowlist` (`on`)
@@ -1749,9 +1770,7 @@ pub fn set_cursor_allow(permissions: &str, entry: &str, on: bool) -> Result<Opti
             }
         }
     }
-    serde_json::to_string_pretty(&root)
-        .map(Some)
-        .map_err(|e| format!("failed to serialize permissions: {e}"))
+    pretty_like(permissions, &root).map(Some)
 }
 
 /// Writes `contents` to `path` atomically: write to a sibling temp file in
@@ -1763,6 +1782,52 @@ pub fn set_cursor_allow(permissions: &str, entry: &str, on: bool) -> Result<Opti
 /// `atomic_write_with`.
 pub fn atomic_write(path: &std::path::Path, contents: &str) -> Result<(), String> {
     atomic_write_with(path, contents, |p, s| std::fs::write(p, s), |a, b| std::fs::rename(a, b), std::thread::sleep)
+}
+
+/// The most times `update_file_safely` re-reads a file that changed under it.
+pub const FILE_CHANGED_ATTEMPTS: u32 = 5;
+
+/// Read-modify-write a file another program may be writing too, losing
+/// nothing of theirs. The file (empty when missing) is read and `edit` makes
+/// the new text from it (`None`: nothing to change). `before_write` is told
+/// the new text and may refuse it. The file is then read AGAIN, immediately
+/// before writing: if it is not what `edit` was given - Claude Code wrote a
+/// rule in the meantime - `abandon` undoes what `before_write` did and the
+/// whole thing runs again on the new content, up to `FILE_CHANGED_ATTEMPTS`
+/// times. The write is atomic (a temp file and a rename). `Ok(true)` when it
+/// wrote, `Ok(false)` when there was nothing to change.
+pub fn update_file_safely(
+    path: &std::path::Path,
+    edit: &mut dyn FnMut(&str) -> Result<Option<String>, String>,
+    before_write: &mut dyn FnMut(&str) -> Result<(), String>,
+    abandon: &mut dyn FnMut(),
+) -> Result<bool, String> {
+    let read = || match std::fs::read_to_string(path) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("could not read {}: {e}", path.display())),
+    };
+    for _ in 0..FILE_CHANGED_ATTEMPTS {
+        let existing = read()?;
+        let Some(next) = edit(&existing)? else { return Ok(false) };
+        before_write(&next)?;
+        if read()? != existing {
+            abandon();
+            continue;
+        }
+        let written = match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display())),
+            None => Ok(()),
+        }
+        .and_then(|()| atomic_write(path, &next));
+        if let Err(e) = written {
+            abandon();
+            return Err(e);
+        }
+        return Ok(true);
+    }
+    Err("the settings file kept changing while the app wrote to it - it will be tried again".to_string())
 }
 
 /// How long to wait before each retry of a rename another process blocked.

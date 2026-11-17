@@ -429,61 +429,64 @@ fn write_allow_inner(
         .copied()
         .filter(|e| record.holds(&target.key, e) || taking.legacy.contains(e))
         .collect();
-    let existing = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if put.is_empty() {
-                // Nothing there to take out of.
-                record.forget(&target.key, &removable);
-                return Ok(());
+    if put.is_empty() && !path.exists() {
+        // Nothing there to take out of.
+        record.forget(&target.key, &removable);
+        return Ok(());
+    }
+    // Read, change only this app's entries, read again right before the
+    // write, and start over on the new text when something else wrote the
+    // file in between (`update_file_safely`). The record is told what was
+    // added before the write, and takes it back when the attempt is dropped.
+    let added: std::cell::RefCell<Vec<&str>> = std::cell::RefCell::new(Vec::new());
+    let record = std::cell::RefCell::new(&mut *record);
+    let mut edit = |existing: &str| -> Result<Option<String>, String> {
+        let mut text = existing.to_string();
+        let mut changed = false;
+        let mut now_added: Vec<&str> = Vec::new();
+        for entry in put {
+            // "Taking it out would change something" is "it is there" - under
+            // the server's current name or its old one.
+            let there = (file.merge)(&text, entry, false).map_err(|e| format!("{}: {e}", path.display()))?.is_some();
+            if let Some(next) = (file.merge)(&text, entry, true).map_err(|e| format!("{}: {e}", path.display()))? {
+                text = next;
+                changed = true;
+                if !there {
+                    now_added.push(entry);
+                }
             }
-            String::new()
         }
-        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+        for entry in &removable {
+            if let Some(next) = (file.merge)(&text, entry, false).map_err(|e| format!("{}: {e}", path.display()))? {
+                text = next;
+                changed = true;
+            }
+        }
+        *added.borrow_mut() = now_added;
+        Ok(changed.then_some(text))
     };
-    let mut text = existing;
-    let mut changed = false;
-    let mut added: Vec<&str> = Vec::new();
-    for entry in put {
-        // "Taking it out would change something" is "it is there" - under
-        // the server's current name or its old one.
-        let there = (file.merge)(&text, entry, false).map_err(|e| format!("{}: {e}", path.display()))?.is_some();
-        if let Some(next) = (file.merge)(&text, entry, true).map_err(|e| format!("{}: {e}", path.display()))? {
-            text = next;
-            changed = true;
-            if !there {
-                added.push(entry);
+    let mut before = |_next: &str| -> Result<(), String> {
+        let list = added.borrow().clone();
+        if !list.is_empty() {
+            let mut rec = record.borrow_mut();
+            rec.add(&target.key, &list);
+            if let Err(e) = rec.save(root) {
+                rec.forget(&target.key, &list);
+                return Err(e);
             }
         }
-    }
-    for entry in &removable {
-        if let Some(next) = (file.merge)(&text, entry, false).map_err(|e| format!("{}: {e}", path.display()))? {
-            text = next;
-            changed = true;
+        Ok(())
+    };
+    let mut undo = || {
+        let list = added.borrow().clone();
+        if !list.is_empty() {
+            let mut rec = record.borrow_mut();
+            rec.forget(&target.key, &list);
+            let _ = rec.save(root);
         }
-    }
-    if !added.is_empty() {
-        record.add(&target.key, &added);
-        if let Err(e) = record.save(root) {
-            record.forget(&target.key, &added);
-            return Err(e);
-        }
-    }
-    if changed {
-        let written = match path.parent() {
-            Some(parent) => std::fs::create_dir_all(parent)
-                .map_err(|e| format!("could not create {}: {e}", parent.display())),
-            None => Ok(()),
-        }
-        .and_then(|()| atomic_write(path, &text));
-        if let Err(e) = written {
-            if !added.is_empty() {
-                record.forget(&target.key, &added);
-                let _ = record.save(root);
-            }
-            return Err(e);
-        }
-    }
+    };
+    crate::ai_tools::update_file_safely(path, &mut edit, &mut before, &mut undo)?;
+    let record = record.into_inner();
     // Out of the file (or never in it): off the record.
     record.forget(&target.key, &removable);
     Ok(())
@@ -571,6 +574,97 @@ pub fn apply_allow_in(
     working_dir: Option<&str>,
     data_root: &std::path::Path,
 ) -> Vec<AutoApproveOutcome> {
+    let generation = ALLOW_PASS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let (out, failed) = apply_allow_pass(tools, state, working_dir, data_root);
+    if failed && ALLOW_RETRY_ON.load(std::sync::atomic::Ordering::SeqCst) {
+        schedule_allow_retry(tools.clone(), state.clone(), working_dir.map(str::to_string), data_root.to_path_buf(), generation);
+    }
+    out
+}
+
+/// Which pass over the allow files is the newest: a retry belongs to the
+/// pass that failed and gives way as soon as another pass has run.
+static ALLOW_PASS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether a failed pass is retried on a timer. Off until the app turns it
+/// on at start (`enable_allow_retry`), so a test never leaves a thread
+/// sleeping behind it.
+static ALLOW_RETRY_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turn on the timed retry of an allow file that could not be written.
+pub fn enable_allow_retry() {
+    ALLOW_RETRY_ON.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// How long to wait before each retry of a failed allow-file write, in
+/// milliseconds: bounded, so a file that stays locked stops being tried.
+pub const ALLOW_RETRY_WAITS_MS: [u64; 5] = [30_000, 30_000, 60_000, 60_000, 60_000];
+
+fn schedule_allow_retry(
+    tools: ToolHome,
+    state: AllowState,
+    working_dir: Option<String>,
+    data_root: PathBuf,
+    generation: u64,
+) {
+    let spawned = std::thread::Builder::new().name("allow-file-retry".into()).spawn(move || {
+        retry_allow_writes(
+            &tools,
+            &state,
+            working_dir.as_deref(),
+            &data_root,
+            &|| ALLOW_PASS.load(std::sync::atomic::Ordering::SeqCst) == generation,
+            &ALLOW_RETRY_WAITS_MS,
+            &mut std::thread::sleep,
+        );
+    });
+    if let Err(e) = spawned {
+        crate::applog::warn(format!("auto-approve: could not schedule a retry: {e}"));
+    }
+}
+
+/// Try a failed pass again after each wait in `waits_ms`, until one writes
+/// everything, another pass has run since (`still_newest` says no: it carries the
+/// newer wishes and schedules its own retry if it fails), or the waits run
+/// out. The environment's database choice is read again each time, under
+/// the files' lock. Every outcome is logged. `true` when the files ended up
+/// written.
+pub fn retry_allow_writes(
+    tools: &ToolHome,
+    state: &AllowState,
+    working_dir: Option<&str>,
+    data_root: &std::path::Path,
+    still_newest: &dyn Fn() -> bool,
+    waits_ms: &[u64],
+    sleep: &mut dyn FnMut(std::time::Duration),
+) -> bool {
+    for (i, wait) in waits_ms.iter().enumerate() {
+        sleep(std::time::Duration::from_millis(*wait));
+        if !still_newest() {
+            return true;
+        }
+        let failed = match_allow_files_with(data_root, |db| {
+            let state = AllowState { db, ..state.clone() };
+            apply_allow_pass(tools, &state, working_dir, data_root).1
+        });
+        if !failed {
+            crate::applog::info(format!("auto-approve: the allow file was written on retry {}", i + 1));
+            return true;
+        }
+        crate::applog::warn(format!("auto-approve: retry {} of {} could not write the allow file", i + 1, waits_ms.len()));
+    }
+    crate::applog::warn("auto-approve: the allow file could not be written; it is tried again when the tools, repository or modules change");
+    false
+}
+
+/// One pass over the allow files: what `apply_allow_in` answers, and
+/// whether any file could not be written.
+fn apply_allow_pass(
+    tools: &ToolHome,
+    state: &AllowState,
+    working_dir: Option<&str>,
+    data_root: &std::path::Path,
+) -> (Vec<AutoApproveOutcome>, bool) {
     let root = root_of(working_dir);
     let mut record = AllowRecord::load(data_root, state.db);
     // The database switch's older entries may go once, with the switch off.
@@ -658,7 +752,7 @@ pub fn apply_allow_in(
     if let Err(e) = record.save(data_root) {
         crate::applog::warn(format!("auto-approve: {e}"));
     }
-    out
+    (out, !all_applied)
 }
 
 /// Every database the Company database card offers, as the public view:
