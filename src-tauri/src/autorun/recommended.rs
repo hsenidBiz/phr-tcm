@@ -43,19 +43,37 @@ pub fn recommended_on_switch(auto_run_used_before: bool, s: &AppSettings) -> Rec
     }
 }
 
-/// Whether the app data folder already holds Auto Run's folder.
-pub fn auto_run_used_before(data_dir: &Path) -> bool {
-    data_dir.join("autorun").exists()
+/// Whether the Auto Run data folder holds any FILE anywhere under it. Empty
+/// directories do not count: every start-up builds `envs/`.
+pub fn autorun_dir_has_files(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| match e.file_type() {
+        Ok(t) if t.is_dir() => autorun_dir_has_files(&e.path()),
+        Ok(t) => t.is_file(),
+        Err(_) => false,
+    })
 }
 
-/// Settle the mode for an install that was already running Auto Run, once,
-/// at start-up. Saved only when it changed.
-pub fn settle_on_start() {
+/// Once true, always true: Auto Run is on now, or has left files.
+pub fn settle_ever_on(ever_on: bool, auto_run_on: bool, dir_has_files: bool) -> bool {
+    ever_on || auto_run_on || dir_has_files
+}
+
+/// Settle the mode and "ever on" for an install, once, at start-up. Must run
+/// BEFORE `roots::start_up`. Saved only when something changed.
+pub fn settle_on_start(data_dir: &Path) {
     let now = crate::app_settings::current();
-    let settled = settle_mode_on_upgrade(now.autorun_mode, crate::modules::on(Module::AutoRun));
-    if settled != now.autorun_mode {
-        if let Err(e) = crate::app_settings::update(|s| s.autorun_mode = settled) {
-            crate::applog::warn(format!("settling the Auto Run mode failed: {e}"));
+    let auto_run_on = crate::modules::on(Module::AutoRun);
+    let mode = settle_mode_on_upgrade(now.autorun_mode, auto_run_on);
+    let ever = settle_ever_on(now.auto_run_ever_on, auto_run_on, !now.auto_run_ever_on && autorun_dir_has_files(&data_dir.join("autorun")));
+    if mode != now.autorun_mode || ever != now.auto_run_ever_on {
+        if let Err(e) = crate::app_settings::update(|s| {
+            s.autorun_mode = mode;
+            s.auto_run_ever_on = ever;
+        }) {
+            crate::applog::warn(format!("settling the Auto Run settings failed: {e}"));
         }
     }
 }

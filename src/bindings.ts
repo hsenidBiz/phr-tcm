@@ -3086,6 +3086,11 @@ export type AppSettings = {
 	 *  Run on never overrides it.
 	 */
 	api_templates_set?: boolean,
+	/**
+	 *  Auto Run has been on at some point (or left files behind). Once
+	 *  true it never goes back; it decides whether a switch-on is the first.
+	 */
+	auto_run_ever_on?: boolean,
 	/**  Simple or Advanced Auto Run; `None` until one is picked or settled. */
 	autorun_mode?: AutorunMode | null,
 	/**

@@ -70,6 +70,9 @@ pub struct AppSettings {
     /// API Templates was switched on or off by a person, so switching Auto
     /// Run on never overrides it.
     pub api_templates_set: bool,
+    /// Auto Run has been on at some point (or left files behind). Once
+    /// true it never goes back; it decides whether a switch-on is the first.
+    pub auto_run_ever_on: bool,
     /// Simple or Advanced Auto Run; `None` until one is picked or settled.
     pub autorun_mode: Option<AutorunMode>,
     /// The page every browser the app drives shows (`browser::viewport`).
@@ -92,6 +95,7 @@ impl Default for AppSettings {
             autorun_failed_video: false,
             autorun_failed_video_set: false,
             api_templates_set: false,
+            auto_run_ever_on: false,
             autorun_mode: None,
             page_size: DEFAULT_PAGE,
         }

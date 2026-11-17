@@ -732,7 +732,7 @@ pub fn run() {
                 crate::app_settings::init(dir.clone());
                 // An install that already runs Auto Run keeps every control
                 // it has today: settle its mode once.
-                crate::autorun::recommended::settle_on_start();
+                crate::autorun::recommended::settle_on_start(&dir);
                 // The AI Bridge tab's writing style, read by the guide on each
                 // call (see writing_style.rs).
                 crate::writing_style::init(dir.clone());
