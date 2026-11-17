@@ -948,7 +948,7 @@ fn a_divergence_shows_on_its_case_in_the_report() {
     ) || product_section_of(&html, 201).contains("step 2: the case says"), "{}", section_of(&html, 201));
     assert!(product_section_of(&html, 201).contains("(data, needs a ruling)"));
     assert!(product_section_of(&html, 203).contains("(data, waits for a repair)"));
-    assert!(product_section_of(&html, 204).contains("(data, ruled: the data was fixed)"));
+    assert!(product_section_of(&html, 204).contains("(data, ruled: you fixed the data)"));
     assert!(!product_section_of(&html, 202).contains("Divergence:"), "ruled long ago");
 }
 
@@ -1026,7 +1026,7 @@ fn the_report_names_an_assistant_ruling_and_the_persons_words() {
     let section = product_section_of(&html, 201);
     assert!(section.contains("ruled by the assistant"), "{section}");
     assert!(section.contains("a different cycle name is fine"), "{section}");
-    assert!(section.contains("ruled: the case stands"), "{section}");
+    assert!(section.contains("ruled: the app is wrong"), "{section}");
 }
 
 /// A run of the given cases (id, verdict), each with the given steps' outcomes empty.

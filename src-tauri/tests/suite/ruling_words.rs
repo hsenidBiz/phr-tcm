@@ -3,7 +3,16 @@
 
 use std::path::{Path, PathBuf};
 
-const OLD_LABELS: [&str; 3] = ["The case is right", "Rewrite the case", "Data fixed"];
+/// Compared in lower case: the labels and their sentence forms.
+const OLD_WORDS: [&str; 7] = [
+    "the case is right",
+    "rewrite the case",
+    "data fixed",
+    "data is fixed",
+    "the case is being rewritten",
+    "the data was fixed",
+    "the case stands",
+];
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -19,10 +28,14 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Files allowed to name an old label in code. None today: a comment is
-/// skipped by line, and the internal names (`case_stands`, `data_fixed`,
-/// `rewrite`, the tool's `case_right`) never contain the labels.
-const ALLOWED_FILES: [&str; 0] = [];
+/// Files allowed to use an old phrase. A comment is skipped by line, and the
+/// internal names (`case_stands`, `data_fixed`, `rewrite`, `case_right`) do
+/// not contain the phrases. Each file here holds text only an assistant reads.
+const ALLOWED_FILES: [(&str, &str); 3] = [
+    ("src-tauri/src/autorun/divergences.rs", "failure answers and healer lines to the assistant, which keep internal names"),
+    ("src-tauri/src/mcp.rs", "the rule_case_divergence tool description, read by the assistant"),
+    ("src-tauri/src/autorun/case_values.rs", "a repair-refusal answer to the assistant"),
+];
 
 #[test]
 fn no_person_facing_text_uses_the_old_ruling_labels() {
@@ -35,7 +48,7 @@ fn no_person_facing_text_uses_the_old_ruling_labels() {
     let mut found = vec![];
     for path in files {
         let rel = path.strip_prefix(repo).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
-        if ALLOWED_FILES.contains(&rel.as_str()) {
+        if ALLOWED_FILES.iter().any(|(f, _)| *f == rel) {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
@@ -45,8 +58,9 @@ fn no_person_facing_text_uses_the_old_ruling_labels() {
             if t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') {
                 continue;
             }
-            for label in OLD_LABELS {
-                if line.contains(label) {
+            let lower = line.to_lowercase();
+            for label in OLD_WORDS {
+                if lower.contains(label) {
                     found.push(format!("{rel}:{}: {label}", n + 1));
                 }
             }

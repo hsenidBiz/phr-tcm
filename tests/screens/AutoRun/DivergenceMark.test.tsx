@@ -26,7 +26,7 @@ const base: Divergence = {
   status: "open",
 };
 
-function show(d: Divergence) {
+function show(d: Divergence, caseId = 147556) {
   const calls: { cmd: string; args: unknown }[] = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
@@ -36,23 +36,23 @@ function show(d: Divergence) {
   const qc = new QueryClient();
   render(
     <QueryClientProvider client={qc}>
-      <DivergenceRow org="acme" project="Web" caseId={147556} divergence={d} />
+      <DivergenceRow org="acme" project="Web" caseId={caseId} divergence={d} />
     </QueryClientProvider>,
   );
   return calls;
 }
 
 test("an open data divergence asks which is right and offers three rulings", () => {
-  show({ ...base, step: 3, case_id: 12 });
+  show({ ...base, step: 3, case_id: 12 }, 12);
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
   // The badge explains the word it uses.
   expect(screen.getByText("Needs a ruling")).toHaveAttribute("data-term", "ruling");
   expect(screen.getByText("The case and the app disagree at step 3. Which is right?")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "The app is wrong for #147556 step 3" })).toHaveTextContent("The app is wrong");
-  expect(screen.getByRole("button", { name: "The app is right, update case #147556 for step 3" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: "The app is wrong for #12 step 3" })).toHaveTextContent("The app is wrong");
+  expect(screen.getByRole("button", { name: "The app is right, update case #12 for step 3" })).toHaveTextContent(
     "The app is right, update the case",
   );
-  expect(screen.getByRole("button", { name: "I fixed the data for #147556 step 3" })).toHaveTextContent("I fixed the data");
+  expect(screen.getByRole("button", { name: "I fixed the data for #12 step 3" })).toHaveTextContent("I fixed the data");
 });
 
 test("a reporter's proposal is shown with the divergence", () => {
@@ -65,6 +65,8 @@ test("an app divergence asks no question and offers no data fix", () => {
   expect(screen.getByText("Divergence")).toBeInTheDocument();
   expect(screen.getByText("Divergence")).toHaveAttribute("data-term", "divergence");
   expect(screen.queryByText(/Which is right/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /The app is wrong/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /The app is right, update the case|The app is right, update case/ })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /I fixed the data/ })).not.toBeInTheDocument();
 });
 

@@ -802,9 +802,9 @@ fn divergence_words(d: &Divergence) -> String {
     let status = match (d.status, d.ruling) {
         (DivergenceStatus::Open, _) => "needs a ruling",
         (DivergenceStatus::AwaitingRepair, _) => "waits for a repair",
-        (DivergenceStatus::Ruled, Some(Ruling::DataFixed)) => "ruled: the data was fixed",
-        (DivergenceStatus::Ruled, Some(Ruling::Rewrite)) => "ruled: the case is being rewritten",
-        (DivergenceStatus::Ruled, _) => "ruled: the case stands",
+        (DivergenceStatus::Ruled, Some(Ruling::DataFixed)) => "ruled: you fixed the data",
+        (DivergenceStatus::Ruled, Some(Ruling::Rewrite)) => "ruled: the app is right, the case is being updated",
+        (DivergenceStatus::Ruled, _) => "ruled: the app is wrong",
     };
     let by = match (d.ruled_by, d.said.as_deref()) {
         (Some(RuledBy::Assistant), said) => {
