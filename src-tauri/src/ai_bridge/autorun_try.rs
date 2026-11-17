@@ -679,7 +679,7 @@ pub(crate) async fn try_action<D: crate::browser::cdp::Driver>(
     } else {
         page_address(d).await.0
     };
-    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false, because: Vec::new() };
+    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false };
     // A try fails on a request the application refused: the assistant learns
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page

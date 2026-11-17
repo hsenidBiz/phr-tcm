@@ -1,11 +1,15 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconBack } from "../../lib/actionIcons";
+import { envKeys, loadEnvironments } from "../../lib/environments";
+import { turnOnNetworkToolsWhereUnset } from "../../lib/networkTools";
+import type { Recommended } from "../../bindings";
 import { realModulesSnapshot, setModule, useModules, useModulesHydrated, type Module } from "../../lib/modules";
 import { noteModuleSwitch } from "../../lib/newNav";
 import ModuleTree from "./ModuleTree";
-import { MODULE_INFO, infoOf, switchOffWarning } from "./modulesCopy";
+import { MODULE_INFO, infoOf, recommendedNote, switchOffWarning } from "./modulesCopy";
 
 /** Every module on that hangs, directly or not, below `m`, in tree order. */
 function below(m: Module, on: ReadonlySet<Module>): Module[] {
@@ -26,22 +30,44 @@ export default function Modules({ onBack }: { onBack: () => void }) {
   const hydrated = useModulesHydrated();
   const [busy, setBusy] = useState<Module | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const qc = useQueryClient();
   const [confirm, setConfirm] = useState<{ module: Module; also: Module[] } | null>(null);
 
   const apply = async (m: Module, next: boolean) => {
     setError(null);
+    setNote(null);
     setBusy(m);
     try {
       const before = realModulesSnapshot();
-      await setModule(m, next);
+      const recommended = await setModule(m, next);
       // A person's own switch: mark in the sidebar what it revealed, or
       // take the mark away from what it hid.
       noteModuleSwitch(before, realModulesSnapshot());
+      if (recommended) await applyRecommended(recommended);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
+  };
+
+  /** The first switch-on of Auto Run: Rust turned its own recommended items
+   * on; the Network tools are the webview's, per environment, so they are
+   * applied here. The settings (mode, video) changed in Rust, so re-read them. */
+  const applyRecommended = async (r: Recommended) => {
+    let networkTools = false;
+    if (r.network_tools) {
+      try {
+        const view = await qc.fetchQuery({ queryKey: envKeys.list, queryFn: loadEnvironments });
+        networkTools = turnOnNetworkToolsWhereUnset(view.environments.map((e) => e.id)) > 0;
+      } catch {
+        // The environments could not be read: the module is on either way,
+        // and the note simply does not claim the Network tools.
+      }
+    }
+    void qc.invalidateQueries({ queryKey: ["app-settings"] });
+    setNote(recommendedNote({ api_templates: r.api_templates, network_tools: networkTools, video: r.video }));
   };
 
   const toggle = (m: Module, next: boolean) => {
@@ -74,6 +100,11 @@ export default function Modules({ onBack }: { onBack: () => void }) {
       {error && (
         <p role="alert" className="shrink-0 rounded-md border border-danger px-3 py-2 text-sm text-danger">
           {error}
+        </p>
+      )}
+      {note && (
+        <p role="status" className="shrink-0 rounded-md border border-border px-3 py-2 text-sm text-muted">
+          {note}
         </p>
       )}
       <ModuleTree modules={modules} hydrated={hydrated} busy={busy} onToggle={toggle} />

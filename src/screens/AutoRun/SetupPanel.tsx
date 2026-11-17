@@ -54,6 +54,8 @@ import SignInProposalNotice from "./SignInProposalNotice";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
+import { BLOCKER_NOTE, blockingRows, fixtureBlock, shownInSimple, type SetupRowName } from "./blocksRun";
+import { useAutoRunMode } from "./useAutoRunMode";
 
 /** Everything the Setup panel reports, and what the screen needs to know
  * about it. All of it
@@ -181,6 +183,11 @@ export function useAutoRunSetup({
   });
   const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
 
+  const discovering = useDiscoveryActive();
+  /** The rows that stop a run now, which Simple mode shows again when it
+   * hides them. The fixtures entries of the header's reasons below use the
+   * same `fixtureBlock` test; its other reasons are its own. */
+  const blocking = blockingRows({ signIn, recipeUnreadable: setupReady && recipe.isError, discovering, fixturesFailed, fixturesFailedHere });
   /** What the panel's "Needs attention" is about, each as a few words for
    * its header: something a run cannot go without is missing, or could not
    * be read, or a script uploads a file the Test files folder does not
@@ -195,10 +202,12 @@ export function useAutoRunSetup({
     ...(readiness.missingTestFiles.length > 0
       ? [`${plural(readiness.missingTestFiles.length, "test file")} missing`]
       : []),
-    ...(fixturesFailedHere > 0
-      ? [`${plural(fixturesFailedHere, "fixture")} failed here - ask the assistant`]
+    ...(fixtureBlock(fixturesFailed, fixturesFailedHere)
+      ? [
+          ...(fixturesFailedHere > 0 ? [`${plural(fixturesFailedHere, "fixture")} failed here - ask the assistant`] : []),
+          ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),
+        ]
       : []),
-    ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),
   ];
 
   return {
@@ -227,6 +236,8 @@ export function useAutoRunSetup({
     essentialsSettled,
     essentialUnreadable,
     attentionReasons,
+    blocking,
+    discovering,
   };
 }
 
@@ -353,13 +364,19 @@ function fixturesLine(list: SavedFixture[]): [Status, string] {
   return when ? ["ready", `${count}, last run ${when}`] : ["quiet", `${count}, never run`];
 }
 
+type SummaryLine = { label: SetupRowName; status: Status; value: string; missing?: string[] };
+
+/** What Simple says of the sign-in, in place of the recipe's own words. */
+const SIMPLE_SIGN_IN_READY = "Ready";
+
 /** The collapsed panel's lines: one per item, from the reads above, in
  * the full rows' own words. `missing` is set on the Test files line when a
  * script uploads a file the folder lacks: the line then names them. */
 function summaryLines(
   s: AutoRunSetup,
   allProjects: boolean,
-): { label: string; status: Status; value: string; missing?: string[] }[] {
+  simple: boolean,
+): SummaryLine[] {
   const pickProject = noProjectHint(allProjects, "Pick a project first");
   // No environment is an answer, not a gap: runs then go to the saved
   // recipe's address, which the Site address line says.
@@ -383,9 +400,9 @@ function summaryLines(
     s.signIn === "none"
       ? ["missing", pickProject]
       : s.signIn === "saved"
-        ? ["ready", "Recipe saved"]
+        ? ["ready", simple ? SIMPLE_SIGN_IN_READY : "Recipe saved"]
         : s.signIn === "builtin"
-          ? ["ready", "Built-in"]
+          ? ["ready", simple ? SIMPLE_SIGN_IN_READY : "Built-in"]
           : s.recipe.isError
             ? ["warning", "Could not be read"]
             : ["quiet", "Loading…"];
@@ -454,7 +471,7 @@ function summaryLines(
           : s.activeDb.server
             ? ["ready", s.activeDb.label]
             : ["warning", "Not set up yet"];
-  return [
+  const rows: SummaryLine[] = [
     { label: "Environment", status: env[0], value: env[1] },
     { label: "Site address", status: site[0], value: site[1] },
     { label: "Sign-in", status: signIn[0], value: signIn[1] },
@@ -468,9 +485,10 @@ function summaryLines(
       value: files[1],
       missing: s.setupReady && !s.testFiles.isError && missingFiles > 0 ? s.readiness.missingTestFiles : undefined,
     },
-    ...(s.fixturesOn ? [{ label: "Fixtures", status: fixtures[0], value: fixtures[1] }] : []),
+    ...(s.fixturesOn ? [{ label: "Fixtures" as const, status: fixtures[0], value: fixtures[1] }] : []),
     { label: "Database", status: db[0], value: db[1] },
   ];
+  return rows;
 }
 
 export default function SetupPanel({
@@ -509,7 +527,7 @@ export default function SetupPanel({
   // discovery is the person's way out of one the assistant never ended.
   // Nothing is lost by ending it - the map keeps what was seen - so it asks
   // no confirm.
-  const discovering = useDiscoveryActive();
+  const discovering = s.discovering;
   const [ending, setEnding] = useState(false);
   const [endProblem, setEndProblem] = useState<string | null>(null);
   const endDiscovery = async () => {
@@ -560,10 +578,47 @@ export default function SetupPanel({
 
   // The full rows carry the same status as the summary lines. A row with no
   // summary line is quiet, so every row's label starts at the same place.
-  const lines = summaryLines(s, allProjects);
+  // Simple leaves out the rows an advanced user tends, unless one stops a run.
+  // Until the mode is known the panel is what Advanced shows.
+  const { mode, loading: modeLoading } = useAutoRunMode();
+  const simple = !modeLoading && mode === "simple";
+  const lines = summaryLines(s, allProjects, simple);
   const statusOf = (label: string): Status => lines.find((l) => l.label === label)?.status ?? "quiet";
   const valueOf = (label: string): string => lines.find((l) => l.label === label)?.value ?? "";
   const dbStatus = statusOf("Database");
+  const showRow = (name: SetupRowName) => !simple || shownInSimple(name, s.blocking);
+  /** The note under a row Simple shows only because it blocks a run. */
+  const blockerNote = (name: SetupRowName) =>
+    simple && s.blocking.has(name) ? <p className="-mt-2 text-xs text-muted">{BLOCKER_NOTE}</p> : null;
+  const shownLines = lines.filter((l) => showRow(l.label));
+  // The Sign-in row's recipe tools are for Advanced, unless sign-in blocks a run.
+  const releaseButton = (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={releasing}
+      title="Let go of an Auto Run browser the app still holds after it closed, and close the browsers the app opened"
+      onClick={() => void releaseBrowser()}
+    >
+      <IconRelease aria-hidden />
+      Release Auto Run browser
+    </Button>
+  );
+  const releaseMessages = (
+    <>
+      {endProblem && (
+        <p role="alert" className="text-xs text-danger">
+          {endProblem}
+        </p>
+      )}
+      {released && (
+        <p role="status" className="text-xs text-muted">
+          {released}
+        </p>
+      )}
+    </>
+  );
+  const signInTools = showRow("Sign-in") && (!simple || s.blocking.has("Sign-in"));
 
   return (
     <section
@@ -607,8 +662,9 @@ export default function SetupPanel({
       <div id={bodyId} className="-mx-1 min-h-0 overflow-auto px-1">
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
-            {lines.map(({ label, status, value, missing }) => (
-              <li key={label} className="flex items-start gap-2 text-sm">
+            {shownLines.map(({ label, status, value, missing }) => (
+              <li key={label} className="text-sm">
+                <div className="flex items-start gap-2">
                 {/* One line tall and centred in it, so the dot sits beside
                     the label's first line even when the value wraps. */}
                 <StatusDot status={status} boxed />
@@ -628,6 +684,10 @@ export default function SetupPanel({
                   )}
                 </span>
                 {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
+                </div>
+                {simple && s.blocking.has(label) && (
+                  <p className="pl-[8.5rem] text-xs text-muted">{BLOCKER_NOTE}</p>
+                )}
               </li>
             ))}
           </ul>
@@ -732,6 +792,8 @@ export default function SetupPanel({
                     <span className="text-muted">Loading…</span>
                   ) : recipe.isError ? (
                     <span className="text-danger">Could not be read - open it to see why</span>
+                  ) : simple ? (
+                    SIMPLE_SIGN_IN_READY
                   ) : recipe.data ? (
                     <Term name="recipe">Recipe saved</Term>
                   ) : (
@@ -743,29 +805,35 @@ export default function SetupPanel({
               >
                 {/* Record: sign in by hand once and the recipe is written.
                     Edit: the recipe as JSON, for what a recording cannot say. */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Record sign-in"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setRecordOpen(true)}
-                >
-                  <IconRecord aria-hidden />
-                  Record
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit sign-in recipe"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setRecipeOpen(true)}
-                >
-                  <IconRecipe aria-hidden />
-                  Edit
-                </Button>
+                {signInTools && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="Record sign-in"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setRecordOpen(true)}
+                    >
+                      <IconRecord aria-hidden />
+                      Record
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="Edit sign-in recipe"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setRecipeOpen(true)}
+                    >
+                      <IconRecipe aria-hidden />
+                      Edit
+                    </Button>
+                  </>
+                )}
               </SetupRow>
+
+              {blockerNote("Sign-in")}
 
               {setupReady && <SignInProposalNotice org={org} project={project} />}
 
@@ -823,99 +891,101 @@ export default function SetupPanel({
 
               {/* What the assistant's discovery has seen of the live app,
                   area by area. */}
-              <SetupRow
-                label="Discovery"
-                status={statusOf("Discovery")}
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : s.discoveryMap.isError ? (
-                    <span className="text-danger">The discovery map could not be read</span>
-                  ) : s.discoveryLine == null ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : s.discoveryLine === "Not explored yet" ? (
-                    <span className="text-muted">{s.discoveryLine}</span>
-                  ) : (
-                    s.discoveryLine
-                  )
-                }
-              >
-                {discovering && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={ending}
-                    title="Close the assistant's discovery browser so Auto Run can run again"
-                    onClick={() => void endDiscovery()}
+              {showRow("Discovery") && (
+                <>
+                  <SetupRow
+                    label="Discovery"
+                    status={statusOf("Discovery")}
+                    state={
+                      !setupReady ? (
+                        <span className="text-muted">{needsProject}</span>
+                      ) : s.discoveryMap.isError ? (
+                        <span className="text-danger">The discovery map could not be read</span>
+                      ) : s.discoveryLine == null ? (
+                        <span className="text-muted">Loading…</span>
+                      ) : s.discoveryLine === "Not explored yet" ? (
+                        <span className="text-muted">{s.discoveryLine}</span>
+                      ) : (
+                        s.discoveryLine
+                      )
+                    }
                   >
-                    <IconStop aria-hidden />
-                    End discovery
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={releasing}
-                  title="Let go of an Auto Run browser the app still holds after it closed, and close the browsers the app opened"
-                  onClick={() => void releaseBrowser()}
-                >
-                  <IconRelease aria-hidden />
-                  Release Auto Run browser
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="View discovery"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setDiscoveryOpen(true)}
-                >
-                  <IconDiscoveryMap aria-hidden />
-                  View
-                </Button>
-              </SetupRow>
-              {endProblem && (
-                <p role="alert" className="text-xs text-danger">
-                  {endProblem}
-                </p>
+                    {discovering && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={ending}
+                        title="Close the assistant's discovery browser so Auto Run can run again"
+                        onClick={() => void endDiscovery()}
+                      >
+                        <IconStop aria-hidden />
+                        End discovery
+                      </Button>
+                    )}
+                    {releaseButton}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="View discovery"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setDiscoveryOpen(true)}
+                    >
+                      <IconDiscoveryMap aria-hidden />
+                      View
+                    </Button>
+                  </SetupRow>
+                  {releaseMessages}
+              {blockerNote("Discovery")}
+              </>
               )}
-              {released && (
-                <p role="status" className="text-xs text-muted">
-                  {released}
-                </p>
+
+              {/* Simple hides the Discovery row, but letting go of a held
+                  browser is always offered: assistants ask the person to
+                  press it. */}
+              {simple && !showRow("Discovery") && (
+                <div className="flex flex-col items-start gap-1.5">
+                  {releaseButton}
+                  {releaseMessages}
+                </div>
               )}
 
               {/* Steps saved once that scripts use by name. */}
-              <SetupRow
-                label="Components"
-                term="component"
-                status={statusOf("Components")}
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : s.components.isError ? (
-                    <span className="text-danger">The components could not be read</span>
-                  ) : s.componentsLine == null ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : s.componentsLine === "None yet" ? (
-                    <span className="text-muted">{s.componentsLine}</span>
-                  ) : (
-                    s.componentsLine
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="View components"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setComponentsOpen(true)}
-                >
-                  <IconComponents aria-hidden />
-                  View
-                </Button>
-              </SetupRow>
+              {showRow("Components") && (
+                <>
+                  <SetupRow
+                    label="Components"
+                    term="component"
+                    status={statusOf("Components")}
+                    state={
+                      !setupReady ? (
+                        <span className="text-muted">{needsProject}</span>
+                      ) : s.components.isError ? (
+                        <span className="text-danger">The components could not be read</span>
+                      ) : s.componentsLine == null ? (
+                        <span className="text-muted">Loading…</span>
+                      ) : s.componentsLine === "None yet" ? (
+                        <span className="text-muted">{s.componentsLine}</span>
+                      ) : (
+                        s.componentsLine
+                      )
+                    }
+                  >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="View components"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setComponentsOpen(true)}
+                    >
+                      <IconComponents aria-hidden />
+                      View
+                    </Button>
+                  </SetupRow>
+                  {blockerNote("Components")}
+                </>
+              )}
 
               <SetupRow
                 label="Test files"
@@ -958,37 +1028,40 @@ export default function SetupPanel({
 
               {/* Drafts the assistant builds test data from; they live on
                   the API Templates screen. */}
-              {s.fixturesOn && (
-                <SetupRow
-                  label="Fixtures"
-                  term="fixture"
-                  status={statusOf("Fixtures")}
-                  state={
-                    !setupReady ? (
-                      <span className="text-muted">{needsProject}</span>
-                    ) : s.fixtures.isError ? (
-                      <span className="text-danger">The fixtures could not be read</span>
-                    ) : !s.fixtures.isSuccess ? (
-                      <span className="text-muted">Loading…</span>
-                    ) : statusOf("Fixtures") === "quiet" ? (
-                      <span className="text-muted">{valueOf("Fixtures")}</span>
-                    ) : (
-                      valueOf("Fixtures")
-                    )
-                  }
-                >
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label="Open fixtures"
-                    disabled={!setupReady}
-                    title={needsProject}
-                    onClick={() => onOpenFixtures?.()}
+              {s.fixturesOn && showRow("Fixtures") && (
+                <>
+                  <SetupRow
+                    label="Fixtures"
+                    term="fixture"
+                    status={statusOf("Fixtures")}
+                    state={
+                      !setupReady ? (
+                        <span className="text-muted">{needsProject}</span>
+                      ) : s.fixtures.isError ? (
+                        <span className="text-danger">The fixtures could not be read</span>
+                      ) : !s.fixtures.isSuccess ? (
+                        <span className="text-muted">Loading…</span>
+                      ) : statusOf("Fixtures") === "quiet" ? (
+                        <span className="text-muted">{valueOf("Fixtures")}</span>
+                      ) : (
+                        valueOf("Fixtures")
+                      )
+                    }
                   >
-                    <IconModuleApiTemplates aria-hidden />
-                    Open
-                  </Button>
-                </SetupRow>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="Open fixtures"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => onOpenFixtures?.()}
+                    >
+                      <IconModuleApiTemplates aria-hidden />
+                      Open
+                    </Button>
+                  </SetupRow>
+                  {blockerNote("Fixtures")}
+                </>
               )}
             </div>
             <p className="text-xs text-muted">

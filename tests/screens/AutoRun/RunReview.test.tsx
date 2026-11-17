@@ -1290,3 +1290,36 @@ test("a failed case's kept video shows Play and Download, and Raise bug offers i
   await waitFor(() => expect(calls.some((c) => c.cmd === "attach_case_video")).toBe(true));
   expect(calls.find((c) => c.cmd === "attach_case_video")?.args).toMatchObject({ bugId: 778, video: VIDEO });
 });
+
+test("Simple hides Replay to step in the run review", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), extra: (cmd) => (cmd === "get_app_settings" ? { autorun_mode: "simple" } : null) });
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  await waitFor(() => expect(within(failed).queryByRole("button", { name: /Replay/ })).toBeNull());
+});
+
+test("Advanced keeps Replay to step in the run review", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), extra: (cmd) => (cmd === "get_app_settings" ? { autorun_mode: "advanced" } : null) });
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(failed).getByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});
+
+test("a mode that never answers shows Replay to step in the run review", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), extra: (cmd) => (cmd === "get_app_settings" ? new Promise(() => {}) : null) });
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(failed).getByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});
+
+test("Simple keeps Raise bug and the failure video in the run review", async () => {
+  const withVideo = { ...BUG_RUN, cases: [{ ...BUG_RUN.cases[0], video: "video-1700000000000-000009.mp4" }, BUG_RUN.cases[1]] };
+  renderReview(withVideo, {
+    extra: (cmd) => {
+      if (cmd === "get_app_settings") return { autorun_mode: "simple" };
+      if (cmd === "test_cases_by_ids") return [BUG_CASE];
+      if (cmd === "auto_run_video_info") return { size: 2048, playable: true, attachable: true };
+      return null;
+    },
+  });
+  await screen.findByText("Valid login");
+  expect(await within(caseCard(201)).findByRole("button", { name: "Play video" })).toBeInTheDocument();
+  expect(within(caseCard(201)).getByRole("button", { name: /Raise bug/ })).toBeInTheDocument();
+});

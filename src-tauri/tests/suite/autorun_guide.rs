@@ -111,6 +111,17 @@ fn the_guide_teaches_locators_and_forbids_pauses() {
     }
 }
 
+#[test]
+fn the_guide_tells_assistants_what_simple_mode_hides() {
+    let g = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(g.contains("## Simple mode"), "the guide needs its Simple mode section");
+    assert!(
+        g.contains("do not send them to Discovery, Components, Fixtures or the sign-in recipe"),
+        "an assistant must not send a Simple person to a hidden control"
+    );
+    assert!(g.contains("autorun_mode") && g.contains("`get_current_pbi` also says"), "the guide names where an assistant reads the mode");
+}
+
 /// The two API checks have limits an assistant cannot guess: what each one
 /// can look at, what it assumes when a field is left out, and where its
 /// facts may come from. The guide must say all of it, and must send the
@@ -2282,9 +2293,9 @@ fn the_guide_says_never_fit_a_check_to_the_page() {
         "step 2: the check counts 6 but the case says 4 (\"exactly 4 levels\")",
         "`report_case_divergence { case_id, step, case_says, app_shows, kind }`",
         "needs a ruling: step N: the case says \"...\" but the app shows \"...\" (data) - a person rules on it in Auto Run",
-        "The case is right",
-        "Data fixed",
-        "Rewrite the case",
+        "The app is wrong",
+        "I fixed the data",
+        "The app is right, update the case",
         "waits for a repair: step N: ...",
         "a healer pointed at a missing precondition will keep rewriting assertions and locators until an empty or disabled page satisfies them, which produces a script that passes and proves nothing",
         "An `app` divergence does not block.",

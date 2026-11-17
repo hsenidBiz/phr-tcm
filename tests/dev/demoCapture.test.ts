@@ -293,7 +293,7 @@ test("Auto Run and API Templates answer from the sample data, with no password a
   expect(await commands.modulesGet()).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
   expect(await commands.modulesSet("auto_run", false)).toEqual({
     status: "ok",
-    data: ["db_access", "writing_style", "auto_run", "api_templates", "playwright"],
+    data: { on: ["db_access", "writing_style", "auto_run", "api_templates", "playwright"], recommended: null },
   });
 
   type Script = { no_save?: boolean; preconditions?: unknown[]; steps: unknown[] } | null;

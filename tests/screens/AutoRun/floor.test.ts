@@ -51,4 +51,9 @@ describe("floorOf", () => {
     ] as unknown as StepScript[];
     expect(floorOf(steps, list)[0].state).toEqual({ kind: "explained", reason: "the PDF - no check reads a PDF" });
   });
+
+  it("explains a step marked as done by Auto Run", () => {
+    const out = floorOf(steps, [{ step_number: 1, actions: [], by_auto_run: true }] as unknown as StepScript[]);
+    expect(out).toEqual([{ step_number: 1, state: { kind: "explained", reason: "Done by Auto Run" } }]);
+  });
 });

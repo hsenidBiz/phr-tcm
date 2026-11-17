@@ -36,6 +36,7 @@ import {
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
+import { useAutoRunMode } from "./useAutoRunMode";
 import { logUi } from "../../lib/uiLog";
 import {
   cancelRunSetup,
@@ -339,6 +340,9 @@ export default function AutoRun({
   /** Why every way of starting a run here waits, when it does: a run going,
    * or the assistant's discovery holding the browser. Said in the title. */
   const runBlocked = runBlockedReason(background, discovering);
+  const { mode, setMode, loading: modeLoading } = useAutoRunMode();
+  /** Simple leaves out the authoring actions; until the mode is known the screen is Advanced. */
+  const simple = !modeLoading && mode === "simple";
   /** The plan the supervised pane pauses by at each reset point. */
   const [runPlan, setRunPlan] = useState<PlanView | null>(null);
   /** An unattended run paused at a reset point that the store does not
@@ -780,9 +784,40 @@ export default function AutoRun({
     );
   };
 
+  /** Simple or Advanced: which Auto Run screen is shown. */
+  const modeSwitch = (
+    <div className="flex justify-end">
+      <div role="group" aria-label="Auto Run mode" className="flex rounded-md border border-border p-0.5">
+        {(["simple", "advanced"] as const).map((m) => {
+          const pressed = !modeLoading && mode === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={pressed}
+              disabled={runGoing}
+              title={runGoing ? "Wait for the run that is going to finish before changing mode" : undefined}
+              className={cn(
+                "rounded px-2 py-1 text-xs transition-colors disabled:pointer-events-auto disabled:opacity-50",
+                pressed ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
+              )}
+              onClick={() => {
+                if (modeLoading || mode === m) return;
+                void setMode(m).catch((e: Error) => toast.error(`Could not change the mode: ${e.message}`));
+              }}
+            >
+              <span className="label-trim">{m === "simple" ? "Simple" : "Advanced"}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   if (!org || !pbi) {
     return (
       <div className="space-y-4">
+        {modeSwitch}
         {/* What the assistants left for a person to decide. */}
         <WaitingForYou org={org} project={project} />
         {/* Assistants work whatever PBI is open, or none. */}
@@ -817,6 +852,7 @@ export default function AutoRun({
       <div className="space-y-4">
         {/* Who is connected and what each assistant is doing, above the tabs
             (and before a PBI is picked); nothing at all while none is. */}
+        {modeSwitch}
         <WaitingForYou org={org} project={project} />
         <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the
@@ -954,12 +990,17 @@ export default function AutoRun({
                     <MoreActionsMenu
                       label="More"
                       actions={[
-                        {
-                          label: "Import scripts",
-                          description: "One JSON file can carry every case in this PBI.",
-                          disabled: importScripts.isPending,
-                          onSelect: () => importScripts.mutate(),
-                        },
+                        // Authoring actions: Advanced only, and shown while the mode loads.
+                        ...(simple
+                          ? []
+                          : [
+                              {
+                                label: "Import scripts",
+                                description: "One JSON file can carry every case in this PBI.",
+                                disabled: importScripts.isPending,
+                                onSelect: () => importScripts.mutate(),
+                              },
+                            ]),
                         {
                           label: "Execution order",
                           description: "The order Auto Run uses for this PBI, and where the shared state is put back.",
@@ -982,12 +1023,16 @@ export default function AutoRun({
                               },
                             ]
                           : []),
-                        {
-                          label: "Clear scripts",
-                          danger: true,
-                          disabled: !rows.some((_, i) => hasScript(i)),
-                          onSelect: () => setClearScriptsOpen(true),
-                        },
+                        ...(simple
+                          ? []
+                          : [
+                              {
+                                label: "Clear scripts",
+                                danger: true,
+                                disabled: !rows.some((_, i) => hasScript(i)),
+                                onSelect: () => setClearScriptsOpen(true),
+                              },
+                            ]),
                       ]}
                     />
                   </span>
@@ -1215,6 +1260,7 @@ export default function AutoRun({
               steps={c.steps}
               org={org}
               project={project}
+              readOnly={simple}
               onClose={() => setEditing(null)}
             />
           );

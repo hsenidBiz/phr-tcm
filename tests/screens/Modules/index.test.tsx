@@ -1,4 +1,5 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetExtrasStore, setExtrasForTest } from "../../../src/lib/extras";
@@ -55,7 +56,15 @@ function show(on: Module[], onBack = vi.fn(), unlocked = true) {
     setExtrasForTest(unlocked);
     setModulesForTest(on);
   });
-  return { onBack, ...render(<Modules onBack={onBack} />) };
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return {
+    onBack,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <Modules onBack={onBack} />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 const sw = (name: RegExp | string) => screen.getByRole("switch", { name });
@@ -99,7 +108,7 @@ test("switching on asks Rust, and follows its answer", async () => {
   mockIPC((cmd, a) => {
     if (cmd === "modules_set") {
       args = a;
-      return ["db_access", "auto_run"];
+      return { on: ["db_access", "auto_run"], recommended: null };
     }
   });
   show(["db_access"]);
@@ -110,7 +119,7 @@ test("switching on asks Rust, and follows its answer", async () => {
 });
 
 test("Space and Enter toggle a switch from the keyboard", async () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? ["writing_style"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["writing_style"], recommended: null } : undefined));
   show([]);
   const ws = sw(/^Writing Style/);
   expect(ws.tagName).toBe("BUTTON");
@@ -125,7 +134,7 @@ test("switching Auto Run off asks first and names what goes with it", async () =
   mockIPC((cmd, a) => {
     if (cmd === "modules_set") {
       calls.push(a);
-      return ["db_access"];
+      return { on: ["db_access"], recommended: null };
     }
   });
   show(["db_access", "auto_run", "api_templates", "playwright"]);
@@ -145,7 +154,7 @@ test("switching Auto Run off asks first and names what goes with it", async () =
 });
 
 test("a module with nothing under it switches off without asking", async () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? ["db_access", "auto_run"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["db_access", "auto_run"], recommended: null } : undefined));
   show(["db_access", "auto_run", "playwright"]);
   fireEvent.click(sw(/^Playwright/));
   await waitFor(() => expect(sw(/^Playwright/)).toHaveAttribute("aria-checked", "false"));
@@ -165,7 +174,7 @@ test("a refusal from Rust is shown and nothing changes", async () => {
 
 test("the light runs before the card lights, unless motion is reduced", async () => {
   vi.useFakeTimers();
-  mockIPC((cmd) => (cmd === "modules_set" ? ["writing_style"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["writing_style"], recommended: null } : undefined));
   show([]);
   fireEvent.click(sw(/^Writing Style/));
   await act(async () => {});
@@ -182,7 +191,7 @@ test("the light runs before the card lights, unless motion is reduced", async ()
 
 test("with reduced motion the end state shows at once", async () => {
   vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} }));
-  mockIPC((cmd) => (cmd === "modules_set" ? ["writing_style"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["writing_style"], recommended: null } : undefined));
   show([]);
   fireEvent.click(sw(/^Writing Style/));
   await waitFor(() => expect(sw(/^Writing Style/).closest("[data-module]")).toHaveAttribute("data-lit", "true"));
@@ -414,7 +423,7 @@ test("while one change saves, every switch waits", async () => {
   mockIPC((cmd, args) => {
     if (cmd !== "modules_set") return [];
     sets.push(args);
-    return new Promise<Module[]>((r) => (release = r));
+    return new Promise<{ on: Module[]; recommended: null }>((r) => (release = (v) => r({ on: v, recommended: null })));
   });
   show(["db_access"]);
   fireEvent.click(sw(/^Auto Run/));
@@ -436,7 +445,7 @@ test("the core's name and line are read out", () => {
 // off again takes the mark away.
 test("switching a module on here marks its sidebar row, and off clears it", async () => {
   let answer: Module[] = ["db_access", "auto_run"];
-  mockIPC((cmd) => (cmd === "modules_set" ? answer : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: answer, recommended: null } : undefined));
   show(["db_access"]);
   fireEvent.click(sw(/^Auto Run/));
   await waitFor(() => expect(isNewNav("autorun")).toBe(true));
@@ -448,7 +457,7 @@ test("switching a module on here marks its sidebar row, and off clears it", asyn
 });
 
 test("Database Access and Writing Style mark AI Bridge, where their cards go", async () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? ["writing_style"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["writing_style"], recommended: null } : undefined));
   show([]);
   fireEvent.click(sw(/^Writing Style/));
   await waitFor(() => expect(isNewNav("ai")).toBe(true));
@@ -614,4 +623,51 @@ test("an unlocked machine shows it", () => {
   expect(screen.getAllByRole("switch")).toHaveLength(6);
   expect(sw(/^Crystal Reports/)).toBeInTheDocument();
   expect(document.querySelector('[data-edge-line="crystal_reports"]')).not.toBeNull();
+});
+
+const ENVS = {
+  active: "e1",
+  playwright_export: "",
+  environments: [
+    { id: "e1", name: "Default", start_url: "", allowed_origins: [], db_id: "", test_environment: false },
+    { id: "e2", name: "QA", start_url: "", allowed_origins: [], db_id: "", test_environment: false },
+  ],
+};
+
+function firstSwitchOn(recommended: Record<string, boolean>) {
+  mockIPC((cmd) => {
+    if (cmd === "modules_set") return { on: ["db_access", "auto_run"], recommended };
+    if (cmd === "env_list") return ENVS;
+    return undefined;
+  });
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+}
+
+test("the first switch-on applies the Network tools per environment and names all three", async () => {
+  firstSwitchOn({ api_templates: true, video: true, network_tools: true, mode_simple: true });
+  expect(
+    await screen.findByText("Also turned on API Templates, the Network tools and videos of failed cases. You can switch each off."),
+  ).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-network-tools:e1")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-network-tools:e2")).toBe("1");
+});
+
+test("the note leaves out what was already on", async () => {
+  firstSwitchOn({ api_templates: false, video: true, network_tools: true, mode_simple: true });
+  expect(
+    await screen.findByText("Also turned on the Network tools and videos of failed cases. You can switch each off."),
+  ).toBeInTheDocument();
+});
+
+test("one turned-on item is worded in the singular", async () => {
+  firstSwitchOn({ api_templates: false, video: true, network_tools: false, mode_simple: true });
+  expect(await screen.findByText("Also turned on videos of failed cases. You can switch it off.")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-network-tools:e1")).toBeNull();
+});
+
+test("a machine that had Auto Run on before gets no note", async () => {
+  firstSwitchOn({ api_templates: false, video: false, network_tools: false, mode_simple: false });
+  await waitFor(() => expect(sw(/^Auto Run/)).toHaveAttribute("aria-checked", "true"));
+  expect(screen.queryByText(/Also turned on/)).not.toBeInTheDocument();
 });

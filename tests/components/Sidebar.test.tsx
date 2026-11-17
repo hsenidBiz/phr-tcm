@@ -54,7 +54,7 @@ test("no sidebar row carries an In Dev pill", () => {
 /// switched off - live, without a reload, because the rail subscribes to the
 /// modules. A fresh install (none on) shows neither.
 test("Auto Run, API Templates and Playwright follow their own modules, live", async () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: [], recommended: null } : null));
   render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
@@ -90,7 +90,7 @@ test("Auto Run, API Templates and Playwright follow their own modules, live", as
 /// Crystal Reports hangs off Core on its own: its row follows its module
 /// alone, and takes no Ctrl number so no other tab's moves.
 test("the Crystal Reports row follows its own module and takes no Ctrl number", () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: [], recommended: null } : null));
   render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.queryByRole("button", { name: "Crystal Reports" })).not.toBeInTheDocument();
 
@@ -143,7 +143,7 @@ test("the shortcut order with and without Auto Run", () => {
 });
 
 /// Playwright sits right under Auto Run in the rail, but has no Ctrl number.
-/// The everyday screens above the Advanced group keep the low numbers.
+/// The everyday screens above the Tools group keep the low numbers.
 test("Playwright sits under Auto Run and takes no Ctrl number", () => {
   const rows = visibleCaseItems(ON).map((i) => i.id);
   expect(rows.indexOf("playwright")).toBe(rows.indexOf("autorun") + 1);
@@ -164,14 +164,14 @@ test("API Templates has no Ctrl number", () => {
 
 /// The everyday screens sit under a "Test Case Management" heading; Auto
 /// Run, Playwright, API Templates and Crystal Reports sit together at the
-/// bottom under one "Advanced" heading, shown only while one of them is.
+/// bottom under one "Tools" heading, shown only while one of them is.
 test("the rail's rows sit under two headings, the advanced tools last", () => {
   const rows = visibleCaseItems(ON).map((i) => i.id);
   expect(rows.slice(-4)).toEqual(["autorun", "playwright", "apitemplates", "crystal-reports"]);
 
   setModulesForTest([...ALL_MODULES]);
   const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.getAllByText("Advanced")).toHaveLength(1);
+  expect(screen.getAllByText("Tools")).toHaveLength(1);
   expect(screen.getAllByText("Test Case Management")).toHaveLength(1);
   // That one comes before the first row, Manual Entry.
   expect(
@@ -179,7 +179,7 @@ test("the rail's rows sit under two headings, the advanced tools last", () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   // The heading comes right before Auto Run, after AI Bridge.
-  const heading = screen.getByText("Advanced");
+  const heading = screen.getByText("Tools");
   const ai = screen.getByRole("button", { name: "AI Bridge" });
   const autorun = screen.getByRole("button", { name: "Auto Run" });
   expect(ai.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -188,7 +188,7 @@ test("the rail's rows sit under two headings, the advanced tools last", () => {
 
   setModulesForTest([]);
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.queryByText("Advanced")).not.toBeInTheDocument();
+  expect(screen.queryByText("Tools")).not.toBeInTheDocument();
   expect(screen.getByText("Test Case Management")).toBeInTheDocument();
 });
 

@@ -4,6 +4,7 @@
 
 import type { CaseScript, Unchecked } from "../../bindings";
 import { plural } from "../../lib/plural";
+import { doneByAutoRun } from "./byAutoRun";
 
 /** A sentence as it stands, or the entries as "item - why; item - why";
  * null for none or blank. The value comes from JSON a person may be typing,
@@ -30,11 +31,13 @@ function collapsed(s: string): string {
 
 /** `autorun::unchecked::expectations`: case steps (not `cleanup`) in run
  * order, whitespace collapsed; a sentence is one expectation, a list one per
- * entry, and a blank sentence or entry is left out. */
+ * entry, and a blank sentence or entry is left out. A step Auto Run performs
+ * itself (`doneByAutoRun`) has none. */
 export function uncheckedExpectations(script: CaseScript): UncheckedExpectation[] {
   const out: UncheckedExpectation[] = [];
+  const byAutoRun = doneByAutoRun(script);
   for (const step of script.steps) {
-    if (step.cleanup) continue;
+    if (step.cleanup || byAutoRun.has(step.step_number)) continue;
     const u = step.unchecked;
     if (typeof u === "string") {
       const why = collapsed(u);

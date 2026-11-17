@@ -9,7 +9,7 @@
 // documentation screenshots) reports every module on but the one that is
 // offered only on a machine that unlocked it.
 import { useSyncExternalStore } from "react";
-import { commands, type Module } from "../bindings";
+import { commands, type Module, type Recommended } from "../bindings";
 import { isCaptureMode } from "../dev/capture";
 
 export type { Module };
@@ -108,13 +108,15 @@ export async function hydrateModules(): Promise<void> {
 
 /** Switch one module through Rust, then tell every screen what Rust says is
  * on now (switching one off can switch others off). Throws Rust's refusal -
- * changing nothing - when it will not. */
-export async function setModule(m: Module, next: boolean): Promise<void> {
+ * changing nothing - when it will not. Returns what switching Auto Run on for
+ * the first time turned on besides (null for any other switch). */
+export async function setModule(m: Module, next: boolean): Promise<Recommended | null> {
   generation += 1;
   const r = await commands.modulesSet(m, next);
   if (r.status === "error") throw new Error(r.error);
-  publish(r.data);
+  publish(r.data.on);
   publishHydrated();
+  return r.data.recommended ?? null;
 }
 
 export function useModules(): ReadonlySet<Module> {

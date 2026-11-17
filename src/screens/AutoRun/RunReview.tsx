@@ -36,6 +36,7 @@ import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import { uncheckedText } from "./unchecked";
 import { autoRunRepro, failureShotNames } from "./bugRepro";
 import FiledBugs from "./FiledBugs";
+import { useAutoRunMode } from "./useAutoRunMode";
 import FlakyBadge from "./FlakyBadge";
 import { useFlakyMarks } from "./flaky";
 import {
@@ -134,6 +135,9 @@ export default function RunReview(props: {
 }) {
   const { runId, onClose, onReplay, replayBlocked } = props;
   const queryClient = useQueryClient();
+  // Simple leaves out Replay to step; until the mode is known it is shown.
+  const { mode, loading: modeLoading } = useAutoRunMode();
+  const simple = !modeLoading && mode === "simple";
 
   const query = useQuery<LocalRun_Serialize | null>({
     queryKey: ["autorun-run", runId],
@@ -539,7 +543,7 @@ export default function RunReview(props: {
                       Raise bug
                     </Button>
                   )}
-                  {replayTo !== null && (
+                  {replayTo !== null && !simple && (
                     <Button
                       size="sm"
                       variant="outline"

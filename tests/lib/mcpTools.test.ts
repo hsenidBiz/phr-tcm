@@ -490,7 +490,7 @@ test("what loadDisabledTools() returns does not depend on capture mode or on mod
 /// a save, which App re-pushes the bridge context on.
 test("switching a module leaves the list as it was, and a save fires the subscription", async () => {
   setModulesForTest([]);
-  mockIPC((cmd) => (cmd === "modules_set" ? ["db_access", "auto_run"] : null));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["db_access", "auto_run"], recommended: null } : null));
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_tags"]));
   const before = disabledToolsSnapshot();
 

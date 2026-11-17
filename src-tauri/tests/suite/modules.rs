@@ -329,6 +329,7 @@ fn preconditions_need_database_access_as_well_as_the_switch() {
 mod commands {
     use super::set;
     use v2_lib::commands::modules::{modules_set_with, AUTO_RUN_BROWSER_OPEN, AUTO_RUN_BUSY, PLAYWRIGHT_BUSY, SAVE_FAILED};
+    use v2_lib::app_settings::AppSettings;
     use v2_lib::modules::Module;
 
     fn dir() -> tempfile::TempDir {
@@ -339,7 +340,7 @@ mod commands {
     fn a_busy_run_refuses_switching_auto_run_off() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun]);
-        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, false, true, false, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::AutoRun, false, true, false, false).unwrap_err();
         assert_eq!(err, AUTO_RUN_BUSY);
         assert!(st.contains(&Module::AutoRun));
     }
@@ -348,7 +349,7 @@ mod commands {
     fn a_busy_repo_command_refuses_switching_playwright_off() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun, Module::Playwright]);
-        let err = modules_set_with(&mut st, d.path(), Module::Playwright, false, false, false, true).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::Playwright, false, false, false, true).unwrap_err();
         assert_eq!(err, PLAYWRIGHT_BUSY);
         assert!(st.contains(&Module::Playwright));
     }
@@ -357,7 +358,7 @@ mod commands {
     fn a_cascade_that_would_switch_off_a_busy_auto_run_is_refused() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun]);
-        let err = modules_set_with(&mut st, d.path(), Module::DbAccess, false, true, false, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::DbAccess, false, true, false, false).unwrap_err();
         assert_eq!(err, AUTO_RUN_BUSY);
         assert_eq!(st, set(&[Module::DbAccess, Module::AutoRun]));
     }
@@ -366,15 +367,15 @@ mod commands {
     fn busy_checks_do_not_block_switching_on() {
         let d = dir();
         let mut st = set(&[Module::DbAccess]);
-        let now = modules_set_with(&mut st, d.path(), Module::AutoRun, true, true, false, true).unwrap();
-        assert_eq!(now, vec![Module::DbAccess, Module::AutoRun]);
+        let now = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::AutoRun, true, true, false, true).unwrap();
+        assert_eq!(now.on, vec![Module::DbAccess, Module::AutoRun, Module::ApiTemplates]);
     }
 
     #[test]
     fn a_locked_module_is_refused() {
         let d = dir();
         let mut st = set(&[]);
-        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, true, false, false, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::AutoRun, true, false, false, false).unwrap_err();
         assert_eq!(err, "\"Auto Run\" needs \"Database Access\" switched on first.");
     }
 
@@ -383,8 +384,8 @@ mod commands {
         let d = dir();
         let all: Vec<Module> = Module::ALL.to_vec();
         let mut st = set(&all);
-        let now = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, false, false).unwrap();
-        assert_eq!(now, vec![Module::WritingStyle, Module::CrystalReports]);
+        let now = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::DbAccess, false, false, false, false).unwrap();
+        assert_eq!(now.on, vec![Module::WritingStyle, Module::CrystalReports]);
         assert_eq!(st, set(&[Module::WritingStyle, Module::CrystalReports]));
     }
 
@@ -392,16 +393,16 @@ mod commands {
     fn an_open_auto_run_browser_refuses_switching_auto_run_off() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun]);
-        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, false, false, true, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::AutoRun, false, false, true, false).unwrap_err();
         assert_eq!(err, "Auto Run can't be switched off while its browser is open - close it first.");
         assert_eq!(err, AUTO_RUN_BROWSER_OPEN);
         // by cascade too, and switching on is never blocked by it
-        let err = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, true, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::DbAccess, false, false, true, false).unwrap_err();
         assert_eq!(err, AUTO_RUN_BROWSER_OPEN);
         assert_eq!(st, set(&[Module::DbAccess, Module::AutoRun]));
         // Auto Run already off: nothing for the browser to block
         let mut off = set(&[Module::DbAccess]);
-        assert!(modules_set_with(&mut off, d.path(), Module::DbAccess, false, false, true, false).is_ok());
+        assert!(modules_set_with(&mut off, &mut AppSettings::default(), d.path(), Module::DbAccess, false, false, true, false).is_ok());
     }
 
     /// The states behind `auto_run_browser_open`: a setup browser (a lease
@@ -432,12 +433,12 @@ mod commands {
         let file = d.path().join("blocked");
         std::fs::write(&file, "x").unwrap();
         let mut st = set(&[Module::DbAccess]);
-        let err = modules_set_with(&mut st, &file, Module::WritingStyle, true, false, false, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), &file, Module::WritingStyle, true, false, false, false).unwrap_err();
         assert_eq!(err, SAVE_FAILED);
         assert!(!err.contains(['/', char::from(92), ':']) && !err.contains("blocked"), "{err}");
         assert_eq!(st, set(&[Module::DbAccess]), "and nothing was changed");
         // a refusal from the tree is still its own sentence
-        let err = modules_set_with(&mut st, &file, Module::Playwright, true, false, false, false).unwrap_err();
+        let err = modules_set_with(&mut st, &mut AppSettings::default(), &file, Module::Playwright, true, false, false, false).unwrap_err();
         assert!(err.contains("needs"), "{err}");
     }
 }

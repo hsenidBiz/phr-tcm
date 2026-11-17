@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 
 import { setActiveEnvId } from "../../src/lib/activeEnv";
-import { loadNetworkTools, networkToolsSnapshot, saveNetworkTools, subscribeNetworkTools } from "../../src/lib/networkTools";
+import { loadNetworkTools, networkToolsSnapshot, saveNetworkTools, subscribeNetworkTools, turnOnNetworkToolsWhereUnset } from "../../src/lib/networkTools";
 
 afterEach(() => localStorage.clear());
 
@@ -44,4 +44,27 @@ test("saving notifies subscribers, so App can re-push the bridge context", () =>
   stop();
   saveNetworkTools(true);
   expect(seen).toHaveBeenCalledTimes(2);
+});
+
+test("turning the tools on where unset leaves an environment a person chose alone", () => {
+  localStorage.setItem("tcm-v2-network-tools-set:env-a", "1");
+  expect(turnOnNetworkToolsWhereUnset(["env-a", "env-b"])).toBe(1);
+  expect(localStorage.getItem("tcm-v2-network-tools:env-a")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-network-tools:env-b")).toBe("1");
+  // A default, not a choice: no marker is written.
+  expect(localStorage.getItem("tcm-v2-network-tools-set:env-b")).toBeNull();
+});
+
+test("saving the switch off is a person's choice that a later switch-on respects", () => {
+  setActiveEnvId("env-a");
+  saveNetworkTools(false);
+  expect(localStorage.getItem("tcm-v2-network-tools-set:env-a")).toBe("1");
+  expect(turnOnNetworkToolsWhereUnset(["env-a"])).toBe(0);
+  expect(localStorage.getItem("tcm-v2-network-tools:env-a")).toBeNull();
+  setActiveEnvId("");
+});
+
+test("an environment already on is not counted as changed", () => {
+  localStorage.setItem("tcm-v2-network-tools:env-a", "1");
+  expect(turnOnNetworkToolsWhereUnset(["env-a"])).toBe(0);
 });

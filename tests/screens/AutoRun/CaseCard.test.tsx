@@ -9,7 +9,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { CaseScript, Divergence } from "../../../src/bindings";
-import CaseCard, { scriptFacts, scriptFiles } from "../../../src/screens/AutoRun/CaseCard";
+import CaseCard, { actionFacts, assistantNotes, scriptFiles, scriptHeaderLine } from "../../../src/screens/AutoRun/CaseCard";
 import { matchesSearch } from "../../../src/screens/AutoRun/CaseSearch";
 
 afterEach(() => {
@@ -124,9 +124,7 @@ test("an open card shows the Script, Steps and Files sections, then View script 
   expect(screen.getByRole("button", { name: "Hide details for #7" })).toHaveAttribute("aria-expanded", "true");
 
   // Script: every fact this script has.
-  expect(screen.getByText("2 steps")).toBeInTheDocument();
-  expect(screen.getByText("emp1")).toBeInTheDocument();
-  expect(screen.getByText("Leave requests")).toBeInTheDocument();
+  expect(screen.getByText("Script · 2 steps · runs as emp1 · Leave requests")).toBeInTheDocument();
   expect(screen.getByText("Yes, saves are stopped while it runs")).toBeInTheDocument();
   expect(screen.getByText("leave-cycle: open")).toBeInTheDocument();
   expect(screen.getByText("cycle published")).toBeInTheDocument();
@@ -174,7 +172,8 @@ test("an open card shows the script's dialog and ignored page-error settings", (
 
 test("an open card leaves out every fact with no value, and Files when there is nothing to list", () => {
   renderCard({ open: true, script: BARE });
-  expect(screen.getByText("1 step")).toBeInTheDocument();
+  expect(screen.getByText("Script · 1 step")).toBeInTheDocument();
+  expect(screen.queryByText(/Assistant notes/)).not.toBeInTheDocument();
   for (const label of [
     "Runs as", "Area", "Must not save", "Page errors", "Ignored page errors", "Unexpected dialogs",
     "Preconditions", "Changes", "Needs unchanged", "Last repair", "Assumed values", "Invented values",
@@ -272,12 +271,13 @@ test("the open card shows the badge, not the marker", () => {
   expect(screen.queryByRole("img", { name: /Suspected defect/ })).toBeNull();
 });
 
-test("scriptFacts and scriptFiles skip what is not there", () => {
-  expect(scriptFacts(BARE)).toEqual([{ label: "Step count", value: "1 step" }]);
+test("actionFacts, assistantNotes and scriptFiles skip what is not there", () => {
+  expect(actionFacts(BARE)).toEqual([]);
+  expect(assistantNotes(BARE)).toEqual([]);
   expect(scriptFiles(BARE)).toEqual({ uploads: [], downloads: [] });
   expect(scriptFiles(FULL)).toEqual({ uploads: ["note.pdf"], downloads: ["leave-*.xlsx"] });
   // Blank text is no value either.
-  expect(scriptFacts({ ...BARE, account: "  ", changes: [] } as CaseScript)).toHaveLength(1);
+  expect(assistantNotes({ ...BARE, account: "  ", changes: [] } as CaseScript)).toHaveLength(0);
 });
 
 test("the card lists assumed and invented values", () => {
@@ -295,15 +295,15 @@ test("the card lists assumed and invented values", () => {
       },
     ],
   } as CaseScript;
-  expect(scriptFacts(script)).toContainEqual({
+  expect(actionFacts(script)).toContainEqual({
     label: "Assumed values",
     value: "step 2: 6 (one row per DEF level the precondition lists)",
   });
-  expect(scriptFacts(script)).toContainEqual({
+  expect(actionFacts(script)).toContainEqual({
     label: "Invented values",
     value: "step 2: USD (one currency the case leaves free)",
   });
-  expect(scriptFacts(BARE).some((f) => /Assumed|Invented/.test(f.label))).toBe(false);
+  expect(actionFacts(BARE).some((f) => /Assumed|Invented/.test(f.label))).toBe(false);
   renderCard({ open: true, script });
   expect(screen.getByText("Assumed values")).toBeInTheDocument();
   expect(screen.getByText("Invented values")).toBeInTheDocument();
@@ -316,8 +316,8 @@ test("the card lists checks given up", () => {
     given_up: [{ step: 3, kind: "expect_count", why: "step 4 already counts the same rows", at: "2026-10-21T09:30:00Z" }],
   } as CaseScript;
   const line = "step 3 expect_count: step 4 already counts the same rows (2026-10-21)";
-  expect(scriptFacts(script)).toContainEqual({ label: "Checks given up", value: line });
-  expect(scriptFacts(BARE).some((f) => f.label === "Checks given up")).toBe(false);
+  expect(assistantNotes(script)).toContainEqual({ label: "Checks given up", value: line });
+  expect(assistantNotes(BARE).some((f) => f.label === "Checks given up")).toBe(false);
   renderCard({ open: true, script });
   expect(screen.getByText("Checks given up")).toBeInTheDocument();
   expect(screen.getByText(line)).toBeInTheDocument();
@@ -419,7 +419,7 @@ test("a case with no script still shows its divergence", () => {
   renderCard({ open: true, script: null, divergences: [DIV] });
   expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Rule the case is right for #7 step 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "The app is wrong for #7 step 2" })).toBeInTheDocument();
 });
 
 /** A script whose step 2 leaves one expectation unchecked, with a stand-in. */
@@ -453,20 +453,20 @@ test("an open passed card says how many too, and a card whose script leaves noth
   unmount();
   renderCard({ open: true, script: BARE, result: "Passed" });
   expect(screen.queryByText(/expectations? unchecked/)).not.toBeInTheDocument();
-  expect(screen.queryByText("Unchecked")).not.toBeInTheDocument();
+  expect(screen.queryByText("Not checked")).not.toBeInTheDocument();
 });
 
 test("the open card lists each unchecked expectation with why and its stand-in", () => {
   mockIPC(() => null);
   renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Failed", open: true });
-  expect(screen.getByText("Unchecked")).toBeInTheDocument();
-  const list = screen.getByRole("list", { name: "Unchecked expectations of #5002" });
+  expect(screen.getByText("Not checked")).toBeInTheDocument();
+  const list = screen.getByRole("list", { name: "Not checked expectations of #5002" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(list).toHaveTextContent("step 2: no access-denied message - the app never shows one (stand-in: expect_hidden)");
 });
 
 test("scriptFacts names each needed record with its reason", () => {
-  const facts = scriptFacts({ ...BARE, needs_records: [{ setup: "Rating scale", why: "the AUTOTEST scale" }] } as CaseScript);
+  const facts = actionFacts({ ...BARE, needs_records: [{ setup: "Rating scale", why: "the AUTOTEST scale" }] } as CaseScript);
   expect(facts).toContainEqual({ label: "Needs records", value: "Rating scale (the AUTOTEST scale)" });
 });
 
@@ -485,4 +485,69 @@ test("the open card shows a clean-up guard that has never fired, whatever the ca
   unmount();
   renderCard({ open: true, script: BARE, result: "Passed" });
   expect(screen.queryByText("Clean-up guard never fired")).not.toBeInTheDocument();
+});
+
+test("the header line leaves out an account or area it does not have", () => {
+  expect(scriptHeaderLine(FULL)).toBe("Script · 2 steps · runs as emp1 · Leave requests");
+  expect(scriptHeaderLine({ ...FULL, area: undefined } as CaseScript)).toBe("Script · 2 steps · runs as emp1");
+  expect(scriptHeaderLine({ ...FULL, account: " ", area: "Self Service > Insights" } as CaseScript)).toBe(
+    "Script · 2 steps · Self Service > Insights",
+  );
+  expect(scriptHeaderLine(BARE)).toBe("Script · 1 step");
+});
+
+test("the action facts are the ones to act on, the assistant's notes the rest", () => {
+  expect(actionFacts(FULL).map((f) => f.label)).toEqual(["Must not save", "Preconditions"]);
+  expect(assistantNotes(FULL).map((f) => f.label)).toEqual(["Changes", "Needs unchanged", "Last repair"]);
+});
+
+test("assistant notes are a closed details with a count, and their items inside", () => {
+  renderCard({ open: true });
+  const summary = screen.getByText("Assistant notes (3)");
+  const details = summary.closest("details") as HTMLDetailsElement;
+  expect(details.open).toBe(false);
+  expect(within(details).getByText("cycle published")).toBeInTheDocument();
+  expect(within(details).getByText("The Save button moved into a menu")).toBeInTheDocument();
+  expect(screen.getByText("Must not save").closest("details")).toBeNull();
+});
+
+/** The owner's example: steps 1-3 are Auto Run's own, step 6 leaves one check out. */
+const AUTO_RUN_OPENING = {
+  case_id: 7,
+  title: "Apply for leave",
+  steps: [
+    { step_number: 1, actions: [], unchecked: "Auto Run launches the app" },
+    { step_number: 2, actions: [], unchecked: "Auto Run signs in" },
+    { step_number: 3, actions: [], unchecked: "Auto Run reaches the area" },
+    { step_number: 4, actions: [{ kind: "navigate", url: "https://app.example/x" }] },
+    { step_number: 5, actions: [{ kind: "navigate", url: "https://app.example/y" }] },
+    {
+      step_number: 6,
+      actions: [{ kind: "navigate", url: "https://app.example/z" }],
+      unchecked: [{ item: "the chart colours", why: "no locator reads a colour" }],
+    },
+  ],
+} as CaseScript;
+const SIX = {
+  id: 7,
+  title: "Apply for leave",
+  steps: [1, 2, 3, 4, 5, 6].map((n) => ({ action: `Step ${n}`, expected: "" })),
+};
+
+test("steps Auto Run does show Done by Auto Run, not 0 actions", () => {
+  renderCard({ open: true, c: SIX, script: AUTO_RUN_OPENING });
+  const lines = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  for (const i of [0, 1, 2]) {
+    expect(lines[i]).toHaveTextContent("Done by Auto Run");
+    expect(lines[i]).not.toHaveTextContent("0 actions");
+  }
+  expect(lines[3]).toHaveTextContent("1 action");
+});
+
+test("Not checked lists only the step the script leaves out, and a passed case counts it", () => {
+  renderCard({ open: true, c: SIX, script: AUTO_RUN_OPENING, result: "Passed" });
+  const list = screen.getByRole("list", { name: "Not checked expectations of #7" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(list).toHaveTextContent("step 6: the chart colours");
+  expect(screen.getByText("1 expectation unchecked")).toBeInTheDocument();
 });

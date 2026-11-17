@@ -23,6 +23,7 @@ fn ctx(all_projects: bool) -> BridgeContext {
         network_tools: false,
         all_projects,
         db_no_ask: false,
+        autorun_mode: None,
         gate: Default::default(),
         current_pbi: None,
     }
@@ -643,6 +644,19 @@ async fn the_tool_policy_answer_says_whether_projects_are_combined() {
     let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
     keys.sort_unstable();
     assert_eq!(keys, ["autorun", "db_no_ask", "disabled", "modules", "network_tools", "unlocked"]);
+}
+
+#[tokio::test]
+async fn tools_answer_carries_the_autorun_mode_only_when_the_webview_pushed_it() {
+    use v2_lib::app_settings::AutorunMode;
+    let (_, none) = route(&BridgeContext::default(), None, "GET", "/tools", "", "2.4.6").await;
+    assert!(serde_json::from_str::<serde_json::Value>(&none).unwrap().get("autorun_mode").is_none(), "{none}");
+    for (mode, word) in [(AutorunMode::Simple, "simple"), (AutorunMode::Advanced, "advanced")] {
+        let ctx = BridgeContext { autorun_mode: Some(mode), ..BridgeContext::default() };
+        let (status, body) = route(&ctx, None, "GET", "/tools", "", "2.4.6").await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["autorun_mode"], word);
+    }
 }
 
 async fn mount_wiki_page(server: &MockServer, project: &str) {

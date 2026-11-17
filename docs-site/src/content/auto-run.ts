@@ -34,6 +34,7 @@ const TALL = { w: 1440, h: 1100 };
 const ACCOUNTS = "auto-run-accounts";
 const ACCOUNTS_PROPOSED = "auto-run-accounts-proposed";
 const ASSISTANTS = "auto-run-assistants";
+const MODE = "auto-run-mode";
 
 const NAV: Step = { nav: "Auto Run" };
 
@@ -80,6 +81,11 @@ export const autoRun: Screen = {
       id: CASES,
       route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
       alt: "Auto Run on its Test cases tab: the result filters, the search and its toolbar, the cases with their last results, two of them open, and the Setup panel beside them",
+    },
+    {
+      id: MODE,
+      route: [NAV, READY, { click: { role: "button", name: "Simple" } }, { waitFor: { css: '[aria-label="Auto Run mode"] [aria-pressed="true"]' } }, { waitFor: { role: "list", name: "Setup summary" } }],
+      alt: "The top of Auto Run in Simple mode, with the Simple and Advanced switch at the right, above the Assistants and the cases",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], size: TALL, alt: "Two scripted cases selected, with the buttons that run them" },
     {
@@ -163,6 +169,7 @@ export const autoRun: Screen = {
     },
   ],
   groups: [
+    { id: "mode", title: "Simple and Advanced", summary: "Which Auto Run screen you see: the everyday path, or every tool." },
     { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
     { id: "scripts", title: "Write a script", summary: "What the app does at each step of a case, and the rules the case runs under." },
     { id: "watch", title: "Run while you watch", summary: "The app does the steps; you see them happen and decide the result." },
@@ -172,6 +179,24 @@ export const autoRun: Screen = {
     { id: "assistants", title: "Assistants at work", summary: "Who is connected, which browser each one uses and what it is doing, with the buttons that stop it." },
   ],
   controls: [
+    // --- Mode ------------------------------------------------------------------
+    {
+      id: "mode-switch",
+      shot: MODE,
+      group: "mode",
+      locate: { role: "group", name: "Auto Run mode" },
+      name: "Simple and Advanced",
+      does:
+        "Chooses how much of Auto Run you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
+        "It hides the Discovery, Components and Fixtures rows of the Setup panel, the sign-in recipe tools, and the buttons **Replay to step**, **Import scripts** and **Clear scripts**; a script opens to read only, and says **Switch to Advanced to edit.** " +
+        "A script card shows one header line, with the steps Auto Run does itself marked **Done by Auto Run** and the assistant's notes folded away under **Assistant notes**. " +
+        "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
+        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going.",
+      tips: [
+        "If something Simple hides is what stops a run, Auto Run shows it anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
+        "An assistant can see which mode you are in but cannot change it. In Simple it offers to do the hidden work for you, or asks you to switch to Advanced.",
+      ],
+    },
     // --- Test cases ------------------------------------------------------------
     {
       id: "tab-cases",
@@ -265,7 +290,7 @@ export const autoRun: Screen = {
       tips: [
         "To run the failed cases again: press **Failed**, then **Select all shown**.",
         "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
-        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. Open the card and choose **The case is right**, **Data fixed** or **Rewrite the case**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then says **Ruled by the assistant** with your words, and **Undo ruling** puts the case back to needing a ruling.",
+        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then says **Ruled by the assistant** with your words, and **Undo ruling** puts the case back to needing a ruling.",
         "**Has a script**, after them, shows only the cases that already have a script, with how many there are. It works together with the result buttons, and the app remembers it for each project.",
       ],
     },
@@ -984,11 +1009,19 @@ export const autoRun: Screen = {
   ],
   howTo: [
     {
+      title: "Switch between Simple and Advanced",
+      steps: [
+        "At the top of Auto Run, press **Simple** or **Advanced**.",
+        "In Simple, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, import or clear scripts.",
+        "If a run is stopped by something Simple hides, it is shown with the note to ask the assistant or switch to Advanced.",
+      ],
+    },
+    {
       title: "Turn Auto Run on",
       steps: [
         "Open Settings with the gear at the top right.",
         "Under **General**, press **Modules**. Switch on **Database Access** if it is off, then **Auto Run**.",
-        "**Auto Run** appears in the group at the bottom of the sidebar. Switch on **Playwright** or **API Templates** on the same page when you need them: they join it in that group.",
+        "**Auto Run** appears in the group at the bottom of the sidebar. The first time you switch it on, it also turns on **API Templates**, the Network tools and videos of failed cases; each can be switched off again. Switch on **Playwright** on the same page when you need it: it joins them in that group.",
       ],
     },
     {

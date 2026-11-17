@@ -23,6 +23,7 @@ import RunDownloads from "./RunDownloads";
 import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
+import { useAutoRunMode } from "./useAutoRunMode";
 import PageErrorsBadge from "./PageErrorsBadge";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import {
@@ -97,6 +98,9 @@ export default function PastRuns({
   onFilterChange: (f: ResultFilter) => void;
 }) {
   const queryClient = useQueryClient();
+  // Simple leaves out Replay to step; until the mode is known it is shown.
+  const { mode, loading: modeLoading } = useAutoRunMode();
+  const simple = !modeLoading && mode === "simple";
   /** One run at a time: Replay to step waits for an unattended run going. */
   // "Clear results" lives here, beside the runs it clears, so it reads the
   // count straight off this query. The screen's Past runs tab reads the
@@ -300,7 +304,7 @@ export default function PastRuns({
                           )}
                           {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
                           <FiledBugs bugs={c.bugs} />
-                          {replayTo !== null && (
+                          {replayTo !== null && !simple && (
                             <Button
                               size="sm"
                               variant="outline"

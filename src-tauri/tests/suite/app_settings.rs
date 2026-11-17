@@ -25,6 +25,10 @@ fn a_missing_file_is_the_defaults() {
             playwright_clone: String::new(),
             autorun_highlight: true,
             autorun_failed_video: false,
+            autorun_failed_video_set: false,
+            api_templates_set: false,
+            auto_run_ever_on: false,
+            autorun_mode: None,
             page_size: DEFAULT_PAGE,
         }
     );
@@ -55,6 +59,10 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             playwright_clone: String::new(),
             autorun_highlight: true,
             autorun_failed_video: false,
+            autorun_failed_video_set: false,
+            api_templates_set: false,
+            auto_run_ever_on: false,
+            autorun_mode: None,
             page_size: DEFAULT_PAGE,
         }
     );
@@ -73,6 +81,10 @@ fn saved_settings_read_back() {
         playwright_clone: "C:/clone".into(),
         autorun_highlight: false,
         autorun_failed_video: true,
+        autorun_failed_video_set: false,
+        api_templates_set: false,
+        auto_run_ever_on: false,
+        autorun_mode: None,
         page_size: PageSize { width: 1920, height: 1080 },
     };
     save(d.path(), &s).unwrap();

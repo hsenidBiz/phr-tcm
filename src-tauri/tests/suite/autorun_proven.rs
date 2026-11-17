@@ -19,7 +19,7 @@ fn script(case_id: i32, checked: bool, stamped: bool) -> CaseScript {
             actions: vec![Action::CheckText { value: "Dashboard".to_string() }],
             unchecked: None,
             cleanup: false,
-            because: Vec::new(),
+            because: Vec::new(), by_auto_run: false,
         }],
         repairs: 2,
         last_repair: None,

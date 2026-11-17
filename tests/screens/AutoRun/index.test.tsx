@@ -31,6 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  autorunMode = undefined;
   resetModulesStore();
   resetBackgroundRun();
   savedRecipe = null;
@@ -56,6 +57,10 @@ function caseRow(id: number, title: string) {
   };
 }
 
+/** What the settings answer for the Auto Run mode; unset answers nothing, as
+ * before there was a mode. "loading" never answers. */
+let autorunMode: "simple" | "advanced" | "loading" | undefined;
+
 const STEPS = [{ step_number: 1, actions: [{ kind: "check_text", value: "ok" }] }];
 
 /** `scripted` names the case ids that have a saved script; every other
@@ -71,6 +76,9 @@ function mockList(
   defects: number[] = [],
 ) {
   mockIPC((cmd, args) => {
+    if (cmd === "get_app_settings" && autorunMode !== undefined) {
+      return autorunMode === "loading" ? new Promise(() => {}) : { autorun_mode: autorunMode };
+    }
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
     if (cmd === "auto_run_load_script") {
@@ -1375,7 +1383,7 @@ test("an open card shows the script's facts and its numbered steps", async () =>
   await screen.findByText("Alpha check");
   openCard(1);
   expect(await screen.findByRole("button", { name: "Run #1" })).toBeInTheDocument();
-  expect(screen.getByText("1 step")).toBeInTheDocument();
+  expect(screen.getByText("Script · 1 step")).toBeInTheDocument();
   const steps = screen.getByRole("list", { name: "Script steps of #1" });
   expect(within(steps).getAllByRole("listitem")).toHaveLength(1);
   // A script with no account, area or marks prints no empty labels.
@@ -2145,4 +2153,98 @@ test("shows the per-environment move notice once", async () => {
   await screen.findByText("Login - valid credentials");
   await waitFor(() => expect(asked).toBe(2));
   expect(toast.info).toHaveBeenCalledTimes(1);
+});
+
+// ---- Simple mode: what the run side leaves out ----
+
+test("Simple hides Import scripts and Clear scripts but keeps Execution order and Export to Playwright", async () => {
+  autorunMode = "simple";
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Import scripts" })).toBeNull());
+  expect(screen.queryByRole("menuitem", { name: "Clear scripts" })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "Execution order" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Export to Playwright" })).toBeInTheDocument();
+});
+
+test("Advanced shows Import scripts and Clear scripts", async () => {
+  autorunMode = "advanced";
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  expect(moreItem("Import scripts")).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Clear scripts" })).toBeInTheDocument();
+});
+
+test("while the mode is loading the screen shows Import scripts and Clear scripts", async () => {
+  autorunMode = "loading";
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  expect(moreItem("Import scripts")).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Clear scripts" })).toBeInTheDocument();
+});
+
+test("in Simple, View script opens the script to read only, and Run is still there", async () => {
+  autorunMode = "simple";
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  openCard(1);
+  expect(screen.getByRole("button", { name: "Run #1" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View script for #1" }));
+  expect(await screen.findByText("Switch to Advanced to edit.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit script" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save script" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Runs as" })).toBeNull();
+});
+
+test("in Advanced, View script opens the editor as today", async () => {
+  autorunMode = "advanced";
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  openCard(1);
+  fireEvent.click(screen.getByRole("button", { name: "View script for #1" }));
+  expect(await screen.findByRole("button", { name: "Edit script" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save script" })).toBeInTheDocument();
+});
+
+test("Simple keeps the run window with its options", async () => {
+  autorunMode = "simple";
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 unattended" }));
+  expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Pause before each action" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Keep a video of failed cases" })).toBeInTheDocument();
+});
+
+test("Simple keeps the network-wait panel", async () => {
+  autorunMode = "simple";
+  mockList([caseRow(1, "Publish the cycle")], [], [], (cmd) =>
+    cmd === "auto_run_waiting_network" ? { run_id: "run-7", before_case_id: 2, waited_s: 125, give_up_in_s: 1675 } : null,
+  );
+  renderScreen();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  expect(await screen.findByRole("region", { name: "Paused - the company network is unreachable" })).toBeInTheDocument();
+});
+
+test("Simple keeps the Assistants card", async () => {
+  autorunMode = "simple";
+  const agent = {
+    label: "Assistant 1", client: "claude-code", slot: 0, own_browser: false, browser: "Edge", account: null,
+    activity: { kind: "working" }, idle_minutes: 0, changed_for_testing: false, saves_blocked: false, can_stop: false,
+  };
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => (cmd === "auto_run_agents" ? [agent] : null));
+  renderScreen();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
 });

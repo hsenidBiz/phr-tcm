@@ -41,7 +41,7 @@ test("without the app behind it, hydrating leaves none on but still flips hydrat
 });
 
 test("setting a module publishes Rust's answer, cascade included, and tells subscribers", async () => {
-  mockIPC((cmd) => (cmd === "modules_get" ? ["db_access", "auto_run", "playwright"] : cmd === "modules_set" ? ["writing_style"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_get" ? ["db_access", "auto_run", "playwright"] : cmd === "modules_set" ? { on: ["writing_style"], recommended: null } : undefined));
   await hydrateModules();
   const seen = vi.fn();
   const off = subscribeModules(seen);
@@ -68,7 +68,7 @@ test("a read that answers after a save does not undo it", async () => {
   const pending = new Promise<string[]>((r) => {
     answer = r;
   });
-  mockIPC((cmd) => (cmd === "modules_get" ? pending : cmd === "modules_set" ? ["db_access"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_get" ? pending : cmd === "modules_set" ? { on: ["db_access"], recommended: null } : undefined));
   const read = hydrateModules();
   await setModule("db_access", true);
   answer([]);

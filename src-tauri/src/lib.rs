@@ -444,6 +444,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_stay_signed_in,
             app_settings::set_autorun_highlight,
             app_settings::set_autorun_failed_video,
+            app_settings::set_autorun_mode,
             app_settings::get_page_size,
             app_settings::set_page_size,
             app_settings::reset_page_size,
@@ -729,6 +730,9 @@ pub fn run() {
                 modules::init(dir.clone());
                 // Close-to-tray and beta updates: read before any page (see app_settings.rs).
                 crate::app_settings::init(dir.clone());
+                // An install that already runs Auto Run keeps every control
+                // it has today: settle its mode once.
+                crate::autorun::recommended::settle_on_start(&dir);
                 // The AI Bridge tab's writing style, read by the guide on each
                 // call (see writing_style.rs).
                 crate::writing_style::init(dir.clone());

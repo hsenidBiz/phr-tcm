@@ -106,8 +106,21 @@ pub fn set_autorun_highlight(on: bool) -> Result<AppSettings, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn set_autorun_failed_video(on: bool) -> Result<AppSettings, String> {
-    app_settings::update(|s| s.autorun_failed_video = on).map_err(|e| {
+    app_settings::update(|s| {
+        s.autorun_failed_video = on;
+        s.autorun_failed_video_set = true;
+    }).map_err(|e| {
         crate::applog::warn(format!("saving the failed-case video setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}
+
+/// Pick Simple or Advanced Auto Run.
+#[tauri::command]
+#[specta::specta]
+pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, String> {
+    app_settings::update(|s| s.autorun_mode = Some(mode)).map_err(|e| {
+        crate::applog::warn(format!("saving the Auto Run mode failed: {e}"));
         "The setting could not be saved. Settings → Logs has the details.".to_string()
     })
 }

@@ -940,7 +940,7 @@ fn script_with(action: Value) -> CaseScript {
         title: "Attach a form".into(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 1, actions: vec![serde_json::from_value(action).unwrap()], unchecked: None, cleanup: false, because: Vec::new() }],
+        steps: vec![StepScript { step_number: 1, actions: vec![serde_json::from_value(action).unwrap()], unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -1213,7 +1213,7 @@ fn upload_step(file: &str) -> StepScript {
         actions: vec![serde_json::from_value(json!({ "kind": "upload", "selector": { "css": "#cv" }, "file": file })).unwrap()],
         unchecked: None,
         cleanup: false,
-        because: Vec::new(),
+        because: Vec::new(), by_auto_run: false,
     }
 }
 

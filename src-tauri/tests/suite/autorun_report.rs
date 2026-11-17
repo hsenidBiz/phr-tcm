@@ -948,7 +948,7 @@ fn a_divergence_shows_on_its_case_in_the_report() {
     ) || product_section_of(&html, 201).contains("step 2: the case says"), "{}", section_of(&html, 201));
     assert!(product_section_of(&html, 201).contains("(data, needs a ruling)"));
     assert!(product_section_of(&html, 203).contains("(data, waits for a repair)"));
-    assert!(product_section_of(&html, 204).contains("(data, ruled: the data was fixed)"));
+    assert!(product_section_of(&html, 204).contains("(data, ruled: you fixed the data)"));
     assert!(!product_section_of(&html, 202).contains("Divergence:"), "ruled long ago");
 }
 
@@ -1026,7 +1026,7 @@ fn the_report_names_an_assistant_ruling_and_the_persons_words() {
     let section = product_section_of(&html, 201);
     assert!(section.contains("ruled by the assistant"), "{section}");
     assert!(section.contains("a different cycle name is fine"), "{section}");
-    assert!(section.contains("ruled: the case stands"), "{section}");
+    assert!(section.contains("ruled: the app is wrong"), "{section}");
 }
 
 /// A run of the given cases (id, verdict), each with the given steps' outcomes empty.
@@ -1274,4 +1274,17 @@ fn the_flaky_rule_matches_the_table_the_screens_are_held_to() {
         let got = if is_flaky_failure(&case, Some(&script)) { "flaky".to_string() } else { case_bucket(&case).to_lowercase() };
         assert_eq!(got, row["counts_as"].as_str().unwrap(), "{row}");
     }
+}
+
+#[test]
+fn a_passed_cases_unchecked_count_leaves_out_the_steps_done_by_auto_run() {
+    let script: CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 309, "title": "t", "steps": [
+        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Run opens the app" },
+        { "step_number": 2, "actions": [], "unchecked": "the PDF cannot be read" }
+    ] }))
+    .unwrap();
+    let html = build(&run_with(&[(309, "Passed")]), &[script], "x", &no_shots);
+    assert!(html.contains("<span class=\"tone-pass\">Passed, 1 expectation unchecked</span>"), "{html}");
+    assert!(!html.contains("Auto Run opens the app"), "{html}");
+    assert!(html.contains("<p class=\"unchecked\">1 expectation unchecked in 1 passed case</p>"), "{html}");
 }

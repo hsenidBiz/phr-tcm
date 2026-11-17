@@ -147,6 +147,11 @@ pub struct BridgeContext {
     /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
     /// default.
     pub network_tools: bool,
+    /// Whether the person is in Auto Run's Simple or Advanced mode, as the
+    /// webview last pushed it. An assistant reads it to know which controls
+    /// the person can see; no tool sets it. None until the webview has
+    /// pushed one, and then the status answer carries no such key.
+    pub autorun_mode: Option<crate::app_settings::AutorunMode>,
     /// The webview's "Treat all projects as one" switch. Read only by the
     /// Azure DevOps routes (from Phase 6); `project` stays the home project
     /// either way.
@@ -255,6 +260,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
             .field("network_tools", &self.network_tools)
+            .field("autorun_mode", &self.autorun_mode)
             .field("all_projects", &self.all_projects)
             .field("current_pbi", &self.current_pbi.as_ref().map(|p| p.id))
             .field("db_no_ask", &self.db_no_ask)
@@ -501,10 +507,24 @@ pub fn call_time_line(method: &str, target: &str, status: u16, ms: u128) -> Stri
 
 /// What `get_current_pbi` answers: the PBI as JSON, or a plain sentence when
 /// the person has none selected in TCM.
+///
+/// Both also say which Auto Run mode the person is in once the webview has
+/// pushed it (`autorun_mode` in the JSON, a closing sentence otherwise), so an
+/// assistant, which reads only this tool, can tell what the person can see.
 fn current_pbi_answer(ctx: &BridgeContext) -> String {
+    let mode = ctx.autorun_mode.and_then(|m| serde_json::to_value(m).ok());
     match &ctx.current_pbi {
-        Some(p) => serde_json::json!({ "id": p.id, "title": p.title, "project": p.project }).to_string(),
-        None => "No PBI is selected in TCM.".to_string(),
+        Some(p) => {
+            let mut v = serde_json::json!({ "id": p.id, "title": p.title, "project": p.project });
+            if let Some(m) = mode {
+                v["autorun_mode"] = m;
+            }
+            v.to_string()
+        }
+        None => match mode.as_ref().and_then(|m| m.as_str()) {
+            Some(m) => format!("No PBI is selected in TCM. Auto Run mode: {m}."),
+            None => "No PBI is selected in TCM.".to_string(),
+        },
     }
 }
 
@@ -1058,6 +1078,11 @@ pub async fn route_as(
             // (a proxy that does not know the key reads a missing one as off).
             if ctx.all_projects {
                 answer["all_projects"] = serde_json::json!(true);
+            }
+            // Read-only for an assistant: it learns which screen the person
+            // has, and cannot change it. Sent only once the webview has said.
+            if let Some(mode) = ctx.autorun_mode {
+                answer["autorun_mode"] = serde_json::to_value(mode).unwrap_or_default();
             }
             (200, answer.to_string())
         }

@@ -26,7 +26,7 @@ const base: Divergence = {
   status: "open",
 };
 
-function show(d: Divergence) {
+function show(d: Divergence, caseId = 147556) {
   const calls: { cmd: string; args: unknown }[] = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
@@ -36,20 +36,23 @@ function show(d: Divergence) {
   const qc = new QueryClient();
   render(
     <QueryClientProvider client={qc}>
-      <DivergenceRow org="acme" project="Web" caseId={147556} divergence={d} />
+      <DivergenceRow org="acme" project="Web" caseId={caseId} divergence={d} />
     </QueryClientProvider>,
   );
   return calls;
 }
 
-test("an open data divergence offers three rulings", () => {
-  show(base);
+test("an open data divergence asks which is right and offers three rulings", () => {
+  show({ ...base, step: 3, case_id: 12 }, 12);
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
-  // The badge explains the word it uses; the buttons' names are untouched.
+  // The badge explains the word it uses.
   expect(screen.getByText("Needs a ruling")).toHaveAttribute("data-term", "ruling");
-  expect(screen.getByRole("button", { name: "Rule the case is right for #147556 step 2" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Rule the data fixed for #147556 step 2" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Rewrite case #147556 in Azure DevOps" })).toBeInTheDocument();
+  expect(screen.getByText("The case and the app disagree at step 3. Which is right?")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "The app is wrong for #12 step 3" })).toHaveTextContent("The app is wrong");
+  expect(screen.getByRole("button", { name: "The app is right, update case #12 for step 3" })).toHaveTextContent(
+    "The app is right, update the case",
+  );
+  expect(screen.getByRole("button", { name: "I fixed the data for #12 step 3" })).toHaveTextContent("I fixed the data");
 });
 
 test("a reporter's proposal is shown with the divergence", () => {
@@ -57,18 +60,22 @@ test("a reporter's proposal is shown with the divergence", () => {
   expect(screen.getByText(/Proposed: "Seed 2 levels"/)).toBeInTheDocument();
 });
 
-test("an app divergence offers no data fixed", () => {
+test("an app divergence asks no question and offers no data fix", () => {
   show({ ...base, kind: "app" });
   expect(screen.getByText("Divergence")).toBeInTheDocument();
   expect(screen.getByText("Divergence")).toHaveAttribute("data-term", "divergence");
-  expect(screen.queryByRole("button", { name: /data fixed/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Rule the case is right/ })).toBeInTheDocument();
+  expect(screen.queryByText(/Which is right/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /The app is wrong/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /The app is right, update the case|The app is right, update case/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /I fixed the data/ })).not.toBeInTheDocument();
 });
 
-test("confirming the case is right calls the command with case_stands", async () => {
+test("confirming the app is wrong calls the command with case_stands", async () => {
   const calls = show(base);
-  fireEvent.click(screen.getByRole("button", { name: /Rule the case is right/ }));
-  expect(screen.getByText("The script keeps the case's value at step 2, and the case runs again.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /The app is wrong/ }));
+  expect(
+    screen.getByText("The script keeps the case's value at step 2, so the run fails there until the app is fixed."),
+  ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   await waitFor(() =>
     expect(calls.find((c) => c.cmd === "auto_run_rule_divergence")?.args).toEqual({
@@ -82,16 +89,31 @@ test("confirming the case is right calls the command with case_stands", async ()
 
 test("rewrite opens azure devops on the case then rules", async () => {
   const calls = show(base);
-  fireEvent.click(screen.getByRole("button", { name: /Rewrite case #147556/ }));
+  fireEvent.click(screen.getByRole("button", { name: /The app is right, update case #147556/ }));
+  expect(
+    screen.getByText(
+      "Azure DevOps opens on the case so you can update it; the case waits until its script is repaired to match.",
+    ),
+  ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   await waitFor(() => expect(calls.some((c) => c.cmd === "auto_run_rule_divergence")).toBe(true));
   expect(opener.openUrl.mock.calls[0][0]).toMatch(/\/_workitems\/edit\/147556$/);
   expect((calls.find((c) => c.cmd === "auto_run_rule_divergence")?.args as { ruling: string }).ruling).toBe("rewrite");
 });
 
+test("I fixed the data confirms with its own sentence and sends data_fixed", async () => {
+  const calls = show(base);
+  fireEvent.click(screen.getByRole("button", { name: /I fixed the data/ }));
+  expect(screen.getByText("You changed the environment's data to match the case; the case runs again.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() =>
+    expect((calls.find((c) => c.cmd === "auto_run_rule_divergence")?.args as { ruling: string }).ruling).toBe("data_fixed"),
+  );
+});
+
 test("keep closes the confirm without ruling", () => {
   const calls = show(base);
-  fireEvent.click(screen.getByRole("button", { name: /Rule the data fixed/ }));
+  fireEvent.click(screen.getByRole("button", { name: /I fixed the data/ }));
   fireEvent.click(screen.getByRole("button", { name: "Keep" }));
   expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "auto_run_rule_divergence")).toBe(false);

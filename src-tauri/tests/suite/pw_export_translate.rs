@@ -2019,3 +2019,16 @@ fn a_select_option_is_a_locator_select_option() {
     assert!(got.contains("await cur.locator('#type').first().selectOption({ label: 'Numeric' });"), "{got}");
     assert!(got.contains("await cur.locator('#kind').first().selectOption({ value: 'it\\'s' });"), "{got}");
 }
+
+#[test]
+fn a_step_done_by_auto_run_has_no_unchecked_comment() {
+    let mut fx = Fx::new(script(json!([
+        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Run opens the app" },
+        { "step_number": 2, "actions": [], "unchecked": "the PDF cannot be read" }
+    ])));
+    fx.texts.insert(1, "open".into());
+    fx.texts.insert(2, "export".into());
+    let got = fx.run().unwrap();
+    assert!(!got.contains("Auto Run opens the app"), "{got}");
+    assert!(got.contains("// TODO unchecked: the step's expected result - the PDF cannot be read"), "{got}");
+}

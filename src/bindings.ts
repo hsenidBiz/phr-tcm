@@ -1692,7 +1692,7 @@ export const commands = {
 	 *  The slash commands and "always allow" entries that follow the switch are
 	 *  files (and a PATH search), so they are written on a blocking thread.
 	 */
-	modulesSet: (module: Module, on: boolean) => typedError<Module[], string>(__TAURI_INVOKE("modules_set", { module, on })),
+	modulesSet: (module: Module, on: boolean) => typedError<ModulesAnswer, string>(__TAURI_INVOKE("modules_set", { module, on })),
 	/**  Whether How To Use is on disk and current, and the download's size. */
 	guideStatus: () => __TAURI_INVOKE<GuideStatus>("guide_status"),
 	/**
@@ -1893,6 +1893,8 @@ export const commands = {
 	 *  or is blocked. Read when a run starts.
 	 */
 	setAutorunFailedVideo: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_failed_video", { on })),
+	/**  Pick Simple or Advanced Auto Run. */
+	setAutorunMode: (mode: AutorunMode) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_mode", { mode })),
 	/**  The page size every browser the app drives shows. */
 	getPageSize: () => __TAURI_INVOKE<PageSize>("get_page_size"),
 	/**
@@ -3075,6 +3077,23 @@ export type AppSettings = {
 	 */
 	autorun_failed_video?: boolean,
 	/**
+	 *  The failed-case video switch was set by a person (not left at its
+	 *  default), so switching Auto Run on never overrides it.
+	 */
+	autorun_failed_video_set?: boolean,
+	/**
+	 *  API Templates was switched on or off by a person, so switching Auto
+	 *  Run on never overrides it.
+	 */
+	api_templates_set?: boolean,
+	/**
+	 *  Auto Run has been on at some point (or left files behind). Once
+	 *  true it never goes back; it decides whether a switch-on is the first.
+	 */
+	auto_run_ever_on?: boolean,
+	/**  Simple or Advanced Auto Run; `None` until one is picked or settled. */
+	autorun_mode?: AutorunMode | null,
+	/**
 	 *  The page every browser the app drives shows (`browser::viewport`).
 	 *  A missing, unreadable or out-of-range value reads as the default, and
 	 *  leaves the rest of the file alone.
@@ -3251,6 +3270,12 @@ export type AutorunDiscoveryChanged = {
 export type AutorunEnvironmentChanged = {
 	env_id: string,
 };
+
+/**
+ *  How much of Auto Run a person sees: Simple keeps to the everyday path,
+ *  Advanced shows everything.
+ */
+export type AutorunMode = "simple" | "advanced";
 
 /**
  *  An unattended run started waiting for the company network, or stopped
@@ -3457,6 +3482,11 @@ export type BridgeSwitches = {
 	 *  `BridgeContext::all_projects`). Not a write switch.
 	 */
 	allProjects?: boolean,
+	/**
+	 *  Auto Run's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+	 *  Not a switch: the assistants only read it.
+	 */
+	autorunMode?: AutorunMode | null,
 	/**
 	 *  The PBI selected in the top bar, or none (see
 	 *  `BridgeContext::current_pbi`). Not a switch: it rides here so
@@ -5932,6 +5962,15 @@ export type ModuleView = {
 	repaired_by_assistant: RepairNote | null,
 };
 
+/**
+ *  The answer to a switch: every module now on, and - only when this call
+ *  turned Auto Run from off to on - what that turned on besides.
+ */
+export type ModulesAnswer = {
+	on: Module[],
+	recommended: Recommended | null,
+};
+
 export type NavView = {
 	direct_urls: boolean,
 	modules: ModuleView[],
@@ -7051,6 +7090,15 @@ export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
 export type RecipeStep_Deserialize = Action_Deserialize | WhenVisible_Deserialize;
 
 export type RecipeStep_Serialize = Action_Serialize | WhenVisible_Serialize;
+
+/**  Which recommended items a switch-on turned on now. */
+export type Recommended = {
+	api_templates: boolean,
+	video: boolean,
+	/**  The webview applies this per environment that never set it. */
+	network_tools: boolean,
+	mode_simple: boolean,
+};
 
 /**
  *  The answer to a Check. `found` is an unambiguous match, treated exactly
@@ -8465,6 +8513,13 @@ export type StepScript_Deserialize = {
 	 *  when there are any.
 	 */
 	because?: Because_Deserialize[],
+	/**
+	 *  The step's whole expected result is what Auto Run does itself before
+	 *  step 1: launching the app, signing in, reaching the area. Only the
+	 *  opening steps can be (`by_auto_run::done_by_auto_run`); such a step
+	 *  has no actions and needs no `unchecked`. Written only when true.
+	 */
+	by_auto_run?: boolean,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -8494,6 +8549,13 @@ export type StepScript_Serialize = {
 	 *  when there are any.
 	 */
 	because?: Because_Serialize[],
+	/**
+	 *  The step's whole expected result is what Auto Run does itself before
+	 *  step 1: launching the app, signing in, reaching the area. Only the
+	 *  opening steps can be (`by_auto_run::done_by_auto_run`); such a step
+	 *  has no actions and needs no `unchecked`. Written only when true.
+	 */
+	by_auto_run?: boolean,
 };
 
 export type Step_Deserialize = {

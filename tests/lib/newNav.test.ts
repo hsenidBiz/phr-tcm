@@ -109,7 +109,7 @@ test("hydration from Rust never marks anything", async () => {
 });
 
 test("a switch that does not come from the Modules page does not mark", async () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? ["db_access", "auto_run"] : undefined));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: ["db_access", "auto_run"], recommended: null } : undefined));
   await setModule("auto_run", true);
   expect(newNavSnapshot()).toEqual({});
 });
