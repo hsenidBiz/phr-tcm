@@ -966,6 +966,12 @@ export const commands = {
 	 *  how it ended. Written only when there are any.
 	 */
 	network_pauses?: NetworkPauseRecord[],
+	/**
+	 *  "Keep a video of failed cases" was on, but the browser cannot record
+	 *  (`browser::recording::NOT_AVAILABLE`): said once for the run, not on
+	 *  any case. Left out when false, so older run files read the same.
+	 */
+	video_unavailable?: boolean,
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**
 	 *  Writes one run's report and opens it in the default browser. `ran_at` is
@@ -5591,6 +5597,12 @@ export type LocalRun_Deserialize = {
 	 *  how it ended. Written only when there are any.
 	 */
 	network_pauses?: NetworkPauseRecord[],
+	/**
+	 *  "Keep a video of failed cases" was on, but the browser cannot record
+	 *  (`browser::recording::NOT_AVAILABLE`): said once for the run, not on
+	 *  any case. Left out when false, so older run files read the same.
+	 */
+	video_unavailable?: boolean,
 };
 
 export type LocalRun_Serialize = {
@@ -5623,6 +5635,12 @@ export type LocalRun_Serialize = {
 	 *  how it ended. Written only when there are any.
 	 */
 	network_pauses?: NetworkPauseRecord[],
+	/**
+	 *  "Keep a video of failed cases" was on, but the browser cannot record
+	 *  (`browser::recording::NOT_AVAILABLE`): said once for the run, not on
+	 *  any case. Left out when false, so older run files read the same.
+	 */
+	video_unavailable?: boolean,
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;

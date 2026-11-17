@@ -67,7 +67,7 @@ fn run_ids_that_could_escape_the_runs_directory_are_rejected() {
 #[test]
 fn saving_over_a_published_run_with_an_unpublished_copy_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let published = LocalRun {
+    let published = LocalRun { video_unavailable: false,
         id: "run-3".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -84,13 +84,13 @@ fn saving_over_a_published_run_with_an_unpublished_copy_is_refused() {
     };
     save_run(dir.path(), &published).unwrap();
 
-    let stale = LocalRun { published: None, ..published.clone() };
+    let stale = LocalRun { video_unavailable: false, published: None, ..published.clone() };
     let err = save_run_guarded(dir.path(), &stale).expect_err("a stale unpublished copy was accepted");
     assert!(err.contains("already been sent"), "{err}");
     let reloaded = load_run(dir.path(), "run-3").unwrap().unwrap();
     assert!(reloaded.published.is_some(), "the guard let the published record be erased");
 
-    let edited_note = LocalRun { cases: vec![], ..published.clone() };
+    let edited_note = LocalRun { video_unavailable: false, cases: vec![], ..published.clone() };
     assert!(save_run_guarded(dir.path(), &edited_note).is_ok());
 }
 
@@ -105,7 +105,7 @@ fn a_run_file_that_cannot_be_read_is_never_overwritten_by_a_guarded_save() {
     std::fs::create_dir_all(dir.path().join("runs")).unwrap();
     std::fs::write(dir.path().join("runs").join("run-x.json"), "{ not json").unwrap();
 
-    let run = LocalRun {
+    let run = LocalRun { video_unavailable: false,
         id: "run-x".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -132,7 +132,7 @@ fn a_run_file_that_cannot_be_read_is_never_overwritten_by_a_guarded_save() {
 #[test]
 fn save_run_guarded_rejects_an_unsafe_run_id() {
     let dir = tempfile::tempdir().unwrap();
-    let run = LocalRun {
+    let run = LocalRun { video_unavailable: false,
         id: "../escape".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),

@@ -163,7 +163,7 @@ test("the app's CSP allows a blob: video but no remote scheme", () => {
       .split(";")
       .map((d) => d.trim())
       .find((d) => d.startsWith("media-src"));
-    expect(media).toBe("media-src 'self' blob:");
+    expect(media).toBe("media-src blob:");
   }
 });
 

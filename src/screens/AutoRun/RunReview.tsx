@@ -26,7 +26,7 @@ import { IconBug, IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } 
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
-import CaseVideo from "./CaseVideo";
+import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import OutcomeGroups from "./OutcomeGroups";
@@ -494,6 +494,7 @@ export default function RunReview(props: {
 
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
+      <VideoUnavailableNote run={run} />
       <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto">
         {shown.map((c, i) => {
           const isExpanded = expanded.has(c.case_id);

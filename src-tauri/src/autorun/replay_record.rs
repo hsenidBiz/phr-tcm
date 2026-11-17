@@ -153,7 +153,7 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
         "area" => format!("module: {}", r.why),
         _ => format!("step {}: {}", r.step, r.why),
     };
-    LocalRun {
+    LocalRun { video_unavailable: false,
         id: format!("a replay to step {}", r.to_step),
         pbi_id: 0,
         started_at: r.at.to_string(),

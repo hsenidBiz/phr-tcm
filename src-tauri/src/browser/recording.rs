@@ -12,7 +12,7 @@
 //! simply means no video, and a browser too old to offer the command is
 //! never asked for it (`support`).
 
-use super::cdp::{CdpError, Driver, MAIN_TAB};
+use super::cdp::{CdpError, Driver};
 use crate::autorun::store;
 use base64::Engine;
 use serde_json::{json, Value};
@@ -46,9 +46,9 @@ const READ_MS: u64 = 60_000;
 /// The size asked for per `IO.read`.
 const CHUNK: u64 = 1024 * 1024;
 
-/// Said once in a run's notes when "Keep a video of failed cases" is on and
+/// Said once on the run (`LocalRun::video_unavailable`) when "Keep a video of failed cases" is on and
 /// the browser cannot record.
-pub const NOT_AVAILABLE: &str = "A video of failed cases is not available with this browser version, so none was recorded.";
+pub const NOT_AVAILABLE: &str = "Video was not recorded: this browser version cannot record.";
 
 /// What `start` asks the browser for.
 pub fn start_params() -> Value {
@@ -96,7 +96,10 @@ pub async fn support<D: Driver>(d: &mut D) -> Support {
 
 /// A recording that is running.
 #[derive(Debug)]
-pub struct Recording(());
+pub struct Recording {
+    /// The tab the recording was started on; it is stopped on the same one.
+    tab: String,
+}
 
 /// A recording that was stopped and whose video is waiting in the browser to
 /// be read (`keep`) or let go (`discard`).
@@ -108,34 +111,30 @@ pub struct Stopped {
 /// Start recording the page. `None` when the browser would not (logged): the
 /// case runs on without a video.
 pub async fn start<D: Driver>(d: &mut D, who: &str) -> Option<Recording> {
-    match tokio::time::timeout(Duration::from_millis(CALL_MS), d.call(START, start_params())).await {
-        Ok(Ok(_)) => Some(Recording(())),
-        Ok(Err(e)) => {
+    let tab = d.tab_name();
+    match d.call_within(START, start_params(), Duration::from_millis(CALL_MS)).await {
+        Ok(_) => Some(Recording { tab }),
+        Err(e) => {
             crate::applog::warn(format!("{who}: the video of this case could not be started: {e}"));
-            None
-        }
-        Err(_) => {
-            crate::applog::warn(format!("{who}: the video of this case could not be started in time"));
             None
         }
     }
 }
 
-/// Stop recording. The recording belongs to the case's first tab, so a case
-/// that ended in another one goes back to it first. `None` when the browser
+/// Stop recording, on the tab it was started on: a case that ended in another
+/// tab goes back to that one first, and one that cannot gives no video. `None` when the browser
 /// gave no video (logged).
-pub async fn stop<D: Driver>(d: &mut D, _recording: Recording, who: &str) -> Option<Stopped> {
-    if d.tab_name() != MAIN_TAB {
-        let _ = d.switch_tab(MAIN_TAB).await;
-    }
-    let reply = match tokio::time::timeout(Duration::from_millis(CALL_MS), d.call(STOP, json!({}))).await {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
-            crate::applog::warn(format!("{who}: the video of this case could not be stopped: {e}"));
+pub async fn stop<D: Driver>(d: &mut D, recording: Recording, who: &str) -> Option<Stopped> {
+    if d.tab_name() != recording.tab {
+        if let Err(e) = d.switch_tab(&recording.tab).await {
+            crate::applog::warn(format!("{who}: the video of this case could not be stopped, its tab is not reachable: {e}"));
             return None;
         }
-        Err(_) => {
-            crate::applog::warn(format!("{who}: the video of this case could not be stopped in time"));
+    }
+    let reply = match d.call_within(STOP, json!({}), Duration::from_millis(CALL_MS)).await {
+        Ok(r) => r,
+        Err(e) => {
+            crate::applog::warn(format!("{who}: the video of this case could not be stopped: {e}"));
             return None;
         }
     };
@@ -150,7 +149,7 @@ pub async fn stop<D: Driver>(d: &mut D, _recording: Recording, who: &str) -> Opt
 
 /// Let the video go unread: the case passed, so it is not kept.
 pub async fn discard<D: Driver>(d: &mut D, stopped: Stopped) {
-    let _ = tokio::time::timeout(Duration::from_millis(CALL_MS), d.call(CLOSE, json!({ "handle": stopped.handle }))).await;
+    let _ = d.call_within(CLOSE, json!({ "handle": stopped.handle }), Duration::from_millis(CALL_MS)).await;
 }
 
 /// Read the video and keep it beside the run's pictures: its name there, or
@@ -158,7 +157,7 @@ pub async fn discard<D: Driver>(d: &mut D, stopped: Stopped) {
 /// go either way.
 pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str) -> Option<String> {
     let read = tokio::time::timeout(Duration::from_millis(READ_MS), read_all(d, &stopped.handle)).await;
-    let _ = tokio::time::timeout(Duration::from_millis(CALL_MS), d.call(CLOSE, json!({ "handle": stopped.handle }))).await;
+    let _ = d.call_within(CLOSE, json!({ "handle": stopped.handle }), Duration::from_millis(CALL_MS)).await;
     let bytes = match read {
         Ok(Ok(b)) => b,
         Ok(Err(e)) => {
@@ -194,7 +193,7 @@ pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str
 async fn read_all<D: Driver>(d: &mut D, handle: &str) -> Result<Vec<u8>, CdpError> {
     let mut out: Vec<u8> = Vec::new();
     loop {
-        let r = d.call(READ, json!({ "handle": handle, "size": CHUNK })).await?;
+        let r = d.call_within(READ, json!({ "handle": handle, "size": CHUNK }), Duration::from_millis(CALL_MS)).await?;
         let data = r["data"].as_str().unwrap_or_default();
         if r["base64Encoded"].as_bool().unwrap_or(false) {
             let chunk = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| CdpError::Protocol {

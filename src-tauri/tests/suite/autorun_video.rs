@@ -39,7 +39,10 @@ fn refuse(method: &str, why: &str) -> CdpError {
 /// A page that answers the recorder as `rec` says and everything else as
 /// the page would. `passes` says whether the case's one check passes.
 fn driver(rec: Recorder, passes: bool) -> ScriptedDriver {
-    let page = FakePage { body_has_text: passes, ..FakePage::default() };
+    driver_on(rec, FakePage { body_has_text: passes, ..FakePage::default() })
+}
+
+fn driver_on(rec: Recorder, page: FakePage) -> ScriptedDriver {
     let sent = Arc::new(Mutex::new(false));
     ScriptedDriver::new(move |method, params| match method {
         "Browser.getVersion" => Ok(json!({ "product": rec.product })),
@@ -93,7 +96,7 @@ async fn go(root: &Path, wanted: bool, drivers: Vec<ScriptedDriver>, cases: &[i3
         cs.push((*id, "c".to_string()));
     }
     let mut browsers = Fake { drivers, closed: vec![], wanted };
-    let mut run = LocalRun {
+    let mut run = LocalRun { video_unavailable: false,
         id: "run-v".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),
@@ -198,6 +201,7 @@ async fn with_the_setting_off_nothing_is_asked_of_the_browser() {
     assert_eq!(run.cases[0].proposed, "Failed");
     assert_eq!(run.cases[0].video, None);
     assert_eq!(run.cases[0].notice, None);
+    assert!(!run.video_unavailable);
     let m = closed[0].methods();
     assert!(m.iter().all(|x| !x.starts_with("Page.startScreen") && !x.starts_with("Page.stopScreen") && x != "Browser.getVersion"), "{m:?}");
 }
@@ -208,8 +212,10 @@ async fn an_old_browser_records_nothing_and_says_so_once() {
     let old = Recorder { product: "Edg/140.0.1.1", ..Recorder::working() };
     let (run, closed) = go(dir.path(), true, vec![driver(old.clone(), false), driver(old, false)], &[1, 2]).await;
     assert!(run.cases.iter().all(|c| c.proposed == "Failed" && c.video.is_none()));
-    assert_eq!(run.cases[0].notice.as_deref(), Some(recording::NOT_AVAILABLE));
-    assert_eq!(run.cases[1].notice, None, "said once, not on every case");
+    // Said once, on the run, and never as a case's notice (the screens show a
+    // notice as "Not checked").
+    assert!(run.video_unavailable);
+    assert!(run.cases.iter().all(|c| c.notice.is_none()), "{:?}", run.cases.iter().map(|c| &c.notice).collect::<Vec<_>>());
     // The browser was asked its version once, and never asked to record.
     assert_eq!(closed.iter().flat_map(|d| d.methods()).filter(|m| m == "Browser.getVersion").count(), 1);
     assert!(closed.iter().all(|d| pos(d, "Page.startScreenRecording").is_none()));
@@ -296,7 +302,7 @@ fn the_screens_are_told_what_a_video_can_be_used_for() {
 
 fn run_naming(video: &str, published: bool) -> LocalRun {
     let case = CaseRecord { video: Some(video.to_string()), ..common::component_case(1, "x") };
-    LocalRun {
+    LocalRun { video_unavailable: false,
         id: "r".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -430,4 +436,124 @@ mod attach {
             assert!(!why.contains("://") && !why.contains('\\'), "{why}");
         }
     }
+}
+
+
+// ---- Blocked, the retry and the network rerun ---------------------------------------
+
+#[tokio::test]
+async fn a_blocked_case_keeps_its_video_too() {
+    let dir = tempfile::tempdir().unwrap();
+    // A project that does not allow opening a page by address: the case cannot
+    // be carried out, which is Blocked, not Failed.
+    let nav = v2_lib::autorun::nav::NavFile { direct_urls: false, ..Default::default() };
+    v2_lib::autorun::nav::save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
+    let blocked: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "c",
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "http://app.test/x" }] }]
+    }))
+    .unwrap();
+    store::save_script(dir.path(), &blocked).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), true)], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, dir.path(), "Acme", "Web", &mut run, &[(1, "c".into())], &common::quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Blocked", "{:?}", run.cases[0]);
+    let name = run.cases[0].video.as_deref().expect("a blocked case keeps its video");
+    assert!(dir.path().join("shots").join(name).is_file());
+}
+
+fn new_run() -> LocalRun {
+    LocalRun {
+        video_unavailable: false,
+        id: "run-v".into(),
+        pbi_id: 42,
+        started_at: "1700000000000".into(),
+        cases: vec![],
+        mode: "unattended".into(),
+        published: None,
+        environment: None,
+        resets: vec![],
+        network_pauses: vec![],
+    }
+}
+
+/// A gate that says the network is gone once the case has failed once.
+struct DropsOnce(Vec<v2_lib::autorun::network::Network>);
+
+impl v2_lib::autorun::replay::ResetGate for DropsOnce {
+    async fn wait(&mut self, _r: &v2_lib::autorun::plan::Pause, _rest: &[i32], _c: &AtomicBool) -> bool {
+        true
+    }
+    async fn network(&mut self) -> v2_lib::autorun::network::Network {
+        if self.0.is_empty() { v2_lib::autorun::network::Network::Reachable } else { self.0.remove(0) }
+    }
+    async fn wait_for_network(&mut self, _before: i32, _c: &AtomicBool) -> v2_lib::autorun::network::WaitEnd {
+        v2_lib::autorun::network::WaitEnd::Resumed
+    }
+}
+
+fn two_step_script() -> CaseScript {
+    serde_json::from_value(json!({
+        "case_id": 1, "title": "c",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "http://app.test/x" }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "x" }] }
+        ]
+    }))
+    .unwrap()
+}
+
+async fn plan_run(
+    root: &Path,
+    drivers: Vec<ScriptedDriver>,
+    gate: &mut DropsOnce,
+    retry: bool,
+) -> LocalRun {
+    use v2_lib::autorun::preconditions::{NoDb, PreconditionDb, NEED_DB};
+    use v2_lib::autorun::replay::{run_cases_planned, CaseToRun, NeverPauses};
+    let _ = NeverPauses;
+    store::save_script(root, &two_step_script()).unwrap();
+    let mut browsers = Fake { drivers, closed: vec![], wanted: true };
+    let mut run = new_run();
+    let no_db: PreconditionDb<NoDb> = PreconditionDb::Missing(NEED_DB.to_string());
+    run_cases_planned(
+        &mut browsers, root, "Acme", "Web", &mut run,
+        &[CaseToRun { case_id: 1, title: "c".into(), module: None }],
+        None, retry, &common::quick(), &AtomicBool::new(false), &no_db, &[], gate, &mut |_| {},
+    )
+    .await
+    .unwrap();
+    run
+}
+
+#[tokio::test]
+async fn a_case_run_again_after_the_network_came_back_leaves_only_the_kept_videos_file() {
+    use v2_lib::autorun::network::Network;
+    let dir = tempfile::tempdir().unwrap();
+    // Reachable before the case, gone after it failed, back for the second go.
+    let mut gate = DropsOnce(vec![Network::Reachable, Network::Unreachable]);
+    let failing = || driver(Recorder::working(), false);
+    let run = plan_run(dir.path(), vec![failing(), failing()], &mut gate, false).await;
+    assert_eq!(run.cases.len(), 1);
+    let name = run.cases[0].video.clone().expect("the final record keeps its video");
+    assert_eq!(videos_on_disk(dir.path()), vec![name], "the first go's video was left behind");
+}
+
+#[tokio::test]
+async fn a_transient_retry_discards_the_first_tries_video() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut gate = DropsOnce(vec![]);
+    // The first go's page would not load (a network error: transient); the
+    // second go fails the check for good and is the record.
+    let glitch = FakePage { navigate_reply: json!({ "frameId": "F", "errorText": "net::ERR_CONNECTION_RESET" }), ..FakePage::default() };
+    let first = driver_on(Recorder::working(), glitch);
+    let second = driver(Recorder::working(), false);
+    let run = plan_run(dir.path(), vec![first, second], &mut gate, true).await;
+    let case = &run.cases[0];
+    assert!(case.retried.is_some(), "the first go was not taken for transient: {case:?}");
+    let name = case.video.clone().expect("the second go's video is kept");
+    assert_eq!(videos_on_disk(dir.path()), vec![name], "the first try's video was left behind");
 }

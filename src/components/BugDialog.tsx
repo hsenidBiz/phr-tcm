@@ -416,7 +416,7 @@ export default function BugDialog({
         </Button>
         <Button
           size="sm"
-          disabled={!title.trim() || file.isPending || !lookupSettled || missing.length > 0}
+          disabled={!title.trim() || file.isPending || !lookupSettled || missing.length > 0 || (Boolean(video) && videoInfo.isLoading)}
           title={missing.length > 0 ? `Fill in: ${missing.map(labelOf).join(", ")}` : undefined}
           onClick={() =>
             file.mutate({

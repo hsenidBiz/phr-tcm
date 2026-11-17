@@ -46,7 +46,7 @@ fn case_failing(step: i32, action: usize, words: &str) -> CaseRecord {
 }
 
 fn run_at(at: u64, case: CaseRecord) -> LocalRun {
-    LocalRun {
+    LocalRun { video_unavailable: false,
         id: format!("run-{at}"),
         pbi_id: 1,
         started_at: at.to_string(),

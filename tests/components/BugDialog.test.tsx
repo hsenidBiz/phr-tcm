@@ -633,3 +633,18 @@ test("a video that fails to attach is said, and the bug still stands", async () 
   await vi.waitFor(() => expect(toastMock.warning).toHaveBeenCalled());
   expect(String(toastMock.warning.mock.calls[0][0])).toContain("the video did not attach");
 });
+
+test("File bug waits for the video's details so the video is never silently left off", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return new Promise(() => {});
+    return null;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <BugDialog org="acme" project="Web" testCase={testCase} pbiId={42} screenshots={[]} video={VIDEO} onClose={vi.fn()} onFiled={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  await vi.waitFor(() => expect(screen.getByLabelText("Bug title")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "File bug" })).toBeDisabled();
+});

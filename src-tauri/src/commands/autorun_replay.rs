@@ -318,7 +318,7 @@ pub async fn auto_run_replay(
     // that finds no supervised browser open.
     store::remember_browser(&root, &browser_name);
     let run_account = crate::autorun::accounts::account_for_run(&root, account.as_deref())?;
-    let mut run = LocalRun {
+    let mut run = LocalRun { video_unavailable: false,
         id: store::new_run_id(),
         pbi_id,
         started_at: sessions::now_ms().to_string(),

@@ -957,18 +957,17 @@ struct Place<'a> {
 }
 
 /// Whether this run records a video of each case, settled once: wanted by
-/// the setting, then (by the first browser opened) possible. Said once in
-/// the notes of the case that found it was not.
+/// the setting, then (by the first browser opened) possible. A browser found
+/// unable to record is said once on the run (`LocalRun::video_unavailable`).
 struct VideoPlan {
     wanted: bool,
     /// 0 not asked yet, 1 can record, 2 cannot.
     supported: std::sync::atomic::AtomicU8,
-    note_due: AtomicBool,
 }
 
 impl VideoPlan {
     fn new(wanted: bool) -> VideoPlan {
-        VideoPlan { wanted, supported: std::sync::atomic::AtomicU8::new(0), note_due: AtomicBool::new(false) }
+        VideoPlan { wanted, supported: std::sync::atomic::AtomicU8::new(0) }
     }
 
     /// Whether to record the case that has this browser. The first browser
@@ -985,16 +984,22 @@ impl VideoPlan {
         let support = recording::support(d).await;
         if let recording::Support::No(why) = &support {
             crate::applog::info(format!("{}: no video of failed cases: {why}", who(case_id)));
-            self.note_due.store(true, Ordering::SeqCst);
         }
         self.supported.store(if support.is_yes() { 1 } else { 2 }, Ordering::SeqCst);
         support.is_yes()
     }
 
-    /// The sentence for the run's notes, once, after the browser was found
-    /// unable to record.
-    fn take_note(&self) -> Option<&'static str> {
-        self.note_due.swap(false, Ordering::SeqCst).then_some(recording::NOT_AVAILABLE)
+    /// The browser was found unable to record.
+    fn found_unable(&self) -> bool {
+        self.supported.load(Ordering::SeqCst) == 2
+    }
+}
+
+/// Let go of the video a record that is not kept wrote: a case run again
+/// (the network came back) or a run that ends at a network wait.
+fn drop_video(root: &Path, record: &CaseRecord) {
+    if let Some(v) = record.video.as_deref() {
+        store::discard_video(root, v);
     }
 }
 
@@ -1414,12 +1419,6 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                     // Said on the record whichever way the case went, so the
                     // review and the report show the checks were skipped.
                     record.notice = notice;
-                    if let Some(note) = video.take_note() {
-                        record.notice = Some(match record.notice.take() {
-                            Some(n) => format!("{n} {note}"),
-                            None => note.to_string(),
-                        });
-                    }
                     record.product_bugs = quirks::product_bugs_for(&quirks, case.case_id);
                     record
                 }
@@ -1435,6 +1434,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             {
                 if network_reruns < MAX_NETWORK_RERUNS {
                     network_reruns += 1;
+                    // This record is dropped: so is the video it wrote.
+                    drop_video(root, &record);
                     let end = pause_for_network(gate, run, case_id, cancel).await;
                     if let Some(why) = network_end_reason(end) {
                         if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {
@@ -1461,6 +1462,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             super::proven::note_outcome(root, case_id, o);
         }
         run.cases.push(record);
+        run.video_unavailable |= video.found_unable();
         if let Err(e) = store::save_run(root, run) {
             save_error.get_or_insert(e);
         }

@@ -31,6 +31,16 @@ function bytesOf(b64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+/** Said once for a run that was meant to keep videos of failed cases but ran in
+ * a browser that cannot record. Quiet text, never a badge on a case: nothing
+ * about the cases' checks was skipped. */
+export const VIDEO_UNAVAILABLE = "Video was not recorded: this browser version cannot record.";
+
+export function VideoUnavailableNote({ run }: { run: { video_unavailable?: boolean } }) {
+  if (!run.video_unavailable) return null;
+  return <p className="text-xs text-faint">{VIDEO_UNAVAILABLE}</p>;
+}
+
 export default function CaseVideo({ name, className }: { name?: string | null; className?: string }) {
   const info = useQuery({
     queryKey: videoInfoKey(name ?? ""),
@@ -100,7 +110,7 @@ export default function CaseVideo({ name, className }: { name?: string | null; c
           Download video
         </Button>
       </div>
-      {src && <video aria-label="Video of the failed case" src={src} controls autoPlay className="max-h-96 max-w-full rounded border border-border" />}
+      {src && <video aria-label="Video of the failed case" src={src} controls autoPlay onError={() => toast.error("This video cannot be played here - download it instead.")} className="max-h-96 max-w-full rounded border border-border" />}
     </div>
   );
 }
