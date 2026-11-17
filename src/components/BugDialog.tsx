@@ -16,6 +16,7 @@ import { imageMime } from "../lib/blob";
 import { firstValidClipboardImage, imageOfPasteFile, NOT_ON_CLIPBOARD_YET, type ClipboardImage } from "../lib/clipboardImage";
 import { describeAdoError, unwrap } from "../lib/ipc";
 import { sharedStepQueryKey, sharedStepText } from "../lib/sharedSteps";
+import { Checkbox } from "./ui/checkbox";
 import { Button } from "./ui/button";
 import DateField from "./ui/datefield";
 import { Input, Textarea } from "./ui/input";
@@ -110,6 +111,7 @@ export default function BugDialog({
   testCase,
   pbiId,
   screenshots,
+  video,
   initialTitle,
   initialRepro,
   onClose,
@@ -120,6 +122,9 @@ export default function BugDialog({
   testCase: TestCaseFull;
   pbiId: number;
   screenshots: string[];
+  /** The name of the video kept of the failure, when there is one: offered
+   * as an attachment, ticked unless it is too large to attach. */
+  video?: string | null;
   /** A caller that already knows the failure (an Auto Run review) hands in
    * its own title and repro; the manual runner passes neither and gets the
    * case's own steps. */
@@ -148,6 +153,18 @@ export default function BugDialog({
   // Screenshots pasted INTO the dialog (Ctrl+V) - evidence of the bug that
   // was never attached to the run, e.g. a capture sitting on the clipboard.
   const [pasted, setPasted] = useState<ClipboardImage[]>([]);
+  // The failure's video: whether it is still there and small enough for the
+  // bug (Rust says), and whether the person wants it attached.
+  const videoInfo = useQuery({
+    queryKey: ["autorun-video-info", video ?? ""],
+    queryFn: () => commands.autoRunVideoInfo(video as string),
+    enabled: Boolean(video),
+    staleTime: 0,
+    retry: false,
+  });
+  const [videoUnticked, setVideoUnticked] = useState(false);
+  const canAttachVideo = Boolean(video && videoInfo.data?.attachable);
+  const attachVideo = canAttachVideo && !videoUnticked;
 
   // The same check and retry the runner's paste has: a clipboard that offers
   // the picture before it is ready gives nothing or its front half, and that
@@ -184,6 +201,7 @@ export default function BugDialog({
     title: string;
     repro: string;
     shots: string[];
+    video: string | null;
     fieldValues: { reference_name: string; value: string }[];
     remember: Record<string, string>;
   };
@@ -208,6 +226,19 @@ export default function BugDialog({
   if (lookup.data) lastFields.current = lookup.data.fields;
   const fields: ExtraField[] = lookup.data?.fields ?? lastFields.current;
 
+  /** The video goes up after the bug exists, so one that cannot never costs a
+   * duplicate: the person is told, and the rest of the bug stands. */
+  const attachVideoTo = async (bugId: number, name: string) => {
+    try {
+      const r = await commands.attachCaseVideo(org, project, bugId, name);
+      if (r.status === "error") throw new Error(r.error);
+    } catch (e) {
+      toast.warning(`Filed bug #${bugId}, but the video did not attach: ${e instanceof Error ? e.message : String(e)} Add it in Azure DevOps.`, {
+        duration: 20_000,
+      });
+    }
+  };
+
   const file = useMutation({
     mutationFn: (p: BugPayload) =>
       unwrapFileBug(
@@ -215,6 +246,7 @@ export default function BugDialog({
       ),
     onSuccess: (bug, p) => {
       cacheWrite(cacheKeys.bugFieldValues(org, project), p.remember);
+      if (p.video) void attachVideoTo(bug.id, p.video);
       // The bug exists either way - re-filing over a failed upload would
       // leave a duplicate - but a tester who attached screenshots of the
       // failure has to be told when they did not arrive.
@@ -364,6 +396,19 @@ export default function BugDialog({
           ` · ${screenshots.length + pasted.length} screenshot(s) attached`}
         . Paste (Ctrl+V) to add more.
       </p>
+      {video && videoInfo.data && (
+        <label className={`flex items-center gap-2 text-xs ${canAttachVideo ? "cursor-pointer text-muted" : "text-faint"}`}>
+          <Checkbox
+            checked={attachVideo}
+            disabled={!canAttachVideo}
+            ariaLabel="Attach the video of the failure"
+            onCheckedChange={(on) => setVideoUnticked(!on)}
+          />
+          {canAttachVideo
+            ? "Attach the video of the failure"
+            : "The video of the failure is too large to attach here - download it from the run and add it in Azure DevOps."}
+        </label>
+      )}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>
           <IconCancel aria-hidden />
@@ -378,6 +423,7 @@ export default function BugDialog({
               title,
               repro,
               shots: [...screenshots, ...pasted.map((p) => p.b64)],
+              video: attachVideo ? (video ?? null) : null,
               fieldValues: fields.map((f) => {
                 const v = (values[f.reference_name] ?? "").trim();
                 return { reference_name: f.reference_name, value: f.kind === "date" ? toAdoDate(v) : v };

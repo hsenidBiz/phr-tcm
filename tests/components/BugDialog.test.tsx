@@ -546,3 +546,90 @@ test("the dialog has an accessible name: its title", () => {
   );
   expect(screen.getByRole("dialog", { name: "File a bug" })).toBeInTheDocument();
 });
+
+// ---- The failure's video ------------------------------------------------------
+
+const VIDEO = "video-1700000000000-000001.mp4";
+
+function dialogWithVideo(info: { size: number; playable: boolean; attachable: boolean } | null, onFiled = vi.fn()) {
+  const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "auto_run_video_info") return info;
+    if (cmd === "file_bug") return { id: 777, url: "https://x/bug/777", screenshots_failed: 0, screenshots_total: 0 };
+    return null;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <BugDialog org="acme" project="Web" testCase={testCase} pbiId={42} screenshots={[]} video={VIDEO} onClose={vi.fn()} onFiled={onFiled} />
+    </QueryClientProvider>,
+  );
+  return calls;
+}
+
+test("a video small enough to attach is offered ticked and goes up after the bug is filed", async () => {
+  const onFiled = vi.fn();
+  const calls = dialogWithVideo({ size: 4096, playable: true, attachable: true }, onFiled);
+  const box = await screen.findByRole("checkbox", { name: "Attach the video of the failure" });
+  expect(box).toHaveAttribute("aria-checked", "true");
+  await vi.waitFor(() => expect(screen.getByRole("button", { name: "File bug" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "File bug" }));
+  await vi.waitFor(() => expect(onFiled).toHaveBeenCalledWith(777));
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "attach_case_video")).toBe(true));
+  expect(calls.find((c) => c.cmd === "attach_case_video")?.args).toEqual({
+    organization: "acme",
+    project: "Web",
+    bugId: 777,
+    video: VIDEO,
+  });
+});
+
+test("unticking the video files the bug without it", async () => {
+  const onFiled = vi.fn();
+  const calls = dialogWithVideo({ size: 4096, playable: true, attachable: true }, onFiled);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Attach the video of the failure" }));
+  await vi.waitFor(() => expect(screen.getByRole("button", { name: "File bug" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "File bug" }));
+  await vi.waitFor(() => expect(onFiled).toHaveBeenCalledWith(777));
+  expect(calls.some((c) => c.cmd === "attach_case_video")).toBe(false);
+});
+
+test("a video over the attachment limit is unticked with a note and never sent", async () => {
+  const onFiled = vi.fn();
+  const calls = dialogWithVideo({ size: 90 * 1024 * 1024, playable: false, attachable: false }, onFiled);
+  expect(await screen.findByText(/too large to attach/)).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Attach the video of the failure" })).toHaveAttribute("aria-checked", "false");
+  await vi.waitFor(() => expect(screen.getByRole("button", { name: "File bug" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "File bug" }));
+  await vi.waitFor(() => expect(onFiled).toHaveBeenCalledWith(777));
+  expect(calls.some((c) => c.cmd === "attach_case_video")).toBe(false);
+});
+
+test("a video that is gone offers nothing", async () => {
+  dialogWithVideo(null);
+  await vi.waitFor(() => expect(screen.getByRole("button", { name: "File bug" })).toBeEnabled());
+  expect(screen.queryByRole("checkbox", { name: "Attach the video of the failure" })).toBeNull();
+});
+
+test("a video that fails to attach is said, and the bug still stands", async () => {
+  const onFiled = vi.fn();
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 10, playable: true, attachable: true };
+    if (cmd === "file_bug") return { id: 778, url: "u", screenshots_failed: 0, screenshots_total: 0 };
+    if (cmd === "attach_case_video") throw "The video did not upload.";
+    return null;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <BugDialog org="acme" project="Web" testCase={testCase} pbiId={42} screenshots={[]} video={VIDEO} onClose={vi.fn()} onFiled={onFiled} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("checkbox", { name: "Attach the video of the failure" });
+  await vi.waitFor(() => expect(screen.getByRole("button", { name: "File bug" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "File bug" }));
+  await vi.waitFor(() => expect(onFiled).toHaveBeenCalledWith(778));
+  await vi.waitFor(() => expect(toastMock.warning).toHaveBeenCalled());
+  expect(String(toastMock.warning.mock.calls[0][0])).toContain("the video did not attach");
+});

@@ -112,6 +112,9 @@ export {
   ChevronRight as IconNext,
   ClipboardCheck as IconReview,
   Play as IconRun,
+  // Watching a failed case's recorded video - the same triangle, named for
+  // what the button does.
+  Play as IconPlayVideo,
   // Starting a run nobody has to sit in front of - a person picks IconRun.
   Bot as IconUnattended,
   // Carrying on with a run that paused at a reset point.

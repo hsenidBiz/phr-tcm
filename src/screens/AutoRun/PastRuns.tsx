@@ -19,6 +19,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import { invalidateRuns, useFlakyMarks } from "./flaky";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
+import CaseVideo from "./CaseVideo";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import PageErrorsBadge from "./PageErrorsBadge";
@@ -314,6 +315,7 @@ export default function PastRuns({
                         {c.note && <p className="mt-0.5 text-xs text-muted">{c.note}</p>}
                         {/* The files its steps saved; nothing for a case that saved none. */}
                         <RunDownloads runId={run.id} steps={c.steps} className="mt-1" />
+                        <CaseVideo name={c.video} className="mt-1" />
                       </li>
                     </Fragment>
                   );

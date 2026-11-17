@@ -168,6 +168,37 @@ function RunWindow({ run }: { run: BackgroundRun }) {
       }
     })();
   };
+  /** Keep a video of failed cases: the browser's own recorder runs while a
+   * case does and the file is kept only when the case fails or is blocked.
+   * Kept by Rust with the other run settings; off until the saved setting
+   * says otherwise. */
+  const [failedVideo, setFailedVideo] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const s = await commands.getAppSettings();
+        if (live && s && typeof s.autorun_failed_video === "boolean") setFailedVideo(s.autorun_failed_video);
+      } catch {
+        // unavailable - the box shows its default
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+  const chooseFailedVideo = (on: boolean) => {
+    setFailedVideo(on);
+    void (async () => {
+      try {
+        const r = await commands.setAutorunFailedVideo(on);
+        if (r.status === "error") throw r.error;
+      } catch (e) {
+        setFailedVideo(!on);
+        toast.error(String(e));
+      }
+    })();
+  };
   /** On by default: a case that failed in a way that looks transient (a
    * gateway error, a dropped connection, the browser going silent) runs
    * once more, in a fresh browser, and is labelled Retried. */
@@ -397,6 +428,10 @@ function RunWindow({ run }: { run: BackgroundRun }) {
           <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
             <Checkbox checked={highlight} ariaLabel="Pause before each action" onCheckedChange={chooseHighlight} />
             Pause before each action
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox checked={failedVideo} ariaLabel="Keep a video of failed cases" onCheckedChange={chooseFailedVideo} />
+            Keep a video of failed cases
           </label>
           <p className="text-xs text-faint">
             Off: the browser runs in the background and you can keep working. On: a window opens
