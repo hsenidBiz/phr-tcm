@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.7",
+    date: "2026-11-17",
+    items: [
+      "Upload queue: removing cases that came from a watched file now has Undo too; it puts the case back in the file as well.",
+      "Words like recipe, fixture, flow, area, component, quirk, divergence and ruling are explained where they first appear: hover or focus the dotted word.",
+      "Fill passwords from database tells you when passwords came from a different database than before, and asks to confirm the first time after an environment's database changes.",
+      "How To Use opens with the title How to use Test Case Manager.",
+    ],
+  },
+  {
     version: "2.4.7-beta.6",
     date: "2026-11-17",
     items: [
