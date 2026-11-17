@@ -515,22 +515,149 @@ fn is_sign_in_answer_cases() {
     let html = Some("text/html; charset=utf-8");
     let form = r#"<form><input name="u"><input id="p" TYPE='Password'></form>"#;
     // Ended on the sign-in page's path (a start path that is not the root).
-    assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login")));
+    assert!(is_sign_in_answer(Some("/Login/"), html, "<html></html>", "/hr/x", Some("/login"), None));
     // Redirected to another page that has a password input.
-    assert!(is_sign_in_answer(Some("/account/in"), html, form, "/hr/x", Some("/")));
-    assert!(is_sign_in_answer(Some("/"), html, form, "/hr/x", Some("/")));
+    assert!(is_sign_in_answer(Some("/account/in"), html, form, "/hr/x", Some("/"), None));
+    assert!(is_sign_in_answer(Some("/"), html, form, "/hr/x", Some("/"), None));
     // The site root as the start page alone is not enough: a save that redirects home.
-    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
-    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/"), None));
+    assert!(!is_sign_in_answer(Some("/"), html, "<html>home</html>", "/hr/x", Some("/"), None));
     // A page with a password field that answers in place (change password) is an answer.
-    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
-    assert!(!is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login"), None));
+    assert!(!is_sign_in_answer(None, html, r#"<input type="PASSWORD">"#, "/hr/x", None, None));
     // A redirect to the same page is not a move.
-    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login")));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, form, "/hr/x", Some("/login"), None));
     // The sign-in page asked for on purpose is not a signed-out account.
-    assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login")));
+    assert!(!is_sign_in_answer(Some("/login"), html, form, "/Login", Some("/login"), None));
     // JSON, a text field, or an attribute that only ends in type is not a sign-in page.
-    assert!(!is_sign_in_answer(Some("/a"), Some("application/json"), form, "/hr/x", Some("/")));
-    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/")));
-    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input data-type="password">"#, "/hr/x", Some("/")));
+    assert!(!is_sign_in_answer(Some("/a"), Some("application/json"), form, "/hr/x", Some("/"), None));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input type="text" name="password">"#, "/hr/x", Some("/"), None));
+    assert!(!is_sign_in_answer(Some("/a"), html, r#"<input data-type="password">"#, "/hr/x", Some("/"), None));
+}
+
+#[test]
+fn a_sign_in_page_served_in_place_is_signed_out_but_a_change_password_page_is_not() {
+    use v2_lib::api_templates::one_off::page_is_sign_in;
+    let recipe = crate::common::recipe();
+    let fields = recipe.sign_in_fields().expect("the recipe fills a password");
+    let html = Some("text/html; charset=utf-8");
+    let sign_in = r#"<form><input id="user" type="text"><input id="pass" type="password"></form>"#;
+    let change = r#"<form><input id="oldpass" type="password"><input id="newpass" type="password"></form>"#;
+    // The address asked for is the address answered: only the page's own fields can say.
+    assert!(is_sign_in_answer(Some("/hr/x"), html, sign_in, "/hr/x", Some("/"), Some(&fields)));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, change, "/hr/x", Some("/"), Some(&fields)));
+    // Without the recipe's fields, nothing changes: an in-place answer stays an answer.
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, sign_in, "/hr/x", Some("/"), None));
+    // Not HTML, no password input, or the sign-in page asked for on purpose.
+    assert!(!is_sign_in_answer(Some("/hr/x"), Some("application/json"), sign_in, "/hr/x", Some("/"), Some(&fields)));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, r#"<input id="user"><input id="pass">"#, "/hr/x", Some("/"), Some(&fields)));
+    assert!(!is_sign_in_answer(Some("/login"), html, sign_in, "/login", Some("/login"), Some(&fields)));
+    // A username field the page lacks keeps it from matching.
+    assert!(!page_is_sign_in(r#"<input id="pass" type="password">"#, &fields));
+    // Quotes, case and class selectors read as a browser would.
+    assert!(page_is_sign_in(r#"<INPUT ID='user'><input type="password" id=pass>"#, &fields));
+}
+
+#[test]
+fn the_sign_in_fields_come_from_the_recipes_password_and_username_steps() {
+    let fields = crate::common::recipe().sign_in_fields().unwrap();
+    assert_eq!(fields.css_selectors(), vec!["#pass".to_string(), "#user".to_string()]);
+    let mut none = crate::common::recipe();
+    none.steps.clear();
+    assert!(none.sign_in_fields().is_none());
+}
+
+#[test]
+fn only_a_distinct_sign_in_page_without_the_signed_in_marker_is_signed_out() {
+    use v2_lib::api_templates::one_off::page_is_sign_in;
+    let html = Some("text/html");
+    let with = |steps: serde_json::Value| {
+        let mut r = crate::common::recipe();
+        r.steps = serde_json::from_value(steps).unwrap();
+        r.sign_in_fields().unwrap()
+    };
+    // The real sign-in page, without the recipe's signed-in marker (#marker): signed out.
+    let page = r#"<form><input id="user" type="text"><input id="pass" type="password"></form>"#;
+    let ids = with(json!([
+        { "kind": "fill", "selector": { "css": "#user" }, "value": "{{username}}" },
+        { "kind": "fill", "selector": { "css": "#pass" }, "value": "{{password}}" }
+    ]));
+    assert!(is_sign_in_answer(Some("/hr/x"), html, page, "/hr/x", Some("/"), Some(&ids)));
+    // The same fields on a page that shows the signed-in marker: not signed out.
+    let with_marker = format!(r#"<div id="marker"></div>{page}"#);
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, &with_marker, "/hr/x", Some("/"), Some(&ids)));
+
+    let change = r#"<form><input type="password" name="old"><input type="password" name="new"></form>"#;
+    let add_user = r#"<form><label>User Name</label><input type="text" name="username"><input type="password" name="password"></form>"#;
+    // Name locators and generic selectors cannot tell a sign-in page from these.
+    for steps in [
+        json!([
+            { "kind": "fill", "selector": { "role": "textbox", "name": "User name" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "role": "textbox", "name": "password" }, "value": "{{password}}" }
+        ]),
+        json!([
+            { "kind": "fill", "selector": { "css": "input[type=\"text\"]" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "input[type=\"password\"]" }, "value": "{{password}}" }
+        ]),
+        json!([
+            { "kind": "fill", "selector": { "css": "[name=username]" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "[name=password]" }, "value": "{{password}}" }
+        ]),
+    ] {
+        let fields = with(steps);
+        assert!(fields.css_selectors().is_empty());
+        for body in [change, add_user, page] {
+            assert!(!is_sign_in_answer(Some("/hr/x"), html, body, "/hr/x", Some("/"), Some(&fields)), "{body}");
+            assert!(!page_is_sign_in(body, &fields));
+        }
+    }
+    // Every part of a selector must hold on the same element.
+    let split = r#"<div id="user"></div><input type="text" class="c"><input id="pass" type="password">"#;
+    let same = with(json!([
+        { "kind": "fill", "selector": { "css": "input#user" }, "value": "{{username}}" },
+        { "kind": "fill", "selector": { "css": "#pass" }, "value": "{{password}}" }
+    ]));
+    assert!(!page_is_sign_in(split, &same));
+}
+
+#[test]
+fn a_marker_nobody_can_evaluate_means_cannot_tell_on_every_path() {
+    use v2_lib::api_templates::one_off::page_is_sign_in;
+    use v2_lib::autorun::recipe::names_one_thing;
+    let html = Some("text/html");
+    let identity = |marker: serde_json::Value| {
+        let mut r = crate::common::recipe();
+        r.steps = serde_json::from_value(json!([
+            { "kind": "fill", "selector": { "css": "#Input_Email" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "#Input_Password" }, "value": "{{password}}" }
+        ]))
+        .unwrap();
+        r.signed_in = serde_json::from_value(marker).unwrap();
+        r.sign_in_fields().unwrap()
+    };
+    // The Register page of ASP.NET Identity has the same two ids as its login page.
+    let register = r#"<form><input id="Input_Email" type="email"><input id="Input_Password" type="password"><input id="Input_ConfirmPassword" type="password"></form>"#;
+    let login = r#"<form><input id="Input_Email" type="email"><input id="Input_Password" type="password"></form>"#;
+
+    // A marker that is a role and name cannot be searched for: cannot tell, so never signed out - and the page is told nothing.
+    let role = identity(json!({ "role": "link", "name": "Logout" }));
+    assert!(role.css_selectors().is_empty() && role.signed_in_css().is_none());
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, register, "/hr/x", Some("/"), Some(&role)));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, login, "/hr/x", Some("/"), Some(&role)));
+    // So is a marker that is a descendant selector, which the Rust side cannot read and the page could.
+    let nested = identity(json!({ "css": "#nav .user" }));
+    assert!(nested.css_selectors().is_empty());
+    assert!(!page_is_sign_in(login, &nested));
+
+    // An evaluable marker: shown on the page, not signed out; absent, the real login page is signed out.
+    let marker = identity(json!({ "css": "#logout" }));
+    assert_eq!(marker.css_selectors(), vec!["#Input_Password".to_string(), "#Input_Email".to_string()]);
+    let shown = format!(r#"<a id="logout"></a>{register}"#);
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, &shown, "/hr/x", Some("/"), Some(&marker)));
+    assert!(is_sign_in_answer(Some("/hr/x"), html, login, "/hr/x", Some("/"), Some(&marker)));
+
+    // What names one thing: an id or class, never one inside a pseudo-class or an attribute.
+    assert!(names_one_thing("#pass") && names_one_thing("input.pwd"));
+    assert!(!names_one_thing("input[type=password]:not(.d-none)"));
+    assert!(!names_one_thing(r#"input[type="password"]"#) && !names_one_thing(r#"[data-x="a.b"]"#));
 }

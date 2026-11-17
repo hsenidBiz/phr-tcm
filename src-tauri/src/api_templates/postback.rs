@@ -147,6 +147,14 @@ pub struct PostbackRequest {
     pub hides: Vec<String>,
     pub rows: Option<RowCheck>,
     pub captures: BTreeMap<String, HtmlCapture>,
+    /// The CSS selectors of the sign-in page's own fields (the recipe's
+    /// password and username fields), so a page loaded in place that holds
+    /// them is the sign-in page, not an answer. Empty when the recipe names
+    /// them in no way a page can look for, or when this step's page IS the
+    /// sign-in page. Set by the runner (`build_postback` leaves it empty).
+    pub sign_in: Vec<String>,
+    /// The recipe's signed-in marker as CSS, when it is one: a page that shows it is never the sign-in page.
+    pub signed_in: Option<String>,
 }
 
 /// `s` with each `{{name}}` replaced by its value percent-encoded as one
@@ -238,6 +246,8 @@ pub fn build_postback(
             has: substitute_str(&r.has, vars),
         }),
         captures,
+        sign_in: Vec::new(),
+        signed_in: None,
     })
 }
 
@@ -624,6 +634,12 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     // the application that has a password field of its own (change password) is not. A held page
     // is never the sign-in page: an answer that was is not kept.
     if (!source.carried && source.redirected && sourceKey !== req.key && sourceHadPassword) return { refused: 'signed_out' };
+    // The sign-in page served where the page should be (no move to another address): it is the
+    // recipe's own sign-in fields on it, not just a password field, that say so.
+    const looksSignIn = (d) => !!req.signIn && req.signIn.length > 0 && !!d.querySelector('input[type="password"]') &&
+      req.signIn.every((s) => { try { return !!d.querySelector(s); } catch (e) { return false; } }) &&
+      !(req.signedIn && (() => { try { return !!d.querySelector(req.signedIn); } catch (e) { return false; } })());
+    if (!source.carried && sourceKey === req.key && looksSignIn(doc)) return { refused: 'signed_out' };
     const vs = doc.querySelector('input[name="__VIEWSTATE"]');
     const form = vs && (vs.form || vs.closest('form'));
     if (!form) return { refused: 'not_webforms' };
@@ -728,7 +744,7 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     const ans = parse(text);
     // Signed out: the answer has a password field and the page posted from had none, or the post
     // was sent to a different page.
-    if (ans.querySelector('input[type="password"]') && (!sourceHadPassword || (r.redirected && finalKey !== sourceKey))) {
+    if (ans.querySelector('input[type="password"]') && (!sourceHadPassword || (r.redirected && finalKey !== sourceKey) || (looksSignIn(ans) && !looksSignIn(doc)))) {
       out.signedOut = true;
       return out;
     }
@@ -801,7 +817,21 @@ pub const POSTBACK_FN: &str = r##"async function (req, limitMs, run, carry, carr
     out.excerpt = html.slice(0, answerLimit);
     return out;
   } catch (e) {
-    return { error: e && e.name === 'AbortError' ? 'timeout' : String(e), posted: posted };
+    if (e && e.name === 'AbortError') return { error: 'timeout', posted: posted };
+    // A request that failed outright may have gone to another site: an SSO redirect the page may
+    // not read, which is what an ended session does. The step's own page is asked for again in
+    // no-cors mode, which follows a redirect to another origin without reading it (and without the
+    // app's cookies, which go to the same origin only): an opaque answer means the address leaves
+    // the origin. A dropped connection, or a redirect that stays here, throws or is readable, so
+    // it stays "did not complete". Not for an address with a handler (a Razor page's handler is
+    // an action, which a second request must not reach). The post is never sent again.
+    if (!/[?&]handler=/i.test(req.url)) {
+      try {
+        const probe = await fetch(req.url, { credentials: 'same-origin', mode: 'no-cors', signal: AbortSignal.timeout(5000) });
+        if (probe.type === 'opaque') return { refused: 'signed_out', posted: posted };
+      } catch (ignored) { /* not a redirect away */ }
+    }
+    return { error: String(e), posted: posted };
   } finally {
     clearTimeout(timer);
   }

@@ -544,7 +544,7 @@ and the token is read there, in the same tab. A POST that names none from a page
 opens the page the project's templates use when there is exactly one (the answer says so in
 `token_page`); with none or several, it is refused unsent and the answer lists them. The answer is
 redacted and cut at the first 64 KB. A call answered by the app's sign-in page in place of the page asked
-for (sent to it, or to another page with a password field) is not shown: the answer says
+for (sent to it, to another page with a password field, or to another site; or the sign-in form itself served at the address asked) is not shown: the answer says
 `signed_out`, and nothing more is sent on that discovery - end it and start again. A page with a
 password field that answers in place, such as change password, is an ordinary answer.
 

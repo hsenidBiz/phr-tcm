@@ -658,14 +658,21 @@ async fn a_redirected_first_request_on_a_reused_browser_signs_in_again_once() {
     let mut r = rig(ok_answers(), None);
     let kept_closed = Arc::new(AtomicUsize::new(0));
     let mut first = Keeping::new(vec![first_page(&mut r)], &kept_closed);
-    assert!(run(&r, &mut first, template()).await.ok);
+    // A GET: nothing was sent that could be saved, so it may be sent again. A POST is not (below).
+    let get_first = || {
+        let mut t = template();
+        t.steps[0].method = Some(v2_lib::api_templates::Method::Get);
+        t.steps[0].form = None;
+        t
+    };
+    assert!(run(&r, &mut first, get_first()).await.ok);
 
     // The token page is skipped (already on it), so the ended session shows
     // first as the request sent to the sign-in page.
     r.script.lock().unwrap().responses.extend([redirected_to_login()].into_iter().chain(ok_answers()));
     let (page, clicks) = fresh_page(&r);
     let mut second = Keeping::new(vec![page], &kept_closed);
-    let report = run(&r, &mut second, template()).await;
+    let report = run(&r, &mut second, get_first()).await;
     assert!(report.ok, "{report:?}");
     assert_eq!((second.opened, second.closed), (1, 1), "the reused browser is closed and one fresh one opens");
     assert_eq!(clicks.load(Ordering::SeqCst), 1);
@@ -812,4 +819,30 @@ async fn a_postback_that_was_not_sent_may_start_again_in_a_fresh_browser() {
     assert!(report.ok, "{report:?}");
     assert_eq!((second.opened, second.closed), (1, 1));
     assert_eq!(clicks.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_post_redirected_to_another_page_is_not_sent_again_in_a_fresh_browser() {
+    use v2_lib::api_templates::runner::SENT_ELSEWHERE;
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(ok_answers(), None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    let mut first = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut first, template()).await.ok);
+    let sent_before = r.script.lock().unwrap().fetched.len();
+
+    // The reused browser's first request is a POST that the application answered by moving to another
+    // page (a save that redirects to its list): it went out, so it is never sent again.
+    let saved_then_listed = json!({
+        "status": 200, "contentType": "text/html", "redirected": true, "text": "<html>list</html>",
+        "finalUrl": "https://hr.example.internal/hr/pmsv10/index",
+    });
+    r.script.lock().unwrap().responses.extend([saved_then_listed].into_iter().chain(ok_answers()));
+    let (page, _) = fresh_page(&r);
+    let mut second = Keeping::new(vec![page], &kept_closed);
+    let report = run(&r, &mut second, template()).await;
+    assert!(!report.ok, "{report:?}");
+    assert!(report.steps.last().unwrap().detail.contains(SENT_ELSEWHERE));
+    assert_eq!(r.script.lock().unwrap().fetched.len(), sent_before + 1, "the POST was sent again");
 }

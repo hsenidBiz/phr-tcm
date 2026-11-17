@@ -1348,3 +1348,63 @@ fn a_wrapper_with_two_keys_is_refused_by_check_and_build() {
     let err = parse_draft(&v).unwrap_err();
     assert!(err.iter().any(|e| e == &format!("step 'Cycle setup': {sentence}")), "{err:?}");
 }
+
+// A step that deletes, in a template whose effect does not admit it.
+
+#[test]
+fn a_template_with_a_delete_step_and_a_non_delete_effect_is_refused() {
+    use v2_lib::api_templates::{deletes_against_effect, Effect};
+    for (word, effect) in [("create", Effect::Create), ("edit", Effect::Edit), ("read", Effect::Read)] {
+        let mut v = draft();
+        v["effect"] = json!(word);
+        v["steps"][1]["path"] = json!("/hr/pmsv10/performancecycle/DeleteCycle");
+        let sentence = deletes_against_effect("Evaluation rules", effect);
+        assert!(sentence.contains("'Evaluation rules'"), "{sentence}");
+        let err = parse_draft(&v).unwrap_err();
+        assert!(err.contains(&sentence), "{word}: {err:?}");
+        assert_eq!(err.iter().filter(|e| e.contains("looks like a delete")).count(), 1, "{err:?}");
+    }
+}
+
+#[test]
+fn the_handler_a_button_and_an_argument_that_say_delete_are_caught_in_a_template() {
+    use v2_lib::api_templates::deletes_against_effect;
+    // The handler of a plain POST.
+    let mut v = draft();
+    v["steps"][0]["query"] = json!({ "handler": "RemoveRow" });
+    assert!(parse_draft(&v).unwrap_err().iter().any(|e| e.starts_with("step 'Cycle setup' looks like a delete")));
+    // A postback step: the grid's own command is the argument, the button may say it too.
+    for postback in [
+        json!({ "page": "/Perf/List.aspx", "button": "grid", "argument": "Delete$0" }),
+        json!({ "page": "/Perf/List.aspx", "button": "btnDelete" }),
+        json!({ "page": "/Perf/Remove.aspx", "button": "btnSave" }),
+    ] {
+        let mut v = draft();
+        v["steps"] = json!([{ "name": "Grid", "postback": postback }]);
+        v["outputs"] = json!([]);
+        let err = parse_draft(&v).unwrap_err();
+        assert!(err.contains(&deletes_against_effect("Grid", v2_lib::api_templates::Effect::Create)), "{postback}: {err:?}");
+    }
+    // A postback that only saves is not a delete, and neither is a GET that says delete.
+    let mut v = draft();
+    v["steps"] = json!([
+        { "name": "Look", "method": "GET", "path": "/hr/deleted-items" },
+        { "name": "Save", "postback": { "page": "/Perf/List.aspx", "button": "btnSave", "argument": "Select$0" } }
+    ]);
+    v["outputs"] = json!([]);
+    assert!(parse_draft(&v).is_ok(), "{:?}", parse_draft(&v));
+}
+
+#[test]
+fn an_effect_that_admits_deleting_is_not_refused_for_a_delete_step() {
+    use v2_lib::api_templates::{deletes_against_effect, Effect};
+    let mut v = draft();
+    v["effect"] = json!("delete");
+    v["deletes_kind"] = json!("cycle");
+    v["params"] = json!([{ "name": "id", "type": "string", "required": true }]);
+    v["steps"] = json!([{ "name": "Delete", "method": "POST", "path": "/hr/pmsv10/performancecycle/Delete/{{id}}" }]);
+    v["outputs"] = json!([]);
+    let t = parsed(&v);
+    assert!(!check(&t).contains(&deletes_against_effect("Delete", Effect::Delete)), "{:?}", check(&t));
+    assert!(check(&t).iter().all(|e| !e.contains("looks like a delete")), "{:?}", check(&t));
+}

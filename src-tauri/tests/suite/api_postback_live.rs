@@ -113,6 +113,8 @@ fn req(url: &str, button: &str) -> PostbackRequest {
         hides: Vec::new(),
         rows: None,
         captures: BTreeMap::new(),
+        sign_in: Vec::new(),
+        signed_in: None,
     }
 }
 
@@ -186,6 +188,9 @@ struct State {
     gets: Vec<String>,
     sign_out: bool,
     summary_shown: bool,
+    /// Another site's address (another port, so another origin) that the
+    /// single sign-on pages send the browser to.
+    other_origin: String,
 }
 
 #[derive(Clone, Debug)]
@@ -313,6 +318,10 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
 }
 
 fn write_out(stream: &mut TcpStream, out: &Out) {
+    // Status 0: the connection is dropped without an answer.
+    if out.status == 0 {
+        return;
+    }
     let reason = match out.status {
         200 => "OK",
         302 => "Found",
@@ -502,6 +511,22 @@ fn route(state: &Shared, rq: &Request) -> Out {
         "/slow.aspx" => ok(simple_page("/Slow.aspx", 0)),
         "/files.aspx" if post => ok(simple_page("/Files.aspx", 0)),
         "/files.aspx" => ok(simple_page("/Files.aspx", 0)),
+        // A page that, once the session has ended, is the sign-in page served in its place.
+        "/gate.aspx" if st.sign_out => ok(
+            r#"<!doctype html><html><body><form method="post" action="/Gate.aspx">
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="VSTATE-G-SECRET" />
+<input type="text" id="user" name="u" /><input type="password" id="pass" name="p" /><input type="submit" name="CmdLogin" value="Login" />
+</form></body></html>"#
+                .to_string(),
+        ),
+        "/gate.aspx" => ok(simple_page("/Gate.aspx", 0)),
+        // A redirect that stays on this site, then the connection dropped.
+        "/dropped.aspx" => redirect("/dropconn"),
+        "/dropconn" => Out { status: 0, location: None, body: String::new(), delay_ms: 0 },
+        // The application's single sign-on: another origin's page takes the browser over.
+        "/sso.aspx" => redirect(&format!("{}/idp", st.other_origin)),
+        "/ssopost.aspx" if st.sign_out => redirect(&format!("{}/idp", st.other_origin)),
+        "/ssopost.aspx" => ok(simple_page("/SsoPost.aspx", 0)),
         "/redir.aspx" if post => redirect("/"),
         "/redir.aspx" => ok(simple_page("/Redir.aspx", 0)),
         _ => Out { status: 404, location: None, body: "not found".to_string(), delay_ms: 0 },
@@ -1068,4 +1093,76 @@ async fn a_three_step_template_runs_end_to_end_in_a_real_page() {
     assert_eq!(post_count(&state), 3);
     let shown = format!("{:?}{}", out.report, out.answer.map(|a| a.body).unwrap_or_default());
     assert!(!shown.contains("SECRET"), "page state reached the report: {shown}");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn the_sign_in_page_served_in_place_is_signed_out_by_its_fields() {
+    let (port, state) = serve();
+    let mut live = open(port).await;
+    let mut r = req("/Gate.aspx", "CmdGo");
+    r.sign_in = vec!["#pass".into(), "#user".into()];
+    // Signed in: the page is the application's own.
+    let a = answered(send(&mut live, &r, "run-g", CarryMode::Fresh).await);
+    assert!(!a.signed_out);
+    // The session ended: the same address now serves the sign-in form. No move to another page, and it
+    // is the recipe's fields that say so - refused before anything is sent.
+    state.lock().unwrap().sign_out = true;
+    let posts = post_count(&state);
+    let (why, _, _) = refused(send(&mut live, &r, "run-g2", CarryMode::Fresh).await);
+    assert_eq!(why, Refusal::SignedOut);
+    assert_eq!(post_count(&state), posts);
+    // A page that shows the signed-in marker is never the sign-in page.
+    let mut marked = r.clone();
+    marked.signed_in = Some("#user".into());
+    let (why, _, _) = refused(send(&mut live, &marked, "run-g5", CarryMode::Fresh).await);
+    assert_eq!(why, Refusal::NoButton);
+    // Without the recipe's fields it is only a page with no such button (as before).
+    let (why, _, _) = refused(send(&mut live, &req("/Gate.aspx", "CmdGo"), "run-g3", CarryMode::Fresh).await);
+    assert_eq!(why, Refusal::NoButton);
+    // A change-password page, with the sign-in fields given, is still no sign-in page.
+    state.lock().unwrap().sign_out = false;
+    let mut c = req("/ChangePwd.aspx", "CmdChange");
+    c.sign_in = vec!["#pass".into(), "#user".into()];
+    let a = answered(send(&mut live, &c, "run-g4", CarryMode::Fresh).await);
+    assert!(!a.signed_out, "a change-password page is not the recipe's sign-in page");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_cross_origin_sso_redirect_is_signed_out() {
+    let (port, state) = serve();
+    let (other, _other_state) = serve();
+    state.lock().unwrap().other_origin = format!("http://127.0.0.1:{other}");
+    let mut live = open(port).await;
+    // The page itself is sent to another origin before anything is posted: the page cannot read
+    // that, looks at the address again, and sees the redirect.
+    let (why, _, _) = refused(send(&mut live, &req("/Sso.aspx", "CmdGo"), "run-s", CarryMode::Fresh).await);
+    assert_eq!(why, Refusal::SignedOut);
+    assert_eq!(post_count(&state), 0);
+    // The session ends while the page is held: the post is sent to another origin (and so is any request the
+    // page makes to that address, which is what a session ended does).
+    let a = answered(send(&mut live, &req("/SsoPost.aspx", "CmdGo"), "run-s2", CarryMode::Fresh).await);
+    assert!(!a.signed_out);
+    state.lock().unwrap().sign_out = true;
+    let v = send(&mut live, &req("/SsoPost.aspx", "CmdGo"), "run-s2", CarryMode::Must).await;
+    let (why, _, _) = refused(v);
+    assert_eq!(why, Refusal::SignedOut);
+    assert_eq!(post_count(&state), 2, "the post was sent again");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_request_that_fails_without_leaving_the_site_is_not_signed_out() {
+    let (port, state) = serve();
+    let (other, _) = serve();
+    state.lock().unwrap().other_origin = format!("http://127.0.0.1:{other}");
+    let mut live = open(port).await;
+    // A redirect that stays on this site and then drops the connection: the request did not complete.
+    let v = send(&mut live, &req("/Dropped.aspx", "CmdGo"), "run-d", CarryMode::Fresh).await;
+    assert!(matches!(v, Reply::Error(_)), "{v:?}");
+    // An address with a handler is never asked for a second time, so it cannot be read as a redirect away.
+    let v = send(&mut live, &req("/Sso.aspx?handler=Save", "CmdGo"), "run-d2", CarryMode::Fresh).await;
+    assert!(matches!(v, Reply::Error(_)), "{v:?}");
+    assert_eq!(state.lock().unwrap().gets.iter().filter(|g| g.starts_with("/sso.aspx")).count(), 1);
 }

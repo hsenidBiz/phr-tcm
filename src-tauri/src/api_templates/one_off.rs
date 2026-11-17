@@ -4,6 +4,8 @@
 //! touches a file; `ai_bridge::send_in` does the sending.
 
 use super::{ApiTemplate, Antiforgery, Effect, Method, Param, Step};
+use crate::autorun::recipe::SignInFields;
+use crate::browser::locator::Target;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -166,19 +168,170 @@ fn has_password_input(body: &str) -> bool {
     false
 }
 
+/// Whether a page's HTML is the sign-in page the recipe describes. All of:
+/// it has a password input; the recipe's password field (and its username
+/// field, when it fills one) are on it, each named by an `#id` or a `.class`
+/// (anything looser - `input[type=password]`, an attribute value, an
+/// accessible name - matches a change-password or Add-user page too, so it
+/// cannot tell and the page is not read as signed out); and the recipe's
+/// `signed_in` marker is not on it (a page that shows the marker is signed in,
+/// whatever else it holds). A marker that cannot be searched for in HTML (an
+/// accessible name, a descendant selector) means "cannot tell" - never signed
+/// out - as `SignInFields::css_selectors` says, the same on the page's side.
+pub fn page_is_sign_in(body: &str, fields: &SignInFields) -> bool {
+    if fields.css_selectors().is_empty() || !has_password_input(body) {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    let on_page = |t: &Target| css_target(t).is_some_and(|c| css_in_html(&c, &lower));
+    if !on_page(&fields.password) || !fields.username.as_ref().is_none_or(on_page) {
+        return false;
+    }
+    !fields.signed_in_css().is_some_and(|m| css_in_html(&m, &lower))
+}
+
+/// The CSS selector of a target that is nothing else.
+fn css_target(t: &Target) -> Option<String> {
+    use crate::browser::locator::LocatorStep;
+    match t {
+        Target::Legacy(s) => Some(s.clone()),
+        Target::One(LocatorStep { css: Some(c), role: None, text: None, .. }) => Some(c.clone()),
+        _ => None,
+    }
+}
+
+/// The attributes of one opening tag (the text between `<` and `>`), names
+/// lower case, quoted either way or not at all.
+fn tag_attrs(inner: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let b: Vec<char> = inner.chars().collect();
+    let mut i = 0;
+    // The tag name.
+    while i < b.len() && !b[i].is_whitespace() {
+        i += 1;
+    }
+    while i < b.len() {
+        while i < b.len() && (b[i].is_whitespace() || b[i] == '/') {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && !b[i].is_whitespace() && b[i] != '=' && b[i] != '/' {
+            i += 1;
+        }
+        let name: String = b[start..i].iter().collect();
+        if name.is_empty() {
+            i += 1;
+            continue;
+        }
+        while i < b.len() && b[i].is_whitespace() {
+            i += 1;
+        }
+        let mut value = String::new();
+        if i < b.len() && b[i] == '=' {
+            i += 1;
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            if i < b.len() && (b[i] == '"' || b[i] == '\'') {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    value.push(b[i]);
+                    i += 1;
+                }
+                i += 1;
+            } else {
+                while i < b.len() && !b[i].is_whitespace() {
+                    value.push(b[i]);
+                    i += 1;
+                }
+            }
+        }
+        out.push((name, value));
+    }
+    out
+}
+
+/// Whether one compound CSS selector (`tag#id.class[attr=value]`, any mix)
+/// matches ONE element of the (lower-cased) HTML: every part is checked
+/// against the same opening tag. A longer selector (descendants, pseudo
+/// classes, lists) is not read and matches nothing.
+fn css_in_html(selector: &str, lower: &str) -> bool {
+    let sel = selector.trim().to_ascii_lowercase();
+    if !crate::autorun::recipe::is_compound(&sel) {
+        return false;
+    }
+    enum Part {
+        Id(String),
+        Class(String),
+        Attr(String, Option<String>),
+    }
+    let tag_len = sel.find(['#', '.', '[']).unwrap_or(sel.len());
+    let tag = sel[..tag_len].to_string();
+    let mut parts = Vec::new();
+    let mut rest = &sel[tag_len..];
+    while !rest.is_empty() {
+        let (kind, after) = rest.split_at(1);
+        if kind == "[" {
+            let Some(close) = after.find(']') else { return false };
+            let inner = &after[..close];
+            parts.push(match inner.split_once('=') {
+                Some((a, v)) => Part::Attr(a.trim().to_string(), Some(v.trim().trim_matches(['"', '\'']).to_string())),
+                None => Part::Attr(inner.trim().to_string(), None),
+            });
+            rest = &after[close + 1..];
+        } else {
+            let end = after.find(['#', '.', '[']).unwrap_or(after.len());
+            let name = after[..end].to_string();
+            if name.is_empty() {
+                return false;
+            }
+            parts.push(if kind == "#" { Part::Id(name) } else { Part::Class(name) });
+            rest = &after[end..];
+        }
+    }
+    let mut from = 0;
+    while let Some(i) = lower[from..].find('<') {
+        let start = from + i + 1;
+        let end = lower[start..].find('>').map_or(lower.len(), |j| start + j);
+        from = end.max(start);
+        let inner = &lower[start..end];
+        let name: String = inner.chars().take_while(|c| !c.is_whitespace() && *c != '/').collect();
+        if name.is_empty() || name.starts_with(['!', '/']) || (!tag.is_empty() && tag != "*" && name != tag) {
+            continue;
+        }
+        let attrs = tag_attrs(inner);
+        let has = |k: &str| attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        let all = parts.iter().all(|p| match p {
+            Part::Id(v) => has("id") == Some(v.as_str()),
+            Part::Class(v) => has("class").is_some_and(|c| c.split_whitespace().any(|t| t == v)),
+            Part::Attr(a, None) => has(a).is_some(),
+            Part::Attr(a, Some(v)) => has(a) == Some(v.as_str()),
+        });
+        if all {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether an answer is the app's sign-in page served in place of the page
 /// asked for. Either it ended on the sign-in recipe's start path (unless that
 /// is the site root, which a save may redirect to for other reasons), or the
-/// call was moved to a different page and that page has a password input.
-/// A page with a password field that answers in place (change password) is
-/// an answer, and so is the sign-in page asked for on purpose. A postback is
-/// judged by `api_templates::postback`, not here.
+/// call was moved to a different page and that page has a password input, or
+/// it answered at the very address asked and its HTML is the recipe's own
+/// sign-in page (`page_is_sign_in`: the session ended and the app served its
+/// sign-in form where the page was). A page with a password field that
+/// answers in place without being the recipe's sign-in page (change
+/// password) is an answer, and so is the sign-in page asked for on purpose.
+/// A postback is judged by `api_templates::postback`, not here.
 pub fn is_sign_in_answer(
     final_path: Option<&str>,
     content_type: Option<&str>,
     body: &str,
     request_path: &str,
     start_path: Option<&str>,
+    fields: Option<&SignInFields>,
 ) -> bool {
     let asked = compared_path(request_path);
     let start = start_path.map(compared_path);
@@ -191,9 +344,11 @@ pub fn is_sign_in_answer(
     if start.as_deref().is_some_and(|s| s != "/" && s == ended) {
         return true;
     }
-    ended != asked
-        && content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"))
-        && has_password_input(body)
+    let html = content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"));
+    if ended != asked {
+        return html && has_password_input(body);
+    }
+    html && fields.is_some_and(|f| page_is_sign_in(body, f))
 }
 
 /// The path of the sign-in recipe's start address, for `is_sign_in_answer`.
@@ -404,15 +559,9 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
     // A save whose address says delete or remove is a delete, whatever label
     // it was sent with: the label is what asks for the person's yes. (A GET
     // cannot be sent as a delete, so only a POST is judged.)
-    if one.step.method() == Method::Post && one.effect != Effect::Delete {
-        let address = request_path(&one).to_ascii_lowercase();
-        let button = one.step.postback.as_ref().map(|p| p.button.to_ascii_lowercase()).unwrap_or_default();
-        // The grid's own delete command is `__doPostBack('grid','Delete$0')`.
-        let argument = one.step.postback.as_ref().map(|p| super::exec::substitute_str(&p.argument, &sent_vars(&one)).trim().to_ascii_lowercase()).unwrap_or_default();
-        let says = |s: &str| s.contains("delete") || s.contains("remove");
-        if says(&address) || says(&button) || argument.starts_with("delete") || argument.starts_with("remove") {
-            return bad(LOOKS_LIKE_A_DELETE);
-        }
+    // A saved template's steps are held to the same rule (`ApiTemplateStep::says_delete`).
+    if one.effect != Effect::Delete && one.step.says_delete(&sent_vars(&one)) {
+        return bad(LOOKS_LIKE_A_DELETE);
     }
     Ok(one)
 }

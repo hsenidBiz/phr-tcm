@@ -604,7 +604,127 @@ pub fn signed_in_check(in_menu: bool) -> crate::browser::expect::Check<'static> 
     }
 }
 
+/// The fields of the sign-in page as the recipe fills them in: the one that
+/// takes `{{password}}`, and the one that takes `{{username}}` when there is
+/// one. How an answer that is the sign-in page is told from a page of the
+/// application that merely has a password field of its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignInFields {
+    pub password: Target,
+    pub username: Option<Target>,
+    /// The recipe's `signed_in` marker: a page that shows it is signed in,
+    /// whatever else it holds.
+    pub signed_in: Target,
+}
+
+impl SignInFields {
+    /// The CSS selectors of these fields, for a page to look for
+    /// (`querySelector`): the password field's and the username field's.
+    /// A page is read as the sign-in page only when ALL of this holds, and
+    /// the answer is empty ("cannot tell", never signed out) otherwise, on
+    /// every path alike:
+    /// - each field is named by an `#id` or a `.class` (`input[type=password]`,
+    ///   a bare tag, an attribute value alone or an accessible name match
+    ///   change-password and Add-user pages as well);
+    /// - each is one compound selector (`is_compound`) that a page's HTML can
+    ///   be searched for without a browser;
+    /// - the recipe's `signed_in` marker is such a selector too, so that its
+    ///   absence can be judged: with a marker nobody can evaluate (a role and
+    ///   name, a descendant selector), nothing proves the page is not signed in.
+    pub fn css_selectors(&self) -> Vec<String> {
+        let distinct = |t: &Target| css_of(t).filter(|c| names_one_thing(c) && is_compound(c));
+        if self.signed_in_css().is_none() {
+            return vec![];
+        }
+        let Some(password) = distinct(&self.password) else { return vec![] };
+        match &self.username {
+            None => vec![password],
+            Some(u) => match distinct(u) {
+                Some(u) => vec![password, u],
+                None => vec![],
+            },
+        }
+    }
+
+    /// The `signed_in` marker as a CSS selector, when it is one a page's
+    /// HTML can be searched for (`is_compound`).
+    pub fn signed_in_css(&self) -> Option<String> {
+        css_of(&self.signed_in).filter(|c| is_compound(c))
+    }
+}
+
+/// Whether a CSS selector is one compound (`tag#id.class[attr=value]`): no
+/// space, combinator, list, pseudo-class or function. Only these are read
+/// from a page's HTML; anything longer is not evaluated on the Rust side, so
+/// a rule that depends on it is not applied on the page side either.
+pub fn is_compound(css: &str) -> bool {
+    let css = css.trim();
+    !css.is_empty() && !css.contains(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~' | ',' | ':' | '('))
+}
+
+/// Whether a CSS selector names an element by an `#id` or a `.class`, not
+/// only by tag, type or attribute. Whatever is inside `[...]`, a pseudo-class
+/// (`:not(.d-none)`) or its parentheses does not count.
+pub fn names_one_thing(css: &str) -> bool {
+    let mut brackets = 0;
+    let mut parens = 0;
+    let mut found = false;
+    let mut chars = css.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '[' => brackets += 1,
+            ']' => brackets -= 1,
+            '(' => parens += 1,
+            ')' => parens -= 1,
+            '#' | '.' if brackets == 0 && parens == 0 => {
+                if chars.peek().is_some_and(|n| n.is_alphanumeric() || *n == '_' || *n == '-') {
+                    found = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The CSS selector a target is, when it is nothing but one.
+fn css_of(t: &Target) -> Option<String> {
+    use crate::browser::locator::LocatorStep;
+    match t {
+        Target::Legacy(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Target::One(LocatorStep { css: Some(c), role: None, text: None, nth: None, has_text: None, .. }) => {
+            Some(c.trim().to_string())
+        }
+        _ => None,
+    }
+}
+
 impl SignInRecipe {
+    /// The sign-in page's fields as the recipe's steps fill them in (also
+    /// inside a `when_visible`), or `None` when no step fills a
+    /// `{{password}}`: the recipe then says nothing of what its page holds.
+    pub fn sign_in_fields(&self) -> Option<SignInFields> {
+        let mut password = None;
+        let mut username = None;
+        let mut look = |a: &Action| {
+            if let Action::Fill { selector, value } = a {
+                let v = value.to_lowercase();
+                if v.contains("{{password}}") && password.is_none() {
+                    password = Some(selector.clone());
+                } else if v.contains("{{username}}") && username.is_none() {
+                    username = Some(selector.clone());
+                }
+            }
+        };
+        for step in &self.steps {
+            match step {
+                RecipeStep::Do(a) => look(a),
+                RecipeStep::WhenVisible(w) => w.then.iter().for_each(&mut look),
+            }
+        }
+        password.map(|password| SignInFields { password, username, signed_in: self.signed_in.clone() })
+    }
+
     /// How this recipe's `signed_in` is checked on every replay.
     pub fn signed_in_check(&self) -> crate::browser::expect::Check<'static> {
         signed_in_check(self.signed_in_in_menu)

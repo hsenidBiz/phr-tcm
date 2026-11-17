@@ -535,15 +535,14 @@ pub async fn send_in<B: DiscoveryBrowser>(
     // out. The answer is not shown (it is the sign-in page, not data), the
     // saved session is forgotten so the next discovery signs in afresh, and
     // nothing more is sent on this one.
-    let start_path = crate::autorun::recipe::load_effective_recipe_if_any(root, &ctx.org, &ctx.project)
-        .ok()
-        .flatten()
-        .map(|recipe| oo::sign_in_path(&recipe.start_url));
+    let recipe = crate::autorun::recipe::load_effective_recipe_if_any(root, &ctx.org, &ctx.project).ok().flatten();
+    let start_path = recipe.as_ref().map(|recipe| oo::sign_in_path(&recipe.start_url));
+    let sign_in_fields = recipe.as_ref().and_then(|recipe| recipe.sign_in_fields());
+    let step_signed_out = report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::SENT_ELSEWHERE));
     // A postback is judged by the postback rule (`postback.rs`); when that
     // rule refused it as signed out, later sends on this discovery are
     // refused too.
-    let postback_signed_out = one.step.is_postback()
-        && report.steps.iter().any(|s| s.detail.contains(crate::api_templates::runner::SENT_ELSEWHERE));
+    let postback_signed_out = one.step.is_postback() && step_signed_out;
     if postback_signed_out {
         if let Some(d) = parts.discovery.as_mut() {
             d.signed_out = true;
@@ -552,16 +551,22 @@ pub async fn send_in<B: DiscoveryBrowser>(
         crate::autorun::sessions::forget_session(root, &req.account);
         crate::applog::warn("Auto Run explore session: a postback was answered with the sign-in page, so its account is signed out");
     }
+    // A call the run found sent to another site (`SENT_ELSEWHERE` with no
+    // answer to read: a cross-origin redirect leaves none) is signed out too.
+    // One that was answered is judged by its answer, as before: a save may
+    // be moved to another page for reasons of its own.
     let signed_out = !one.step.is_postback()
-        && out.answer.as_ref().is_some_and(|a| {
-            oo::is_sign_in_answer(
-                a.final_path.as_deref(),
-                a.content_type.as_deref(),
-                &a.body,
-                &oo::request_path(&one),
-                start_path.as_deref(),
-            )
-        });
+        && ((step_signed_out && out.answer.is_none())
+            || out.answer.as_ref().is_some_and(|a| {
+                oo::is_sign_in_answer(
+                    a.final_path.as_deref(),
+                    a.content_type.as_deref(),
+                    &a.body,
+                    &oo::request_path(&one),
+                    start_path.as_deref(),
+                    sign_in_fields.as_ref(),
+                )
+            }));
     if signed_out {
         if let Some(d) = parts.discovery.as_mut() {
             d.signed_out = true;
