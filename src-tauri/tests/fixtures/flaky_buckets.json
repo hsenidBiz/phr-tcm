@@ -1,0 +1,14 @@
+{
+  "_comment": "How a case counts once its script may be marked flaky: a Failed result on a marked case is flaky, never failed; a mark changes nothing for any other result. Read by BOTH the Rust test (tests/suite/autorun_report.rs, autorun::report::is_flaky_failure) and the vitest one (tests/screens/AutoRun/verdicts.test.ts, isFlakyFailure), so the run report and the Auto Run screens can never count a flaky failure differently. Add a row here, and both sides are held to it.",
+  "cases": [
+    { "verdict": "Failed", "proposed": "", "marked": true, "counts_as": "flaky" },
+    { "verdict": "", "proposed": "Failed", "marked": true, "counts_as": "flaky" },
+    { "verdict": "Failed", "proposed": "", "marked": false, "counts_as": "failed" },
+    { "verdict": "", "proposed": "Failed", "marked": false, "counts_as": "failed" },
+    { "verdict": "Passed", "proposed": "Failed", "marked": true, "counts_as": "passed" },
+    { "verdict": "Passed", "proposed": "", "marked": true, "counts_as": "passed" },
+    { "verdict": "Blocked", "proposed": "", "marked": true, "counts_as": "blocked" },
+    { "verdict": "", "proposed": "", "marked": true, "counts_as": "not run" },
+    { "verdict": "Failed", "proposed": "Passed", "marked": true, "counts_as": "flaky" }
+  ]
+}

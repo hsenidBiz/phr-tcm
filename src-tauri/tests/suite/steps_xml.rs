@@ -802,3 +802,20 @@ fn underline_survives_a_read_an_untouched_save_and_an_edit_elsewhere() {
     assert_eq!(md, read);
     assert_eq!(legacy[0].action, "Click Save");
 }
+
+/// A draft saved by the Markdown reader before underline was kept holds the
+/// text without it: unchanged, so the underlined node is not rewritten.
+#[test]
+fn a_draft_with_bold_but_no_underline_does_not_rewrite_the_step() {
+    use v2_lib::steps_xml::{merge_steps_xml, steps_unchanged};
+    let xml = build_steps_xml(&[step("**Open** the <u>Save</u> menu", "Shown"), step("Wait", "")]);
+    let draft = vec![step("**Open** the Save menu", "Shown"), step("Wait", "")];
+    assert!(steps_unchanged(&xml, &draft));
+    let mut edited = draft.clone();
+    edited[1].action = "Wait 5 seconds".into();
+    let merged = merge_steps_xml(&xml, &edited).unwrap();
+    assert!(merged.contains("&lt;U&gt;Save&lt;/U&gt;"), "{merged}");
+    // A real edit of the underlined step is an edit.
+    let changed = vec![step("**Open** the Save menus", "Shown"), step("Wait", "")];
+    assert!(!steps_unchanged(&xml, &changed));
+}

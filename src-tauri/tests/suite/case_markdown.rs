@@ -717,7 +717,6 @@ fn generated_ado_plain_text_stays_the_same_plain_text() {
 fn generated_formatted_html(count: usize) -> Vec<String> {
     const PIECES: &[&str] = &[
         "<B>", "</B>", "<I>", "</I>", "<STRONG>", "</STRONG>", "<EM>", "</EM>", "<U>", "</U>",
-        "<INS>", "</INS>",
         "<BR/>", "<DIV>", "</DIV>", "<P>", "</P>", "<SPAN>", "</SPAN>", "a", "word", " ", "(", ")",
         ".", ",", ":", "1", "\u{2022}", "&nbsp;", "&quot;", "'", "-", "=", "?",
     ];
@@ -904,7 +903,6 @@ fn underline_round_trips_through_html_markdown_html_in_both_fields() {
             ("<B><U>both</U></B>", "<u>**both**</u>"),
             ("<U>a <B>mid</B> b</U>", "<u>a **mid** b</u>"),
             ("x<U>(y)</U>z", "x<u>(y)</u>z"),
-            ("<ins>inserted</ins>", "<u>inserted</u>"),
         ] {
             assert_eq!(to_md(f, html), md, "{f:?}: {html:?}");
             let back = to_html(f, md);
@@ -971,4 +969,22 @@ fn an_untouched_underlined_field_is_unchanged_and_an_old_copy_without_it_too() {
         assert!(!unchanged("Click Save later", html, f), "{f:?}: a real edit");
         assert!(!unchanged("Click <u>Save</u> later", html, f), "{f:?}: a real edit");
     }
+}
+
+/// Copies saved by the Markdown reader before underline was kept hold the
+/// Markdown without it. That is no edit; a different text is.
+#[test]
+fn a_copy_saved_before_underline_was_kept_is_unchanged_and_an_edit_is_not() {
+    use v2_lib::case_markdown::without_underline;
+    assert_eq!(without_underline("a <u>b</u> <U>c</U> x < y <ul>"), "a b c x < y <ul>");
+    let step = "<B>Open</B> the <U>Save</U> menu";
+    assert_eq!(to_md(Field::Step, step), "**Open** the <u>Save</u> menu");
+    assert!(unchanged("**Open** the Save menu", step, Field::Step), "bold + underline, old copy");
+    assert!(unchanged("**Open** the <u>Save</u> menu", step, Field::Step), "today's reading");
+    assert!(!unchanged("**Open** the Save menus", step, Field::Step), "a real edit");
+
+    let prereq = "<ul><li>Account <u>Alpha</u></li><li><b>Admin</b> role</li></ul>";
+    assert_eq!(to_md(Field::Prereq, prereq), "- Account <u>Alpha</u>\n- **Admin** role");
+    assert!(unchanged("- Account Alpha\n- **Admin** role", prereq, Field::Prereq));
+    assert!(!unchanged("- Account Beta\n- **Admin** role", prereq, Field::Prereq));
 }

@@ -176,7 +176,30 @@ pub fn unchanged(new_md: &str, current_html: &str, field: Field) -> bool {
         Field::Step => step_html_to_md(current_html),
         Field::Prereq => prereq_html_to_md(current_html),
     };
-    new_md == read || new_md == legacy_text(current_html, field)
+    new_md == read || new_md == without_underline(&read) || new_md == legacy_text(current_html, field)
+}
+
+/// `md` with its bare `<u>` and `</u>` taken out: the reading of a field that
+/// a copy saved after Markdown but before underline was kept holds
+/// (`**Open** the Save menu` for `<B>Open</B> the <U>Save</U> menu`). Such a
+/// copy is no edit either, so `unchanged` accepts it as a third reading.
+pub fn without_underline(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut rest = md;
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let len = [3usize, 4].into_iter().find(|n| rest.get(..*n).is_some_and(|t| underline_tag(t).is_some()));
+        match len {
+            Some(n) => rest = &rest[n..],
+            None => {
+                out.push('<');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A field's HTML as TCM read it before case text was Markdown: for a
@@ -1094,7 +1117,7 @@ impl Walker {
             "b" | "strong" => count(&mut self.bold, closing, self_closing),
             "i" | "em" => count(&mut self.italic, closing, self_closing),
             "code" => count(&mut self.code, closing, self_closing),
-            "u" | "ins" => count(&mut self.underline, closing, self_closing),
+            "u" => count(&mut self.underline, closing, self_closing),
             "br" => self.b.newline(),
             "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" => self.b.para_break(),
             "div" | "tr" | "table" | "tbody" | "thead" | "caption" | "dl" | "dt" | "dd"

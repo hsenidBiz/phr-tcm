@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import {
   countBuckets,
+  isFlakyFailure,
   failingStep,
   lastResultFor,
   lastResultWithFlaky,
@@ -175,4 +176,17 @@ test("a failure on a flaky-marked case is Flaky, not Failed, in every reading", 
   expect(matchesFilter(passed, "Flaky", flaky)).toBe(false);
   expect(matchesFilter(failed, "All", flaky)).toBe(true);
   expect(countBuckets([failed, other, passed], flaky)).toEqual({ Passed: 1, Failed: 1, Blocked: 0, "Not run": 0 });
+});
+
+test("a flaky mark counts a failure as flaky and nothing else (the Rust report reads the same table)", () => {
+  const rows = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../src-tauri/tests/fixtures/flaky_buckets.json"), "utf-8"),
+  ).cases as { verdict: string; proposed: string; marked: boolean; counts_as: string }[];
+  expect(rows.length).toBeGreaterThan(5);
+  for (const row of rows) {
+    const flaky = row.marked ? new Set([1]) : new Set<number>();
+    const c = { case_id: 1, verdict: row.verdict, proposed: row.proposed };
+    const got = isFlakyFailure(c, flaky) ? "flaky" : resultBucket(c).toLowerCase();
+    expect([row, got]).toEqual([row, row.counts_as]);
+  }
 });

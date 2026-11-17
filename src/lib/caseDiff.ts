@@ -52,11 +52,16 @@ export function sameStep(a: Step, b: Step): boolean {
   return a.action === b.action && a.expected === b.expected && (a.shared ?? null) === (b.shared ?? null);
 }
 
+/** Case text without its bare `<u>` pair: what a copy saved before underline was kept holds
+ * (`without_underline` in Rust). */
+const withoutUnderline = (md: string) => md.replace(/<\/?u>/gi, "");
+
 /** A queued step the save leaves alone: the same Shared Steps reference,
  * and each field equal to the current step's field or to its one-line
  * reading `old` - field by field, as `steps_unchanged` in Rust. */
 function unchangedStep(q: Step, c: Step, old: Step | undefined): boolean {
-  const field = (k: "action" | "expected") => q[k] === c[k] || (old != null && q[k] === old[k]);
+  const field = (k: "action" | "expected") =>
+    q[k] === c[k] || q[k] === withoutUnderline(c[k]) || (old != null && q[k] === old[k]);
   return (q.shared ?? null) === (c.shared ?? null) && field("action") && field("expected");
 }
 
@@ -201,7 +206,9 @@ export function diffCase(
       name === "Tags"
         ? tagsEqual(q, c)
         : q.trim() === c.trim() ||
-          (name === "Preconditions" && current.preconditions_legacy != null && q.trim() === current.preconditions_legacy.trim());
+          (name === "Preconditions" &&
+            ((current.preconditions_legacy != null && q.trim() === current.preconditions_legacy.trim()) ||
+              q.trim() === withoutUnderline(c).trim()));
     if (!equal) fields.push({ name, old: c, new: q });
   }
 

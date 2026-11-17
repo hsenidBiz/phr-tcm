@@ -353,3 +353,21 @@ test("a draft saved before underline was kept is no change", () => {
   expect(diffCase(queued({ steps: cur.steps }), cur).noop).toBe(true);
   expect(diffCase(queued({ steps: [{ action: "Click Save", expected: "The list is shown" }] }), cur).steps.changed).toBe(1);
 });
+
+test("a bold step and a list saved before underline was kept are no change, and an edit still is", () => {
+  const cur = current({
+    steps: [{ action: "**Open** the <u>Save</u> menu", expected: "Shown" }],
+    preconditions: "- Account <u>Alpha</u>\n- **Admin** role",
+  });
+  const same = diffCase(
+    queued({ steps: [{ action: "**Open** the Save menu", expected: "Shown" }], preconditions: "- Account Alpha\n- **Admin** role" }),
+    cur,
+  );
+  expect(same.noop).toBe(true);
+  const edited = diffCase(
+    queued({ steps: [{ action: "**Open** the Save menus", expected: "Shown" }], preconditions: "- Account Beta\n- **Admin** role" }),
+    cur,
+  );
+  expect(edited.steps.changed).toBe(1);
+  expect(edited.fields.some((f) => f.name === "Preconditions")).toBe(true);
+});

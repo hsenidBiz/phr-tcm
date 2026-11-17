@@ -1202,3 +1202,31 @@ fn a_bug_can_be_recorded_on_a_run_that_was_already_sent() {
     assert!(back.published.is_some());
     assert_eq!(back.cases[0].bugs.len(), 1);
 }
+
+/// The flaky rule is held to one table, tests/fixtures/flaky_buckets.json, which the Auto Run
+/// screens' test reads too (`isFlakyFailure`), so the report and the screens count alike.
+#[test]
+fn the_flaky_rule_matches_the_table_the_screens_are_held_to() {
+    use v2_lib::autorun::report::{case_bucket, is_flaky_failure};
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky_buckets.json"),
+    )
+    .unwrap();
+    let table: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = table["cases"].as_array().unwrap();
+    assert!(rows.len() > 5);
+    for row in rows {
+        let case: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+            "case_id": 1, "title": "t", "note": "", "steps": [],
+            "verdict": row["verdict"], "proposed": row["proposed"],
+        }))
+        .unwrap();
+        let mut script: CaseScript =
+            serde_json::from_value(serde_json::json!({ "case_id": 1, "title": "t", "steps": [] })).unwrap();
+        if row["marked"].as_bool().unwrap() {
+            script.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
+        }
+        let got = if is_flaky_failure(&case, Some(&script)) { "flaky".to_string() } else { case_bucket(&case).to_lowercase() };
+        assert_eq!(got, row["counts_as"].as_str().unwrap(), "{row}");
+    }
+}

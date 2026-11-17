@@ -189,7 +189,7 @@ const HTML_TAGS = new Set([
   "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
   "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
   "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
-  "td", "th", "thead", "tr", "u", "ul", "ins",
+  "td", "th", "thead", "tr", "u", "ul",
 ]);
 
 /** `steps_xml::html_tag_end`: the index of the `>` that closes a real tag

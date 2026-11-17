@@ -29,11 +29,11 @@ use serde::{Deserialize, Serialize};
 /// exactly alike - there is no structural difference left to use. Matching
 /// against what the editor can actually produce is the only thing that
 /// separates them.
-const HTML_TAGS: [&str; 45] = [
+const HTML_TAGS: [&str; 44] = [
     "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
-    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "ins",
-    "li", "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table",
-    "tbody", "td", "th", "thead", "tr", "u", "ul",
+    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
+    "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
+    "td", "th", "thead", "tr", "u", "ul",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -655,17 +655,26 @@ struct OldField {
     html: String,
     md: String,
     legacy: String,
+    /// `md` without its `<u>` pairs: what a copy saved before underline was
+    /// kept holds (`case_markdown::without_underline`).
+    no_underline: String,
 }
 
 impl OldField {
     fn of(html: String) -> OldField {
         use crate::case_markdown::{legacy_text, step_html_to_md, Field};
-        OldField { md: step_html_to_md(&html), legacy: legacy_text(&html, Field::Step), html }
+        let md = step_html_to_md(&html);
+        OldField {
+            no_underline: crate::case_markdown::without_underline(&md),
+            md,
+            legacy: legacy_text(&html, Field::Step),
+            html,
+        }
     }
 
     /// `case_markdown::unchanged` for this field, with its readings at hand.
     fn unchanged(&self, new: &str) -> bool {
-        new == self.md || new == self.legacy
+        new == self.md || new == self.no_underline || new == self.legacy
     }
 }
 
