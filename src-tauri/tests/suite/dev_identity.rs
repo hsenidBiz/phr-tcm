@@ -95,3 +95,37 @@ fn the_app_is_built_from_the_config_the_identity_was_applied_to() {
         assert!(creds.contains(call), "{call}");
     }
 }
+
+/// The AI tools' settings are in the person's home folder under names the
+/// installed app shares, so a development build does not touch them.
+#[test]
+fn a_development_build_does_not_change_the_ai_tools_settings() {
+    use v2_lib::commands::ai_tools::ToolHome;
+    assert_eq!(ai_tools_refusal(false), None);
+    let why = ai_tools_refusal(true).expect("a development build refuses");
+    assert!(why.contains("development build") && !why.contains(".json") && !why.contains("http"), "{why}");
+
+    // Every allow-file sync goes through a ToolHome: a development build's is
+    // an empty place, so it finds no tool and writes nothing.
+    let dev = ToolHome::for_build(true);
+    assert!(!std::path::Path::new(&dev.home).exists(), "never created: {}", dev.home);
+    assert!(!(dev.on_path)("claude"));
+    let release = ToolHome::for_build(false);
+    assert_ne!(release.home, dev.home);
+
+    // Every entry that writes the real settings checks first.
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands/ai_tools.rs")).unwrap();
+    for f in [
+        "pub async fn register_ai_tool(",
+        "pub fn set_db_auto_approve(",
+        "pub async fn remove_legacy_db_server(",
+        "pub fn unregister_ai_tool(",
+        "pub fn retire_global_registrations(",
+        "pub fn sync_commands(",
+        "pub fn sync_agents(",
+    ] {
+        let at = src.find(f).unwrap_or_else(|| panic!("{f}"));
+        let body = &src[at..at + 700.min(src.len() - at)];
+        assert!(body.contains("not_in_dev()"), "{f} must refuse in a development build");
+    }
+}

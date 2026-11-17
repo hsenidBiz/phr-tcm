@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { commands, type DraftEdit, type DraftInsert, type RemovedEntry, type TestCase } from "../../bindings";
 import { toast } from "../../lib/toast";
 import { fileName, fileOwners, patchWatch, type WatchedFile } from "../../lib/fileSync";
@@ -55,7 +55,21 @@ export function useQueueEdits({
   /** Which PBI this queue is for; a pending Undo does not outlive it. */
   scope?: string;
 }) {
-  const announce = useUndoToast(scope, JSON.stringify(watches.map((w) => w.path)));
+  const watchKey = JSON.stringify(watches.map((w) => w.path));
+  const announce = useUndoToast(scope, watchKey);
+  /** What an Undo already clicked still has to answer to: the toast's own
+   * cancellations (another PBI or org, the screen gone, a changed set of
+   * watched files) stop being checked once the button is pressed, and an
+   * Undo that writes files waits on IPC. */
+  const alive = useRef({ scope, watchKey, mounted: true });
+  alive.current.scope = scope;
+  alive.current.watchKey = watchKey;
+  useEffect(() => {
+    alive.current.mounted = true;
+    return () => {
+      alive.current.mounted = false;
+    };
+  }, []);
   /** A row a hand edit replaced, to the row that replaced it - how a bulk
    * edit's Undo still finds a row someone has since edited. */
   const successor = useRef(new WeakMap<TestCase, TestCase>());
@@ -313,11 +327,18 @@ export function useQueueEdits({
       toast.info("Undo is not available while an upload is running.");
       return null;
     }
+    const at = { scope: alive.current.scope, key: alive.current.watchKey };
+    const unchanged = () =>
+      alive.current.mounted && alive.current.scope === at.scope && alive.current.watchKey === at.key;
     const outcome = await written;
+    if (!unchanged()) return null;
     const byFile = new Map<string, RemovedRow[]>();
     for (const g of gone) {
+      // A row the file had no entry for (Rust could not match it, and the
+      // file was not changed) goes back to the queue alone: inserting a
+      // rebuilt copy could duplicate a case the file still holds.
       const o = outcome.get(g.row);
-      if (o) byFile.set(o.path, [...(byFile.get(o.path) ?? []), g]);
+      if (o?.entry) byFile.set(o.path, [...(byFile.get(o.path) ?? []), g]);
     }
     const refused = new Set<TestCase>();
     let rearm = dropped;
@@ -328,6 +349,9 @@ export function useQueueEdits({
       };
       try {
         await runOnFileChain(path, async () => {
+          // The chain may have waited: nothing is written for an Undo
+          // that is no longer this screen's.
+          if (!unchanged()) return;
           const expected = lastOwnStamp(path);
           if (!expected) return fail("is not what it was when they were removed.");
           const inserts: DraftInsert[] = rows.map((g) => ({
@@ -340,7 +364,9 @@ export function useQueueEdits({
             return fail(
               /changed outside/.test(r.error)
                 ? "was changed outside the app, so nothing was put back."
-                : `could not be written: ${r.error}.`,
+                : /still in the file/.test(r.error)
+                  ? "still has that case, so it was not put back again."
+                  : `could not be written: ${r.error}.`,
             );
           }
           noteWritten(path, r.data);
@@ -353,6 +379,7 @@ export function useQueueEdits({
         fail(`could not be written: ${e instanceof Error ? e.message : String(e)}.`);
       }
     }
+    if (!unchanged()) return null;
     const back = gone.filter((g) => !refused.has(g.row));
     for (const { row } of back) removing.current.delete(row);
     setQueue((q) => restoreRows(q, back));

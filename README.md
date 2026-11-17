@@ -386,7 +386,10 @@ folder, browser profile and single-instance lock; its own Windows Credential
 Manager entries, so a dev sign-in never reads or replaces the installed app's
 saved session or database logins; its own handshake file for the AI tools'
 proxy; its own Start with Windows entry; and `(dev)` on the window title. A
-release build is unchanged. A dev build starts with no data and no sign-in of
+release build is unchanged. A dev build does not change the AI tools'
+settings (register, remove, auto-approve, commands, agents), which live in the
+home folder under names the installed app shares; do that in the installed app.
+A dev build starts with no data and no sign-in of
 its own.
 
 Rust tests live in `src-tauri/tests/` as integration targets. A Windows

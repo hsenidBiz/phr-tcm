@@ -623,7 +623,7 @@ fn an_insert_of_an_entry_already_in_the_file_is_refused() {
     // Identical entry text.
     let raw = serde_json::to_string(&serde_json::from_str::<Value>(&old).unwrap()["test_cases"][1]).unwrap();
     let dup = DraftInsert { case: row.clone(), raw: Some(raw), position: Some(0) };
-    assert!(insert_draft_entries(&old, &[dup]).is_err());
+    assert_eq!(insert_draft_entries(&old, &[dup]).unwrap_err(), "that case is still in the file");
     // The same work item id.
     let with_id = json!({ "test_cases": [
         { "id": 77, "title": "Has id", "steps": [{ "action": "X.", "expected": "" }] }

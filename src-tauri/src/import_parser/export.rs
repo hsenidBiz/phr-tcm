@@ -445,6 +445,10 @@ fn array_of(doc: &Value) -> Vec<Value> {
     }
 }
 
+/// Said when an entry to put back is, word for word, still in the file (a file
+/// that held two identical entries, one of them removed).
+pub const CASE_STILL_IN_FILE: &str = "that case is still in the file";
+
 /// Put entries back into a draft file - the other half of a removal's Undo.
 /// Each insert goes where the entry stood (`position`, an index into the
 /// file's case list, clamped to it as it is now; no position appends),
@@ -472,7 +476,10 @@ pub fn insert_draft_entries(old_text: &str, inserts: &[DraftInsert]) -> Result<S
             },
             None => case_record(&ins.case),
         };
-        if array.contains(&entry) || ins.case.update_id.is_some_and(|id| ids.contains(&id)) {
+        if array.contains(&entry) {
+            return Err(CASE_STILL_IN_FILE.into());
+        }
+        if ins.case.update_id.is_some_and(|id| ids.contains(&id)) {
             return Err("that case is already in the file".into());
         }
         if let Some(id) = ins.case.update_id {

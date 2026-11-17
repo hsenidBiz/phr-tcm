@@ -83,6 +83,26 @@ pub fn store_name(target: &str, dev: bool) -> Option<String> {
     }
 }
 
+/// Said when a development build is asked to change the AI tools' settings
+/// (register, remove, auto-approve, commands, agents, allow files). Those
+/// live in the person's home folder, under names shared with the installed
+/// app (`tcm`, `~/.claude/commands/tcm`, `mcp__tcm__*`), so a development
+/// build leaves them alone instead of replacing the installed app's.
+pub const AI_TOOLS_REFUSED: &str =
+    "This is a development build, which does not change the AI tools' settings - they are shared with the installed app. Do this in the installed app.";
+
+/// `Some(AI_TOOLS_REFUSED)` for a development build, `None` for a release.
+pub fn ai_tools_refusal(dev: bool) -> Option<&'static str> {
+    dev.then_some(AI_TOOLS_REFUSED)
+}
+
+/// The folder a development build is told is its home for the AI tools'
+/// settings: one that is never created, so no tool is found under it and
+/// nothing is written to the real one.
+pub fn no_ai_tools_home() -> String {
+    std::env::temp_dir().join("tcm-dev-no-ai-tools").to_string_lossy().to_string()
+}
+
 /// The name of the file in the temp folder where the running app tells
 /// `--mcp` proxies its port and token. A development build's own, so it
 /// never replaces the installed app's.

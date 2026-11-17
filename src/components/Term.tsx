@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { GLOSSARY, type TermName } from "../lib/glossary";
 
 /**
@@ -9,9 +9,10 @@ import { GLOSSARY, type TermName } from "../lib/glossary";
  * The bubble is the app's own tooltip (`TooltipLayer` turns every `title`
  * into one, and closes it on Escape), so there is one tooltip implementation.
  * The span is focusable so the keyboard reaches it, and while it is hovered or
- * focused `aria-describedby` points at the definition text, so a screen reader
- * says it too. The text is only in the page then, so it never competes with
- * what a screen is showing for a text search.
+ * focused `aria-describedby` points at the definition text from the start,
+ * so a screen reader says it too. The text sits in a `hidden` element: it is
+ * left out of the name of any heading or label the word is in, but a
+ * description may still point at it.
  *
  * `within` is for a word inside a control (a tab, a button): a focusable
  * element in a button is no good, so the word is not a tab stop; give the
@@ -21,7 +22,6 @@ import { GLOSSARY, type TermName } from "../lib/glossary";
  */
 export function Term({ name, within = false, children }: { name: TermName; within?: boolean; children: ReactNode }) {
   const id = useId();
-  const [active, setActive] = useState(false);
   const text = GLOSSARY[name];
   return (
     <span
@@ -29,16 +29,11 @@ export function Term({ name, within = false, children }: { name: TermName; withi
       data-tip-side="bottom"
       data-term={name}
       tabIndex={within ? undefined : 0}
-      aria-describedby={!within && active ? id : undefined}
-      onPointerEnter={within ? undefined : () => setActive(true)}
-      onPointerLeave={within ? undefined : () => setActive(false)}
-      onFocus={within ? undefined : () => setActive(true)}
-      onBlur={within ? undefined : () => setActive(false)}
-      onKeyDown={within ? undefined : (e) => e.key === "Escape" && setActive(false)}
+      aria-describedby={within ? undefined : id}
       className="cursor-help underline decoration-dotted decoration-muted underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent motion-safe:transition-colors"
     >
       {children}
-      {!within && active && (
+      {!within && (
         <span id={id} hidden>
           {text}
         </span>

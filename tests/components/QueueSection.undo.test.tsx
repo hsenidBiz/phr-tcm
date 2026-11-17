@@ -20,11 +20,17 @@ const DRAFT = "tcm-v2-draft:acme/42";
 
 /** What `restore_draft_cases` was asked, and what the mock answers. */
 let restoreCalls: Array<{ path: string; expectedStamp: string; inserts: Array<{ case: TestCase; raw: string | null; position: number | null }> }> = [];
-let restoreAnswer: "ok" | "changed" = "ok";
+let restoreAnswer: "ok" | "changed" | "still" = "ok";
+/** Rust could not match a removed row to an entry of the file. */
+let removedNothing = false;
+/** Holds the removal's write-back until opened. */
+let saveGate: Promise<void> | null = null;
 
 beforeEach(() => {
   restoreCalls = [];
   restoreAnswer = "ok";
+  removedNothing = false;
+  saveGate = null;
   resetFileWriteQueueForTests();
   localStorage.clear();
   vi.mocked(toast.info).mockReturnValue("toast-info");
@@ -98,16 +104,19 @@ function renderQueue(initial: TestCase[], owner: Owner = {}) {
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
       const p = args as { edits: Array<{ before: TestCase; after: TestCase | null }> };
-      return {
+      return Promise.resolve(saveGate).then(() => ({
         stamp: "stamp-2",
         cases: p.edits.flatMap((e) => (e.after ? [e.after] : [])),
-        removed: p.edits.map((e, i) => (e.after ? null : { raw: JSON.stringify({ title: e.before.title }), position: i })),
-      };
+        removed: p.edits.map((e, i) =>
+          e.after || removedNothing ? null : { raw: JSON.stringify({ title: e.before.title }), position: i },
+        ),
+      }));
     }
     if (cmd === "restore_draft_cases") {
       const p = args as (typeof restoreCalls)[number];
       restoreCalls.push(p);
       if (restoreAnswer === "changed") throw "the file was changed outside the app";
+      if (restoreAnswer === "still") throw "that case is still in the file";
       return { stamp: "stamp-3", cases: p.inserts.map((i) => i.case), removed: [] };
     }
     return undefined;
@@ -591,4 +600,56 @@ test("Undo of a bulk remove that emptied the queue arms the dropped watches agai
   await screen.findByText("Alpha");
   expect(restored).toHaveBeenCalledTimes(1);
   expect(restored.mock.calls[0][0]).toEqual([elsewhere]);
+});
+
+test("a removed row Rust found no entry for goes back to the queue alone, with nothing inserted", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned, makeCase("Typed by hand")], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+  removedNothing = true;
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  await new Promise((r) => setTimeout(r, 20));
+  pressUndo(shown);
+  await screen.findByText("Owned");
+  expect(rowTitles()).toEqual(["Owned", "Typed by hand"]);
+  expect(restoreCalls).toEqual([]);
+});
+
+test("an Undo clicked before the write-back returns is dropped when the PBI changes meanwhile", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned, makeCase("Typed by hand")], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+  let open: () => void = () => {};
+  saveGate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  pressUndo(shown);
+  // The person moves to another PBI while the file write is still out.
+  act(() => setPbiOut(43));
+  open();
+  await new Promise((r) => setTimeout(r, 30));
+  expect(restoreCalls).toEqual([]);
+  expect(rowTitles()).not.toContain("Owned");
+});
+
+test("a file that still holds that case says so, in words", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Owned");
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  await new Promise((r) => setTimeout(r, 20));
+  restoreAnswer = "still";
+  pressUndo(shown);
+  await waitFor(() =>
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/a\.json still has that case, so it was not put back again/),
+      expect.anything(),
+    ),
+  );
 });

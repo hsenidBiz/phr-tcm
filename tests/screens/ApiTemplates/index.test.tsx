@@ -676,6 +676,9 @@ test("Templates and Flows are separate views, and the one chosen is remembered",
   expect(flowsTab).toHaveAttribute("title", GLOSSARY.flow);
   expect(screen.getByRole("tab", { name: /^Fixtures/ })).toHaveAttribute("title", GLOSSARY.fixture);
   expect(screen.getByRole("tab", { name: /^Templates/ })).toHaveAttribute("title", GLOSSARY.template);
+  // ...and to a screen reader from the start, without adding to the names.
+  expect(flowsTab).toHaveAccessibleDescription(GLOSSARY.flow);
+  expect(screen.getByRole("tab", { name: /^Fixtures/ })).toHaveAccessibleDescription(GLOSSARY.fixture);
   expect(templatesTab).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("listitem", { name: "Save the rules" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Performance cycle wizard" })).toBeNull();

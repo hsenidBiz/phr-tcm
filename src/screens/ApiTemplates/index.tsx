@@ -2,7 +2,7 @@ import { define, Term } from "../../components/Term";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { commands, events, type Flow, type SavedTemplate, type TemplatesExportResult } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -117,6 +117,7 @@ export default function ApiTemplates({
   const [folded, toggleFolded, foldGroups, unfoldGroups] = usePersistedStringSet(
     "tcm-v2-api-templates-collapsed-groups",
   );
+  const tabHelp = useId();
   const [search, setSearch] = useState("");
   const [view, setViewState] = useState<View>(loadView);
   const setView = (next: View) => {
@@ -353,6 +354,17 @@ export default function ApiTemplates({
 
       {(templates.length > 0 || flows.length > 0 || fixtures > 0) && (
         <>
+          {/* What each tab's word means, for a screen reader: hidden, so it is
+              no part of any tab's name, and pointed at by the tab. */}
+          <span id={`${tabHelp}-templates`} hidden>
+            {define("template")}
+          </span>
+          <span id={`${tabHelp}-flows`} hidden>
+            {define("flow")}
+          </span>
+          <span id={`${tabHelp}-fixtures`} hidden>
+            {define("fixture")}
+          </span>
           <div role="tablist" aria-label="Show" className="flex gap-1 border-b border-border">
             {(
               [
@@ -368,6 +380,7 @@ export default function ApiTemplates({
                 // The word's definition, through the control itself: the
                 // word inside is not a tab stop of its own.
                 title={define(term)}
+                aria-describedby={`${tabHelp}-${id}`}
                 data-tip-side="bottom"
                 className={cn(
                   "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",

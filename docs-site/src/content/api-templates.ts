@@ -35,7 +35,7 @@ export const apiTemplates: Screen = {
   title: "API Templates",
   group: "AI tools",
   summary:
-    "An API template is a recipe for creating or changing test data through the site's own requests, the ones its pages send: create a user, lock an account, add an address. " +
+    "An API template is a saved way of creating or changing test data through the site's own requests, the ones its pages send: create a user, lock an account, add an address. " +
     "An assistant builds each one from the application's code and proves it on your site before it appears here; after that, a script's precondition or the assistant itself can run it for the data a test needs. " +
     "This screen shows them, and lets you read and remove them. " +
     "API Templates is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears in the group at the bottom of the sidebar.",

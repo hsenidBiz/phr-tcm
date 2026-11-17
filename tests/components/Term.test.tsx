@@ -28,21 +28,30 @@ test("hovering the word shows its definition", async () => {
   expect(await screen.findByRole("tooltip")).toHaveTextContent(GLOSSARY.recipe);
 });
 
-test("keyboard focus shows it too, and the word is a tab stop described by the definition", async () => {
+test("keyboard focus shows it too, and the word is a tab stop described by the definition from the start", async () => {
   show();
   const word = screen.getByText("recipe");
   expect(word).toHaveAttribute("tabindex", "0");
-  // Nothing about the definition sits in the page until the word is in use.
-  expect(screen.queryByText(GLOSSARY.recipe)).toBeNull();
+  // A screen reader gets the definition without anything being opened: the
+  // description is pointed at from the start, in a hidden element.
+  expect(word).toHaveAccessibleDescription(GLOSSARY.recipe);
+  expect(screen.getByText(GLOSSARY.recipe)).toHaveAttribute("hidden");
 
   tab(word);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(GLOSSARY.recipe);
-  expect(word).toHaveAccessibleDescription(GLOSSARY.recipe);
-
   fireEvent.blur(word);
   fireEvent.focusOut(word);
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
-  expect(word).not.toHaveAttribute("aria-describedby");
+  expect(word).toHaveAccessibleDescription(GLOSSARY.recipe);
+});
+
+test("the hidden description is no part of the name of a heading the word is in", () => {
+  render(
+    <h2>
+      Sign-in <Term name="recipe">recipe</Term>
+    </h2>,
+  );
+  expect(screen.getByRole("heading", { name: "Sign-in recipe" })).toBeInTheDocument();
 });
 
 test("Escape closes the bubble", async () => {
@@ -50,12 +59,10 @@ test("Escape closes the bubble", async () => {
   const word = screen.getByText("recipe");
   tab(word);
   await screen.findByRole("tooltip");
-  fireEvent.keyDown(word, { key: "Escape" });
   act(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
   });
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
-  expect(word).not.toHaveAttribute("aria-describedby");
 });
 
 test("a word inside a control is not a tab stop and leaves the control's name alone", () => {
