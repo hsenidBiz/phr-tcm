@@ -71,6 +71,8 @@ function fake(initial: Walk, clone = "C:/repo") {
   const state = {
     walk: initial,
     structureFails: false,
+    /** A different refusal for the structure read (a run holds the slot). */
+    structureError: null as null | string,
     /** Holds the structure read until released, so the amber state can be seen. */
     gate: null as null | Promise<void>,
   };
@@ -83,6 +85,7 @@ function fake(initial: Walk, clone = "C:/repo") {
     }
     if (cmd === "pw_repo_structure") {
       if (state.gate) await state.gate;
+      if (state.structureError) throw state.structureError;
       if (state.structureFails) throw "The clone could not be read.";
       return STRUCTURE;
     }
@@ -330,4 +333,25 @@ test("a Refresh whose look at the specs failed still reads the clone again", asy
     screen.getByRole("button", { name: "Refresh everything" }).click();
   });
   await waitFor(() => expect(f.n("pw_repo_structure")).toBe(2));
+});
+
+test("a re-read refused because a run holds the slot is not red; it is tried again at the next look", async () => {
+  const f = fake(walk(4, "a"));
+  mount();
+  await screen.findByText(READY);
+
+  f.state.structureError = "Playwright run is still running. Stop it, or wait for it to finish, before starting another.";
+  f.state.walk = walk(5, "b");
+  await tick();
+  const waiting = (await screen.findByText("Waiting for a run to finish")).closest("[role=status]")!;
+  expect(waiting.className).toContain("text-warning");
+  expect(waiting.className).not.toContain("text-danger");
+  expect(screen.queryByText("Specs could not be read")).not.toBeInTheDocument();
+  expect(f.n("pw_repo_structure")).toBe(2);
+
+  // The slot frees: the next look reads the clone again, with no Refresh.
+  f.state.structureError = null;
+  await tick();
+  expect(await screen.findByText(READY)).toBeInTheDocument();
+  expect(f.n("pw_repo_structure")).toBe(3);
 });

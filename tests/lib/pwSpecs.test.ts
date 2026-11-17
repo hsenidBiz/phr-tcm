@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { SUITES_MISSING, ruleFileName, specsPill, type SpecsView } from "../../src/lib/pwSpecs";
+import { SUITES_MISSING, isRunSlotBusy, ruleFileName, specsPill, type SpecsView } from "../../src/lib/pwSpecs";
 
 const view = (over: Partial<SpecsView>): SpecsView => ({ walk: null, processed: null, processing: false, failed: null, ...over });
 const AGENTS = [
@@ -80,4 +80,15 @@ test("a walk or a read that failed is red: Specs could not be read, and says why
 test("the missing-suites sentence is the one Rust says", () => {
   // tests/suite/pw_repo_specs_status.rs pins the same sentence.
   expect(SUITES_MISSING).toBe("The clone has no suites folder.");
+});
+
+// A run holding the Playwright slot refuses the listing; that is not a
+// failure, so the pill is never red for it.
+test("a re-read refused because a run holds the slot is amber, not red", () => {
+  const busy = "Playwright run is still running. Stop it, or wait for it to finish, before starting another.";
+  expect(isRunSlotBusy(busy)).toBe(true);
+  expect(isRunSlotBusy("Another run is being prepared. Wait for it to start, or stop it, then try again.")).toBe(true);
+  expect(isRunSlotBusy("Playwright's list of the tests could not be read.")).toBe(false);
+  const pill = specsPill(view({ walk: found(5, "b"), processed: "a", waiting: true }));
+  expect(pill).toMatchObject({ tone: "warning", label: "Waiting for a run to finish" });
 });

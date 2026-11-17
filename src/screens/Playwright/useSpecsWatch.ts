@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands } from "../../bindings";
 import { unwrapStr } from "../../lib/ipc";
-import { SPECS_CHECK_MS, setSpecsPill, specsPill, type SpecsView } from "../../lib/pwSpecs";
+import { SPECS_CHECK_MS, isRunSlotBusy, setSpecsPill, specsPill, type SpecsView } from "../../lib/pwSpecs";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -107,13 +107,17 @@ export function useSpecsWatch({
       }
       inFlight.current = false;
       if (latest.current.clone !== forClone) return;
-      if (failure === null) {
+      if (failure !== null && isRunSlotBusy(failure)) {
+        // A run holds the slot: not a failure. Tried again at the next look,
+        // or as soon as the slot frees.
+        patch(forClone, { processing: false, waiting: true });
+      } else if (failure === null) {
         failedAt.current = null;
         if (print !== null) qc.setQueryData(processedKey(forClone), print);
-        patch(forClone, { processing: false, failed: null, ...(print !== null ? { processed: print } : {}) });
+        patch(forClone, { processing: false, waiting: false, failed: null, ...(print !== null ? { processed: print } : {}) });
       } else if (print !== null) {
         failedAt.current = { clone: forClone, fingerprint: print };
-        patch(forClone, { processing: false, failed: { fingerprint: print, error: failure } });
+        patch(forClone, { processing: false, waiting: false, failed: { fingerprint: print, error: failure } });
       } else {
         patch(forClone, { processing: false });
       }
@@ -132,6 +136,15 @@ export function useSpecsWatch({
       window.removeEventListener("focus", check);
     };
   }, [clone, ready, look]);
+
+  // The slot freed (a run ended): a re-read that was waiting for it goes now.
+  const waiting = view.waiting === true;
+  const wasBusy = useRef(busy);
+  useEffect(() => {
+    const freed = wasBusy.current && !busy;
+    wasBusy.current = busy;
+    if (freed && waiting) void look(false);
+  }, [waiting, busy, look]);
 
   const pill = clone && ready ? specsPill(view) : null;
   useEffect(() => {
