@@ -1328,9 +1328,16 @@ fn new_run(pbi_id: i32) -> LocalRun {
     }
 }
 
-#[tokio::test]
+/// Runs on a thread with a bigger stack: this test's future, built in a
+/// debug build, is deeper than a test thread's default 2 MB (it overflowed it
+/// on this machine whether or not the assertions held).
+#[test]
 #[ignore = "starts real headless Edge processes"]
-async fn an_unattended_selection_runs_each_case_in_its_own_browser_and_proposes_honestly() {
+fn an_unattended_selection_runs_each_case_in_its_own_browser_and_proposes_honestly() {
+    crate::common::on_big_stack(an_unattended_selection_body);
+}
+
+async fn an_unattended_selection_body() {
     let app = App::start();
     let root = tempfile::tempdir().unwrap();
     save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
@@ -1449,7 +1456,19 @@ async fn an_unattended_selection_runs_each_case_in_its_own_browser_and_proposes_
     assert!(rec3.reason.contains("checks nothing"), "{}", rec3.reason);
 
     let saved = store::load_run(root.path(), &run.id).unwrap().expect("the run should be on disk");
-    assert_eq!(saved, run);
+    // An outcome's in-memory-only fields (the page path the review reads,
+    // the step indicator, the guard trace) are never saved, by design - see
+    // the `#[serde(skip)]` fields of `ActionOutcome` - so the run in memory is
+    // compared with them cleared; everything else must round-trip.
+    let mut in_file_form = run.clone();
+    for o in in_file_form.cases.iter_mut().flat_map(|c| c.steps.iter_mut()).flat_map(|s| s.outcomes.iter_mut()) {
+        o.harness = false;
+        o.page_step = None;
+        o.page_path = None;
+        o.guard = None;
+        o.rows_told_apart = false;
+    }
+    assert_eq!(saved, in_file_form);
     assert_eq!(saved.mode, "unattended");
     assert!(saved.published.is_none());
 
@@ -3678,9 +3697,14 @@ impl Browsers for WatchedOneBrowser {
 /// as nobody and must meet the login form, so case 1's cookie did not
 /// reach it. Each case has only its own page, though the browser's first
 /// page and another context's page are attached to its connection.
-#[tokio::test]
+#[test]
 #[ignore = "starts a real headless Edge"]
-async fn one_browser_gives_each_case_a_context_of_its_own() {
+fn one_browser_gives_each_case_a_context_of_its_own() {
+    // Its debug-build future overflows a test thread's default 2 MB stack.
+    crate::common::on_big_stack(one_browser_contexts_body);
+}
+
+async fn one_browser_contexts_body() {
     let app = App::start();
     let root = tempfile::tempdir().unwrap();
     save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
@@ -4225,7 +4249,7 @@ async fn states_expect_checked_follows_clicks() {
     refused(run(&mut live, checked(button, true)).await, "has no checked state");
     // A container is never read for the first box inside it.
     let region = json!({ "role": "region", "name": "Switches" });
-    refused(run(&mut live, checked(region, true)).await, "matches a container, point at the checkbox");
+    refused(run(&mut live, checked(region, true)).await, "matches a container holding 2 boxes - point at one");
 }
 
 /// The page with cards a person can click though they are not usable.
