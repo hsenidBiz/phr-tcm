@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.9",
+    date: "2026-11-17",
+    items: [
+      "The Auto Run run report has a new look: failures grouped by what stopped them, a step timeline for each failed case, Insights with trends, History and a comparison with the previous run, a gallery, light and dark, search with filters and keyboard shortcuts, and buttons to copy a failure summary or a prompt for an AI assistant.",
+    ],
+  },
+  {
     version: "2.4.7-beta.8",
     date: "2026-11-17",
     items: [
