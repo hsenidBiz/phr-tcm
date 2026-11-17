@@ -158,6 +158,7 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
         pbi_id: 0,
         started_at: r.at.to_string(),
         cases: vec![CaseRecord {
+            bugs: vec![],
             case_id: r.case_id,
             title: r.title.clone(),
             verdict: String::new(),

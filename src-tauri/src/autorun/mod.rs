@@ -680,6 +680,25 @@ pub struct CaseRecord {
     /// for a script without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<StepRecord>,
+    /// Bugs filed for this case from the run's review (Raise bug), so the
+    /// review and Past runs still show "Bug #123" after the review closes.
+    /// Only what Raise bug already made in Azure DevOps is recorded: the
+    /// id, and the organization and project it was filed in, which are
+    /// what opening it needs. Left out of a record that has none, and a
+    /// record saved before this field reads as having none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bugs: Vec<CaseBug>,
+}
+
+/// A bug filed from a run's review for one case (`CaseRecord::bugs`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct CaseBug {
+    /// The bug's work item id.
+    pub id: i32,
+    /// The organization and project it was filed in, so it can be opened
+    /// later without guessing which one the review was in.
+    pub org: String,
+    pub project: String,
 }
 
 /// Where an unattended case's wall time went, in milliseconds. `total_ms`

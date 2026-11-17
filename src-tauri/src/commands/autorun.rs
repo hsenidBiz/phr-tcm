@@ -3334,6 +3334,49 @@ pub fn set_flaky(root: &std::path::Path, case_id: i32, flaky: bool) -> Result<()
     Ok(())
 }
 
+/// A bug just filed from a run's review for one of its cases, kept on the case's record
+/// (`CaseRecord::bugs`) so the review and Past runs still show it once the review is closed.
+/// Writes only the saved run on this machine: the bug itself was made in Azure DevOps by Raise
+/// bug, and nothing more is sent. Filing the same bug twice records it once.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_record_bug(
+    app: tauri::AppHandle,
+    run_id: String,
+    case_id: i32,
+    bug_id: i32,
+    org: String,
+    project: String,
+) -> Result<(), String> {
+    record_bug_at(&root(&app)?, &run_id, case_id, bug_id, &org, &project)
+}
+
+/// The pure half of [`auto_run_record_bug`]. A run that is gone, or does not hold the case, is an
+/// error rather than a silent nothing: the bug was filed, and the person is told it was not kept.
+pub fn record_bug_at(
+    root: &std::path::Path,
+    run_id: &str,
+    case_id: i32,
+    bug_id: i32,
+    org: &str,
+    project: &str,
+) -> Result<(), String> {
+    if bug_id <= 0 {
+        return Err("that is not a bug number".to_string());
+    }
+    let mut run = store::load_run(root, run_id)?.ok_or_else(|| "this run is no longer on this machine".to_string())?;
+    let case = run
+        .cases
+        .iter_mut()
+        .find(|c| c.case_id == case_id)
+        .ok_or_else(|| "this run does not hold that case".to_string())?;
+    if case.bugs.iter().any(|b| b.id == bug_id) {
+        return Ok(());
+    }
+    case.bugs.push(crate::autorun::CaseBug { id: bug_id, org: org.to_string(), project: project.to_string() });
+    store::save_run_guarded(root, &run)
+}
+
 /// The plan for a selection, as the screen shows it: the order, the order
 /// split into batches (`phases`) at each pause, and the pauses: one before
 /// each batch after the first (settings to set, state to put back), and one

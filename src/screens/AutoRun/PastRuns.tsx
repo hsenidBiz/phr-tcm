@@ -12,6 +12,7 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
+import FiledBugs from "./FiledBugs";
 import FlakyBadge from "./FlakyBadge";
 import FlakyCases from "./FlakyCases";
 import ResultFilterRow from "./ResultFilterRow";
@@ -295,6 +296,7 @@ export default function PastRuns({
                             <span className="text-xs font-medium text-faint">unset</span>
                           )}
                           {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
+                          <FiledBugs bugs={c.bugs} />
                           {replayTo !== null && (
                             <Button
                               size="sm"

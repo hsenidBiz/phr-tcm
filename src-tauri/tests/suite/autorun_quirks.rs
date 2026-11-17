@@ -403,6 +403,7 @@ fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
 
 fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
     CaseRecord {
+        bugs: vec![],
         case_id,
         title: "a case".into(),
         verdict: String::new(),

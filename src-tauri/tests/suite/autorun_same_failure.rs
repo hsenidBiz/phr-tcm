@@ -17,6 +17,7 @@ fn case_failing(step: i32, action: usize, words: &str) -> CaseRecord {
     let mut outcomes: Vec<ActionOutcome> = (0..action).map(|_| ActionOutcome::passed("done")).collect();
     outcomes.push(ActionOutcome::failed(words));
     CaseRecord {
+        bugs: vec![],
         case_id: ID,
         title: "Save a request".into(),
         verdict: "Failed".into(),

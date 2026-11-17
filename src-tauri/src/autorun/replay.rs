@@ -700,6 +700,7 @@ async fn run_case_in<D: Driver>(
     let components = super::components::load_components(root, organization, project).unwrap_or_default();
     let p = propose_with(script, &steps, signed_in, stopped, &components);
     let mut record = CaseRecord {
+        bugs: vec![],
         case_id: script.case_id,
         title: script.title.clone(),
         verdict: String::new(),
@@ -773,6 +774,7 @@ const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecord {
     CaseRecord {
+        bugs: vec![],
         case_id,
         title: title.to_string(),
         verdict: String::new(),
@@ -862,6 +864,7 @@ fn leave_for_network(
 fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: String) -> CaseRecord {
     let why = format!("not run: {reason}");
     CaseRecord {
+        bugs: vec![],
         case_id: script.case_id,
         title: script.title.clone(),
         verdict: String::new(),

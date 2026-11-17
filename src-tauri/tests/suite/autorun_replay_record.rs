@@ -49,6 +49,7 @@ fn run_failing_step_1(started_at: u64) -> LocalRun {
         pbi_id: 1,
         started_at: started_at.to_string(),
         cases: vec![CaseRecord {
+            bugs: vec![],
             case_id: ID,
             title: "Leave request".into(),
             verdict: "Failed".into(),

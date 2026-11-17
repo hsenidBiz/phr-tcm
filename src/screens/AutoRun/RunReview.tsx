@@ -34,6 +34,7 @@ import VerdictPicker from "./VerdictPicker";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import { uncheckedText } from "./unchecked";
 import { autoRunRepro, failureShotNames } from "./bugRepro";
+import FiledBugs from "./FiledBugs";
 import FlakyBadge from "./FlakyBadge";
 import { useFlakyMarks } from "./flaky";
 import {
@@ -231,9 +232,35 @@ export default function RunReview(props: {
     testCase: TestCaseFull;
   } | null>(null);
   const [raiseBusy, setRaiseBusy] = useState<number | null>(null);
-  /** Bugs filed from this review, per case. Kept for this review session
-   * only: the run record has no field for them. */
-  const [filedBugs, setFiledBugs] = useState<Record<number, number[]>>({});
+  /** A bug just filed for a case: kept on the case's saved record, so it still shows when the
+   * review is opened again, and on this screen's copy of the run, so a later Save keeps it. */
+  const keepBug = async (caseId: number, bugId: number) => {
+    const bug = { id: bugId, org: props.org, project: props.project };
+    setRun((prev) =>
+      prev
+        ? {
+            ...prev,
+            cases: prev.cases.map((c) =>
+              c.case_id === caseId && !(c.bugs ?? []).some((b) => b.id === bugId)
+                ? { ...c, bugs: [...(c.bugs ?? []), bug] }
+                : c,
+            ),
+          }
+        : prev,
+    );
+    try {
+      const r = await commands.autoRunRecordBug(runId, caseId, bugId, props.org, props.project);
+      if (r.status === "error") {
+        toast.error(`Bug #${bugId} was filed, but it could not be kept on this run: ${r.error}`);
+        return;
+      }
+      await invalidateRuns(queryClient);
+    } catch (e) {
+      toast.error(
+        `Bug #${bugId} was filed, but it could not be kept on this run: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  };
   const raiseBug = async (c: LocalRun_Serialize["cases"][number]) => {
     if (!run) return;
     setRaiseBusy(c.case_id);
@@ -495,11 +522,7 @@ export default function RunReview(props: {
                   <ProductBugBadge bugs={c.product_bugs} />
                   <PageErrorsBadge seen={c.page_errors_seen} />
                   {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
-                  {(filedBugs[c.case_id] ?? []).map((id) => (
-                    <span key={id} className="shrink-0 text-xs text-success">
-                      Bug #{id}
-                    </span>
-                  ))}
+                  <FiledBugs bugs={c.bugs} />
                   {resultBucket(c) === "Failed" && (
                     <Button
                       size="sm"
@@ -758,7 +781,7 @@ export default function RunReview(props: {
           initialRepro={raising.repro}
           onClose={() => setRaising(null)}
           onFiled={(bugId) => {
-            setFiledBugs((x) => ({ ...x, [raising.caseId]: [...(x[raising.caseId] ?? []), bugId] }));
+            void keepBug(raising.caseId, bugId);
             setRaising(null);
           }}
         />

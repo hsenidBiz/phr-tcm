@@ -1143,3 +1143,62 @@ fn a_flaky_marked_failure_is_counted_as_flaky_and_keeps_its_details() {
     mark_204.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
     assert_eq!(flaky_count(&run, &[mark_204]), 0);
 }
+
+/// Raise bug keeps the bug it filed on the run's case, so the review and
+/// Past runs show it after the review closes. A record saved before the
+/// field reads as having none, and the field is left out when empty.
+#[test]
+fn a_filed_bug_is_kept_on_the_cases_record() {
+    use v2_lib::commands::autorun::record_bug_at;
+    let tmp = TempDir::new();
+    let run = run_of(SHOT);
+    save_run(tmp.path(), &run).unwrap();
+
+    // Nothing is written for a case with no bug: old files stay as they were.
+    let before = std::fs::read_to_string(tmp.path().join("runs").join("run-1786000200000.json")).unwrap();
+    assert!(!before.contains("\"bugs\""), "{before}");
+
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 777, "org", "Proj").unwrap();
+    // Filing it again records it once; another bug is added.
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 777, "org", "Proj").unwrap();
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 778, "org", "Proj").unwrap();
+
+    let back = v2_lib::autorun::store::load_run(tmp.path(), "run-1786000200000").unwrap().unwrap();
+    let case = back.cases.iter().find(|c| c.case_id == 201).unwrap();
+    let ids: Vec<i32> = case.bugs.iter().map(|b| b.id).collect();
+    assert_eq!(ids, vec![777, 778]);
+    assert_eq!((case.bugs[0].org.as_str(), case.bugs[0].project.as_str()), ("org", "Proj"));
+    assert!(back.cases.iter().filter(|c| c.case_id != 201).all(|c| c.bugs.is_empty()));
+    // Everything else about the run is as it was.
+    assert_eq!(back.cases.len(), run.cases.len());
+    assert_eq!(back.cases[0].proposed, "Failed");
+
+    // The saved record reads back through the listing the screens use.
+    let listed = v2_lib::autorun::store::list_runs(tmp.path());
+    assert_eq!(listed[0].cases[0].bugs.len(), 2);
+
+    // A record from before the field has no `bugs` key and reads as none.
+    let old: LocalRun = serde_json::from_str(&before).unwrap();
+    assert!(old.cases.iter().all(|c| c.bugs.is_empty()));
+
+    // A run that is gone, a case it does not hold, and a nonsense number are refused.
+    assert!(record_bug_at(tmp.path(), "run-1", 201, 1, "o", "p").is_err());
+    assert!(record_bug_at(tmp.path(), "run-1786000200000", 999, 1, "o", "p").is_err());
+    assert!(record_bug_at(tmp.path(), "run-1786000200000", 201, 0, "o", "p").is_err());
+}
+
+/// A run already sent to Azure DevOps still takes the bug, and stays sent.
+#[test]
+fn a_bug_can_be_recorded_on_a_run_that_was_already_sent() {
+    use v2_lib::commands::autorun::record_bug_at;
+    let tmp = TempDir::new();
+    let mut run = run_of(SHOT);
+    run.published = Some(serde_json::from_value(serde_json::json!({
+        "run_id": 9, "web_url": "https://dev.azure.com/o/p/_testManagement/runs?runId=9", "at": "1786000300000"
+    })).unwrap());
+    save_run(tmp.path(), &run).unwrap();
+    record_bug_at(tmp.path(), "run-1786000200000", 201, 31, "o", "p").unwrap();
+    let back = v2_lib::autorun::store::load_run(tmp.path(), "run-1786000200000").unwrap().unwrap();
+    assert!(back.published.is_some());
+    assert_eq!(back.cases[0].bugs.len(), 1);
+}

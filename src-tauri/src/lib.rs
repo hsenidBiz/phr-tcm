@@ -272,6 +272,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_flaky_cases,
             autorun::auto_run_flaky_marks,
             autorun::auto_run_set_flaky,
+            autorun::auto_run_record_bug,
             autorun_divergence::auto_run_load_divergences,
             autorun_divergence::auto_run_rule_divergence,
             autorun_divergence::auto_run_undo_divergence_ruling,
