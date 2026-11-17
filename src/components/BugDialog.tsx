@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import {
   commands,
@@ -129,6 +129,7 @@ export default function BugDialog({
   onFiled: (bugId: number) => void;
 }) {
   const qc = useQueryClient();
+  const titleId = useId();
   // A Shared Steps reference has no text of its own: it is named, with its
   // title when a screen has already read it.
   const stepLine = (s: Step, i: number) =>
@@ -263,9 +264,9 @@ export default function BugDialog({
     : [];
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-lg p-4">
+    <Modal onClose={onClose} labelledBy={titleId} className="w-full max-w-lg p-4">
       <div className="space-y-3" onPaste={onPaste}>
-      <h2 className="text-sm font-semibold text-text">File a bug</h2>
+      <h2 id={titleId} className="text-sm font-semibold text-text">File a bug</h2>
       <Input
         aria-label="Bug title"
         className="w-full"
