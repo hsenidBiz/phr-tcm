@@ -277,7 +277,8 @@ fn bare_host_path(core: &str, before: &str) -> Option<String> {
         None => (authority, false),
     };
     let labels: Vec<&str> = host.split('.').collect();
-    if labels.len() < 2 || labels.iter().any(|l| l.is_empty() || !l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
+    let machine = labels.len() == 1 && single_label_host(host);
+    if (labels.len() < 2 && !machine) || labels.iter().any(|l| l.is_empty() || !l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
         return None;
     }
     let ipv4 = labels.len() == 4
@@ -287,9 +288,45 @@ fn bare_host_path(core: &str, before: &str) -> Option<String> {
     let tld = (2..=24).contains(&last.len())
         && last.bytes().all(|b| b.is_ascii_alphabetic())
         && !FILE_EXTENSIONS.contains(&last.to_ascii_lowercase().as_str());
-    if !(ipv4 || (tld && (rest.is_some() || has_port))) {
+    if !(machine || ipv4 || (tld && (rest.is_some() || has_port)) || (rest.is_none() && !has_port && bare_name(&labels))) {
         return None;
     }
     let path = rest.unwrap_or("/").split(['?', '#']).next().unwrap_or("");
     Some(if path.is_empty() { "/".to_string() } else { path.to_string() })
+}
+
+/// Last labels a name written alone (no path, no port) must end in to be a
+/// host: well-known domains and the ones networks keep inside (`.local`).
+/// Short country codes (`in`, `us`, `de`) and words that end code names
+/// (`info`, `app`, `dev`, `local`: `log.info`, `this.app`) are left out; with a
+/// scheme, a path or a port a name needs no such list.
+const HOST_TLDS: &[&str] = &[
+    "com", "net", "org", "edu", "gov", "io", "lk", "uk", "biz", "cloud", "internal", "corp", "lan", "intranet",
+];
+
+/// Whether a dotted name with nothing after it is a host: every label lower
+/// case (so `ASP.NET` and `Class.Method` are words), the last one in
+/// `HOST_TLDS`, and the first one two characters or more with a letter in it
+/// (`e.g`, `1.com` are not).
+fn bare_name(labels: &[&str]) -> bool {
+    let Some(last) = labels.last() else { return false };
+    HOST_TLDS.contains(last)
+        && labels.iter().all(|l| !l.bytes().any(|b| b.is_ascii_uppercase()))
+        && labels[0].len() >= 2
+        && labels[0].bytes().any(|b| b.is_ascii_alphabetic())
+}
+
+/// Words a machine's name ends in before its number: `qa-server01`, `uat-web2`.
+const MACHINE_WORDS: &[&str] = &["server", "srv", "host", "web", "app", "db", "sql", "vm", "node"];
+
+/// Whether a one-label name is a machine's: lower case letters, digits and
+/// hyphens, ending in a machine word followed by digits (`server01`).
+/// `test-3`, `step-12` and `utf-8` are words.
+fn single_label_host(label: &str) -> bool {
+    if label.is_empty() || !label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        return false;
+    }
+    let last = label.rsplit('-').next().unwrap_or("");
+    let letters = last.trim_end_matches(|c: char| c.is_ascii_digit());
+    letters.len() < last.len() && MACHINE_WORDS.contains(&letters)
 }

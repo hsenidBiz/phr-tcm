@@ -193,6 +193,20 @@ pub async fn record_point_outcome(
     }
     if let Some(files) = &outcome.attachments {
         for att in files {
+            // Rust is the boundary: whatever the page let through is checked
+            // again, and a refusal names the file, never a path.
+            let shown = std::path::Path::new(&att.file_name)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "a file".into());
+            if let Err(why) = crate::commands::bugs::refuse_result_attachment(&att.file_name, &att.b64) {
+                crate::applog::warn(format!(
+                    "run {run_id}: attachment {shown} for point {} was refused: {why}",
+                    outcome.point_id
+                ));
+                extras_failed.push(format!("{shown} (test point {}) - {why}", outcome.point_id));
+                continue;
+            }
             if let Err(e) = client
                 .add_result_attachment(
                     organization,

@@ -235,6 +235,11 @@ pub async fn attach_screenshots(
             failed += 1;
             continue;
         };
+        if let Err(why) = refuse_attachment(&format!("bug-{id}-{n}.png"), bytes.len() as u64, MAX_PICKED_FILE) {
+            crate::applog::warn(format!("bug {id}: screenshot {n} was not uploaded - {why}"));
+            failed += 1;
+            continue;
+        }
         let ext = match bug_image_ext(&bytes) {
             Ok(ext) => ext,
             Err(why) => {
@@ -263,6 +268,118 @@ pub async fn attach_screenshots(
     failed
 }
 
+/// The most a file picked for attaching may be.
+pub const MAX_PICKED_FILE: u64 = 25 * 1024 * 1024;
+
+/// The most one result attachment may be when it reaches Rust (Azure DevOps
+/// refuses a test attachment over 100 MB; a screen recording can be large).
+pub const MAX_RESULT_FILE: u64 = 100 * 1024 * 1024;
+
+/// The one check a file to attach passes, whichever way it arrives (picked
+/// from disk or sent by the page): its name is a bare file name, it is not
+/// empty and it is no larger than `max` bytes. The sentences name no path.
+pub fn refuse_attachment(file_name: &str, size: u64, max: u64) -> Result<(), String> {
+    // A path separator or a drive prefix (`C:name`) makes it a path, not a name.
+    let drive = file_name.as_bytes().get(1) == Some(&b':') && file_name.as_bytes()[0].is_ascii_alphabetic();
+    if file_name.trim().is_empty()
+        || drive
+        || file_name.contains(['/', '\\', ':'])
+        || file_name.chars().any(char::is_control)
+    {
+        return Err("The file's name can't be used - rename it and attach it again.".into());
+    }
+    if size == 0 {
+        return Err("The file is empty.".into());
+    }
+    if size > max {
+        return Err(format!("File is larger than {} MB.", max / (1024 * 1024)));
+    }
+    Ok(())
+}
+
+/// `refuse_attachment` for a file that is already base64 in the page, and
+/// the same image test the bug dialog's upload makes: a picture (by its
+/// name) that is cut off or is not an image is refused. Other files go up
+/// as they are.
+pub fn refuse_result_attachment(file_name: &str, b64: &str) -> Result<(), String> {
+    use base64::Engine;
+    let b64 = b64.trim();
+    let padding = b64.bytes().rev().take_while(|b| *b == b'=').count() as u64;
+    let size = (b64.len() as u64 / 4 * 3).saturating_sub(padding);
+    refuse_attachment(file_name, size, MAX_RESULT_FILE)?;
+    let ext = std::path::Path::new(file_name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp")) {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|_| "The picture's data is damaged.".to_string())?;
+        // A JPEG may carry data after its end marker (a motion photo's
+        // video): it only has to be whole. Pasted screenshots stay strict.
+        let whole_jpeg = jpeg_main_image_ends(&bytes);
+        if !whole_jpeg {
+            bug_image_ext(&bytes).map_err(|why| format!("The picture can't be attached: {why}."))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a JPEG's main image is complete: its top-level segments are
+/// walked by their lengths (so an EXIF thumbnail, which sits inside an APP
+/// segment with its own end marker, is skipped), then the image data after
+/// the first top-level start-of-scan is read until an end-of-image marker.
+/// Bytes after that marker (a motion photo's video) are allowed. A photo
+/// cut off part-way has no end marker after its scan data and is refused.
+pub fn jpeg_main_image_ends(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return false;
+    }
+    let mut i = 2;
+    // Top-level segments up to the first start-of-scan.
+    loop {
+        // Fill bytes (0xFF repeated) may pad between segments.
+        while i < bytes.len() && bytes[i] == 0xff && bytes.get(i + 1) == Some(&0xff) {
+            i += 1;
+        }
+        if i + 4 > bytes.len() || bytes[i] != 0xff {
+            return false;
+        }
+        let marker = bytes[i + 1];
+        let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        if len < 2 || i + 2 + len > bytes.len() {
+            return false;
+        }
+        i += 2 + len;
+        if marker == 0xda {
+            break;
+        }
+        if marker == 0xd9 {
+            return false;
+        }
+    }
+    // Entropy-coded data: 0xFF00 is a stuffed byte and 0xFFD0-0xFFD7 are
+    // restart markers; a progressive image has further segments (tables,
+    // more scans) with lengths; 0xFFD9 ends the image.
+    while i + 1 < bytes.len() {
+        if bytes[i] != 0xff {
+            i += 1;
+            continue;
+        }
+        match bytes[i + 1] {
+            0x00 | 0xff | 0xd0..=0xd7 => i += 2,
+            0xd9 => return true,
+            _ => {
+                let Some(len) = bytes.get(i + 2..i + 4).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize) else {
+                    return false;
+                };
+                if len < 2 {
+                    return false;
+                }
+                i += 2 + len;
+            }
+        }
+    }
+    false
+}
+
 /// Read any file for attaching to a result (name + base64 bytes).
 #[tauri::command(async)]
 #[specta::specta]
@@ -274,14 +391,12 @@ pub fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
     if meta.is_dir() {
         return Err("Folders can't be attached - attach the files inside it.".into());
     }
-    if meta.len() > 25 * 1024 * 1024 {
-        return Err("File is larger than 25 MB.".into());
-    }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let file_name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "attachment".into());
+    refuse_attachment(&file_name, meta.len(), MAX_PICKED_FILE)?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     Ok(RunAttachmentOut {
         file_name,
         b64: base64::engine::general_purpose::STANDARD.encode(&bytes),

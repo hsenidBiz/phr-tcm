@@ -721,3 +721,114 @@ fn an_unreadable_file_does_not_stop_the_other_file() {
     let cc = out.iter().find(|o| o.tool == "Claude Code").expect("Claude Code is reported");
     assert!(!cc.applied && cc.note.contains("settings.local.json"), "{cc:?}");
 }
+
+// ------------------------------------------------------------ a file two programs write
+
+/// A rule another program (Claude Code) writes between this app reading the
+/// file and writing it is not lost: the app reads again before it writes and
+/// starts over on the new text.
+#[test]
+fn a_rule_written_between_the_read_and_the_write_survives() {
+    use v2_lib::ai_tools::update_file_safely;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.local.json");
+    std::fs::write(&path, r#"{"permissions":{"allow":["Bash(ls)"]}}"#).unwrap();
+    let mut injected = false;
+    let mut edits = 0;
+    let wrote = update_file_safely(
+        &path,
+        &mut |existing| {
+            edits += 1;
+            let mut v: Value = serde_json::from_str(existing).unwrap();
+            v["permissions"]["allow"].as_array_mut().unwrap().push(json!("mcp__tcm__db_query"));
+            Ok(Some(serde_json::to_string_pretty(&v).unwrap()))
+        },
+        &mut |_next| {
+            if !injected {
+                injected = true;
+                // Claude Code's write, after this app read the file.
+                std::fs::write(&path, r#"{"permissions":{"allow":["Bash(ls)","Bash(pwd)"]}}"#).unwrap();
+            }
+            Ok(())
+        },
+        &mut || {},
+    )
+    .unwrap();
+    assert!(wrote);
+    assert_eq!(edits, 2, "the edit ran again on the changed file");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["permissions"]["allow"], json!(["Bash(ls)", "Bash(pwd)", "mcp__tcm__db_query"]));
+}
+
+/// The app's entries go in without the file being laid out again: the indent,
+/// the line endings, the final line break and the key order are the person's.
+#[test]
+fn the_files_layout_and_key_order_are_kept() {
+    let original = "{\r\n    \"model\": \"opus\",\r\n    \"permissions\": {\r\n        \"allow\": [\r\n            \"Bash(ls)\"\r\n        ]\r\n    },\r\n    \"env\": {\r\n        \"A\": \"1\"\r\n    }\r\n}\r\n";
+    let m = machine(Some(original));
+    m.apply(&state(false, auto_run_on(), &[]));
+    let text = m.text();
+    assert!(text.starts_with("{\r\n    \"model\": \"opus\",\r\n    \"permissions\": {\r\n        \"allow\": [\r\n            \"Bash(ls)\","), "{text}");
+    assert!(text.ends_with("\"A\": \"1\"\r\n    }\r\n}\r\n"), "{text}");
+    assert!(text.find("\"model\"").unwrap() < text.find("\"permissions\"").unwrap());
+    assert!(text.find("\"permissions\"").unwrap() < text.find("\"env\"").unwrap());
+    assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES));
+    // A tab-indented file stays tab-indented.
+    let tabs = machine(Some("{\n\t\"permissions\": {\n\t\t\"allow\": [\"Bash(ls)\"]\n\t}\n}\n"));
+    tabs.apply(&state(false, auto_run_on(), &[]));
+    assert!(tabs.text().contains("\n\t\"permissions\": {\n\t\t\"allow\": [\n\t\t\t\"Bash(ls)\""), "{}", tabs.text());
+}
+
+/// A pass whose write failed is tried again after each wait, and stops once
+/// the files are written - here the file is fixed before the second try - or
+/// once a newer pass has run.
+#[test]
+fn a_failed_write_is_retried_on_a_timer_and_then_given_up() {
+    use v2_lib::commands::ai_tools::{retry_allow_writes, ALLOW_RETRY_WAITS_MS};
+    assert!(ALLOW_RETRY_WAITS_MS.len() <= 5 && ALLOW_RETRY_WAITS_MS.iter().all(|w| *w >= 30_000));
+    let m = machine(Some("{ not json"));
+    let st = state(false, auto_run_on(), &[]);
+    let mut waited = Vec::new();
+    let ok = retry_allow_writes(&m.tools, &st, Some(&m.dir()), m.data.path(), &|| true, &[30_000, 30_000, 60_000], &mut |d| {
+        waited.push(d.as_millis() as u64);
+        if waited.len() == 2 {
+            // Whoever held the file repairs it before the second retry.
+            std::fs::write(m.file(), "{}").unwrap();
+        }
+    });
+    assert!(ok);
+    assert_eq!(waited, vec![30_000, 30_000], "it stopped after the write worked");
+    assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES));
+    // A file that never gets better is tried each wait and then left.
+    let bad = machine(Some("{ not json"));
+    let mut tries = 0;
+    let ok = retry_allow_writes(&bad.tools, &st, Some(&bad.dir()), bad.data.path(), &|| true, &[1, 1, 1], &mut |_| tries += 1);
+    assert!(!ok);
+    assert_eq!(tries, 3);
+    assert_eq!(bad.text(), "{ not json");
+    // A newer pass ends the retry without touching the file.
+    let mut tries = 0;
+    assert!(retry_allow_writes(&bad.tools, &st, Some(&bad.dir()), bad.data.path(), &|| false, &[1, 1], &mut |_| tries += 1));
+    assert_eq!(tries, 1);
+}
+
+/// A retry that wakes after a newer pass has taken rules out does not put
+/// them back: the newer pass is judged under the files' lock.
+#[test]
+fn a_retry_gives_way_to_a_pass_that_ran_while_it_waited() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use v2_lib::commands::ai_tools::retry_allow_writes;
+    let m = machine(Some("{}"));
+    let newest = AtomicBool::new(true);
+    let ok = retry_allow_writes(
+        &m.tools,
+        &state(false, auto_run_on(), &[]),
+        Some(&m.dir()),
+        m.data.path(),
+        &|| newest.load(Ordering::SeqCst),
+        &[1],
+        &mut |_| newest.store(false, Ordering::SeqCst),
+    );
+    assert!(ok);
+    assert!(has_none(&m.allow(), CLAUDE_AUTORUN_RULES), "{:?}", m.allow());
+}

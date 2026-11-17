@@ -289,3 +289,76 @@ fn read_file_b64_refuses_an_oversize_file_without_naming_it() {
     assert_eq!(err, "File is larger than 25 MB.");
     assert!(!err.contains("secret-name"));
 }
+
+#[test]
+fn a_result_attachment_is_checked_in_rust_without_naming_a_path() {
+    use base64::Engine;
+    use v2_lib::commands::bugs::{refuse_attachment, refuse_result_attachment, MAX_RESULT_FILE};
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    // An allowed file goes through: a log, and a real picture.
+    assert!(refuse_result_attachment("run.log", &b64(b"hello")).is_ok());
+    let whole_png: Vec<u8> = [&PNG[..8], &[0, 0, 0, 0], b"IEND".as_slice(), &[0xae, 0x42, 0x60, 0x82]].concat();
+    assert!(refuse_result_attachment("shot.png", &b64(&whole_png)).is_ok());
+    // Over the cap: refused from the size alone, no data decoded.
+    let over = "A".repeat((MAX_RESULT_FILE as usize / 3 + 4) * 4);
+    let err = refuse_result_attachment("big.bin", &over).unwrap_err();
+    assert_eq!(err, "File is larger than 100 MB.");
+    assert!(refuse_attachment("x.bin", 25 * 1024 * 1024 + 1, 25 * 1024 * 1024).is_err());
+    // Empty, and a name that is a path or a folder: refused, the path never in the sentence.
+    assert_eq!(refuse_result_attachment("empty.txt", "").unwrap_err(), "The file is empty.");
+    let windows_path = ["C:", "secret", "dir", "a.txt"].join(&String::from('\u{5c}'));
+    let drive_relative = format!("C{}secret.txt", ':');
+    for name in [windows_path.as_str(), drive_relative.as_str(), "../../etc/passwd", "folder/"] {
+        let err = refuse_result_attachment(name, &b64(b"x")).unwrap_err();
+        assert!(!err.contains("secret") && !err.contains("etc"), "{err}");
+    }
+    // A picture that is not a picture (a disallowed type for that name) is refused.
+    let err = refuse_result_attachment("fake.png", &b64(b"MZ not an image")).unwrap_err();
+    assert!(err.starts_with("The picture can't be attached"), "{err}");
+    assert!(refuse_result_attachment("fake.png", "!!!not base64!!!").is_err());
+}
+
+#[test]
+fn read_file_b64_refuses_an_empty_file_and_passes_an_allowed_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = dir.path().join("empty.txt");
+    std::fs::write(&empty, b"").unwrap();
+    assert_eq!(v2_lib::commands::bugs::read_file_b64(empty.to_string_lossy().into()).err().unwrap(), "The file is empty.");
+    let ok = dir.path().join("notes.txt");
+    std::fs::write(&ok, b"hello").unwrap();
+    let got = v2_lib::commands::bugs::read_file_b64(ok.to_string_lossy().into()).unwrap();
+    assert_eq!(got.file_name, "notes.txt");
+}
+
+#[test]
+fn a_jpeg_with_data_after_its_end_is_allowed_for_a_result_but_a_cut_one_is_not() {
+    use base64::Engine;
+    use v2_lib::commands::bugs::refuse_result_attachment;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    // A camera photo: an APP1 (EXIF) segment holding a thumbnail with its own
+    // start and end markers, then the main image's scan and data.
+    let thumb: &[u8] = &[0xff, 0xd8, 0xff, 0xda, 0x00, 0x02, 9, 9, 0xff, 0xd9];
+    let app1_len = (2 + thumb.len()) as u16;
+    let head: Vec<u8> = [&[0xff, 0xd8, 0xff, 0xe1][..], &app1_len.to_be_bytes(), thumb].concat();
+    let scan: &[u8] = &[0xff, 0xda, 0x00, 0x08, 1, 1, 0, 0, 0x3f, 0];
+    let data: &[u8] = &[0x12, 0xff, 0x00, 0x34, 0xff, 0xd0, 0x56];
+    let whole: Vec<u8> = [&head[..], scan, data, &[0xff, 0xd9]].concat();
+    assert!(v2_lib::commands::bugs::jpeg_main_image_ends(&whole));
+    assert!(refuse_result_attachment("photo.jpg", &b64(&whole)).is_ok());
+    // A motion photo: video bytes after the main image's end.
+    let motion: Vec<u8> = [&whole[..], b"ftypmp4 video bytes \xff\xda\xff\xd9"].concat();
+    assert!(refuse_result_attachment("photo.jpg", &b64(&motion)).is_ok());
+    // Cut off part-way: the thumbnail's end marker must not make it pass.
+    let cut: Vec<u8> = [&head[..], scan, data].concat();
+    assert!(!v2_lib::commands::bugs::jpeg_main_image_ends(&cut));
+    assert!(refuse_result_attachment("photo.jpg", &b64(&cut)).is_err());
+    let header_only = [0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4];
+    assert!(refuse_result_attachment("photo.jpg", &b64(&header_only)).is_err());
+}
+
+#[test]
+fn a_bug_screenshot_over_the_cap_is_counted_as_failed() {
+    use v2_lib::commands::bugs::{refuse_attachment, MAX_PICKED_FILE};
+    assert!(refuse_attachment("bug-1-1.png", MAX_PICKED_FILE + 1, MAX_PICKED_FILE).is_err());
+    assert!(refuse_attachment("bug-1-1.png", 10, MAX_PICKED_FILE).is_ok());
+}
