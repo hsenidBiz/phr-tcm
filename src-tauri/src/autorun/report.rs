@@ -1348,7 +1348,10 @@ pub fn build_smart(
     // ---- The page.
     let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery }));
     let head_js = HEAD_JS;
-    let app_js = SCRIPT;
+    // A checkout may have turned the file's line ends into CRLF; a browser reads a script's CRLF
+    // as LF before it hashes it, so the hash is of the LF text, and that is the text written.
+    let app_js_lf = SCRIPT.replace("\r\n", "\n");
+    let app_js = app_js_lf.as_str();
     let (accent_l, accent_d) = palette.accents();
     let mut accent = String::new();
     if let Some(a) = accent_l {
