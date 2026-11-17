@@ -155,3 +155,31 @@ async fn the_writing_start_points_at_get_current_pbi_first() {
     let note = v["note"].as_str().unwrap();
     assert!(note.contains("get_current_pbi") && note.contains(CONFIRM), "{note}");
 }
+
+#[tokio::test]
+async fn get_current_pbi_carries_the_autorun_mode_only_when_it_is_known() {
+    use v2_lib::app_settings::AutorunMode;
+    // Known: in the JSON, and in the sentence when no PBI is selected.
+    let ctx = BridgeContext { current_pbi: Some(pbi()), autorun_mode: Some(AutorunMode::Simple), ..BridgeContext::default() };
+    let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["autorun_mode"], "simple");
+    assert_eq!(v["id"], 4321);
+    let ctx = BridgeContext { autorun_mode: Some(AutorunMode::Advanced), ..BridgeContext::default() };
+    let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    assert_eq!(body, "No PBI is selected in TCM. Auto Run mode: advanced.");
+    // Unknown: exactly what it always answered.
+    let ctx = BridgeContext { current_pbi: Some(pbi()), ..BridgeContext::default() };
+    let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    assert!(!body.contains("autorun_mode"), "{body}");
+}
+
+#[test]
+fn the_tool_passes_the_bridges_mode_through_untouched() {
+    let call = |_: &str, _: &str, _: &str| Ok((200, r#"{"id":1,"title":"t","project":"p","autorun_mode":"simple"}"#.to_string()));
+    let call = &crate::common::dev_app(&call);
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_current_pbi","arguments":{}}}"#;
+    let resp = v2_lib::mcp::handle_message(req, "1.0.0", call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(r#""autorun_mode":"simple""#));
+}

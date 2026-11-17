@@ -119,7 +119,7 @@ fn the_guide_tells_assistants_what_simple_mode_hides() {
         g.contains("do not send them to Discovery, Components, Fixtures or the sign-in recipe"),
         "an assistant must not send a Simple person to a hidden control"
     );
-    assert!(g.contains("autorun_mode"), "the guide names the field an assistant reads");
+    assert!(g.contains("autorun_mode") && g.contains("`get_current_pbi` also says"), "the guide names where an assistant reads the mode");
 }
 
 /// The two API checks have limits an assistant cannot guess: what each one

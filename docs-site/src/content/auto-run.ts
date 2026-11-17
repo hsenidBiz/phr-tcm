@@ -84,8 +84,8 @@ export const autoRun: Screen = {
     },
     {
       id: MODE,
-      route: [NAV, READY, { waitFor: { role: "group", name: "Auto Run mode" } }],
-      alt: "The top of Auto Run with the Simple and Advanced switch at the right, above the Assistants and the cases",
+      route: [NAV, READY, { click: { role: "button", name: "Simple" } }, { waitFor: { css: '[aria-label="Auto Run mode"] [aria-pressed="true"]' } }, { waitFor: { role: "list", name: "Setup summary" } }],
+      alt: "The top of Auto Run in Simple mode, with the Simple and Advanced switch at the right, above the Assistants and the cases",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], size: TALL, alt: "Two scripted cases selected, with the buttons that run them" },
     {

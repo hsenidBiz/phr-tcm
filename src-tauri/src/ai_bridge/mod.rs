@@ -507,10 +507,24 @@ pub fn call_time_line(method: &str, target: &str, status: u16, ms: u128) -> Stri
 
 /// What `get_current_pbi` answers: the PBI as JSON, or a plain sentence when
 /// the person has none selected in TCM.
+///
+/// Both also say which Auto Run mode the person is in once the webview has
+/// pushed it (`autorun_mode` in the JSON, a closing sentence otherwise), so an
+/// assistant, which reads only this tool, can tell what the person can see.
 fn current_pbi_answer(ctx: &BridgeContext) -> String {
+    let mode = ctx.autorun_mode.and_then(|m| serde_json::to_value(m).ok());
     match &ctx.current_pbi {
-        Some(p) => serde_json::json!({ "id": p.id, "title": p.title, "project": p.project }).to_string(),
-        None => "No PBI is selected in TCM.".to_string(),
+        Some(p) => {
+            let mut v = serde_json::json!({ "id": p.id, "title": p.title, "project": p.project });
+            if let Some(m) = mode {
+                v["autorun_mode"] = m;
+            }
+            v.to_string()
+        }
+        None => match mode.as_ref().and_then(|m| m.as_str()) {
+            Some(m) => format!("No PBI is selected in TCM. Auto Run mode: {m}."),
+            None => "No PBI is selected in TCM.".to_string(),
+        },
     }
 }
 

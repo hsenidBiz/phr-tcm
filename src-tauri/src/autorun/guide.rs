@@ -1128,8 +1128,9 @@ the PBI id it was given.
 
 ## Simple mode
 
-The status answer's `autorun_mode` says whether the person has Auto Run's Simple or Advanced
-screen. You can read it; you cannot change it. The person may be in Simple mode: do not send them
+`get_current_pbi` also says, once the app has told it, whether the person has Auto Run's Simple or
+Advanced screen (`autorun_mode`, or "Auto Run mode: simple." when no PBI is selected). You can read
+it; you cannot change it. The person may be in Simple mode: do not send them
 to Discovery, Components, Fixtures or the sign-in recipe; offer to do it, or ask them to switch to
 Advanced. Simple also hides Replay to step, Import scripts and Clear scripts, and shows a script
 read-only. A person in Simple mode still sees what stops a run, so say what you did about it in

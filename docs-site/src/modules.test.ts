@@ -156,15 +156,25 @@ describe("the content", () => {
   });
 });
 
+/** The exact phrases the Auto Run mode is named by, longest first. Nothing
+ * else may say "advanced". */
+const MODE_PHRASES = ["Switch to Advanced to edit.", "Simple and Advanced", "switch to Advanced", "**Advanced**"];
+const withoutModePhrases = (t: string) => MODE_PHRASES.reduce((acc, p) => acc.split(p).join(""), t);
+
 describe("the Modules section and the old switch", () => {
   const text = JSON.stringify({ screens, recipes, intro });
 
+  test("the mode's phrases are taken out, and a stray advanced next to them is not", () => {
+    expect(withoutModePhrases("Press **Advanced** to switch to Advanced.")).not.toMatch(/\badvanced\b/i);
+    expect(withoutModePhrases("Simple and Advanced. Open the advanced options.")).toMatch(/\badvanced\b/i);
+    expect(withoutModePhrases(text.replace("Hide setup details", "Hide advanced setup details"))).toMatch(/\badvanced\b/i);
+  });
+
   test("no help text names the Advanced Features switch", () => {
     expect(text).not.toMatch(/advanced feature/i);
-    // Auto Run's Simple/Advanced screen mode is named in its own section and
-    // nowhere else; the old switch's word stays out of every other screen.
-    const elsewhere = JSON.stringify({ screens: screens.filter((s) => s.id !== "auto-run"), recipes, intro });
-    expect(elsewhere).not.toMatch(/\badvanced\b/i);
+    // The bare word is banned on every screen, Auto Run included, once the
+    // exact phrases of Auto Run's Simple/Advanced mode are taken out.
+    expect(withoutModePhrases(text)).not.toMatch(/\badvanced\b/i);
   });
 
   test("Settings documents the Modules page with the app's own wording", () => {

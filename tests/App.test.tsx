@@ -494,6 +494,26 @@ test("the API Templates tab opens from the rail with no In Development pill", as
 // and resetting modules in THIS file would hand every screen lazily loaded
 // afterwards a second copy of the stores (the tour's among them).
 
+test("the bridge push carries the Auto Run mode the settings hold", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  localStorage.setItem("tcm-v2-prefs", JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }));
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "get_app_settings") return { autorun_mode: "simple" };
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ switches: expect.objectContaining({ autorunMode: "simple" }) }),
+  );
+});
+
 test("signing in starts the AI bridge and pushes org/project context", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   let bridgeStarted = 0;

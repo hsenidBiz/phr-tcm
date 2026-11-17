@@ -14,6 +14,7 @@ import {
   type AgentView,
   type AccountInput,
   type AuthStatus,
+  type AutorunMode,
   type CleanupLine_Serialize,
   type BoardData,
   type CaseHistory,
@@ -1095,9 +1096,19 @@ function applyPatches() {
     },
   ];
 
+  const demoPw = playwrightPatches({ getAppSettings: realGetAppSettings });
+  let demoAutorunMode: AutorunMode = "advanced";
   const patches = {
     // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
+    // Auto Run's Simple/Advanced mode lives in memory here, never in the
+    // settings file: every shot starts in Advanced (a reload resets it), and
+    // the one that documents the switch clicks Simple.
+    getAppSettings: async () => ({ ...(await demoPw.getAppSettings()), autorun_mode: demoAutorunMode }),
+    setAutorunMode: async (mode: AutorunMode) => {
+      demoAutorunMode = mode;
+      return ok({ ...(await demoPw.getAppSettings()), autorun_mode: demoAutorunMode });
+    },
     // Every module on but the one held back (see DEMO_MODULES), so the
     // sample app shows everything (and the help
     // site documents it); a click on a module is answered here and never

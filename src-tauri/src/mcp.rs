@@ -565,7 +565,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         guide_tool(&disabled),
         {
             "name": "get_current_pbi",
-            "description": "The PBI the person has selected in Test Case Manager's top bar: its id, title and project, or a plain sentence saying none is selected. Read only; it never changes the selection. Call it before searching for a PBI. If the person named a PBI, compare it with this one; if they named none and TCM has one, name it to them (\"PBI <id>, <title>, is selected in TCM - is that the one?\") and wait for their yes before you go on.",
+            "description": "The PBI the person has selected in Test Case Manager's top bar: its id, title and project, or a plain sentence saying none is selected, and once the app has told it, which Auto Run mode the person has (simple or advanced; you cannot change it). Read only; it never changes the selection. Call it before searching for a PBI. If the person named a PBI, compare it with this one; if they named none and TCM has one, name it to them (\"PBI <id>, <title>, is selected in TCM - is that the one?\") and wait for their yes before you go on.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
