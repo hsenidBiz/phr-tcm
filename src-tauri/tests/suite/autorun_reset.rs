@@ -411,18 +411,14 @@ fn the_report_shows_the_reset_line_between_the_cases() {
     );
     let html = report::build_with_downloads(&run, &[], "", &|_| false, &|_| None);
     let line = "Reset: revert &quot;cycle &lt;published&gt;&quot; - stopped";
-    let at = html.find(line).unwrap_or_else(|| panic!("no reset line in {html}"));
-    // Between case 1 and case 2 in the cases table.
-    let one = html.find("<td class=\"id\">#1</td>").unwrap();
-    let two = html.find("<td class=\"id\">#2</td>").unwrap();
+    let _ = html.find(line).unwrap_or_else(|| panic!("no reset line in {html}"));
+    // Between case 1 and case 2 in the All cases list.
+    let all = html.find("id=\"list-all\"").unwrap();
+    let one = html.find("data-list=\"all\" data-id=\"1\"").unwrap();
+    let two = html.find("data-list=\"all\" data-id=\"2\"").unwrap();
+    let at = html[all..].find(line).unwrap() + all;
     assert!(one < at && at < two, "{html}");
     assert!(html.contains("Reset: revert &quot;rota&quot; - stopped"));
-    // And between the two in the detail.
-    let detail = html.find("<h2>Cases in detail</h2>").unwrap();
-    let later = html[detail..].find(line).unwrap() + detail;
-    let one_d = html[detail..].find("#1</span>").unwrap() + detail;
-    let two_d = html[detail..].find("#2</span>").unwrap() + detail;
-    assert!(one_d < later && later < two_d);
     // A run with no resets shows none.
     let none = report::build_with_downloads(&new_run("run-plain"), &[], "", &|_| false, &|_| None);
     assert!(!none.contains("Reset: revert"));
@@ -632,10 +628,10 @@ fn the_report_shows_batches_and_the_pauses_between_them() {
     assert_eq!(report::batch_heading(&run, 3), None);
     let html = report::build_with_downloads(&run, &[], "", &|_| false, &|_| None);
     let b1 = html.find(">Batch 1<").unwrap_or_else(|| panic!("no Batch 1 in {html}"));
-    let one = html.find("<td class=\"id\">#1</td>").unwrap();
+    let one = html.find("data-list=\"all\" data-id=\"1\"").unwrap();
     let b2 = html.find(">Batch 2<").unwrap();
     let set = html.find("Set Approval workflow to OFF - continued").unwrap();
-    let two = html.find("<td class=\"id\">#2</td>").unwrap();
+    let two = html.find("data-list=\"all\" data-id=\"2\"").unwrap();
     assert!(b1 < one && one < b2 && b2 < set && set < two, "{html}");
 
     // Before Batch 1 the line asks to make sure.

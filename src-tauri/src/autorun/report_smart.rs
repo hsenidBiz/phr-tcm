@@ -97,8 +97,14 @@ fn normalise(text: &str, keep_quoted: bool) -> String {
     let mut quoted_out = String::with_capacity(scrubbed.len());
     let mut in_quote = false;
     let mut quote = String::new();
-    for c in scrubbed.chars() {
-        if c == '"' {
+    let mut chars = scrubbed.chars().peekable();
+    while let Some(c) = chars.next() {
+        // The browser's messages are Debug-formatted: an inner quote is `\"`.
+        if in_quote && c == '\\' && chars.peek() == Some(&'"') {
+            quote.push(c);
+            quote.push('"');
+            chars.next();
+        } else if c == '"' {
             if in_quote {
                 if keep_quoted {
                     quoted_out.push_str(&quote);
@@ -162,12 +168,40 @@ pub struct Cluster {
     pub cause: String,
     /// The cases, in the order the run had them.
     pub cases: Vec<i32>,
+    /// What a reader calls it: the failing action and the start of the
+    /// sentence, "Click button \"Apply\": button \"...\" not found".
+    pub title: String,
+    /// A real error line from the first of its cases, not normalised.
+    pub example: String,
 }
 
 impl Cluster {
-    /// What the filter's `cause:` and the case rows call it.
+    /// The short id the filter's `cause:` also takes (`c1`).
     pub fn label(&self) -> String {
         format!("c{}", self.number)
+    }
+}
+
+/// `text` cut to `max` characters with an ellipsis, on a character boundary.
+pub fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}\u{2026}", cut.trim_end())
+}
+
+fn readable_title(action: &str, cause: &str) -> String {
+    let cause = shorten(cause, 60);
+    let mut chars = action.chars();
+    let action: String = match chars.next() {
+        Some(f) => f.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    };
+    if action.is_empty() {
+        cause
+    } else {
+        format!("{}: {cause}", shorten(&action, 60))
     }
 }
 
@@ -200,7 +234,13 @@ pub fn clusters(
     let out = groups
         .into_iter()
         .enumerate()
-        .map(|(i, (action, cause, cases))| Cluster { number: i + 1, action, cause, cases })
+        .map(|(i, (action, cause, cases))| {
+            let example = failures
+                .get(&cases[0])
+                .map(|f| shorten(f.message.lines().next().unwrap_or("").trim(), 200))
+                .unwrap_or_default();
+            Cluster { number: i + 1, title: readable_title(&action, &cause), action, cause, cases, example }
+        })
         .collect();
     (out, failures)
 }
@@ -231,6 +271,10 @@ pub struct Timeline {
     /// failed, or the first step that ran more than twice its median in
     /// this environment's history - whichever comes first.
     pub anomaly: Option<usize>,
+    /// All the steps' durations added up, milliseconds.
+    pub total_ms: u64,
+    /// How long into the case the anomaly step began, milliseconds.
+    pub anomaly_at_ms: u64,
 }
 
 fn step_failed(step: &StepRecord) -> bool {
@@ -276,7 +320,9 @@ pub fn timeline(case: &CaseRecord, passes: &[&CaseRecord]) -> Timeline {
         });
     }
     let anomaly = steps.iter().position(|s| s.failed || s.slow);
-    Timeline { steps, anomaly }
+    let total_ms = steps.iter().filter_map(|s| s.ms).sum();
+    let anomaly_at_ms = anomaly.map_or(0, |i| steps[..i].iter().filter_map(|s| s.ms).sum());
+    Timeline { steps, anomaly, total_ms, anomaly_at_ms }
 }
 
 // ----------------------------------------------------------------------
@@ -299,7 +345,7 @@ pub const MIN_JUDGED_FOR_GRADE: usize = 3;
 /// ```
 ///
 /// A case that always passes scores 100; always failing, 0; passing every
-/// run but one at the very end, about 86 (B); alternating, 10 (F). The
+/// run but one at the very end, out of 10 judged runs, about 86 (B); alternating, 10 (F). The
 /// flips are what separate a case that failed twice in a row from one that
 /// keeps changing its mind. `None` for fewer than [`MIN_JUDGED_FOR_GRADE`].
 pub fn grade(judged: &[bool]) -> Option<char> {
@@ -353,8 +399,12 @@ pub struct CaseTrend {
     /// [`HISTORY_RUNS`]: `P`assed, `F`ailed, `B`locked, `N`ot run.
     pub strip: Vec<char>,
     pub grade: Option<char>,
+    /// How many of those runs were judged (Passed or Failed).
+    pub judged: usize,
+    /// How many times a judged run differed from the one before it.
+    pub flips: usize,
     /// The case passed and failed among its newest [`FLAKY_WINDOW`] runs in
-    /// this environment.
+    /// this environment (`flaky::flaky_cases_of`, as the Flaky list does).
     pub alternates: bool,
     /// The person marked the case's script flaky.
     pub marked: bool,
@@ -364,6 +414,14 @@ impl CaseTrend {
     /// Flaky in either sense.
     pub fn flaky(&self) -> bool {
         self.alternates || self.marked
+    }
+
+    /// How often the case changed its mind between judged runs, 0 to 100.
+    pub fn flip_percent(&self) -> u32 {
+        if self.judged < 2 {
+            return 0;
+        }
+        ((self.flips as f64 / (self.judged - 1) as f64) * 100.0).round() as u32
     }
 }
 
@@ -381,13 +439,18 @@ pub struct Compare {
     pub new_cases: Vec<i32>,
     /// In the previous run and not in this one.
     pub missing: Vec<i32>,
+    /// A title for every case named above (the newest run's own).
+    pub titles: HashMap<i32, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Trend<'a> {
-    /// Oldest first, the report's run last.
+    /// Runs of this PBI in this environment, oldest first, the report's run
+    /// last, at most [`HISTORY_RUNS`].
     pub points: Vec<RunPoint>,
     pub per_case: HashMap<i32, CaseTrend>,
+    /// Against the previous run of this PBI in this environment; `None` when
+    /// this is the first.
     pub compare: Option<Compare>,
     /// Each earlier passing record of a case in this environment, newest
     /// first - what the timeline's "slow" is judged against.
@@ -412,6 +475,11 @@ fn case_duration(case: &CaseRecord) -> u64 {
     }
 }
 
+/// How long `case` took, milliseconds; 0 when nothing was timed.
+pub fn duration_of(case: &CaseRecord) -> u64 {
+    case_duration(case)
+}
+
 fn point(run: &LocalRun, marked: &HashSet<i32>, current: bool) -> RunPoint {
     let c = counts(run);
     let flaky = run.cases.iter().filter(|x| case_bucket(x) == "Failed" && marked.contains(&x.case_id)).count();
@@ -432,41 +500,62 @@ fn point(run: &LocalRun, marked: &HashSet<i32>, current: bool) -> RunPoint {
 }
 
 /// The trends for `run` from every run on this machine (`runs`; `run`
-/// itself may be among them). Only runs in the same environment that
-/// started no later than `run` count, the newest [`HISTORY_RUNS`] - `run`
-/// included - oldest first. `marked` is the ids of the cases whose script
-/// is marked flaky.
+/// itself may be among them), all in `run`'s environment and none newer.
+///
+/// Two windows, on purpose. The run-level history (`points`, `compare`) is
+/// the newest [`HISTORY_RUNS`] runs of this PBI - another PBI's runs are a
+/// different suite and would only muddy the charts and the comparison. A
+/// case's own history (strip, grade, flaky marker, the runs its slow-step
+/// baseline comes from) is that case's own newest [`HISTORY_RUNS`] runs in
+/// the environment, whatever PBI made them, and its flaky marker is the
+/// app's own (`flaky::flaky_cases_of` over every run of the environment), so
+/// the report and the Flaky list never disagree.
+///
+/// `marked` is the ids of the cases whose script is marked flaky.
 pub fn trend<'a>(run: &'a LocalRun, runs: &'a [LocalRun], marked: &[i32]) -> Trend<'a> {
     let marked_set: HashSet<i32> = marked.iter().copied().collect();
     let mine = started(run);
-    let mut earlier: Vec<&LocalRun> = runs
+    let mut env: Vec<&LocalRun> = runs
         .iter()
         .filter(|r| r.id != run.id && r.environment == run.environment && started(r) <= mine)
         .collect();
-    earlier.sort_by(|a, b| started(a).cmp(&started(b)).then_with(|| a.started_at.cmp(&b.started_at)));
-    let keep = HISTORY_RUNS - 1;
-    if earlier.len() > keep {
-        earlier.drain(..earlier.len() - keep);
+    env.sort_by(|a, b| started(a).cmp(&started(b)).then_with(|| a.started_at.cmp(&b.started_at)));
+    env.push(run);
+
+    // Run level: this PBI only.
+    let mut same_pbi: Vec<&LocalRun> = env.iter().copied().filter(|r| r.pbi_id == run.pbi_id).collect();
+    if same_pbi.len() > HISTORY_RUNS {
+        same_pbi.drain(..same_pbi.len() - HISTORY_RUNS);
     }
-    let mut history: Vec<&LocalRun> = earlier;
-    history.push(run);
+    let points: Vec<RunPoint> = same_pbi.iter().map(|r| point(r, &marked_set, r.id == run.id)).collect();
 
-    let points: Vec<RunPoint> = history.iter().map(|r| point(r, &marked_set, r.id == run.id)).collect();
-
-    // The app's own idea of a flaky case, over the same runs.
-    let alternating: HashSet<i32> = flaky_cases_of(&history, FLAKY_WINDOW, &[])
+    // Case level: the app's own flaky definition over the whole environment.
+    let alternating: HashSet<i32> = flaky_cases_of(&env, FLAKY_WINDOW, &[])
         .into_iter()
         .filter(|f| f.environment == run.environment && f.pattern.iter().any(|p| *p) && f.pattern.iter().any(|p| !*p))
         .map(|f| f.case_id)
         .collect();
 
+    let mut seen: HashMap<i32, Vec<(&LocalRun, &CaseRecord)>> = HashMap::new();
+    for r in &env {
+        for case in &r.cases {
+            seen.entry(case.case_id).or_default().push((r, case));
+        }
+    }
     let mut per_case: HashMap<i32, CaseTrend> = HashMap::new();
     let mut passes: HashMap<i32, Vec<&CaseRecord>> = HashMap::new();
-    let mut judged: HashMap<i32, Vec<bool>> = HashMap::new();
-    for r in &history {
-        for case in &r.cases {
+    for (id, mut list) in seen {
+        // Only the cases in this run are reported on.
+        if !run.cases.iter().any(|c| c.case_id == id) {
+            continue;
+        }
+        if list.len() > HISTORY_RUNS {
+            list.drain(..list.len() - HISTORY_RUNS);
+        }
+        let mut t = CaseTrend::default();
+        let mut judged: Vec<bool> = Vec::new();
+        for (r, case) in &list {
             let b = case_bucket(case);
-            let t = per_case.entry(case.case_id).or_default();
             t.strip.push(match b {
                 "Passed" => 'P',
                 "Failed" => 'F',
@@ -474,23 +563,24 @@ pub fn trend<'a>(run: &'a LocalRun, runs: &'a [LocalRun], marked: &[i32]) -> Tre
                 _ => 'N',
             });
             if matches!(b, "Passed" | "Failed") {
-                judged.entry(case.case_id).or_default().push(b == "Passed");
+                judged.push(b == "Passed");
             }
             if b == "Passed" && r.id != run.id {
-                passes.entry(case.case_id).or_default().push(case);
+                passes.entry(id).or_default().push(case);
             }
         }
-    }
-    for (id, t) in per_case.iter_mut() {
-        t.grade = judged.get(id).and_then(|j| grade(j));
-        t.alternates = alternating.contains(id);
-        t.marked = marked_set.contains(id);
+        t.judged = judged.len();
+        t.flips = judged.windows(2).filter(|w| w[0] != w[1]).count();
+        t.grade = grade(&judged);
+        t.alternates = alternating.contains(&id);
+        t.marked = marked_set.contains(&id);
+        per_case.insert(id, t);
     }
     for list in passes.values_mut() {
         list.reverse();
     }
 
-    let compare = (history.len() >= 2).then(|| compare_runs(history[history.len() - 2], run, &marked_set));
+    let compare = (same_pbi.len() >= 2).then(|| compare_runs(same_pbi[same_pbi.len() - 2], run, &marked_set));
     Trend { points, per_case, compare, passes }
 }
 
@@ -503,7 +593,11 @@ pub fn compare_runs(before: &LocalRun, now: &LocalRun, marked: &HashSet<i32>) ->
         previous_started_at: before.started_at.clone(),
         ..Compare::default()
     };
+    for case in &before.cases {
+        out.titles.insert(case.case_id, case.title.clone());
+    }
     for case in &now.cases {
+        out.titles.insert(case.case_id, case.title.clone());
         match was.get(&case.case_id) {
             None => out.new_cases.push(case.case_id),
             Some(old) => {
@@ -528,6 +622,78 @@ pub fn compare_runs(before: &LocalRun, now: &LocalRun, marked: &HashSet<i32>) ->
         list.dedup();
     }
     out
+}
+
+// ----------------------------------------------------------------------
+// Insights
+// ----------------------------------------------------------------------
+
+/// The run's health: three scores out of 100 and their mean as a letter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Health {
+    pub score: u32,
+    pub letter: char,
+    /// This run's pass rate.
+    pub pass: u32,
+    /// 100 less the share of this run's cases that are flaky.
+    pub stability: u32,
+    /// 100 when this run took no longer than the median of the previous
+    /// runs of this PBI, less one point per percent over that.
+    pub speed: u32,
+}
+
+/// The letter for a score, with the bands the grade uses.
+pub fn letter_for(score: f64) -> char {
+    match score {
+        s if s >= 90.0 => 'A',
+        s if s >= 75.0 => 'B',
+        s if s >= 60.0 => 'C',
+        s if s >= 40.0 => 'D',
+        _ => 'F',
+    }
+}
+
+/// How healthy the run is, from `points` (this PBI's runs, the report's
+/// last) and how many of its `total` cases are `flaky_cases` flaky. `None`
+/// when the run has no result at all.
+pub fn health(points: &[RunPoint], flaky_cases: usize, total: usize) -> Option<Health> {
+    let now = points.last()?;
+    let pass = now.pass_rate?;
+    let stability = if total == 0 { 100 } else { 100 - ((flaky_cases as f64 / total as f64) * 100.0).round() as u32 };
+    let mut before: Vec<u64> = points[..points.len() - 1].iter().map(|p| p.duration_ms).filter(|d| *d > 0).collect();
+    let speed = if before.is_empty() || now.duration_ms == 0 {
+        100
+    } else {
+        let m = median(&mut before) as f64;
+        let over = (now.duration_ms as f64 / m - 1.0) * 100.0;
+        (100.0 - over).clamp(0.0, 100.0).round() as u32
+    };
+    let score = (f64::from(pass) + f64::from(stability) + f64::from(speed)) / 3.0;
+    Some(Health { score: score.round() as u32, letter: letter_for(score), pass, stability, speed })
+}
+
+/// The `n` cases of `run` that took longest, slowest first: (case id, ms).
+pub fn slowest(run: &LocalRun, n: usize) -> Vec<(i32, u64)> {
+    let mut all: Vec<(i32, u64)> = run.cases.iter().map(|c| (c.case_id, case_duration(c))).filter(|(_, ms)| *ms > 0).collect();
+    all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    all.truncate(n);
+    all
+}
+
+/// The `n` cases of the run that change their mind most between judged
+/// runs, most first: (case id, percent of runs it flipped on). Only the
+/// cases that count as flaky and flipped at least once.
+pub fn most_flaky(per_case: &HashMap<i32, CaseTrend>, order: &[i32], n: usize) -> Vec<(i32, u32)> {
+    let mut all: Vec<(i32, u32)> = order
+        .iter()
+        .filter_map(|id| per_case.get(id).map(|t| (*id, t)))
+        .filter(|(_, t)| t.flaky() && t.flips > 0)
+        .map(|(id, t)| (id, t.flip_percent()))
+        .collect();
+    // Stable: equal percentages keep the run's order.
+    all.sort_by(|a, b| b.1.cmp(&a.1));
+    all.truncate(n);
+    all
 }
 
 // ----------------------------------------------------------------------

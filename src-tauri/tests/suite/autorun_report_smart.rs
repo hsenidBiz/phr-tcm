@@ -340,7 +340,8 @@ fn flaky_is_counted_the_way_the_app_counts_it() {
     // the same case failing in a row does not.
     let t = trend(&now, &all, &[]);
     assert!(t.per_case[&1].alternates, "case 1 went P, P, F... passed and failed lately");
-    assert!(!t.per_case[&6].flaky());
+    // Only the cases of this run are reported on; case 6 is not in it.
+    assert!(!t.per_case.contains_key(&6));
     let alternating = trend(&now, &all, &[]);
     assert!(!alternating.per_case[&5].alternates, "case 5 only ever passed");
 }
@@ -419,25 +420,27 @@ fn data_of(html: &str) -> Value {
 fn the_page_has_every_view_the_clusters_the_timelines_and_the_history() {
     let (now, all) = history_fixture();
     let html = page(&now, &all, &[], &no_shots);
-    for view in ["overview", "failures", "history", "gallery", "all"] {
+    for view in ["cases", "insights", "history", "gallery"] {
         assert!(html.contains(&format!("id=\"view-{view}\"")), "{view}");
-        assert!(html.contains(&format!("data-view=\"{view}\"")), "{view}");
     }
-    assert!(html.contains("<button type=\"button\" data-view=\"failures\" aria-selected=\"false\">Failures (2)</button>"));
-    assert!(html.contains("id=\"cluster-1\""));
+    for nav in ["failures", "flaky", "all", "insights", "history", "gallery"] {
+        assert!(html.contains(&format!("data-nav=\"{nav}\"")), "{nav}");
+    }
+    // Something failed, so the page opens on Failures; the sidebar counts them.
+    assert!(html.contains("data-start=\"failures\""));
+    assert!(html.contains("<span class=\"rail__label\">Failures</span><span class=\"rail__count\">2</span>"));
+    // The two failures share a cause: one group, a readable title, a real example error line.
+    assert_eq!(html.matches("class=\"group\"").count() >= 1, true);
+    assert!(html.contains("<p class=\"grp__note\">boom</p>"), "{html}");
     assert!(html.contains("Copy failure summary") && html.contains("Copy AI prompt"));
-    assert!(html.contains("class=\"tl-row failed anomaly\""), "{html}");
-    assert!(html.contains("first anomaly"));
-    assert!(html.contains("Compared with the run before it"));
-    assert!(html.contains("<h4>New failures (1)</h4>"));
-    assert!(html.contains("<h4>Fixed (1)</h4>"));
-    assert!(html.contains("<h4>Still failing (1)</h4>"));
-    assert!(html.contains("<h4>New cases (1)</h4>"));
-    assert!(html.contains("<h4>Not in this run (1)</h4>"));
+    assert!(html.contains("Possible first anomaly") && html.contains("class=\"timeline__bar\" data-failed"), "{html}");
+    for (title, n) in [("New failures", 1), ("Fixed", 1), ("Still failing", 1), ("New cases", 1), ("Not in this run", 1)] {
+        assert!(html.contains(&format!("<h2 class=\"panel__title\">{title}</h2><span class=\"panel__meta\">{n}</span>")), "{title}");
+    }
     assert!(html.contains("<svg"), "the charts are inline SVG");
-    // The existing report is all still there under All cases.
-    assert!(html.contains("<h2>Cases in detail</h2>"));
-    assert_eq!(html.matches("<details").count(), 5);
+    // Every case still has its steps, notes and the rest in its detail.
+    assert_eq!(html.matches("<article class=\"dt detail\"").count(), 5);
+    assert!(html.contains("<span class=\"step__title\">Step 2</span>"));
     // The filter reads these.
     assert!(html.contains("data-status=\"failed\"") && html.contains("data-grade=\"A\"") && html.contains("data-cause=\"c1 "));
     only_the_pages_own_scripts(&html);
@@ -527,7 +530,7 @@ fn the_gallery_holds_the_pictures_and_videos_that_are_there_and_safe() {
     assert_eq!(names, vec![SHOT, VIDEO]);
     assert_eq!(g[0]["c"], 1);
     assert_eq!(g[1]["k"], 1, "a video says so");
-    assert!(html.contains("Gallery (2)"));
+    assert!(html.contains("data-gtab=\"all\">All <span class=\"tab__count\">2</span>"));
     // The summary to copy names the failing step's pictures and the video.
     let md = data["sum"]["1"].as_str().unwrap();
     assert!(md.contains(SHOT) && md.contains(VIDEO), "{md}");
@@ -536,24 +539,127 @@ fn the_gallery_holds_the_pictures_and_videos_that_are_there_and_safe() {
     assert!(empty.contains("No pictures or videos were kept for this run."));
 }
 
+fn web_file(name: &str) -> String {
+    std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web").join(name)).unwrap()
+}
+
 #[test]
-fn the_page_prints_sensibly_and_wears_the_palette() {
+fn print_is_always_the_light_palette_and_lays_the_report_out_in_order() {
     let (now, all) = history_fixture();
     let html = page(&now, &all, &[], &no_shots);
-    assert!(html.contains("@media print"));
-    assert!(html.contains(".js .view { display: block !important; }"), "every view is on paper");
-    assert!(html.contains(":root[data-scheme=\"dark\"]") && html.contains("data-scheme=\"light\""));
-    // No colour of its own: the page's stylesheet speaks only in the palette's variables.
-    let css = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/autorun-report.css")).unwrap();
-    assert!(!css.contains("rgb(") && !css.contains("hsl("), "a literal colour");
-    let bytes = css.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        if *b == b'#' {
-            let next: String = css[i + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-            let hex = (3..=8).contains(&next.len()) && next.chars().all(|c| c.is_ascii_hexdigit());
-            assert!(!hex, "a literal colour #{next}");
+    // The tokens end with a print block that puts the light values on every mode.
+    let dark = html.find(":root[data-mode=\"dark\"]{color-scheme:dark;").expect("the dark block");
+    let print = html.find("@media print{:root,:root[data-mode=\"light\"],:root[data-mode=\"dark\"],:root:not([data-mode])").expect("the print block");
+    assert!(dark < print, "the print block comes last, so it wins");
+    let block = &html[print..html[print..].find("}}").map(|e| print + e).unwrap()];
+    assert!(block.contains("color-scheme:light") && block.contains("--bg:#ffffff") && block.contains("--text:#171717"), "{block}");
+    assert!(!block.contains("--bg:#111111"));
+    // The chrome is left off paper; the failed cases are shown in full.
+    let css = web_file("autorun-report.css");
+    let printed = &css[css.find("@media print").unwrap()..];
+    for hidden in [".topbar", ".rail", ".pane__list", ".btns", ".tabs", "#view-gallery"] {
+        assert!(printed.contains(hidden), "{hidden} is hidden in print");
+    }
+    assert!(printed.contains(".dt[data-print=\"1\"]"));
+    assert!(printed.contains("print-color-adjust: exact"), "the bars and marks print");
+    // And the page says which cases that is.
+    assert!(article_of_page(&html, 1).contains("data-print=\"1\"") && article_of_page(&html, 2).contains("data-print=\"0\""));
+}
+
+fn article_of_page(html: &str, id: i32) -> &str {
+    super::autorun_report::article_of(html, id)
+}
+
+/// The stylelint rules of the design system the page follows, by hand: no colour, gradient or
+/// effect of its own outside the token file, and only the scale's shapes, type, shadows and
+/// transitions.
+#[test]
+fn the_pages_stylesheet_follows_the_design_systems_rules() {
+    let css = web_file("autorun-report.css");
+    let mut plain = String::new();
+    let mut rest = css.as_str();
+    while let Some(at) = rest.find("/*") {
+        plain.push_str(&rest[..at]);
+        rest = &rest[rest[at..].find("*/").map(|e| at + e + 2).unwrap()..];
+    }
+    plain.push_str(rest);
+    for banned in ["rgb(", "rgba(", "hsl(", "hsla(", "hwb(", "lab(", "lch(", "oklab(", "oklch(", "color(", "color-mix(", "gradient(", "backdrop-filter", "text-shadow", "letter-spacing", "uppercase"] {
+        assert!(!plain.contains(banned), "{banned}");
+    }
+    let chars: Vec<char> = plain.chars().collect();
+    for (i, c) in chars.iter().enumerate() {
+        if *c == '#' {
+            let word: String = chars[i + 1..].iter().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            assert!(!((3..=8).contains(&word.len()) && word.chars().all(|c| c.is_ascii_hexdigit())), "a hex colour #{word}");
         }
     }
+    let flat = plain.replace(['{', '}'], ";");
+    let mut checked = 0;
+    for decl in flat.split(';') {
+        let Some((prop, value)) = decl.split_once(':') else { continue };
+        let (prop, value) = (prop.trim(), value.trim());
+        match prop {
+            "filter" => panic!("filter is not allowed"),
+            "box-shadow" => assert!(value == "none" || value == "var(--elevation)", "box-shadow: {value}"),
+            "font-family" => assert!(value == "inherit" || value == "var(--font-sans)" || value == "var(--font-mono)", "{value}"),
+            "font-size" => assert!(value == "inherit" || value.starts_with("var(--text-"), "font-size: {value}"),
+            "transition" => assert!(
+                value == "none" || value == "transform var(--duration-fast) var(--ease)" || value == "opacity var(--duration-fast) var(--ease)",
+                "transition: {value}"
+            ),
+            p if p == "border-radius" || p.ends_with("-radius") => {
+                for v in value.split_whitespace() {
+                    assert!(matches!(v, "0" | "50%" | "var(--radius-sm)" | "var(--radius-md)"), "{p}: {v}");
+                }
+            }
+            "color" | "background" | "background-color" | "fill" | "stroke" | "border-color" => {
+                for w in value.split(|c: char| !c.is_ascii_alphabetic() && c != '-').filter(|w| !w.is_empty()) {
+                    // Words inside var(--name) are names, not colours.
+                    let in_var = w.starts_with("--") || w == "var";
+                    assert!(in_var || matches!(w, "transparent" | "none" | "inherit" | "currentColor"), "{prop}: {value}");
+                }
+            }
+            _ => continue,
+        }
+        checked += 1;
+    }
+    assert!(checked > 40, "the scan looked at {checked} declarations");
+    // Box shadows only on overlays: the dialog, the lightbox, the narrow sidebar.
+    assert_eq!(plain.matches("var(--elevation)").count(), 3);
+    // The tokens are where the colours live.
+    assert!(web_file("autorun-report-tokens.css").contains("--fail-fg:#cf222e"));
+}
+
+#[test]
+fn a_hostile_palette_value_is_dropped_and_a_plain_one_is_the_accent() {
+    use v2_lib::webtheme::safe_color;
+    for ok in ["#1764d8", "#fff", "#ffffff80", "rgb(10, 20, 30)", "rgba(10,20,30,0.5)", "hsl(210 50% 40%)", "hsla(210, 50%, 40%, 0.8)"] {
+        assert!(safe_color(ok), "{ok}");
+    }
+    for bad in ["red", "red}</style><script>alert(1)</script>", "url(http://x/y)", "#12", "#gggggg", "rgb(1,2,3);x", "rgb(1,2,3)}", "var(--x)", "expression(1)", "#fff\"", ""] {
+        assert!(!safe_color(bad), "{bad}");
+    }
+    let (now, all) = history_fixture();
+    let mut hostile = PagePalette::default();
+    hostile.light.accent = "red}</style><script>alert(1)</script>".into();
+    hostile.dark.accent = "url(http://x/y)".into();
+    hostile.light.bg = "}</style><script>alert(2)</script>".into();
+    let run_it = |pal: &PagePalette| {
+        build_smart(&now, &[], &Default::default(), "x", &no_shots, &|_| None, &ReportExtras { divergences: &[] }, &TrendInput { runs: &all, flaky_marked: &[] }, pal)
+    };
+    let html = run_it(&hostile);
+    assert!(!html.contains("alert(1)") && !html.contains("alert(2)") && !html.contains("url(http"), "dropped");
+    only_the_pages_own_scripts(&html);
+    assert!(html.contains("--accent-l:#1764d8"), "the default accent stays");
+    assert!(!html.contains(":root{--accent-l:"), "no override was written");
+    // A plain accent is the one thing taken from the palette.
+    let mut good = PagePalette::default();
+    good.light.accent = "#0a7d42".into();
+    good.dark.accent = "rgb(10, 200, 100)".into();
+    let html = run_it(&good);
+    assert!(html.contains(":root{--accent-l:#0a7d42;--accent-d:rgb(10, 200, 100);}"), "{}", &html[..html.find("</style>").unwrap()]);
+    // The neutrals and status colours are the page's own whatever the app wears.
+    assert!(html.contains("--fail-fg:#cf222e"));
 }
 
 #[test]
@@ -577,6 +683,181 @@ fn a_big_run_with_a_full_history_stays_a_page_that_opens() {
     only_the_pages_own_scripts(&html);
     // 71 failed cases (every seventh of 500) share one cause once the numbers are gone,
     // and only the newest 20 of the 21 runs are history.
-    assert!(html.contains("id=\"cluster-1\"") && !html.contains("id=\"cluster-2\""));
+    assert!(html.contains("id=\"list-failures\" data-title=\"Failures\" data-count=\"71\""));
+    assert_eq!(html.matches("class=\"group\"").count(), 1, "one group of failures");
     assert_eq!(data_of(&html)["sum"].as_object().unwrap().len(), 71);
+}
+
+// ---------------------------------------------------------------- fix round 1
+
+/// The number in the top bar's count of `tone` (`fail`, `pass`, `flaky`, `blocked`, `skip`).
+fn top_count(html: &str, tone: &str) -> Option<usize> {
+    let marker = format!("<span class=\"count__value tone-{tone}\">");
+    let at = html.find(&marker)? + marker.len();
+    html[at..html[at..].find('<').map(|e| at + e)?].parse().ok()
+}
+
+#[test]
+fn the_counts_add_up_and_a_flaky_failure_counts_once() {
+    let r = run(
+        "run-1",
+        1000,
+        "QA",
+        vec![
+            passed(1),
+            failed_at(2, 2, "boom"),
+            failed_at(3, 2, "bang"),
+            { let mut c = case(4, "Blocked", vec![]); c["note"] = json!("No test user"); c },
+            case(5, "", vec![]),
+            passed(6),
+        ],
+    );
+    // Case 2 is marked flaky: its failure is a flaky one, and counted as that and nothing else.
+    let mut marked = script(2, json!([]));
+    marked.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
+    let html = build_smart(
+        &r,
+        &[marked],
+        &Default::default(),
+        "x",
+        &no_shots,
+        &|_| None,
+        &ReportExtras { divergences: &[] },
+        &TrendInput { runs: &[], flaky_marked: &[2] },
+        &PagePalette::default(),
+    );
+    let (failed, passed, flaky, blocked, not_run) = (
+        top_count(&html, "fail").unwrap(),
+        top_count(&html, "pass").unwrap(),
+        top_count(&html, "flaky").unwrap(),
+        top_count(&html, "blocked").unwrap(),
+        top_count(&html, "skip").unwrap(),
+    );
+    assert_eq!((failed, passed, flaky, blocked, not_run), (1, 2, 1, 1, 1));
+    assert_eq!(failed + passed + flaky + blocked + not_run, r.cases.len(), "every case counted once");
+    // The sidebar and the lists agree: Failures is the failed and blocked, Flaky the flaky one.
+    assert!(html.contains("<span class=\"rail__label\">Failures</span><span class=\"rail__count\">2</span>"));
+    assert!(html.contains("<span class=\"rail__label\">Flaky</span><span class=\"rail__count\">1</span>"));
+    assert!(html.contains("<span class=\"rail__label\">All cases</span><span class=\"rail__count\">6</span>"));
+    // The History row for this run says the same, and so does the old summary table.
+    assert!(html.contains("<td class=\"tone-fail\">1</td><td class=\"tone-flaky\">1</td>"), "the history row");
+    assert!(html.contains("<td class=\"b-failed\">1</td><td class=\"b-blocked\">1</td><td class=\"b-notrun\">1</td><td class=\"b-flaky\">1</td>"));
+    // A flaky failure is `flaky` to the filter, as it is to the counts.
+    assert!(html.contains("data-id=\"2\" data-status=\"flaky\""));
+    assert!(html.contains("data-id=\"3\" data-status=\"failed\""));
+}
+
+#[test]
+fn history_and_compare_are_of_the_same_pbi_even_with_another_pbi_between() {
+    let run_of_pbi = |id: &str, t: u64, pbi: i32, cases: Vec<Value>| {
+        let mut r = run(id, t, "QA", cases);
+        r.pbi_id = pbi;
+        r
+    };
+    let a1 = run_of_pbi("a1", 1000, 42, vec![passed(1), passed(2)]);
+    let b1 = run_of_pbi("b1", 2000, 43, vec![failed_at(90, 2, "boom"), passed(91)]);
+    let a2 = run_of_pbi("a2", 3000, 42, vec![failed_at(1, 2, "boom"), passed(2)]);
+    let b2 = run_of_pbi("b2", 3500, 43, vec![passed(90)]);
+    let a3 = run_of_pbi("a3", 4000, 42, vec![failed_at(1, 2, "boom"), failed_at(2, 2, "bang"), passed(3)]);
+    let all = vec![b2, a3.clone(), a1, b1.clone(), a2];
+
+    let t = trend(&a3, &all, &[]);
+    assert_eq!(t.points.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["a1", "a2", "a3"], "no run of PBI 43");
+    let c = t.compare.expect("a previous run of this PBI");
+    assert_eq!(c.previous_id, "a2", "the previous run of this PBI, not the one made just before");
+    assert_eq!(c.still_failing, vec![1]);
+    assert_eq!(c.new_failures, vec![2]);
+    assert_eq!(c.new_cases, vec![3]);
+    assert!(c.missing.is_empty() && c.fixed.is_empty(), "{c:?}");
+
+    // The page says so, and for a PBI's first run says that instead of listing everything as new.
+    let html = page(&a3, &all, &[], &no_shots);
+    assert!(html.contains("3 recorded runs of PBI #42 in QA"), "{html}");
+    let first = page(&b1, &all, &[], &no_shots);
+    assert!(first.contains("This is the first run of PBI #43 in QA."), "{first}");
+    assert!(first.contains("1 recorded run of PBI #43 in QA"));
+}
+
+#[test]
+fn a_cases_own_history_is_not_cut_by_the_environments_newest_twenty_runs() {
+    // Case 101 (PBI 42) went pass, fail, pass, fail, pass, fail in six runs, and has not run since;
+    // twenty-five runs of another PBI were made in the same environment after that.
+    let mut runs: Vec<LocalRun> = Vec::new();
+    for i in 1..=6u64 {
+        let c = if i % 2 == 1 { passed(101) } else { failed_at(101, 2, "boom") };
+        runs.push(run(&format!("a{i}"), i * 1000, "QA", vec![c]));
+    }
+    for i in 1..=25u64 {
+        let mut r = run(&format!("b{i}"), 10_000 + i * 1000, "QA", vec![passed(900 + i as i32)]);
+        r.pbi_id = 43;
+        runs.push(r);
+    }
+    let mut now = run("a7", 100_000, "QA", vec![passed(101)]);
+    now.pbi_id = 42;
+    let t = trend(&now, &runs, &[]);
+    let c = &t.per_case[&101];
+    assert!(c.alternates, "the Flaky list would list it, so the report marks it");
+    assert_eq!(c.strip.iter().collect::<String>(), "PFPFPFP");
+    assert!(c.grade.is_some());
+    // The app's own flaky list, over the same runs, agrees.
+    let mut env_runs = runs.clone();
+    env_runs.push(now.clone());
+    let app = v2_lib::autorun::flaky::flaky_cases(&env_runs, v2_lib::autorun::flaky::FLAKY_WINDOW);
+    assert!(app.iter().any(|f| f.case_id == 101));
+    // Its slow-step baseline is its own earlier passes, whatever PBI the runs between were of.
+    assert_eq!(t.passes[&101].len(), 3, "the three earlier passes");
+    // The run-level charts are this PBI's newest runs only.
+    assert_eq!(t.points.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().len(), 7);
+}
+
+#[test]
+fn a_cluster_has_a_readable_title_and_a_real_error_line() {
+    let r = run(
+        "run-1",
+        1000,
+        "QA",
+        vec![
+            case(1, "Failed", vec![step(1, Some(10), false, "button \"Apply\" not found after 5000 ms")]),
+            case(2, "Failed", vec![step(1, Some(10), false, "button \"Apply\" not found after 7 ms")]),
+        ],
+    );
+    let scripts = vec![click_script(1, "text=Apply"), click_script(2, "text=Apply")];
+    let (list, _) = clusters(&r, &scripts, &Default::default());
+    assert_eq!(list.len(), 1);
+    let c = &list[0];
+    assert!(c.title.starts_with("Click ") && c.title.contains("Apply") && c.title.contains("not found"), "{}", c.title);
+    assert_eq!(c.example, "button \"Apply\" not found after 5000 ms", "the first case's own line, not normalised");
+    assert_eq!(c.label(), "c1");
+}
+
+#[test]
+fn an_escaped_quote_inside_a_quoted_value_belongs_to_the_value() {
+    // The browser's messages are Debug-formatted, so an inner quote arrives as \".
+    assert_eq!(
+        normalise_cause("expected text \"say \\\"hi\\\"\" not found"),
+        normalise_cause("expected text \"other\" not found")
+    );
+    assert_eq!(normalise_cause("expected text \"say \\\"hi\\\"\" not found"), "expected text \"\u{2026}\" not found");
+}
+
+#[test]
+fn the_timeline_says_where_the_anomaly_began() {
+    let failed = record(case(
+        7,
+        "Failed",
+        vec![step(1, Some(1000), true, "ok"), step(2, Some(3000), true, "ok"), step(3, Some(500), false, "boom")],
+    ));
+    let t = timeline(&failed, &[]);
+    assert_eq!(t.total_ms, 4500);
+    assert_eq!(t.anomaly, Some(2));
+    assert_eq!(t.anomaly_at_ms, 4000, "the failing step began after the two before it");
+}
+
+#[test]
+fn a_failed_step_is_always_the_failure_colour_and_slow_is_an_extra_note() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    // Only a step that did not fail is amber; a failed step carries only the failure flag.
+    assert!(html.contains("class=\"timeline__bar\" data-failed"));
+    assert!(!html.contains("data-failed data-slow") && !html.contains("data-slow data-failed"));
 }

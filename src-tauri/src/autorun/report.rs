@@ -26,8 +26,8 @@
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::divergences::{Divergence, DivergenceStatus, RuledBy, Ruling};
-use super::report_smart::{self, Cluster};
-use super::report_view::{self, CaseView};
+use super::report_smart::{self, Cluster, Failure};
+use super::report_view::{self, CaseView, Counts};
 use super::unchecked::{count_words, expectations, line as unchecked_line};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
@@ -444,86 +444,13 @@ fn picture(name: &str, alt: &str, exists: &dyn Fn(&str) -> bool) -> String {
         "<figure><img loading=\"lazy\" src=\"../shots/{}\" alt=\"{}\"><figcaption>{}</figcaption></figure>",
         esc_attr(name),
         esc_attr(alt),
-        esc_attr(name)
+        esc_attr(alt)
     )
-}
-
-/// The "step that stopped it" summary at the top of a Failed or Blocked
-/// case's section: why, the step and action in words, the page's message.
-/// Its pictures are not repeated here - the step list below shows them.
-fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> String {
-    let mut h = String::new();
-    if !case.reason.is_empty() {
-        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc_attr(&scrub_urls(&case.reason))));
-    }
-    match stopping_point(case) {
-        Some((step, index, outcome)) => {
-            h.push_str("<dl>");
-            h.push_str(&format!("<dt>Stopped at</dt><dd>{}</dd>", esc_attr(&step_label(step.step_number))));
-            h.push_str(&format!(
-                "<dt>Action</dt><dd>{}</dd>",
-                esc_attr(&stopped_action(case, step, index, script, components))
-            ));
-            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc_attr(&scrub_urls(&outcome.detail))));
-            h.push_str("</dl>");
-        }
-        None => h.push_str(
-            "<p class=\"note\">No step failed on its own - this result was decided by the person reviewing the run.</p>",
-        ),
-    }
-    h
 }
 
 /// Milliseconds as `2.3 s`.
 fn seconds(ms: u64) -> String {
     format!("{:.1} s", ms as f64 / 1000.0)
-}
-
-/// Every step of a case in the order it ran: its label, each action's
-/// outcome as a line marked with a tick or a cross and the sentence the run
-/// recorded (never anything from the script), then the step's picture and
-/// any picture an action took on failing. A picture named twice in one step
-/// is shown once. The case's clean-up comes last, named Clean-up.
-fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
-    if case.steps.is_empty() {
-        return "<p class=\"note\">No steps were recorded for this case.</p>".to_string();
-    }
-    let mut h = String::new();
-    let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
-    let tidy = case.cleanup.iter().map(|s| (super::CLEANUP_LABEL.to_string(), s));
-    for (label, step) in labelled.chain(tidy) {
-        h.push_str("<div class=\"step\">");
-        // How long the step took, when the run timed it.
-        let took = step.duration_ms.map(|ms| format!(" <span class=\"took\">{}</span>", seconds(ms))).unwrap_or_default();
-        h.push_str(&format!("<h4>{}{took}</h4>", esc_attr(&label)));
-        if step.outcomes.is_empty() {
-            h.push_str("<p class=\"note\">No actions were recorded for this step.</p>");
-        } else {
-            h.push_str("<ul class=\"actions\">");
-            for o in &step.outcomes {
-                let (class, mark) = if o.ok { ("ok", "\u{2713}") } else { ("bad", "\u{2717}") };
-                // An action a component ran says which component.
-                let from = o.component.as_deref().map(|c| format!("{}: ", esc_attr(c))).unwrap_or_default();
-                h.push_str(&format!("<li class=\"{class}\">{mark} {from}{}</li>", esc_attr(&scrub_urls(&o.detail))));
-            }
-            h.push_str("</ul>");
-        }
-        let mut seen = std::collections::HashSet::new();
-        for (i, o) in step.outcomes.iter().enumerate() {
-            if let Some(n) = o.screenshot.as_deref() {
-                if seen.insert(n) {
-                    h.push_str(&picture(n, &format!("{label}, action {}", i + 1), exists));
-                }
-            }
-        }
-        if let Some(n) = step.screenshot.as_deref() {
-            if seen.insert(n) {
-                h.push_str(&picture(n, &label, exists));
-            }
-        }
-        h.push_str("</div>");
-    }
-    h
 }
 
 /// A link to the video kept of a failed case, beside its pictures: relative
@@ -575,44 +502,18 @@ fn result_words(bucket: &str, unchecked: usize) -> String {
     }
 }
 
-/// The label beside a flaky failure's result (see `is_flaky_failure`).
-const FLAKY_TAG: &str = " <span class=\"flaky\" title=\"Marked as flaky: it passes and fails on its own. The failure is still sent as failed.\">Flaky</span>";
-
-/// One case's collapsible section. Open for Failed and Blocked, closed for
-/// Passed and Not run - a reader lands on what needs them and can still
-/// expand the rest. `<details>` needs no script.
-fn case_section(
+/// What the run recorded about a case besides its steps and pictures: why,
+/// a retry, a notice, product bugs, divergences, what its checks leave out,
+/// a clean-up that failed, the person's note, where the time went, and the
+/// files it downloaded. Empty when there is none of it.
+fn case_notes(
     case: &CaseRecord,
     script: Option<&CaseScript>,
-    components: &ComponentFile,
-    exists: &dyn Fn(&str) -> bool,
     size_of: &dyn Fn(&str) -> Option<u64>,
     divergences: &[&Divergence],
 ) -> String {
-    let b = case_bucket(case);
-    let unchecked = script.map(expectations).unwrap_or_default();
-    let result = result_words(b, unchecked.len());
-    let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
-    let flaky = if is_flaky_failure(case, script) { FLAKY_TAG } else { "" };
     let mut h = String::new();
-    h.push_str(&format!("<details class=\"case\"{open}>"));
-    // Run a second time after a transient failure (`transient`).
-    let retried = if case.retried.is_some() { " <span class=\"retried\">Retried</span>" } else { "" };
-    // Page errors a flagging script counted (`page_errors`).
-    let flagged = match case.page_errors_seen {
-        0 => String::new(),
-        n => format!(" <span class=\"retried\">page errors seen: {n}</span>"),
-    };
-    h.push_str(&format!(
-        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{}</span>{flaky}{retried}{flagged}</summary>",
-        case.case_id,
-        esc_attr(&case.title),
-        css_key(b),
-        esc_attr(&result)
-    ));
-    if matches!(b, "Failed" | "Blocked") {
-        h.push_str(&stopped_summary(case, script, components));
-    } else if !case.reason.is_empty() {
+    if !case.reason.is_empty() {
         h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc_attr(&scrub_urls(&case.reason))));
     }
     if let Some(first) = &case.retried {
@@ -629,7 +530,7 @@ fn case_section(
         h.push_str(&format!("<p><strong>Divergence:</strong> {}</p>", esc_attr(&divergence_words(d))));
     }
     // What the script's checks leave out, whatever the case's own verdict.
-    for e in &unchecked {
+    for e in &script.map(expectations).unwrap_or_default() {
         h.push_str(&format!("<p><strong>Unchecked:</strong> {}</p>", esc_attr(&unchecked_line(e))));
     }
     // A clean-up that failed, whatever the case's own verdict.
@@ -640,13 +541,200 @@ fn case_section(
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc_attr(&case.note)));
     }
+    if case.page_errors_seen > 0 {
+        h.push_str(&format!("<p><strong>Page errors seen:</strong> {}</p>", case.page_errors_seen));
+    }
     if let Some(phases) = &case.phases {
-        h.push_str(&format!("<p class=\"took\">{}</p>", esc_attr(&phases.line())));
+        h.push_str(&format!("<p class=\"muted\">{}</p>", esc_attr(&phases.line())));
+    }
+    h.push_str(&downloads_line(case, size_of));
+    h
+}
+
+/// Every step of a case as a line - its number, its label, a small bar for
+/// how long it took and the time - with the actions it ran under it, each
+/// marked with a tick or a cross and the sentence the run recorded (never
+/// anything from the script). The case's clean-up comes last.
+fn steps_list(case: &CaseRecord) -> String {
+    if case.steps.is_empty() {
+        return "<p class=\"muted\">No steps were recorded for this case.</p>".to_string();
+    }
+    let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
+    let tidy = case.cleanup.iter().map(|s| (super::CLEANUP_LABEL.to_string(), s));
+    let all: Vec<(String, &StepRecord)> = labelled.chain(tidy).collect();
+    let longest = all.iter().filter_map(|(_, s)| s.duration_ms).max().unwrap_or(0).max(1);
+    let mut h = String::from("<ol class=\"steps\">");
+    for (label, step) in &all {
+        let failed = step.outcomes.iter().any(|o| !o.ok && !o.detail.starts_with("not run:"));
+        let (bar, dur) = match step.duration_ms {
+            Some(ms) => (format!("<span style=\"width:{:.1}%\"></span>", ms as f64 / longest as f64 * 100.0), seconds(ms)),
+            None => ("<span style=\"width:0%\"></span>".to_string(), String::new()),
+        };
+        h.push_str(&format!(
+            "<li class=\"stepitem\"><div class=\"step\"{}><span class=\"step__dot\"></span><span class=\"step__title\">{}</span><span class=\"step__bar\">{bar}</span><span class=\"step__dur mono\">{dur}</span></div>",
+            if failed { " data-failed" } else { "" },
+            esc_attr(label),
+        ));
+        if step.outcomes.is_empty() {
+            h.push_str("<p class=\"muted step__none\">No actions were recorded for this step.</p>");
+        } else {
+            h.push_str("<ul class=\"actions\">");
+            for o in &step.outcomes {
+                let (class, mark) = if o.ok { ("ok", "\u{2713}") } else { ("bad", "\u{2717}") };
+                // An action a component ran says which component.
+                let from = o.component.as_deref().map(|c| format!("{}: ", esc_attr(c))).unwrap_or_default();
+                h.push_str(&format!("<li class=\"{class}\">{mark} {from}{}</li>", esc_attr(&scrub_urls(&o.detail))));
+            }
+            h.push_str("</ul>");
+        }
+        h.push_str("</li>");
+    }
+    h.push_str("</ol>");
+    h
+}
+
+/// The pictures a case's steps took (each step's, once), the video, and how
+/// many pictures that is. A picture whose name is not a screenshot name, or
+/// that is no longer on this machine, is a note.
+fn pictures_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> (String, usize) {
+    let mut h = String::new();
+    let mut n = 0;
+    let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
+    let tidy = case.cleanup.iter().map(|s| (super::CLEANUP_LABEL.to_string(), s));
+    for (label, step) in labelled.chain(tidy) {
+        let mut seen = std::collections::HashSet::new();
+        for (i, o) in step.outcomes.iter().enumerate() {
+            if let Some(name) = o.screenshot.as_deref() {
+                if seen.insert(name) {
+                    h.push_str(&picture(name, &format!("{label}, action {}", i + 1), exists));
+                    n += 1;
+                }
+            }
+        }
+        if let Some(name) = step.screenshot.as_deref() {
+            if seen.insert(name) {
+                h.push_str(&picture(name, &label, exists));
+                n += 1;
+            }
+        }
     }
     h.push_str(&video_line(case, exists));
-    h.push_str(&downloads_line(case, size_of));
-    h.push_str(&steps_block(case, exists));
-    h.push_str("</details>");
+    (h, n)
+}
+
+/// One case's detail: the title and its meta, the copy buttons, and the
+/// sections - the error, the timeline, the steps, the pictures, its history
+/// and what else the run recorded. All of them are on the page whether or
+/// not the script shows only the selected one, so nothing is lost.
+#[allow(clippy::too_many_arguments)]
+fn detail(
+    v: &CaseView,
+    failure: Option<&Failure>,
+    script: Option<&CaseScript>,
+    exists: &dyn Fn(&str) -> bool,
+    size_of: &dyn Fn(&str) -> Option<u64>,
+    divergences: &[&Divergence],
+) -> String {
+    let case = v.case;
+    let id = case.case_id;
+    let unchecked = script.map(expectations).unwrap_or_default();
+    let result = result_words(v.bucket, unchecked.len());
+    let ms = report_smart::duration_of(case);
+    let mut meta = format!("<span class=\"mono\">#{id}</span><span class=\"tone-{}\">{}</span>", match v.status() {
+        "failed" => "fail",
+        "passed" => "pass",
+        "flaky" => "flaky",
+        "blocked" => "blocked",
+        _ => "skip",
+    }, esc_attr(&result));
+    let decided = if !case.verdict.is_empty() {
+        "Confirmed"
+    } else if !case.proposed.is_empty() {
+        "Proposed"
+    } else {
+        ""
+    };
+    if !decided.is_empty() {
+        meta.push_str(&format!("<span class=\"muted\">Decided by: {decided}</span>"));
+    }
+    let place: Vec<&str> = [v.area.as_str(), v.module.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
+    if !place.is_empty() {
+        meta.push_str(&format!("<span>{}</span>", esc_attr(&place.join(" \u{203a} "))));
+    }
+    if ms > 0 {
+        meta.push_str(&format!("<span class=\"mono\">{}</span>", report_view::took(ms)));
+    }
+    if let Some(g) = v.grade() {
+        meta.push_str(&format!("<span>Grade {g}</span>"));
+    }
+    if v.new_failure {
+        meta.push_str("<span class=\"signal\">New failure</span>");
+    }
+    if v.flaky() {
+        meta.push_str("<span class=\"signal\">Flaky</span>");
+    }
+    if v.slow() {
+        meta.push_str("<span class=\"signal\">Slow</span>");
+    }
+    if case.retried.is_some() {
+        meta.push_str("<span class=\"signal\">Retried</span>");
+    }
+    if case.page_errors_seen > 0 {
+        meta.push_str(&format!("<span class=\"signal\">page errors seen: {}</span>", case.page_errors_seen));
+    }
+    if let Some(a) = case.account.as_deref().filter(|a| !a.is_empty()) {
+        meta.push_str(&format!("<span class=\"muted\">as {}</span>", esc_attr(a)));
+    }
+    let mut h = format!(
+        "<article class=\"dt detail\" id=\"case-{id}\" data-id=\"{id}\" data-status=\"{}\" data-print=\"{}\"><div class=\"detail__head\"><div class=\"detail__title-row\">{}<h2 class=\"detail__title\">{}</h2><span class=\"detail__nav\"><button type=\"button\" class=\"icon-btn\" data-step=\"-1\" aria-label=\"Previous case\">{}</button><button type=\"button\" class=\"icon-btn\" data-step=\"1\" aria-label=\"Next case\">{}</button></span></div><div class=\"detail__meta\">{meta}</div>",
+        v.status(),
+        u8::from(v.is_failure()),
+        report_view::glyph(v.status()),
+        esc_attr(&case.title),
+        report_view::icon("chevron-up"),
+        report_view::icon("chevron-down"),
+    );
+    if failure.is_some() {
+        h.push_str(&format!(
+            "<div class=\"detail__actions btns\"><button type=\"button\" class=\"btn\" data-copy=\"summary\" data-id=\"{id}\">{} Copy failure summary <kbd class=\"kbd\">c</kbd></button><button type=\"button\" class=\"btn\" data-copy=\"prompt\" data-id=\"{id}\">Copy AI prompt</button></div>",
+            report_view::icon("copy")
+        ));
+    }
+    h.push_str("</div>");
+
+    if let Some(f) = failure {
+        let mut lines = f.message.lines();
+        let first = lines.next().unwrap_or("");
+        let rest: Vec<&str> = lines.collect();
+        let mut body = format!("<pre class=\"error-text\"><span class=\"error-text__head\">{}</span>", esc_attr(first));
+        if !rest.is_empty() {
+            body.push('\n');
+            body.push_str(&esc_attr(&rest.join("\n")));
+        }
+        body.push_str("</pre>");
+        if f.step_number.is_some() {
+            body.push_str(&format!("<p class=\"error__step\"><span class=\"muted\">Stopped at</span> {} \u{b7} {}</p>", esc_attr(&f.step), esc_attr(&f.action)));
+        } else {
+            body.push_str("<p class=\"note muted\">No step failed on its own - this result was decided by the person reviewing the run.</p>");
+        }
+        h.push_str(&report_view::section("Error", "", true, &body));
+        if let Some(t) = &v.timeline {
+            let meta = if t.anomaly.is_some() { "possible first anomaly found" } else { "" };
+            h.push_str(&report_view::section("Timeline", meta, true, &report_view::timeline_body(t)));
+        }
+    }
+    h.push_str(&report_view::section("Steps", &format!("{} steps", case.steps.len()), true, &steps_list(case)));
+    let (pics, n) = pictures_block(case, exists);
+    if !pics.is_empty() {
+        let meta = if n > 0 { format!("{n} picture{}", if n == 1 { "" } else { "s" }) } else { String::new() };
+        h.push_str(&report_view::section("Screenshots and video", &meta, true, &pics));
+    }
+    h.push_str(&report_view::section("History", "", true, &report_view::history_body(v.trend)));
+    let notes = case_notes(case, script, size_of, divergences);
+    if !notes.is_empty() {
+        h.push_str(&report_view::section("Run notes", "", true, &notes));
+    }
+    h.push_str("</article>");
     h
 }
 
@@ -796,18 +884,15 @@ fn web_link(url: &str) -> String {
     }
 }
 
-/// The page's Content-Security-Policy: nothing fetched, pictures and videos
-/// only from a file on this machine (the shots folder, linked relative to
-/// the page), and script and style only inline - the page's own script and
-/// the one blob of data it reads are written into it.
-pub const CSP: &str = "default-src 'none'; img-src file:; media-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'";
+/// The page's design tokens: the neutral and status colours of each mode,
+/// the type and space scales, and `--accent` (`web/autorun-report-tokens.css`).
+const TOKENS: &str = include_str!("../../web/autorun-report-tokens.css");
 
-/// The page's stylesheet. Colours are the palette's variables
-/// (`webtheme`), never literals, so the page wears the app's theme and
-/// flips with the switch in its corner.
+/// The page's stylesheet: components only, in the tokens' variables, with no
+/// colour of its own (`tests/suite/autorun_report_smart.rs` scans it).
 const STYLE: &str = include_str!("../../web/autorun-report.css");
 
-/// The page's own script: tabs, filter, keys, copy, gallery.
+/// The page's own script: views, filter, keys, copy, gallery.
 const SCRIPT: &str = include_str!("../../web/autorun-report.js");
 
 /// The whole page. `ran_at` is the run's start as the person reads time
@@ -910,8 +995,40 @@ fn step_pictures<'a>(step: &'a StepRecord, exists: &dyn Fn(&str) -> bool) -> Vec
     out
 }
 
+/// `sha256-<base64>` of a script's exact text, the form a
+/// Content-Security-Policy `script-src` takes.
+fn script_hash(text: &str) -> String {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(text.as_bytes());
+    format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(digest))
+}
+
+/// The page's Content-Security-Policy for the scripts it writes (`scripts`,
+/// each exactly as it sits between its tags): nothing fetched, pictures and
+/// videos only from a file on this machine (the shots folder, linked
+/// relative to the page), style only inline, and script only those
+/// scripts, by hash - no `'unsafe-inline'` - so a value that slipped past
+/// the escaping could not run. No `<base>` and no form can send anything
+/// anywhere.
+pub fn csp(scripts: &[&str]) -> String {
+    let hashes: Vec<String> = scripts.iter().map(|s| script_hash(s)).collect();
+    format!(
+        "default-src 'none'; img-src file:; media-src file:; style-src 'unsafe-inline'; script-src {}; base-uri 'none'; form-action 'none'",
+        hashes.join(" ")
+    )
+}
+
+/// The first script in the page's head: the choice of light or dark the
+/// reader made last time (else the app's, which is on `<html>`), and the
+/// flag that says the page's script is running, so its views may hide
+/// themselves. Guarded: a `file://` page has no usable localStorage in some
+/// browsers, and it throws rather than returning null.
+pub const HEAD_JS: &str = "try{var m=localStorage.getItem('tcm-report-mode');if(m==='dark'||m==='light')document.documentElement.setAttribute('data-mode',m)}catch(e){}\ndocument.documentElement.classList.add('js');";
+
 /// [`build_with_extras`], with the runs the history and trends are read
-/// from and the palette the page wears.
+/// from and the palette the page wears (only its accent: the page keeps
+/// its own neutrals and status colours).
 #[allow(clippy::too_many_arguments)]
 pub fn build_smart(
     run: &LocalRun,
@@ -928,31 +1045,53 @@ pub fn build_smart(
     let when = if ran_at.trim().is_empty() { utc_time(&run.started_at) } else { ran_at.trim().to_string() };
     let mode = if run.mode == "unattended" { "Unattended" } else { "Supervised" };
 
-    // What the new views say, worked out once.
+    // What the views say, worked out once.
     let (clusters, failures) = report_smart::clusters(run, scripts, components);
     let trend = report_smart::trend(run, history.runs, history.flaky_marked);
     let cluster_of: std::collections::HashMap<i32, &Cluster> =
         clusters.iter().flat_map(|c| c.cases.iter().map(move |id| (*id, c))).collect();
+    let new_failures: std::collections::HashSet<i32> =
+        trend.compare.as_ref().map(|c| c.new_failures.iter().copied().collect()).unwrap_or_default();
     let views: Vec<CaseView> = run
         .cases
         .iter()
         .map(|case| {
             let script = script_for(case.case_id);
+            let bucket = case_bucket(case);
+            let timeline = matches!(bucket, "Failed" | "Blocked").then(|| {
+                let passes = trend.passes.get(&case.case_id).map(Vec::as_slice).unwrap_or(&[]);
+                report_smart::timeline(case, passes)
+            });
             CaseView {
                 case,
-                bucket: case_bucket(case),
+                bucket,
                 flaky_failure: is_flaky_failure(case, script),
                 area: script.and_then(CaseScript::area_name).unwrap_or("").to_string(),
                 module: report_smart::module_of(case).unwrap_or_default(),
                 trend: trend.per_case.get(&case.case_id),
                 cluster: cluster_of.get(&case.case_id).copied(),
-                failure: failures.get(&case.case_id),
+                new_failure: new_failures.contains(&case.case_id),
+                timeline,
             }
         })
         .collect();
+    let by_id: std::collections::HashMap<i32, &CaseView> = views.iter().map(|v| (v.case.case_id, v)).collect();
+    let failure_text = |v: &CaseView| -> String {
+        failures.get(&v.case.case_id).map(|f| format!("{} {} {}", f.step, f.action, f.message)).unwrap_or_default()
+    };
+
+    // The counts, with the app's rule: a flaky-marked failure is flaky, once.
+    let flaky = flaky_count(run, scripts);
+    let mut c4 = counts(run);
+    c4[1] -= flaky;
+    let counts_now = Counts { failed: c4[1], passed: c4[0], flaky, blocked: c4[2], not_run: c4[3] };
+    let flaky_cases = views.iter().filter(|v| v.flaky()).count();
+    let failure_cases = views.iter().filter(|v| v.is_failure() && !v.flaky_failure).count();
+    let run_ms: u64 = run.cases.iter().map(report_smart::duration_of).sum();
 
     // The gallery, and each failed case's own pictures for its summary.
     let mut gallery: Vec<serde_json::Value> = Vec::new();
+    let (mut shots, mut videos) = (0usize, 0usize);
     let mut seen_pictures = std::collections::HashSet::new();
     for case in &run.cases {
         let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
@@ -961,112 +1100,226 @@ pub fn build_smart(
             for name in step_pictures(step, exists) {
                 if seen_pictures.insert(name.to_string()) {
                     gallery.push(serde_json::json!({ "n": name, "c": case.case_id, "s": label }));
+                    shots += 1;
                 }
             }
         }
         if let Some(v) = case.video.as_deref().filter(|v| super::store::safe_video_name(v) && exists(v)) {
             if seen_pictures.insert(v.to_string()) {
-                gallery.push(serde_json::json!({ "n": v, "c": case.case_id, "s": "video", "k": 1 }));
+                gallery.push(serde_json::json!({ "n": v, "c": case.case_id, "s": "Video", "k": 1 }));
+                videos += 1;
             }
         }
     }
     let mut summaries = serde_json::Map::new();
-    let mut failure_views = String::new();
-    for c in &clusters {
-        let mut cases_html = String::new();
-        for id in &c.cases {
-            let Some(v) = views.iter().find(|v| v.case.case_id == *id) else { continue };
-            let Some(failure) = v.failure else { continue };
-            let passes = trend.passes.get(id).map(Vec::as_slice).unwrap_or(&[]);
-            let timeline = report_smart::timeline(v.case, passes);
-            let pictures: Vec<String> = v
-                .case
-                .steps
-                .iter()
-                .filter(|s| Some(s.step_number) == failure.step_number)
-                .flat_map(|s| step_pictures(s, exists))
-                .map(str::to_string)
-                .collect();
-            let video = v.case.video.as_deref().filter(|n| super::store::safe_video_name(n) && exists(n));
-            summaries.insert(
-                id.to_string(),
-                serde_json::Value::String(report_smart::summary_markdown(
-                    v.case,
-                    failure,
-                    run.environment.as_deref(),
-                    &when,
-                    &pictures,
-                    video,
-                )),
-            );
-            cases_html.push_str(&report_view::failure_case(v, failure, &timeline));
-        }
-        failure_views.push_str(&report_view::cluster_box(c, &cases_html));
+    for v in views.iter().filter(|v| v.is_failure()) {
+        let Some(failure) = failures.get(&v.case.case_id) else { continue };
+        let pictures: Vec<String> = v
+            .case
+            .steps
+            .iter()
+            .filter(|s| Some(s.step_number) == failure.step_number)
+            .flat_map(|s| step_pictures(s, exists))
+            .map(str::to_string)
+            .collect();
+        let video = v.case.video.as_deref().filter(|n| super::store::safe_video_name(n) && exists(n));
+        summaries.insert(
+            v.case.case_id.to_string(),
+            serde_json::Value::String(report_smart::summary_markdown(v.case, failure, run.environment.as_deref(), &when, &pictures, video)),
+        );
     }
-    let failed_cases = clusters.iter().map(|c| c.cases.len()).sum::<usize>();
 
-    let mut h = String::new();
-    h.push_str(&format!(
-        "<!doctype html><html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">",
-        palette.initial_scheme()
-    ));
-    // Defence in depth: everything below is escaped and nothing is fetched,
-    // but should either ever slip, the page still may load nothing beyond
-    // its linked pictures and videos and its own inline style and script.
-    h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"));
-    h.push_str(&format!(
-        "<script>{}\ndocument.documentElement.classList.add('js');</script>",
-        crate::webtheme::RESTORE_JS
-    ));
-    h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-    h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
-    h.push_str(&format!("<style>{}\n{STYLE}</style></head><body>", palette.css()));
-    h.push_str(crate::webtheme::SWITCH_HTML);
-    h.push_str("<div class=\"page\"><h1>Auto Run report</h1><dl>");
-    h.push_str(&format!("<dt>Ran</dt><dd>{}</dd>", esc_attr(&when)));
-    h.push_str(&format!("<dt>Mode</dt><dd>{mode}</dd>"));
-    if let Some(env) = run.environment.as_deref().filter(|e| !e.trim().is_empty()) {
-        h.push_str(&format!("<dt>Environment</dt><dd>{}</dd>", esc_attr(env)));
+    // ---- The lists.
+    let mut fail_list = String::new();
+    let mut insight_clusters: Vec<String> = Vec::new();
+    let mut print_clusters = String::new();
+    let mut n_clusters = 0;
+    for c in &clusters {
+        let members: Vec<&CaseView> = c.cases.iter().filter_map(|id| by_id.get(id).copied()).filter(|v| !v.flaky_failure).collect();
+        if members.is_empty() {
+            continue;
+        }
+        n_clusters += 1;
+        let rows: String = members.iter().map(|v| report_view::row(v, "failures", &failure_text(v))).collect();
+        let note = if c.example.is_empty() { String::new() } else { format!("<p class=\"grp__note\">{}</p>", esc_attr(&c.example)) };
+        fail_list.push_str(&report_view::group(&c.title, true, members.len(), &rows, &note));
+        insight_clusters.push(format!(
+            "<span class=\"lines__label mono\" title=\"{t}\">{t}</span><span class=\"tone-fail count mono\">{}{}</span>",
+            report_view::icon("failed"),
+            members.len(),
+            t = esc_attr(&c.title)
+        ));
+        let ids: Vec<String> = members.iter().map(|v| format!("#{}", v.case.case_id)).collect();
+        print_clusters.push_str(&format!(
+            "<li><strong>{}</strong> ({}): {}<br><span class=\"muted\">{}</span></li>",
+            esc_attr(&c.title),
+            members.len(),
+            ids.join(", "),
+            esc_attr(&c.example)
+        ));
     }
-    h.push_str(&format!("<dt>PBI</dt><dd>#{}</dd>", run.pbi_id));
+    if fail_list.is_empty() {
+        fail_list = "<div class=\"empty\"><p class=\"empty__title\">No case failed or was blocked in this run.</p></div>".to_string();
+    }
+    let flaky_rows: String = views
+        .iter()
+        .filter(|v| v.flaky())
+        .map(|v| report_view::row(v, "flaky", &failure_text(v)))
+        .collect();
+    let flaky_list = if flaky_rows.is_empty() {
+        "<div class=\"empty\"><p class=\"empty__title\">No flaky cases.</p><p class=\"empty__body\">A case is flaky when its script is marked flaky, or it passed and failed among its recent runs in this environment.</p></div>".to_string()
+    } else {
+        flaky_rows
+    };
+    let mut all_list = String::new();
+    if views.is_empty() {
+        all_list.push_str("<div class=\"empty\"><p class=\"empty__title\">This run has no cases.</p></div>");
+    } else if in_batches(run) {
+        // Under the batches the run made, with the pauses between them.
+        let mut rows = String::new();
+        let mut label = String::new();
+        let mut extra = String::new();
+        let mut count = 0;
+        for v in &views {
+            if let Some(heading) = batch_heading(run, v.case.case_id) {
+                if count > 0 {
+                    all_list.push_str(&report_view::group(&label, false, count, &rows, &extra));
+                }
+                label = heading;
+                rows.clear();
+                extra = resets_before(run, v.case.case_id).iter().map(|l| format!("<p class=\"reset grp__note\">{l}</p>")).collect();
+                count = 0;
+            }
+            rows.push_str(&report_view::row(v, "all", &failure_text(v)));
+            count += 1;
+        }
+        all_list.push_str(&report_view::group(&label, false, count, &rows, &extra));
+    } else if views.iter().any(|v| !v.area.is_empty()) {
+        let mut areas: Vec<(String, String, usize)> = Vec::new();
+        for v in &views {
+            let name = if v.area.is_empty() { "No area".to_string() } else { v.area.clone() };
+            let pauses: String = resets_before(run, v.case.case_id).iter().map(|l| format!("<p class=\"reset grp__note\">{l}</p>")).collect();
+            let row = format!("{pauses}{}", report_view::row(v, "all", &failure_text(v)));
+            match areas.iter_mut().find(|(n, _, _)| *n == name) {
+                Some((_, rows, n)) => {
+                    rows.push_str(&row);
+                    *n += 1;
+                }
+                None => areas.push((name, row, 1)),
+            }
+        }
+        for (name, rows, n) in &areas {
+            all_list.push_str(&report_view::group(name, false, *n, rows, ""));
+        }
+    } else {
+        for v in &views {
+            for line in resets_before(run, v.case.case_id) {
+                all_list.push_str(&format!("<p class=\"reset grp__note\">{line}</p>"));
+            }
+            all_list.push_str(&report_view::row(v, "all", &failure_text(v)));
+        }
+    }
+    let lists = format!(
+        "<div class=\"list\" id=\"list-failures\" data-title=\"Failures\" data-count=\"{failure_cases}\">{fail_list}</div>\
+<div class=\"list\" id=\"list-flaky\" data-title=\"Flaky\" data-count=\"{flaky_cases}\" hidden>{flaky_list}</div>\
+<div class=\"list\" id=\"list-all\" data-title=\"All cases\" data-count=\"{}\" hidden>{all_list}</div>",
+        views.len()
+    );
+
+    // ---- The details, one per case, in the run's order.
+    let mut details = String::new();
+    for v in &views {
+        details.push_str(&detail(
+            v,
+            failures.get(&v.case.case_id),
+            script_for(v.case.case_id),
+            exists,
+            size_of,
+            &shown_divergences(run, extras, v.case.case_id),
+        ));
+    }
+    let cases_view = format!(
+        "<section class=\"view split\" id=\"view-cases\">{}<div class=\"pane__detail\" id=\"details\"><div class=\"empty detail__empty\" hidden><p class=\"empty__title\">Select a case</p></div>{details}</div></section>",
+        report_view::list_pane(&lists)
+    );
+
+    // ---- Insights.
+    let health = report_smart::health(&trend.points, flaky_cases, views.len());
+    let new_cases = trend.compare.as_ref().map(|c| c.new_cases.len());
+    let prior = trend.points.len().saturating_sub(1);
+    let sub = if prior == 0 {
+        format!("Run of {} \u{b7} the first run of PBI #{} in this environment", esc_attr(&when), run.pbi_id)
+    } else {
+        format!("Run of {} \u{b7} compared with the previous {}", esc_attr(&when), if prior == 1 { "run".to_string() } else { format!("{prior} runs") })
+    };
+    let line_for = |ids: &[i32], status: &str| -> Vec<String> {
+        ids.iter()
+            .filter_map(|id| by_id.get(id).copied())
+            .map(|v| report_view::case_line(if status.is_empty() { v.status() } else { status }, v.case.case_id, &v.case.title, ""))
+            .collect()
+    };
+    let cmp = trend.compare.clone().unwrap_or_default();
+    let slow_lines: Vec<String> = report_smart::slowest(run, 5)
+        .into_iter()
+        .filter_map(|(id, ms)| by_id.get(&id).map(|v| report_view::case_line(v.status(), id, &v.case.title, &report_view::took(ms))))
+        .collect();
+    let order: Vec<i32> = run.cases.iter().map(|c| c.case_id).collect();
+    let flaky_lines: Vec<String> = report_smart::most_flaky(&trend.per_case, &order, 5)
+        .into_iter()
+        .filter_map(|(id, pct)| by_id.get(&id).map(|v| report_view::case_line(v.status(), id, &v.case.title, &format!("{pct}%"))))
+        .collect();
+    let mut insights = format!(
+        "<section class=\"view page\" id=\"view-insights\"><div class=\"page__head\"><h1 class=\"page__title\">Insights</h1><span class=\"muted\">{sub}</span></div>"
+    );
+    insights.push_str(&report_view::stats(&trend.points, new_cases, views.len(), health.as_ref()));
+    insights.push_str(&report_view::minibar(&counts_now));
+    insights.push_str("<div class=\"panels\">");
+    insights.push_str(&report_view::panel("Failure clusters", &format!("{n_clusters} cluster{}", if n_clusters == 1 { "" } else { "s" }), &insight_clusters, "None this run."));
+    insights.push_str(&report_view::panel("Slowest", "this run", &slow_lines, "No timings were recorded."));
+    insights.push_str(&report_view::panel("Most flaky", "flips between runs", &flaky_lines, "None this run."));
+    insights.push_str(&report_view::panel("Fixed", &cmp.fixed.len().to_string(), &line_for(&cmp.fixed, "passed"), "None this run."));
+    insights.push_str(&report_view::panel("New failures", &cmp.new_failures.len().to_string(), &line_for(&cmp.new_failures, ""), "None this run."));
+    insights.push_str(&report_view::panel("New cases", &cmp.new_cases.len().to_string(), &line_for(&cmp.new_cases, ""), "None this run."));
+    insights.push_str("</div>");
+    if !print_clusters.is_empty() {
+        insights.push_str(&format!("<div class=\"print-only\"><h2 class=\"panel__title\">Failure clusters</h2><ul>{print_clusters}</ul></div>"));
+    }
+
+    // The run's details, as the report always gave them.
+    insights.push_str("<h2 class=\"panel__title run__title\">Run</h2><dl class=\"run__dl\">");
+    insights.push_str(&format!("<dt>Ran</dt><dd>{}</dd>", esc_attr(&when)));
+    insights.push_str(&format!("<dt>Mode</dt><dd>{mode}</dd>"));
+    if let Some(env) = run.environment.as_deref().filter(|e| !e.trim().is_empty()) {
+        insights.push_str(&format!("<dt>Environment</dt><dd>{}</dd>", esc_attr(env)));
+    }
+    insights.push_str(&format!("<dt>PBI</dt><dd>#{}</dd>", run.pbi_id));
     match &run.published {
-        Some(p) => h.push_str(&format!(
+        Some(p) => insights.push_str(&format!(
             "<dt>Azure DevOps</dt><dd>Sent as test run #{} - {}</dd>",
             p.run_id,
             web_link(&p.web_url)
         )),
-        None => h.push_str("<dt>Azure DevOps</dt><dd>Not sent - these results are on this machine only</dd>"),
+        None => insights.push_str("<dt>Azure DevOps</dt><dd>Not sent - these results are on this machine only</dd>"),
     }
-    h.push_str("</dl>");
-    h.push_str(&report_view::tabs(failed_cases, gallery.len()));
-
-    // Overview.
-    h.push_str("<section class=\"view on\" id=\"view-overview\">");
-    h.push_str(&product_bugs_section(run));
-
-    let mut c = counts(run);
-    // A failure of a case marked flaky is counted as flaky, not as failed;
-    // the column shows only when there is one, as Past runs does.
-    let flaky = flaky_count(run, scripts);
-    c[1] -= flaky;
-    h.push_str("<h2>Summary</h2><table class=\"summary\"><thead><tr>");
+    insights.push_str("</dl>");
+    insights.push_str(&product_bugs_section(run));
+    insights.push_str("<h2>Summary</h2><table class=\"summary\"><thead><tr>");
     for b in BUCKETS {
-        h.push_str(&format!("<th>{b}</th>"));
+        insights.push_str(&format!("<th>{b}</th>"));
     }
     if flaky > 0 {
-        h.push_str("<th>Flaky</th>");
+        insights.push_str("<th>Flaky</th>");
     }
-    h.push_str("<th>Total</th></tr></thead><tbody><tr>");
+    insights.push_str("<th>Total</th></tr></thead><tbody><tr>");
     for (i, b) in BUCKETS.iter().enumerate() {
-        h.push_str(&format!("<td class=\"b-{}\">{}</td>", css_key(b), c[i]));
+        insights.push_str(&format!("<td class=\"b-{}\">{}</td>", css_key(b), c4[i]));
     }
     if flaky > 0 {
-        h.push_str(&format!("<td class=\"b-flaky\">{flaky}</td>"));
+        insights.push_str(&format!("<td class=\"b-flaky\">{flaky}</td>"));
     }
-    h.push_str(&format!("<td>{}</td></tr></tbody></table>", run.cases.len()));
-    h.push_str(&report_view::outcome_bar(c, flaky));
+    insights.push_str(&format!("<td>{}</td></tr></tbody></table>", run.cases.len()));
     if flaky > 0 {
-        h.push_str(&format!(
+        insights.push_str(&format!(
             "<p class=\"note\">{flaky} failed case{} marked as flaky, so {} not counted as failed above. Still sent as failed.</p>",
             if flaky == 1 { " is" } else { "s are" },
             if flaky == 1 { "it is" } else { "they are" }
@@ -1081,99 +1334,69 @@ pub fn build_smart(
     }
     if total > 0 {
         let cases = if passed_with == 1 { "case" } else { "cases" };
-        h.push_str(&format!("<p class=\"unchecked\">{} in {passed_with} passed {cases}</p>", count_words(total)));
+        insights.push_str(&format!("<p class=\"unchecked\">{} in {passed_with} passed {cases}</p>", count_words(total)));
     }
     if run.video_unavailable {
-        h.push_str("<p class=\"note\">Videos of failed cases were asked for, but this browser cannot record them.</p>");
+        insights.push_str("<p class=\"note\">Videos of failed cases were asked for, but this browser cannot record them.</p>");
     }
-    h.push_str(&report_view::top_clusters(&clusters));
-    h.push_str(&report_view::sparkline(&trend.points));
-    h.push_str("</section>");
+    insights.push_str("</section>");
 
-    // Failures.
-    h.push_str("<section class=\"view\" id=\"view-failures\"><h2>Failures</h2>");
-    if clusters.is_empty() {
-        h.push_str("<p class=\"note\">No case failed or was blocked in this run.</p>");
-    } else {
-        h.push_str(&format!(
-            "<p class=\"note\">{failed_cases} failed or blocked case{} in {} group{} by what stopped {}. Each bar is one step; the first anomaly is the first step that failed, or ran more than twice as long as it usually does.</p>",
-            if failed_cases == 1 { "" } else { "s" },
-            clusters.len(),
-            if clusters.len() == 1 { "" } else { "s" },
-            if failed_cases == 1 { "it" } else { "them" },
-        ));
-        h.push_str(&failure_views);
-    }
-    h.push_str("</section>");
+    // ---- History: the titles the compare lists need.
+    let titles: std::collections::HashMap<i32, (String, &'static str)> = views.iter().map(|v| (v.case.case_id, (v.case.title.clone(), v.status()))).collect();
+    let history_html = report_view::history_view(&trend, run.pbi_id, run.environment.as_deref(), &titles);
 
-    h.push_str(&report_view::history_view(&trend, run.environment.as_deref()));
-    h.push_str(&report_view::gallery_view(gallery.len()));
-
-    // All cases: the table and a section per case, as the report always had.
-    h.push_str("<section class=\"view\" id=\"view-all\"><h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th><th>Grade</th><th>Last runs</th></tr></thead><tbody>");
-    for v in &views {
-        let case = v.case;
-        if let Some(heading) = batch_heading(run, case.case_id) {
-            h.push_str(&format!("<tr class=\"batch\"><th colspan=\"8\">{}</th></tr>", esc_attr(&heading)));
-        }
-        for line in resets_before(run, case.case_id) {
-            h.push_str(&format!("<tr class=\"reset\"><td colspan=\"8\">{line}</td></tr>"));
-        }
-        let b = v.bucket;
-        let decided = if !case.verdict.is_empty() {
-            "Confirmed"
-        } else if !case.proposed.is_empty() {
-            "Proposed"
-        } else {
-            "-"
-        };
-        let result = result_words(b, script_for(case.case_id).map(|s| expectations(s).len()).unwrap_or(0));
-        let flaky_mark = if v.flaky_failure { FLAKY_TAG } else { "" };
-        h.push_str(&format!(
-            "<tr class=\"f-item\"{}><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{}{flaky_mark}</td><td>{decided}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            v.attrs(),
-            case.case_id,
-            esc_attr(&case.title),
-            css_key(b),
-            esc_attr(&result),
-            esc_attr(case.account.as_deref().unwrap_or("")),
-            esc_attr(&v.area),
-            report_view::grade_cell(v),
-            v.trend.map(report_view::strip_html).unwrap_or_default(),
-        ));
-    }
-    h.push_str("</tbody></table>");
-
-    if !run.cases.is_empty() {
-        h.push_str("<h2>Cases in detail</h2>");
-        for v in &views {
-            let case = v.case;
-            if let Some(heading) = batch_heading(run, case.case_id) {
-                h.push_str(&format!("<h3 class=\"batch\">{}</h3>", esc_attr(&heading)));
-            }
-            for line in resets_before(run, case.case_id) {
-                h.push_str(&format!("<p class=\"reset\">{line}</p>"));
-            }
-            h.push_str(&format!("<div class=\"f-item case-wrap\" id=\"case-{}\"{}>", case.case_id, v.attrs()));
-            h.push_str(&case_section(
-                case,
-                script_for(case.case_id),
-                components,
-                exists,
-                size_of,
-                &shown_divergences(run, extras, case.case_id),
-            ));
-            h.push_str("</div>");
-        }
-    }
-    h.push_str("</section>");
-    h.push_str(report_view::dialogs());
-    h.push_str("</div>");
-
+    // ---- The page.
     let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery }));
+    let head_js = HEAD_JS;
+    let app_js = SCRIPT;
+    let (accent_l, accent_d) = palette.accents();
+    let mut accent = String::new();
+    if let Some(a) = accent_l {
+        accent.push_str(&format!("--accent-l:{a};"));
+    }
+    if let Some(a) = accent_d {
+        accent.push_str(&format!("--accent-d:{a};"));
+    }
+    let accent = if accent.is_empty() { String::new() } else { format!(":root{{{accent}}}\n") };
+    let start = if failure_cases > 0 { "failures" } else { "insights" };
+
+    let mut h = String::new();
+    h.push_str(&format!("<!doctype html><html lang=\"en\" data-mode=\"{}\"><head><meta charset=\"utf-8\">", palette.initial_scheme()));
+    // Defence in depth: everything below is escaped and nothing is fetched,
+    // but should either ever slip, the page still may load nothing beyond
+    // its linked pictures and videos and its own inline style, and run only
+    // the two scripts it carries (by hash).
+    h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", csp(&[head_js, app_js])));
+    h.push_str(&format!("<script>{head_js}</script>"));
+    h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
+    h.push_str(&format!("<style>{TOKENS}\n{accent}{STYLE}</style></head><body data-start=\"{start}\">"));
+    h.push_str("<a class=\"skip-link\" href=\"#main\">Skip to the report</a>");
+    h.push_str("<div class=\"app\" data-rail=\"open\">");
+    h.push_str(&report_view::topbar(run.pbi_id, run.environment.as_deref(), &when, run.mode != "unattended", &counts_now, run_ms));
+    h.push_str("<div class=\"app__body\">");
+    h.push_str(&report_view::sidebar(failure_cases, flaky_cases, views.len(), env!("CARGO_PKG_VERSION")));
+    h.push_str("<main class=\"app__main\" id=\"main\" tabindex=\"-1\">");
+    // On paper only: the run's name and its counts, ahead of everything.
+    h.push_str(&format!(
+        "<div class=\"print-only print-head\"><h1 class=\"page__title\">Auto Run report</h1><p>PBI #{}{} \u{b7} {}</p><p>{} passed, {} failed, {} flaky, {} blocked, {} not run</p></div>",
+        run.pbi_id,
+        run.environment.as_deref().filter(|e| !e.trim().is_empty()).map(|e| format!(" \u{b7} {}", esc_attr(e))).unwrap_or_default(),
+        esc_attr(&when),
+        counts_now.passed,
+        counts_now.failed,
+        counts_now.flaky,
+        counts_now.blocked,
+        counts_now.not_run
+    ));
+    h.push_str(&cases_view);
+    h.push_str(&insights);
+    h.push_str(&history_html);
+    h.push_str(&report_view::gallery_view(shots, videos));
+    h.push_str("</main></div></div>");
+    h.push_str(&report_view::dialogs());
     h.push_str(&format!("<script type=\"application/json\" id=\"report-data\">{blob}</script>"));
-    h.push_str(&format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
-    h.push_str(&format!("<script>{SCRIPT}</script>"));
+    h.push_str(&format!("<script>{app_js}</script>"));
     h.push_str("</body></html>\n");
     h
 }
