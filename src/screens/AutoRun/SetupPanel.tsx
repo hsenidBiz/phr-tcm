@@ -54,6 +54,8 @@ import SignInProposalNotice from "./SignInProposalNotice";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
+import { BLOCKER_NOTE, SIMPLE_HIDDEN, blockingRows, shownInSimple, type SetupRowName } from "./blocksRun";
+import { useAutoRunMode } from "./useAutoRunMode";
 
 /** Everything the Setup panel reports, and what the screen needs to know
  * about it. All of it
@@ -181,6 +183,16 @@ export function useAutoRunSetup({
   });
   const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
 
+  const discoveringNow = useDiscoveryActive();
+  /** The rows that stop a run now: the header's reasons and Simple mode's
+   * "show it anyway" rule both read this. */
+  const blocking = blockingRows({
+    essentialMissing: !setupReady || accountCount === 0 || (knownSiteUrl !== undefined && !knownSiteUrl.trim()),
+    signIn,
+    discovering: discoveringNow,
+    fixturesFailed,
+    fixturesFailedHere,
+  });
   /** What the panel's "Needs attention" is about, each as a few words for
    * its header: something a run cannot go without is missing, or could not
    * be read, or a script uploads a file the Test files folder does not
@@ -227,6 +239,7 @@ export function useAutoRunSetup({
     essentialsSettled,
     essentialUnreadable,
     attentionReasons,
+    blocking,
   };
 }
 
@@ -564,6 +577,17 @@ export default function SetupPanel({
   const statusOf = (label: string): Status => lines.find((l) => l.label === label)?.status ?? "quiet";
   const valueOf = (label: string): string => lines.find((l) => l.label === label)?.value ?? "";
   const dbStatus = statusOf("Database");
+  // Simple leaves out the rows an advanced user tends, unless one stops a run.
+  // Until the mode is known the panel is what Advanced shows.
+  const { mode, loading: modeLoading } = useAutoRunMode();
+  const simple = !modeLoading && mode === "simple";
+  const showRow = (name: SetupRowName) => !simple || shownInSimple(name, s.blocking);
+  /** The note under a row Simple shows only because it blocks a run. */
+  const blockerNote = (name: SetupRowName) =>
+    simple && SIMPLE_HIDDEN.has(name) ? <p className="-mt-2 text-xs text-muted">{BLOCKER_NOTE}</p> : null;
+  const shownLines = lines.filter((l) => showRow(l.label as SetupRowName));
+  // The Sign-in row's recipe tools are for Advanced, unless sign-in blocks a run.
+  const signInTools = showRow("Sign-in") && (!simple || s.blocking.has("Sign-in"));
 
   return (
     <section
@@ -607,7 +631,7 @@ export default function SetupPanel({
       <div id={bodyId} className="-mx-1 min-h-0 overflow-auto px-1">
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
-            {lines.map(({ label, status, value, missing }) => (
+            {shownLines.map(({ label, status, value, missing }) => (
               <li key={label} className="flex items-start gap-2 text-sm">
                 {/* One line tall and centred in it, so the dot sits beside
                     the label's first line even when the value wraps. */}
@@ -628,6 +652,9 @@ export default function SetupPanel({
                   )}
                 </span>
                 {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
+                {simple && SIMPLE_HIDDEN.has(label as SetupRowName) && (
+                  <span className="basis-full pl-[8.5rem] text-xs text-muted">{BLOCKER_NOTE}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -743,28 +770,32 @@ export default function SetupPanel({
               >
                 {/* Record: sign in by hand once and the recipe is written.
                     Edit: the recipe as JSON, for what a recording cannot say. */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Record sign-in"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setRecordOpen(true)}
-                >
-                  <IconRecord aria-hidden />
-                  Record
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit sign-in recipe"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setRecipeOpen(true)}
-                >
-                  <IconRecipe aria-hidden />
-                  Edit
-                </Button>
+                {signInTools && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="Record sign-in"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setRecordOpen(true)}
+                    >
+                      <IconRecord aria-hidden />
+                      Record
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="Edit sign-in recipe"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setRecipeOpen(true)}
+                    >
+                      <IconRecipe aria-hidden />
+                      Edit
+                    </Button>
+                  </>
+                )}
               </SetupRow>
 
               {setupReady && <SignInProposalNotice org={org} project={project} />}
@@ -823,6 +854,8 @@ export default function SetupPanel({
 
               {/* What the assistant's discovery has seen of the live app,
                   area by area. */}
+              {showRow("Discovery") && (
+              <>
               <SetupRow
                 label="Discovery"
                 status={statusOf("Discovery")}
@@ -884,8 +917,13 @@ export default function SetupPanel({
                   {released}
                 </p>
               )}
+              {blockerNote("Discovery")}
+              </>
+              )}
 
               {/* Steps saved once that scripts use by name. */}
+              {showRow("Components") && (
+              <>
               <SetupRow
                 label="Components"
                 term="component"
@@ -916,6 +954,9 @@ export default function SetupPanel({
                   View
                 </Button>
               </SetupRow>
+              {blockerNote("Components")}
+              </>
+              )}
 
               <SetupRow
                 label="Test files"
@@ -958,7 +999,8 @@ export default function SetupPanel({
 
               {/* Drafts the assistant builds test data from; they live on
                   the API Templates screen. */}
-              {s.fixturesOn && (
+              {s.fixturesOn && showRow("Fixtures") && (
+                <>
                 <SetupRow
                   label="Fixtures"
                   term="fixture"
@@ -989,6 +1031,8 @@ export default function SetupPanel({
                     Open
                   </Button>
                 </SetupRow>
+                {blockerNote("Fixtures")}
+                </>
               )}
             </div>
             <p className="text-xs text-muted">
