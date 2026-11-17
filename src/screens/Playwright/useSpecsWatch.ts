@@ -59,6 +59,10 @@ export function useSpecsWatch({
     setState((s) => ({ ...(s.clone === forClone ? s : empty(forClone)), ...p }));
   }, []);
 
+  /** Whether a refused re-read is waiting for the slot (read by `look`). */
+  const waitingRef = useRef(false);
+  waitingRef.current = view.waiting === true;
+
   /** One look at the clone, and the re-read when it changed. `force` is the
    * Refresh button: it reads again whatever the look says. */
   const look = useCallback(
@@ -94,7 +98,10 @@ export function useSpecsWatch({
           return;
         }
         patch(forClone, { processed: was });
-        if (was === print) return;
+        // Unchanged files need no re-read - unless a refused one is still
+        // waiting (a Refresh, or a holder of the slot this window never saw,
+        // such as a folder rename): each timer look tries it once more.
+        if (was === print && !waitingRef.current) return;
         const failed = failedAt.current;
         if (failed && failed.clone === forClone && failed.fingerprint === print) return;
         // Waiting on a running command, or on a re-read already going.

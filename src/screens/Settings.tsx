@@ -1234,7 +1234,11 @@ function ChangelogVersion({ entry, takeFocus }: { entry: ChangelogEntry; takeFoc
     if (takeFocus) root.current?.focus({ preventScroll: false });
   }, [takeFocus]);
   return (
-    <div ref={root} tabIndex={takeFocus ? -1 : undefined} className="space-y-1.5 focus:outline-none">
+    <div
+      ref={root}
+      tabIndex={takeFocus ? -1 : undefined}
+      className="space-y-1.5 rounded focus:outline-none focus-visible:outline-2 focus-visible:outline-accent"
+    >
       <ChangelogVersionTitle entry={entry} />
       <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
         {entry.items.map((item, i) => (
