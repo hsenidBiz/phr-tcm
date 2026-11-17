@@ -71,6 +71,7 @@ mod autorun_refusals;
 mod autorun_roles;
 mod autorun_slots;
 mod autorun_area_trip;
+mod autorun_by_auto_run;
 mod autorun_batches;
 mod autorun_claims;
 mod autorun_check_signin;

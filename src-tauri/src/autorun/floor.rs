@@ -58,7 +58,9 @@ pub fn on_shared_row(n: i32) -> String {
 /// step past the case's count, where "no case step there" is rule 4. Rule 5
 /// refuses a script step on a Shared Steps row. Rule 6: the clean-up step
 /// (`StepScript::cleanup`) comes right after the case's last step, where
-/// the case expects nothing, so rule 4 does not speak about it.
+/// the case expects nothing, so rule 4 does not speak about it. Rule 7: a
+/// step marked `by_auto_run` needs no check or `unchecked`, but has no
+/// actions and sits among the opening steps.
 pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
     let mut out: Vec<(i32, String)> = Vec::new();
 
@@ -74,7 +76,7 @@ pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
             }
             Some(step) => {
                 let has_check = step.actions.iter().any(|a| a.is_check());
-                if step.unchecked.is_none() && !has_check {
+                if step.unchecked.is_none() && !has_check && !step.by_auto_run {
                     out.push((
                         n,
                         format!(
@@ -108,6 +110,9 @@ pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
             out.push((n, format!("step {n} says it is unchecked but the case expects nothing there")));
         }
     }
+
+    // Rule 7: a step done by Auto Run has no actions and is one of the opening steps.
+    out.extend(super::by_auto_run::mark_problems(script));
 
     if let Some(step) = script.cleanup_step() {
         let after = expected.len() as i32 + 1;

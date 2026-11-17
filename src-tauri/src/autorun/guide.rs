@@ -373,6 +373,8 @@ A step whose checks leave out part of its expected result lists each part in `un
 A check that only stands in for the item stays in the step, and the item names its kind: `"stand_in": "expect_hidden"`.
 Each item shows on the case card and in the run report ("1 expectation unchecked" on a pass), and Export to Playwright writes each as a `// TODO unchecked` line.
 
+A step whose whole expected result is what Auto Run does itself before step 1 (launching the app, signing in, reaching the area) is written `{ "step_number": 1, "actions": [], "by_auto_run": true }`: no actions, no `unchecked`, no check. Only the opening steps can be, one after another from step 1; a marked step after an unmarked one, or with actions, is refused at save. Such a step is not counted as unchecked on the card, the run report or the Playwright export.
+
 A script may end with one clean-up step that removes what the case made:
 `{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
 It is no step of the case: it is the script's last, numbered right after

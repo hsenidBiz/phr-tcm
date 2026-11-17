@@ -1,0 +1,67 @@
+[
+  {
+    "name": "steps 1 to 3 marked",
+    "script": {
+      "case_id": 1,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [], "by_auto_run": true },
+        { "step_number": 2, "actions": [], "by_auto_run": true },
+        { "step_number": 3, "actions": [], "by_auto_run": true },
+        { "step_number": 4, "actions": [{ "kind": "check_text", "value": "Saved" }] }
+      ]
+    },
+    "steps": [1, 2, 3]
+  },
+  {
+    "name": "steps 1 and 3 marked, only 1 counts",
+    "script": {
+      "case_id": 2,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [], "by_auto_run": true },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 3, "actions": [], "by_auto_run": true }
+      ]
+    },
+    "steps": [1]
+  },
+  {
+    "name": "no field: the opening steps with no actions and a sentence count",
+    "script": {
+      "case_id": 3,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [], "unchecked": "Auto Run opens the app" },
+        { "step_number": 2, "actions": [], "unchecked": "Auto Run signs in" },
+        { "step_number": 3, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "the PDF cannot be read" }
+      ]
+    },
+    "steps": [1, 2]
+  },
+  {
+    "name": "no field and step 1 has actions",
+    "script": {
+      "case_id": 4,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "why" },
+        { "step_number": 2, "actions": [], "unchecked": "why" }
+      ]
+    },
+    "steps": []
+  },
+  {
+    "name": "a marked clean-up step never counts",
+    "script": {
+      "case_id": 5,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [], "by_auto_run": true },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 3, "actions": [], "cleanup": true, "by_auto_run": true, "unchecked": "removes what step 2 made" }
+      ]
+    },
+    "steps": [1]
+  }
+]

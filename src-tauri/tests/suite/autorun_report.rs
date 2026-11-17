@@ -1275,3 +1275,16 @@ fn the_flaky_rule_matches_the_table_the_screens_are_held_to() {
         assert_eq!(got, row["counts_as"].as_str().unwrap(), "{row}");
     }
 }
+
+#[test]
+fn a_passed_cases_unchecked_count_leaves_out_the_steps_done_by_auto_run() {
+    let script: CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 309, "title": "t", "steps": [
+        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Run opens the app" },
+        { "step_number": 2, "actions": [], "unchecked": "the PDF cannot be read" }
+    ] }))
+    .unwrap();
+    let html = build(&run_with(&[(309, "Passed")]), &[script], "x", &no_shots);
+    assert!(html.contains("<span class=\"tone-pass\">Passed, 1 expectation unchecked</span>"), "{html}");
+    assert!(!html.contains("Auto Run opens the app"), "{html}");
+    assert!(html.contains("<p class=\"unchecked\">1 expectation unchecked in 1 passed case</p>"), "{html}");
+}

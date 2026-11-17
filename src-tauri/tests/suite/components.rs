@@ -83,7 +83,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
         title: "a case".into(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 2, actions, unchecked: None, cleanup: false, because: Vec::new() }],
+        steps: vec![StepScript { step_number: 2, actions, unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,

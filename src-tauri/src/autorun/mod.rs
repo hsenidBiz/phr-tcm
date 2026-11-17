@@ -18,6 +18,7 @@ pub mod capture_tools;
 pub mod case_text;
 pub mod claims;
 pub mod case_values;
+pub mod by_auto_run;
 pub mod cleanup;
 pub mod defects;
 pub mod divergences;
@@ -223,6 +224,12 @@ pub struct StepScript {
     /// when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub because: Vec<Because>,
+    /// The step's whole expected result is what Auto Run does itself before
+    /// step 1: launching the app, signing in, reaching the area. Only the
+    /// opening steps can be (`by_auto_run::done_by_auto_run`); such a step
+    /// has no actions and needs no `unchecked`. Written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub by_auto_run: bool,
 }
 
 /// Where a check's value comes from when the case does not hold it word for word.

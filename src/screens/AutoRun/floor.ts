@@ -2,7 +2,8 @@
 // (`src-tauri/src/autorun/floor.rs`'s `check_floor`), so the editor can show
 // a case step's checked state before a save is even attempted.
 //
-// Only rules 1 and 2 are mirrored here - a case step with no matching
+// Only rules 1 and 2 are mirrored here (a step marked `by_auto_run` is
+// explained by that mark; the save refuses a bad mark) - a case step with no matching
 // script step, or one whose actions carry no check and no "unchecked"
 // reason. Rules 3 and 4, which judge whether an "unchecked" reason was
 // honest, stay server-side: they are about the SCRIPT policing itself, not
@@ -37,6 +38,8 @@ export function floorOf(
     .map(({ step_number }) => {
       const scriptStep = script.find((ss) => typeof ss === "object" && ss !== null && ss.step_number === step_number);
       if (!scriptStep) return { step_number, state: { kind: "unchecked" as const } };
+      // A step Auto Run performs itself needs no check or reason.
+      if (scriptStep.by_auto_run === true) return { step_number, state: { kind: "explained" as const, reason: "Done by Auto Run" } };
       const actions: unknown[] = Array.isArray(scriptStep.actions) ? scriptStep.actions : [];
       const hasCheck = actions.some((a) => {
         const kind = typeof a === "object" && a !== null ? (a as { kind?: unknown }).kind : undefined;

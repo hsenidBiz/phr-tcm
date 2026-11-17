@@ -3754,7 +3754,7 @@ fn scripted(case_id: i32) -> CaseScript {
             actions: vec![Action::Navigate { url: "https://app.example/".into() }],
             unchecked: None,
             cleanup: false,
-            because: Vec::new(),
+            because: Vec::new(), by_auto_run: false,
         }],
         repairs: 0,
         last_repair: None,

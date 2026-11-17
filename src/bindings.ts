@@ -8508,6 +8508,13 @@ export type StepScript_Deserialize = {
 	 *  when there are any.
 	 */
 	because?: Because_Deserialize[],
+	/**
+	 *  The step's whole expected result is what Auto Run does itself before
+	 *  step 1: launching the app, signing in, reaching the area. Only the
+	 *  opening steps can be (`by_auto_run::done_by_auto_run`); such a step
+	 *  has no actions and needs no `unchecked`. Written only when true.
+	 */
+	by_auto_run?: boolean,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -8537,6 +8544,13 @@ export type StepScript_Serialize = {
 	 *  when there are any.
 	 */
 	because?: Because_Serialize[],
+	/**
+	 *  The step's whole expected result is what Auto Run does itself before
+	 *  step 1: launching the app, signing in, reaching the area. Only the
+	 *  opening steps can be (`by_auto_run::done_by_auto_run`); such a step
+	 *  has no actions and needs no `unchecked`. Written only when true.
+	 */
+	by_auto_run?: boolean,
 };
 
 export type Step_Deserialize = {

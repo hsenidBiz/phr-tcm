@@ -1050,7 +1050,7 @@ pub async fn run_step_in_run<D: Driver>(
         all
     });
     let areas = merged.as_ref().or(run.areas);
-    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone(), cleanup: step.cleanup, because: Vec::new() };
+    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone(), cleanup: step.cleanup, because: Vec::new(), by_auto_run: step.by_auto_run };
     run.components = uses;
     // The actions as written, and where each expanded action came from: a sentence
     // that counts the step's actions counts the script's, not the expansion's.

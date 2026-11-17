@@ -2,6 +2,7 @@
 //! `unchecked` names, in the order the case runs. Pure - the card, the run
 //! report and the Playwright export all read this one list.
 
+use super::by_auto_run::done_by_auto_run;
 use super::{CaseScript, Unchecked};
 
 /// One expectation the script leaves unchecked.
@@ -27,11 +28,16 @@ fn collapsed(s: &str) -> String {
 /// Every expectation the script leaves unchecked, case steps in run order,
 /// never the clean-up: a sentence is one (item `WHOLE_STEP_ITEM`), a list is
 /// one per entry. Item and why with their whitespace collapsed; a blank
-/// sentence or entry is left out.
+/// sentence or entry is left out. A step Auto Run performs itself
+/// (`done_by_auto_run`) has none: every reader of this list agrees.
 pub fn expectations(script: &CaseScript) -> Vec<UncheckedExpectation> {
     let mut out = Vec::new();
+    let by_auto_run = done_by_auto_run(script);
     for step in script.case_steps() {
         let step_number = step.step_number;
+        if by_auto_run.contains(&step_number) {
+            continue;
+        }
         match &step.unchecked {
             None => {}
             Some(Unchecked::Step(sentence)) => {

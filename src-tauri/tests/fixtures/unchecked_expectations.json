@@ -90,5 +90,35 @@
     },
     "lines": ["step 2: the toast colour - no check reads a colour"],
     "words": "1 expectation unchecked"
+  },
+  {
+    "name": "steps done by Auto Run leave out their sentences",
+    "script": {
+      "case_id": 7,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [], "by_auto_run": true },
+        { "step_number": 2, "actions": [], "by_auto_run": true },
+        { "step_number": 3, "actions": [], "by_auto_run": true },
+        { "step_number": 4, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 5, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 6, "actions": [{ "kind": "check_text", "value": "Saved" }], "unchecked": [{ "item": "no lock icon", "why": "no check reads an icon" }] }
+      ]
+    },
+    "lines": ["step 6: no lock icon - no check reads an icon"],
+    "words": "1 expectation unchecked"
+  },
+  {
+    "name": "an old script's opening sentence-only step is done by Auto Run",
+    "script": {
+      "case_id": 8,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [], "unchecked": "Auto Run opens the app" },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "the PDF cannot be read" }
+      ]
+    },
+    "lines": ["step 2: the step's expected result - the PDF cannot be read"],
+    "words": "1 expectation unchecked"
   }
 ]

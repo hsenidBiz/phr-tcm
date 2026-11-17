@@ -34,7 +34,6 @@ test.describe('Definition Wizard', () => {
     await cur.locator('a[href*=\'DefinitionWizard\']').filter({ visible: true }).first().click();
 
     // 1. Open "Performance Management", go to "Setup & Configuration" and select "Definition Wizard".
-    // TODO unchecked: the step's expected result - The run's recorded Definition Wizard area does this navigation before step 1, so the script starts past it.
 
     // 2. If the landing page shows, make sure the "Goals / KPIs" and "Competencies" cards are both selected and click "Continue to Configuration".
     await cur.locator('#btnContinue-button').first().waitFor({ state: 'attached', timeout: 20000 });
