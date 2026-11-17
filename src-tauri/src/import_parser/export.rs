@@ -8,7 +8,7 @@ use super::{
     REVIEWER_NOTES_KEYS, SPEC_ORDER_KEYS, STEP_ACTION_KEYS, STEP_EXPECTED_KEYS, TESTER_ORDER_KEYS,
     TITLE_KEYS,
 };
-use crate::model::{DraftEdit, SourceIndex, TestCase};
+use crate::model::{DraftEdit, DraftInsert, RemovedEntry, SourceIndex, TestCase};
 use crate::steps_xml::Step;
 use serde_json::{Map, Value};
 
@@ -373,8 +373,20 @@ fn patch_step(raw: &Value, old: &Step, new: &Step) -> Value {
 /// before/after can be minutes old: replaying them reverted whatever an
 /// assistant changed in the file during the upload.
 pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, String> {
+    apply_draft_edits_keeping(old_text, edits).map(|(text, _)| text)
+}
+
+/// `apply_draft_edits`, and also what each REMOVAL took out of the file:
+/// aligned with `edits`, `Some` only for an edit that removed an entry the
+/// file still had. That is what an Undo needs to put the entry back exactly
+/// as it was (`insert_draft_entries`).
+pub fn apply_draft_edits_keeping(
+    old_text: &str,
+    edits: &[DraftEdit],
+) -> Result<(String, Vec<Option<RemovedEntry>>), String> {
     let old_text = super::strip_bom(old_text);
     let parsed = super::parse_json_text(old_text).map(|p| p.cases).unwrap_or_default();
+    let raw_array = serde_json::from_str::<Value>(old_text).ok().map(|d| array_of(&d)).unwrap_or_default();
     let mut claimed = vec![false; parsed.len()];
     let mut slot: Vec<Option<usize>> = vec![None; edits.len()];
     for (e, edit) in edits.iter().enumerate() {
@@ -390,12 +402,22 @@ pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, 
     // None = untouched; Some(None) = removed; Some(Some(case)) = edited.
     let mut fate: Vec<Option<Option<&TestCase>>> = vec![None; parsed.len()];
     let mut unmatched: Vec<TestCase> = vec![];
+    let mut removed: Vec<Option<RemovedEntry>> = vec![None; edits.len()];
     for (e, edit) in edits.iter().enumerate() {
         let unchanged = edit.after.as_ref() == Some(&edit.before);
         match (slot[e], &edit.after) {
             // Claimed (above) but left alone / not brought back.
             _ if unchanged => {}
-            (Some(k), after) => fate[k] = Some(after.as_ref()),
+            (Some(k), after) => {
+                fate[k] = Some(after.as_ref());
+                if after.is_none() {
+                    removed[e] = parsed[k]
+                        .source
+                        .0
+                        .and_then(|at| raw_array.get(at).map(|v| (at, v)))
+                        .map(|(at, v)| RemovedEntry { raw: v.to_string(), position: at as u32 });
+                }
+            }
             (None, Some(after)) => {
                 unmatched.push(TestCase { source: SourceIndex(None), ..after.clone() })
             }
@@ -411,7 +433,66 @@ pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, 
         }
     }
     out.extend(unmatched);
-    merge_cases_into_draft(old_text, &out)
+    Ok((merge_cases_into_draft(old_text, &out)?, removed))
+}
+
+/// The entries of a draft document's case list, whichever shape it has.
+fn array_of(doc: &Value) -> Vec<Value> {
+    match doc {
+        Value::Array(a) => a.clone(),
+        Value::Object(o) => o.get("test_cases").and_then(Value::as_array).cloned().unwrap_or_default(),
+        _ => vec![],
+    }
+}
+
+/// Said when an entry to put back is, word for word, still in the file (a file
+/// that held two identical entries, one of them removed).
+pub const CASE_STILL_IN_FILE: &str = "that case is still in the file";
+
+/// Put entries back into a draft file - the other half of a removal's Undo.
+/// Each insert goes where the entry stood (`position`, an index into the
+/// file's case list, clamped to it as it is now; no position appends),
+/// inserts in ascending position order so several removed entries come out
+/// where they were. The entry is the original text of what the removal took
+/// out (`raw`) when the caller has it, so keys the app does not model and
+/// the author's spellings survive; otherwise it is written the way the
+/// exporter writes a case. An entry the file already holds - the same work
+/// item id, or an identical entry - is refused, and nothing is written.
+pub fn insert_draft_entries(old_text: &str, inserts: &[DraftInsert]) -> Result<String, String> {
+    let old_text = super::strip_bom(old_text);
+    let mut doc: Value = serde_json::from_str(old_text).map_err(|e| format!("the file is not valid JSON ({e})"))?;
+    let mut array = array_of(&doc);
+    let mut ids: std::collections::HashSet<i32> = super::parse_json_text(old_text)
+        .map(|p| p.cases.iter().filter_map(|c| c.update_id).collect())
+        .unwrap_or_default();
+    let mut order: Vec<usize> = (0..inserts.len()).collect();
+    order.sort_by_key(|&i| inserts[i].position.map_or(u64::MAX, u64::from));
+    for i in order {
+        let ins = &inserts[i];
+        let entry = match &ins.raw {
+            Some(raw) => match serde_json::from_str::<Value>(raw) {
+                Ok(v) if v.is_object() => v,
+                _ => return Err("an entry to put back is not a case".into()),
+            },
+            None => case_record(&ins.case),
+        };
+        if array.contains(&entry) {
+            return Err(CASE_STILL_IN_FILE.into());
+        }
+        if ins.case.update_id.is_some_and(|id| ids.contains(&id)) {
+            return Err("that case is already in the file".into());
+        }
+        if let Some(id) = ins.case.update_id {
+            ids.insert(id);
+        }
+        let at = ins.position.map_or(array.len(), |p| (p as usize).min(array.len()));
+        array.insert(at, entry);
+    }
+    if !doc.is_object() {
+        doc = serde_json::from_str(&queue_to_json_string(&[])?).map_err(|e| e.to_string())?;
+    }
+    doc["test_cases"] = Value::Array(array);
+    super::comments::render(&doc)
 }
 
 /// Titles as the app compares them (`caseKey` in fileSync.ts): trimmed, and

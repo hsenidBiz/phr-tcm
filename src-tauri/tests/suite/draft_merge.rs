@@ -537,3 +537,133 @@ fn a_bare_array_keeps_its_skipped_entries_in_the_wrapper() {
         "an unchanged case is written back exactly as it was"
     );
 }
+
+// ---- Undo of a removal: putting entries back into the file ----
+
+use v2_lib::import_parser::{apply_draft_edits_keeping, insert_draft_entries};
+use v2_lib::model::DraftInsert;
+
+fn three_entry_file() -> String {
+    // The pretty form the app writes, with a key the app does not model.
+    serde_json::to_string_pretty(&json!({ "comments": "note", "test_cases": [
+        { "title": "A", "steps": [{ "action": "A.", "expected": "" }] },
+        { "title": "B", "author": "avin", "steps": [{ "step": "B.", "expected": "" }] },
+        { "title": "C", "steps": [{ "action": "C.", "expected": "" }] }
+    ]}))
+    .unwrap()
+        + "\n"
+}
+
+fn insert(case: TestCase, removed: &v2_lib::model::RemovedEntry) -> DraftInsert {
+    DraftInsert { case, raw: Some(removed.raw.clone()), position: Some(removed.position) }
+}
+
+#[test]
+fn a_removal_reports_the_entry_and_where_it_stood() {
+    let old = three_entry_file();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+    let (_, removed) =
+        apply_draft_edits_keeping(&old, &[edit(row(0), Some(row(0))), edit(row(1), None)]).unwrap();
+    assert!(removed[0].is_none(), "an unchanged row removed nothing");
+    let r = removed[1].as_ref().unwrap();
+    assert_eq!(r.position, 1);
+    assert!(r.raw.contains("\"author\":\"avin\""), "the original entry, key and all: {}", r.raw);
+}
+
+#[test]
+fn an_insert_restores_the_entry_at_its_position_with_every_key_and_the_formatting() {
+    let old = three_entry_file();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+    let (without, removed) = apply_draft_edits_keeping(&old, &[edit(row(1), None)]).unwrap();
+    assert_eq!(titles(&serde_json::from_str(&without).unwrap()), ["A", "C"]);
+
+    let back = insert_draft_entries(&without, &[insert(row(1), removed[0].as_ref().unwrap())]).unwrap();
+    // The very text the file started with: order, the author key, the
+    // `step` spelling, the top-level comment and the pretty form.
+    assert_eq!(back, old);
+}
+
+#[test]
+fn several_removed_entries_come_back_in_their_original_order() {
+    let old = three_entry_file();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+    let (without, removed) =
+        apply_draft_edits_keeping(&old, &[edit(row(0), None), edit(row(2), None)]).unwrap();
+    // Given in reverse on purpose: the order the caller lists them in does not matter.
+    let back = insert_draft_entries(
+        &without,
+        &[insert(row(2), removed[1].as_ref().unwrap()), insert(row(0), removed[0].as_ref().unwrap())],
+    )
+    .unwrap();
+    assert_eq!(back, old);
+}
+
+#[test]
+fn an_insert_position_past_the_end_is_clamped() {
+    let old = three_entry_file();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = TestCase { source: Default::default(), ..parsed[0].clone() };
+    let one = serde_json::to_string_pretty(&json!({ "test_cases": [
+        { "title": "Only", "steps": [{ "action": "X.", "expected": "" }] }
+    ]}))
+    .unwrap();
+    let ins = DraftInsert { case: row, raw: None, position: Some(40) };
+    let out = insert_draft_entries(&one, &[ins]).unwrap();
+    assert_eq!(titles(&serde_json::from_str(&out).unwrap()), ["Only", "A"]);
+}
+
+#[test]
+fn an_insert_of_an_entry_already_in_the_file_is_refused() {
+    let old = three_entry_file();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = TestCase { source: Default::default(), ..parsed[1].clone() };
+    // Identical entry text.
+    let raw = serde_json::to_string(&serde_json::from_str::<Value>(&old).unwrap()["test_cases"][1]).unwrap();
+    let dup = DraftInsert { case: row.clone(), raw: Some(raw), position: Some(0) };
+    assert_eq!(insert_draft_entries(&old, &[dup]).unwrap_err(), "that case is still in the file");
+    // The same work item id.
+    let with_id = json!({ "test_cases": [
+        { "id": 77, "title": "Has id", "steps": [{ "action": "X.", "expected": "" }] }
+    ]})
+    .to_string();
+    let case = TestCase { update_id: Some(77), title: "Has id (renamed)".into(), ..row };
+    let again = DraftInsert { case, raw: None, position: None };
+    let err = insert_draft_entries(&with_id, &[again]).unwrap_err();
+    assert!(err.contains("already"), "{err}");
+}
+
+#[test]
+fn restoring_into_a_file_moves_the_snapshot_and_refuses_a_file_that_changed() {
+    use v2_lib::commands::queue::restore_into_file;
+    let dir = TempDir::new();
+    let path = dir.0.join("draft.json");
+    let old = three_entry_file();
+    std::fs::write(&path, &old).unwrap();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = TestCase { source: Default::default(), ..parsed[1].clone() };
+    let (without, removed) = apply_draft_edits_keeping(&old, &[edit(row.clone(), None)]).unwrap();
+    std::fs::write(&path, &without).unwrap();
+    let stamp = v2_lib::filewatch::fingerprint(without.as_bytes());
+    let ins = vec![insert(row, removed[0].as_ref().unwrap())];
+    let p = path.to_string_lossy().to_string();
+
+    // Somebody edited the file after the removal: nothing is written.
+    std::fs::write(&path, format!("{without} ")).unwrap();
+    let err = restore_into_file(&p, &stamp, &ins, |_| unreachable!("nothing is written")).unwrap_err();
+    assert!(err.contains("outside the app"), "{err}");
+    std::fs::write(&path, &without).unwrap();
+
+    // Untouched: written, and the result is the new fingerprint and cases in file order.
+    let result = restore_into_file(&p, &stamp, &ins, |text| {
+        std::fs::write(&path, text).unwrap();
+        Ok(v2_lib::filewatch::fingerprint(text.as_bytes()))
+    })
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
+    assert_eq!(result.stamp, v2_lib::filewatch::fingerprint(old.as_bytes()));
+    let names: Vec<_> = result.cases.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(names, ["A", "B", "C"]);
+}

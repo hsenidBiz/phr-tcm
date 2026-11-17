@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { commands, type ComponentsView } from "../../bindings";
 import { Button } from "../../components/ui/button";
+import { Term } from "../../components/Term";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconClear, IconRemove } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
@@ -100,7 +101,7 @@ export default function ComponentsDialog({
   return (
     <Modal onClose={onClose} labelledBy={headingId} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
       <h2 id={headingId} className="text-sm font-semibold text-text">
-        Components
+        <Term name="component">Components</Term>
       </h2>
       <p className="text-xs text-muted">
         Steps an assistant saved once, after trying them on the live app, that scripts use by name. One stays while a

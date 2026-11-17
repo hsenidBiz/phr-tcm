@@ -137,6 +137,41 @@ pub fn proposals_path_for(root: &Path, env_id: &str) -> PathBuf {
     crate::autorun::roots::shared_of(root).join("proposals").join(format!("{env_id}.json"))
 }
 
+/// Where the database the last Fill passwords from database read is
+/// remembered, per environment.
+pub fn last_fill_path_for(root: &Path, env_id: &str) -> PathBuf {
+    crate::autorun::roots::shared_of(root).join("last-fill").join(format!("{env_id}.json"))
+}
+
+/// The database id the last Fill passwords from database used for this
+/// environment, if there has been one.
+pub fn last_fill_db(root: &Path, env_id: &str) -> Option<String> {
+    if !valid_id(env_id) {
+        return None;
+    }
+    let text = std::fs::read_to_string(last_fill_path_for(root, env_id)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("db_id").and_then(|d| d.as_str()).map(str::to_string).filter(|d| !d.is_empty())
+}
+
+/// Remember the database a Fill just read. A file that cannot be written is
+/// logged and nothing more: the Fill itself has worked.
+pub fn set_last_fill_db(root: &Path, env_id: &str, db_id: &str) {
+    if !valid_id(env_id) || db_id.is_empty() {
+        return;
+    }
+    let path = last_fill_path_for(root, env_id);
+    let text = serde_json::json!({ "db_id": db_id }).to_string();
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .map_err(|e| e.to_string())
+        .and_then(|()| crate::ai_tools::atomic_write(&path, &text));
+    if let Err(e) = written {
+        crate::applog::warn(format!("Environments: the database of the last fill was not remembered: {e}"));
+    }
+}
+
 /// Where an environment's default password is kept in the secret store.
 pub fn password_target(id: &str) -> String {
     format!("env-default-password:{id}")
@@ -927,6 +962,11 @@ pub struct StoredProposal {
     /// Epoch milliseconds when the assistant proposed it; older files have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposed_ms: Option<u64>,
+    /// The database id `password` was read from, when the account table
+    /// gave it (a lookup or a Fill); absent for one the assistant supplied.
+    /// It moves to the account when the proposal is added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_source: Option<String>,
 }
 
 /// Hand-written so a password cannot reach a log line through `{:?}`.

@@ -267,6 +267,11 @@ test("the recipe and the quirks are two peer sections, each with its own heading
   const quirks = screen.getByRole("heading", { name: "Known quirks", level: 3 });
   expect(recipe.closest("section")).toContainElement(screen.getByRole("button", { name: "Save recipe" }));
   expect(quirks.closest("section")).toContainElement(await screen.findByRole("button", { name: "Add note" }));
+  // Where each word first shows, it carries its definition.
+  expect(screen.getByText("quirks")).toHaveAttribute("data-term", "quirk");
+  expect(screen.getByRole("heading", { name: "Sign-in recipe", level: 2 })).toContainElement(
+    screen.getByText("recipe", { selector: "[data-term]" }),
+  );
 });
 
 test("while one note is open, the other notes wait, and Enter adds a note once", async () => {

@@ -60,6 +60,7 @@ impl Fx {
             label: key.into(),
             username: user.into(),
             password: REAL_PASSWORD.into(),
+            password_source: None,
         };
         save_accounts_for(
             r,

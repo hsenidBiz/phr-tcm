@@ -1778,6 +1778,7 @@ function applyPatches() {
       accountProposals = accountProposals.filter((p) => !keys.includes(p.key));
       return ok([] as string[]);
     },
+    envFillDbChange: () => ok(null),
     envFillProposalPasswords: () => err("Demo mode: sample data has no database to fill passwords from"),
     envFillAccountPasswords: () => err("Demo mode: sample data has no database to fill passwords from"),
     autoRunListAccounts: () => ok(autoRunAccounts.map((a) => ({ ...a }))),

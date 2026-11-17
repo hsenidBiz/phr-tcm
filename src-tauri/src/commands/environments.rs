@@ -624,13 +624,15 @@ pub fn add_proposals_with(
             confirm.push(key);
             continue;
         }
-        let from_proposal = proposed
-            .iter()
-            .find(|q| q.key == key && q.username.trim() == username)
-            .and_then(|q| q.password.clone());
+        let proposal = proposed.iter().find(|q| q.key == key && q.username.trim() == username);
+        let from_proposal = proposal.and_then(|q| q.password.clone());
+        // Where the password came from, only when it is the proposal's: one
+        // typed here, or the default, has no source.
+        let mut password_source = None;
         let password = if !p.password.is_empty() {
             p.password
         } else if let Some(pw) = from_proposal {
+            password_source = proposal.and_then(|q| q.password_source.clone());
             pw
         } else {
             if default.is_none() {
@@ -648,7 +650,7 @@ pub fn add_proposals_with(
             "" => key.clone(),
             l => l.to_string(),
         };
-        ready.push(Account { key, label, username, password });
+        ready.push(Account { key, label, username, password, password_source });
     }
     if ready.is_empty() {
         return Ok(confirm);
@@ -682,6 +684,47 @@ pub struct FillCounts {
     pub no_row: u32,
     /// Logins whose value in the table is only a hash.
     pub hash_only: u32,
+    /// Of the passwords updated, how many came from a different database
+    /// than the one this Fill read (the account remembers where its
+    /// password came from). A password nobody filled has no source and is
+    /// not counted.
+    pub other_database: u32,
+}
+
+/// What the Fill button asks about when the environment's database is not
+/// the one the last Fill read: the two databases' labels.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct FillDbChange {
+    /// The database the last Fill read.
+    pub from: String,
+    /// The database the environment uses now.
+    pub to: String,
+}
+
+/// The label a database is known by, for a sentence. An id the list no
+/// longer has reads as that, never as the id.
+fn db_label(store: &dyn SecretStore, id: &str) -> String {
+    credentials::label_of(store, id).unwrap_or_else(|| "a database no longer in the list".to_string())
+}
+
+/// Whether the active environment's database differs from the one its last
+/// Fill read. `None` with no earlier Fill, or the same database.
+pub fn fill_db_change_in(root: &Path, store: &dyn SecretStore) -> Result<Option<FillDbChange>, String> {
+    let env = environments::active(root)?;
+    Ok(match environments::last_fill_db(root, &env.id) {
+        Some(was) if was != env.db_id => {
+            Some(FillDbChange { from: db_label(store, &was), to: db_label(store, &env.db_id) })
+        }
+        _ => None,
+    })
+}
+
+/// Whether the Fill should first ask: the environment's database is not the
+/// one its last Fill read.
+#[tauri::command]
+#[specta::specta]
+pub fn env_fill_db_change(app: tauri::AppHandle, secrets: State<'_, DbSecrets>) -> Result<Option<FillDbChange>, String> {
+    fill_db_change_in(&super::autorun::root(&app)?, &*secrets.0)
 }
 
 /// A fill works only on a test environment.
@@ -710,7 +753,12 @@ async fn fill_lookup<S: crate::autorun::setup_find::RowSource>(
         Err(why) => Err(why),
     };
     match looked {
-        Ok(found) => Ok((env, found)),
+        Ok(found) => {
+            // The Fill read this database: the next one asks only if the
+            // environment's database is not this one.
+            environments::set_last_fill_db(root, &env.id, &env.db_id);
+            Ok((env, found))
+        }
         Err(why) => {
             crate::applog::info(format!("Environments: the account lookup for {} did not run", env.name));
             Err(failure_sentence(&why, FIX_IN_APP))
@@ -735,7 +783,7 @@ pub async fn fill_proposals_in<S: crate::autorun::setup_find::RowSource>(
         return Err("there are no proposed logins to fill".to_string());
     }
     let users: Vec<String> = list.iter().map(|p| p.username.clone()).collect();
-    let (_, found) = fill_lookup(root, rows, &users).await?;
+    let (env, found) = fill_lookup(root, rows, &users).await?;
     let mut counts = FillCounts::default();
     let before = list.clone();
     for p in &mut list {
@@ -743,12 +791,24 @@ pub async fn fill_proposals_in<S: crate::autorun::setup_find::RowSource>(
         let (password, reason) = settle_proposal(seen, p.password.clone(), p.no_password.clone(), &found.table);
         match seen {
             Some(Found::Password(_)) if password == p.password => counts.unchanged += 1,
-            Some(Found::Password(_)) => counts.updated += 1,
+            Some(Found::Password(_)) => {
+                counts.updated += 1;
+                if p.password_source.as_deref().is_some_and(|was| was != env.db_id) {
+                    counts.other_database += 1;
+                }
+            }
             // The database login's own password cannot be read back: the
             // proposal keeps what it had.
             Some(Found::Masked) => counts.unchanged += 1,
             Some(Found::Hash) => counts.hash_only += 1,
             Some(Found::Empty) | None => counts.no_row += 1,
+        }
+        // Where the kept password came from: this database when the table
+        // gave it, nothing when it was dropped, as it was otherwise.
+        match (seen, &password) {
+            (Some(Found::Password(_)), _) => p.password_source = Some(env.db_id.clone()),
+            (_, None) => p.password_source = None,
+            _ => {}
         }
         p.password = password;
         p.no_password = reason;
@@ -784,18 +844,26 @@ pub async fn fill_accounts_in<S: crate::autorun::setup_find::RowSource>(
         return Err("there are no saved accounts to fill".to_string());
     }
     let users: Vec<String> = targets.iter().map(|a| a.username.clone()).collect();
-    let (_, found) = fill_lookup(root, rows, &users).await?;
+    let (env, found) = fill_lookup(root, rows, &users).await?;
     let mut counts = FillCounts::default();
     let mut changes = vec![];
+    // The accounts whose password came from another database than this one.
+    let mut elsewhere: Vec<String> = vec![];
     for a in targets {
         match found.of(&a.username) {
             Some(Found::Password(p)) if *p == a.password => counts.unchanged += 1,
-            Some(Found::Password(p)) => changes.push(crate::autorun::accounts::PasswordChange {
-                key: a.key.clone(),
-                username: a.username.clone(),
-                was: a.password.clone(),
-                new: p.clone(),
-            }),
+            Some(Found::Password(p)) => {
+                if a.password_source.as_deref().is_some_and(|was| was != env.db_id) {
+                    elsewhere.push(a.key.clone());
+                }
+                changes.push(crate::autorun::accounts::PasswordChange {
+                    key: a.key.clone(),
+                    username: a.username.clone(),
+                    was: a.password.clone(),
+                    new: p.clone(),
+                    source: Some(env.db_id.clone()),
+                })
+            }
             // The database login's own password cannot be read back: the
             // saved one stays, as if it had not changed.
             Some(Found::Masked) => counts.unchanged += 1,
@@ -808,12 +876,13 @@ pub async fn fill_accounts_in<S: crate::autorun::setup_find::RowSource>(
     // the lookup keeps its newer password and counts as unchanged.
     let asked = changes.len();
     let applied = if changes.is_empty() {
-        0
+        vec![]
     } else {
-        crate::autorun::accounts::apply_password_changes_for(root, &env.id, &changes)?
+        crate::autorun::accounts::apply_password_changes_keyed(root, &env.id, &changes)?
     };
-    counts.updated += applied as u32;
-    counts.unchanged += (asked - applied) as u32;
+    counts.updated += applied.len() as u32;
+    counts.unchanged += (asked - applied.len()) as u32;
+    counts.other_database += applied.iter().filter(|k| elsewhere.contains(k)).count() as u32;
     crate::applog::info(format!(
         "Environments: filled saved accounts from the account table ({} updated, {} unchanged, {} with no row, {} hash only)",
         counts.updated, counts.unchanged, counts.no_row, counts.hash_only

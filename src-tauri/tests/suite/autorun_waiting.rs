@@ -25,6 +25,7 @@ fn account(key: &str, proposed_ms: Option<u64>) -> StoredProposal {
         no_password: None,
         marks: vec![],
         proposed_ms,
+        password_source: None,
     }
 }
 

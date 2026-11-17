@@ -43,6 +43,10 @@ type Written = { stamp: string; cases: TestCase[] };
 
 const chains = new Map<string, Promise<unknown>>();
 const latest = new Map<string, Written>();
+/** The fingerprint of the newest write this app made to each file - kept for
+ * the whole session, unlike `latest`. A removal's Undo puts entries back
+ * only while the file still is exactly what the app last wrote. */
+const ownStamps = new Map<string, string>();
 
 /** Run `task` only after every task already queued for `path` has settled,
  * success or failure - so two write-backs to the same file never overlap,
@@ -80,6 +84,12 @@ export function runOnFileChain<T>(path: string, task: () => Promise<T>): Promise
  * `path` drains (see `runOnFileChain`). */
 export function noteWritten(path: string, result: Written): void {
   latest.set(path, result);
+  ownStamps.set(path, result.stamp);
+}
+
+/** The fingerprint of the last write this app made to `path`, if any. */
+export function lastOwnStamp(path: string): string | undefined {
+  return ownStamps.get(path);
 }
 
 /** `watches`, with each entry's snapshot replaced by the one this module
@@ -108,4 +118,5 @@ export function freshWatches(watches: WatchedFile[]): WatchedFile[] {
 export function resetFileWriteQueueForTests(): void {
   chains.clear();
   latest.clear();
+  ownStamps.clear();
 }

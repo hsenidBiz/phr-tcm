@@ -20,8 +20,10 @@
 // its shot fails the run by name, and nothing is written.
 //
 // The app must be running with `npm run docs:dev` (the dev app with
-// WebView2's CDP port open). The run drives the OWNER'S dev profile: it
-// switches on sample data, capture mode and a theme through localStorage.
+// WebView2's CDP port open). The run drives the dev build's own profile (a
+// development build keeps its data apart from the installed app's, see
+// src-tauri/src/dev_identity.rs, so the installed app's settings are never
+// in reach): it switches on sample data, capture mode and a theme through localStorage.
 // So before it changes anything it snapshots every localStorage entry (also
 // to a file in the temp folder, in case the process is killed outright),
 // and it puts every entry back exactly - on success, on failure and on

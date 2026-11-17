@@ -503,6 +503,16 @@ export const commands = {
 	 *  every saved one when `keys` is empty.
 	 */
 	envFillAccountPasswords: (keys: string[], dbRead: boolean) => typedError<FillCounts, string>(__TAURI_INVOKE("env_fill_account_passwords", { keys, dbRead })),
+	/**
+	 *  Whether the Fill should first ask: the environment's database is not the
+	 *  one its last Fill read.
+	 */
+	envFillDbChange: () => typedError<{
+	/**  The database the last Fill read. */
+	from: string,
+	/**  The database the environment uses now. */
+	to: string,
+} | null, string>(__TAURI_INVOKE("env_fill_db_change")),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -987,13 +997,13 @@ export const commands = {
 	 *  them in place. This is the one IPC call that carries a password, by the
 	 *  owner's decision (see `autorun::accounts`). It is never logged.
 	 */
-	autoRunListAccounts: () => typedError<Account[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
+	autoRunListAccounts: () => typedError<Account_Serialize[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
 	/**
 	 *  Replace the accounts list. Returns the keys whose saved session was
 	 *  dropped, so the screen can say so. With `loaded_version` (from
 	 *  `auto_run_accounts_version`) a list that changed since is refused.
 	 */
-	autoRunSaveAccounts: (accounts: Account[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
+	autoRunSaveAccounts: (accounts: Account_Deserialize[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
 	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
@@ -1362,6 +1372,17 @@ export const commands = {
 	 *  and the author's spellings all survive.
 	 */
 	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<DraftSaveResult_Serialize, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
+	/**
+	 *  Undo's half of a removal: put entries back into the draft file they were
+	 *  removed from (`DraftInsert`: the original entry text and its position).
+	 *  `expected_stamp` is the file's fingerprint right after the removal wrote
+	 *  it; if the file is anything else now, somebody changed it since, and
+	 *  nothing is written - an entry put back into a file that moved on could
+	 *  land among edits the person has not seen. An entry the file already holds
+	 *  is refused too. Like `save_draft_cases` it returns the file's new
+	 *  fingerprint and cases, to become the watch snapshot.
+	 */
+	restoreDraftCases: (path: string, expectedStamp: string, inserts: DraftInsert_Deserialize[]) => typedError<DraftSaveResult_Serialize, string>(__TAURI_INVOKE("restore_draft_cases", { path, expectedStamp, inserts })),
 	/**
 	 *  Re-render the draft page WITHOUT opening a browser. This is what the
 	 *  background keep-in-step refresh calls: it used to share `view_draft_html`
@@ -1962,14 +1983,7 @@ export const events = {
 };
 
 /* Types */
-export type Account = {
-	/**  What a script writes: `"account": "hr.supervisor"`. */
-	key: string,
-	/**  What a person reads in the app. */
-	label: string,
-	username: string,
-	password: string,
-};
+export type Account = Account_Serialize | Account_Deserialize;
 
 /**
  *  A change to the registry. Deliberately not `Debug`: it can hold a
@@ -2023,6 +2037,38 @@ export type AccountRefs = {
 	 *  pointers. Any reference at all refuses a delete.
 	 */
 	other_refs: number,
+};
+
+export type Account_Deserialize = {
+	/**  What a script writes: `"account": "hr.supervisor"`. */
+	key: string,
+	/**  What a person reads in the app. */
+	label: string,
+	username: string,
+	password: string,
+	/**
+	 *  The database id the password was filled from (Fill passwords from
+	 *  database, or a proposal filled that way and then added). Absent for a
+	 *  password somebody typed, and in files from before this existed. It
+	 *  names a database in the list, never a connection or a password.
+	 */
+	password_source?: string | null,
+};
+
+export type Account_Serialize = {
+	/**  What a script writes: `"account": "hr.supervisor"`. */
+	key: string,
+	/**  What a person reads in the app. */
+	label: string,
+	username: string,
+	password: string,
+	/**
+	 *  The database id the password was filled from (Fill passwords from
+	 *  database, or a proposal filled that way and then added). Absent for a
+	 *  password somebody typed, and in files from before this existed. It
+	 *  names a database in the list, never a connection or a password.
+	 */
+	password_source?: string | null,
 };
 
 export type Action = Action_Serialize | Action_Deserialize;
@@ -4684,6 +4730,35 @@ export type DraftGeneralCommentSaved = {
 };
 
 /**
+ *  One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+ *  what `RemovedEntry` gave; without it the case is written the way the
+ *  exporter writes one. `position` is where it stood; without it, the end.
+ */
+export type DraftInsert = DraftInsert_Serialize | DraftInsert_Deserialize;
+
+/**
+ *  One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+ *  what `RemovedEntry` gave; without it the case is written the way the
+ *  exporter writes one. `position` is where it stood; without it, the end.
+ */
+export type DraftInsert_Deserialize = {
+	case: TestCase_Deserialize,
+	raw?: string | null,
+	position?: number | null,
+};
+
+/**
+ *  One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+ *  what `RemovedEntry` gave; without it the case is written the way the
+ *  exporter writes one. `position` is where it stood; without it, the end.
+ */
+export type DraftInsert_Serialize = {
+	case: TestCase_Serialize,
+	raw?: string | null,
+	position?: number | null,
+};
+
+/**
  *  What a write-back actually did: the file's new fingerprint, and a fresh
  *  parse of the text just written, in FILE order - EVERY case now there,
  *  including ones no queue row owns (an assistant's addition). This is
@@ -4706,6 +4781,12 @@ export type DraftSaveResult = DraftSaveResult_Serialize | DraftSaveResult_Deseri
 export type DraftSaveResult_Deserialize = {
 	stamp: string,
 	cases: TestCase_Deserialize[],
+	/**
+	 *  Aligned with the edits sent: what each removal took out of the file,
+	 *  for the queue's Undo (`restore_draft_cases`). `None` for every edit
+	 *  that did not remove an entry the file still had.
+	 */
+	removed: (RemovedEntry | null)[],
 };
 
 /**
@@ -4720,6 +4801,12 @@ export type DraftSaveResult_Deserialize = {
 export type DraftSaveResult_Serialize = {
 	stamp: string,
 	cases: TestCase_Serialize[],
+	/**
+	 *  Aligned with the edits sent: what each removal took out of the file,
+	 *  for the queue's Undo (`restore_draft_cases`). `None` for every edit
+	 *  that did not remove an entry the file still had.
+	 */
+	removed: (RemovedEntry | null)[],
 };
 
 /**
@@ -4993,6 +5080,24 @@ export type FillCounts = {
 	no_row: number,
 	/**  Logins whose value in the table is only a hash. */
 	hash_only: number,
+	/**
+	 *  Of the passwords updated, how many came from a different database
+	 *  than the one this Fill read (the account remembers where its
+	 *  password came from). A password nobody filled has no source and is
+	 *  not counted.
+	 */
+	other_database: number,
+};
+
+/**
+ *  What the Fill button asks about when the environment's database is not
+ *  the one the last Fill read: the two databases' labels.
+ */
+export type FillDbChange = {
+	/**  The database the last Fill read. */
+	from: string,
+	/**  The database the environment uses now. */
+	to: string,
 };
 
 /**  One object that matched. */
@@ -7016,6 +7121,17 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**
+ *  What a write-back removed from a draft file: the entry exactly as the
+ *  file had it (compact JSON text, unknown keys included) and where it
+ *  stood in the file's case list. Handed back by `save_draft_cases` so the
+ *  queue's Undo can put the entry back (`DraftInsert`).
+ */
+export type RemovedEntry = {
+	raw: string,
+	position: number,
 };
 
 /**  One thing a rename would break. */

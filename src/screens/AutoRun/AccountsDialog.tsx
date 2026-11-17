@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
 import { cn } from "../../lib/cn";
-import { commands, type Account, type AccountInput, type FillCounts, type ProposedAccount } from "../../bindings";
+import { commands, type Account, type AccountInput, type FillCounts, type FillDbChange, type ProposedAccount } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -91,8 +91,11 @@ export function reseedRows(cur: Account[], baseline: Account[], fresh: Account[]
  * 1 unchanged, 1 with no row". Counts only - the app never sends a password
  * to this screen for it. */
 export function fillSentence(c: FillCounts): string {
+  // Of the updated passwords, the ones that had come from another database:
+  // said right beside the count they belong to.
+  const elsewhere = c.other_database > 0 ? ` - ${c.other_database} of them came from a different database than before` : "";
   const parts = [
-    `${c.updated} ${c.updated === 1 ? "password" : "passwords"} updated`,
+    `${c.updated} ${c.updated === 1 ? "password" : "passwords"} updated${elsewhere}`,
     `${c.unchanged} unchanged`,
     `${c.no_row} with no row`,
   ];
@@ -154,6 +157,9 @@ export default function AccountsDialog({
   // environment: the fill buttons are not there on any other.
   const testEnvironment = environment?.test_environment ?? false;
   const [filling, setFilling] = useState(false);
+  /** The environment's database is not the one the last Fill read: the Fill
+   * waits for a yes. `go` is the Fill itself. */
+  const [fillAsk, setFillAsk] = useState<{ change: FillDbChange; go: () => Promise<void> } | null>(null);
 
   // Check sign-in: the saved accounts ticked, the area to walk to, and the
   // words for each. One account at a time, in order - never two sign-ins at
@@ -351,19 +357,37 @@ export default function AccountsDialog({
     }
   };
 
+  /** The first Fill after the environment's database changed asks first: the
+   * passwords would come from a database the last Fill did not read. A
+   * question that cannot be asked is not a reason to refuse the Fill. */
+  const askThenFill = async (go: () => Promise<void>) => {
+    let change: FillDbChange | null = null;
+    try {
+      change = await unwrapStr(commands.envFillDbChange());
+    } catch {
+      change = null;
+    }
+    if (change) setFillAsk({ change, go });
+    else await go();
+  };
+
   const fillProposals = () =>
-    fill(
-      () => unwrapStr(commands.envFillProposalPasswords(dbReadAccessOn())),
-      () => qc.invalidateQueries({ queryKey: PROPOSALS_KEY }),
-      setProposalProblem,
+    askThenFill(() =>
+      fill(
+        () => unwrapStr(commands.envFillProposalPasswords(dbReadAccessOn())),
+        () => qc.invalidateQueries({ queryKey: PROPOSALS_KEY }),
+        setProposalProblem,
+      ),
     );
 
   /** Every saved account: this tab has no selection, so none picked means all. */
   const fillAccounts = () =>
-    fill(
-      () => unwrapStr(commands.envFillAccountPasswords([], dbReadAccessOn())),
-      () => qc.invalidateQueries({ queryKey: ["autorun-accounts"] }),
-      setProblem,
+    askThenFill(() =>
+      fill(
+        () => unwrapStr(commands.envFillAccountPasswords([], dbReadAccessOn())),
+        () => qc.invalidateQueries({ queryKey: ["autorun-accounts"] }),
+        setProblem,
+      ),
     );
 
   const dismiss = async () => {
@@ -493,6 +517,32 @@ export default function AccountsDialog({
 
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
+      {fillAsk && (
+        <Modal onClose={() => setFillAsk(null)} label="Fill passwords from the new database?" className="w-full max-w-md space-y-4 p-5">
+          <h2 className="text-sm font-semibold text-text">Fill passwords from the new database?</h2>
+          <p className="text-xs text-muted">
+            This environment now uses {fillAsk.change.to} instead of {fillAsk.change.from}. Fill passwords from the new
+            database?
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setFillAsk(null)}>
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const go = fillAsk.go;
+                setFillAsk(null);
+                void go();
+              }}
+            >
+              <IconConfirm aria-hidden />
+              Fill passwords
+            </Button>
+          </div>
+        </Modal>
+      )}
       <div>
         <h2 className="text-sm font-semibold text-text">Accounts</h2>
         <p className="mt-1 text-xs text-muted">

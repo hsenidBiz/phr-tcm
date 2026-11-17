@@ -185,13 +185,19 @@ pub fn saved(dir: &Path) -> Option<BTreeSet<Module>> {
 
 /// The bundle identifier (`tauri.conf.json`), which Tauri appends to the
 /// roaming app-data folder to make the app data dir.
-pub const APP_IDENTIFIER: &str = "com.avinalwis.testcasemanager.v2";
+pub const APP_IDENTIFIER: &str = crate::dev_identity::RELEASE_IDENTIFIER;
 
 /// Where the app keeps its data, given the roaming app-data folder
 /// (`%APPDATA%`): what `app_data_dir()` resolves to, for a process that has
 /// no Tauri handle. `None` without that folder.
 pub fn data_dir_in(roaming: Option<std::ffi::OsString>) -> Option<PathBuf> {
-    roaming.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r).join(APP_IDENTIFIER))
+    data_dir_for(roaming, crate::ai_tools::dev_build())
+}
+
+/// `data_dir_in` for a build that is, or is not, a development build: a
+/// development build keeps its data in its own folder (`dev_identity`).
+pub fn data_dir_for(roaming: Option<std::ffi::OsString>, dev: bool) -> Option<PathBuf> {
+    roaming.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r).join(crate::dev_identity::identifier(dev)))
 }
 
 /// The modules this machine offers, for the `--mcp` proxy when the app is

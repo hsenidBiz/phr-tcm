@@ -1,7 +1,8 @@
+import { define, Term } from "../../components/Term";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { commands, events, type Flow, type SavedTemplate, type TemplatesExportResult } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -116,6 +117,7 @@ export default function ApiTemplates({
   const [folded, toggleFolded, foldGroups, unfoldGroups] = usePersistedStringSet(
     "tcm-v2-api-templates-collapsed-groups",
   );
+  const tabHelp = useId();
   const [search, setSearch] = useState("");
   const [view, setViewState] = useState<View>(loadView);
   const setView = (next: View) => {
@@ -352,18 +354,34 @@ export default function ApiTemplates({
 
       {(templates.length > 0 || flows.length > 0 || fixtures > 0) && (
         <>
+          {/* What each tab's word means, for a screen reader: hidden, so it is
+              no part of any tab's name, and pointed at by the tab. */}
+          <span id={`${tabHelp}-templates`} hidden>
+            {define("template")}
+          </span>
+          <span id={`${tabHelp}-flows`} hidden>
+            {define("flow")}
+          </span>
+          <span id={`${tabHelp}-fixtures`} hidden>
+            {define("fixture")}
+          </span>
           <div role="tablist" aria-label="Show" className="flex gap-1 border-b border-border">
             {(
               [
-                ["templates", "Templates", templates.length],
-                ["flows", "Flows", flows.length],
-                ["fixtures", "Fixtures", fixtures],
+                ["templates", "Templates", templates.length, "template"],
+                ["flows", "Flows", flows.length, "flow"],
+                ["fixtures", "Fixtures", fixtures, "fixture"],
               ] as const
-            ).map(([id, label, count]) => (
+            ).map(([id, label, count, term]) => (
               <button
                 key={id}
                 role="tab"
                 aria-selected={view === id}
+                // The word's definition, through the control itself: the
+                // word inside is not a tab stop of its own.
+                title={define(term)}
+                aria-describedby={`${tabHelp}-${id}`}
+                data-tip-side="bottom"
                 className={cn(
                   "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
                   view === id ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
@@ -371,7 +389,10 @@ export default function ApiTemplates({
                 onClick={() => setView(id)}
               >
                 <span className="label-trim">
-                  {label} <span className="text-xs text-faint">{count}</span>
+                  <Term name={term} within>
+                    {label}
+                  </Term>{" "}
+                  <span className="text-xs text-faint">{count}</span>
                 </span>
               </button>
             ))}

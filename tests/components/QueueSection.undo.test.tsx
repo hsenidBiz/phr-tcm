@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { TestCase } from "../../src/bindings";
 import { useQueue } from "../../src/hooks/useQueue";
 import type { WatchedFile } from "../../src/lib/fileSync";
+import { resetFileWriteQueueForTests } from "../../src/lib/draftWriteQueue";
 import { submitFinished, submitPhaseSnapshot, submitStarted } from "../../src/lib/submitRun";
 import { toast } from "../../src/lib/toast";
 import QueueSection from "../../src/components/QueueSection";
@@ -17,7 +18,20 @@ vi.mock("../../src/lib/toast", () => ({
 
 const DRAFT = "tcm-v2-draft:acme/42";
 
+/** What `restore_draft_cases` was asked, and what the mock answers. */
+let restoreCalls: Array<{ path: string; expectedStamp: string; inserts: Array<{ case: TestCase; raw: string | null; position: number | null }> }> = [];
+let restoreAnswer: "ok" | "changed" | "still" = "ok";
+/** Rust could not match a removed row to an entry of the file. */
+let removedNothing = false;
+/** Holds the removal's write-back until opened. */
+let saveGate: Promise<void> | null = null;
+
 beforeEach(() => {
+  restoreCalls = [];
+  restoreAnswer = "ok";
+  removedNothing = false;
+  saveGate = null;
+  resetFileWriteQueueForTests();
   localStorage.clear();
   vi.mocked(toast.info).mockReturnValue("toast-info");
   vi.mocked(toast.success).mockReturnValue("toast-success");
@@ -55,6 +69,7 @@ type Owner = {
   watches?: WatchedFile[];
   onQueueCleared?: () => void;
   onQueueRestored?: (dropped: WatchedFile[]) => void;
+  onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
 };
 function Harness({ owner }: { owner: Owner }) {
   const [pbi, setPbi] = useState(42);
@@ -73,7 +88,7 @@ function Harness({ owner }: { owner: Owner }) {
       watches={watches}
       onQueueCleared={owner.onQueueCleared}
       onQueueRestored={owner.onQueueRestored}
-      onWatchPatched={watches ? () => {} : undefined}
+      onWatchPatched={watches ? (owner.onWatchPatched ?? (() => {})) : undefined}
     />
   );
 }
@@ -88,8 +103,21 @@ function renderQueue(initial: TestCase[], owner: Owner = {}) {
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      const p = args as { edits: Array<{ after: TestCase | null }> };
-      return { stamp: "stamp-2", cases: p.edits.flatMap((e) => (e.after ? [e.after] : [])) };
+      const p = args as { edits: Array<{ before: TestCase; after: TestCase | null }> };
+      return Promise.resolve(saveGate).then(() => ({
+        stamp: "stamp-2",
+        cases: p.edits.flatMap((e) => (e.after ? [e.after] : [])),
+        removed: p.edits.map((e, i) =>
+          e.after || removedNothing ? null : { raw: JSON.stringify({ title: e.before.title }), position: i },
+        ),
+      }));
+    }
+    if (cmd === "restore_draft_cases") {
+      const p = args as (typeof restoreCalls)[number];
+      restoreCalls.push(p);
+      if (restoreAnswer === "changed") throw "the file was changed outside the app";
+      if (restoreAnswer === "still") throw "that case is still in the file";
+      return { stamp: "stamp-3", cases: p.inserts.map((i) => i.case), removed: [] };
     }
     return undefined;
   });
@@ -345,21 +373,74 @@ test("Undo does nothing to Azure DevOps", async () => {
 
 const fileOf = (rows: TestCase[]): WatchedFile => ({ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: rows });
 
-test("removing a row a watched file owns gets no Undo; a hand-typed row still does", async () => {
+test("removing a row a watched file owns offers Undo, which puts the entry back and owns the row again", async () => {
+  const owned = makeCase("Owned");
+  const owned2 = makeCase("Owned too");
+  const watch = fileOf([owned, owned2]);
+  const patched = vi.fn();
+  renderQueue([owned, owned2, makeCase("Typed by hand")], { watches: [watch], onWatchPatched: patched, onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  expect(shown.message).toBe("Removed 1 case");
+  expect(shown.undo).toBeTypeOf("function");
+  await waitFor(() => expect(patched).toHaveBeenCalledTimes(1));
+
+  pressUndo(shown);
+  await screen.findByText("Owned");
+  expect(rowTitles()).toEqual(["Owned", "Owned too", "Typed by hand"]);
+  // One write-back for the file: its original entry text, where it stood,
+  // guarded by the fingerprint of the app's own removal write.
+  expect(restoreCalls).toHaveLength(1);
+  expect(restoreCalls[0].path).toBe("C:/drafts/a.json");
+  expect(restoreCalls[0].expectedStamp).toBe("stamp-2");
+  expect(restoreCalls[0].inserts).toEqual([{ case: owned, raw: JSON.stringify({ title: "Owned" }), position: 0 }]);
+  // The watch moved forward with it, so the file is not seen as changed and
+  // the row belongs to it again.
+  await waitFor(() => expect(patched).toHaveBeenCalledTimes(2));
+  expect(patched.mock.calls[1][0]).toBe("C:/drafts/a.json");
+  expect(patched.mock.calls[1][1]).toMatchObject({ stamp: "stamp-3" });
+});
+
+test("Undo is refused for a file that changed outside the app; other rows still come back", async () => {
+  const owned = makeCase("Owned");
+  const hand = makeCase("Typed by hand");
+  renderQueue([owned, hand], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Remove 2/ }));
+  const shown = lastToast();
+  await waitFor(() => expect(localStorage.getItem(DRAFT)).toBeNull());
+  restoreAnswer = "changed";
+  pressUndo(shown);
+  await screen.findByText("Typed by hand");
+  expect(restoreCalls).toHaveLength(1);
+  expect(rowTitles()).toEqual(["Typed by hand"]);
+  expect(toast.warning).toHaveBeenCalledWith(
+    expect.stringMatching(/a\.json was changed outside the app, so nothing was put back/),
+    expect.anything(),
+  );
+});
+
+test("a removal of file-owned and hand-typed rows is undone as one", async () => {
   const owned = makeCase("Owned");
   const owned2 = makeCase("Owned too");
   const hand = makeCase("Typed by hand");
   renderQueue([owned, owned2, hand], { watches: [fileOf([owned, owned2])], onQueueCleared: () => {} });
   await screen.findByText("Typed by hand");
 
-  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
-  expect(lastToast()).toEqual({ message: "Removed 1 case", undo: undefined });
-
-  // Selected rows: one owned among them is enough to withhold Undo.
   fireEvent.click(screen.getByRole("row", { name: /^Owned too / }));
   fireEvent.click(screen.getByRole("row", { name: /^Typed by hand / }), { ctrlKey: true });
   fireEvent.click(screen.getByRole("button", { name: /^Remove 2/ }));
-  expect(lastToast()).toEqual({ message: "Removed 2 cases", undo: undefined });
+  const shown = lastToast();
+  expect(shown.message).toBe("Removed 2 cases");
+  pressUndo(shown);
+  await screen.findByText("Typed by hand");
+  expect(rowTitles()).toEqual(["Owned", "Owned too", "Typed by hand"]);
+  expect(restoreCalls).toHaveLength(1);
+  expect(restoreCalls[0].inserts.map((i) => i.case.title)).toEqual(["Owned too"]);
 });
 
 test("removing only hand-typed rows keeps Undo even when a file feeds the queue", async () => {
@@ -519,4 +600,56 @@ test("Undo of a bulk remove that emptied the queue arms the dropped watches agai
   await screen.findByText("Alpha");
   expect(restored).toHaveBeenCalledTimes(1);
   expect(restored.mock.calls[0][0]).toEqual([elsewhere]);
+});
+
+test("a removed row Rust found no entry for goes back to the queue alone, with nothing inserted", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned, makeCase("Typed by hand")], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+  removedNothing = true;
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  await new Promise((r) => setTimeout(r, 20));
+  pressUndo(shown);
+  await screen.findByText("Owned");
+  expect(rowTitles()).toEqual(["Owned", "Typed by hand"]);
+  expect(restoreCalls).toEqual([]);
+});
+
+test("an Undo clicked before the write-back returns is dropped when the PBI changes meanwhile", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned, makeCase("Typed by hand")], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Typed by hand");
+  let open: () => void = () => {};
+  saveGate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  pressUndo(shown);
+  // The person moves to another PBI while the file write is still out.
+  act(() => setPbiOut(43));
+  open();
+  await new Promise((r) => setTimeout(r, 30));
+  expect(restoreCalls).toEqual([]);
+  expect(rowTitles()).not.toContain("Owned");
+});
+
+test("a file that still holds that case says so, in words", async () => {
+  const owned = makeCase("Owned");
+  renderQueue([owned], { watches: [fileOf([owned])], onQueueCleared: () => {} });
+  await screen.findByText("Owned");
+  fireEvent.click(screen.getByRole("button", { name: "Remove Owned from the queue" }));
+  const shown = lastToast();
+  await new Promise((r) => setTimeout(r, 20));
+  restoreAnswer = "still";
+  pressUndo(shown);
+  await waitFor(() =>
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/a\.json still has that case, so it was not put back again/),
+      expect.anything(),
+    ),
+  );
 });

@@ -28,7 +28,7 @@ pub type ClientFactory =
 
 /// Where the app announces the running bridge to `v2.exe --mcp` proxies.
 pub fn handshake_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("tcm-v2-mcp-bridge.json")
+    std::env::temp_dir().join(crate::dev_identity::handshake_file_name(crate::ai_tools::dev_build()))
 }
 
 /// After an answer sent before the request was all read (a body over the cap): half-closes the socket so the

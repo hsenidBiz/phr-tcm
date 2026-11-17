@@ -951,7 +951,7 @@ pub fn quick() -> Timing {
 }
 
 pub fn account() -> Account {
-    Account { key: "admin".into(), label: "Administrator".into(), username: "kim".into(), password: PASSWORD.into() }
+    Account { key: "admin".into(), label: "Administrator".into(), username: "kim".into(), password: PASSWORD.into(), password_source: None }
 }
 
 /// The recipe `stateful_app` answers to: fill username, fill password,

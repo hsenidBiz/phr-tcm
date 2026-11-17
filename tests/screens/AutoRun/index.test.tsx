@@ -4,6 +4,7 @@
 // to it, so every assertion here is about local state: which rows are
 // ticked, which groups are shut, and what the Run button hands to RunPane.
 
+import { GLOSSARY } from "../../../src/lib/glossary";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -1568,6 +1569,14 @@ test("the Setup card reads a project that is set up", async () => {
   expect(await within(row("Accounts")).findByText("2 accounts on this machine")).toBeInTheDocument();
   // One wording for the same count, in the row and in the header.
   expect(await within(row("Areas")).findByText("1 area recorded")).toBeInTheDocument();
+
+  // The words the panel does not explain carry their definition, on the
+  // visible text only: the groups keep their accessible names.
+  const term = (r: string, text: string) => within(row(r)).getByText(text);
+  expect(term("Sign-in", "Recipe saved")).toHaveAttribute("data-term", "recipe");
+  expect(term("Areas", "Areas")).toHaveAttribute("data-term", "area");
+  expect(term("Components", "Components")).toHaveAttribute("data-term", "component");
+  expect(term("Areas", "Areas")).toHaveAttribute("title", GLOSSARY.area);
 
 });
 

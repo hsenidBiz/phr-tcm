@@ -109,8 +109,13 @@ fn the_proxy_looks_in_the_apps_data_folder() {
     let conf = include_str!("../../tauri.conf.json");
     let v: serde_json::Value = serde_json::from_str(conf).unwrap();
     assert_eq!(v["identifier"].as_str().unwrap(), v2_lib::modules::APP_IDENTIFIER);
-    let dir = v2_lib::modules::data_dir_in(Some(std::ffi::OsString::from("C:/Roaming"))).unwrap();
-    assert!(dir.ends_with(v2_lib::modules::APP_IDENTIFIER), "{dir:?}");
+    // A release build looks in the identifier's folder, a development build
+    // in its own (suite/dev_identity.rs); this test binary is a debug build.
+    let roaming = || Some(std::ffi::OsString::from("C:/Roaming"));
+    let release = v2_lib::modules::data_dir_for(roaming(), false).unwrap();
+    assert!(release.ends_with(v2_lib::modules::APP_IDENTIFIER), "{release:?}");
+    let dir = v2_lib::modules::data_dir_in(roaming()).unwrap();
+    assert_eq!(dir, v2_lib::modules::data_dir_for(roaming(), v2_lib::ai_tools::dev_build()).unwrap());
     assert_eq!(v2_lib::modules::data_dir_in(None), None);
 }
 

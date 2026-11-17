@@ -146,6 +146,28 @@ pub struct DraftEdit {
     pub occurrence: Option<u32>,
 }
 
+/// What a write-back removed from a draft file: the entry exactly as the
+/// file had it (compact JSON text, unknown keys included) and where it
+/// stood in the file's case list. Handed back by `save_draft_cases` so the
+/// queue's Undo can put the entry back (`DraftInsert`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct RemovedEntry {
+    pub raw: String,
+    pub position: u32,
+}
+
+/// One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+/// what `RemovedEntry` gave; without it the case is written the way the
+/// exporter writes one. `position` is where it stood; without it, the end.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct DraftInsert {
+    pub case: TestCase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+}
+
 impl TestCase {
     /// Ported from v1 TestCase.is_valid(): Ok(()) if ready to submit.
     pub fn is_valid(&self) -> Result<(), String> {

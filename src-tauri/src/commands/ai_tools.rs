@@ -104,6 +104,7 @@ pub async fn register_ai_tool(
     disabled_tools: Vec<String>,
     global: bool,
 ) -> Result<(), String> {
+    not_in_dev()?;
     let root = super::autorun::root(&app).ok();
     let job = tauri::async_runtime::spawn_blocking(move || {
         register_and_allow(&id, working_dir.as_deref(), disabled_tools, global, root.as_deref())
@@ -290,6 +291,7 @@ pub fn set_db_auto_approve(
     on: bool,
     working_dir: Option<String>,
 ) -> Result<Vec<AutoApproveOutcome>, String> {
+    not_in_dev()?;
     let root = super::autorun::root(&app)?;
     let bridge = super::ai_bridge::running_bridge(&app);
     set_auto_approve_with(&root, bridge.as_deref().map(|b| &b.ctx), &env_id, on)?;
@@ -551,7 +553,28 @@ pub struct ToolHome {
 
 impl ToolHome {
     pub fn real() -> ToolHome {
-        ToolHome { home: home_dir(), appdata: appdata_dir(), on_path: is_on_path }
+        Self::for_build(crate::ai_tools::dev_build())
+    }
+
+    /// This machine's, or - for a development build, which must not write
+    /// the installed app's settings (`dev_identity::AI_TOOLS_REFUSED`) - a
+    /// place with no tools in it, so every allow-file sync finds nothing.
+    pub fn for_build(dev: bool) -> ToolHome {
+        if dev {
+            let nowhere = crate::dev_identity::no_ai_tools_home();
+            ToolHome { home: nowhere.clone(), appdata: nowhere, on_path: |_| false }
+        } else {
+            ToolHome { home: home_dir(), appdata: appdata_dir(), on_path: is_on_path }
+        }
+    }
+}
+
+/// The refusal a development build gives for a change to the AI tools'
+/// settings, or `Ok` in a release build.
+fn not_in_dev() -> Result<(), String> {
+    match crate::dev_identity::ai_tools_refusal(crate::ai_tools::dev_build()) {
+        Some(why) => Err(why.to_string()),
+        None => Ok(()),
     }
 }
 
@@ -904,6 +927,7 @@ pub async fn remove_legacy_db_server(
     working_dir: Option<String>,
     global: bool,
 ) -> Result<(), String> {
+    not_in_dev()?;
     tauri::async_runtime::spawn_blocking(move || remove_legacy_db_server_now(&id, working_dir.as_deref(), global))
         .await
         .map_err(|e| format!("could not remove the old database server: {e}"))?
@@ -1096,6 +1120,7 @@ pub fn unregister_ai_tool(
     working_dir: Option<String>,
     global: bool,
 ) -> Result<(), String> {
+    not_in_dev()?;
     unregister_server(&id, TCM_SERVER, working_dir.as_deref(), global)?;
     // The server's old name is ours too, so it goes with it - only where
     // that same config still carries it, so no CLI runs for nothing.
@@ -1126,6 +1151,7 @@ pub fn unregister_ai_tool(
 #[tauri::command]
 #[specta::specta]
 pub fn retire_global_registrations(id: String) -> Result<(), String> {
+    not_in_dev()?;
     let spec = TOOL_SPECS
         .iter()
         .find(|s| s.id == id)
@@ -1194,6 +1220,9 @@ fn unregister_server(
 /// Public so `set_bridge_context` can call it when the AI Bridge tab's
 /// toggles move.
 pub fn sync_commands(disabled: &[String], working_dir: Option<&str>) {
+    if not_in_dev().is_err() {
+        return;
+    }
     let (dir, _) = sync_folders(working_dir);
     if !dir.is_dir() {
         return;
@@ -1224,6 +1253,9 @@ fn clone_now() -> String {
 /// unless that command folder exists, as `sync_commands` is. A failure is
 /// logged, never returned.
 pub fn sync_agents(disabled: &[String], working_dir: Option<&str>) {
+    if not_in_dev().is_err() {
+        return;
+    }
     let (dir, agents) = sync_folders(working_dir);
     if !dir.is_dir() {
         return;
