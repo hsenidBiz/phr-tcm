@@ -17,6 +17,7 @@ import { IconBug, IconHideDetails, IconRun, IconShowDetails, IconViewScript, Ico
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { plural } from "../../lib/plural";
+import { doneByAutoRun } from "./byAutoRun";
 import { badgeText, DivergenceRow, needsAttention } from "./DivergenceMark";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
@@ -49,35 +50,57 @@ export function scriptFiles(script: CaseScript): { uploads: string[]; downloads:
   return { uploads: [...uploads], downloads: [...downloads] };
 }
 
-/** The script's facts worth a line each. A fact with no value is left out,
- * so the card never prints a label with nothing beside it. */
-export function scriptFacts(script: CaseScript): { label: string; value: string }[] {
-  const facts: { label: string; value: string | null | undefined }[] = [
-    { label: "Step count", value: plural(script.steps.length, "step") },
-    { label: "Runs as", value: script.account?.trim() },
-    { label: "Area", value: script.area?.trim() },
+type Fact = { label: string; value: string };
+
+function present(facts: { label: string; value: string | null | undefined }[]): Fact[] {
+  return facts.flatMap(({ label, value }) => (value ? [{ label, value }] : []));
+}
+
+/** The one line over an open card: "Script · 8 steps · runs as automation ·
+ * Self Service > Insights". A part with no value is left out. */
+export function scriptHeaderLine(script: CaseScript): string {
+  const account = script.account?.trim();
+  return [
+    "Script",
+    plural(script.steps.length, "step"),
+    account ? `runs as ${account}` : null,
+    script.area?.trim(),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The facts about what the script does that a person acts on, a line each.
+ * A fact with no value is left out. */
+export function actionFacts(script: CaseScript): Fact[] {
+  return present([
     { label: "Must not save", value: script.no_save ? "Yes, saves are stopped while it runs" : null },
-    { label: "Page errors", value: script.page_errors },
-    { label: "Ignored page errors", value: (script.ignore_page_errors ?? []).join(", ") },
-    { label: "Unexpected dialogs", value: script.fail_on_unexpected_dialog ? "fail" : null },
     {
       label: "Preconditions",
       value: (script.preconditions ?? []).map((p) => `${p.flow}: ${p.stage}`).join(", "),
     },
     { label: "Needs records", value: (script.needs_records ?? []).map((n) => `${n.setup} (${n.why})`).join(", ") },
+    { label: "Assumed values", value: becauseFacts(script, false) },
+    { label: "Invented values", value: becauseFacts(script, true) },
+  ]);
+}
+
+/** What the assistant noted about the script: folded away on the card. */
+export function assistantNotes(script: CaseScript): Fact[] {
+  return present([
     { label: "Changes", value: (script.changes ?? []).join(", ") },
     { label: "Needs unchanged", value: (script.needs_unchanged ?? []).join(", ") },
     { label: "Last repair", value: script.last_repair?.trim() },
-    { label: "Assumed values", value: becauseFacts(script, false) },
-    { label: "Invented values", value: becauseFacts(script, true) },
     {
       label: "Checks given up",
       value: (script.given_up ?? [])
         .map((g) => `step ${g.step} ${g.kind}: ${g.why} (${g.at.slice(0, 10)})`)
         .join("; "),
     },
-  ];
-  return facts.flatMap(({ label, value }) => (value ? [{ label, value }] : []));
+    { label: "Page errors", value: script.page_errors },
+    { label: "Ignored page errors", value: (script.ignore_page_errors ?? []).join(", ") },
+    { label: "Unexpected dialogs", value: script.fail_on_unexpected_dialog ? "fail" : null },
+  ]);
 }
 
 /** The steps' "because" entries of one source (an entry with no source reads as assumed). */
@@ -155,7 +178,9 @@ function CaseCard({
   const files = script ? scriptFiles(script) : { uploads: [], downloads: [] };
   const hasRunDownloads = (lastRun?.steps ?? []).some((s) => (s.downloads ?? []).length > 0);
   const showFiles = files.uploads.length > 0 || files.downloads.length > 0 || hasRunDownloads;
-  const facts = script ? scriptFacts(script) : [];
+  const facts = script ? actionFacts(script) : [];
+  const notes = script ? assistantNotes(script) : [];
+  const autoSteps = script ? doneByAutoRun(script) : new Set<number>();
   // What the script's checks leave out. A passed case says how many beside
   // its result; the open card lists them whatever the result. Read only when
   // one of the two will show.
@@ -264,7 +289,7 @@ function CaseCard({
           ) : (
             <>
               <div className="space-y-1">
-                <SectionLabel>Script</SectionLabel>
+                <SectionLabel>{scriptHeaderLine(script)}</SectionLabel>
                 <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
                   {facts.map(({ label, value }) => (
                     <div key={label} className="contents">
@@ -273,6 +298,19 @@ function CaseCard({
                     </div>
                   ))}
                 </dl>
+                {notes.length > 0 && (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-muted">Assistant notes ({notes.length})</summary>
+                    <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+                      {notes.map(({ label, value }) => (
+                        <div key={label} className="contents">
+                          <dt className="text-muted">{label}</dt>
+                          <dd className="break-words text-text">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </details>
+                )}
                 {script.setup && setup.data && (
                   <p className="text-xs text-text">
                     <span className="text-muted">Setup: </span>
@@ -308,7 +346,7 @@ function CaseCard({
                           <span className="min-w-0 flex-1 truncate text-text" title={own ? caseTextLine(own.action) : undefined}>
                             {own?.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own && caseTextLine(own.action)}
                           </span>
-                          <span className="shrink-0 text-faint">{plural(s.actions.length, "action")}</span>
+                          <span className="shrink-0 text-faint">{autoSteps.has(s.step_number) ? "Done by Auto Run" : plural(s.actions.length, "action")}</span>
                         </li>
                       );
                     })}
@@ -318,7 +356,7 @@ function CaseCard({
 
               {unchecked.length > 0 && (
                 <div className="space-y-1">
-                  <SectionLabel>Unchecked</SectionLabel>
+                  <SectionLabel>Not checked</SectionLabel>
                   <ul aria-label={`Unchecked expectations of #${c.id}`} className="space-y-0.5 text-xs text-text">
                     {unchecked.map((e, i) => (
                       <li key={i} className="break-words">
