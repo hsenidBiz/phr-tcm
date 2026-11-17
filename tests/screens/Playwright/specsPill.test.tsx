@@ -343,7 +343,7 @@ test("a re-read refused because a run holds the slot is not red; it is tried aga
   f.state.structureError = "Playwright run is still running. Stop it, or wait for it to finish, before starting another.";
   f.state.walk = walk(5, "b");
   await tick();
-  const waiting = (await screen.findByText("Waiting for a run to finish")).closest("[role=status]")!;
+  const waiting = (await screen.findByText("Run in progress")).closest("[role=status]")!;
   expect(waiting.className).toContain("text-warning");
   expect(waiting.className).not.toContain("text-danger");
   expect(screen.queryByText("Specs could not be read")).not.toBeInTheDocument();

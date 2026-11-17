@@ -1105,8 +1105,8 @@ export default function Settings({
             {/* Earlier versions unfold in place, under the latest. */}
             <Collapse open={tiles.expanded} onGrow={tiles.onGrow} onShrink={tiles.onShrink}>
               <div id="changelog-history" className="space-y-4">
-                {changelog.slice(1, olderShown ? undefined : CHANGELOG_FIRST_SHOWN).map((e) => (
-                  <ChangelogVersion key={e.version} entry={e} />
+                {changelog.slice(1, olderShown ? undefined : CHANGELOG_FIRST_SHOWN).map((e, i) => (
+                  <ChangelogVersion key={e.version} entry={e} takeFocus={olderShown && i === CHANGELOG_FIRST_SHOWN - 1} />
                 ))}
                 {!olderShown && changelog.length > CHANGELOG_FIRST_SHOWN && (
                   <Button size="sm" variant="ghost" onClick={() => setOlderShown(true)}>
@@ -1124,7 +1124,7 @@ export default function Settings({
               aria-controls="changelog-history"
               onClick={tiles.toggle}
             >
-              {tiles.expanded ? "Show less" : `Show more (${changelog.length - 1} earlier versions)`}
+              {tiles.expanded ? "Show less" : `Show more (${Math.min(changelog.length, CHANGELOG_FIRST_SHOWN) - 1} earlier versions)`}
             </Button>
           )}
           </div>
@@ -1222,13 +1222,19 @@ export default function Settings({
   );
 }
 
-/** One version's notes, as the changelog lists them. */
 /** How many versions the open changelog lists before "Show older versions". */
 const CHANGELOG_FIRST_SHOWN = 10;
 
-function ChangelogVersion({ entry }: { entry: ChangelogEntry }) {
+/** One version's notes, as the changelog lists them. `takeFocus` moves
+ * keyboard focus here when it appears (the first version "Show older
+ * versions" reveals, so focus does not fall to the page when that button goes). */
+function ChangelogVersion({ entry, takeFocus }: { entry: ChangelogEntry; takeFocus?: boolean }) {
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (takeFocus) root.current?.focus({ preventScroll: false });
+  }, [takeFocus]);
   return (
-    <div className="space-y-1.5">
+    <div ref={root} tabIndex={takeFocus ? -1 : undefined} className="space-y-1.5 focus:outline-none">
       <ChangelogVersionTitle entry={entry} />
       <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
         {entry.items.map((item, i) => (

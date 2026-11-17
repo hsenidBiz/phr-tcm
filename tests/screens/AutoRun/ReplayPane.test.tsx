@@ -981,3 +981,9 @@ test("the run window says nothing when no password is near its end", async () =>
   await screen.findByRole("button", { name: "Start" });
   expect(screen.queryByText(/expired or due within a week/)).not.toBeInTheDocument();
 });
+
+test("the run window's dialog is named by its Unattended run title", async () => {
+  mockIPC(() => null, { shouldMockEvents: true });
+  renderPane([{ id: 1, title: "A" }]);
+  expect(await screen.findByRole("dialog", { name: "Unattended run" })).toBeInTheDocument();
+});

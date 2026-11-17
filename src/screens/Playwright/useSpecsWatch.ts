@@ -27,6 +27,7 @@ export function useSpecsWatch({
   clone,
   ready,
   busy,
+  slotBusy,
   process,
 }: {
   /** The clone folder; empty for none. */
@@ -35,6 +36,10 @@ export function useSpecsWatch({
   ready: boolean;
   /** Something is writing or reading the clone: a change waits for it. */
   busy: boolean;
+  /** A run or an accounts command started in this window holds the Playwright
+   * slot. Only this (never `busy`, which includes the re-read's own fetching)
+   * ends a wait for the slot, so a refused re-read cannot start the next. */
+  slotBusy: boolean;
   /** Reads the clone's data again; rejects when that failed. */
   process: () => Promise<void>;
 }): { reprocess: () => Promise<void> } {
@@ -139,12 +144,13 @@ export function useSpecsWatch({
 
   // The slot freed (a run ended): a re-read that was waiting for it goes now.
   const waiting = view.waiting === true;
-  const wasBusy = useRef(busy);
+  const wasSlotBusy = useRef(slotBusy);
   useEffect(() => {
-    const freed = wasBusy.current && !busy;
-    wasBusy.current = busy;
-    if (freed && waiting) void look(false);
-  }, [waiting, busy, look]);
+    const freed = wasSlotBusy.current && !slotBusy;
+    wasSlotBusy.current = slotBusy;
+    // Forced: a Refresh that was refused has no changed fingerprint to go on.
+    if (freed && waiting) void look(true);
+  }, [waiting, slotBusy, look]);
 
   const pill = clone && ready ? specsPill(view) : null;
   useEffect(() => {

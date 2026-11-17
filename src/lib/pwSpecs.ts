@@ -45,11 +45,16 @@ export type SpecsView = {
   waiting?: boolean;
 };
 
+/** What `busy_sentence` in pw_repo/process.rs says after the running command's
+ * label, and how PREPARING_ALREADY in pw_repo/runner.rs begins
+ * (tests/suite/pw_repo_specs_status.rs keeps both equal to the Rust). */
+export const RUN_BUSY_TAIL = " is still running. Stop it, or wait for it to finish, before starting another.";
+export const RUN_PREPARING_HEAD = "Another run is being prepared.";
+
 /** True when `error` is the refusal a command meets while a run holds the
- * Playwright slot (`busy_sentence` and `PREPARING_ALREADY` in pw_repo/): a
- * busy slot is not an error, so it never turns the pill red. */
+ * Playwright slot: a busy slot is not an error, so it never turns the pill red. */
 export function isRunSlotBusy(error: string): boolean {
-  return /is still running\. Stop it, or wait for it to finish/.test(error) || /^Another run is being prepared\./.test(error);
+  return error.endsWith(RUN_BUSY_TAIL) || error.startsWith(RUN_PREPARING_HEAD);
 }
 
 const specsWord = (n: number) => (n === 1 ? "1 spec" : `${n} specs`);
@@ -93,8 +98,8 @@ export function specsPill(v: SpecsView): SpecsPill | null {
   if (v.waiting) {
     return {
       tone: "warning",
-      label: "Waiting for a run to finish",
-      why: `The spec files changed (${specsWord(walk.count)} found), but a run is using Playwright. They are read again when it finishes.`,
+      label: "Run in progress",
+      why: `A run is using Playwright, so the clone is not read again yet (${specsWord(walk.count)} found). It is read again when the run finishes.`,
     };
   }
   if (v.failed && v.failed.fingerprint === walk.fingerprint) {

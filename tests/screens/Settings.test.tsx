@@ -112,7 +112,7 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(screen.getByText(`Version ${releases[0].version}`)).toBeInTheDocument();
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
 
-  const more = screen.getByRole("button", { name: `Show more (${releases.length - 1} earlier versions)` });
+  const more = screen.getByRole("button", { name: "Show more (9 earlier versions)" });
   expect(more).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(more);
   // Ten versions at first: the latest and nine earlier. The rest waits.
@@ -121,6 +121,8 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(screen.queryByText(`Version ${releases[10].version}`)).not.toBeInTheDocument();
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: `Show older versions (${releases.length - 10} more)` }));
+  // Focus moves to the first version that appeared, not to the page.
+  expect(screen.getByText(`Version ${releases[10].version}`).closest("[tabindex]")).toHaveFocus();
   expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
   expect(screen.getAllByText(/^Version \d+\.\d+\.\d+$/)).toHaveLength(releases.length);

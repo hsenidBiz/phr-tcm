@@ -4249,7 +4249,7 @@ async fn states_expect_checked_follows_clicks() {
     refused(run(&mut live, checked(button, true)).await, "has no checked state");
     // A container is never read for the first box inside it.
     let region = json!({ "role": "region", "name": "Switches" });
-    refused(run(&mut live, checked(region, true)).await, "matches a container holding 2 boxes - point at one");
+    refused(run(&mut live, checked(region, true)).await, &format!("{} 2 boxes - point at one", v2_lib::browser::expect::MATCHES_A_CONTAINER));
 }
 
 /// The page with cards a person can click though they are not usable.
