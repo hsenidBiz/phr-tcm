@@ -1363,6 +1363,17 @@ export const commands = {
 	 */
 	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<DraftSaveResult_Serialize, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
 	/**
+	 *  Undo's half of a removal: put entries back into the draft file they were
+	 *  removed from (`DraftInsert`: the original entry text and its position).
+	 *  `expected_stamp` is the file's fingerprint right after the removal wrote
+	 *  it; if the file is anything else now, somebody changed it since, and
+	 *  nothing is written - an entry put back into a file that moved on could
+	 *  land among edits the person has not seen. An entry the file already holds
+	 *  is refused too. Like `save_draft_cases` it returns the file's new
+	 *  fingerprint and cases, to become the watch snapshot.
+	 */
+	restoreDraftCases: (path: string, expectedStamp: string, inserts: DraftInsert_Deserialize[]) => typedError<DraftSaveResult_Serialize, string>(__TAURI_INVOKE("restore_draft_cases", { path, expectedStamp, inserts })),
+	/**
 	 *  Re-render the draft page WITHOUT opening a browser. This is what the
 	 *  background keep-in-step refresh calls: it used to share `view_draft_html`
 	 *  with the button, and the `open_path` at the end of that meant every
@@ -4684,6 +4695,35 @@ export type DraftGeneralCommentSaved = {
 };
 
 /**
+ *  One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+ *  what `RemovedEntry` gave; without it the case is written the way the
+ *  exporter writes one. `position` is where it stood; without it, the end.
+ */
+export type DraftInsert = DraftInsert_Serialize | DraftInsert_Deserialize;
+
+/**
+ *  One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+ *  what `RemovedEntry` gave; without it the case is written the way the
+ *  exporter writes one. `position` is where it stood; without it, the end.
+ */
+export type DraftInsert_Deserialize = {
+	case: TestCase_Deserialize,
+	raw?: string | null,
+	position?: number | null,
+};
+
+/**
+ *  One entry to put back into a draft file (`restore_draft_cases`). `raw` is
+ *  what `RemovedEntry` gave; without it the case is written the way the
+ *  exporter writes one. `position` is where it stood; without it, the end.
+ */
+export type DraftInsert_Serialize = {
+	case: TestCase_Serialize,
+	raw?: string | null,
+	position?: number | null,
+};
+
+/**
  *  What a write-back actually did: the file's new fingerprint, and a fresh
  *  parse of the text just written, in FILE order - EVERY case now there,
  *  including ones no queue row owns (an assistant's addition). This is
@@ -4706,6 +4746,12 @@ export type DraftSaveResult = DraftSaveResult_Serialize | DraftSaveResult_Deseri
 export type DraftSaveResult_Deserialize = {
 	stamp: string,
 	cases: TestCase_Deserialize[],
+	/**
+	 *  Aligned with the edits sent: what each removal took out of the file,
+	 *  for the queue's Undo (`restore_draft_cases`). `None` for every edit
+	 *  that did not remove an entry the file still had.
+	 */
+	removed: (RemovedEntry | null)[],
 };
 
 /**
@@ -4720,6 +4766,12 @@ export type DraftSaveResult_Deserialize = {
 export type DraftSaveResult_Serialize = {
 	stamp: string,
 	cases: TestCase_Serialize[],
+	/**
+	 *  Aligned with the edits sent: what each removal took out of the file,
+	 *  for the queue's Undo (`restore_draft_cases`). `None` for every edit
+	 *  that did not remove an entry the file still had.
+	 */
+	removed: (RemovedEntry | null)[],
 };
 
 /**
@@ -7016,6 +7068,17 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**
+ *  What a write-back removed from a draft file: the entry exactly as the
+ *  file had it (compact JSON text, unknown keys included) and where it
+ *  stood in the file's case list. Handed back by `save_draft_cases` so the
+ *  queue's Undo can put the entry back (`DraftInsert`).
+ */
+export type RemovedEntry = {
+	raw: string,
+	position: number,
 };
 
 /**  One thing a rename would break. */

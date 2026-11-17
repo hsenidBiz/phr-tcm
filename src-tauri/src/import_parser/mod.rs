@@ -14,7 +14,7 @@ mod html;
 pub mod specs;
 
 pub use export::{
-    apply_draft_edits, export_queue_to_json, merge_cases_into_draft, queue_to_json_string, step_json,
+    apply_draft_edits, apply_draft_edits_keeping, insert_draft_entries, export_queue_to_json, merge_cases_into_draft, queue_to_json_string, step_json,
 };
 pub use html::{
     export_queue_page, export_queue_page_in, export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx,

@@ -475,10 +475,14 @@ pub fn save_draft_comment(
 /// only the rows it sent stops matching the file the moment a re-sort makes
 /// queue order and file order disagree, and the NEXT write then counts a
 /// same-titled twin's position wrong.
-#[derive(serde::Serialize, specta::Type)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct DraftSaveResult {
     pub stamp: String,
     pub cases: Vec<model::TestCase>,
+    /// Aligned with the edits sent: what each removal took out of the file,
+    /// for the queue's Undo (`restore_draft_cases`). `None` for every edit
+    /// that did not remove an entry the file still had.
+    pub removed: Vec<Option<model::RemovedEntry>>,
 }
 
 /// Write a queue edit back into the draft file its cases came from, so the
@@ -502,28 +506,96 @@ pub fn save_draft_cases(
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
     let old = import_parser::read_json_text(std::path::Path::new(&path))?;
-    let out = import_parser::apply_draft_edits(&old, &edits)?;
+    let (out, removed) = import_parser::apply_draft_edits_keeping(&old, &edits)?;
     let stamp = crate::filewatch::write_watched(&watch_state(&app), &path, &out)?;
-    // The write already landed - `out` came from `apply_draft_edits`, which
-    // only ever produces valid JSON. If re-parsing it somehow fails anyway,
-    // an error (not an empty case list) is the only safe answer: an empty
-    // `cases` would silently become the caller's new watch snapshot, and
-    // every row in the file would look unowned from then on. An error
-    // instead leaves the caller's existing snapshot exactly as it was,
-    // same as any other failed write.
-    let cases = match import_parser::parse_json_text(&out) {
-        Ok(p) => p.cases,
+    let cases = reparse_written("save_draft_cases", &path, &out)?;
+    Ok(DraftSaveResult { stamp, cases, removed })
+}
+
+/// The cases now in the file, parsed from the text just written. The write
+/// already landed - `out` came from the draft writers, which only ever
+/// produce valid JSON. If re-parsing it somehow fails anyway, an error (not
+/// an empty case list) is the only safe answer: an empty `cases` would
+/// silently become the caller's new watch snapshot, and every row in the
+/// file would look unowned from then on. An error instead leaves the
+/// caller's existing snapshot exactly as it was, same as any other failed
+/// write.
+fn reparse_written(who: &str, path: &str, out: &str) -> Result<Vec<model::TestCase>, String> {
+    match import_parser::parse_json_text(out) {
+        Ok(p) => Ok(p.cases),
         Err(e) => {
             crate::applog::error(format!(
-                "save_draft_cases: wrote {path} but could not re-parse it afterwards: {e}"
+                "{who}: wrote {path} but could not re-parse it afterwards: {e}"
             ));
-            return Err(format!(
+            Err(format!(
                 "the file was written, but could not be read back afterwards ({e}). \
                  Its case list here may be out of date - close and reopen it to check."
-            ));
+            ))
         }
-    };
-    Ok(DraftSaveResult { stamp, cases })
+    }
+}
+
+/// Undo's half of a removal: put entries back into the draft file they were
+/// removed from (`DraftInsert`: the original entry text and its position).
+/// `expected_stamp` is the file's fingerprint right after the removal wrote
+/// it; if the file is anything else now, somebody changed it since, and
+/// nothing is written - an entry put back into a file that moved on could
+/// land among edits the person has not seen. An entry the file already holds
+/// is refused too. Like `save_draft_cases` it returns the file's new
+/// fingerprint and cases, to become the watch snapshot.
+#[tauri::command]
+#[specta::specta]
+pub fn restore_draft_cases(
+    app: tauri::AppHandle,
+    path: String,
+    expected_stamp: String,
+    inserts: Vec<model::DraftInsert>,
+) -> Result<DraftSaveResult, String> {
+    let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let watched = crate::filewatch::watched_paths(&watch_state(&app));
+    // A Remove all drops the watches and can leave a draft with an empty
+    // case list, which `draft_write_allowed` would not call a draft. The
+    // stamp check below is what proves the file is the one the app wrote.
+    if !watched.iter().any(|p| p == &path) && !is_empty_draft(&path) {
+        draft_write_allowed(&path, &watched)?;
+    }
+    restore_into_file(&path, &expected_stamp, &inserts, |text| {
+        crate::filewatch::write_watched(&watch_state(&app), &path, text)
+    })
+}
+
+/// A `.json` file with an (empty) `test_cases` list or a bare empty array -
+/// what removing every case from a draft leaves behind.
+fn is_empty_draft(path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    let is_json = p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if !is_json || !p.is_file() {
+        return false;
+    }
+    let Ok(text) = import_parser::read_json_text(p) else { return false };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Array(a)) => a.is_empty(),
+        Ok(v) => v.get("test_cases").and_then(|t| t.as_array()).is_some_and(|a| a.is_empty()),
+        Err(_) => false,
+    }
+}
+
+/// `restore_draft_cases` without the app: `write` is how the text lands.
+pub fn restore_into_file(
+    path: &str,
+    expected_stamp: &str,
+    inserts: &[model::DraftInsert],
+    write: impl FnOnce(&str) -> Result<String, String>,
+) -> Result<DraftSaveResult, String> {
+    let p = std::path::Path::new(path);
+    if crate::filewatch::stamp(p).as_deref() != Some(expected_stamp) {
+        return Err("the file was changed outside the app".into());
+    }
+    let old = import_parser::read_json_text(p)?;
+    let out = import_parser::insert_draft_entries(&old, inserts)?;
+    let stamp = write(&out)?;
+    let cases = reparse_written("restore_draft_cases", path, &out)?;
+    Ok(DraftSaveResult { stamp, cases, removed: vec![] })
 }
 
 /// Render the queue's HTML report to a temp file and open it in the

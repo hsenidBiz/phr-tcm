@@ -1,8 +1,8 @@
 import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { commands, type DraftEdit, type TestCase } from "../../bindings";
+import { commands, type DraftEdit, type DraftInsert, type RemovedEntry, type TestCase } from "../../bindings";
 import { toast } from "../../lib/toast";
 import { fileName, fileOwners, patchWatch, type WatchedFile } from "../../lib/fileSync";
-import { freshWatches, noteWritten, runOnFileChain } from "../../lib/draftWriteQueue";
+import { freshWatches, lastOwnStamp, noteWritten, runOnFileChain } from "../../lib/draftWriteQueue";
 import type { RenameTarget } from "../PowerRenameDialog";
 import {
   changedKeys,
@@ -14,6 +14,11 @@ import {
 } from "./queueUndo";
 
 const noun = (n: number) => `${n} case${n === 1 ? "" : "s"}`;
+
+/** What a write-back did to the rows it removed from files: for each such
+ * row, the file it left and what the file had (`null` when the entry was
+ * already gone from it). Only files that were written are in it. */
+type WriteOutcome = Map<TestCase, { path: string; entry: RemovedEntry | null }>;
 
 /**
  * Every way the queue changes under the user's hand - bulk edit, bulk
@@ -78,8 +83,9 @@ export function useQueueEdits({
     prev: TestCase[],
     next: (TestCase | null)[],
     changed: Set<number>,
-  ) => {
-    if (watches.length === 0) return;
+  ): Promise<WriteOutcome> => {
+    const outcome: WriteOutcome = new Map();
+    if (watches.length === 0) return outcome;
     // Only used to find which files are touched - not for occurrences.
     // Ownership itself (WHICH file a row belongs to) does not shift when
     // an unrelated row elsewhere in the same file is removed, so today's
@@ -92,11 +98,13 @@ export function useQueueEdits({
         await runOnFileChain(path, async () => {
           const owners = fileOwners(prev, freshWatches(watchesRef.current));
           const edits: DraftEdit[] = [];
+          const sent: number[] = [];
           let touched = false;
           prev.forEach((before, i) => {
             const o = owners[i];
             if (!o || o.path !== path) return;
             edits.push({ before, after: next[i], occurrence: o.occurrence });
+            sent.push(i);
             if (changed.has(i)) touched = true;
           });
           if (!touched) return;
@@ -117,6 +125,9 @@ export function useQueueEdits({
           // and so does a task that reads `watchesRef.current` before this
           // component has re-rendered with the parent's own state update.
           noteWritten(path, r.data);
+          sent.forEach((i, e) => {
+            if (next[i] === null) outcome.set(prev[i], { path, entry: r.data.removed?.[e] ?? null });
+          });
           const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
           watchesRef.current = patchWatch(watchesRef.current, path, fields);
           onWatchPatched?.(path, fields);
@@ -132,6 +143,7 @@ export function useQueueEdits({
         );
       }
     }
+    return outcome;
   };
 
   const bulkApply = async (edit: (tc: TestCase) => TestCase) => {
@@ -179,23 +191,34 @@ export function useQueueEdits({
     let undone = false;
     let cleared = false;
     const dropped = watchesRef.current;
-    announce(
-      "info",
-      `Removed ${noun(removing.size)}`,
-      uploading || fileOwned(prev, removing)
-        ? undefined
-        : () => {
-            undone = undoRemoval(gone);
-            // The watches were already dropped: arm them again.
-            if (undone && cleared && dropped.length > 0) onQueueRestored?.(dropped);
-          },
-      kept.length === 0 ? "[]" : undefined,
-    );
-    await writeBackOwned(
+    const owned = fileOwned(prev, removing);
+    const written = writeBackOwned(
       prev,
       prev.map((tc, i) => (removing.has(i) ? null : tc)),
       removing,
     );
+    announce(
+      "info",
+      `Removed ${noun(removing.size)}`,
+      uploading
+        ? undefined
+        : owned
+          ? () => {
+              undone = true;
+              void undoWithFiles(gone, written, dropped).then((back) => {
+                // The watches were already dropped: arm them again, as they
+                // now stand (each file's fingerprint moved with its Undo).
+                if (back && cleared && back.length > 0) onQueueRestored?.(back);
+              });
+            }
+          : () => {
+              undone = undoRemoval(gone);
+              // The watches were already dropped: arm them again.
+              if (undone && cleared && dropped.length > 0) onQueueRestored?.(dropped);
+            },
+      kept.length === 0 ? "[]" : undefined,
+    );
+    await written;
     if (kept.length === 0 && !undone) {
       cleared = true;
       onQueueCleared?.();
@@ -273,11 +296,72 @@ export function useQueueEdits({
     return true;
   };
 
+  /** Undo of a removal that included rows owned by watched files. The
+   * removal was written into those files, so Undo puts each entry back
+   * (`restoreDraftCases`, one write per file, exactly as the file had it)
+   * and then the rows, which the refreshed watch snapshot owns again. A
+   * file that is no longer what the app last wrote - somebody changed it
+   * since - is left alone and its rows stay removed; the rest come back.
+   * Returns the watches `dropped` by a Remove all, moved to the files' new
+   * fingerprints, or null when nothing was undone. */
+  const undoWithFiles = async (
+    gone: RemovedRow[],
+    written: Promise<WriteOutcome>,
+    dropped: WatchedFile[] = [],
+  ): Promise<WatchedFile[] | null> => {
+    if (latest.current.uploading) {
+      toast.info("Undo is not available while an upload is running.");
+      return null;
+    }
+    const outcome = await written;
+    const byFile = new Map<string, RemovedRow[]>();
+    for (const g of gone) {
+      const o = outcome.get(g.row);
+      if (o) byFile.set(o.path, [...(byFile.get(o.path) ?? []), g]);
+    }
+    const refused = new Set<TestCase>();
+    let rearm = dropped;
+    for (const [path, rows] of byFile) {
+      const fail = (why: string) => {
+        rows.forEach((g) => refused.add(g.row));
+        toast.warning(`Undo left ${noun(rows.length)} out: ${fileName(path)} ${why}`, { duration: 12000 });
+      };
+      try {
+        await runOnFileChain(path, async () => {
+          const expected = lastOwnStamp(path);
+          if (!expected) return fail("is not what it was when they were removed.");
+          const inserts: DraftInsert[] = rows.map((g) => ({
+            case: g.row,
+            raw: outcome.get(g.row)?.entry?.raw ?? null,
+            position: outcome.get(g.row)?.entry?.position ?? null,
+          }));
+          const r = await commands.restoreDraftCases(path, expected, inserts);
+          if (r.status === "error") {
+            return fail(
+              /changed outside/.test(r.error)
+                ? "was changed outside the app, so nothing was put back."
+                : `could not be written: ${r.error}.`,
+            );
+          }
+          noteWritten(path, r.data);
+          const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
+          watchesRef.current = patchWatch(watchesRef.current, path, fields);
+          rearm = patchWatch(rearm, path, fields);
+          onWatchPatched?.(path, fields);
+        });
+      } catch (e) {
+        fail(`could not be written: ${e instanceof Error ? e.message : String(e)}.`);
+      }
+    }
+    const back = gone.filter((g) => !refused.has(g.row));
+    for (const { row } of back) removing.current.delete(row);
+    setQueue((q) => restoreRows(q, back));
+    return rearm;
+  };
+
   /** Whether any of these rows belongs to a watched file. Removing such a
-   * row is written into the file, and the write-back has no way to put an
-   * entry back, so Undo would leave queue and file disagreeing: a removal
-   * of file-owned rows gets no Undo. It gets one once the file write-back
-   * can re-insert an entry. */
+   * row is written into the file, so its Undo has to put the entry back
+   * too (`undoWithFiles`). */
   const fileOwned = (rows: TestCase[], at: Set<number>) => {
     if (watchesRef.current.length === 0) return false;
     const owners = fileOwners(rows, watchesRef.current);
@@ -291,15 +375,20 @@ export function useQueueEdits({
       removing.current.add(target);
       setQueue((q) => q.filter((t) => t !== target));
       const gone = [{ index: i, row: target }];
-      announce(
-        "info",
-        `Removed ${noun(1)}`,
-        latest.current.uploading || fileOwned(prev, new Set([i])) ? undefined : () => void undoRemoval(gone),
-      );
-      void writeBack(
+      const owned = fileOwned(prev, new Set([i]));
+      const written = writeBack(
         prev,
         prev.map((t) => (t === target ? null : t)),
         new Set([i]),
+      );
+      announce(
+        "info",
+        `Removed ${noun(1)}`,
+        latest.current.uploading
+          ? undefined
+          : owned
+            ? () => void undoWithFiles(gone, written)
+            : () => void undoRemoval(gone),
       );
     },
     // announce and undoRemoval are stable in effect: they read through refs.

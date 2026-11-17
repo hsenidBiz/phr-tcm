@@ -347,6 +347,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::save_specs,
             queue::save_draft_comment,
             queue::save_draft_cases,
+            queue::restore_draft_cases,
             queue::refresh_draft_html,
             queue::refresh_queue_html,
             cases::test_cases_by_ids,
