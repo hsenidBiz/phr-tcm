@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.8",
+    date: "2026-11-17",
+    items: [
+      "Auto Run can keep a video of failed and blocked cases: turn on Keep a video of failed cases when starting a run. Play or download it from Past runs and the run review, and attach it when raising a bug. Needs a recent Edge; with an older one the run says video was not recorded.",
+    ],
+  },
+  {
     version: "2.4.7-beta.7",
     date: "2026-11-17",
     items: [
