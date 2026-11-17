@@ -289,3 +289,41 @@ fn read_file_b64_refuses_an_oversize_file_without_naming_it() {
     assert_eq!(err, "File is larger than 25 MB.");
     assert!(!err.contains("secret-name"));
 }
+
+#[test]
+fn a_result_attachment_is_checked_in_rust_without_naming_a_path() {
+    use base64::Engine;
+    use v2_lib::commands::bugs::{refuse_attachment, refuse_result_attachment, MAX_RESULT_FILE};
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    // An allowed file goes through: a log, and a real picture.
+    assert!(refuse_result_attachment("run.log", &b64(b"hello")).is_ok());
+    let whole_png: Vec<u8> = [&PNG[..8], &[0, 0, 0, 0], b"IEND".as_slice(), &[0xae, 0x42, 0x60, 0x82]].concat();
+    assert!(refuse_result_attachment("shot.png", &b64(&whole_png)).is_ok());
+    // Over the cap: refused from the size alone, no data decoded.
+    let over = "A".repeat((MAX_RESULT_FILE as usize / 3 + 4) * 4);
+    let err = refuse_result_attachment("big.bin", &over).unwrap_err();
+    assert_eq!(err, "File is larger than 100 MB.");
+    assert!(refuse_attachment("x.bin", 25 * 1024 * 1024 + 1, 25 * 1024 * 1024).is_err());
+    // Empty, and a name that is a path or a folder: refused, the path never in the sentence.
+    assert_eq!(refuse_result_attachment("empty.txt", "").unwrap_err(), "The file is empty.");
+    for name in [r"C:secretdir.txt", "../../etc/passwd", "folder/"] {
+        let err = refuse_result_attachment(name, &b64(b"x")).unwrap_err();
+        assert!(!err.contains("secret") && !err.contains("etc"), "{err}");
+    }
+    // A picture that is not a picture (a disallowed type for that name) is refused.
+    let err = refuse_result_attachment("fake.png", &b64(b"MZ not an image")).unwrap_err();
+    assert!(err.starts_with("The picture can't be attached"), "{err}");
+    assert!(refuse_result_attachment("fake.png", "!!!not base64!!!").is_err());
+}
+
+#[test]
+fn read_file_b64_refuses_an_empty_file_and_passes_an_allowed_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = dir.path().join("empty.txt");
+    std::fs::write(&empty, b"").unwrap();
+    assert_eq!(v2_lib::commands::bugs::read_file_b64(empty.to_string_lossy().into()).err().unwrap(), "The file is empty.");
+    let ok = dir.path().join("notes.txt");
+    std::fs::write(&ok, b"hello").unwrap();
+    let got = v2_lib::commands::bugs::read_file_b64(ok.to_string_lossy().into()).unwrap();
+    assert_eq!(got.file_name, "notes.txt");
+}

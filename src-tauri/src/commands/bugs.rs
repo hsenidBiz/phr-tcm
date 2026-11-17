@@ -263,6 +263,49 @@ pub async fn attach_screenshots(
     failed
 }
 
+/// The most a file picked for attaching may be.
+pub const MAX_PICKED_FILE: u64 = 25 * 1024 * 1024;
+
+/// The most one result attachment may be when it reaches Rust (Azure DevOps
+/// refuses a test attachment over 100 MB; a screen recording can be large).
+pub const MAX_RESULT_FILE: u64 = 100 * 1024 * 1024;
+
+/// The one check a file to attach passes, whichever way it arrives (picked
+/// from disk or sent by the page): its name is a bare file name, it is not
+/// empty and it is no larger than `max` bytes. The sentences name no path.
+pub fn refuse_attachment(file_name: &str, size: u64, max: u64) -> Result<(), String> {
+    if file_name.trim().is_empty() || file_name.contains(['/', '\\']) || file_name.chars().any(char::is_control) {
+        return Err("The file's name can't be used - rename it and attach it again.".into());
+    }
+    if size == 0 {
+        return Err("The file is empty.".into());
+    }
+    if size > max {
+        return Err(format!("File is larger than {} MB.", max / (1024 * 1024)));
+    }
+    Ok(())
+}
+
+/// `refuse_attachment` for a file that is already base64 in the page, and
+/// the same image test the bug dialog's upload makes: a picture (by its
+/// name) that is cut off or is not an image is refused. Other files go up
+/// as they are.
+pub fn refuse_result_attachment(file_name: &str, b64: &str) -> Result<(), String> {
+    use base64::Engine;
+    let b64 = b64.trim();
+    let padding = b64.bytes().rev().take_while(|b| *b == b'=').count() as u64;
+    let size = (b64.len() as u64 / 4 * 3).saturating_sub(padding);
+    refuse_attachment(file_name, size, MAX_RESULT_FILE)?;
+    let ext = std::path::Path::new(file_name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp")) {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|_| "The picture's data is damaged.".to_string())?;
+        bug_image_ext(&bytes).map_err(|why| format!("The picture can't be attached: {why}."))?;
+    }
+    Ok(())
+}
+
 /// Read any file for attaching to a result (name + base64 bytes).
 #[tauri::command(async)]
 #[specta::specta]
@@ -274,14 +317,12 @@ pub fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
     if meta.is_dir() {
         return Err("Folders can't be attached - attach the files inside it.".into());
     }
-    if meta.len() > 25 * 1024 * 1024 {
-        return Err("File is larger than 25 MB.".into());
-    }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let file_name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "attachment".into());
+    refuse_attachment(&file_name, meta.len(), MAX_PICKED_FILE)?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     Ok(RunAttachmentOut {
         file_name,
         b64: base64::engine::general_purpose::STANDARD.encode(&bytes),
