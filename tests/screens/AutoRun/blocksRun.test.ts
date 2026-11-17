@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
-import { SIMPLE_HIDDEN, blockingRows, shownInSimple, type SetupRowName } from "../../../src/screens/AutoRun/blocksRun";
+import { SIMPLE_HIDDEN, blockingRows, fixtureBlock, shownInSimple, type SetupRowName } from "../../../src/screens/AutoRun/blocksRun";
 
-const QUIET = { essentialMissing: false, signIn: "saved" as const, discovering: false, fixturesFailed: 0, fixturesFailedHere: 0 };
+const QUIET = { signIn: "saved" as const, discovering: false, fixturesFailed: 0, fixturesFailedHere: 0 };
 
 const ALL: SetupRowName[] = [
   "Environment",
@@ -36,7 +36,7 @@ test("no sign-in blocks the Sign-in row", () => {
 });
 
 test("several blockers add up", () => {
-  const b = blockingRows({ essentialMissing: true, signIn: "none", discovering: true, fixturesFailed: 1, fixturesFailedHere: 0 });
+  const b = blockingRows({ signIn: "none", discovering: true, fixturesFailed: 1, fixturesFailedHere: 0 });
   expect([...b].sort()).toEqual(["Discovery", "Fixtures", "Sign-in"]);
 });
 
@@ -50,4 +50,10 @@ test("a blocking hidden row is shown, and only that one", () => {
   for (const row of ALL) {
     expect(shownInSimple(row, blocking)).toBe(row === "Discovery" || !SIMPLE_HIDDEN.has(row));
   }
+});
+
+test("fixtureBlock is true when either count is above zero", () => {
+  expect(fixtureBlock(0, 0)).toBe(false);
+  expect(fixtureBlock(1, 0)).toBe(true);
+  expect(fixtureBlock(0, 1)).toBe(true);
 });

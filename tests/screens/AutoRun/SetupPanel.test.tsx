@@ -28,9 +28,17 @@ const FAILED_HERE = {
   here: { state: "failed", failure: { at: "2026-11-06 10:00:00", step: null, detail: null } },
 };
 
-function mount(opts: { mode: "simple" | "advanced"; fixtures?: unknown[]; discovering?: () => boolean }) {
+function mount(opts: {
+  mode: "simple" | "advanced" | "loading";
+  fixtures?: unknown[];
+  discovering?: () => boolean;
+  project?: string;
+}) {
   mockIPC((cmd) => {
-    if (cmd === "get_app_settings") return { autorun_mode: opts.mode };
+    if (cmd === "get_app_settings") {
+      // "loading": the settings never answer, so the mode stays unknown.
+      return opts.mode === "loading" ? new Promise(() => {}) : { autorun_mode: opts.mode };
+    }
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return [];
     if (cmd === "env_list") {
@@ -58,7 +66,7 @@ function mount(opts: { mode: "simple" | "advanced"; fixtures?: unknown[]; discov
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="Web" pbi={PBI} />
+      <AutoRun org="acme" project={opts.project ?? "Web"} pbi={PBI} />
     </QueryClientProvider>,
   );
   return qc;
@@ -132,4 +140,55 @@ test("a failed fixture shows the Fixtures row with the note in Simple", async ()
   expect(within(panel()).getByText(NOTE)).toBeInTheDocument();
   expect(row("Discovery")).not.toBeInTheDocument();
   expect(row("Components")).not.toBeInTheDocument();
+});
+
+test("in Simple the Sign-in row says Ready, not the recipe's own words", async () => {
+  mount({ mode: "simple" });
+  await expand();
+  const signIn = await within(panel()).findByRole("group", { name: "Sign-in" });
+  await waitFor(() => expect(signIn).toHaveTextContent("Ready"));
+  expect(signIn).not.toHaveTextContent("Built-in");
+  expect(signIn).not.toHaveTextContent("Recipe saved");
+});
+
+test("Advanced keeps the Sign-in row's own words", async () => {
+  mount({ mode: "advanced" });
+  await expand();
+  const signIn = await within(panel()).findByRole("group", { name: "Sign-in" });
+  await waitFor(() => expect(signIn).toHaveTextContent("Built-in"));
+});
+
+test("with no sign-in, Simple says Needs setting up, keeps the recipe tools and shows the note", async () => {
+  mount({ mode: "simple", project: "" });
+  await expand();
+  const signIn = await within(panel()).findByRole("group", { name: "Sign-in" });
+  expect(signIn).toHaveTextContent("Needs setting up");
+  expect(within(signIn).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
+  expect(within(signIn).getByRole("button", { name: "Edit sign-in recipe" })).toBeInTheDocument();
+  expect(within(panel()).getByText(NOTE)).toBeInTheDocument();
+});
+
+test("the panel renders as Advanced while the mode is still loading", async () => {
+  mount({ mode: "loading" });
+  await expand();
+  for (const name of ["Discovery", "Components", "Fixtures"]) {
+    expect(await within(panel()).findByRole("group", { name })).toBeInTheDocument();
+  }
+  expect(within(panel()).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
+  expect(within(panel()).queryByText(NOTE)).not.toBeInTheDocument();
+});
+
+test("the collapsed summary puts the blocker note in its own block under the line", async () => {
+  mount({ mode: "simple", discovering: () => true });
+  const summary = await within(panel()).findByRole("list", { name: "Setup summary" });
+  const note = await within(summary).findByText(NOTE);
+  const item = note.closest("li")!;
+  expect(within(item).getByText("Discovery")).toBeInTheDocument();
+  // The note is a sibling block of the line's own flex row, never a flex item
+  // inside it, so the label and value keep their line whole.
+  const line = within(item).getByText("Discovery").closest("div")!;
+  expect(line.parentElement).toBe(item);
+  expect(line).not.toContainElement(note);
+  expect(note.parentElement).toBe(item);
+  expect(note.tagName).toBe("P");
 });
