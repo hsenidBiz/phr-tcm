@@ -811,3 +811,24 @@ fn a_failed_write_is_retried_on_a_timer_and_then_given_up() {
     assert!(retry_allow_writes(&bad.tools, &st, Some(&bad.dir()), bad.data.path(), &|| false, &[1, 1], &mut |_| tries += 1));
     assert_eq!(tries, 1);
 }
+
+/// A retry that wakes after a newer pass has taken rules out does not put
+/// them back: the newer pass is judged under the files' lock.
+#[test]
+fn a_retry_gives_way_to_a_pass_that_ran_while_it_waited() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use v2_lib::commands::ai_tools::retry_allow_writes;
+    let m = machine(Some("{}"));
+    let newest = AtomicBool::new(true);
+    let ok = retry_allow_writes(
+        &m.tools,
+        &state(false, auto_run_on(), &[]),
+        Some(&m.dir()),
+        m.data.path(),
+        &|| newest.load(Ordering::SeqCst),
+        &[1],
+        &mut |_| newest.store(false, Ordering::SeqCst),
+    );
+    assert!(ok);
+    assert!(has_none(&m.allow(), CLAUDE_AUTORUN_RULES), "{:?}", m.allow());
+}

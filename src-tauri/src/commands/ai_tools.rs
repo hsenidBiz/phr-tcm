@@ -640,13 +640,17 @@ pub fn retry_allow_writes(
 ) -> bool {
     for (i, wait) in waits_ms.iter().enumerate() {
         sleep(std::time::Duration::from_millis(*wait));
-        if !still_newest() {
-            return true;
-        }
+        // Judged under the files' lock: a newer pass that ran while this one
+        // woke and waited for the lock has the newer wishes (rules taken out
+        // stay out), so this one stands down.
         let failed = match_allow_files_with(data_root, |db| {
+            if !still_newest() {
+                return None;
+            }
             let state = AllowState { db, ..state.clone() };
-            apply_allow_pass(tools, &state, working_dir, data_root).1
+            Some(apply_allow_pass(tools, &state, working_dir, data_root).1)
         });
+        let Some(failed) = failed else { return true };
         if !failed {
             crate::applog::info(format!("auto-approve: the allow file was written on retry {}", i + 1));
             return true;

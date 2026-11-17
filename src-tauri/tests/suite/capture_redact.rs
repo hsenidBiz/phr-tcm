@@ -536,7 +536,7 @@ fn guids_are_hidden_in_secret_positions_and_kept_as_record_ids() {
     assert!(!redact_body(Some("application/json"), &format!(r#"{{"ticket":"{guid}","user":"avin"}}"#)).contains("3f2504e0"));
     assert!(!redact_body(Some("text/plain"), &format!("sid = '{guid}'")).contains("3f2504e0"));
     assert!(!redact_path_query(&format!("/cb?nonce={guid}&x=1")).contains("3f2504e0"));
-    assert!(!redact_field("resetId", guid).contains("3f2504e0"));
+    assert!(!redact_field("reset", guid).contains("3f2504e0"));
     // A trace header, and a record's id in a body, a URL and a query, stay: a
     // template captures them as placeholders.
     assert_eq!(redact_header("X-Request-Id", guid), guid);
@@ -560,4 +560,31 @@ fn long_lower_case_tokens_are_hidden_but_words_are_not() {
     ] {
         assert_eq!(redact_body(Some("text/plain"), plain), plain);
     }
+}
+
+#[test]
+fn record_names_that_hold_state_or_grants_keep_their_guid() {
+    use v2_lib::autorun::capture_redact::redact_field;
+    let guid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    for name in ["stateId", "leaveStateId", "workflowState", "handle", "grantId", "confirmationId", "sigma"] {
+        assert_eq!(redact_field(name, guid), guid, "{name}");
+        let body = format!(r#"{{"{name}":"{guid}"}}"#);
+        assert_eq!(redact_body(Some("application/json"), &body), body, "{name}");
+    }
+    for name in ["state", "sig", "ticket", "sid", "nonce", "resetTicket"] {
+        assert!(!redact_field(name, guid).contains("3f2504e0"), "{name}");
+    }
+    // An explore one-off with a state id in its query is not taken for a secret.
+    assert!(!v2_lib::api_templates::one_off::page_sends_a_secret(&format!("/leave?stateId={guid}&page=1")));
+    assert!(v2_lib::api_templates::one_off::page_sends_a_secret(&format!("/cb?state={guid}")));
+}
+
+#[test]
+fn a_location_keeps_a_created_records_guid_in_its_path_only() {
+    use v2_lib::autorun::capture_redact::redact_header;
+    let guid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    let at = format!("/api/leave/{guid}");
+    assert_eq!(redact_header("Location", &at), at);
+    let out = redact_header("Location", &format!("{at}?ticket={guid}"));
+    assert!(out.starts_with(&at) && !out.contains("ticket=3f25"), "{out}");
 }

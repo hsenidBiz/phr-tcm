@@ -297,10 +297,11 @@ fn bare_host_path(core: &str, before: &str) -> Option<String> {
 
 /// Last labels a name written alone (no path, no port) must end in to be a
 /// host: well-known domains and the ones networks keep inside (`.local`).
-/// Short country codes (`in`, `us`, `de`) are left out: `sign.in` is words.
+/// Short country codes (`in`, `us`, `de`) and words that end code names
+/// (`info`, `app`, `dev`, `local`: `log.info`, `this.app`) are left out; with a
+/// scheme, a path or a port a name needs no such list.
 const HOST_TLDS: &[&str] = &[
-    "com", "net", "org", "edu", "gov", "io", "lk", "uk", "app", "dev", "biz", "info", "cloud", "local", "internal",
-    "corp", "lan", "intranet",
+    "com", "net", "org", "edu", "gov", "io", "lk", "uk", "biz", "cloud", "internal", "corp", "lan", "intranet",
 ];
 
 /// Whether a dotted name with nothing after it is a host: every label lower

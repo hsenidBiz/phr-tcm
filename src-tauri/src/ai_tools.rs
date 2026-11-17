@@ -1827,7 +1827,7 @@ pub fn update_file_safely(
         }
         return Ok(true);
     }
-    Err("the settings file kept changing while the app wrote to it - it will be tried again".to_string())
+    Err("the settings file kept changing while the app wrote to it".to_string())
 }
 
 /// How long to wait before each retry of a rename another process blocked.

@@ -280,14 +280,20 @@ pub fn is_guid(text: &str) -> bool {
 /// Words that make a name one whose GUID value is a secret: a session id, a
 /// ticket, a nonce, a reset or invitation link's id. A GUID under any other
 /// name (a record's `id`, `userId`) is data a template may need, so stays.
-const GUID_WORDS: [&str; 17] = [
-    "sid", "ticket", "nonce", "state", "handle", "reset", "invite", "invitation", "activation", "verification",
-    "verify", "confirmation", "challenge", "magic", "grant", "jti", "sig",
-];
+const GUID_WORDS: [&str; 6] = ["sid", "ticket", "nonce", "jti", "challenge", "magic"];
 
-/// Whether a name carries a GUID value as a secret (`GUID_WORDS`).
+/// Names that are a secret's only when they are the whole name: OAuth's
+/// `state`, a bare `sig`, a link's `reset`/`invite`... but `stateId`,
+/// `leaveStateId`, `workflowState`, `grantId`, `confirmationId` and the like
+/// name records (a workflow's state, a grant) a template needs to see.
+const GUID_WHOLE_NAMES: [&str; 9] =
+    ["state", "sig", "reset", "invite", "invitation", "activation", "verification", "verify", "confirmation"];
+
+/// Whether a name carries a GUID value as a secret: one of `GUID_WORDS` as a
+/// word of the name, or the whole name one of `GUID_WHOLE_NAMES`.
 fn guid_name(name: &str) -> bool {
-    segments(name).iter().any(|w| GUID_WORDS.contains(&w.as_str()))
+    let plain: String = name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    GUID_WHOLE_NAMES.contains(&plain.as_str()) || segments(name).iter().any(|w| GUID_WORDS.contains(&w.as_str()))
 }
 
 /// `value` is a GUID held under a name that makes it a secret.
@@ -616,7 +622,10 @@ pub fn redact_header(name: &str, value: &str) -> String {
     if secret_name(name) || name.eq_ignore_ascii_case("authorization") {
         return HIDDEN.to_string();
     }
-    let trace = segments(name).iter().any(|w| TRACE_WORDS.contains(&w.as_str()));
+    // A created record's id is in the path of the address a `Location` names:
+    // only a secret-named query parameter is hidden there (`redact_text`).
+    let address = matches!(name.to_ascii_lowercase().as_str(), "location" | "content-location" | "referer" | "referrer");
+    let trace = address || segments(name).iter().any(|w| TRACE_WORDS.contains(&w.as_str()));
     let shown = if trace { value.to_string() } else { hide_guids(value) };
     redact_text(&shown)
 }

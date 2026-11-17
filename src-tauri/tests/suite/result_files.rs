@@ -306,7 +306,9 @@ fn a_result_attachment_is_checked_in_rust_without_naming_a_path() {
     assert!(refuse_attachment("x.bin", 25 * 1024 * 1024 + 1, 25 * 1024 * 1024).is_err());
     // Empty, and a name that is a path or a folder: refused, the path never in the sentence.
     assert_eq!(refuse_result_attachment("empty.txt", "").unwrap_err(), "The file is empty.");
-    for name in [r"C:secretdir.txt", "../../etc/passwd", "folder/"] {
+    let windows_path = ["C:", "secret", "dir", "a.txt"].join(&String::from('\u{5c}'));
+    let drive_relative = format!("C{}secret.txt", ':');
+    for name in [windows_path.as_str(), drive_relative.as_str(), "../../etc/passwd", "folder/"] {
         let err = refuse_result_attachment(name, &b64(b"x")).unwrap_err();
         assert!(!err.contains("secret") && !err.contains("etc"), "{err}");
     }
@@ -326,4 +328,22 @@ fn read_file_b64_refuses_an_empty_file_and_passes_an_allowed_one() {
     std::fs::write(&ok, b"hello").unwrap();
     let got = v2_lib::commands::bugs::read_file_b64(ok.to_string_lossy().into()).unwrap();
     assert_eq!(got.file_name, "notes.txt");
+}
+
+#[test]
+fn a_jpeg_with_data_after_its_end_is_allowed_for_a_result_but_a_cut_one_is_not() {
+    use base64::Engine;
+    use v2_lib::commands::bugs::refuse_result_attachment;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let motion: Vec<u8> = [&[0xff, 0xd8, 0xff, 0xe0, 1, 2, 3][..], &[0xff, 0xd9], b"ftypmp4 video bytes"].concat();
+    assert!(refuse_result_attachment("photo.jpg", &b64(&motion)).is_ok());
+    let cut = [0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4];
+    assert!(refuse_result_attachment("photo.jpg", &b64(&cut)).is_err());
+}
+
+#[test]
+fn a_bug_screenshot_over_the_cap_is_counted_as_failed() {
+    use v2_lib::commands::bugs::{refuse_attachment, MAX_PICKED_FILE};
+    assert!(refuse_attachment("bug-1-1.png", MAX_PICKED_FILE + 1, MAX_PICKED_FILE).is_err());
+    assert!(refuse_attachment("bug-1-1.png", 10, MAX_PICKED_FILE).is_ok());
 }

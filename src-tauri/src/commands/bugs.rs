@@ -235,6 +235,11 @@ pub async fn attach_screenshots(
             failed += 1;
             continue;
         };
+        if let Err(why) = refuse_attachment(&format!("bug-{id}-{n}.png"), bytes.len() as u64, MAX_PICKED_FILE) {
+            crate::applog::warn(format!("bug {id}: screenshot {n} was not uploaded - {why}"));
+            failed += 1;
+            continue;
+        }
         let ext = match bug_image_ext(&bytes) {
             Ok(ext) => ext,
             Err(why) => {
@@ -274,7 +279,13 @@ pub const MAX_RESULT_FILE: u64 = 100 * 1024 * 1024;
 /// from disk or sent by the page): its name is a bare file name, it is not
 /// empty and it is no larger than `max` bytes. The sentences name no path.
 pub fn refuse_attachment(file_name: &str, size: u64, max: u64) -> Result<(), String> {
-    if file_name.trim().is_empty() || file_name.contains(['/', '\\']) || file_name.chars().any(char::is_control) {
+    // A path separator or a drive prefix (`C:name`) makes it a path, not a name.
+    let drive = file_name.as_bytes().get(1) == Some(&b':') && file_name.as_bytes()[0].is_ascii_alphabetic();
+    if file_name.trim().is_empty()
+        || drive
+        || file_name.contains(['/', '\\', ':'])
+        || file_name.chars().any(char::is_control)
+    {
         return Err("The file's name can't be used - rename it and attach it again.".into());
     }
     if size == 0 {
@@ -301,7 +312,12 @@ pub fn refuse_result_attachment(file_name: &str, b64: &str) -> Result<(), String
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|_| "The picture's data is damaged.".to_string())?;
-        bug_image_ext(&bytes).map_err(|why| format!("The picture can't be attached: {why}."))?;
+        // A JPEG may carry data after its end marker (a motion photo's
+        // video): it only has to be whole. Pasted screenshots stay strict.
+        let whole_jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]) && bytes.windows(2).any(|w| w == [0xff, 0xd9]);
+        if !whole_jpeg {
+            bug_image_ext(&bytes).map_err(|why| format!("The picture can't be attached: {why}."))?;
+        }
     }
     Ok(())
 }

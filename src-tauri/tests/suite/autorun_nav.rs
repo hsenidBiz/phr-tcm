@@ -1664,3 +1664,14 @@ fn home_carries_the_recipes_in_menu_check() {
     assert!(Home::of(&r).signed_in_in_menu);
     assert!(matches!(Home::of(&r).signed_in_check(), Check::Present));
 }
+
+#[test]
+fn code_like_names_ending_in_a_tld_word_are_not_bare_hosts() {
+    use v2_lib::autorun::mapping_summary::without_addresses as hide;
+    for w in ["see log.info and this.app and my.dev and x.local", "called logger.info today"] {
+        assert_eq!(hide(w), w, "{w}");
+    }
+    assert_eq!(hide("opened hr.example.app/x"), "opened /x");
+    assert_eq!(hide("on box.local:8080"), "on /");
+    assert_eq!(hide("on example.com"), "on /");
+}
