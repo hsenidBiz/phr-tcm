@@ -27,6 +27,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.6",
+    date: "2026-11-17",
+    items: [
+      "Update Guide now just updates How to Use and says so, without opening it.",
+      "Test cases: underlined text in a step or in the List of Prerequisites stays underlined when you edit the case in TCM.",
+      "Auto Run: a failure on a case marked flaky counts as flaky in the run report and the Test cases tab, and the review and Past runs have a Flaky filter.",
+      "Auto Run: a bug you raise from a failed case stays listed with that run after the review closes.",
+      "API templates: a sign-in page shown in place, or a sign-in on another site part-way through a step, is recognised as being signed out; a save is never sent twice because of it.",
+      "API templates: a saved template is checked for a step that deletes something it was not declared to, as one-off requests already were.",
+      "Secrets: more token formats are hidden from captured requests and notes, and every attachment is checked in the same way before it is uploaded.",
+      "Playwright: the specs badge no longer turns red while a run is using the Playwright folder.",
+      "Settings: What's new shows the latest ten versions, with Show older versions for the rest.",
+    ],
+  },
+  {
     version: "2.4.7-beta.5",
     date: "2026-11-17",
     items: [

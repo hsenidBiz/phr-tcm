@@ -136,29 +136,10 @@
     <p>In Settings' sign-in recipe: the clicks that open the Preferences dialog, its close button and the Group Menu Items checkbox, and how the page shows Admin or Self Service with the control that switches to each. Nothing uses them until they are filled in.</p>
   </div>
 
-  <h2>Agreed 17 November 2026, being built</h2>
-  <div class="item">
-    <div class="head"><span class="title">Follow-ups the owner picked to build</span><span class="status todo">Building</span></div>
-    <ul>
-      <li>Underline from Azure DevOps reads back as plain text, so editing a case strips it; an old draft of an underlined step saves without it.</li>
-      <li>Flaky cases: the HTML run report and the Test cases tab still count a flaky-marked failure as failed; the review has no Flaky filter.</li>
-      <li>Raise bug: the filed bug number shows only until the review closes (the run record has no field for it).</li>
-      <li>A sign-in page served in place at the same URL is not caught as signed out (84); a cross-origin SSO redirect on a postback fails as "the request did not complete" instead of signed out.</li>
-      <li>A saved API template (a plain POST or a postback) is not checked for a step that deletes against its declared effect; only one-off requests are.</li>
-      <li>Opaque tokens in lower case, or as dashed GUIDs, in a request body are not recognised as secrets unless their field name says so; a server name written without a path or port is not hidden in notes the assistant writes.</li>
-      <li>Run-result attachments are checked in the app before upload; only the bug dialog's upload checks again on the Rust side.</li>
-      <li>Two real-browser tests fail: an unattended selection's saved run lacks the page path the run in memory has; a second response check in one step reads "not run: an earlier action in this step failed" against a real page.</li>
-      <li>A rule Claude Code writes into the same settings file at the moment TCM writes it can be lost, and TCM rewrites the file's formatting; a failed allow-file write is retried only when the tool list, repository or modules change.</li>
-      <li>The Playwright specs pill turns red if a spec listing fails because a run holds the Playwright slot.</li>
-      <li>The run window's dialog has no accessible name.</li>
-    </ul>
-  </div>
-
   <h2>Agreed 17 November 2026, queued in this order</h2>
   <div class="item">
-    <div class="head"><span class="title">After the eleven follow-ups above</span><span class="status todo">Queued</span></div>
+    <div class="head"><span class="title">Next, in order</span><span class="status todo">Queued</span></div>
     <ul>
-      <li><b>U12 Shorter changelog in Settings.</b> Built with the eleven follow-ups (the small-fixes group): the latest ten versions, then Show older versions.</li>
       <li><b>U1b Undo for removing rows that came from a watched file.</b> The Rust file write-back gains insert-at-position, so Undo restores the row and its file entry together.</li>
       <li><b>U9 Explain the jargon where it appears.</b> One glossary file (recipe, fixture, flow, area, component, quirk, divergence, ruling) and a Term component: a dotted underline with the definition on hover or focus, at each term&#39;s first appearance on a screen; the guides use the same wording.</li>
       <li><b>M13 Dev app beside the installed app.</b> Development builds get their own single-instance identity, a window-title marker and a separate data folder (owner ruling: never share the installed app&#39;s settings, cache or Auto Run data).</li>
@@ -205,7 +186,9 @@
     </ul>
   </div>
   <p class="done">Dropped 17 November 2026 at the owner's word: the remaining follow-ups (record-and-replay of postbacks, locator and check wording, explore/discovery/menu timing edge cases, capture limits, old-format warnings, cosmetic and rare race items, smaller Playwright export notes). The commit before this one still lists them.</p>
+  <p class="done">Built 17 November 2026 for 2.4.7-beta.6: the eleven follow-ups the owner picked (underline kept, flaky counted as flaky with a Flaky filter, filed bug numbers kept, two more sign-outs recognised, saved templates checked for deletes, wider secret detection, one attachment check in Rust, a safe settings-file write, the specs pill during runs, the run window named, the live tests) and U12 (shorter changelog).</p>
   <h2>To investigate</h2>
+  <div class="item"><div class="head"><span class="title">Live test: a second response check in one step read "not run: an earlier action in this step failed" against a real page</span><span class="status todo">To investigate</span></div><p>Did not reproduce on 17 November 2026; probably a load flake (the page answers slowly on first load).</p></div>
   <div class="item"><div class="head"><span class="title">Edge stall after long role-lookup polling</span><span class="status todo">To investigate</span></div></div>
 
   <h2>On hold</h2>
