@@ -340,3 +340,16 @@ test("a removal is still shown when the case's files could not be read", () => {
   const q = queued({ steps: twoSteps([]), removed_attachments: ["gone"] });
   expect(diffCase(q, cur).noop).toBe(false);
 });
+
+test("a draft saved before underline was kept is no change", () => {
+  // Azure DevOps holds an underlined word; the old reader's draft lost it.
+  // The save leaves the step alone (the old copy is read as unchanged), so
+  // does the review; a real edit still shows.
+  const cur = current({
+    steps: [{ action: "Click <u>Save</u>", expected: "The <u>list</u> shows" }],
+    steps_legacy: [{ action: "Click Save", expected: "The list shows" }],
+  });
+  expect(diffCase(queued({ steps: [{ action: "Click Save", expected: "The list shows" }] }), cur).noop).toBe(true);
+  expect(diffCase(queued({ steps: cur.steps }), cur).noop).toBe(true);
+  expect(diffCase(queued({ steps: [{ action: "Click Save", expected: "The list is shown" }] }), cur).steps.changed).toBe(1);
+});

@@ -63,6 +63,7 @@ const ALLOWED_TAGS = [
   "td",
   "em",
   "strong",
+  "u",
   "del",
   "a",
   "img",
@@ -120,6 +121,11 @@ purify.addHook("uponSanitizeAttribute", (node, data) => {
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
   const value = data.attrValue.trim();
+  // Underline carries no attributes at all: it is a bare `<u>`.
+  if (tag === "u") {
+    data.keepAttr = false;
+    return;
+  }
   switch (data.attrName) {
     case "class":
       if (!(tag === "code" && value.length > 0 && value.split(/\s+/).every((t) => LANGUAGE_CLASS.test(t)))) {
@@ -183,7 +189,7 @@ const HTML_TAGS = new Set([
   "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
   "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
   "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
-  "td", "th", "thead", "tr", "u", "ul",
+  "td", "th", "thead", "tr", "u", "ul", "ins",
 ]);
 
 /** `steps_xml::html_tag_end`: the index of the `>` that closes a real tag
@@ -273,6 +279,9 @@ function caseDialect(kind: CaseTextKind): MarkedExtension {
           const kept = stripTags(token.text).trim();
           return kept ? `<p>${lineBreaks(escapeHtml(kept))}</p>\n` : "";
         }
+        // A bare `<u>` or `</u>` is how underline is written in the
+        // converter's Markdown (`case_markdown::underline_tag`); it shows.
+        if (/^<\/?u>$/i.test(token.text)) return token.text.toLowerCase();
         return containsHtmlMarkup(token.text) ? "" : escapeHtml(token.text);
       },
       paragraph(token) {

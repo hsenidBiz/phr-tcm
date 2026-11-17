@@ -213,8 +213,26 @@ pub fn case_text_to_html(src: &str, field: Field) -> String {
 }
 
 /// Raw HTML met inline, as what it shows: nothing for a real tag, the text
-/// as typed for anything else.
-fn inline_html(text: &str) -> String {
+/// as typed for anything else - except the bare `<u>` pair, which is how
+/// underline is written (`case_markdown::underline_tag`) and shows as one.
+///
+/// `underlined` is how deep the underline is. Only the outermost pair is
+/// written, and an unmatched `</u>` is dropped, so a stray `<u>` can never
+/// leave the page underlining what follows the field (a browser reopens an
+/// unclosed formatting tag in the next block).
+fn inline_html(text: &str, underlined: &mut usize) -> String {
+    match crate::case_markdown::underline_tag(text) {
+        Some(true) => {
+            *underlined += 1;
+            return if *underlined == 1 { "<u>".to_string() } else { String::new() };
+        }
+        Some(false) if *underlined == 0 => return String::new(),
+        Some(false) => {
+            *underlined -= 1;
+            return if *underlined == 0 { "</u>".to_string() } else { String::new() };
+        }
+        None => {}
+    }
     if crate::steps_xml::contains_html_markup(text) {
         String::new()
     } else {
@@ -237,6 +255,7 @@ fn prereq_text_to_html(src: &str) -> String {
     let mut out = String::new();
     // A raw HTML block arrives line by line; it is one paragraph of text.
     let mut html_block: Option<String> = None;
+    let mut underlined = 0usize;
     for event in Parser::new_ext(src, CASE_MARKDOWN_OPTIONS) {
         match event {
             Event::Start(tag) => match tag {
@@ -279,12 +298,15 @@ fn prereq_text_to_html(src: &str) -> String {
             Event::Code(t) => out.push_str(&format!("<code>{}</code>", esc(&t))),
             Event::Html(t) => match html_block.as_mut() {
                 Some(buf) => buf.push_str(&t),
-                None => out.push_str(&inline_html(&t)),
+                None => out.push_str(&inline_html(&t, &mut underlined)),
             },
-            Event::InlineHtml(t) => out.push_str(&inline_html(&t)),
+            Event::InlineHtml(t) => out.push_str(&inline_html(&t, &mut underlined)),
             Event::SoftBreak | Event::HardBreak => out.push_str("<br>"),
             _ => {}
         }
+    }
+    if underlined > 0 {
+        out.push_str("</u>");
     }
     out
 }
@@ -349,6 +371,7 @@ impl StepWalk {
 
 fn step_text_to_html(src: &str) -> String {
     let mut w = StepWalk::default();
+    let mut underlined = 0usize;
     for (event, range) in Parser::new_ext(src, CASE_MARKDOWN_OPTIONS).into_offset_iter() {
         match event {
             Event::Start(tag) => match tag {
@@ -424,9 +447,9 @@ fn step_text_to_html(src: &str) -> String {
             Event::Code(t) => w.inline(&format!("<code>{}</code>", esc(&t)), &range),
             Event::Html(t) => match w.html.as_mut() {
                 Some(buf) => buf.push_str(&t),
-                None => w.inline(&inline_html(&t), &range),
+                None => w.inline(&inline_html(&t, &mut underlined), &range),
             },
-            Event::InlineHtml(t) => w.inline(&inline_html(&t), &range),
+            Event::InlineHtml(t) => w.inline(&inline_html(&t, &mut underlined), &range),
             Event::SoftBreak | Event::HardBreak => w.inline("<br>", &range),
             _ => {}
         }
@@ -452,6 +475,9 @@ fn step_text_to_html(src: &str) -> String {
         }
         html.push_str(&piece.html);
         prev = Some(piece);
+    }
+    if underlined > 0 {
+        html.push_str("</u>");
     }
     html
 }

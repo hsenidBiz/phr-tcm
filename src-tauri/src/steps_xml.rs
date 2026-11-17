@@ -29,11 +29,11 @@ use serde::{Deserialize, Serialize};
 /// exactly alike - there is no structural difference left to use. Matching
 /// against what the editor can actually produce is the only thing that
 /// separates them.
-const HTML_TAGS: [&str; 44] = [
+const HTML_TAGS: [&str; 45] = [
     "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
-    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
-    "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
-    "td", "th", "thead", "tr", "u", "ul",
+    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "ins",
+    "li", "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table",
+    "tbody", "td", "th", "thead", "tr", "u", "ul",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]

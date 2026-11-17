@@ -773,3 +773,32 @@ fn an_edit_back_to_the_one_line_text_is_not_saved() {
     let flat = vec![step("Open the page Click Save", "Saved The list shows it"), step("Wait", "")];
     assert!(steps_unchanged(LINED, &flat));
 }
+
+/// Underline in Azure DevOps reads back as `<u>`, so editing a case no
+/// longer strips it - and an old copy that lost it does not rewrite it.
+#[test]
+fn underline_survives_a_read_an_untouched_save_and_an_edit_elsewhere() {
+    use v2_lib::steps_xml::{merge_steps_xml, steps_unchanged};
+    let xml = build_steps_xml(&[step("Click <u>Save</u>", "The <u>list</u> shows"), step("Wait", "")]);
+    let read = parse_steps_xml(&xml);
+    assert_eq!(read[0].action, "Click <u>Save</u>");
+    assert_eq!(read[0].expected, "The <u>list</u> shows");
+    assert!(xml.contains("&lt;U&gt;Save&lt;/U&gt;"), "{xml}");
+    assert!(steps_unchanged(&xml, &read), "an untouched underlined case is unchanged");
+
+    // The old reader's copy: no underline. Not an edit...
+    let old_copy = vec![step("Click Save", "The list shows"), step("Wait", "")];
+    assert!(steps_unchanged(&xml, &old_copy));
+    // ...and beside a real edit its node is kept byte for byte.
+    let mut edited = old_copy.clone();
+    edited[1].action = "Wait 5 seconds".into();
+    let merged = merge_steps_xml(&xml, &edited).unwrap();
+    assert!(merged.contains("&lt;U&gt;Save&lt;/U&gt;"), "underline kept: {merged}");
+    assert!(merged.contains("&lt;U&gt;list&lt;/U&gt;"), "underline kept: {merged}");
+    assert!(merged.contains("Wait 5 seconds"), "{merged}");
+
+    // The webview is told both readings, so its review agrees.
+    let (md, legacy) = v2_lib::steps_xml::parse_steps_readings(&xml);
+    assert_eq!(md, read);
+    assert_eq!(legacy[0].action, "Click Save");
+}

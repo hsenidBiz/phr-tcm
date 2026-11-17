@@ -269,7 +269,7 @@ fn ado_html_with_b_strong_div_p_reads_back() {
         assert_eq!(to_md(f, "<P><STRONG>x</STRONG></P>"), "**x**", "{f:?}");
         assert_eq!(to_md(f, "<div><b>x</b></div>"), "**x**", "{f:?}");
         assert_eq!(to_md(f, "<DIV><I>x</I> and <EM>y</EM></DIV>"), "*x* and *y*", "{f:?}");
-        assert_eq!(to_md(f, "<DIV>a <U>underlined</U> word</DIV>"), "a underlined word", "{f:?}");
+        assert_eq!(to_md(f, "<DIV>a <U>underlined</U> word</DIV>"), "a <u>underlined</u> word", "{f:?}");
         assert_eq!(
             to_md(f, "<DIV><SPAN style=\"color: rgb(0, 0, 0);\">plain</SPAN></DIV>"),
             "plain",
@@ -717,6 +717,7 @@ fn generated_ado_plain_text_stays_the_same_plain_text() {
 fn generated_formatted_html(count: usize) -> Vec<String> {
     const PIECES: &[&str] = &[
         "<B>", "</B>", "<I>", "</I>", "<STRONG>", "</STRONG>", "<EM>", "</EM>", "<U>", "</U>",
+        "<INS>", "</INS>",
         "<BR/>", "<DIV>", "</DIV>", "<P>", "</P>", "<SPAN>", "</SPAN>", "a", "word", " ", "(", ")",
         ".", ",", ":", "1", "\u{2022}", "&nbsp;", "&quot;", "'", "-", "=", "?",
     ];
@@ -888,4 +889,86 @@ fn text_is_escaped_on_the_way_out() {
     assert_eq!(step_md_to_html("`<b>`"), "&lt;b&gt;");
     assert_eq!(step_md_to_html(""), "");
     assert_eq!(prereq_md_to_html("  \n "), "");
+}
+
+// ---------------------------------------------------------------------------
+// Underline: a `<u>` pair in the Markdown, `<U>` / `<u>` in the HTML
+// ---------------------------------------------------------------------------
+
+#[test]
+fn underline_round_trips_through_html_markdown_html_in_both_fields() {
+    for f in FIELDS {
+        for (html, md) in [
+            ("a <U>underlined</U> word", "a <u>underlined</u> word"),
+            ("<U>all of it</U>", "<u>all of it</u>"),
+            ("<B><U>both</U></B>", "<u>**both**</u>"),
+            ("<U>a <B>mid</B> b</U>", "<u>a **mid** b</u>"),
+            ("x<U>(y)</U>z", "x<u>(y)</u>z"),
+            ("<ins>inserted</ins>", "<u>inserted</u>"),
+        ] {
+            assert_eq!(to_md(f, html), md, "{f:?}: {html:?}");
+            let back = to_html(f, md);
+            assert!(back.to_ascii_lowercase().contains("<u>"), "{f:?}: {back:?}");
+            // Reading what was written gives the same Markdown, and writing
+            // that gives the same HTML: it is a fixed point.
+            assert_eq!(to_md(f, &back), md, "{f:?}: {md:?} not stable");
+            assert_eq!(to_html(f, &to_md(f, &back)), back, "{f:?}: {md:?} html not stable");
+        }
+    }
+}
+
+#[test]
+fn underline_is_written_as_u_in_a_step_and_in_the_prerequisites() {
+    assert_eq!(step_md_to_html("a <u>b</u> c"), "a <U>b</U> c");
+    assert_eq!(prereq_md_to_html("a <u>b</u> c"), "<p>a <u>b</u> c</p>");
+    assert_eq!(step_md_to_html("<u>one</u>
+<u>two</u>"), "<U>one</U><BR/><U>two</U>");
+}
+
+#[test]
+fn underline_overlapping_bold_loses_nothing() {
+    for f in FIELDS {
+        let html = "<U>under <B>both</B></U><B> bold</B>";
+        let md = to_md(f, html);
+        let back = to_html(f, &md);
+        assert_eq!(to_md(f, &back), md, "{f:?}: {md:?}");
+        assert!(md.contains("<u>") && md.contains("**"), "{f:?}: {md:?}");
+    }
+}
+
+#[test]
+fn a_typed_u_tag_with_attributes_is_still_dropped() {
+    for f in FIELDS {
+        let back = to_html(f, "a <u style=\"color:red\">b</u> c");
+        assert!(!back.to_ascii_lowercase().contains("style"), "{f:?}: {back}");
+        assert!(!back.to_ascii_lowercase().contains("<u"), "{f:?}: {back}");
+        assert!(back.contains("a b c"), "the text is kept: {f:?}: {back}");
+    }
+}
+
+#[test]
+fn text_that_spells_a_u_tag_in_ado_comes_back_as_text() {
+    // `&lt;u&gt;` in Azure DevOps is the words "<u>", not underline.
+    for f in FIELDS {
+        let md = to_md(f, "type &lt;u&gt;x&lt;/u&gt; here");
+        let back = to_html(f, &md);
+        assert!(!back.to_ascii_lowercase().contains("<u>"), "{f:?}: {md:?} -> {back:?}");
+        assert_eq!(to_md(f, &back), md, "{f:?}");
+    }
+}
+
+#[test]
+fn an_untouched_underlined_field_is_unchanged_and_an_old_copy_without_it_too() {
+    for f in FIELDS {
+        let html = match f {
+            Field::Step => "Click <U>Save</U> now",
+            Field::Prereq => "<p>Click <u>Save</u> now</p>",
+        };
+        let md = to_md(f, html);
+        assert_eq!(md, "Click <u>Save</u> now");
+        assert!(unchanged(&md, html, f), "{f:?}: today's reading");
+        assert!(unchanged("Click Save now", html, f), "{f:?}: an old draft that lost the underline");
+        assert!(!unchanged("Click Save later", html, f), "{f:?}: a real edit");
+        assert!(!unchanged("Click <u>Save</u> later", html, f), "{f:?}: a real edit");
+    }
 }
