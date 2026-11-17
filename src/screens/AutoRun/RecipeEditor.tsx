@@ -13,6 +13,7 @@ import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import { Term } from "../../components/Term";
 import QuirksList from "./QuirksList";
 
 const PLACEHOLDER = `{
@@ -103,7 +104,9 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
 
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-4 overflow-y-auto p-5`}>
-      <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
+      <h2 className="text-sm font-semibold text-text">
+        Sign-in <Term name="recipe">recipe</Term>
+      </h2>
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold text-text">Recipe</h3>
@@ -136,7 +139,9 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
 
       <section className="space-y-2 border-t border-border pt-4">
         <div>
-          <h3 className="text-sm font-semibold text-text">Known quirks</h3>
+          <h3 className="text-sm font-semibold text-text">
+            Known <Term name="quirk">quirks</Term>
+          </h3>
           <p className="mt-1 text-xs text-muted">
             Things learned about this application that the next script or API template - written by a
             person or an assistant - should not have to rediscover. A note an assistant filed with a repair

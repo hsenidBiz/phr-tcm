@@ -16,6 +16,7 @@ import { commands, events } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import Combobox from "../../components/ui/combobox";
 import { Input } from "../../components/ui/input";
+import { Term } from "../../components/Term";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { Select } from "../../components/ui/select";
@@ -366,7 +367,9 @@ export default function AreasDialog({
   return (
     <Modal onClose={closeIfIdle} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
       <div>
-        <h2 className="text-sm font-semibold text-text">Areas</h2>
+        <h2 className="text-sm font-semibold text-text">
+          <Term name="area">Areas</Term>
+        </h2>
         <p className="mt-1 text-xs text-muted">
           How an unattended run reaches each screen after signing in. An area is a named place inside a
           module; a module can have several. Record one by clicking through the menu; it is saved only if

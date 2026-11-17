@@ -1,3 +1,4 @@
+import { define, Term } from "../../components/Term";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -355,15 +356,19 @@ export default function ApiTemplates({
           <div role="tablist" aria-label="Show" className="flex gap-1 border-b border-border">
             {(
               [
-                ["templates", "Templates", templates.length],
-                ["flows", "Flows", flows.length],
-                ["fixtures", "Fixtures", fixtures],
+                ["templates", "Templates", templates.length, "template"],
+                ["flows", "Flows", flows.length, "flow"],
+                ["fixtures", "Fixtures", fixtures, "fixture"],
               ] as const
-            ).map(([id, label, count]) => (
+            ).map(([id, label, count, term]) => (
               <button
                 key={id}
                 role="tab"
                 aria-selected={view === id}
+                // The word's definition, through the control itself: the
+                // word inside is not a tab stop of its own.
+                title={define(term)}
+                data-tip-side="bottom"
                 className={cn(
                   "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
                   view === id ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
@@ -371,7 +376,10 @@ export default function ApiTemplates({
                 onClick={() => setView(id)}
               >
                 <span className="label-trim">
-                  {label} <span className="text-xs text-faint">{count}</span>
+                  <Term name={term} within>
+                    {label}
+                  </Term>{" "}
+                  <span className="text-xs text-faint">{count}</span>
                 </span>
               </button>
             ))}

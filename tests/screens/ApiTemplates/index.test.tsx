@@ -5,6 +5,7 @@
 // event, so the tests mock exactly those: the overview, the remove, and
 // the change event Rust emits when a prove or run finishes.
 
+import { GLOSSARY } from "../../../src/lib/glossary";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -671,6 +672,10 @@ test("Templates and Flows are separate views, and the one chosen is remembered",
 
   const templatesTab = await screen.findByRole("tab", { name: "Templates 2" });
   const flowsTab = screen.getByRole("tab", { name: "Flows 1" });
+  // Each tab says what its word means; the names above are unchanged.
+  expect(flowsTab).toHaveAttribute("title", GLOSSARY.flow);
+  expect(screen.getByRole("tab", { name: /^Fixtures/ })).toHaveAttribute("title", GLOSSARY.fixture);
+  expect(screen.getByRole("tab", { name: /^Templates/ })).toHaveAttribute("title", GLOSSARY.template);
   expect(templatesTab).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("listitem", { name: "Save the rules" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Performance cycle wizard" })).toBeNull();

@@ -41,6 +41,8 @@ import { useModule } from "../../lib/modules";
 import { plural } from "../../lib/plural";
 import { FIXTURES_KEY, fixturesHereCounts, fixturesLastRuns } from "../ApiTemplates/FixturesTab";
 import AccountsDialog from "./AccountsDialog";
+import { Term } from "../../components/Term";
+import type { TermName } from "../../lib/glossary";
 import AreasDialog from "./AreasDialog";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
@@ -238,11 +240,15 @@ export type AutoRunSetup = ReturnType<typeof useAutoRunSetup>;
  * buttons. */
 function SetupRow({
   label,
+  term,
   status,
   state,
   children,
 }: {
   label: string;
+  /** A word in the label the glossary explains. Only the visible text is
+   * wrapped: the group's accessible name stays `label`. */
+  term?: TermName;
   /** The row's status, as the collapsed summary shows it. */
   status: Status;
   state: ReactNode;
@@ -260,7 +266,7 @@ function SetupRow({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="mr-auto flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted">
           <StatusDot status={status} />
-          {label}
+          {term ? <Term name={term}>{label}</Term> : label}
           {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
         </span>
         <span className="ml-auto flex max-w-full flex-wrap justify-end gap-2">{children}</span>
@@ -727,7 +733,7 @@ export default function SetupPanel({
                   ) : recipe.isError ? (
                     <span className="text-danger">Could not be read - open it to see why</span>
                   ) : recipe.data ? (
-                    "Recipe saved"
+                    <Term name="recipe">Recipe saved</Term>
                   ) : (
                     // No saved recipe: the app's own runs. Recording or
                     // editing one saves this project's, which replaces it.
@@ -786,6 +792,7 @@ export default function SetupPanel({
 
               <SetupRow
                 label="Areas"
+                term="area"
                 status={statusOf("Areas")}
                 state={
                   !setupReady ? (
@@ -881,6 +888,7 @@ export default function SetupPanel({
               {/* Steps saved once that scripts use by name. */}
               <SetupRow
                 label="Components"
+                term="component"
                 status={statusOf("Components")}
                 state={
                   !setupReady ? (
@@ -953,6 +961,7 @@ export default function SetupPanel({
               {s.fixturesOn && (
                 <SetupRow
                   label="Fixtures"
+                  term="fixture"
                   status={statusOf("Fixtures")}
                   state={
                     !setupReady ? (

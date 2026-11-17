@@ -10,6 +10,7 @@ import { useId, useState } from "react";
 import { commands, type Divergence, type Ruling } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { IconCancel, IconConfirm, IconDataFixed, IconOpenInBrowser, IconUndo } from "../../lib/actionIcons";
+import { Term } from "../../components/Term";
 import { toast } from "../../lib/toast";
 
 /** True while a divergence stops its case's runs or waits on a repair. */
@@ -23,6 +24,12 @@ export function badgeText(d: Divergence): string {
   return d.kind === "app" ? "Divergence" : "Needs a ruling";
 }
 
+/** The word the badge's label is: a ruling for the ones that name it, the
+ * divergence itself otherwise. */
+function badgeTerm(d: Divergence): "ruling" | "divergence" {
+  return badgeText(d) === "Needs a ruling" || badgeText(d) === "Ruled" ? "ruling" : "divergence";
+}
+
 export function DivergenceBadge({ divergence }: { divergence: Divergence }) {
   const describedBy = useId();
   const detail = `Step ${divergence.step}: the case says "${divergence.case_says}"; the app shows "${divergence.app_shows}" (${divergence.kind})${divergence.proposal ? `; proposed: "${divergence.proposal}"` : ""}`;
@@ -30,7 +37,6 @@ export function DivergenceBadge({ divergence }: { divergence: Divergence }) {
   return (
     <>
       <span
-        title={detail}
         aria-describedby={describedBy}
         className={
           ruled
@@ -38,7 +44,9 @@ export function DivergenceBadge({ divergence }: { divergence: Divergence }) {
             : "shrink-0 rounded-md border border-warning/50 px-2 py-0.5 text-xs font-medium text-warning"
         }
       >
-        <span className="label-trim">{badgeText(divergence)}</span>
+        <span className="label-trim">
+          <Term name={badgeTerm(divergence)}>{badgeText(divergence)}</Term>
+        </span>
       </span>
       <span id={describedBy} className="sr-only">
         {detail}

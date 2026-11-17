@@ -56,6 +56,12 @@ function mount(handler: (cmd: string, args: Record<string, unknown>) => unknown)
   );
 }
 
+test("the heading explains what an area is", async () => {
+  mount(() => ({ direct_urls: true, modules: [] }));
+  const heading = await screen.findByRole("heading", { name: "Areas" });
+  expect(heading.querySelector("[data-term]")).toHaveAttribute("data-term", "area");
+});
+
 async function startRecording() {
   const record = await screen.findByRole("button", { name: "Record an area…" });
   await waitFor(() => expect(record).toBeEnabled());

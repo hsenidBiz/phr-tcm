@@ -45,6 +45,8 @@ function show(d: Divergence) {
 test("an open data divergence offers three rulings", () => {
   show(base);
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
+  // The badge explains the word it uses; the buttons' names are untouched.
+  expect(screen.getByText("Needs a ruling")).toHaveAttribute("data-term", "ruling");
   expect(screen.getByRole("button", { name: "Rule the case is right for #147556 step 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Rule the data fixed for #147556 step 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Rewrite case #147556 in Azure DevOps" })).toBeInTheDocument();
@@ -58,6 +60,7 @@ test("a reporter's proposal is shown with the divergence", () => {
 test("an app divergence offers no data fixed", () => {
   show({ ...base, kind: "app" });
   expect(screen.getByText("Divergence")).toBeInTheDocument();
+  expect(screen.getByText("Divergence")).toHaveAttribute("data-term", "divergence");
   expect(screen.queryByRole("button", { name: /data fixed/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Rule the case is right/ })).toBeInTheDocument();
 });
