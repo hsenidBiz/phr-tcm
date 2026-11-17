@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.10",
+    date: "2026-11-17",
+    items: [
+      "Auto Run has a Simple mode: a Simple / Advanced switch at the top of Auto Run. Simple hides the setup and script editing your assistant looks after, and still shows anything that stops a run. Switching Auto Run on for the first time starts in Simple and also turns on API Templates, the Network tools and videos of failed cases.",
+      "When the case and the app disagree, the question is now which is right: The app is wrong, The app is right, update the case, or I fixed the data.",
+      "The open script card is shorter: one header line, steps Auto Run does itself say Done by Auto Run, and the assistant's notes fold away.",
+      "The sidebar group with Auto Run, Playwright and API Templates is now called Tools.",
+    ],
+  },
+  {
     version: "2.4.7-beta.9",
     date: "2026-11-17",
     items: [
