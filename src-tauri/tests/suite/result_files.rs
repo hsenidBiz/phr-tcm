@@ -335,10 +335,25 @@ fn a_jpeg_with_data_after_its_end_is_allowed_for_a_result_but_a_cut_one_is_not()
     use base64::Engine;
     use v2_lib::commands::bugs::refuse_result_attachment;
     let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
-    let motion: Vec<u8> = [&[0xff, 0xd8, 0xff, 0xe0, 1, 2, 3][..], &[0xff, 0xd9], b"ftypmp4 video bytes"].concat();
+    // A camera photo: an APP1 (EXIF) segment holding a thumbnail with its own
+    // start and end markers, then the main image's scan and data.
+    let thumb: &[u8] = &[0xff, 0xd8, 0xff, 0xda, 0x00, 0x02, 9, 9, 0xff, 0xd9];
+    let app1_len = (2 + thumb.len()) as u16;
+    let head: Vec<u8> = [&[0xff, 0xd8, 0xff, 0xe1][..], &app1_len.to_be_bytes(), thumb].concat();
+    let scan: &[u8] = &[0xff, 0xda, 0x00, 0x08, 1, 1, 0, 0, 0x3f, 0];
+    let data: &[u8] = &[0x12, 0xff, 0x00, 0x34, 0xff, 0xd0, 0x56];
+    let whole: Vec<u8> = [&head[..], scan, data, &[0xff, 0xd9]].concat();
+    assert!(v2_lib::commands::bugs::jpeg_main_image_ends(&whole));
+    assert!(refuse_result_attachment("photo.jpg", &b64(&whole)).is_ok());
+    // A motion photo: video bytes after the main image's end.
+    let motion: Vec<u8> = [&whole[..], b"ftypmp4 video bytes \xff\xda\xff\xd9"].concat();
     assert!(refuse_result_attachment("photo.jpg", &b64(&motion)).is_ok());
-    let cut = [0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4];
+    // Cut off part-way: the thumbnail's end marker must not make it pass.
+    let cut: Vec<u8> = [&head[..], scan, data].concat();
+    assert!(!v2_lib::commands::bugs::jpeg_main_image_ends(&cut));
     assert!(refuse_result_attachment("photo.jpg", &b64(&cut)).is_err());
+    let header_only = [0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4];
+    assert!(refuse_result_attachment("photo.jpg", &b64(&header_only)).is_err());
 }
 
 #[test]

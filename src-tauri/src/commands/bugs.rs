@@ -314,12 +314,70 @@ pub fn refuse_result_attachment(file_name: &str, b64: &str) -> Result<(), String
             .map_err(|_| "The picture's data is damaged.".to_string())?;
         // A JPEG may carry data after its end marker (a motion photo's
         // video): it only has to be whole. Pasted screenshots stay strict.
-        let whole_jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]) && bytes.windows(2).any(|w| w == [0xff, 0xd9]);
+        let whole_jpeg = jpeg_main_image_ends(&bytes);
         if !whole_jpeg {
             bug_image_ext(&bytes).map_err(|why| format!("The picture can't be attached: {why}."))?;
         }
     }
     Ok(())
+}
+
+/// Whether a JPEG's main image is complete: its top-level segments are
+/// walked by their lengths (so an EXIF thumbnail, which sits inside an APP
+/// segment with its own end marker, is skipped), then the image data after
+/// the first top-level start-of-scan is read until an end-of-image marker.
+/// Bytes after that marker (a motion photo's video) are allowed. A photo
+/// cut off part-way has no end marker after its scan data and is refused.
+pub fn jpeg_main_image_ends(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return false;
+    }
+    let mut i = 2;
+    // Top-level segments up to the first start-of-scan.
+    loop {
+        // Fill bytes (0xFF repeated) may pad between segments.
+        while i < bytes.len() && bytes[i] == 0xff && bytes.get(i + 1) == Some(&0xff) {
+            i += 1;
+        }
+        if i + 4 > bytes.len() || bytes[i] != 0xff {
+            return false;
+        }
+        let marker = bytes[i + 1];
+        let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        if len < 2 || i + 2 + len > bytes.len() {
+            return false;
+        }
+        i += 2 + len;
+        if marker == 0xda {
+            break;
+        }
+        if marker == 0xd9 {
+            return false;
+        }
+    }
+    // Entropy-coded data: 0xFF00 is a stuffed byte and 0xFFD0-0xFFD7 are
+    // restart markers; a progressive image has further segments (tables,
+    // more scans) with lengths; 0xFFD9 ends the image.
+    while i + 1 < bytes.len() {
+        if bytes[i] != 0xff {
+            i += 1;
+            continue;
+        }
+        match bytes[i + 1] {
+            0x00 | 0xff | 0xd0..=0xd7 => i += 2,
+            0xd9 => return true,
+            _ => {
+                let Some(len) = bytes.get(i + 2..i + 4).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize) else {
+                    return false;
+                };
+                if len < 2 {
+                    return false;
+                }
+                i += 2 + len;
+            }
+        }
+    }
+    false
 }
 
 /// Read any file for attaching to a result (name + base64 bytes).
