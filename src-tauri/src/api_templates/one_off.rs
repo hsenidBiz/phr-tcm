@@ -5,7 +5,7 @@
 
 use super::{ApiTemplate, Antiforgery, Effect, Method, Param, Step};
 use crate::autorun::recipe::SignInFields;
-use crate::browser::locator::{fold_name, Target};
+use crate::browser::locator::Target;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -168,111 +168,150 @@ fn has_password_input(body: &str) -> bool {
     false
 }
 
-/// Whether a page's HTML is the sign-in page the recipe describes: it has a
-/// password input, and the recipe's password field (and its username field,
-/// when it names one) are on it. A page of the application with a password
-/// field of its own (change password) does not hold the recipe's fields, so
-/// it is not the sign-in page. A field the recipe names in a way this cannot
-/// read from HTML (an accessible name alone) is read as its name appearing on
-/// the page; a recipe with no `{{password}}` step never matches.
+/// Whether a page's HTML is the sign-in page the recipe describes. All of:
+/// it has a password input; the recipe's password field (and its username
+/// field, when it fills one) are on it, each named by an `#id` or a `.class`
+/// (anything looser - `input[type=password]`, an attribute value, an
+/// accessible name - matches a change-password or Add-user page too, so it
+/// cannot tell and the page is not read as signed out); and the recipe's
+/// `signed_in` marker is not on it (a page that shows the marker is signed in,
+/// whatever else it holds). A marker the page cannot be searched for (an
+/// accessible name) is not a reason to refuse: the distinct fields decide.
 pub fn page_is_sign_in(body: &str, fields: &SignInFields) -> bool {
-    if !has_password_input(body) {
+    if fields.css_selectors().is_empty() || !has_password_input(body) {
         return false;
     }
     let lower = body.to_ascii_lowercase();
-    target_in_html(&fields.password, &lower) && fields.username.as_ref().is_none_or(|u| target_in_html(u, &lower))
+    let on_page = |t: &Target| css_target(t).is_some_and(|c| css_in_html(&c, &lower));
+    if !on_page(&fields.password) || !fields.username.as_ref().is_none_or(on_page) {
+        return false;
+    }
+    !fields.signed_in_css().is_some_and(|m| css_in_html(&m, &lower))
 }
 
-/// Whether the (lower-cased) HTML holds what `t` points at. A CSS selector
-/// is read when it is one compound (`#id`, `.class`, `[attr=value]`, a tag,
-/// in any mix); a longer one is not read and holds nothing. A locator with a
-/// name or text holds it when that wording is on the page.
-fn target_in_html(t: &Target, lower: &str) -> bool {
+/// The CSS selector of a target that is nothing else.
+fn css_target(t: &Target) -> Option<String> {
     use crate::browser::locator::LocatorStep;
     match t {
-        Target::Legacy(s) => css_in_html(s, lower),
-        Target::One(LocatorStep { css: Some(c), .. }) => css_in_html(c, lower),
-        Target::One(step) => {
-            let words = step.name.as_deref().or(step.text.as_deref()).map(fold_name).unwrap_or_default();
-            !words.is_empty() && lower.contains(&words)
-        }
-        Target::Chain(_) => false,
+        Target::Legacy(s) => Some(s.clone()),
+        Target::One(LocatorStep { css: Some(c), role: None, text: None, .. }) => Some(c.clone()),
+        _ => None,
     }
 }
 
-/// Every value `attr` has in the HTML, quoted either way or not at all.
-fn attr_values(lower: &str, attr: &str) -> Vec<String> {
+/// The attributes of one opening tag (the text between `<` and `>`), names
+/// lower case, quoted either way or not at all.
+fn tag_attrs(inner: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let needle = format!("{attr}=");
-    let mut from = 0;
-    while let Some(i) = lower[from..].find(&needle) {
-        let at = from + i;
-        let before = lower[..at].chars().last();
-        from = at + needle.len();
-        if !before.is_some_and(|c| c.is_whitespace() || c == '<') && !before.is_some_and(|c| c == '"' || c == '\'') {
+    let b: Vec<char> = inner.chars().collect();
+    let mut i = 0;
+    // The tag name.
+    while i < b.len() && !b[i].is_whitespace() {
+        i += 1;
+    }
+    while i < b.len() {
+        while i < b.len() && (b[i].is_whitespace() || b[i] == '/') {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && !b[i].is_whitespace() && b[i] != '=' && b[i] != '/' {
+            i += 1;
+        }
+        let name: String = b[start..i].iter().collect();
+        if name.is_empty() {
+            i += 1;
             continue;
         }
-        let rest = &lower[from..];
-        let value = match rest.chars().next() {
-            Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or(""),
-            _ => rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or(""),
-        };
-        out.push(value.to_string());
+        while i < b.len() && b[i].is_whitespace() {
+            i += 1;
+        }
+        let mut value = String::new();
+        if i < b.len() && b[i] == '=' {
+            i += 1;
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            if i < b.len() && (b[i] == '"' || b[i] == '\'') {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    value.push(b[i]);
+                    i += 1;
+                }
+                i += 1;
+            } else {
+                while i < b.len() && !b[i].is_whitespace() {
+                    value.push(b[i]);
+                    i += 1;
+                }
+            }
+        }
+        out.push((name, value));
     }
     out
 }
 
-/// One compound CSS selector against the HTML (see `target_in_html`).
+/// Whether one compound CSS selector (`tag#id.class[attr=value]`, any mix)
+/// matches ONE element of the (lower-cased) HTML: every part is checked
+/// against the same opening tag. A longer selector (descendants, pseudo
+/// classes, lists) is not read and matches nothing.
 fn css_in_html(selector: &str, lower: &str) -> bool {
     let sel = selector.trim().to_ascii_lowercase();
     if sel.is_empty() || sel.contains(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~' | ',' | ':' | '(')) {
         return false;
     }
-    let mut rest = sel.as_str();
-    let tag_len = rest.find(['#', '.', '[']).unwrap_or(rest.len());
-    let tag = &rest[..tag_len];
-    if !tag.is_empty() && tag != "*" && !lower.contains(&format!("<{tag}")) {
-        return false;
+    enum Part {
+        Id(String),
+        Class(String),
+        Attr(String, Option<String>),
     }
-    rest = &rest[tag_len..];
+    let tag_len = sel.find(['#', '.', '[']).unwrap_or(sel.len());
+    let tag = sel[..tag_len].to_string();
+    let mut parts = Vec::new();
+    let mut rest = &sel[tag_len..];
     while !rest.is_empty() {
         let (kind, after) = rest.split_at(1);
-        let end = after.find(['#', '.', '[']).unwrap_or(after.len());
-        match kind {
-            "#" | "." => {
-                let name = &after[..end];
-                if name.is_empty() {
-                    return false;
-                }
-                let found = if kind == "#" {
-                    attr_values(lower, "id").iter().any(|v| v == name)
-                } else {
-                    attr_values(lower, "class").iter().any(|v| v.split_whitespace().any(|c| c == name))
-                };
-                if !found {
-                    return false;
-                }
-                rest = &after[end..];
+        if kind == "[" {
+            let Some(close) = after.find(']') else { return false };
+            let inner = &after[..close];
+            parts.push(match inner.split_once('=') {
+                Some((a, v)) => Part::Attr(a.trim().to_string(), Some(v.trim().trim_matches(['"', '\'']).to_string())),
+                None => Part::Attr(inner.trim().to_string(), None),
+            });
+            rest = &after[close + 1..];
+        } else {
+            let end = after.find(['#', '.', '[']).unwrap_or(after.len());
+            let name = after[..end].to_string();
+            if name.is_empty() {
+                return false;
             }
-            "[" => {
-                let Some(close) = after.find(']') else { return false };
-                let inner = &after[..close];
-                let found = match inner.split_once('=') {
-                    Some((attr, value)) => {
-                        let value = value.trim().trim_matches(['"', '\'']);
-                        attr_values(lower, attr.trim()).iter().any(|v| v == value)
-                    }
-                    None => lower.contains(&format!("{} ", inner.trim())) || lower.contains(&format!("{}=", inner.trim())),
-                };
-                if !found {
-                    return false;
-                }
-                rest = &after[close + 1..];
-            }
-            _ => return false,
+            parts.push(if kind == "#" { Part::Id(name) } else { Part::Class(name) });
+            rest = &after[end..];
         }
     }
-    true
+    let mut from = 0;
+    while let Some(i) = lower[from..].find('<') {
+        let start = from + i + 1;
+        let end = lower[start..].find('>').map_or(lower.len(), |j| start + j);
+        from = end.max(start);
+        let inner = &lower[start..end];
+        let name: String = inner.chars().take_while(|c| !c.is_whitespace() && *c != '/').collect();
+        if name.is_empty() || name.starts_with(['!', '/']) || (!tag.is_empty() && tag != "*" && name != tag) {
+            continue;
+        }
+        let attrs = tag_attrs(inner);
+        let has = |k: &str| attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        let all = parts.iter().all(|p| match p {
+            Part::Id(v) => has("id") == Some(v.as_str()),
+            Part::Class(v) => has("class").is_some_and(|c| c.split_whitespace().any(|t| t == v)),
+            Part::Attr(a, None) => has(a).is_some(),
+            Part::Attr(a, Some(v)) => has(a) == Some(v.as_str()),
+        });
+        if all {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether an answer is the app's sign-in page served in place of the page

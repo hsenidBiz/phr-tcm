@@ -168,13 +168,19 @@ pub const FETCH_FN: &str = r#"async function (req, token, limitMs) {
     return { status: r.status, contentType: r.headers.get("content-type"), finalUrl: r.url, redirected: r.redirected, text };
   } catch (e) {
     if (e && e.name === "AbortError") return { error: "timeout" };
-    // A request that failed outright may have been sent to another site: an SSO redirect
-    // the page may not read. The address asked for, looked at again with redirects left
-    // alone, says whether it sends the browser away (an opaque redirect). Never sent again.
-    try {
-      const probe = await fetch(req.url, { method: "GET", credentials: "same-origin", redirect: "manual", signal: AbortSignal.timeout(5000) });
-      if (probe.type === "opaqueredirect") return { signedOut: true };
-    } catch (ignored) { /* not a redirect */ }
+    // A request that failed outright may have been sent to another site: an SSO redirect the page
+    // may not read, which is what an ended session does. The address is asked for again in no-cors
+    // mode, which follows a redirect to another origin without reading it (and without the app's
+    // cookies, which go to the same origin only): an opaque answer means it leaves the origin. A
+    // dropped connection, or a redirect that stays here, throws or is readable: not signed out. Not
+    // for an address with a handler (a Razor page's handler is an action a second request must not
+    // reach). The request is never sent again.
+    if (!/[?&]handler=/i.test(req.url)) {
+      try {
+        const probe = await fetch(req.url, { method: "GET", credentials: "same-origin", mode: "no-cors", signal: AbortSignal.timeout(5000) });
+        if (probe.type === "opaque") return { signedOut: true };
+      } catch (ignored) { /* not a redirect away */ }
+    }
     return { error: String(e) };
   } finally {
     clearTimeout(timer);
@@ -1648,7 +1654,7 @@ async fn run_step<D: Driver>(
             detail: SENT_ELSEWHERE.to_string(),
             unread: false,
             session_ended: true,
-            posted: false,
+            posted: step.method() == Method::Post,
         });
     }
     let Some(status) = status else {
@@ -1705,7 +1711,7 @@ async fn run_step<D: Driver>(
             detail: SENT_ELSEWHERE.to_string(),
             unread: false,
             session_ended: true,
-            posted: false,
+            posted: step.method() == Method::Post,
         });
     }
 
@@ -1830,7 +1836,9 @@ async fn run_postback<D: Driver>(
     // from an answer - none when this step's page is the sign-in page.
     let start_key = super::postback::page_key(&super::one_off::sign_in_path(&ctx.recipe.start_url));
     if req.key != start_key {
-        req.sign_in = ctx.recipe.sign_in_fields().map(|f| f.css_selectors()).unwrap_or_default();
+        let fields = ctx.recipe.sign_in_fields();
+        req.sign_in = fields.as_ref().map(|f| f.css_selectors()).unwrap_or_default();
+        req.signed_in = fields.and_then(|f| f.signed_in_css());
     }
     let wire = serde_json::to_value(&req).map_err(|e| (None, format!("the request could not be built: {e}")))?;
     let cookies_sent = cookies_for(d, ctx, &format!("{}{}", ctx.origin, req.url))

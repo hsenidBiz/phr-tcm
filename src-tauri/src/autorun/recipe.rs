@@ -612,24 +612,53 @@ pub fn signed_in_check(in_menu: bool) -> crate::browser::expect::Check<'static> 
 pub struct SignInFields {
     pub password: Target,
     pub username: Option<Target>,
+    /// The recipe's `signed_in` marker: a page that shows it is signed in,
+    /// whatever else it holds.
+    pub signed_in: Target,
 }
 
 impl SignInFields {
-    /// The plain CSS selectors of these fields, for a page to look for
+    /// The CSS selectors of these fields, for a page to look for
     /// (`querySelector`): the password field's and the username field's.
-    /// Empty when the password field is not named by CSS, or the username
-    /// field (which the recipe has) is not: nothing then says a page is the
-    /// sign-in page without reading its accessible names.
+    /// Only a selector that names one thing (an `#id` or a `.class`) counts:
+    /// `input[type="password"]`, a bare tag, an attribute value alone or an
+    /// accessible name match change-password and Add-user pages as well, so
+    /// they cannot tell a sign-in page. Empty whenever any field the recipe
+    /// has is not distinct - the page is then never read as signed out.
     pub fn css_selectors(&self) -> Vec<String> {
-        let Some(password) = css_of(&self.password) else { return vec![] };
+        let distinct = |t: &Target| css_of(t).filter(|c| names_one_thing(c));
+        let Some(password) = distinct(&self.password) else { return vec![] };
         match &self.username {
             None => vec![password],
-            Some(u) => match css_of(u) {
+            Some(u) => match distinct(u) {
                 Some(u) => vec![password, u],
                 None => vec![],
             },
         }
     }
+
+    /// The `signed_in` marker as a CSS selector, when it is one.
+    pub fn signed_in_css(&self) -> Option<String> {
+        css_of(&self.signed_in)
+    }
+}
+
+/// Whether a CSS selector names an element by an `#id` or a `.class` (outside
+/// any `[...]`), not only by tag, type or attribute.
+fn names_one_thing(css: &str) -> bool {
+    let mut depth = 0;
+    let mut prev_ident = false;
+    for (i, c) in css.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            '#' | '.' if depth == 0 && css[i + 1..].chars().next().is_some_and(|n| n.is_alphanumeric() || n == '_' || n == '-') => {
+                prev_ident = true;
+            }
+            _ => {}
+        }
+    }
+    prev_ident
 }
 
 /// The CSS selector a target is, when it is nothing but one.
@@ -667,7 +696,7 @@ impl SignInRecipe {
                 RecipeStep::WhenVisible(w) => w.then.iter().for_each(&mut look),
             }
         }
-        password.map(|password| SignInFields { password, username })
+        password.map(|password| SignInFields { password, username, signed_in: self.signed_in.clone() })
     }
 
     /// How this recipe's `signed_in` is checked on every replay.

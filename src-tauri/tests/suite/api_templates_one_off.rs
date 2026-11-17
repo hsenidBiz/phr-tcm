@@ -566,3 +566,56 @@ fn the_sign_in_fields_come_from_the_recipes_password_and_username_steps() {
     none.steps.clear();
     assert!(none.sign_in_fields().is_none());
 }
+
+#[test]
+fn only_a_distinct_sign_in_page_without_the_signed_in_marker_is_signed_out() {
+    use v2_lib::api_templates::one_off::page_is_sign_in;
+    let html = Some("text/html");
+    let with = |steps: serde_json::Value| {
+        let mut r = crate::common::recipe();
+        r.steps = serde_json::from_value(steps).unwrap();
+        r.sign_in_fields().unwrap()
+    };
+    // The real sign-in page, without the recipe's signed-in marker (#marker): signed out.
+    let page = r#"<form><input id="user" type="text"><input id="pass" type="password"></form>"#;
+    let ids = with(json!([
+        { "kind": "fill", "selector": { "css": "#user" }, "value": "{{username}}" },
+        { "kind": "fill", "selector": { "css": "#pass" }, "value": "{{password}}" }
+    ]));
+    assert!(is_sign_in_answer(Some("/hr/x"), html, page, "/hr/x", Some("/"), Some(&ids)));
+    // The same fields on a page that shows the signed-in marker: not signed out.
+    let with_marker = format!(r#"<div id="marker"></div>{page}"#);
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, &with_marker, "/hr/x", Some("/"), Some(&ids)));
+
+    let change = r#"<form><input type="password" name="old"><input type="password" name="new"></form>"#;
+    let add_user = r#"<form><label>User Name</label><input type="text" name="username"><input type="password" name="password"></form>"#;
+    // Name locators and generic selectors cannot tell a sign-in page from these.
+    for steps in [
+        json!([
+            { "kind": "fill", "selector": { "role": "textbox", "name": "User name" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "role": "textbox", "name": "password" }, "value": "{{password}}" }
+        ]),
+        json!([
+            { "kind": "fill", "selector": { "css": "input[type=\"text\"]" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "input[type=\"password\"]" }, "value": "{{password}}" }
+        ]),
+        json!([
+            { "kind": "fill", "selector": { "css": "[name=username]" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "[name=password]" }, "value": "{{password}}" }
+        ]),
+    ] {
+        let fields = with(steps);
+        assert!(fields.css_selectors().is_empty());
+        for body in [change, add_user, page] {
+            assert!(!is_sign_in_answer(Some("/hr/x"), html, body, "/hr/x", Some("/"), Some(&fields)), "{body}");
+            assert!(!page_is_sign_in(body, &fields));
+        }
+    }
+    // Every part of a selector must hold on the same element.
+    let split = r#"<div id="user"></div><input type="text" class="c"><input id="pass" type="password">"#;
+    let same = with(json!([
+        { "kind": "fill", "selector": { "css": "input#user" }, "value": "{{username}}" },
+        { "kind": "fill", "selector": { "css": "#pass" }, "value": "{{password}}" }
+    ]));
+    assert!(!page_is_sign_in(split, &same));
+}

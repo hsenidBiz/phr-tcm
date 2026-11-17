@@ -425,6 +425,7 @@ async fn the_page_is_told_the_sign_in_pages_fields_except_for_the_sign_in_page_i
     assert!(report.ok, "{report:?}");
     // The test recipe fills #pass with the password and #user with the login.
     assert_eq!(posted(&r)[0][0]["signIn"], json!(["#pass", "#user"]));
+    assert_eq!(posted(&r)[0][0]["signedIn"], json!("#marker"));
     // A step whose page is the sign-in page (the recipe starts at the site root) asks nothing of it.
     let mut r = rig(vec![], None);
     replies(&r, vec![page_reply(200, json!({}))]);
