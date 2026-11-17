@@ -191,8 +191,12 @@ pub fn shorten(text: &str, max: usize) -> String {
     format!("{}\u{2026}", cut.trim_end())
 }
 
-fn readable_title(action: &str, cause: &str) -> String {
-    let cause = shorten(cause, 60);
+/// What a reader sees of a cluster: the first case's own failing action and error line (real
+/// words, never the normalised form that groups them), the action's first letter capitalised.
+fn readable_title(action: &str, step: &str, message: &str) -> String {
+    // A script no longer on this machine leaves no action to name: the step will do.
+    let action = if action.starts_with('(') { step } else { action };
+    let cause = shorten(message.lines().next().unwrap_or("").trim(), 80);
     let mut chars = action.chars();
     let action: String = match chars.next() {
         Some(f) => f.to_uppercase().chain(chars).collect(),
@@ -239,7 +243,9 @@ pub fn clusters(
                 .get(&cases[0])
                 .map(|f| shorten(f.message.lines().next().unwrap_or("").trim(), 200))
                 .unwrap_or_default();
-            Cluster { number: i + 1, title: readable_title(&action, &cause), action, cause, cases, example }
+            let first = failures.get(&cases[0]);
+            let title = readable_title(first.map_or("", |f| f.action.as_str()), first.map_or("", |f| f.step.as_str()), first.map_or("", |f| f.message.as_str()));
+            Cluster { number: i + 1, title, action, cause, cases, example }
         })
         .collect();
     (out, failures)
@@ -465,7 +471,12 @@ fn started(run: &LocalRun) -> u64 {
 /// runs are compared (a flaky failure is counted as flaky, as the summary
 /// does).
 fn failing(case: &CaseRecord, marked: &HashSet<i32>) -> bool {
-    case_bucket(case) == "Failed" && !marked.contains(&case.case_id)
+    match case_bucket(case) {
+        "Failed" => !marked.contains(&case.case_id),
+        // A blocked case did not get to pass either: it counts here.
+        "Blocked" => true,
+        _ => false,
+    }
 }
 
 fn case_duration(case: &CaseRecord) -> u64 {

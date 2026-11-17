@@ -19,9 +19,13 @@
   var filter = $('#filter');
 
   // Local times -----------------------------------------------------------
+  // One short format everywhere ("17 Nov, 09:30"), with the year when it is not this year.
   function local(ms) {
     try {
-      return new Date(Number(ms)).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      var d = new Date(Number(ms));
+      var o = { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
+      if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+      return d.toLocaleString(undefined, o);
     } catch (e) { return ''; }
   }
   $$('time[data-ts]').forEach(function (t) {
@@ -106,6 +110,8 @@
       var list = $('#list-' + name);
       var title = $('#list-title');
       if (title && list) title.textContent = list.getAttribute('data-title');
+      var sub = $('#list-sub');
+      if (sub && list) sub.textContent = list.getAttribute('data-sub') || '';
       countText();
       var vis = visibleRows();
       var keep = vis.filter(function (r) { return r.getAttribute('data-id') === selected; })[0];
@@ -141,6 +147,15 @@
     select(id);
   }
   document.addEventListener('click', function (e) {
+    var vid = e.target.closest ? e.target.closest('a[data-video]') : null;
+    if (vid) {
+      e.preventDefault();
+      var name = vid.getAttribute('data-video');
+      var at = -1;
+      all.forEach(function (g, k) { if (g.n === name) at = k; });
+      if (at >= 0) openLightbox(at, all);
+      return;
+    }
     var a = e.target.closest ? e.target.closest('a[data-case]') : null;
     if (a) {
       e.preventDefault();
@@ -332,7 +347,7 @@
           img.src = '../shots/' + g.n;
           b.appendChild(img);
         }
-        b.addEventListener('click', function () { openLightbox(i); });
+        b.addEventListener('click', function () { openLightbox(i, shown); });
         var cap = document.createElement('span');
         cap.className = 'gallery__caption';
         cap.textContent = caption(g);
@@ -359,10 +374,12 @@
 
   var lb = $('#lb');
   var lbIndex = 0;
-  function openLightbox(i) {
-    if (!lb || !shown.length) return;
-    lbIndex = (i + shown.length) % shown.length;
-    var g = shown[lbIndex];
+  var lbList = [];
+  function openLightbox(i, list) {
+    if (list) lbList = list;
+    if (!lb || !lbList.length) return;
+    lbIndex = (i + lbList.length) % lbList.length;
+    var g = lbList[lbIndex];
     var stage = $('.stage', lb);
     while (stage.firstChild) stage.removeChild(stage.firstChild);
     var el;
@@ -376,7 +393,7 @@
       el.alt = caption(g);
     }
     stage.appendChild(el);
-    $('.lb-cap', lb).textContent = caption(g) + '  (' + (lbIndex + 1) + ' of ' + shown.length + ')';
+    $('.lb-cap', lb).textContent = caption(g) + '  (' + (lbIndex + 1) + ' of ' + lbList.length + ')';
     lb.hidden = false;
   }
   function closeLightbox() {

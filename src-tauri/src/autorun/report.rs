@@ -465,7 +465,13 @@ fn video_line(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
     if !exists(name) {
         return format!("<p class=\"note\">The video {} was not found - it is no longer on this machine.</p>", esc_attr(name));
     }
-    format!("<p class=\"video\"><strong>Video:</strong> <a href=\"../shots/{0}\">{0}</a></p>", esc_attr(name))
+    // A tile like the pictures', captioned Video: the file's name is not shown. The script opens it
+    // in the player; without the script the link opens the file.
+    format!(
+        "<figure class=\"vtile\"><a class=\"vtile__media\" href=\"../shots/{0}\" data-video=\"{0}\" aria-label=\"Play the video\">{1}</a><figcaption>Video</figcaption></figure>",
+        esc_attr(name),
+        report_view::icon("video")
+    )
 }
 
 /// The files a case's steps saved, in the order the steps ran.
@@ -634,6 +640,7 @@ fn detail(
     exists: &dyn Fn(&str) -> bool,
     size_of: &dyn Fn(&str) -> Option<u64>,
     divergences: &[&Divergence],
+    before: &[String],
 ) -> String {
     let case = v.case;
     let id = case.case_id;
@@ -723,7 +730,9 @@ fn detail(
             h.push_str(&report_view::section("Timeline", meta, true, &report_view::timeline_body(t)));
         }
     }
-    h.push_str(&report_view::section("Steps", &format!("{} steps", case.steps.len()), true, &steps_list(case)));
+    // What the run did just before this case (a batch's start, a pause for settings), in order.
+    let pauses: String = before.iter().map(|l| format!("<p class=\"reset\">{l}</p>")).collect();
+    h.push_str(&report_view::section("Steps", &format!("{} steps", case.steps.len()), true, &format!("{pauses}{}", steps_list(case))));
     let (pics, n) = pictures_block(case, exists);
     if !pics.is_empty() {
         let meta = if n > 0 { format!("{n} picture{}", if n == 1 { "" } else { "s" }) } else { String::new() };
@@ -1219,10 +1228,14 @@ pub fn build_smart(
             all_list.push_str(&report_view::row(v, "all", &failure_text(v)));
         }
     }
+    // The sidebar's Flaky counts every case flaky in any sense; the top bar counts this run's flaky
+    // failures. Both say so.
+    let flaky_note = format!("Cases whose result flipped in recent runs. {} counted as flaky in this run.", counts_now.flaky);
     let lists = format!(
-        "<div class=\"list\" id=\"list-failures\" data-title=\"Failures\" data-count=\"{failure_cases}\">{fail_list}</div>\
-<div class=\"list\" id=\"list-flaky\" data-title=\"Flaky\" data-count=\"{flaky_cases}\" hidden>{flaky_list}</div>\
-<div class=\"list\" id=\"list-all\" data-title=\"All cases\" data-count=\"{}\" hidden>{all_list}</div>",
+        "<div class=\"list\" id=\"list-failures\" data-title=\"Failures\" data-sub=\"Failed and blocked cases, grouped by what stopped them.\" data-count=\"{failure_cases}\">{fail_list}</div>\
+<div class=\"list\" id=\"list-flaky\" data-title=\"Flaky\" data-sub=\"{}\" data-count=\"{flaky_cases}\" hidden>{flaky_list}</div>\
+<div class=\"list\" id=\"list-all\" data-title=\"All cases\" data-sub=\"Every case of the run.\" data-count=\"{}\" hidden>{all_list}</div>",
+        esc_attr(&flaky_note),
         views.len()
     );
 
@@ -1236,6 +1249,11 @@ pub fn build_smart(
             exists,
             size_of,
             &shown_divergences(run, extras, v.case.case_id),
+            &{
+                let mut lines: Vec<String> = batch_heading(run, v.case.case_id).map(|b| esc_attr(&b)).into_iter().collect();
+                lines.extend(resets_before(run, v.case.case_id));
+                lines
+            },
         ));
     }
     let cases_view = format!(
@@ -1247,10 +1265,12 @@ pub fn build_smart(
     let health = report_smart::health(&trend.points, flaky_cases, views.len());
     let new_cases = trend.compare.as_ref().map(|c| c.new_cases.len());
     let prior = trend.points.len().saturating_sub(1);
+    // One instant for every time on the page: the run's own start, shown by the script in one format.
+    let when_tag = report_view::time_tag_as(&run.started_at, &when);
     let sub = if prior == 0 {
-        format!("Run of {} \u{b7} the first run of PBI #{} in this environment", esc_attr(&when), run.pbi_id)
+        format!("Run of {when_tag} \u{b7} the first run of PBI #{} in this environment", run.pbi_id)
     } else {
-        format!("Run of {} \u{b7} compared with the previous {}", esc_attr(&when), if prior == 1 { "run".to_string() } else { format!("{prior} runs") })
+        format!("Run of {when_tag} \u{b7} compared with the previous {}", if prior == 1 { "run".to_string() } else { format!("{prior} runs") })
     };
     let line_for = |ids: &[i32], status: &str| -> Vec<String> {
         ids.iter()
@@ -1287,7 +1307,7 @@ pub fn build_smart(
 
     // The run's details, as the report always gave them.
     insights.push_str("<h2 class=\"panel__title run__title\">Run</h2><dl class=\"run__dl\">");
-    insights.push_str(&format!("<dt>Ran</dt><dd>{}</dd>", esc_attr(&when)));
+    insights.push_str(&format!("<dt>Ran</dt><dd>{when_tag}</dd>"));
     insights.push_str(&format!("<dt>Mode</dt><dd>{mode}</dd>"));
     if let Some(env) = run.environment.as_deref().filter(|e| !e.trim().is_empty()) {
         insights.push_str(&format!("<dt>Environment</dt><dd>{}</dd>", esc_attr(env)));
@@ -1376,9 +1396,9 @@ pub fn build_smart(
     h.push_str(&format!("<style>{TOKENS}\n{accent}{STYLE}</style></head><body data-start=\"{start}\">"));
     h.push_str("<a class=\"skip-link\" href=\"#main\">Skip to the report</a>");
     h.push_str("<div class=\"app\" data-rail=\"open\">");
-    h.push_str(&report_view::topbar(run.pbi_id, run.environment.as_deref(), &when, run.mode != "unattended", &counts_now, run_ms));
+    h.push_str(&report_view::topbar(run.pbi_id, run.environment.as_deref(), &when_tag, run.mode != "unattended", &counts_now, run_ms));
     h.push_str("<div class=\"app__body\">");
-    h.push_str(&report_view::sidebar(failure_cases, flaky_cases, views.len(), env!("CARGO_PKG_VERSION")));
+    h.push_str(&report_view::sidebar(failure_cases, flaky_cases, views.len(), env!("CARGO_PKG_VERSION"), &flaky_note));
     h.push_str("<main class=\"app__main\" id=\"main\" tabindex=\"-1\">");
     // On paper only: the run's name and its counts, ahead of everything.
     h.push_str(&format!(

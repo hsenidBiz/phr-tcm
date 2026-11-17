@@ -170,7 +170,7 @@ fn the_header_says_when_how_where_and_whether_it_was_sent() {
     let mut run = run_of(SHOT);
     let html = build(&run, &[], "2 Oct 2026, 09:30", &no_shots);
     assert!(html.contains("<span class=\"topbar__brand\">Auto Run report</span>"));
-    assert!(html.contains("<dt>Ran</dt><dd>2 Oct 2026, 09:30</dd>"));
+    assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">2 Oct 2026, 09:30</time></dd>"));
     assert!(html.contains("<dt>Mode</dt><dd>Unattended</dd>"));
     assert!(html.contains("<dt>Environment</dt><dd>QA</dd>"));
     assert!(html.contains("<dt>PBI</dt><dd>#42</dd>"));
@@ -186,7 +186,7 @@ fn the_header_says_when_how_where_and_whether_it_was_sent() {
     assert!(html.contains("<dt>Mode</dt><dd>Supervised</dd>"));
     assert!(!html.contains("<dt>Environment</dt>"));
     assert!(html.contains("Sent as test run #77 - <a href=\"https://dev.azure.com/acme/Web/_testManagement/runs?runId=77\">"));
-    assert!(html.contains(" UTC</dd>"));
+    assert!(html.contains(" UTC</time></dd>"));
 }
 
 #[test]
@@ -330,7 +330,7 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("\u{b7} click text=Save</p>"));
     // The time the webview sent, as given - not UTC.
-    assert!(html.contains("<dt>Ran</dt><dd>2 Oct 2026, 09:30</dd>"));
+    assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">2 Oct 2026, 09:30</time></dd>"));
     // The header says the time as given; only the history's own times fall back to UTC (the
     // page's script shows those in the reader's locale).
     let top = &html[html.find("<header class=\"topbar\">").unwrap()..html.find("</header>").unwrap()];
@@ -494,7 +494,7 @@ fn opening_escapes_the_time_it_is_given() {
     let root = seeded_root(&dir);
     let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "<script>x</script>").unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
-    assert!(html.contains("<dt>Ran</dt><dd>&lt;script&gt;x&lt;/script&gt;</dd>"));
+    assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">&lt;script&gt;x&lt;/script&gt;</time></dd>"));
     only_the_pages_own_scripts(&html);
 }
 

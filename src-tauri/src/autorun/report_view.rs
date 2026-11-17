@@ -165,9 +165,16 @@ pub(super) fn took(ms: u64) -> String {
 }
 
 /// A run's start as a `<time>` the script rewrites in the reader's own
-/// locale; the text is UTC for anyone reading it without the script.
+/// locale, in one short format everywhere; the text is UTC for anyone
+/// reading it without the script.
 pub(super) fn time_tag(started_at: &str) -> String {
-    format!("<time data-ts=\"{}\">{}</time>", esc_attr(started_at.trim()), esc_attr(&super::report::utc_time(started_at)))
+    time_tag_as(started_at, &super::report::utc_time(started_at))
+}
+
+/// [`time_tag`] with the words to show without the script (the time the
+/// webview formatted, when it sent one).
+pub(super) fn time_tag_as(started_at: &str, text: &str) -> String {
+    format!("<time data-ts=\"{}\">{}</time>", esc_attr(started_at.trim()), esc_attr(text))
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {
@@ -196,7 +203,7 @@ impl Counts {
 
 /// The top bar: sidebar toggle, the run's name and meta, the counts, the
 /// duration, Search and the light/dark toggle.
-pub(super) fn topbar(pbi: i32, environment: Option<&str>, when: &str, attended: bool, c: &Counts, duration_ms: u64) -> String {
+pub(super) fn topbar(pbi: i32, environment: Option<&str>, when_html: &str, attended: bool, c: &Counts, duration_ms: u64) -> String {
     let mut h = String::from(
         "<header class=\"topbar\"><button type=\"button\" class=\"icon-btn\" id=\"rail-toggle\" aria-label=\"Show or hide the sidebar\" title=\"Sidebar (Ctrl+B)\">",
     );
@@ -206,7 +213,7 @@ pub(super) fn topbar(pbi: i32, environment: Option<&str>, when: &str, attended: 
     if let Some(env) = environment.map(str::trim).filter(|e| !e.is_empty()) {
         h.push_str(&format!("<span class=\"topbar__meta\">{}</span>", esc_attr(env)));
     }
-    h.push_str(&format!("<span class=\"topbar__meta\">{}</span>", esc_attr(when)));
+    h.push_str(&format!("<span class=\"topbar__meta\">{when_html}</span>"));
     if attended {
         h.push_str("<span class=\"topbar__meta\">Attended</span>");
     }
@@ -247,10 +254,11 @@ pub(super) fn topbar(pbi: i32, environment: Option<&str>, when: &str, attended: 
 
 /// The sidebar. `failures` is the Failed and Blocked cases, `flaky` the
 /// cases flaky in any sense, `all` every case.
-pub(super) fn sidebar(failures: usize, flaky: usize, all: usize, version: &str) -> String {
+pub(super) fn sidebar(failures: usize, flaky: usize, all: usize, version: &str, flaky_note: &str) -> String {
     let item = |nav: &str, ic: &str, label: &str, n: Option<usize>| {
+        let title = if nav == "flaky" { format!(" title=\"{}\"", esc_attr(flaky_note)) } else { String::new() };
         format!(
-            "<a class=\"rail__item\" href=\"#view-{nav}\" data-nav=\"{nav}\">{}<span class=\"rail__label\">{label}</span>{}</a>",
+            "<a class=\"rail__item\" href=\"#view-{nav}\" data-nav=\"{nav}\"{title}>{}<span class=\"rail__label\">{label}</span>{}</a>",
             icon(ic),
             n.map(|n| format!("<span class=\"rail__count\">{n}</span>")).unwrap_or_default()
         )
@@ -311,7 +319,7 @@ pub(super) fn group(label: &str, mono: bool, count: usize, rows: &str, extra: &s
 /// The middle pane's header and filter, the lists inside it.
 pub(super) fn list_pane(lists: &str) -> String {
     format!(
-        "<div class=\"pane__list\"><div class=\"pane__head\"><h1 class=\"pane__title\" id=\"list-title\">Failures</h1><span class=\"pane__count\" id=\"list-count\"></span></div>\
+        "<div class=\"pane__list\"><div class=\"pane__head\"><h1 class=\"pane__title\" id=\"list-title\">Failures</h1><span class=\"pane__count\" id=\"list-count\"></span><span class=\"pane__sub\" id=\"list-sub\"></span></div>\
 <div class=\"filterbar\"><span class=\"filterbar__icon\">{}</span>\
 <input id=\"filter\" class=\"filterbar__input\" type=\"search\" autocomplete=\"off\" aria-label=\"Filter cases\" placeholder=\"Filter: text, status:, area:, module:, grade:, cause:\">\
 <kbd class=\"kbd\">/</kbd></div><div class=\"pane__scroll\" role=\"listbox\" aria-label=\"Cases\">{lists}</div></div>",
@@ -637,7 +645,7 @@ pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, t
     if n < 2 {
         h.push_str("<p class=\"trends__note muted\">Only one run of this PBI is on this machine in this environment, so there is no trend to draw yet.</p>");
     } else {
-        h.push_str("<p class=\"trends__note muted\">Line: three-run average. Bars start at zero; the lighter bar is this run.</p><div class=\"trends\">");
+        h.push_str("<p class=\"trends__note muted\">Line: three-run average. Bars start at zero; the highlighted bar is this run.</p><div class=\"trends\">");
         let pick = |f: &dyn Fn(&RunPoint) -> (f64, String)| -> Vec<(f64, &RunPoint, String)> {
             trend
                 .points
@@ -708,9 +716,10 @@ fn compare_html(c: &Compare, titles: &HashMap<i32, (String, &'static str)>) -> S
         "<p class=\"compare__base muted\">Against the previous run of this PBI, which started {}.</p><div class=\"panels\" id=\"compare-panels\">",
         time_tag(&c.previous_started_at)
     );
-    h.push_str(&compare_list("New failures", &c.new_failures, titles, "failed"));
+    // A blocked case shows the blocked icon: the status is the case's own.
+    h.push_str(&compare_list("New failures", &c.new_failures, titles, ""));
     h.push_str(&compare_list("Fixed", &c.fixed, titles, "passed"));
-    h.push_str(&compare_list("Still failing", &c.still_failing, titles, "failed"));
+    h.push_str(&compare_list("Still failing", &c.still_failing, titles, ""));
     h.push_str(&compare_list("New cases", &c.new_cases, titles, ""));
     // A case gone from this run is not in it, so it links nowhere.
     let gone: Vec<String> = c

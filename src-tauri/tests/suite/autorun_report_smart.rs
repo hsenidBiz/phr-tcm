@@ -683,7 +683,7 @@ fn a_big_run_with_a_full_history_stays_a_page_that_opens() {
     only_the_pages_own_scripts(&html);
     // 71 failed cases (every seventh of 500) share one cause once the numbers are gone,
     // and only the newest 20 of the 21 runs are history.
-    assert!(html.contains("id=\"list-failures\" data-title=\"Failures\" data-count=\"71\""));
+    assert!(html.contains("grouped by what stopped them.\" data-count=\"71\""));
     assert_eq!(html.matches("class=\"group\"").count(), 1, "one group of failures");
     assert_eq!(data_of(&html)["sum"].as_object().unwrap().len(), 71);
 }
@@ -860,4 +860,106 @@ fn a_failed_step_is_always_the_failure_colour_and_slow_is_an_extra_note() {
     // Only a step that did not fail is amber; a failed step carries only the failure flag.
     assert!(html.contains("class=\"timeline__bar\" data-failed"));
     assert!(!html.contains("data-failed data-slow") && !html.contains("data-slow data-failed"));
+}
+
+// ---------------------------------------------------------------- fix round 2
+
+#[test]
+fn a_cluster_never_shows_the_normalised_text_to_a_reader() {
+    let r = run(
+        "run-1",
+        1000,
+        "QA",
+        vec![
+            case(1, "Failed", vec![step(1, Some(10), false, "button \"Apply\" not found after 5000 ms")]),
+            case(2, "Failed", vec![step(1, Some(10), false, "button \"Apply\" not found after 7 ms")]),
+        ],
+    );
+    let scripts = vec![click_script(1, "text=Apply"), click_script(2, "text=Apply")];
+    let (list, _) = clusters(&r, &scripts, &Default::default());
+    let c = &list[0];
+    // The title is the first case's own words.
+    assert_eq!(c.title, "Click text=Apply: button \"Apply\" not found after 5000 ms");
+    assert!(!c.title.contains('\u{2026}') && !c.title.contains("# ms"));
+    // ... and so is what the page shows: only the filter's attribute carries the grouping form.
+    let html = page(&r, &[], &scripts, &no_shots);
+    let shown_part = &html[html.find("<body").unwrap()..];
+    let mut text = String::new();
+    let mut in_tag = false;
+    for ch in shown_part.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    assert!(!text.contains("\u{2026}\"") && !text.contains("after # ms"), "the grouping form is on the page as text");
+}
+
+#[test]
+fn a_blocked_case_counts_in_compare_with_its_own_icon() {
+    let before = run("a", 1, "QA", vec![passed(1), case(2, "Blocked", vec![]), case(3, "Blocked", vec![]), failed_at(4, 2, "x")]);
+    let now = run("b", 2, "QA", vec![case(1, "Blocked", vec![]), passed(2), case(3, "Blocked", vec![]), failed_at(4, 2, "x")]);
+    let c = compare_runs(&before, &now, &HashSet::new());
+    assert_eq!(c.new_failures, vec![1], "passed, now blocked");
+    assert_eq!(c.fixed, vec![2], "blocked, now passed");
+    assert_eq!(c.still_failing, vec![3, 4], "blocked and failed both stay");
+    // On the page the new failure wears the blocked icon, not the failed one.
+    let mut all = vec![before];
+    all.push(now.clone());
+    let html = page(&now, &all, &[], &no_shots);
+    let panel = &html[html.find("<h2 class=\"panel__title\">New failures</h2>").unwrap()..];
+    let panel = &panel[..panel.find("</ul>").unwrap()];
+    assert!(panel.contains("class=\"glyph tone-blocked\""), "{panel}");
+}
+
+#[test]
+fn every_time_on_the_page_is_the_runs_own_instant() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    let stamp = |from: &str| -> String {
+        let at = from.find("<time data-ts=\"").expect("a time") + "<time data-ts=\"".len();
+        from[at..at + from[at..].find('"').unwrap()].to_string()
+    };
+    let top = &html[html.find("<header class=\"topbar\">").unwrap()..html.find("</header>").unwrap()];
+    // The header, the Insights subtitle and the Run block, and the history row marked this run.
+    let sub = &html[html.find("Run of <time").unwrap()..];
+    let run_block = &html[html.find("<dt>Ran</dt>").unwrap()..];
+    let this_run = html.find("<span class=\"signal\">this run</span>").unwrap();
+    let row = &html[html[..this_run].rfind("<tr>").unwrap()..this_run];
+    for (what, found) in [("header", stamp(top)), ("subtitle", stamp(sub)), ("Run block", stamp(run_block)), ("history row", stamp(row))] {
+        assert_eq!(found, now.started_at, "{what}");
+    }
+}
+
+#[test]
+fn the_flaky_view_says_what_it_counts_and_the_sidebar_item_says_the_same() {
+    let r = run("run-1", 1000, "QA", vec![passed(1), failed_at(2, 2, "boom"), passed(3)]);
+    let mut marked = script(2, json!([]));
+    marked.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
+    let html = page(&r, &[], &[marked], &no_shots);
+    let sentence = "Cases whose result flipped in recent runs. 1 counted as flaky in this run.";
+    assert!(html.contains(&format!("id=\"list-flaky\" data-title=\"Flaky\" data-sub=\"{sentence}\"")), "{html}");
+    assert!(html.contains(&format!("data-nav=\"flaky\" title=\"{sentence}\"")));
+}
+
+#[test]
+fn the_video_is_a_tile_captioned_video_in_the_detail() {
+    let (mut now, all) = history_fixture();
+    now.cases[0].video = Some(VIDEO.to_string());
+    let html = page(&now, &all, &[], &all_shots);
+    let detail = super::autorun_report::article_of(&html, 1);
+    assert!(detail.contains(&format!("<a class=\"vtile__media\" href=\"../shots/{VIDEO}\" data-video=\"{VIDEO}\"")), "{detail}");
+    assert!(detail.contains("<figcaption>Video</figcaption>"));
+    assert!(!detail.contains(&format!(">{VIDEO}<")), "no file name as text");
+}
+
+#[test]
+fn the_note_names_the_highlighted_bar_and_the_axis_ticks_do_not_wrap() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    assert!(html.contains("the highlighted bar is this run"));
+    assert!(!html.contains("the lighter bar"));
+    assert!(web_file("autorun-report.css").contains(".timeline__tick { position: absolute; top: 2px; white-space: nowrap;"));
 }

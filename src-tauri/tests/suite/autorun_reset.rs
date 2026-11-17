@@ -419,6 +419,18 @@ fn the_report_shows_the_reset_line_between_the_cases() {
     let at = html[all..].find(line).unwrap() + all;
     assert!(one < at && at < two, "{html}");
     assert!(html.contains("Reset: revert &quot;rota&quot; - stopped"));
+    // The old per-case section never held a pause (they sat between the sections); the detail now
+    // shows what ran just before its case at the top of its Steps, so the line is in case 2's
+    // detail, ahead of its steps, and not in case 1's.
+    let detail = |id: i32| {
+        let at = html.find(&format!("<article class=\"dt detail\" id=\"case-{id}\"")).unwrap();
+        let rest = &html[at..];
+        rest[..rest.find("</article>").unwrap()].to_string()
+    };
+    let two_detail = detail(2);
+    let in_two = two_detail.find(line).expect("the pause is in the detail of the case it came before");
+    assert!(in_two < two_detail.find("<ol class=\"steps\">").unwrap_or(usize::MAX), "ahead of the steps");
+    assert!(!detail(1).contains(line));
     // A run with no resets shows none.
     let none = report::build_with_downloads(&new_run("run-plain"), &[], "", &|_| false, &|_| None);
     assert!(!none.contains("Reset: revert"));
