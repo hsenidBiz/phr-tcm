@@ -115,8 +115,16 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   const more = screen.getByRole("button", { name: `Show more (${releases.length - 1} earlier versions)` });
   expect(more).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(more);
+  // Ten versions at first: the latest and nine earlier. The rest waits.
+  expect(screen.getAllByText(/^Version \d+\.\d+\.\d+$/)).toHaveLength(10);
+  expect(screen.getByText(`Version ${releases[9].version}`)).toBeInTheDocument();
+  expect(screen.queryByText(`Version ${releases[10].version}`)).not.toBeInTheDocument();
+  expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: `Show older versions (${releases.length - 10} more)` }));
   expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
+  expect(screen.getAllByText(/^Version \d+\.\d+\.\d+$/)).toHaveLength(releases.length);
+  expect(screen.queryByRole("button", { name: /^Show older versions/ })).not.toBeInTheDocument();
   expect(screen.queryByText(/^Version \d+\.\d+\.\d+-beta/)).not.toBeInTheDocument();
 
   // One list scrolls: the latest version scrolls away with the others, it
@@ -124,7 +132,7 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   const latest = screen.getByText(`Version ${releases[0].version}`);
   const box = latest.closest(".overflow-y-auto");
   expect(box).not.toBeNull();
-  expect(box).toContainElement(screen.getByText("Version 1.9.0"));
+  expect(box).toContainElement(screen.getByText(`Version ${releases[9].version}`));
 
   const less = screen.getByRole("button", { name: "Show less" });
   expect(less).toHaveAttribute("aria-expanded", "true");
@@ -160,7 +168,7 @@ test("a narrow window lists the setting cards in order, then only the changelog"
 
   // Nothing moves on a narrow window: Show more only unfolds the history.
   fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
-  expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
+  expect(screen.getByText(`Version ${CHANGELOG.filter((e) => !isBetaVersion(e.version))[9].version}`)).toBeInTheDocument();
   expect(headings(columns().left)).toEqual(ALL_CARDS);
   expect(headings(columns().right)).toEqual(["Changelog"]);
 });
@@ -324,7 +332,7 @@ test("a wide window puts three cards under the changelog, and Show more moves th
   fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
   const less = await screen.findByRole("button", { name: "Show less" });
   expect(less).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
+  expect(screen.getByText(`Version ${CHANGELOG.filter((e) => !isBetaVersion(e.version))[9].version}`)).toBeInTheDocument();
   expect(headings(columns().left)).toEqual(ALL_CARDS);
   expect(headings(columns().right)).toEqual(["Changelog"]);
   // Every card keeps its tour anchor wherever it sits.

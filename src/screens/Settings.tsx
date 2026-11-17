@@ -369,6 +369,12 @@ export default function Settings({
   const appSettings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
   const onBeta = isBetaVersion(version.data ?? "");
   const changelog = changelogFor(version.data ?? "");
+  // Opened, the history lists the latest versions first; the rest (all at
+  // once) waits for "Show older versions", so the box stays short.
+  const [olderShown, setOlderShown] = useState(false);
+  useEffect(() => {
+    if (!tiles.expanded) setOlderShown(false);
+  }, [tiles.expanded]);
   const setBeta = async (on: boolean) => {
     const before = appSettings.data;
     if (before) qc.setQueryData<AppSettings>(["app-settings"], { ...before, beta_updates: on });
@@ -1099,9 +1105,14 @@ export default function Settings({
             {/* Earlier versions unfold in place, under the latest. */}
             <Collapse open={tiles.expanded} onGrow={tiles.onGrow} onShrink={tiles.onShrink}>
               <div id="changelog-history" className="space-y-4">
-                {changelog.slice(1).map((e) => (
+                {changelog.slice(1, olderShown ? undefined : CHANGELOG_FIRST_SHOWN).map((e) => (
                   <ChangelogVersion key={e.version} entry={e} />
                 ))}
+                {!olderShown && changelog.length > CHANGELOG_FIRST_SHOWN && (
+                  <Button size="sm" variant="ghost" onClick={() => setOlderShown(true)}>
+                    {`Show older versions (${changelog.length - CHANGELOG_FIRST_SHOWN} more)`}
+                  </Button>
+                )}
               </div>
             </Collapse>
           </div>
@@ -1212,6 +1223,9 @@ export default function Settings({
 }
 
 /** One version's notes, as the changelog lists them. */
+/** How many versions the open changelog lists before "Show older versions". */
+const CHANGELOG_FIRST_SHOWN = 10;
+
 function ChangelogVersion({ entry }: { entry: ChangelogEntry }) {
   return (
     <div className="space-y-1.5">
