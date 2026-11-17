@@ -11,6 +11,7 @@ vi.mock("../../../src/lib/toast", () => ({ toast: { success: vi.fn(), error: vi.
 afterEach(() => {
   clearMocks();
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
 const AREAS = [
@@ -1208,7 +1209,6 @@ test("read-only: the script shows as text with nothing to edit, save or copy", a
   expect(screen.getByText("Switch to Advanced to edit.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(onClose).toHaveBeenCalledTimes(1);
-  localStorage.clear();
 });
 
 test("not read-only: the editing controls are there as before", async () => {
@@ -1217,4 +1217,25 @@ test("not read-only: the editing controls are there as before", async () => {
   expect(screen.getByRole("button", { name: "Save script" })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Must not save" })).toBeInTheDocument();
   expect(screen.queryByText("Switch to Advanced to edit.")).toBeNull();
+});
+
+test("read-only: an account this machine does not have reads as not on this machine", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, account: "payroll.officer" }, ACCOUNTS, []);
+  await screen.findByText("payroll.officer (not on this machine)");
+});
+
+test("read-only: a script that cannot be read says so without mentioning saving", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_script") throw new Error("disk gone");
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" readOnly onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  const msg = await screen.findByText(/Could not read the script/);
+  expect(msg.textContent).not.toMatch(/sav/i);
 });

@@ -2212,3 +2212,39 @@ test("in Advanced, View script opens the editor as today", async () => {
   expect(await screen.findByRole("button", { name: "Edit script" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save script" })).toBeInTheDocument();
 });
+
+test("Simple keeps the run window with its options", async () => {
+  autorunMode = "simple";
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 unattended" }));
+  expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Pause before each action" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Keep a video of failed cases" })).toBeInTheDocument();
+});
+
+test("Simple keeps the network-wait panel", async () => {
+  autorunMode = "simple";
+  mockList([caseRow(1, "Publish the cycle")], [], [], (cmd) =>
+    cmd === "auto_run_waiting_network" ? { run_id: "run-7", before_case_id: 2, waited_s: 125, give_up_in_s: 1675 } : null,
+  );
+  renderScreen();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  expect(await screen.findByRole("region", { name: "Paused - the company network is unreachable" })).toBeInTheDocument();
+});
+
+test("Simple keeps the Assistants card", async () => {
+  autorunMode = "simple";
+  const agent = {
+    label: "Assistant 1", client: "claude-code", slot: 0, own_browser: false, browser: "Edge", account: null,
+    activity: { kind: "working" }, idle_minutes: 0, changed_for_testing: false, saves_blocked: false, can_stop: false,
+  };
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => (cmd === "auto_run_agents" ? [agent] : null));
+  renderScreen();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
+});

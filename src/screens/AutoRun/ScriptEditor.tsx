@@ -330,7 +330,9 @@ function ScriptEditorBody({
               <span className="text-text">
                 {account === ""
                   ? "No sign-in"
-                  : `${(accounts.data ?? []).find((a) => a.key === account)?.label.trim() || account} (${account})`}
+                  : known
+                    ? `${(accounts.data ?? []).find((a) => a.key === account)?.label.trim() || account} (${account})`
+                    : `${account} (not on this machine)`}
               </span>
             </p>
           ) : (
@@ -571,7 +573,9 @@ function ScriptEditorBody({
 
       {existing.isError && (
         <p className="text-xs text-danger">
-          Could not load the existing script, so saving is blocked: {existing.error.message}
+          {readOnly
+            ? `Could not read the script: ${existing.error.message}`
+            : `Could not load the existing script, so saving is blocked: ${existing.error.message}`}
         </p>
       )}
       {problem && <p className="text-xs text-danger">{problem}</p>}
