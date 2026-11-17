@@ -11,6 +11,7 @@ import { Modal } from "../../components/ui/modal";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
+import { pagePalette } from "../../lib/reportTheme";
 import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
 import FiledBugs from "./FiledBugs";
 import FlakyBadge from "./FlakyBadge";
@@ -146,7 +147,7 @@ export default function PastRuns({
    * The run's time goes as this screen shows it, so the report reads in the
    * person's own locale. */
   const openReport = useMutation({
-    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(org, project, run.id, when(run.started_at))),
+    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(org, project, run.id, when(run.started_at), pagePalette())),
     onSuccess: () => toast.success("Report opened in your browser"),
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });

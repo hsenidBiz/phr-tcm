@@ -361,7 +361,10 @@ fn the_report_links_the_video_beside_the_pictures_and_never_embeds_it() {
     use v2_lib::autorun::report::build_with_downloads;
     let run = run_naming("video-1700000000000-000001.mp4", false);
     let html = build_with_downloads(&run, &[], "now", &|_| true, &|_| None);
-    assert!(html.contains("<a href=\"../shots/video-1700000000000-000001.mp4\">"), "{html}");
+    assert!(html.contains("href=\"../shots/video-1700000000000-000001.mp4\" data-video="), "{html}");
+    // A tile captioned Video: the file's name is not shown as text.
+    assert!(html.contains("<figcaption>Video</figcaption>"), "{html}");
+    assert!(!html.contains(">video-1700000000000-000001.mp4<"), "{html}");
     assert!(!html.contains("<video") && !html.contains("<embed") && !html.contains("<iframe"), "{html}");
     // A video that is gone is said to be, not linked.
     let gone = build_with_downloads(&run, &[], "now", &|_| false, &|_| None);

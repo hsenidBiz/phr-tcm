@@ -54,6 +54,29 @@ pub fn head_script() -> String {
     format!("<script>{RESTORE_JS}</script>")
 }
 
+/// Whether a palette value is a plain colour and nothing else: `#rgb`,
+/// `#rrggbb` (and the alpha forms), or `rgb(`, `rgba(`, `hsl(`, `hsla(` of
+/// numbers, percentages, `deg`, commas, slashes and spaces. The values come
+/// from the webview and go straight into a page's `<style>`, so anything
+/// that could close it or add a rule (`<`, `}`, `;`, a quote, `url(`...) is
+/// refused and the default is used instead.
+pub fn safe_color(value: &str) -> bool {
+    let v = value.trim();
+    if let Some(hex) = v.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    let Some(open) = v.find('(') else { return false };
+    let name = &v[..open];
+    if !matches!(name, "rgb" | "rgba" | "hsl" | "hsla") || !v.ends_with(')') {
+        return false;
+    }
+    let inner = &v[open + 1..v.len() - 1];
+    !inner.is_empty()
+        && inner.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '%' | ' ' | '/' | '-' | '+') || c.is_ascii_alphabetic())
+        && inner.split(|c: char| !c.is_ascii_alphabetic()).all(|w| w.is_empty() || w == "deg" || w == "e")
+
+}
+
 /// One scheme's worth of colour, named for the app's own tokens.
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 pub struct ReportPalette {
@@ -118,7 +141,7 @@ impl ReportPalette {
         let d = if self.dark { Self::default_dark() } else { Self::default() };
         let or = |v: &str, fallback: &str| {
             let v = v.trim();
-            if v.is_empty() { fallback.to_string() } else { v.to_string() }
+            if v.is_empty() || !safe_color(v) { fallback.to_string() } else { v.to_string() }
         };
         Self {
             bg: or(&self.bg, &d.bg),
@@ -184,6 +207,14 @@ impl Default for PagePalette {
 }
 
 impl PagePalette {
+    /// The accent the app is wearing in each scheme, for the pages that take
+    /// only that from the palette (the Auto Run report): `(light, dark)`,
+    /// each `None` when blank or not a plain colour (`safe_color`).
+    pub fn accents(&self) -> (Option<String>, Option<String>) {
+        let pick = |v: &str| Some(v.trim().to_string()).filter(|v| !v.is_empty() && safe_color(v));
+        (pick(&self.light.accent), pick(&self.dark.accent))
+    }
+
     /// Which scheme the page starts in - also the value baked into the
     /// `<html>` tag, so there is no unstyled flash before the script runs.
     pub fn initial_scheme(&self) -> &'static str {

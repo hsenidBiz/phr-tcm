@@ -1,14 +1,29 @@
 //! The Auto Run report: one run as an HTML page opened in the browser.
-//! Everything from the run is escaped, the page carries no script, every
+//! Everything from the run is escaped, the page's only scripts are its own
+//! inline ones (the new views' tests are in `autorun_report_smart`), every
 //! case has its own section with every step, a failed case shows the step
 //! that stopped it, pictures are linked from the shots folder beside the
 //! reports folder (never embedded), a missing picture is a note rather than
 //! a failure, and a name that is not a screenshot is never linked.
 
-use v2_lib::autorun::report::{action_words, bucket, build, build_with_downloads, counts, scrub_urls, BUCKETS, CSP};
+use v2_lib::autorun::report::{action_words, bucket, build, build_with_downloads, counts, scrub_urls, BUCKETS};
 use v2_lib::autorun::store::{downloads_dir, save_run, save_script};
 use v2_lib::autorun::{CaseScript, LocalRun};
 use v2_lib::commands::autorun::{write_report_at, REPORT_RUN_GONE};
+
+/// Every `<script` in the page is one of the page's own: inline (no `src`),
+/// either its data blob or a plain script - and there are exactly the three
+/// it writes. Anything a case wrote that looked like a tag was escaped.
+pub fn only_the_pages_own_scripts(html: &str) {
+    let lower = html.to_lowercase();
+    let opens: Vec<usize> = lower.match_indices("<script").map(|(i, _)| i).collect();
+    assert_eq!(opens.len(), 3, "the page writes three scripts and nothing else may open one");
+    for i in opens {
+        let tag_end = lower[i..].find('>').map(|n| i + n).unwrap();
+        let tag = &lower[i..=tag_end];
+        assert!(tag == "<script>" || tag == "<script type=\"application/json\" id=\"report-data\">", "unexpected script tag {tag}");
+    }
+}
 
 struct TempDir(std::path::PathBuf);
 
@@ -128,9 +143,11 @@ fn counts_follow_the_confirmed_verdict_over_the_proposal() {
     assert_eq!(counts(&run), [1, 1, 1, 1]);
     let html = build(&run, &[], "2 Oct 2026, 09:30", &no_shots);
     assert!(html.contains("<td class=\"b-passed\">1</td><td class=\"b-failed\">1</td><td class=\"b-blocked\">1</td><td class=\"b-notrun\">1</td><td>4</td>"));
-    // The case table marks how each result was decided.
-    assert!(html.contains("<td class=\"b-blocked\">Blocked</td><td>Confirmed</td>"));
-    assert!(html.contains("<td class=\"b-failed\">Failed</td><td>Proposed</td>"));
+    // Each case's detail marks how its result was decided, and its status.
+    let blocked = article_of(&html, 202);
+    assert!(blocked.contains("data-status=\"blocked\"") && blocked.contains("Decided by: Confirmed"), "{blocked}");
+    let failed = article_of(&html, 201);
+    assert!(failed.contains("data-status=\"failed\"") && failed.contains("Decided by: Proposed"), "{failed}");
 }
 
 #[test]
@@ -141,7 +158,7 @@ fn every_value_is_escaped_and_the_page_carries_no_script() {
     run.environment = Some("<b>QA</b>".to_string());
     let html = build(&run, &[], "<script>when</script>", &no_shots);
 
-    assert!(!html.to_lowercase().contains("<script"), "the page must carry no script");
+    only_the_pages_own_scripts(&html);
     assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; &quot;quotes&quot;"));
     assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
     assert!(html.contains("&lt;b&gt;QA&lt;/b&gt;"));
@@ -152,8 +169,8 @@ fn every_value_is_escaped_and_the_page_carries_no_script() {
 fn the_header_says_when_how_where_and_whether_it_was_sent() {
     let mut run = run_of(SHOT);
     let html = build(&run, &[], "2 Oct 2026, 09:30", &no_shots);
-    assert!(html.contains("<h1>Auto Run report</h1>"));
-    assert!(html.contains("<dt>Ran</dt><dd>2 Oct 2026, 09:30</dd>"));
+    assert!(html.contains("<span class=\"topbar__brand\">Auto Run report</span>"));
+    assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">2 Oct 2026, 09:30</time></dd>"));
     assert!(html.contains("<dt>Mode</dt><dd>Unattended</dd>"));
     assert!(html.contains("<dt>Environment</dt><dd>QA</dd>"));
     assert!(html.contains("<dt>PBI</dt><dd>#42</dd>"));
@@ -169,7 +186,7 @@ fn the_header_says_when_how_where_and_whether_it_was_sent() {
     assert!(html.contains("<dt>Mode</dt><dd>Supervised</dd>"));
     assert!(!html.contains("<dt>Environment</dt>"));
     assert!(html.contains("Sent as test run #77 - <a href=\"https://dev.azure.com/acme/Web/_testManagement/runs?runId=77\">"));
-    assert!(html.contains(" UTC</dd>"));
+    assert!(html.contains(" UTC</time></dd>"));
 }
 
 #[test]
@@ -190,39 +207,35 @@ fn a_failed_case_shows_the_step_that_stopped_it_and_links_its_picture() {
         true
     });
 
-    assert!(html.contains("<dt>Stopped at</dt><dd>Step 2</dd>"));
-    assert!(html.contains("<dt>Action</dt><dd>click text=Save</dd>"));
-    assert!(html.contains("<dt>Message</dt><dd>button &quot;Save&quot; not found</dd>"));
+    assert!(html.contains("Stopped at</span> Step 2 \u{b7} click text=Save</p>"));
+    assert!(html.contains("<span class=\"error-text__head\">button &quot;Save&quot; not found</span>"));
     assert!(html.contains(&format!("src=\"../shots/{SHOT}\"")));
     // The Blocked case is listed too, decided by the person with no failed step.
     assert!(html.contains("No test user"));
     assert!(html.contains("decided by the person"));
-    // The account key and the script's area are in the case table.
-    assert!(html.contains("<td>tester1</td><td>Login page</td>"));
+    // The account key and the script's area are in the case's detail.
+    assert!(html.contains("<span>Login page</span>") && html.contains("as tester1</span>"));
 }
 
-/// The opening tag of the `<details>` section of one case.
-fn details_of(html: &str, case_id: i32) -> String {
-    let marker = format!("<span class=\"id\">#{case_id}</span>");
+/// One case's whole detail, from its opening tag to its close.
+pub fn article_of(html: &str, case_id: i32) -> &str {
     let at = html
-        .match_indices("<details")
-        .map(|(i, _)| i)
-        .find(|i| html[*i..].find("</summary>").is_some_and(|e| html[*i..*i + e].contains(&marker)))
-        .unwrap_or_else(|| panic!("no <details> section for case {case_id}"));
-    let end = html[at..].find('>').unwrap();
-    html[at..at + end + 1].to_string()
+        .find(&format!("<article class=\"dt detail\" id=\"case-{case_id}\""))
+        .unwrap_or_else(|| panic!("no detail for case {case_id}"));
+    let rest = &html[at..];
+    &rest[..rest.find("</article>").unwrap()]
 }
 
 #[test]
-fn every_case_has_a_details_section_open_for_failed_and_blocked_only() {
+fn every_case_has_a_detail_and_only_failed_and_blocked_print_in_full() {
     let html = build(&run_of(SHOT), &[script_201()], "x", &all_shots);
-    assert_eq!(html.matches("<details").count(), 4);
-    assert!(details_of(&html, 201).contains(" open"), "Failed opens");
-    assert!(details_of(&html, 202).contains(" open"), "Blocked opens");
-    assert!(!details_of(&html, 203).contains(" open"), "Not run stays closed");
-    assert!(!details_of(&html, 204).contains(" open"), "Passed stays closed");
+    assert_eq!(html.matches("<article class=\"dt detail\"").count(), 4);
+    assert!(article_of(&html, 201).contains("data-print=\"1\""), "Failed prints in full");
+    assert!(article_of(&html, 202).contains("data-print=\"1\""), "Blocked prints in full");
+    assert!(article_of(&html, 203).contains("data-print=\"0\""), "Not run does not");
+    assert!(article_of(&html, 204).contains("data-print=\"0\""), "Passed does not");
     // The page still needs no script for any of that.
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
 }
 
 #[test]
@@ -236,9 +249,9 @@ fn every_step_and_action_is_listed_marked_and_in_order() {
         .unwrap();
     assert!(signed < step1 && step1 < step2 && step2 < skipped);
     // The steps carry their labels.
-    assert!(html.contains("<h4>Sign in</h4>"));
-    assert!(html.contains("<h4>Step 1</h4>"));
-    assert!(html.contains("<h4>Step 2</h4>"));
+    assert!(html.contains("<span class=\"step__title\">Sign in</span>"));
+    assert!(html.contains("<span class=\"step__title\">Step 1</span>"));
+    assert!(html.contains("<span class=\"step__title\">Step 2</span>"));
     // A passed case's step is there too, inside its own closed section.
     assert!(html.contains("clicked button &quot;Log out&quot;"));
 }
@@ -256,7 +269,7 @@ fn the_page_embeds_nothing_and_a_picture_is_never_a_data_url() {
     let html = build(&run_of(SHOT), &[script_201()], "x", &all_shots);
     assert!(!html.contains("data:image"));
     assert!(!html.contains("base64"));
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
 }
 
 #[test]
@@ -283,7 +296,7 @@ fn a_missing_picture_is_noted_not_fatal() {
     let html = build(&run, &[script_201()], "x", &no_shots);
     assert!(html.contains(&format!("The picture {SHOT} was not found")));
     assert!(!html.contains("<img"));
-    assert!(html.contains("<dt>Stopped at</dt><dd>Step 2</dd>"));
+    assert!(html.contains("Stopped at</span> Step 2"));
     assert!(html.ends_with("</html>\n"));
 }
 
@@ -294,7 +307,7 @@ fn a_typed_value_never_reaches_the_report() {
     run.cases[0].steps[1].outcomes[0].ok = false;
     run.cases[0].steps[1].outcomes[0].detail = "textbox \"Email\" not found".to_string();
     let html = build(&run, &[script_201()], "x", &all_shots);
-    assert!(html.contains("<dt>Action</dt><dd>fill in #email</dd>"));
+    assert!(html.contains("\u{b7} fill in #email</p>"));
     assert!(!html.contains("hunter2-typed-secret"));
 }
 
@@ -315,15 +328,18 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
     let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     assert_eq!(path, root.join("reports").join("run-1786000200000.html"));
     let html = std::fs::read_to_string(&path).unwrap();
-    assert!(html.contains("<dd>click text=Save</dd>"));
+    assert!(html.contains("\u{b7} click text=Save</p>"));
     // The time the webview sent, as given - not UTC.
-    assert!(html.contains("<dt>Ran</dt><dd>2 Oct 2026, 09:30</dd>"));
-    assert!(!html.contains(" UTC"));
+    assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">2 Oct 2026, 09:30</time></dd>"));
+    // The header says the time as given; only the history's own times fall back to UTC (the
+    // page's script shows those in the reader's locale).
+    let top = &html[html.find("<header class=\"topbar\">").unwrap()..html.find("</header>").unwrap()];
+    assert!(top.contains("2 Oct 2026, 09:30") && !top.contains(" UTC"), "{top}");
     // The picture on disk is linked; the one that is not is a note.
     assert!(html.contains(&format!("src=\"../shots/{SHOT}\"")));
     assert!(html.contains(&format!("The picture {PASSED_SHOT} was not found")));
     assert!(!html.contains("data:image"));
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
     // Atomic: no temp file is left beside it.
     let leftovers: Vec<_> = std::fs::read_dir(root.join("reports"))
         .unwrap()
@@ -373,11 +389,45 @@ fn opening_says_so_for_a_run_that_is_gone_and_refuses_an_unsafe_id() {
     assert!(!dir.path().join("run-1.html").exists());
 }
 
+/// The text of every script the page runs (the data blob is not one).
+pub fn page_scripts(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = html;
+    while let Some(at) = rest.find("<script>") {
+        let body = &rest[at + "<script>".len()..];
+        let end = body.find("</script>").unwrap();
+        out.push(body[..end].to_string());
+        rest = &body[end..];
+    }
+    out
+}
+
+/// The Content-Security-Policy the page declares.
+pub fn page_csp(html: &str) -> String {
+    let open = "<meta http-equiv=\"Content-Security-Policy\" content=\"";
+    let at = html.find(open).expect("a policy") + open.len();
+    html[at..at + html[at..].find('"').unwrap()].to_string()
+}
+
 #[test]
-fn the_page_declares_a_policy_that_runs_nothing_and_loads_nothing() {
+fn the_policy_loads_nothing_and_names_the_pages_own_scripts_by_hash() {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
     let html = build(&run_of(SHOT), &[], "x", &no_shots);
-    assert_eq!(CSP, "default-src 'none'; img-src file:; style-src 'unsafe-inline'");
-    assert!(html.contains(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">")));
+    let csp = page_csp(&html);
+    for part in ["default-src 'none'", "img-src file:", "media-src file:", "style-src 'unsafe-inline'", "base-uri 'none'", "form-action 'none'"] {
+        assert!(csp.contains(part), "{part} in {csp}");
+    }
+    let script_src = csp.split("; ").find(|p| p.starts_with("script-src")).expect("a script-src");
+    assert!(!script_src.contains("'unsafe-inline'") && !script_src.contains("'unsafe-eval'"), "{script_src}");
+    let scripts = page_scripts(&html);
+    assert_eq!(scripts.len(), 2, "the head script and the page's own");
+    for body in &scripts {
+        let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(body.as_bytes()));
+        assert!(script_src.contains(&format!("'sha256-{hash}'")), "no hash for a script in {script_src}");
+    }
+    // A script that is not one of those is not covered: one hash per script, no more.
+    assert_eq!(script_src.matches("'sha256-").count(), 2);
 }
 
 #[test]
@@ -434,7 +484,7 @@ fn a_navigate_address_is_reported_without_its_query_string() {
     }))
     .unwrap();
     let html = build(&run, &[script], "x", &no_shots);
-    assert!(html.contains("<dd>go to https://app.example.test/login</dd>"));
+    assert!(html.contains("\u{b7} go to https://app.example.test/login</p>"));
     assert!(!html.contains("s3cr3t-value"));
 }
 
@@ -444,8 +494,8 @@ fn opening_escapes_the_time_it_is_given() {
     let root = seeded_root(&dir);
     let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "<script>x</script>").unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
-    assert!(html.contains("<dt>Ran</dt><dd>&lt;script&gt;x&lt;/script&gt;</dd>"));
-    assert!(!html.to_lowercase().contains("<script"));
+    assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">&lt;script&gt;x&lt;/script&gt;</time></dd>"));
+    only_the_pages_own_scripts(&html);
 }
 
 #[test]
@@ -457,7 +507,7 @@ fn an_address_in_a_recorded_sentence_loses_its_query_string_and_fragment() {
     run.cases[0].reason = "moved to file:///C:/a/b.html?k=s3cr3t3#top and stopped".to_string();
     let html = build(&run, &[], "x", &no_shots);
     assert!(html.contains("<li class=\"ok\">\u{2713} loaded https://x/y</li>"));
-    assert!(html.contains("<dd>url is http://h/p not the expected one</dd>"));
+    assert!(html.contains("<span class=\"error-text__head\">url is http://h/p not the expected one</span>"));
     assert!(html.contains("moved to file:///C:/a/b.html and stopped"));
     for secret in ["s3cr3t", "s3cr3t2", "s3cr3t3", "#frag", "#top"] {
         assert!(!html.contains(secret), "{secret} leaked into the page");
@@ -476,11 +526,9 @@ fn scrubbing_keeps_the_rest_of_the_sentence_and_every_address_in_it() {
     assert_eq!(scrub_urls(""), "");
 }
 
-/// One case's whole `<details>` section, from its summary to its close.
+/// One case's whole detail.
 fn section_of(html: &str, case_id: i32) -> &str {
-    let at = html.find(&format!("<span class=\"id\">#{case_id}</span>")).unwrap();
-    let rest = &html[at..];
-    &rest[..rest.find("</details>").unwrap()]
+    article_of(html, case_id)
 }
 
 /// Spec §6: a case that ran a second time after a transient failure says
@@ -492,7 +540,7 @@ fn a_retried_case_is_labelled_and_names_its_first_try() {
     run.cases[3].retried = Some("step 1: GET /hr/api/<x> answered 503, expected 200".into());
     let html = build(&run, &[script_201()], "x", &all_shots);
     let section = section_of(&html, 204);
-    assert!(section.contains("<span class=\"retried\">Retried</span></summary>"), "{section}");
+    assert!(section.contains("<span class=\"signal\">Retried</span>"), "{section}");
     assert!(
         section.contains("<p><strong>Retried:</strong> the first try failed: step 1: GET /hr/api/&lt;x&gt; answered 503, expected 200</p>"),
         "{section}"
@@ -613,7 +661,7 @@ fn a_report_of_a_component_step_lines_up() {
     .unwrap();
     let html = build_with_components(&run, &[component_script(7)], &pick_a_date_file(), "x", &no_shots, &|_| None);
     assert!(
-        html.contains(&format!("<dt>Action</dt><dd>Pick a date: {}</dd>", v2_lib::html_escape::esc_attr(&action_words(&typed[1])))),
+        html.contains(&format!("\u{b7} Pick a date: {}</p>", v2_lib::html_escape::esc_attr(&action_words(&typed[1])))),
         "{html}"
     );
     // Every outcome is listed, those the component ran named by it.
@@ -628,7 +676,7 @@ fn a_report_of_a_component_step_lines_up() {
     // changed script.
     let html = build_with_components(&run, &[component_script(7)], &ComponentFile::default(), "x", &no_shots, &|_| None);
     assert!(
-        html.contains("<dd>Pick a date: action 3 (the component on this machine has changed since the run)</dd>"),
+        html.contains("\u{b7} Pick a date: action 3 (the component on this machine has changed since the run)</p>"),
         "{html}"
     );
     assert!(!html.contains("script on this machine has changed"), "{html}");
@@ -657,7 +705,7 @@ fn the_report_reads_the_components_of_its_own_project() {
     )
     .unwrap();
     assert!(
-        html.contains(&format!("<dd>Pick a date: {}</dd>", v2_lib::html_escape::esc_attr(&action_words(&typed[1])))),
+        html.contains(&format!("\u{b7} Pick a date: {}</p>", v2_lib::html_escape::esc_attr(&action_words(&typed[1])))),
         "{html}"
     );
     assert!(!html.contains("has changed since the run"), "{html}");
@@ -667,7 +715,7 @@ fn the_report_reads_the_components_of_its_own_project() {
     let path = write_report_at(true, &root, "Other", "Project", "run-1786000200000", "x").unwrap();
     let html = std::fs::read_to_string(path).unwrap();
     assert!(
-        html.contains("<dd>Pick a date: action 3 (the component on this machine has changed since the run)</dd>"),
+        html.contains("\u{b7} Pick a date: action 3 (the component on this machine has changed since the run)</p>"),
         "{html}"
     );
 }
@@ -712,9 +760,9 @@ fn a_clean_up_is_its_own_block_and_its_failure_its_own_line() {
     }))
     .unwrap();
     let html = build(&run, &[], "", &|_| false);
-    assert!(html.contains("<h4>Clean-up</h4>"), "{html}");
+    assert!(html.contains("<span class=\"step__title\">Clean-up</span>"), "{html}");
     assert!(html.contains("<p><strong>Clean-up:</strong> button &quot;Delete&quot; not found</p>"), "{html}");
-    assert!(!html.contains("<h4>Step 2</h4>"), "{html}");
+    assert!(!html.contains("<span class=\"step__title\">Step 2</span>"), "{html}");
 }
 
 
@@ -809,12 +857,9 @@ fn a_forced_click_that_expects_nothing_has_words() {
     );
 }
 
-/// A case's whole details block, summary to close.
+/// A case's whole detail.
 fn product_section_of(html: &str, case_id: i32) -> String {
-    let marker = format!("<span class=\"id\">#{case_id}</span>");
-    let at = html.find(&marker).unwrap_or_else(|| panic!("no section for case {case_id}"));
-    let end = html[at..].find("</details>").unwrap();
-    html[at..at + end].to_string()
+    article_of(html, case_id).to_string()
 }
 
 fn with_bugs(run: &mut LocalRun, bugs: &[(i32, &[&str])]) {
@@ -1019,8 +1064,7 @@ fn two_entries() -> serde_json::Value {
 fn a_passed_case_with_unchecked_entries_says_how_many() {
     let run = run_with(&[(301, "Passed")]);
     let html = build(&run, &[script_with_unchecked(301, two_entries())], "x", &no_shots);
-    assert!(html.contains("<td class=\"b-passed\">Passed, 2 expectations unchecked</td>"), "{html}");
-    assert!(html.contains("<span class=\"b-passed\">Passed, 2 expectations unchecked</span>"), "{html}");
+    assert!(html.contains("<span class=\"tone-pass\">Passed, 2 expectations unchecked</span>"), "{html}");
     assert!(html.contains("<p><strong>Unchecked:</strong> step 1: no lock icon - no check reads an icon</p>"), "{html}");
     assert!(
         html.contains("<p><strong>Unchecked:</strong> step 1: no denied message - no check reads words (stand-in: expect_hidden)</p>"),
@@ -1032,8 +1076,7 @@ fn a_passed_case_with_unchecked_entries_says_how_many() {
 fn a_failed_case_shows_its_unchecked_items_but_no_count() {
     let run = run_with(&[(302, "Failed")]);
     let html = build(&run, &[script_with_unchecked(302, two_entries())], "x", &no_shots);
-    assert!(html.contains("<td class=\"b-failed\">Failed</td>"), "{html}");
-    assert!(html.contains("<span class=\"b-failed\">Failed</span>"), "{html}");
+    assert!(html.contains("<span class=\"tone-fail\">Failed</span>"), "{html}");
     assert!(!html.contains("Failed, "), "{html}");
     assert_eq!(html.matches("<p><strong>Unchecked:</strong>").count(), 2, "{html}");
     assert!(!html.contains("class=\"unchecked\""), "{html}");
@@ -1059,7 +1102,7 @@ fn a_run_with_none_unchecked_reads_as_before() {
     let run = run_with(&[(307, "Passed"), (308, "Failed")]);
     let html = build(&run, &[script_with_unchecked(307, serde_json::Value::Null), script_with_unchecked(308, serde_json::Value::Null)], "x", &no_shots);
     assert!(!html.to_lowercase().contains("unchecked"), "{html}");
-    assert!(html.contains("<td class=\"b-passed\">Passed</td>"), "{html}");
+    assert!(html.contains("<span class=\"tone-pass\">Passed</span>"), "{html}");
 }
 
 #[test]
@@ -1122,7 +1165,8 @@ fn a_flaky_marked_failure_is_counted_as_flaky_and_keeps_its_details() {
     // Not marked: as before - one failed, no Flaky column.
     let plain = build(&run, &[script_201()], "", &no_shots);
     assert_eq!(flaky_count(&run, &[script_201()]), 0);
-    assert!(!plain.contains("<th>Flaky</th>") && !plain.contains("class=\"flaky\""), "{plain}");
+    let summary = |h: &str| h[h.find("<table class=\"summary\">").unwrap()..].split("</table>").next().unwrap().to_string();
+    assert!(!summary(&plain).contains("<th>Flaky</th>") && !plain.contains("data-status=\"flaky\""), "{plain}");
     assert!(plain.contains("<td class=\"b-failed\">1</td>"), "{plain}");
 
     // Marked: the Failed column drops to 0 and the Flaky column holds the case.
@@ -1133,9 +1177,10 @@ fn a_flaky_marked_failure_is_counted_as_flaky_and_keeps_its_details() {
     assert!(html.contains("<td class=\"b-flaky\">1</td>"), "{html}");
     assert!(html.contains("<td>4</td></tr></tbody></table>"), "the total is every case: {html}");
     assert!(html.contains("marked as flaky, so it is not counted as failed above"), "{html}");
-    // The case still reads Failed, flagged, open, with its raw failure.
-    assert!(html.contains("<td class=\"b-failed\">Failed <span class=\"flaky\""), "{html}");
-    assert!(html.contains("<details class=\"case\" open><summary><span class=\"id\">#201</span>"), "{html}");
+    // The case still reads Failed, flagged, printed in full, with its raw failure.
+    let detail = article_of(&html, 201);
+    assert!(detail.contains("<span class=\"tone-flaky\">Failed</span>"), "{detail}");
+    assert!(detail.contains("<span class=\"signal\">Flaky</span>") && detail.contains("data-print=\"1\""), "{detail}");
     assert!(html.contains("button &quot;Save&quot; not found"), "{html}");
     // Only a failure is flaky: a mark on a passing case changes nothing.
     let mut mark_204: CaseScript =

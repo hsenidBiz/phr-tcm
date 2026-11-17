@@ -3839,6 +3839,20 @@ pub fn write_report_at(
     run_id: &str,
     ran_at: &str,
 ) -> Result<std::path::PathBuf, String> {
+    write_report_themed(offered, root, organization, project, run_id, ran_at, &crate::webtheme::PagePalette::default())
+}
+
+/// [`write_report_at`], in the app's own colours (`palette`). The report
+/// also reads the environment's recent runs for its trends and history.
+pub fn write_report_themed(
+    offered: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    run_id: &str,
+    ran_at: &str,
+    palette: &crate::webtheme::PagePalette,
+) -> Result<std::path::PathBuf, String> {
     crate::modules::require(crate::modules::Module::AutoRun, offered)?;
     if !safe_run_id(run_id) {
         return Err(format!("run id {run_id:?} is not a safe filename"));
@@ -3854,7 +3868,9 @@ pub fn write_report_at(
     // their component only.
     let components = crate::autorun::components::load_components(root, organization, project).unwrap_or_default();
     let divergences = crate::autorun::divergences::load(root, organization, project).unwrap_or_default();
-    let html = crate::autorun::report::build_with_extras(
+    let all_runs = store::list_runs(root);
+    let flaky_marked = store::flaky_marked(root);
+    let html = crate::autorun::report::build_smart(
         &run,
         &scripts,
         &components,
@@ -3862,6 +3878,8 @@ pub fn write_report_at(
         &|name| store::shot_exists(root, name),
         &|name| store::download_size(root, run_id, name),
         &crate::autorun::report::ReportExtras { divergences: &divergences },
+        &crate::autorun::report::TrendInput { runs: &all_runs, flaky_marked: &flaky_marked },
+        palette,
     );
     let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));
@@ -3898,10 +3916,13 @@ pub async fn auto_run_open_report(
     project: String,
     run_id: String,
     ran_at: String,
+    palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
     let offered = crate::modules::on(crate::modules::Module::AutoRun);
     let root = root(&app)?;
-    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &organization, &project, &run_id, &ran_at))
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        write_report_themed(offered, &root, &organization, &project, &run_id, &ran_at, &palette)
+    })
         .await
         .map_err(|e| {
             crate::applog::warn(format!("auto run report: the writer stopped: {e}"));

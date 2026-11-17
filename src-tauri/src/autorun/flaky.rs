@@ -68,7 +68,13 @@ pub fn flaky_cases(runs: &[LocalRun], window: usize) -> Vec<FlakyCase> {
 /// Such a case's `last_failed_at` is its newest failure, else its newest judged run, else its newest run.
 /// Each case's `marked` is filled in from `marked`.
 pub fn flaky_cases_with_marks(runs: &[LocalRun], window: usize, marked: &[i32]) -> Vec<FlakyCase> {
-    let mut newest_first: Vec<&LocalRun> = runs.iter().collect();
+    flaky_cases_of(&runs.iter().collect::<Vec<_>>(), window, marked)
+}
+
+/// [`flaky_cases_with_marks`] over runs the caller already holds by reference (the run report reads a
+/// window of runs and must not copy them).
+pub fn flaky_cases_of(runs: &[&LocalRun], window: usize, marked: &[i32]) -> Vec<FlakyCase> {
+    let mut newest_first: Vec<&LocalRun> = runs.to_vec();
     newest_first.sort_by(|a, b| started(b).cmp(&started(a)).then_with(|| b.started_at.cmp(&a.started_at)));
 
     // (environment, case id) in first-seen order, which is newest-first.
