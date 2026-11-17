@@ -74,6 +74,9 @@ type ScriptEditorProps = {
    * save that names none. */
   org: string;
   project: string;
+  /** Simple mode: the script is shown as text, with nothing to change, save
+   * or copy. */
+  readOnly?: boolean;
   onClose: () => void;
 };
 
@@ -83,6 +86,7 @@ function ScriptEditorBody({
   steps,
   org,
   project,
+  readOnly = false,
   onClose,
   onPulled,
 }: ScriptEditorProps & { onPulled: () => void }) {
@@ -320,6 +324,16 @@ function ScriptEditorBody({
         </div>
 
         <div className="space-y-2 lg:min-h-0 lg:overflow-y-auto">
+          {readOnly ? (
+            <p className="text-xs text-muted">
+              Runs as{" "}
+              <span className="text-text">
+                {account === ""
+                  ? "No sign-in"
+                  : `${(accounts.data ?? []).find((a) => a.key === account)?.label.trim() || account} (${account})`}
+              </span>
+            </p>
+          ) : (
           <label className="block text-xs text-muted">
             Runs as
             <Select
@@ -339,7 +353,13 @@ function ScriptEditorBody({
               )}
             </Select>
           </label>
+          )}
 
+          {readOnly ? (
+            <p className="text-xs text-muted">
+              Area <span className="text-text">{area === "" ? "the case's Module" : area}</span>
+            </p>
+          ) : (
           <label className="block text-xs text-muted">
             Area
             <Select
@@ -357,15 +377,22 @@ function ScriptEditorBody({
               {area !== "" && !areaKnown && <option value={area}>{`${area} (not recorded)`}</option>}
             </Select>
           </label>
+          )}
 
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-            <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
-            Must not save
-          </label>
-          <p className="text-xs text-faint">
-            For a case that works on a shared draft: while it runs, any save the page tries to send
-            is stopped before it reaches the server, and the case fails.
-          </p>
+          {readOnly ? (
+            noSave && <p className="text-xs text-muted">Must not save: a save the page tries to send is stopped.</p>
+          ) : (
+            <>
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
+                Must not save
+              </label>
+              <p className="text-xs text-faint">
+                For a case that works on a shared draft: while it runs, any save the page tries to send
+                is stopped before it reaches the server, and the case fails.
+              </p>
+            </>
+          )}
 
           {existing.data && (existing.data.repairs ?? 0) > 0 && (
             <p className="text-xs text-warning">
@@ -393,16 +420,18 @@ function ScriptEditorBody({
                           <span className="block text-faint">Changed again later - put back the newer change first.</span>
                         )}
                       </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`${label}: precondition change ${i + 1}`}
-                        disabled={done || changedLater}
-                        onClick={() => setPutBack((b) => [...b, i])}
-                      >
-                        <IconUndo aria-hidden />
-                        {label}
-                      </Button>
+                      {!readOnly && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`${label}: precondition change ${i + 1}`}
+                          disabled={done || changedLater}
+                          onClick={() => setPutBack((b) => [...b, i])}
+                        >
+                          <IconUndo aria-hidden />
+                          {label}
+                        </Button>
+                      )}
                     </li>
                   );
                 })}
@@ -410,7 +439,7 @@ function ScriptEditorBody({
             </div>
           )}
 
-          {editing ? (
+          {editing && !readOnly ? (
             <div ref={jsonView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script JSON</span>
@@ -431,18 +460,20 @@ function ScriptEditorBody({
             <div ref={readableView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className={HEADER_BUTTON}
-                  onClick={() => {
-                    setProblem("");
-                    swapTo(true);
-                  }}
-                >
-                  <IconEdit aria-hidden />
-                  Edit script
-                </Button>
+                {!readOnly && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={HEADER_BUTTON}
+                    onClick={() => {
+                      setProblem("");
+                      swapTo(true);
+                    }}
+                  >
+                    <IconEdit aria-hidden />
+                    Edit script
+                  </Button>
+                )}
               </div>
               <ReadableScript script={scriptForChecks} loading={existing.isLoading} steps={steps} org={org} />
             </div>
@@ -473,16 +504,18 @@ function ScriptEditorBody({
               label="Changes"
               noun="change"
               names={changes}
+              readOnly={readOnly}
               onChange={setPickedChanges}
             />
             <MarkRow
               label="Needs unchanged"
               noun="needs unchanged"
               names={needsUnchanged}
+              readOnly={readOnly}
               onChange={setPickedNeeds}
             />
           </div>
-          <SettingRow settings={needsState} onChange={setPickedState} />
+          <SettingRow settings={needsState} readOnly={readOnly} onChange={setPickedState} />
 
           <SetupSection org={org} project={project} caseId={caseId} />
 
@@ -493,15 +526,17 @@ function ScriptEditorBody({
                 {needsRecords.map((n) => (
                   <li key={`${n.setup}|${n.why}`} className="flex items-center justify-between gap-2">
                     <span className="min-w-0 break-words text-text">{`${n.setup}: ${n.why}`}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Remove needed record ${n.setup}`}
-                      onClick={() => setRemovedNeeds((r) => [...r, n])}
-                    >
-                      <IconRemove aria-hidden />
-                      Remove
-                    </Button>
+                    {!readOnly && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Remove needed record ${n.setup}`}
+                        onClick={() => setRemovedNeeds((r) => [...r, n])}
+                      >
+                        <IconRemove aria-hidden />
+                        Remove
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -515,15 +550,17 @@ function ScriptEditorBody({
                 {preconditions.map(({ p, n }) => (
                   <li key={n} className="flex items-center justify-between gap-2">
                     <span className="id-mono min-w-0 break-words text-text">{preconditionText(p)}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Remove precondition ${n}`}
-                      onClick={() => setRemovedPre((r) => [...r, p])}
-                    >
-                      <IconRemove aria-hidden />
-                      Remove
-                    </Button>
+                    {!readOnly && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Remove precondition ${n}`}
+                        onClick={() => setRemovedPre((r) => [...r, p])}
+                      >
+                        <IconRemove aria-hidden />
+                        Remove
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -539,6 +576,15 @@ function ScriptEditorBody({
       )}
       {problem && <p className="text-xs text-danger">{problem}</p>}
 
+      {readOnly ? (
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <p className="text-xs text-muted">Switch to Advanced to edit.</p>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <IconCancel aria-hidden />
+            Close
+          </Button>
+        </div>
+      ) : (
       <div className="flex flex-wrap justify-end gap-2">
         {hasOthers && (
           <div className="mr-auto flex flex-wrap gap-2">
@@ -569,6 +615,7 @@ function ScriptEditorBody({
           Save script
         </Button>
       </div>
+      )}
       {copying && (
         <CopyCaseDialog
           caseId={caseId}
@@ -741,9 +788,11 @@ function markKey(name: string): string {
  * value. The run pauses between batches to change them. */
 function SettingRow({
   settings,
+  readOnly = false,
   onChange,
 }: {
   settings: [string, string][];
+  readOnly?: boolean;
   onChange: (settings: [string, string][]) => void;
 }) {
   const label = "Needs these settings";
@@ -763,6 +812,7 @@ function SettingRow({
       add();
     }
   };
+  if (readOnly && settings.length === 0) return null;
   return (
     <div className="space-y-1">
       <span className="text-xs font-medium text-muted">{label}</span>
@@ -771,19 +821,24 @@ function SettingRow({
           {settings.map(([k, v], i) => (
             <li key={`${i}-${k}`} className="flex items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text">
               {k}: {v}
-              <Button
-                size="sm"
-                variant="ghost"
-                className="px-1.5 py-0.5"
-                aria-label={`Remove setting ${k}`}
-                onClick={() => onChange(settings.filter((_, j) => j !== i))}
-              >
-                <IconRemove aria-hidden />
-              </Button>
+              {readOnly ? (
+                <span className="pr-2" />
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="px-1.5 py-0.5"
+                  aria-label={`Remove setting ${k}`}
+                  onClick={() => onChange(settings.filter((_, j) => j !== i))}
+                >
+                  <IconRemove aria-hidden />
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       )}
+      {!readOnly && (
       <div className="flex items-center gap-2">
         <Input
           aria-label="Setting"
@@ -806,6 +861,7 @@ function SettingRow({
           Add
         </Button>
       </div>
+      )}
     </div>
   );
 }
@@ -817,11 +873,13 @@ function MarkRow({
   label,
   noun,
   names,
+  readOnly = false,
   onChange,
 }: {
   label: string;
   noun: string;
   names: string[];
+  readOnly?: boolean;
   onChange: (names: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -831,6 +889,7 @@ function MarkRow({
     if (!name || names.some((n) => markKey(n) === markKey(name))) return;
     onChange([...names, name]);
   };
+  if (readOnly && names.length === 0) return null;
   return (
     <div className="space-y-1">
       <span className="text-xs font-medium text-muted">{label}</span>
@@ -842,19 +901,24 @@ function MarkRow({
               className="flex items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text"
             >
               {name}
-              <Button
-                size="sm"
-                variant="ghost"
-                className="px-1.5 py-0.5"
-                aria-label={`Remove ${noun} ${name}`}
-                onClick={() => onChange(names.filter((_, j) => j !== i))}
-              >
-                <IconRemove aria-hidden />
-              </Button>
+              {readOnly ? (
+                <span className="pr-2" />
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="px-1.5 py-0.5"
+                  aria-label={`Remove ${noun} ${name}`}
+                  onClick={() => onChange(names.filter((_, j) => j !== i))}
+                >
+                  <IconRemove aria-hidden />
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       )}
+      {!readOnly && (
       <div className="flex items-center gap-2">
         <Input
           aria-label={`Add to ${label}`}
@@ -873,6 +937,7 @@ function MarkRow({
           Add
         </Button>
       </div>
+      )}
     </div>
   );
 }

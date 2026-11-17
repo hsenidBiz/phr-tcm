@@ -678,3 +678,20 @@ test("a run that could record shows no such line", async () => {
   await screen.findByRole("listitem", { name: "Run of Valid login" });
   expect(screen.queryByText(/Video was not recorded/)).not.toBeInTheDocument();
 });
+
+test("Simple hides Replay to step in Past runs; Review stays", async () => {
+  renderPastRuns([FAILED_AT_2], 42, (cmd) => (cmd === "get_app_settings" ? { autorun_mode: "simple" } : null));
+  const failed = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  await waitFor(() => expect(within(failed).queryByRole("button", { name: /Replay/ })).toBeNull());
+  expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument();
+});
+
+test("Advanced keeps Replay to step in Past runs", async () => {
+  renderPastRuns([FAILED_AT_2], 42, (cmd) => (cmd === "get_app_settings" ? { autorun_mode: "advanced" } : null));
+  expect(await screen.findByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});
+
+test("a mode that never answers keeps Replay to step in Past runs", async () => {
+  renderPastRuns([FAILED_AT_2], 42, (cmd) => (cmd === "get_app_settings" ? new Promise(() => {}) : null));
+  expect(await screen.findByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});

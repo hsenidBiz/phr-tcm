@@ -1151,3 +1151,70 @@ test("the readable script shows a when_hidden and the guard inside it, each unde
   expect(one).toHaveTextContent('Click the "Yes" button');
   expect(one).toHaveTextContent('Click the "Apply template" button');
 });
+
+// Simple mode opens the script to read, never to change.
+test("read-only: the script shows as text with nothing to edit, save or copy", async () => {
+  setActiveEnvId("env-00000001");
+  const env = (n: number) => ({
+    id: `env-0000000${n}`, name: `Env ${n}`, start_url: "", allowed_origins: [], db_id: "d",
+    test_environment: false, test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false,
+  });
+  mockIPC((cmd) => {
+    if (cmd === "env_list") return { active: "env-00000001", environments: [env(1), env(2)] };
+    if (cmd === "auto_run_load_script")
+      return {
+        case_id: 7,
+        title: "t",
+        steps: ONE_STEP,
+        account: "hr.admin",
+        area: "Cycle Setup",
+        no_save: true,
+        changes: ["cycle published"],
+        needs_state: { mode: "on" },
+        needs_records: [{ setup: "a-fixture", why: "needs a row" }],
+        preconditions: TWO_PRECONDITIONS,
+        precondition_repairs: [{ op: "remove", before: TWO_PRECONDITIONS[0], reason: "step 1 publishes it" }],
+      };
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    return null;
+  });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" readOnly onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("HR Admin (hr.admin)");
+  expect(screen.getByText("Cycle Setup")).toBeInTheDocument();
+  expect(screen.getByText("cycle published")).toBeInTheDocument();
+  await screen.findByRole("list", { name: "Preconditions" });
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  for (const name of [
+    /Edit script/,
+    /Copy case/,
+    /Copy to environment/,
+    /Copy from environment/,
+    /Save script/,
+    /Put back/,
+    /^Remove/,
+    /^Add/,
+    /Cancel/,
+  ]) {
+    expect(screen.queryByRole("button", { name })).toBeNull();
+  }
+  expect(screen.getByText("Switch to Advanced to edit.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  localStorage.clear();
+});
+
+test("not read-only: the editing controls are there as before", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, preconditions: TWO_PRECONDITIONS }, ACCOUNTS, []);
+  expect(await screen.findByRole("button", { name: "Edit script" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save script" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Must not save" })).toBeInTheDocument();
+  expect(screen.queryByText("Switch to Advanced to edit.")).toBeNull();
+});

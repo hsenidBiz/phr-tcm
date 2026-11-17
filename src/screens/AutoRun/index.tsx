@@ -341,6 +341,8 @@ export default function AutoRun({
    * or the assistant's discovery holding the browser. Said in the title. */
   const runBlocked = runBlockedReason(background, discovering);
   const { mode, setMode, loading: modeLoading } = useAutoRunMode();
+  /** Simple leaves out the authoring actions; until the mode is known the screen is Advanced. */
+  const simple = !modeLoading && mode === "simple";
   /** The plan the supervised pane pauses by at each reset point. */
   const [runPlan, setRunPlan] = useState<PlanView | null>(null);
   /** An unattended run paused at a reset point that the store does not
@@ -988,12 +990,17 @@ export default function AutoRun({
                     <MoreActionsMenu
                       label="More"
                       actions={[
-                        {
-                          label: "Import scripts",
-                          description: "One JSON file can carry every case in this PBI.",
-                          disabled: importScripts.isPending,
-                          onSelect: () => importScripts.mutate(),
-                        },
+                        // Authoring actions: Advanced only, and shown while the mode loads.
+                        ...(simple
+                          ? []
+                          : [
+                              {
+                                label: "Import scripts",
+                                description: "One JSON file can carry every case in this PBI.",
+                                disabled: importScripts.isPending,
+                                onSelect: () => importScripts.mutate(),
+                              },
+                            ]),
                         {
                           label: "Execution order",
                           description: "The order Auto Run uses for this PBI, and where the shared state is put back.",
@@ -1016,12 +1023,16 @@ export default function AutoRun({
                               },
                             ]
                           : []),
-                        {
-                          label: "Clear scripts",
-                          danger: true,
-                          disabled: !rows.some((_, i) => hasScript(i)),
-                          onSelect: () => setClearScriptsOpen(true),
-                        },
+                        ...(simple
+                          ? []
+                          : [
+                              {
+                                label: "Clear scripts",
+                                danger: true,
+                                disabled: !rows.some((_, i) => hasScript(i)),
+                                onSelect: () => setClearScriptsOpen(true),
+                              },
+                            ]),
                       ]}
                     />
                   </span>
@@ -1249,6 +1260,7 @@ export default function AutoRun({
               steps={c.steps}
               org={org}
               project={project}
+              readOnly={simple}
               onClose={() => setEditing(null)}
             />
           );

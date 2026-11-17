@@ -1290,3 +1290,21 @@ test("a failed case's kept video shows Play and Download, and Raise bug offers i
   await waitFor(() => expect(calls.some((c) => c.cmd === "attach_case_video")).toBe(true));
   expect(calls.find((c) => c.cmd === "attach_case_video")?.args).toMatchObject({ bugId: 778, video: VIDEO });
 });
+
+test("Simple hides Replay to step in the run review", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), extra: (cmd) => (cmd === "get_app_settings" ? { autorun_mode: "simple" } : null) });
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  await waitFor(() => expect(within(failed).queryByRole("button", { name: /Replay/ })).toBeNull());
+});
+
+test("Advanced keeps Replay to step in the run review", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), extra: (cmd) => (cmd === "get_app_settings" ? { autorun_mode: "advanced" } : null) });
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(failed).getByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});
+
+test("a mode that never answers shows Replay to step in the run review", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), extra: (cmd) => (cmd === "get_app_settings" ? new Promise(() => {}) : null) });
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(failed).getByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});
