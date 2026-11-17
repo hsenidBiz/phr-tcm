@@ -1126,6 +1126,15 @@ If TCM has none, find it with `search_pbis`, or ask the person for the id. You c
 selection. Only the assistant the person talks to asks: a subagent never asks about the PBI, it uses
 the PBI id it was given.
 
+## Simple mode
+
+The status answer's `autorun_mode` says whether the person has Auto Run's Simple or Advanced
+screen. You can read it; you cannot change it. The person may be in Simple mode: do not send them
+to Discovery, Components, Fixtures or the sign-in recipe; offer to do it, or ask them to switch to
+Advanced. Simple also hides Replay to step, Import scripts and Clear scripts, and shows a script
+read-only. A person in Simple mode still sees what stops a run, so say what you did about it in
+plain words.
+
 ## Who the case runs as
 
 Never put a username or a password in a script. Logins belong to the

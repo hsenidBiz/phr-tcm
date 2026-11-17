@@ -111,6 +111,17 @@ fn the_guide_teaches_locators_and_forbids_pauses() {
     }
 }
 
+#[test]
+fn the_guide_tells_assistants_what_simple_mode_hides() {
+    let g = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(g.contains("## Simple mode"), "the guide needs its Simple mode section");
+    assert!(
+        g.contains("do not send them to Discovery, Components, Fixtures or the sign-in recipe"),
+        "an assistant must not send a Simple person to a hidden control"
+    );
+    assert!(g.contains("autorun_mode"), "the guide names the field an assistant reads");
+}
+
 /// The two API checks have limits an assistant cannot guess: what each one
 /// can look at, what it assumes when a field is left out, and where its
 /// facts may come from. The guide must say all of it, and must send the

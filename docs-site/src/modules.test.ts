@@ -161,7 +161,10 @@ describe("the Modules section and the old switch", () => {
 
   test("no help text names the Advanced Features switch", () => {
     expect(text).not.toMatch(/advanced feature/i);
-    expect(text).not.toMatch(/\badvanced\b/i);
+    // Auto Run's Simple/Advanced screen mode is named in its own section and
+    // nowhere else; the old switch's word stays out of every other screen.
+    const elsewhere = JSON.stringify({ screens: screens.filter((s) => s.id !== "auto-run"), recipes, intro });
+    expect(elsewhere).not.toMatch(/\badvanced\b/i);
   });
 
   test("Settings documents the Modules page with the app's own wording", () => {

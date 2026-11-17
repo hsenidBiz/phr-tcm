@@ -17,6 +17,7 @@ import { networkToolsSnapshot, subscribeNetworkTools } from "../lib/networkTools
 import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "../lib/writingStyle";
 import { subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
 import { useFieldRefs } from "../hooks/useFieldRefs";
+import { useAutoRunMode } from "../screens/AutoRun/useAutoRunMode";
 
 type Args = {
   signedIn: boolean;
@@ -70,6 +71,11 @@ export function useBridgeContextSync({
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
   // Whether an assistant gets the network tools - pushed the same way.
   const networkTools = useSyncExternalStore(subscribeNetworkTools, networkToolsSnapshot);
+  // Which Auto Run screen the person has, so an assistant does not send them
+  // to a control Simple hides. Read-only for the assistant; nothing is pushed
+  // until the settings have answered.
+  const { mode: autorunModeNow, loading: autorunModeLoading } = useAutoRunMode();
+  const autorunMode = autorunModeLoading ? null : autorunModeNow;
   // The switches above are the ACTIVE environment's, and every push
   // says which environment that is: Rust allows no write from a push for
   // any other one, so a push still on its way when the environment changes
@@ -153,6 +159,7 @@ export function useBridgeContextSync({
               networkTools,
               envId,
               allProjects,
+              autorunMode,
               // The PBI in the top bar, for the assistants' get_current_pbi.
               pbi: bridgePbiId == null ? null : { id: bridgePbiId, title: bridgePbiTitle, project: bridgePbiProject },
             },
@@ -184,6 +191,7 @@ export function useBridgeContextSync({
     devLogin,
     apiWrites,
     networkTools,
+    autorunMode,
     envId,
     bridgePbiId,
     bridgePbiTitle,

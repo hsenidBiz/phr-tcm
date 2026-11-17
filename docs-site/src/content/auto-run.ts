@@ -34,6 +34,7 @@ const TALL = { w: 1440, h: 1100 };
 const ACCOUNTS = "auto-run-accounts";
 const ACCOUNTS_PROPOSED = "auto-run-accounts-proposed";
 const ASSISTANTS = "auto-run-assistants";
+const MODE = "auto-run-mode";
 
 const NAV: Step = { nav: "Auto Run" };
 
@@ -80,6 +81,11 @@ export const autoRun: Screen = {
       id: CASES,
       route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
       alt: "Auto Run on its Test cases tab: the result filters, the search and its toolbar, the cases with their last results, two of them open, and the Setup panel beside them",
+    },
+    {
+      id: MODE,
+      route: [NAV, READY, { waitFor: { role: "group", name: "Auto Run mode" } }],
+      alt: "The top of Auto Run with the Simple and Advanced switch at the right, above the Assistants and the cases",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], size: TALL, alt: "Two scripted cases selected, with the buttons that run them" },
     {
@@ -163,6 +169,7 @@ export const autoRun: Screen = {
     },
   ],
   groups: [
+    { id: "mode", title: "Simple and Advanced", summary: "Which Auto Run screen you see: the everyday path, or every tool." },
     { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
     { id: "scripts", title: "Write a script", summary: "What the app does at each step of a case, and the rules the case runs under." },
     { id: "watch", title: "Run while you watch", summary: "The app does the steps; you see them happen and decide the result." },
@@ -172,6 +179,24 @@ export const autoRun: Screen = {
     { id: "assistants", title: "Assistants at work", summary: "Who is connected, which browser each one uses and what it is doing, with the buttons that stop it." },
   ],
   controls: [
+    // --- Mode ------------------------------------------------------------------
+    {
+      id: "mode-switch",
+      shot: MODE,
+      group: "mode",
+      locate: { role: "group", name: "Auto Run mode" },
+      name: "Simple and Advanced",
+      does:
+        "Chooses how much of Auto Run you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
+        "It hides the Discovery, Components and Fixtures rows of the Setup panel, the sign-in recipe tools, and the buttons **Replay to step**, **Import scripts** and **Clear scripts**; a script opens to read only, and says **Switch to Advanced to edit.** " +
+        "A script card shows one header line, with the steps Auto Run does itself marked **Done by Auto Run** and the assistant's notes folded away under **Assistant notes**. " +
+        "When a difference is found, Simple asks **The case and the app disagree at step N. Which is right?** " +
+        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going.",
+      tips: [
+        "If something Simple hides is what stops a run, Auto Run shows it anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
+        "An assistant can see which mode you are in but cannot change it. In Simple it offers to do the hidden work for you, or asks you to switch to Advanced.",
+      ],
+    },
     // --- Test cases ------------------------------------------------------------
     {
       id: "tab-cases",
@@ -983,6 +1008,14 @@ export const autoRun: Screen = {
     "When a step fails and the reason is not on the page, your assistant can inspect one element and, once you switch **Network tools** on, on the AI Bridge tab, look at the requests the page made and try a header or cookie of its own; passwords, tokens and session cookies are always hidden from it. Each environment keeps its own Network tools switch, off until you turn it on.",
   ],
   howTo: [
+    {
+      title: "Switch between Simple and Advanced",
+      steps: [
+        "At the top of Auto Run, press **Simple** or **Advanced**.",
+        "In Simple, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, import or clear scripts.",
+        "If a run is stopped by something Simple hides, it is shown with the note to ask the assistant or switch to Advanced.",
+      ],
+    },
     {
       title: "Turn Auto Run on",
       steps: [

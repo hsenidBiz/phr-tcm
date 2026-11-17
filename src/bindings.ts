@@ -3483,6 +3483,11 @@ export type BridgeSwitches = {
 	 */
 	allProjects?: boolean,
 	/**
+	 *  Auto Run's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+	 *  Not a switch: the assistants only read it.
+	 */
+	autorunMode?: AutorunMode | null,
+	/**
 	 *  The PBI selected in the top bar, or none (see
 	 *  `BridgeContext::current_pbi`). Not a switch: it rides here so
 	 *  `set_bridge_context` stays inside the ten arguments a specta command

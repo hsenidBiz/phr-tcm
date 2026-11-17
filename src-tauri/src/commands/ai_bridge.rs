@@ -219,6 +219,10 @@ pub struct BridgeSwitches {
     /// `BridgeContext::all_projects`). Not a write switch.
     #[serde(default)]
     pub all_projects: bool,
+    /// Auto Run's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+    /// Not a switch: the assistants only read it.
+    #[serde(default)]
+    pub autorun_mode: Option<crate::app_settings::AutorunMode>,
     /// The PBI selected in the top bar, or none (see
     /// `BridgeContext::current_pbi`). Not a switch: it rides here so
     /// `set_bridge_context` stays inside the ten arguments a specta command
@@ -424,6 +428,7 @@ fn push_context(
             api_writes: switches.api_writes,
             network_tools: switches.network_tools,
             all_projects: switches.all_projects,
+            autorun_mode: switches.autorun_mode,
             current_pbi: switches.pbi.clone(),
             // Set from the active environment, never from the webview.
             db_no_ask: false,

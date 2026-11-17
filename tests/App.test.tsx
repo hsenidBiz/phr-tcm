@@ -547,18 +547,18 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   );
   // No environment known in this test: the push says so, and Rust then
   // keeps every write off whatever the switches say.
-  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true, pbi: null });
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true, autorunMode: null, pbi: null });
 
   // The Network tools switch reaches the push as true too: dropping it from
   // the effect or the switches object would leave every assertion above
   // green and the tools off for good.
   act(() => saveNetworkTools(true));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "", allProjects: true, pbi: null }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "", allProjects: true, autorunMode: null, pbi: null }),
   );
   act(() => saveNetworkTools(false));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true, pbi: null }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true, autorunMode: null, pbi: null }),
   );
 });
 
@@ -594,14 +594,14 @@ test("the bridge context carries the active environment's switches and names it"
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id, allProjects: true, pbi: null }),
+    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id, allProjects: true, autorunMode: null, pbi: null }),
   );
 
   // At once, not after the pause a burst of edits waits for (400ms): Rust
   // holds every write off from the switch until this push arrives.
   act(() => setActiveEnvId(B.id));
   await vi.waitFor(
-    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id, allProjects: true, pbi: null }),
+    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id, allProjects: true, autorunMode: null, pbi: null }),
     { timeout: 300 },
   );
 });
