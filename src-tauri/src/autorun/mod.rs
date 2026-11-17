@@ -41,6 +41,7 @@ pub mod menu_setup;
 pub mod nav;
 pub mod needs_records;
 pub mod proven;
+pub mod recommended;
 pub mod roles;
 pub mod network;
 pub mod one_browser;

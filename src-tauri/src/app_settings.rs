@@ -18,6 +18,15 @@ use crate::browser::viewport::{PageSize, DEFAULT_PAGE};
 
 const FILE: &str = "app-settings.json";
 
+/// How much of Auto Run a person sees: Simple keeps to the everyday path,
+/// Advanced shows everything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AutorunMode {
+    Simple,
+    Advanced,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct AppSettings {
@@ -55,6 +64,14 @@ pub struct AppSettings {
     /// made while it is on, and a case that passes keeps none. A machine-wide
     /// choice like the highlight, read once when a run starts.
     pub autorun_failed_video: bool,
+    /// The failed-case video switch was set by a person (not left at its
+    /// default), so switching Auto Run on never overrides it.
+    pub autorun_failed_video_set: bool,
+    /// API Templates was switched on or off by a person, so switching Auto
+    /// Run on never overrides it.
+    pub api_templates_set: bool,
+    /// Simple or Advanced Auto Run; `None` until one is picked or settled.
+    pub autorun_mode: Option<AutorunMode>,
     /// The page every browser the app drives shows (`browser::viewport`).
     /// A missing, unreadable or out-of-range value reads as the default, and
     /// leaves the rest of the file alone.
@@ -73,6 +90,9 @@ impl Default for AppSettings {
             playwright_clone: String::new(),
             autorun_highlight: true,
             autorun_failed_video: false,
+            autorun_failed_video_set: false,
+            api_templates_set: false,
+            autorun_mode: None,
             page_size: DEFAULT_PAGE,
         }
     }

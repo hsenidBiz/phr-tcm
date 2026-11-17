@@ -54,7 +54,7 @@ test("no sidebar row carries an In Dev pill", () => {
 /// switched off - live, without a reload, because the rail subscribes to the
 /// modules. A fresh install (none on) shows neither.
 test("Auto Run, API Templates and Playwright follow their own modules, live", async () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: [], recommended: null } : null));
   render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
@@ -90,7 +90,7 @@ test("Auto Run, API Templates and Playwright follow their own modules, live", as
 /// Crystal Reports hangs off Core on its own: its row follows its module
 /// alone, and takes no Ctrl number so no other tab's moves.
 test("the Crystal Reports row follows its own module and takes no Ctrl number", () => {
-  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  mockIPC((cmd) => (cmd === "modules_set" ? { on: [], recommended: null } : null));
   render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.queryByRole("button", { name: "Crystal Reports" })).not.toBeInTheDocument();
 

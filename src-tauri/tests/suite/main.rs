@@ -66,6 +66,7 @@ mod audio;
 mod auth;
 mod autorun_accounts;
 mod autorun_api_checks;
+mod autorun_recommended;
 mod autorun_refusals;
 mod autorun_roles;
 mod autorun_slots;

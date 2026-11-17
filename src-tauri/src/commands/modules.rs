@@ -3,7 +3,17 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::app_settings::AppSettings;
+use crate::autorun::recommended::{self, Recommended};
 use crate::modules::{self, Module};
+
+/// The answer to a switch: every module now on, and - only when this call
+/// turned Auto Run from off to on - what that turned on besides.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ModulesAnswer {
+    pub on: Vec<Module>,
+    pub recommended: Option<Recommended>,
+}
 
 pub const AUTO_RUN_BUSY: &str = "Auto Run can't be switched off while a run is going - stop the run first.";
 pub const PLAYWRIGHT_BUSY: &str = "Playwright can't be switched off while a repo command is running - stop it first.";
@@ -42,7 +52,8 @@ fn in_order(on: &BTreeSet<Module>) -> Vec<Module> {
 /// files (and a PATH search), so they are written on a blocking thread.
 #[tauri::command]
 #[specta::specta]
-pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Result<Vec<Module>, String> {
+pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Result<ModulesAnswer, String> {
+    use tauri::Manager;
     modules::refuse_if_locked(module, on, crate::extras::unlocked())?;
     let before = modules::current();
     refuse_if_busy(
@@ -56,7 +67,14 @@ pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Res
     // The tree's own refusal ("needs ... first") is its sentence; only a
     // save that failed gets the generic one.
     modules::apply(&before, module, on)?;
-    let next = modules::set(module, on).map_err(save_failed)?;
+    // Read BEFORE the switch: switching Auto Run on may create its folder.
+    let used_before = app.path().app_data_dir().map(|d| recommended::auto_run_used_before(&d)).unwrap_or(true);
+    let mut next = modules::set(module, on).map_err(save_failed)?;
+    let rec = recommended_for(&before, module, on, used_before, &crate::app_settings::current());
+    if rec.as_ref().is_some_and(|r| r.api_templates) {
+        next = modules::set(Module::ApiTemplates, true).map_err(save_failed)?;
+    }
+    save_settings_after(module, rec.as_ref())?;
     // A module off takes its slash commands with it (`effective_disabled`);
     // re-sync from the bridge's last-known toggles so they vanish/appear now.
     if next != before {
@@ -65,7 +83,41 @@ pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Res
             crate::applog::warn(format!("re-syncing the AI tools' files after a module switch stopped early: {e}"));
         }
     }
-    Ok(in_order(&next))
+    Ok(ModulesAnswer { on: in_order(&next), recommended: rec })
+}
+
+/// `Some` only when this switch turned Auto Run from off to on.
+fn recommended_for(
+    before: &BTreeSet<Module>,
+    module: Module,
+    on: bool,
+    used_before: bool,
+    s: &AppSettings,
+) -> Option<Recommended> {
+    (module == Module::AutoRun && on && !before.contains(&Module::AutoRun))
+        .then(|| recommended::recommended_on_switch(used_before, s))
+}
+
+/// Save the settings once: the recommended video and mode, and the mark that
+/// a person switched API Templates themselves.
+fn save_settings_after(module: Module, rec: Option<&Recommended>) -> Result<(), String> {
+    let person_set_templates = module == Module::ApiTemplates;
+    if !person_set_templates && rec.is_none_or(|r| !r.video && !r.mode_simple) {
+        return Ok(());
+    }
+    crate::app_settings::update(|s| {
+        if person_set_templates {
+            s.api_templates_set = true;
+        }
+        if let Some(r) = rec {
+            recommended::apply_to_settings(r, s);
+        }
+    })
+    .map(|_| ())
+    .map_err(|e| {
+        crate::applog::warn(format!("saving the app settings after a module switch failed: {e}"));
+        SAVE_FAILED.to_string()
+    })
 }
 
 /// Re-sync the assistant's slash commands from the bridge's last-known
@@ -148,19 +200,46 @@ pub fn resync_agents_with(
 }
 
 /// The testable half: the busy refusals, then `modules::set_in` on a state and
-/// directory of the caller's own (so a test needs no process-wide lock).
+/// directory of the caller's own (so a test needs no process-wide lock), and
+/// the recommended features on `settings` (saved into `dir` when changed).
+#[allow(clippy::too_many_arguments)]
 pub fn modules_set_with(
     state: &mut BTreeSet<Module>,
+    settings: &mut AppSettings,
     dir: &Path,
     module: Module,
     on: bool,
     auto_run_busy: bool,
     browser_open: bool,
     playwright_busy: bool,
-) -> Result<Vec<Module>, String> {
+) -> Result<ModulesAnswer, String> {
     refuse_if_busy(state, module, on, auto_run_busy, browser_open, playwright_busy)?;
     modules::apply(state, module, on)?;
-    modules::set_in(state, dir, module, on).map(|n| in_order(&n)).map_err(save_failed)
+    // Read BEFORE the switch, as `modules_set` does.
+    let used_before = recommended::auto_run_used_before(dir);
+    let before = state.clone();
+    let mut next = modules::set_in(state, dir, module, on).map_err(save_failed)?;
+    let rec = recommended_for(&before, module, on, used_before, settings);
+    let mut changed = false;
+    if rec.as_ref().is_some_and(|r| r.api_templates) {
+        next = modules::set_in(state, dir, Module::ApiTemplates, true).map_err(save_failed)?;
+    }
+    if module == Module::ApiTemplates && !settings.api_templates_set {
+        settings.api_templates_set = true;
+        changed = true;
+    }
+    if let Some(r) = &rec {
+        let was = settings.clone();
+        recommended::apply_to_settings(r, settings);
+        changed |= *settings != was;
+    }
+    if changed {
+        crate::app_settings::save(dir, settings).map_err(|e| {
+            crate::applog::warn(format!("saving the app settings after a module switch failed: {e}"));
+            SAVE_FAILED.to_string()
+        })?;
+    }
+    Ok(ModulesAnswer { on: in_order(&next), recommended: rec })
 }
 
 /// Log the raw reason (it names a path) and answer with the sentence.

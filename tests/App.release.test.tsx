@@ -52,7 +52,7 @@ test("switching Auto Run off while API Templates is open lands on Manual Entry",
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "modules_get") return ["db_access", "auto_run", "api_templates"];
-    if (cmd === "modules_set") return ["db_access"];
+    if (cmd === "modules_set") return { on: ["db_access"], recommended: null };
     if (cmd === "api_templates_overview") return { origin: null, templates: [] };
     return undefined;
   });

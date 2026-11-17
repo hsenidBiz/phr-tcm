@@ -1106,7 +1106,7 @@ function applyPatches() {
     // The sample app has a Playwright repo set, so Auto Run never opens
     // the "Playwright is needed" dialog in it or in the docs shots.
     pwRulesStatus: async () => ({ clone_set: true, clone_gone: false }),
-    modulesSet: () => ok(DEMO_MODULES),
+    modulesSet: () => ok({ on: DEMO_MODULES, recommended: null }),
     // The extras switch reads locked whatever this machine holds, so the
     // sample app and the guide's shots never show the module held back
     // behind it.

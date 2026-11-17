@@ -113,7 +113,7 @@ export async function setModule(m: Module, next: boolean): Promise<void> {
   generation += 1;
   const r = await commands.modulesSet(m, next);
   if (r.status === "error") throw new Error(r.error);
-  publish(r.data);
+  publish(r.data.on);
   publishHydrated();
 }
 
