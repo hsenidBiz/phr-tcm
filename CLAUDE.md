@@ -142,6 +142,12 @@ before pushing anyway.
   different account signs in. `tests/lib/cache.test.ts` and
   `tests/suite/cache.rs` catch the common ways of adding a private cache - they
   are a tripwire, not proof.
+- **A development build has its own identity** (`src-tauri/src/dev_identity.rs`,
+  applied to the config in `run()`): identifier + `.dev` (every data folder, the
+  WebView2 profile, the single-instance lock), its own Credential Manager
+  targets, handshake file and Start with Windows value, `(dev)` on the window
+  title. A new place the app keeps data must either hang off the identifier or
+  go through that module; a release build's names never change.
 - **Icons** come from the shared vocabulary in `src/lib/actionIcons.ts`,
   named for what the button DOES, not what it looks like.
 - **User-facing errors name no URL.** `reqwest`'s `Display` is `error

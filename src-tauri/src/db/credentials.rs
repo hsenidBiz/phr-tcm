@@ -610,10 +610,19 @@ pub struct DbSecrets(pub Arc<dyn SecretStore>);
 /// the signed-in account, and it survives an uninstall-reinstall.
 pub struct CredentialManager;
 
+/// The name an entry is kept under in Windows Credential Manager: the one the
+/// callers use in a release build, the development build's own in a
+/// development build - so a development sign-in or database login never
+/// reads or replaces the installed app's (`dev_identity`).
+#[cfg(windows)]
+fn os_target(id: &str) -> String {
+    crate::dev_identity::credential_target(id, crate::ai_tools::dev_build())
+}
+
 #[cfg(windows)]
 impl SecretStore for CredentialManager {
     fn get(&self, id: &str) -> Result<Option<String>, String> {
-        match wincred::read(id) {
+        match wincred::read(&os_target(id)) {
             Ok(v) => Ok(v.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())),
             Err(code) => {
                 crate::applog::warn(format!("Credential Manager read failed (Win32 error {code})"));
@@ -622,22 +631,25 @@ impl SecretStore for CredentialManager {
         }
     }
     fn put(&self, id: &str, value: &str) -> Result<(), String> {
-        wincred::write(id, value.as_bytes()).map_err(|code| {
+        wincred::write(&os_target(id), value.as_bytes()).map_err(|code| {
             crate::applog::warn(format!("Credential Manager write failed (Win32 error {code})"));
             "Could not save the login in Windows Credential Manager.".to_string()
         })
     }
     fn remove(&self, id: &str) -> Result<(), String> {
-        wincred::delete(id).map_err(|code| {
+        wincred::delete(&os_target(id)).map_err(|code| {
             crate::applog::warn(format!("Credential Manager delete failed (Win32 error {code})"));
             "Could not remove the saved login.".to_string()
         })
     }
     fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
-        wincred::enumerate(prefix).map_err(|code| {
-            crate::applog::warn(format!("Credential Manager listing failed (Win32 error {code})"));
-            "Could not list the saved logins.".to_string()
-        })
+        let dev = crate::ai_tools::dev_build();
+        wincred::enumerate(&os_target(prefix))
+            .map(|found| found.iter().filter_map(|t| crate::dev_identity::store_name(t, dev)).collect())
+            .map_err(|code| {
+                crate::applog::warn(format!("Credential Manager listing failed (Win32 error {code})"));
+                "Could not list the saved logins.".to_string()
+            })
     }
 }
 

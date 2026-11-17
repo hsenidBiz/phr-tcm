@@ -195,6 +195,7 @@ mod db_sqlcmd;
 mod deletion;
 mod discovery_locators;
 mod draft_comments;
+mod dev_identity;
 mod draft_merge;
 mod environments;
 mod explore_send;

@@ -50,6 +50,12 @@ pub const AUTOSTART_ARGS: &[&str] = &["--hidden"];
 /// value the plugin wrote.
 pub const AUTOSTART_APP_NAME: &str = "Test Case Manager V2";
 
+/// The value name this build writes: `AUTOSTART_APP_NAME` in a release, the
+/// development build's own beside it (`dev_identity`).
+pub fn autostart_app_name() -> String {
+    crate::dev_identity::autostart_app_name(AUTOSTART_APP_NAME, crate::ai_tools::dev_build())
+}
+
 /// Where the autostart plugin (auto-launch 0.5) keeps the entry, under
 /// HKEY_CURRENT_USER: the command line in `Run`, and Task Manager's
 /// enabled/disabled flag in `StartupApproved\Run`.

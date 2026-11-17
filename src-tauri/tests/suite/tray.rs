@@ -50,7 +50,10 @@ fn the_uninstaller_removes_the_value_start_with_windows_writes() {
 
     // The plugin is told the same name the uninstall hook deletes.
     let lib = read("src/lib.rs");
-    assert!(lib.contains(".app_name(tray::AUTOSTART_APP_NAME)"), "the plugin writes AUTOSTART_APP_NAME");
+    // A release build writes AUTOSTART_APP_NAME itself; a development build's own
+    // name is a different value (suite/dev_identity.rs).
+    assert!(lib.contains(".app_name(tray::autostart_app_name())"), "the plugin writes the build's name");
+    assert!(v2_lib::tray::autostart_app_name().starts_with(AUTOSTART_APP_NAME));
     let tray = read("src/tray.rs");
     assert!(tray.contains("delete_value(AUTOSTART_APP_NAME)"), "the hook deletes AUTOSTART_APP_NAME");
 

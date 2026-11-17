@@ -26,6 +26,7 @@ pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod dev_identity;
 pub mod allow_record;
 pub mod api_templates;
 pub mod app_settings;
@@ -546,6 +547,11 @@ pub fn run() {
     LAUNCHED.get_or_init(std::time::Instant::now);
     leave_install_dir();
     let builder = specta_builder();
+    // A development build gets its own identifier - so its own data folders,
+    // WebView2 profile and single-instance lock - and a marked window title,
+    // before anything is built from the config (`dev_identity`).
+    let mut context = tauri::generate_context!();
+    dev_identity::apply(context.config_mut(), ai_tools::dev_build());
     #[allow(unused_mut)]
     let mut tauri_builder = tauri::Builder::default();
 
@@ -584,7 +590,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .args(tray::AUTOSTART_ARGS.iter().copied())
-                .app_name(tray::AUTOSTART_APP_NAME)
+                .app_name(tray::autostart_app_name())
                 .build(),
         )
         .manage(Mutex::new(auth::AuthState::default()))
@@ -837,7 +843,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {

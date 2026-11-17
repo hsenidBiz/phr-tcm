@@ -379,6 +379,16 @@ Dev-only code gates on `import.meta.env.DEV` in the frontend and
 `tauri build` removes them. Released binaries carry no trace. Put new
 debugging tools behind the same gates.
 
+A development build runs beside the installed app. It has its own identity
+(`src-tauri/src/dev_identity.rs`): the bundle identifier with `.dev` appended,
+which gives it its own settings, cache, Auto Run data, accounts, logs, guide
+folder, browser profile and single-instance lock; its own Windows Credential
+Manager entries, so a dev sign-in never reads or replaces the installed app's
+saved session or database logins; its own handshake file for the AI tools'
+proxy; its own Start with Windows entry; and `(dev)` on the window title. A
+release build is unchanged. A dev build starts with no data and no sign-in of
+its own.
+
 Rust tests live in `src-tauri/tests/` as integration targets. A Windows
 manifest quirk crashes tauri-linked unit-test binaries. They are one
 binary, `src-tauri/tests/suite/` (one module per file, listed in its
