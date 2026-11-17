@@ -187,7 +187,7 @@ export function useAutoRunSetup({
   /** The rows that stop a run now, which Simple mode shows again when it
    * hides them. The fixtures entries of the header's reasons below use the
    * same `fixtureBlock` test; its other reasons are its own. */
-  const blocking = blockingRows({ signIn, discovering, fixturesFailed, fixturesFailedHere });
+  const blocking = blockingRows({ signIn, recipeUnreadable: setupReady && recipe.isError, discovering, fixturesFailed, fixturesFailedHere });
   /** What the panel's "Needs attention" is about, each as a few words for
    * its header: something a run cannot go without is missing, or could not
    * be read, or a script uploads a file the Test files folder does not
@@ -368,7 +368,6 @@ type SummaryLine = { label: SetupRowName; status: Status; value: string; missing
 
 /** What Simple says of the sign-in, in place of the recipe's own words. */
 const SIMPLE_SIGN_IN_READY = "Ready";
-const SIMPLE_SIGN_IN_NONE = "Needs setting up";
 
 /** The collapsed panel's lines: one per item, from the reads above, in
  * the full rows' own words. `missing` is set on the Test files line when a
@@ -399,7 +398,7 @@ function summaryLines(
         : ["ready", s.site.start_url || s.knownSiteUrl];
   const signIn: [Status, string] =
     s.signIn === "none"
-      ? ["missing", simple ? SIMPLE_SIGN_IN_NONE : pickProject]
+      ? ["missing", pickProject]
       : s.signIn === "saved"
         ? ["ready", simple ? SIMPLE_SIGN_IN_READY : "Recipe saved"]
         : s.signIn === "builtin"
@@ -593,6 +592,32 @@ export default function SetupPanel({
     simple && s.blocking.has(name) ? <p className="-mt-2 text-xs text-muted">{BLOCKER_NOTE}</p> : null;
   const shownLines = lines.filter((l) => showRow(l.label));
   // The Sign-in row's recipe tools are for Advanced, unless sign-in blocks a run.
+  const releaseButton = (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={releasing}
+      title="Let go of an Auto Run browser the app still holds after it closed, and close the browsers the app opened"
+      onClick={() => void releaseBrowser()}
+    >
+      <IconRelease aria-hidden />
+      Release Auto Run browser
+    </Button>
+  );
+  const releaseMessages = (
+    <>
+      {endProblem && (
+        <p role="alert" className="text-xs text-danger">
+          {endProblem}
+        </p>
+      )}
+      {released && (
+        <p role="status" className="text-xs text-muted">
+          {released}
+        </p>
+      )}
+    </>
+  );
   const signInTools = showRow("Sign-in") && (!simple || s.blocking.has("Sign-in"));
 
   return (
@@ -762,7 +787,7 @@ export default function SetupPanel({
                 status={statusOf("Sign-in")}
                 state={
                   !setupReady ? (
-                    <span className="text-muted">{simple ? SIMPLE_SIGN_IN_NONE : needsProject}</span>
+                    <span className="text-muted">{needsProject}</span>
                   ) : recipe.isLoading ? (
                     <span className="text-muted">Loading…</span>
                   ) : recipe.isError ? (
@@ -897,16 +922,7 @@ export default function SetupPanel({
                         End discovery
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={releasing}
-                      title="Let go of an Auto Run browser the app still holds after it closed, and close the browsers the app opened"
-                      onClick={() => void releaseBrowser()}
-                    >
-                      <IconRelease aria-hidden />
-                      Release Auto Run browser
-                    </Button>
+                    {releaseButton}
                     <Button
                       size="sm"
                       variant="outline"
@@ -919,18 +935,19 @@ export default function SetupPanel({
                       View
                     </Button>
                   </SetupRow>
-                  {endProblem && (
-                    <p role="alert" className="text-xs text-danger">
-                      {endProblem}
-                  </p>
-              )}
-              {released && (
-                <p role="status" className="text-xs text-muted">
-                  {released}
-                </p>
-              )}
+                  {releaseMessages}
               {blockerNote("Discovery")}
               </>
+              )}
+
+              {/* Simple hides the Discovery row, but letting go of a held
+                  browser is always offered: assistants ask the person to
+                  press it. */}
+              {simple && !showRow("Discovery") && (
+                <div className="flex flex-col items-start gap-1.5">
+                  {releaseButton}
+                  {releaseMessages}
+                </div>
               )}
 
               {/* Steps saved once that scripts use by name. */}

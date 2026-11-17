@@ -460,7 +460,7 @@ test("the open card lists each unchecked expectation with why and its stand-in",
   mockIPC(() => null);
   renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Failed", open: true });
   expect(screen.getByText("Not checked")).toBeInTheDocument();
-  const list = screen.getByRole("list", { name: "Unchecked expectations of #5002" });
+  const list = screen.getByRole("list", { name: "Not checked expectations of #5002" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(list).toHaveTextContent("step 2: no access-denied message - the app never shows one (stand-in: expect_hidden)");
 });
@@ -546,7 +546,7 @@ test("steps Auto Run does show Done by Auto Run, not 0 actions", () => {
 
 test("Not checked lists only the step the script leaves out, and a passed case counts it", () => {
   renderCard({ open: true, c: SIX, script: AUTO_RUN_OPENING, result: "Passed" });
-  const list = screen.getByRole("list", { name: "Unchecked expectations of #7" });
+  const list = screen.getByRole("list", { name: "Not checked expectations of #7" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(list).toHaveTextContent("step 6: the chart colours");
   expect(screen.getByText("1 expectation unchecked")).toBeInTheDocument();

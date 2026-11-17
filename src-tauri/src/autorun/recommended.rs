@@ -43,31 +43,47 @@ pub fn recommended_on_switch(auto_run_used_before: bool, s: &AppSettings) -> Rec
     }
 }
 
-/// Whether the Auto Run data folder holds any FILE anywhere under it. Empty
-/// directories do not count: every start-up builds `envs/`.
-pub fn autorun_dir_has_files(dir: &Path) -> bool {
+/// Whether `dir` or anything under it holds a file.
+fn holds_a_file(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
     entries.flatten().any(|e| match e.file_type() {
-        Ok(t) if t.is_dir() => autorun_dir_has_files(&e.path()),
+        Ok(t) if t.is_dir() => holds_a_file(&e.path()),
         Ok(t) => t.is_file(),
         Err(_) => false,
     })
 }
 
-/// Once true, always true: Auto Run is on now, or has left files.
-pub fn settle_ever_on(ever_on: bool, auto_run_on: bool, dir_has_files: bool) -> bool {
-    ever_on || auto_run_on || dir_has_files
+/// Whether Auto Run's OWN work exists under the shared Auto Run folder: at
+/// least one saved script or one run record, in an environment folder or in
+/// the older flat layout. Nothing else counts - the environments file, the
+/// proposals, the last-fill notes, a migration or failed-start note and empty
+/// folders are all written whether or not Auto Run was ever on. The seed
+/// folder is a template, not work.
+pub fn autorun_has_own_work(dir: &Path) -> bool {
+    let mut roots = vec![dir.to_path_buf()];
+    roots.extend(crate::autorun::roots::env_roots(dir).into_iter().filter(|r| r.file_name().and_then(|n| n.to_str()) != Some(crate::autorun::roots::SEED_ID)));
+    roots.iter().any(|r| ["scripts", "runs"].iter().any(|item| holds_a_file(&r.join(item))))
+}
+
+/// Once true, always true: Auto Run is on now, or has saved scripts or runs.
+pub fn settle_ever_on(ever_on: bool, auto_run_on: bool, has_own_work: bool) -> bool {
+    ever_on || auto_run_on || has_own_work
+}
+
+/// The mode and "ever on" this install settles to at start-up.
+pub fn settled_on_start(now: &AppSettings, auto_run_on: bool, autorun_dir: &Path) -> (Option<AutorunMode>, bool) {
+    let mode = settle_mode_on_upgrade(now.autorun_mode, auto_run_on);
+    let ever = settle_ever_on(now.auto_run_ever_on, auto_run_on, !now.auto_run_ever_on && autorun_has_own_work(autorun_dir));
+    (mode, ever)
 }
 
 /// Settle the mode and "ever on" for an install, once, at start-up. Must run
 /// BEFORE `roots::start_up`. Saved only when something changed.
 pub fn settle_on_start(data_dir: &Path) {
     let now = crate::app_settings::current();
-    let auto_run_on = crate::modules::on(Module::AutoRun);
-    let mode = settle_mode_on_upgrade(now.autorun_mode, auto_run_on);
-    let ever = settle_ever_on(now.auto_run_ever_on, auto_run_on, !now.auto_run_ever_on && autorun_dir_has_files(&data_dir.join("autorun")));
+    let (mode, ever) = settled_on_start(&now, crate::modules::on(Module::AutoRun), &data_dir.join("autorun"));
     if mode != now.autorun_mode || ever != now.auto_run_ever_on {
         if let Err(e) = crate::app_settings::update(|s| {
             s.autorun_mode = mode;

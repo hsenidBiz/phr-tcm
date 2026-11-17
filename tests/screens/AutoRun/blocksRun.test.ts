@@ -22,6 +22,10 @@ test("nothing blocks a quiet setup", () => {
   expect(blockingRows({ ...QUIET, signIn: null }).size).toBe(0);
 });
 
+test("a recipe that could not be read blocks the Sign-in row", () => {
+  expect([...blockingRows({ ...QUIET, signIn: null, recipeUnreadable: true })]).toEqual(["Sign-in"]);
+});
+
 test("a discovery holding the browser blocks the Discovery row", () => {
   expect([...blockingRows({ ...QUIET, discovering: true })]).toEqual(["Discovery"]);
 });

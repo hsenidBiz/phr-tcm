@@ -2626,8 +2626,9 @@ person and never changes the script; add `proposal` (optional) with what you sug
 
 The person rules on the case in Auto Run:
 
-- The app is wrong: the script keeps the case's value and the case runs again. A failure there is the
-  data's or the application's; reporting the same divergence again is refused.
+- The app is wrong: the script keeps the case's value and the case runs again, and the run fails at that
+  step until the app is fixed. A failure there is the data's or the application's; reporting the same
+  divergence again is refused.
 - I fixed the data (a `data` divergence): the person changed the environment, and the case runs again.
 - The app is right, update the case: the person changes the case in Azure DevOps, and the case waits for a repair
   (`waits for a repair: step N: ...`). Repair that step's checks to the case as it now reads; the repair

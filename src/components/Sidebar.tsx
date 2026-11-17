@@ -83,7 +83,7 @@ type Item<T extends string> = {
  * icons it is a thin rule instead. */
 const GROUP_LABEL: Record<NonNullable<Item<string>["group"]>, string> = {
   cases: "Test Case Management",
-  advanced: "Advanced",
+  advanced: "Tools",
 };
 
 export const CASE_ITEMS: Item<Section>[] = [

@@ -31,6 +31,8 @@ export function fixtureBlock(fixturesFailed: number, fixturesFailedHere: number)
 /** The rows that stop a run now. */
 export function blockingRows(input: {
   signIn: "saved" | "builtin" | "none" | null;
+  /** The saved recipe could not be read: a run cannot tell how to sign in. */
+  recipeUnreadable?: boolean;
   discovering: boolean;
   fixturesFailed: number;
   fixturesFailedHere: number;
@@ -38,7 +40,7 @@ export function blockingRows(input: {
   const out = new Set<SetupRowName>();
   if (input.discovering) out.add("Discovery");
   if (fixtureBlock(input.fixturesFailed, input.fixturesFailedHere)) out.add("Fixtures");
-  if (input.signIn === "none") out.add("Sign-in");
+  if (input.signIn === "none" || input.recipeUnreadable) out.add("Sign-in");
   return out;
 }
 

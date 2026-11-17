@@ -33,6 +33,7 @@ function mount(opts: {
   fixtures?: unknown[];
   discovering?: () => boolean;
   project?: string;
+  recipeError?: boolean;
 }) {
   mockIPC((cmd) => {
     if (cmd === "get_app_settings") {
@@ -60,6 +61,7 @@ function mount(opts: {
     if (cmd === "auto_run_list_accounts") return [{ key: "a", label: "A", username: "u", password: "p" }];
     if (cmd === "api_fixtures_list") return opts.fixtures ?? [];
     if (cmd === "auto_run_list_runs") return [];
+    if (cmd === "auto_run_load_recipe" && opts.recipeError) throw new Error("the recipe file is broken");
     if (cmd === "auto_run_discovery_active") return opts.discovering?.() ?? false;
     return null;
   });
@@ -158,14 +160,54 @@ test("Advanced keeps the Sign-in row's own words", async () => {
   await waitFor(() => expect(signIn).toHaveTextContent("Built-in"));
 });
 
-test("with no sign-in, Simple says Needs setting up, keeps the recipe tools and shows the note", async () => {
+test("with no project, Simple keeps the pick-a-project text, the recipe tools and the note", async () => {
   mount({ mode: "simple", project: "" });
   await expand();
   const signIn = await within(panel()).findByRole("group", { name: "Sign-in" });
-  expect(signIn).toHaveTextContent("Needs setting up");
+  expect(signIn).toHaveTextContent("Pick a PBI, or a Home project in Settings, first");
+  expect(signIn).not.toHaveTextContent("Needs setting up");
   expect(within(signIn).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
   expect(within(signIn).getByRole("button", { name: "Edit sign-in recipe" })).toBeInTheDocument();
   expect(within(panel()).getByText(NOTE)).toBeInTheDocument();
+});
+
+test("with no project, the collapsed Simple summary says pick a project, not Needs setting up", async () => {
+  mount({ mode: "simple", project: "" });
+  const summary = await within(panel()).findByRole("list", { name: "Setup summary" });
+  await within(summary).findByText("Sign-in");
+  expect(within(summary).queryByText("Needs setting up")).not.toBeInTheDocument();
+});
+
+test("a recipe that could not be read blocks a run: Simple shows the Sign-in tools and the note", async () => {
+  mount({ mode: "simple", recipeError: true });
+  await expand();
+  const signIn = await within(panel()).findByRole("group", { name: "Sign-in" });
+  await waitFor(() => expect(signIn).toHaveTextContent("Could not be read"));
+  expect(within(signIn).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
+  expect(within(signIn).getByRole("button", { name: "Edit sign-in recipe" })).toBeInTheDocument();
+  expect(within(panel()).getByText(NOTE)).toBeInTheDocument();
+});
+
+test("Simple offers Release Auto Run browser with no discovery running; Advanced is unchanged", async () => {
+  mount({ mode: "simple" });
+  await expand();
+  expect(row("Discovery")).not.toBeInTheDocument();
+  expect(await within(panel()).findByRole("button", { name: "Release Auto Run browser" })).toBeInTheDocument();
+});
+
+test("Advanced offers Release Auto Run browser once, in the Discovery row", async () => {
+  mount({ mode: "advanced" });
+  await expand();
+  const discovery = await within(panel()).findByRole("group", { name: "Discovery" });
+  expect(within(discovery).getByRole("button", { name: "Release Auto Run browser" })).toBeInTheDocument();
+  expect(within(panel()).getAllByRole("button", { name: "Release Auto Run browser" })).toHaveLength(1);
+});
+
+test("Simple during a discovery shows Release Auto Run browser once, in the Discovery row", async () => {
+  mount({ mode: "simple", discovering: () => true });
+  await expand();
+  await within(panel()).findByRole("group", { name: "Discovery" });
+  expect(within(panel()).getAllByRole("button", { name: "Release Auto Run browser" })).toHaveLength(1);
 });
 
 test("the panel renders as Advanced while the mode is still loading", async () => {

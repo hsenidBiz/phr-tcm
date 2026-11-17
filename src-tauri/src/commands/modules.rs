@@ -66,15 +66,20 @@ pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Res
     // The tree's own refusal ("needs ... first") is its sentence; only a
     // save that failed gets the generic one.
     modules::apply(&before, module, on)?;
-    let mut settings = crate::app_settings::current();
-    let was = settings.clone();
-    let rec = settle_switch(&before, module, on, &mut settings);
+    // What the switch recommends, worked out on a copy: the live settings
+    // are changed below inside the one save, never written back whole.
+    let was = crate::app_settings::current();
+    let mut preview = was.clone();
+    let rec = settle_switch(&before, module, on, &mut preview);
     let mut next = modules::set(module, on).map_err(save_failed)?;
     if rec.as_ref().is_some_and(|r| r.api_templates) {
         next = modules::set(Module::ApiTemplates, true).map_err(save_failed)?;
     }
-    if settings != was {
-        crate::app_settings::update(|c| *c = settings).map_err(settings_save_failed)?;
+    if preview != was {
+        crate::app_settings::update(|c| {
+            settle_switch(&before, module, on, c);
+        })
+        .map_err(settings_save_failed)?;
     }
     // A module off takes its slash commands with it (`effective_disabled`);
     // re-sync from the bridge's last-known toggles so they vanish/appear now.

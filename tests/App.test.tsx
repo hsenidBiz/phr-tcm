@@ -442,7 +442,7 @@ test("Ctrl+2 jumps to Import Test Cases; Ctrl+Shift+M toggles Work Manager", asy
 });
 
 // The sidebar's numbered CASE_ITEMS order is manual, import, edit, view,
-// run, suites, manage, ai, then the Advanced group's autorun (9 rows) - the
+// run, suites, manage, ai, then the Tools group's autorun (9 rows) - the
 // Ctrl+N shortcut order must match it row for row, or a number opens the
 // wrong screen and the last row loses its shortcut entirely.
 test("Ctrl+6 jumps to Search Suites, Ctrl+7 to Suite Management, Ctrl+8 to AI Bridge and Ctrl+9 to Auto Run", async () => {

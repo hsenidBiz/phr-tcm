@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use v2_lib::app_settings::{AppSettings, AutorunMode};
-use v2_lib::autorun::recommended::{autorun_dir_has_files, recommended_on_switch, settle_ever_on, settle_mode_on_upgrade};
+use v2_lib::autorun::recommended::{autorun_has_own_work, recommended_on_switch, settle_ever_on, settle_mode_on_upgrade, settled_on_start};
 use v2_lib::commands::modules::modules_set_with;
 use v2_lib::modules::Module;
 
@@ -52,21 +52,63 @@ fn a_picked_mode_is_never_overwritten() {
     assert!(!recommended_on_switch(false, &s).mode_simple);
 }
 
-#[test]
-fn a_folder_holding_only_empty_directories_is_not_use() {
-    let d = tempfile::tempdir().unwrap();
-    assert!(!autorun_dir_has_files(&d.path().join("autorun")));
-    std::fs::create_dir_all(d.path().join("autorun").join("envs")).unwrap();
-    assert!(!autorun_dir_has_files(&d.path().join("autorun")));
+fn put(path: &std::path::Path, name: &str) {
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::write(path.join(name), "{}").unwrap();
 }
 
 #[test]
-fn a_file_anywhere_under_the_folder_is_use() {
+fn files_that_are_written_whether_or_not_auto_run_was_used_are_not_use() {
     let d = tempfile::tempdir().unwrap();
-    let deep = d.path().join("autorun").join("envs").join("one");
-    std::fs::create_dir_all(&deep).unwrap();
-    std::fs::write(deep.join("script.json"), "{}").unwrap();
-    assert!(autorun_dir_has_files(&d.path().join("autorun")));
+    let a = d.path().join("autorun");
+    assert!(!autorun_has_own_work(&a));
+    std::fs::create_dir_all(a.join("envs").join("env-0a1b2c3d").join("scripts")).unwrap();
+    assert!(!autorun_has_own_work(&a), "empty folders");
+    std::fs::write(a.join("environments.json"), "{}").unwrap();
+    put(&a.join("proposals"), "p.json");
+    put(&a.join("last-fill"), "f.json");
+    put(&a, "migration-note.txt");
+    put(&a.join("envs").join("env-0a1b2c3d"), "orders.json");
+    put(&a.join("envs").join("_seed").join("scripts"), "s.json");
+    assert!(!autorun_has_own_work(&a));
+}
+
+#[test]
+fn a_saved_script_or_a_run_record_in_an_environment_is_use() {
+    let d = tempfile::tempdir().unwrap();
+    let a = d.path().join("autorun");
+    put(&a.join("envs").join("env-0a1b2c3d").join("scripts"), "case-1.json");
+    assert!(autorun_has_own_work(&a));
+    let d2 = tempfile::tempdir().unwrap();
+    let a2 = d2.path().join("autorun");
+    put(&a2.join("envs").join("env-0a1b2c3d").join("runs"), "run-1.json");
+    assert!(autorun_has_own_work(&a2));
+}
+
+#[test]
+fn a_script_in_the_older_flat_layout_is_use() {
+    let d = tempfile::tempdir().unwrap();
+    let a = d.path().join("autorun");
+    put(&a.join("scripts"), "case-1.json");
+    assert!(autorun_has_own_work(&a));
+}
+
+#[test]
+fn the_start_up_settle_with_auto_run_off_and_only_the_environments_file_stays_not_ever_on() {
+    let d = tempfile::tempdir().unwrap();
+    let a = d.path().join("autorun");
+    std::fs::create_dir_all(a.join("envs")).unwrap();
+    std::fs::write(a.join("environments.json"), "{}").unwrap();
+    let mut s = AppSettings::default();
+    for _ in 0..2 {
+        let (mode, ever) = settled_on_start(&s, false, &a);
+        assert_eq!(mode, None);
+        assert!(!ever);
+        s.autorun_mode = mode;
+        s.auto_run_ever_on = ever;
+    }
+    put(&a.join("envs").join("env-0a1b2c3d").join("scripts"), "case-1.json");
+    assert!(settled_on_start(&s, false, &a).1, "a saved script is use");
 }
 
 #[test]

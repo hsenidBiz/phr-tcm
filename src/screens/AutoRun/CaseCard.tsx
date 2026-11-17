@@ -357,7 +357,7 @@ function CaseCard({
               {unchecked.length > 0 && (
                 <div className="space-y-1">
                   <SectionLabel>Not checked</SectionLabel>
-                  <ul aria-label={`Unchecked expectations of #${c.id}`} className="space-y-0.5 text-xs text-text">
+                  <ul aria-label={`Not checked expectations of #${c.id}`} className="space-y-0.5 text-xs text-text">
                     {unchecked.map((e, i) => (
                       <li key={i} className="break-words">
                         {uncheckedLine(e)}
