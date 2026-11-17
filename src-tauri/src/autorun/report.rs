@@ -2,12 +2,19 @@
 //! email: when it ran, where, what each case came to, and for each case
 //! that failed or was blocked, the step that stopped it with its pictures.
 //!
-//! The page is opened in the browser from `<root>/reports/`: inline CSS, no
-//! script, nothing fetched. Every case has its own collapsible section with
-//! every step the run recorded, and the pictures are linked, not embedded -
-//! `../shots/<name>`, beside the reports folder - so a long unattended run
-//! stays a small file. Every value from the run is escaped: a case title is
-//! whatever someone typed into Azure DevOps.
+//! The page is opened in the browser from `<root>/reports/`: inline CSS and
+//! one inline script, nothing fetched. It opens on an overview (the counts,
+//! the biggest groups of failures that share a cause, the recent runs) and
+//! has a view of every failure in those groups with a timeline of its
+//! steps, a history of the environment's recent runs with a comparison to
+//! the run before, a gallery of the pictures and videos, and "All cases":
+//! the table and a collapsible section per case with every step the run
+//! recorded, as it has always been. The pictures and videos are linked, not
+//! embedded - `../shots/<name>`, beside the reports folder - so a long
+//! unattended run stays a small file. Every value from the run is escaped:
+//! a case title is whatever someone typed into Azure DevOps. The script
+//! only adds the tabs, the filter, the keys, the copy buttons and the
+//! gallery; with it off, or on paper, everything is on the page in order.
 //!
 //! What never goes in: passwords, the values a script typed (`fill`'s
 //! value), cookies, headers, or any file's bytes. A picture is linked only
@@ -19,10 +26,13 @@
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::divergences::{Divergence, DivergenceStatus, RuledBy, Ruling};
+use super::report_smart::{self, Cluster};
+use super::report_view::{self, CaseView};
 use super::unchecked::{count_words, expectations, line as unchecked_line};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 use crate::html_escape::esc_attr;
+use crate::webtheme::PagePalette;
 
 /// The result buckets, in the order the report (and the Auto Run screen's
 /// filter row) lists them.
@@ -346,7 +356,7 @@ pub fn scrub_urls(text: &str) -> String {
 
 /// `started_at` (epoch milliseconds as a string) as a UTC time - only for
 /// when the webview sent no local time to print instead.
-fn utc_time(started_at: &str) -> String {
+pub(super) fn utc_time(started_at: &str) -> String {
     let Ok(ms) = started_at.trim().parse::<i64>() else {
         return "unknown time".to_string();
     };
@@ -362,7 +372,7 @@ fn utc_time(started_at: &str) -> String {
 /// Where the case stopped: the first action that failed and was not merely
 /// skipped because an earlier one had - its step, its index in that step,
 /// and what the page said.
-fn stopping_point(case: &CaseRecord) -> Option<(&StepRecord, usize, &ActionOutcome)> {
+pub(super) fn stopping_point(case: &CaseRecord) -> Option<(&StepRecord, usize, &ActionOutcome)> {
     for step in &case.steps {
         for (i, o) in step.outcomes.iter().enumerate() {
             if !o.ok && !o.detail.starts_with("not run:") {
@@ -375,7 +385,7 @@ fn stopping_point(case: &CaseRecord) -> Option<(&StepRecord, usize, &ActionOutco
 
 /// The words for the action that stopped a case. The sign-in and the trip
 /// to the module are the runner's own, not the script's.
-fn stopped_action(
+pub(super) fn stopped_action(
     case: &CaseRecord,
     step: &StepRecord,
     index: usize,
@@ -767,7 +777,7 @@ pub struct ReportExtras<'a> {
 }
 
 /// A bucket as a CSS class suffix.
-fn css_key(bucket: &str) -> &'static str {
+pub(super) fn css_key(bucket: &str) -> &'static str {
     match bucket {
         "Passed" => "passed",
         "Failed" => "failed",
@@ -786,23 +796,19 @@ fn web_link(url: &str) -> String {
     }
 }
 
-/// The page's Content-Security-Policy: no script, nothing fetched, and
-/// pictures only from a file on this machine (the shots folder, linked
-/// relative to the page).
-pub const CSP: &str = "default-src 'none'; img-src file:; style-src 'unsafe-inline'";
+/// The page's Content-Security-Policy: nothing fetched, pictures and videos
+/// only from a file on this machine (the shots folder, linked relative to
+/// the page), and script and style only inline - the page's own script and
+/// the one blob of data it reads are written into it.
+pub const CSP: &str = "default-src 'none'; img-src file:; media-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'";
 
-const STYLE: &str = "body{font-family:Segoe UI,Arial,sans-serif;color:#1f2328;background:#ffffff;margin:24px;font-size:14px;line-height:1.45}\
-h1{font-size:22px;margin:0 0 12px}h2{font-size:17px;margin:24px 0 8px;border-bottom:1px solid #d0d7de;padding-bottom:4px}\
-h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0 0 8px}\
-dt{color:#59636e}dd{margin:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:4px 8px;text-align:left;vertical-align:top}\
-th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed{color:#1a7f37;font-weight:600}\
-.b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}.b-flaky{color:#9a6700;font-weight:600}.flaky{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
-.took{color:#59636e;font-size:12px;font-weight:400}.bugs{color:#9a6700;font-weight:600}.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
-.case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
-.note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.batch{text-align:left;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
-.actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\
-figure{margin:8px 0}figure img{max-width:100%;border:1px solid #d0d7de}figcaption{font-size:12px;color:#59636e}\
-@media print{body{margin:0}.case,.step,tr,figure{break-inside:avoid}a{color:inherit}}";
+/// The page's stylesheet. Colours are the palette's variables
+/// (`webtheme`), never literals, so the page wears the app's theme and
+/// flips with the switch in its corner.
+const STYLE: &str = include_str!("../../web/autorun-report.css");
+
+/// The page's own script: tabs, filter, keys, copy, gallery.
+const SCRIPT: &str = include_str!("../../web/autorun-report.js");
 
 /// The whole page. `ran_at` is the run's start as the person reads time
 /// (the webview formats it in their own locale); blank falls back to UTC.
@@ -853,7 +859,9 @@ pub fn build_with_components(
 }
 
 /// [`build_with_components`], with the product bugs listed on top (they
-/// ride on the run's cases) and each case's divergences from `extras`.
+/// ride on the run's cases) and each case's divergences from `extras`. The
+/// history is only this run, and the palette the page's default one: see
+/// [`build_smart`].
 pub fn build_with_extras(
     run: &LocalRun,
     scripts: &[CaseScript],
@@ -863,20 +871,158 @@ pub fn build_with_extras(
     size_of: &dyn Fn(&str) -> Option<u64>,
     extras: &ReportExtras,
 ) -> String {
+    let marked: Vec<i32> = scripts.iter().filter(|s| s.flaky.is_some()).map(|s| s.case_id).collect();
+    build_smart(
+        run,
+        scripts,
+        components,
+        ran_at,
+        exists,
+        size_of,
+        extras,
+        &TrendInput { runs: &[], flaky_marked: &marked },
+        &PagePalette::default(),
+    )
+}
+
+/// The runs a report's trends are read from.
+pub struct TrendInput<'a> {
+    /// Every run on this machine (`store::list_runs`); the report's own may
+    /// be among them. Only the ones in the same environment and not newer
+    /// count (`report_smart::trend`).
+    pub runs: &'a [LocalRun],
+    /// The ids of the cases whose script is marked flaky
+    /// (`store::flaky_marked`): a failure of one of them counts as flaky.
+    pub flaky_marked: &'a [i32],
+}
+
+/// The names of the pictures a step took, in the order the report shows
+/// them (an action's, then the step's), unique, and only the ones that are
+/// safe names present in the shots folder.
+fn step_pictures<'a>(step: &'a StepRecord, exists: &dyn Fn(&str) -> bool) -> Vec<&'a str> {
+    let mut out: Vec<&str> = Vec::new();
+    let named = step.outcomes.iter().filter_map(|o| o.screenshot.as_deref()).chain(step.screenshot.as_deref());
+    for n in named {
+        if super::store::safe_shot_name(n) && exists(n) && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// [`build_with_extras`], with the runs the history and trends are read
+/// from and the palette the page wears.
+#[allow(clippy::too_many_arguments)]
+pub fn build_smart(
+    run: &LocalRun,
+    scripts: &[CaseScript],
+    components: &ComponentFile,
+    ran_at: &str,
+    exists: &dyn Fn(&str) -> bool,
+    size_of: &dyn Fn(&str) -> Option<u64>,
+    extras: &ReportExtras,
+    history: &TrendInput,
+    palette: &PagePalette,
+) -> String {
     let script_for = |id: i32| scripts.iter().find(|s| s.case_id == id);
     let when = if ran_at.trim().is_empty() { utc_time(&run.started_at) } else { ran_at.trim().to_string() };
     let mode = if run.mode == "unattended" { "Unattended" } else { "Supervised" };
 
+    // What the new views say, worked out once.
+    let (clusters, failures) = report_smart::clusters(run, scripts, components);
+    let trend = report_smart::trend(run, history.runs, history.flaky_marked);
+    let cluster_of: std::collections::HashMap<i32, &Cluster> =
+        clusters.iter().flat_map(|c| c.cases.iter().map(move |id| (*id, c))).collect();
+    let views: Vec<CaseView> = run
+        .cases
+        .iter()
+        .map(|case| {
+            let script = script_for(case.case_id);
+            CaseView {
+                case,
+                bucket: case_bucket(case),
+                flaky_failure: is_flaky_failure(case, script),
+                area: script.and_then(CaseScript::area_name).unwrap_or("").to_string(),
+                module: report_smart::module_of(case).unwrap_or_default(),
+                trend: trend.per_case.get(&case.case_id),
+                cluster: cluster_of.get(&case.case_id).copied(),
+                failure: failures.get(&case.case_id),
+            }
+        })
+        .collect();
+
+    // The gallery, and each failed case's own pictures for its summary.
+    let mut gallery: Vec<serde_json::Value> = Vec::new();
+    let mut seen_pictures = std::collections::HashSet::new();
+    for case in &run.cases {
+        let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
+        let tidy = case.cleanup.iter().map(|s| (super::CLEANUP_LABEL.to_string(), s));
+        for (label, step) in labelled.chain(tidy) {
+            for name in step_pictures(step, exists) {
+                if seen_pictures.insert(name.to_string()) {
+                    gallery.push(serde_json::json!({ "n": name, "c": case.case_id, "s": label }));
+                }
+            }
+        }
+        if let Some(v) = case.video.as_deref().filter(|v| super::store::safe_video_name(v) && exists(v)) {
+            if seen_pictures.insert(v.to_string()) {
+                gallery.push(serde_json::json!({ "n": v, "c": case.case_id, "s": "video", "k": 1 }));
+            }
+        }
+    }
+    let mut summaries = serde_json::Map::new();
+    let mut failure_views = String::new();
+    for c in &clusters {
+        let mut cases_html = String::new();
+        for id in &c.cases {
+            let Some(v) = views.iter().find(|v| v.case.case_id == *id) else { continue };
+            let Some(failure) = v.failure else { continue };
+            let passes = trend.passes.get(id).map(Vec::as_slice).unwrap_or(&[]);
+            let timeline = report_smart::timeline(v.case, passes);
+            let pictures: Vec<String> = v
+                .case
+                .steps
+                .iter()
+                .filter(|s| Some(s.step_number) == failure.step_number)
+                .flat_map(|s| step_pictures(s, exists))
+                .map(str::to_string)
+                .collect();
+            let video = v.case.video.as_deref().filter(|n| super::store::safe_video_name(n) && exists(n));
+            summaries.insert(
+                id.to_string(),
+                serde_json::Value::String(report_smart::summary_markdown(
+                    v.case,
+                    failure,
+                    run.environment.as_deref(),
+                    &when,
+                    &pictures,
+                    video,
+                )),
+            );
+            cases_html.push_str(&report_view::failure_case(v, failure, &timeline));
+        }
+        failure_views.push_str(&report_view::cluster_box(c, &cases_html));
+    }
+    let failed_cases = clusters.iter().map(|c| c.cases.len()).sum::<usize>();
+
     let mut h = String::new();
-    h.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    h.push_str(&format!(
+        "<!doctype html><html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">",
+        palette.initial_scheme()
+    ));
     // Defence in depth: everything below is escaped and nothing is fetched,
-    // but should either ever slip, the page still may run no script and
-    // load nothing beyond its linked pictures and inline style.
+    // but should either ever slip, the page still may load nothing beyond
+    // its linked pictures and videos and its own inline style and script.
     h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"));
+    h.push_str(&format!(
+        "<script>{}\ndocument.documentElement.classList.add('js');</script>",
+        crate::webtheme::RESTORE_JS
+    ));
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
     h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
-    h.push_str(&format!("<style>{STYLE}</style></head><body>"));
-    h.push_str("<h1>Auto Run report</h1><dl>");
+    h.push_str(&format!("<style>{}\n{STYLE}</style></head><body>", palette.css()));
+    h.push_str(crate::webtheme::SWITCH_HTML);
+    h.push_str("<div class=\"page\"><h1>Auto Run report</h1><dl>");
     h.push_str(&format!("<dt>Ran</dt><dd>{}</dd>", esc_attr(&when)));
     h.push_str(&format!("<dt>Mode</dt><dd>{mode}</dd>"));
     if let Some(env) = run.environment.as_deref().filter(|e| !e.trim().is_empty()) {
@@ -892,6 +1038,10 @@ pub fn build_with_extras(
         None => h.push_str("<dt>Azure DevOps</dt><dd>Not sent - these results are on this machine only</dd>"),
     }
     h.push_str("</dl>");
+    h.push_str(&report_view::tabs(failed_cases, gallery.len()));
+
+    // Overview.
+    h.push_str("<section class=\"view on\" id=\"view-overview\">");
     h.push_str(&product_bugs_section(run));
 
     let mut c = counts(run);
@@ -914,6 +1064,7 @@ pub fn build_with_extras(
         h.push_str(&format!("<td class=\"b-flaky\">{flaky}</td>"));
     }
     h.push_str(&format!("<td>{}</td></tr></tbody></table>", run.cases.len()));
+    h.push_str(&report_view::outcome_bar(c, flaky));
     if flaky > 0 {
         h.push_str(&format!(
             "<p class=\"note\">{flaky} failed case{} marked as flaky, so {} not counted as failed above. Still sent as failed.</p>",
@@ -932,16 +1083,43 @@ pub fn build_with_extras(
         let cases = if passed_with == 1 { "case" } else { "cases" };
         h.push_str(&format!("<p class=\"unchecked\">{} in {passed_with} passed {cases}</p>", count_words(total)));
     }
+    if run.video_unavailable {
+        h.push_str("<p class=\"note\">Videos of failed cases were asked for, but this browser cannot record them.</p>");
+    }
+    h.push_str(&report_view::top_clusters(&clusters));
+    h.push_str(&report_view::sparkline(&trend.points));
+    h.push_str("</section>");
 
-    h.push_str("<h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th></tr></thead><tbody>");
-    for case in &run.cases {
+    // Failures.
+    h.push_str("<section class=\"view\" id=\"view-failures\"><h2>Failures</h2>");
+    if clusters.is_empty() {
+        h.push_str("<p class=\"note\">No case failed or was blocked in this run.</p>");
+    } else {
+        h.push_str(&format!(
+            "<p class=\"note\">{failed_cases} failed or blocked case{} in {} group{} by what stopped {}. Each bar is one step; the first anomaly is the first step that failed, or ran more than twice as long as it usually does.</p>",
+            if failed_cases == 1 { "" } else { "s" },
+            clusters.len(),
+            if clusters.len() == 1 { "" } else { "s" },
+            if failed_cases == 1 { "it" } else { "them" },
+        ));
+        h.push_str(&failure_views);
+    }
+    h.push_str("</section>");
+
+    h.push_str(&report_view::history_view(&trend, run.environment.as_deref()));
+    h.push_str(&report_view::gallery_view(gallery.len()));
+
+    // All cases: the table and a section per case, as the report always had.
+    h.push_str("<section class=\"view\" id=\"view-all\"><h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th><th>Grade</th><th>Last runs</th></tr></thead><tbody>");
+    for v in &views {
+        let case = v.case;
         if let Some(heading) = batch_heading(run, case.case_id) {
-            h.push_str(&format!("<tr class=\"batch\"><th colspan=\"6\">{}</th></tr>", esc_attr(&heading)));
+            h.push_str(&format!("<tr class=\"batch\"><th colspan=\"8\">{}</th></tr>", esc_attr(&heading)));
         }
         for line in resets_before(run, case.case_id) {
-            h.push_str(&format!("<tr class=\"reset\"><td colspan=\"6\">{line}</td></tr>"));
+            h.push_str(&format!("<tr class=\"reset\"><td colspan=\"8\">{line}</td></tr>"));
         }
-        let b = case_bucket(case);
+        let b = v.bucket;
         let decided = if !case.verdict.is_empty() {
             "Confirmed"
         } else if !case.proposed.is_empty() {
@@ -949,30 +1127,34 @@ pub fn build_with_extras(
         } else {
             "-"
         };
-        let area = script_for(case.case_id).and_then(CaseScript::area_name).unwrap_or("");
         let result = result_words(b, script_for(case.case_id).map(|s| expectations(s).len()).unwrap_or(0));
-        let flaky_mark = if is_flaky_failure(case, script_for(case.case_id)) { FLAKY_TAG } else { "" };
+        let flaky_mark = if v.flaky_failure { FLAKY_TAG } else { "" };
         h.push_str(&format!(
-            "<tr><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{}{flaky_mark}</td><td>{decided}</td><td>{}</td><td>{}</td></tr>",
+            "<tr class=\"f-item\"{}><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{}{flaky_mark}</td><td>{decided}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            v.attrs(),
             case.case_id,
             esc_attr(&case.title),
             css_key(b),
             esc_attr(&result),
             esc_attr(case.account.as_deref().unwrap_or("")),
-            esc_attr(area)
+            esc_attr(&v.area),
+            report_view::grade_cell(v),
+            v.trend.map(report_view::strip_html).unwrap_or_default(),
         ));
     }
     h.push_str("</tbody></table>");
 
     if !run.cases.is_empty() {
         h.push_str("<h2>Cases in detail</h2>");
-        for case in &run.cases {
+        for v in &views {
+            let case = v.case;
             if let Some(heading) = batch_heading(run, case.case_id) {
                 h.push_str(&format!("<h3 class=\"batch\">{}</h3>", esc_attr(&heading)));
             }
             for line in resets_before(run, case.case_id) {
                 h.push_str(&format!("<p class=\"reset\">{line}</p>"));
             }
+            h.push_str(&format!("<div class=\"f-item case-wrap\" id=\"case-{}\"{}>", case.case_id, v.attrs()));
             h.push_str(&case_section(
                 case,
                 script_for(case.case_id),
@@ -981,9 +1163,17 @@ pub fn build_with_extras(
                 size_of,
                 &shown_divergences(run, extras, case.case_id),
             ));
+            h.push_str("</div>");
         }
     }
+    h.push_str("</section>");
+    h.push_str(report_view::dialogs());
+    h.push_str("</div>");
 
+    let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery }));
+    h.push_str(&format!("<script type=\"application/json\" id=\"report-data\">{blob}</script>"));
+    h.push_str(&format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
+    h.push_str(&format!("<script>{SCRIPT}</script>"));
     h.push_str("</body></html>\n");
     h
 }

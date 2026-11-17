@@ -1,0 +1,581 @@
+//! What the run report works out beyond listing a run: which failures share
+//! a cause, where a failed case's time went, how a case has fared in this
+//! environment's recent runs, and how this run compares with the one before.
+//!
+//! Everything here is a pure reading of run records already on this machine
+//! (nothing is asked of Azure DevOps or the network), and nothing here holds
+//! a password, a typed value, a cookie or a header: it only re-orders and
+//! counts the sentences the run recorded, which the report already shows.
+//!
+//! The counting rules are the app's own: a case's bucket is
+//! [`report::bucket`] (held to `tests/fixtures/verdict_buckets.json`), and a
+//! failure of a case whose script is marked flaky counts as flaky, as Past
+//! runs does. What makes a case "flaky in its recent runs" is
+//! [`flaky::flaky_cases_with_marks`], not a second definition.
+
+use std::collections::{HashMap, HashSet};
+
+use super::components::ComponentFile;
+use super::flaky::{flaky_cases_of, FLAKY_WINDOW};
+use super::replay::MODULE_STEP;
+use super::report::{case_bucket, counts, scrub_urls, step_label, stopped_action, stopping_point};
+use super::{CaseRecord, CaseScript, LocalRun, StepRecord};
+
+/// How many runs of one environment the trends look at, the run itself
+/// included.
+pub const HISTORY_RUNS: usize = 20;
+
+/// A step is only called slow when the case has passed at least this many
+/// times in the environment's history, and the step has at least this many
+/// timings in those passes.
+pub const MIN_PASSES_FOR_SLOW: usize = 4;
+
+/// A step is slow when it took more than this many times its median.
+pub const SLOW_FACTOR: u64 = 2;
+
+/// What a case with no failing step and no recorded sentence is said to
+/// have failed on: its result came from the person reviewing the run.
+pub const DECIDED_BY_PERSON: &str = "decided by the person reviewing the run";
+
+// ----------------------------------------------------------------------
+// Failures grouped by cause
+// ----------------------------------------------------------------------
+
+/// Where a failed or blocked case stopped, in words.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Failure {
+    /// The step's number (`MODULE_STEP`, `SIGN_IN_STEP` for the runner's
+    /// own); `None` when no step failed on its own.
+    pub step_number: Option<i32>,
+    /// "Step 2", "Sign in"; empty when no step failed on its own.
+    pub step: String,
+    /// The action that stopped it, in words (never a typed value).
+    pub action: String,
+    /// The one sentence that says why, with addresses stripped of their
+    /// query strings.
+    pub message: String,
+}
+
+/// Where `case` stopped and why. The sentence is the failing action's own,
+/// else the run's reason, else the case's note, else that a person decided.
+pub fn failure_of(case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> Failure {
+    match stopping_point(case) {
+        Some((step, index, outcome)) => Failure {
+            step_number: Some(step.step_number),
+            step: step_label(step.step_number),
+            action: stopped_action(case, step, index, script, components),
+            message: scrub_urls(outcome.detail.trim()),
+        },
+        None => {
+            let said = [case.reason.trim(), case.note.trim()].into_iter().find(|s| !s.is_empty());
+            Failure {
+                step_number: None,
+                step: String::new(),
+                action: String::new(),
+                message: said.map(scrub_urls).unwrap_or_else(|| DECIDED_BY_PERSON.to_string()),
+            }
+        }
+    }
+}
+
+/// A sentence with what varies from case to case taken out, so two cases
+/// that failed the same way read the same: addresses lose their query,
+/// quoted values become `"…"`, and any number or identifier becomes `#`.
+pub fn normalise_cause(text: &str) -> String {
+    normalise(text, false)
+}
+
+/// [`normalise_cause`] for an action's words: the quoted names stay (they
+/// are the target - "click the Save button" and "click the Cancel button"
+/// are different places to fail), numbers and identifiers still go.
+pub fn normalise_target(text: &str) -> String {
+    normalise(text, true)
+}
+
+fn normalise(text: &str, keep_quoted: bool) -> String {
+    let scrubbed = scrub_urls(text);
+    let mut quoted_out = String::with_capacity(scrubbed.len());
+    let mut in_quote = false;
+    let mut quote = String::new();
+    for c in scrubbed.chars() {
+        if c == '"' {
+            if in_quote {
+                if keep_quoted {
+                    quoted_out.push_str(&quote);
+                } else {
+                    quoted_out.push('\u{2026}');
+                }
+                quoted_out.push('"');
+                quote.clear();
+            } else {
+                quoted_out.push('"');
+            }
+            in_quote = !in_quote;
+        } else if in_quote {
+            quote.push(c);
+        } else {
+            quoted_out.push(c);
+        }
+    }
+    // A quote never closed is plain text again.
+    if in_quote {
+        quoted_out.push_str(&quote);
+    }
+    let words: Vec<String> = quoted_out.split_whitespace().map(hide_numbers).collect();
+    words.join(" ")
+}
+
+/// One whitespace-free chunk with its numbers and identifiers hidden.
+fn hide_numbers(word: &str) -> String {
+    let core = word.trim_matches(|c: char| !c.is_alphanumeric());
+    let identifier = core.len() >= 8
+        && core.chars().any(|c| c.is_ascii_digit())
+        && core.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    if identifier {
+        return word.replacen(core, "#", 1);
+    }
+    let mut out = String::with_capacity(word.len());
+    let mut prev_digit = false;
+    for c in word.chars() {
+        if c.is_ascii_digit() {
+            if !prev_digit {
+                out.push('#');
+            }
+            prev_digit = true;
+        } else {
+            out.push(c);
+            prev_digit = false;
+        }
+    }
+    out
+}
+
+/// Failed and Blocked cases that stopped the same way: the same action in
+/// the same place and the same sentence once what varies is taken out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cluster {
+    /// 1-based, in the order clusters are listed (`C1`, `C2`...).
+    pub number: usize,
+    /// The shared action, normalised; empty when no step failed on its own.
+    pub action: String,
+    /// The shared sentence, normalised.
+    pub cause: String,
+    /// The cases, in the order the run had them.
+    pub cases: Vec<i32>,
+}
+
+impl Cluster {
+    /// What the filter's `cause:` and the case rows call it.
+    pub fn label(&self) -> String {
+        format!("c{}", self.number)
+    }
+}
+
+/// Every Failed and Blocked case of `run` in clusters, the biggest cluster
+/// first (ties: the one whose first case came first in the run), and for
+/// each case the failure it was clustered on.
+pub fn clusters(
+    run: &LocalRun,
+    scripts: &[CaseScript],
+    components: &ComponentFile,
+) -> (Vec<Cluster>, HashMap<i32, Failure>) {
+    let mut failures: HashMap<i32, Failure> = HashMap::new();
+    let mut groups: Vec<(String, String, Vec<i32>)> = Vec::new();
+    for case in &run.cases {
+        if !matches!(case_bucket(case), "Failed" | "Blocked") {
+            continue;
+        }
+        let script = scripts.iter().find(|s| s.case_id == case.case_id);
+        let failure = failure_of(case, script, components);
+        let action = if failure.step_number.is_some() { normalise_target(&failure.action) } else { String::new() };
+        let cause = normalise_cause(&failure.message);
+        match groups.iter_mut().find(|(a, c, _)| *a == action && *c == cause) {
+            Some((_, _, ids)) => ids.push(case.case_id),
+            None => groups.push((action, cause, vec![case.case_id])),
+        }
+        failures.insert(case.case_id, failure);
+    }
+    // Stable: equal sizes keep the order their first case came in.
+    groups.sort_by(|a, b| b.2.len().cmp(&a.2.len()));
+    let out = groups
+        .into_iter()
+        .enumerate()
+        .map(|(i, (action, cause, cases))| Cluster { number: i + 1, action, cause, cases })
+        .collect();
+    (out, failures)
+}
+
+// ----------------------------------------------------------------------
+// Timeline of one case
+// ----------------------------------------------------------------------
+
+/// One step of a failed case's timeline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimelineStep {
+    pub label: String,
+    /// How long the step took; `None` when the run did not time it.
+    pub ms: Option<u64>,
+    /// The step is where the case stopped.
+    pub failed: bool,
+    /// More than [`SLOW_FACTOR`] times the median of its passing runs.
+    pub slow: bool,
+    /// That median, when there was enough history to have one.
+    pub median_ms: Option<u64>,
+}
+
+/// A case's steps with their durations and where it first went wrong.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Timeline {
+    pub steps: Vec<TimelineStep>,
+    /// The index into `steps` of the first anomaly: the first step that
+    /// failed, or the first step that ran more than twice its median in
+    /// this environment's history - whichever comes first.
+    pub anomaly: Option<usize>,
+}
+
+fn step_failed(step: &StepRecord) -> bool {
+    step.outcomes.iter().any(|o| !o.ok && !o.detail.starts_with("not run:"))
+}
+
+fn median(values: &mut [u64]) -> u64 {
+    values.sort_unstable();
+    let n = values.len();
+    if n % 2 == 1 {
+        values[n / 2]
+    } else {
+        (values[n / 2 - 1] + values[n / 2]) / 2
+    }
+}
+
+/// `case`'s timeline. `passes` are this case's records from earlier runs in
+/// the same environment that came to Passed: with at least
+/// [`MIN_PASSES_FOR_SLOW`] of them, and as many timings of a step, a step
+/// that took more than [`SLOW_FACTOR`] times the median of those timings is
+/// slow. With less history, only a failing step is an anomaly.
+pub fn timeline(case: &CaseRecord, passes: &[&CaseRecord]) -> Timeline {
+    let enough = passes.len() >= MIN_PASSES_FOR_SLOW;
+    let mut steps = Vec::with_capacity(case.steps.len());
+    for step in &case.steps {
+        let median_ms = if enough {
+            let mut seen: Vec<u64> = passes
+                .iter()
+                .filter_map(|p| p.steps.iter().find(|s| s.step_number == step.step_number))
+                .filter_map(|s| s.duration_ms)
+                .collect();
+            (seen.len() >= MIN_PASSES_FOR_SLOW).then(|| median(&mut seen))
+        } else {
+            None
+        };
+        let slow = matches!((step.duration_ms, median_ms), (Some(ms), Some(m)) if m > 0 && ms > m * SLOW_FACTOR);
+        steps.push(TimelineStep {
+            label: step_label(step.step_number),
+            ms: step.duration_ms,
+            failed: step_failed(step),
+            slow,
+            median_ms,
+        });
+    }
+    let anomaly = steps.iter().position(|s| s.failed || s.slow);
+    Timeline { steps, anomaly }
+}
+
+// ----------------------------------------------------------------------
+// Grade
+// ----------------------------------------------------------------------
+
+/// How few judged runs a case needs before it is graded at all: one pass
+/// is no track record.
+pub const MIN_JUDGED_FOR_GRADE: usize = 3;
+
+/// A stability grade, A (steady) to F (unreliable), from a case's judged
+/// outcomes in this environment, oldest first (`true` is a pass; Blocked
+/// and not-run results are not judged and not passed in).
+///
+/// ```text
+/// pass_rate = passes / judged
+/// flip_rate = flips / (judged - 1)     a flip is a pass next to a fail
+/// score     = 100 * pass_rate - 40 * flip_rate      (never below 0)
+/// A: score >= 90   B: >= 75   C: >= 60   D: >= 40   F: below that
+/// ```
+///
+/// A case that always passes scores 100; always failing, 0; passing every
+/// run but one at the very end, about 86 (B); alternating, 10 (F). The
+/// flips are what separate a case that failed twice in a row from one that
+/// keeps changing its mind. `None` for fewer than [`MIN_JUDGED_FOR_GRADE`].
+pub fn grade(judged: &[bool]) -> Option<char> {
+    if judged.len() < MIN_JUDGED_FOR_GRADE {
+        return None;
+    }
+    let n = judged.len() as f64;
+    let passes = judged.iter().filter(|p| **p).count() as f64;
+    let flips = judged.windows(2).filter(|w| w[0] != w[1]).count() as f64;
+    let score = (100.0 * passes / n - 40.0 * flips / (n - 1.0)).max(0.0);
+    Some(match score {
+        s if s >= 90.0 => 'A',
+        s if s >= 75.0 => 'B',
+        s if s >= 60.0 => 'C',
+        s if s >= 40.0 => 'D',
+        _ => 'F',
+    })
+}
+
+// ----------------------------------------------------------------------
+// History and compare
+// ----------------------------------------------------------------------
+
+/// One run in the history charts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunPoint {
+    pub id: String,
+    /// The run's start, epoch milliseconds as the run stored it.
+    pub started_at: String,
+    pub total: usize,
+    pub passed: usize,
+    /// Failed, not counting flaky failures.
+    pub failed: usize,
+    pub blocked: usize,
+    pub not_run: usize,
+    /// Failed cases whose script is marked flaky.
+    pub flaky: usize,
+    /// Passed over every case with a result (Passed, Failed, Blocked), as a
+    /// percentage; `None` when none has one.
+    pub pass_rate: Option<u32>,
+    /// The cases' durations added up, milliseconds; 0 when none was timed.
+    pub duration_ms: u64,
+    /// The run the report is of.
+    pub current: bool,
+}
+
+/// What a case's recent runs say about it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CaseTrend {
+    /// One letter per run the case was in, oldest first, at most
+    /// [`HISTORY_RUNS`]: `P`assed, `F`ailed, `B`locked, `N`ot run.
+    pub strip: Vec<char>,
+    pub grade: Option<char>,
+    /// The case passed and failed among its newest [`FLAKY_WINDOW`] runs in
+    /// this environment.
+    pub alternates: bool,
+    /// The person marked the case's script flaky.
+    pub marked: bool,
+}
+
+impl CaseTrend {
+    /// Flaky in either sense.
+    pub fn flaky(&self) -> bool {
+        self.alternates || self.marked
+    }
+}
+
+/// This run set against the one before it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Compare {
+    pub previous_id: String,
+    pub previous_started_at: String,
+    /// Failing now, and in the previous run it was not.
+    pub new_failures: Vec<i32>,
+    /// Failing in the previous run, Passed now.
+    pub fixed: Vec<i32>,
+    pub still_failing: Vec<i32>,
+    /// In this run and not in the previous one.
+    pub new_cases: Vec<i32>,
+    /// In the previous run and not in this one.
+    pub missing: Vec<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Trend<'a> {
+    /// Oldest first, the report's run last.
+    pub points: Vec<RunPoint>,
+    pub per_case: HashMap<i32, CaseTrend>,
+    pub compare: Option<Compare>,
+    /// Each earlier passing record of a case in this environment, newest
+    /// first - what the timeline's "slow" is judged against.
+    pub passes: HashMap<i32, Vec<&'a CaseRecord>>,
+}
+
+fn started(run: &LocalRun) -> u64 {
+    run.started_at.trim().parse().unwrap_or(0)
+}
+
+/// A failed case that is not a flaky failure: what "failing" means when
+/// runs are compared (a flaky failure is counted as flaky, as the summary
+/// does).
+fn failing(case: &CaseRecord, marked: &HashSet<i32>) -> bool {
+    case_bucket(case) == "Failed" && !marked.contains(&case.case_id)
+}
+
+fn case_duration(case: &CaseRecord) -> u64 {
+    match case.duration_ms {
+        Some(ms) => ms.max(0) as u64,
+        None => case.steps.iter().chain(case.cleanup.iter()).filter_map(|s| s.duration_ms).sum(),
+    }
+}
+
+fn point(run: &LocalRun, marked: &HashSet<i32>, current: bool) -> RunPoint {
+    let c = counts(run);
+    let flaky = run.cases.iter().filter(|x| case_bucket(x) == "Failed" && marked.contains(&x.case_id)).count();
+    let judged = c[0] + c[1] + c[2];
+    RunPoint {
+        id: run.id.clone(),
+        started_at: run.started_at.clone(),
+        total: run.cases.len(),
+        passed: c[0],
+        failed: c[1] - flaky,
+        blocked: c[2],
+        not_run: c[3],
+        flaky,
+        pass_rate: (judged > 0).then(|| ((c[0] as f64 / judged as f64) * 100.0).round() as u32),
+        duration_ms: run.cases.iter().map(case_duration).sum(),
+        current,
+    }
+}
+
+/// The trends for `run` from every run on this machine (`runs`; `run`
+/// itself may be among them). Only runs in the same environment that
+/// started no later than `run` count, the newest [`HISTORY_RUNS`] - `run`
+/// included - oldest first. `marked` is the ids of the cases whose script
+/// is marked flaky.
+pub fn trend<'a>(run: &'a LocalRun, runs: &'a [LocalRun], marked: &[i32]) -> Trend<'a> {
+    let marked_set: HashSet<i32> = marked.iter().copied().collect();
+    let mine = started(run);
+    let mut earlier: Vec<&LocalRun> = runs
+        .iter()
+        .filter(|r| r.id != run.id && r.environment == run.environment && started(r) <= mine)
+        .collect();
+    earlier.sort_by(|a, b| started(a).cmp(&started(b)).then_with(|| a.started_at.cmp(&b.started_at)));
+    let keep = HISTORY_RUNS - 1;
+    if earlier.len() > keep {
+        earlier.drain(..earlier.len() - keep);
+    }
+    let mut history: Vec<&LocalRun> = earlier;
+    history.push(run);
+
+    let points: Vec<RunPoint> = history.iter().map(|r| point(r, &marked_set, r.id == run.id)).collect();
+
+    // The app's own idea of a flaky case, over the same runs.
+    let alternating: HashSet<i32> = flaky_cases_of(&history, FLAKY_WINDOW, &[])
+        .into_iter()
+        .filter(|f| f.environment == run.environment && f.pattern.iter().any(|p| *p) && f.pattern.iter().any(|p| !*p))
+        .map(|f| f.case_id)
+        .collect();
+
+    let mut per_case: HashMap<i32, CaseTrend> = HashMap::new();
+    let mut passes: HashMap<i32, Vec<&CaseRecord>> = HashMap::new();
+    let mut judged: HashMap<i32, Vec<bool>> = HashMap::new();
+    for r in &history {
+        for case in &r.cases {
+            let b = case_bucket(case);
+            let t = per_case.entry(case.case_id).or_default();
+            t.strip.push(match b {
+                "Passed" => 'P',
+                "Failed" => 'F',
+                "Blocked" => 'B',
+                _ => 'N',
+            });
+            if matches!(b, "Passed" | "Failed") {
+                judged.entry(case.case_id).or_default().push(b == "Passed");
+            }
+            if b == "Passed" && r.id != run.id {
+                passes.entry(case.case_id).or_default().push(case);
+            }
+        }
+    }
+    for (id, t) in per_case.iter_mut() {
+        t.grade = judged.get(id).and_then(|j| grade(j));
+        t.alternates = alternating.contains(id);
+        t.marked = marked_set.contains(id);
+    }
+    for list in passes.values_mut() {
+        list.reverse();
+    }
+
+    let compare = (history.len() >= 2).then(|| compare_runs(history[history.len() - 2], run, &marked_set));
+    Trend { points, per_case, compare, passes }
+}
+
+/// `now` against `before`.
+pub fn compare_runs(before: &LocalRun, now: &LocalRun, marked: &HashSet<i32>) -> Compare {
+    let was: HashMap<i32, &CaseRecord> = before.cases.iter().map(|c| (c.case_id, c)).collect();
+    let is: HashMap<i32, &CaseRecord> = now.cases.iter().map(|c| (c.case_id, c)).collect();
+    let mut out = Compare {
+        previous_id: before.id.clone(),
+        previous_started_at: before.started_at.clone(),
+        ..Compare::default()
+    };
+    for case in &now.cases {
+        match was.get(&case.case_id) {
+            None => out.new_cases.push(case.case_id),
+            Some(old) => {
+                let (f_now, f_was) = (failing(case, marked), failing(old, marked));
+                if f_now && f_was {
+                    out.still_failing.push(case.case_id);
+                } else if f_now {
+                    out.new_failures.push(case.case_id);
+                } else if f_was && case_bucket(case) == "Passed" {
+                    out.fixed.push(case.case_id);
+                }
+            }
+        }
+    }
+    for case in &before.cases {
+        if !is.contains_key(&case.case_id) {
+            out.missing.push(case.case_id);
+        }
+    }
+    for list in [&mut out.new_failures, &mut out.fixed, &mut out.still_failing, &mut out.new_cases, &mut out.missing] {
+        list.sort_unstable();
+        list.dedup();
+    }
+    out
+}
+
+// ----------------------------------------------------------------------
+// The module a case ran in, and the text to copy
+// ----------------------------------------------------------------------
+
+/// The module the run took `case` to: the run's own "Go to X" line from
+/// its trip to the module (the case's Module is not kept with the run).
+/// `None` when the case never got there.
+pub fn module_of(case: &CaseRecord) -> Option<String> {
+    let step = case.steps.iter().find(|s| s.step_number == MODULE_STEP)?;
+    let first = step.outcomes.first().filter(|o| o.ok)?;
+    let rest = first.detail.trim().strip_prefix("Go to ")?;
+    let name = rest.split(" (").next().unwrap_or(rest).trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// A title or sentence on one line, for a Markdown list.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The failure summary a person pastes into a ticket or a chat, as
+/// Markdown: the case, where and when it ran, the failing step, the
+/// sentence the run recorded, and the names of the pictures and video.
+/// Never a value a script typed or anything the run did not already show.
+pub fn summary_markdown(
+    case: &CaseRecord,
+    failure: &Failure,
+    environment: Option<&str>,
+    ran_at: &str,
+    pictures: &[String],
+    video: Option<&str>,
+) -> String {
+    let mut s = format!("### #{} {} - {}\n", case.case_id, one_line(&case.title), case_bucket(case));
+    if let Some(env) = environment.map(str::trim).filter(|e| !e.is_empty()) {
+        s.push_str(&format!("- Environment: {}\n", one_line(env)));
+    }
+    s.push_str(&format!("- Ran: {}\n", one_line(ran_at)));
+    if failure.step_number.is_some() {
+        s.push_str(&format!("- Failing step: {} - {}\n", failure.step, one_line(&failure.action)));
+    }
+    s.push_str(&format!("- Error: {}\n", one_line(&failure.message)));
+    if !pictures.is_empty() {
+        s.push_str(&format!("- Screenshots: {}\n", pictures.join(", ")));
+    }
+    if let Some(v) = video {
+        s.push_str(&format!("- Video: {v}\n"));
+    }
+    s
+}

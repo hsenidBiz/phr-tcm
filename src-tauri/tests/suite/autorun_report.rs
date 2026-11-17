@@ -1,5 +1,6 @@
 //! The Auto Run report: one run as an HTML page opened in the browser.
-//! Everything from the run is escaped, the page carries no script, every
+//! Everything from the run is escaped, the page's only scripts are its own
+//! inline ones (the new views' tests are in `autorun_report_smart`), every
 //! case has its own section with every step, a failed case shows the step
 //! that stopped it, pictures are linked from the shots folder beside the
 //! reports folder (never embedded), a missing picture is a note rather than
@@ -9,6 +10,20 @@ use v2_lib::autorun::report::{action_words, bucket, build, build_with_downloads,
 use v2_lib::autorun::store::{downloads_dir, save_run, save_script};
 use v2_lib::autorun::{CaseScript, LocalRun};
 use v2_lib::commands::autorun::{write_report_at, REPORT_RUN_GONE};
+
+/// Every `<script` in the page is one of the page's own: inline (no `src`),
+/// either its data blob or a plain script - and there are exactly the four
+/// it writes. Anything a case wrote that looked like a tag was escaped.
+pub fn only_the_pages_own_scripts(html: &str) {
+    let lower = html.to_lowercase();
+    let opens: Vec<usize> = lower.match_indices("<script").map(|(i, _)| i).collect();
+    assert_eq!(opens.len(), 4, "the page writes four scripts and nothing else may open one");
+    for i in opens {
+        let tag_end = lower[i..].find('>').map(|n| i + n).unwrap();
+        let tag = &lower[i..=tag_end];
+        assert!(tag == "<script>" || tag == "<script type=\"application/json\" id=\"report-data\">", "unexpected script tag {tag}");
+    }
+}
 
 struct TempDir(std::path::PathBuf);
 
@@ -141,7 +156,7 @@ fn every_value_is_escaped_and_the_page_carries_no_script() {
     run.environment = Some("<b>QA</b>".to_string());
     let html = build(&run, &[], "<script>when</script>", &no_shots);
 
-    assert!(!html.to_lowercase().contains("<script"), "the page must carry no script");
+    only_the_pages_own_scripts(&html);
     assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; &quot;quotes&quot;"));
     assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
     assert!(html.contains("&lt;b&gt;QA&lt;/b&gt;"));
@@ -203,7 +218,7 @@ fn a_failed_case_shows_the_step_that_stopped_it_and_links_its_picture() {
 
 /// The opening tag of the `<details>` section of one case.
 fn details_of(html: &str, case_id: i32) -> String {
-    let marker = format!("<span class=\"id\">#{case_id}</span>");
+    let marker = format!("<summary><span class=\"id\">#{case_id}</span>");
     let at = html
         .match_indices("<details")
         .map(|(i, _)| i)
@@ -222,7 +237,7 @@ fn every_case_has_a_details_section_open_for_failed_and_blocked_only() {
     assert!(!details_of(&html, 203).contains(" open"), "Not run stays closed");
     assert!(!details_of(&html, 204).contains(" open"), "Passed stays closed");
     // The page still needs no script for any of that.
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
 }
 
 #[test]
@@ -256,7 +271,7 @@ fn the_page_embeds_nothing_and_a_picture_is_never_a_data_url() {
     let html = build(&run_of(SHOT), &[script_201()], "x", &all_shots);
     assert!(!html.contains("data:image"));
     assert!(!html.contains("base64"));
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
 }
 
 #[test]
@@ -323,7 +338,7 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
     assert!(html.contains(&format!("src=\"../shots/{SHOT}\"")));
     assert!(html.contains(&format!("The picture {PASSED_SHOT} was not found")));
     assert!(!html.contains("data:image"));
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
     // Atomic: no temp file is left beside it.
     let leftovers: Vec<_> = std::fs::read_dir(root.join("reports"))
         .unwrap()
@@ -374,9 +389,12 @@ fn opening_says_so_for_a_run_that_is_gone_and_refuses_an_unsafe_id() {
 }
 
 #[test]
-fn the_page_declares_a_policy_that_runs_nothing_and_loads_nothing() {
+fn the_page_declares_a_policy_that_loads_nothing_and_runs_only_its_own_inline_script() {
     let html = build(&run_of(SHOT), &[], "x", &no_shots);
-    assert_eq!(CSP, "default-src 'none'; img-src file:; style-src 'unsafe-inline'");
+    assert_eq!(
+        CSP,
+        "default-src 'none'; img-src file:; media-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    );
     assert!(html.contains(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">")));
 }
 
@@ -445,7 +463,7 @@ fn opening_escapes_the_time_it_is_given() {
     let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "<script>x</script>").unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<dt>Ran</dt><dd>&lt;script&gt;x&lt;/script&gt;</dd>"));
-    assert!(!html.to_lowercase().contains("<script"));
+    only_the_pages_own_scripts(&html);
 }
 
 #[test]
@@ -478,7 +496,7 @@ fn scrubbing_keeps_the_rest_of_the_sentence_and_every_address_in_it() {
 
 /// One case's whole `<details>` section, from its summary to its close.
 fn section_of(html: &str, case_id: i32) -> &str {
-    let at = html.find(&format!("<span class=\"id\">#{case_id}</span>")).unwrap();
+    let at = html.find(&format!("<summary><span class=\"id\">#{case_id}</span>")).unwrap();
     let rest = &html[at..];
     &rest[..rest.find("</details>").unwrap()]
 }
@@ -811,7 +829,7 @@ fn a_forced_click_that_expects_nothing_has_words() {
 
 /// A case's whole details block, summary to close.
 fn product_section_of(html: &str, case_id: i32) -> String {
-    let marker = format!("<span class=\"id\">#{case_id}</span>");
+    let marker = format!("<summary><span class=\"id\">#{case_id}</span>");
     let at = html.find(&marker).unwrap_or_else(|| panic!("no section for case {case_id}"));
     let end = html[at..].find("</details>").unwrap();
     html[at..at + end].to_string()

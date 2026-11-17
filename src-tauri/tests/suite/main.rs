@@ -132,6 +132,7 @@ mod autorun_same_failure;
 mod autorun_replay_route;
 mod autorun_replay_to;
 mod autorun_report;
+mod autorun_report_smart;
 mod autorun_reset;
 mod autorun_run_files;
 mod autorun_runner;

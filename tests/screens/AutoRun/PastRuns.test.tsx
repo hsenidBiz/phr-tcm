@@ -193,6 +193,8 @@ test("Report opens the run's report in the browser and says so", async () => {
     project: "Web",
     runId: "run-1",
     ranAt: new Date(1786000200000).toLocaleString(),
+    // The page arrives in the app's own colours, both schemes.
+    palette: expect.objectContaining({ light: expect.any(Object), dark: expect.any(Object) }),
   });
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Report opened in your browser"));
   // Nothing is saved anywhere the person has to pick.

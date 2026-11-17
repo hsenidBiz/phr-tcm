@@ -68,6 +68,8 @@ pub mod reset_wait;
 pub mod replay_record;
 pub mod replay_to;
 pub mod report;
+pub mod report_smart;
+pub mod report_view;
 pub mod run_files;
 pub mod runner;
 pub mod seen_check;
