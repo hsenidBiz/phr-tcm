@@ -619,3 +619,45 @@ fn only_a_distinct_sign_in_page_without_the_signed_in_marker_is_signed_out() {
     ]));
     assert!(!page_is_sign_in(split, &same));
 }
+
+#[test]
+fn a_marker_nobody_can_evaluate_means_cannot_tell_on_every_path() {
+    use v2_lib::api_templates::one_off::page_is_sign_in;
+    use v2_lib::autorun::recipe::names_one_thing;
+    let html = Some("text/html");
+    let identity = |marker: serde_json::Value| {
+        let mut r = crate::common::recipe();
+        r.steps = serde_json::from_value(json!([
+            { "kind": "fill", "selector": { "css": "#Input_Email" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "#Input_Password" }, "value": "{{password}}" }
+        ]))
+        .unwrap();
+        r.signed_in = serde_json::from_value(marker).unwrap();
+        r.sign_in_fields().unwrap()
+    };
+    // The Register page of ASP.NET Identity has the same two ids as its login page.
+    let register = r#"<form><input id="Input_Email" type="email"><input id="Input_Password" type="password"><input id="Input_ConfirmPassword" type="password"></form>"#;
+    let login = r#"<form><input id="Input_Email" type="email"><input id="Input_Password" type="password"></form>"#;
+
+    // A marker that is a role and name cannot be searched for: cannot tell, so never signed out - and the page is told nothing.
+    let role = identity(json!({ "role": "link", "name": "Logout" }));
+    assert!(role.css_selectors().is_empty() && role.signed_in_css().is_none());
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, register, "/hr/x", Some("/"), Some(&role)));
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, login, "/hr/x", Some("/"), Some(&role)));
+    // So is a marker that is a descendant selector, which the Rust side cannot read and the page could.
+    let nested = identity(json!({ "css": "#nav .user" }));
+    assert!(nested.css_selectors().is_empty());
+    assert!(!page_is_sign_in(login, &nested));
+
+    // An evaluable marker: shown on the page, not signed out; absent, the real login page is signed out.
+    let marker = identity(json!({ "css": "#logout" }));
+    assert_eq!(marker.css_selectors(), vec!["#Input_Password".to_string(), "#Input_Email".to_string()]);
+    let shown = format!(r#"<a id="logout"></a>{register}"#);
+    assert!(!is_sign_in_answer(Some("/hr/x"), html, &shown, "/hr/x", Some("/"), Some(&marker)));
+    assert!(is_sign_in_answer(Some("/hr/x"), html, login, "/hr/x", Some("/"), Some(&marker)));
+
+    // What names one thing: an id or class, never one inside a pseudo-class or an attribute.
+    assert!(names_one_thing("#pass") && names_one_thing("input.pwd"));
+    assert!(!names_one_thing("input[type=password]:not(.d-none)"));
+    assert!(!names_one_thing(r#"input[type="password"]"#) && !names_one_thing(r#"[data-x="a.b"]"#));
+}

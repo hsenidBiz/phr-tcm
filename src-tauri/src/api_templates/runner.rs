@@ -1690,7 +1690,7 @@ async fn run_step<D: Driver>(
             detail: SENT_ELSEWHERE.to_string(),
             unread: false,
             session_ended: true,
-            posted: false,
+            posted: step.method() == Method::Post,
         });
     }
     // Answered at the very address asked, with the recipe's own sign-in page

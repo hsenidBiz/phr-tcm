@@ -620,13 +620,22 @@ pub struct SignInFields {
 impl SignInFields {
     /// The CSS selectors of these fields, for a page to look for
     /// (`querySelector`): the password field's and the username field's.
-    /// Only a selector that names one thing (an `#id` or a `.class`) counts:
-    /// `input[type="password"]`, a bare tag, an attribute value alone or an
-    /// accessible name match change-password and Add-user pages as well, so
-    /// they cannot tell a sign-in page. Empty whenever any field the recipe
-    /// has is not distinct - the page is then never read as signed out.
+    /// A page is read as the sign-in page only when ALL of this holds, and
+    /// the answer is empty ("cannot tell", never signed out) otherwise, on
+    /// every path alike:
+    /// - each field is named by an `#id` or a `.class` (`input[type=password]`,
+    ///   a bare tag, an attribute value alone or an accessible name match
+    ///   change-password and Add-user pages as well);
+    /// - each is one compound selector (`is_compound`) that a page's HTML can
+    ///   be searched for without a browser;
+    /// - the recipe's `signed_in` marker is such a selector too, so that its
+    ///   absence can be judged: with a marker nobody can evaluate (a role and
+    ///   name, a descendant selector), nothing proves the page is not signed in.
     pub fn css_selectors(&self) -> Vec<String> {
-        let distinct = |t: &Target| css_of(t).filter(|c| names_one_thing(c));
+        let distinct = |t: &Target| css_of(t).filter(|c| names_one_thing(c) && is_compound(c));
+        if self.signed_in_css().is_none() {
+            return vec![];
+        }
         let Some(password) = distinct(&self.password) else { return vec![] };
         match &self.username {
             None => vec![password],
@@ -637,28 +646,45 @@ impl SignInFields {
         }
     }
 
-    /// The `signed_in` marker as a CSS selector, when it is one.
+    /// The `signed_in` marker as a CSS selector, when it is one a page's
+    /// HTML can be searched for (`is_compound`).
     pub fn signed_in_css(&self) -> Option<String> {
-        css_of(&self.signed_in)
+        css_of(&self.signed_in).filter(|c| is_compound(c))
     }
 }
 
-/// Whether a CSS selector names an element by an `#id` or a `.class` (outside
-/// any `[...]`), not only by tag, type or attribute.
-fn names_one_thing(css: &str) -> bool {
-    let mut depth = 0;
-    let mut prev_ident = false;
-    for (i, c) in css.char_indices() {
+/// Whether a CSS selector is one compound (`tag#id.class[attr=value]`): no
+/// space, combinator, list, pseudo-class or function. Only these are read
+/// from a page's HTML; anything longer is not evaluated on the Rust side, so
+/// a rule that depends on it is not applied on the page side either.
+pub fn is_compound(css: &str) -> bool {
+    let css = css.trim();
+    !css.is_empty() && !css.contains(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~' | ',' | ':' | '('))
+}
+
+/// Whether a CSS selector names an element by an `#id` or a `.class`, not
+/// only by tag, type or attribute. Whatever is inside `[...]`, a pseudo-class
+/// (`:not(.d-none)`) or its parentheses does not count.
+pub fn names_one_thing(css: &str) -> bool {
+    let mut brackets = 0;
+    let mut parens = 0;
+    let mut found = false;
+    let mut chars = css.chars().peekable();
+    while let Some(c) = chars.next() {
         match c {
-            '[' => depth += 1,
-            ']' => depth -= 1,
-            '#' | '.' if depth == 0 && css[i + 1..].chars().next().is_some_and(|n| n.is_alphanumeric() || n == '_' || n == '-') => {
-                prev_ident = true;
+            '[' => brackets += 1,
+            ']' => brackets -= 1,
+            '(' => parens += 1,
+            ')' => parens -= 1,
+            '#' | '.' if brackets == 0 && parens == 0 => {
+                if chars.peek().is_some_and(|n| n.is_alphanumeric() || *n == '_' || *n == '-') {
+                    found = true;
+                }
             }
             _ => {}
         }
     }
-    prev_ident
+    found
 }
 
 /// The CSS selector a target is, when it is nothing but one.

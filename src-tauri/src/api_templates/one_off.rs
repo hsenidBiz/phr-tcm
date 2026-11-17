@@ -175,8 +175,9 @@ fn has_password_input(body: &str) -> bool {
 /// accessible name - matches a change-password or Add-user page too, so it
 /// cannot tell and the page is not read as signed out); and the recipe's
 /// `signed_in` marker is not on it (a page that shows the marker is signed in,
-/// whatever else it holds). A marker the page cannot be searched for (an
-/// accessible name) is not a reason to refuse: the distinct fields decide.
+/// whatever else it holds). A marker that cannot be searched for in HTML (an
+/// accessible name, a descendant selector) means "cannot tell" - never signed
+/// out - as `SignInFields::css_selectors` says, the same on the page's side.
 pub fn page_is_sign_in(body: &str, fields: &SignInFields) -> bool {
     if fields.css_selectors().is_empty() || !has_password_input(body) {
         return false;
@@ -257,7 +258,7 @@ fn tag_attrs(inner: &str) -> Vec<(String, String)> {
 /// classes, lists) is not read and matches nothing.
 fn css_in_html(selector: &str, lower: &str) -> bool {
     let sel = selector.trim().to_ascii_lowercase();
-    if sel.is_empty() || sel.contains(|c: char| c.is_whitespace() || matches!(c, '>' | '+' | '~' | ',' | ':' | '(')) {
+    if !crate::autorun::recipe::is_compound(&sel) {
         return false;
     }
     enum Part {
