@@ -553,6 +553,16 @@ test("a run whose only failure is flaky does not count under the Failed filter",
   expect(screen.getByRole("group", { name: "Results" })).not.toHaveTextContent("failed");
 });
 
+test("Past runs' Flaky filter shows the runs and cases with a flaky failure", async () => {
+  renderPastRuns([FLAKY_RUN], 7, (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null));
+
+  const flakyPill = await screen.findByRole("button", { name: "Flaky (1)" });
+  fireEvent.click(flakyPill);
+  expect(flakyPill).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Locked account")).toBeNull();
+});
+
 test("without a mark the same failure counts as failed", async () => {
   renderPastRuns([FLAKY_RUN], 7);
 

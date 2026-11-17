@@ -22,7 +22,7 @@ import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, ClearedDefectNote, SuspectedDefectBadge } from "./SuspectedDefectMark";
 import { uncheckedExpectations, uncheckedLine, uncheckedWords } from "./unchecked";
-import { bucketTone, type ResultBucket } from "./verdicts";
+import { bucketTone, type LastResult } from "./verdicts";
 
 /** Every action of a script, the ones nested in a `when_visible` or `when_hidden` too. */
 function allActions(script: CaseScript): Action[] {
@@ -127,7 +127,7 @@ function CaseCard({
   project: string;
   /** The saved script, or null/undefined for a case with none. */
   script: CaseScript | null | undefined;
-  result: ResultBucket;
+  result: LastResult;
   selected: boolean;
   onSelect: (id: number) => void;
   open: boolean;

@@ -1194,6 +1194,26 @@ test("a flaky-marked failure is tagged and counted as flaky, not failed", async 
   expect(screen.getByText(/1 failed case is marked as flaky/)).toBeInTheDocument();
 });
 
+test("the Flaky filter shows only the flaky-marked failures, and is offered only while there is one", async () => {
+  renderReview(RUN, { extra: (cmd) => (cmd === "auto_run_flaky_marks" ? [201] : null) });
+  await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  const flakyButton = await screen.findByRole("button", { name: "Flaky (1)" });
+  expect(flakyButton).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(flakyButton);
+  expect(flakyButton).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("listitem", { name: "Case #201 Valid login" })).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem", { name: /^Case #/ })).toHaveLength(1);
+  // The raw failure is still there.
+  expect(screen.getByText(/button "Save" not found/)).toBeInTheDocument();
+});
+
+test("no Flaky filter while no failure is marked flaky", async () => {
+  renderReview(RUN);
+  await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(screen.queryByRole("button", { name: /^Flaky/ })).toBeNull();
+});
+
 test("an unmarked failure is counted as failed and carries no flaky tag", async () => {
   renderReview(RUN);
 

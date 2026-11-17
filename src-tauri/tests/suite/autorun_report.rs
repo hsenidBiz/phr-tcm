@@ -1107,3 +1107,39 @@ fn a_report_for_an_environment_that_was_left_is_refused_and_makes_no_folder() {
     assert_eq!(err, roots::ENVIRONMENT_SWITCHED);
     assert!(!roots::env_root(dir.path(), &a).join("reports").exists());
 }
+
+/// A failure of a case whose script is marked flaky is counted as flaky, not
+/// as failed, the way Past runs and the review count it. It stays a failure
+/// in every other way: the case's result says Failed, its section is open
+/// and shows the step that stopped it.
+#[test]
+fn a_flaky_marked_failure_is_counted_as_flaky_and_keeps_its_details() {
+    use v2_lib::autorun::report::flaky_count;
+    let run = run_of(SHOT);
+    let mut marked = script_201();
+    marked.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1786000000000".into() });
+
+    // Not marked: as before - one failed, no Flaky column.
+    let plain = build(&run, &[script_201()], "", &no_shots);
+    assert_eq!(flaky_count(&run, &[script_201()]), 0);
+    assert!(!plain.contains("<th>Flaky</th>") && !plain.contains("class=\"flaky\""), "{plain}");
+    assert!(plain.contains("<td class=\"b-failed\">1</td>"), "{plain}");
+
+    // Marked: the Failed column drops to 0 and the Flaky column holds the case.
+    assert_eq!(flaky_count(&run, &[marked.clone()]), 1);
+    let html = build(&run, &[marked], "", &no_shots);
+    assert!(html.contains("<th>Not run</th><th>Flaky</th><th>Total</th>"), "{html}");
+    assert!(html.contains("<td class=\"b-failed\">0</td>"), "{html}");
+    assert!(html.contains("<td class=\"b-flaky\">1</td>"), "{html}");
+    assert!(html.contains("<td>4</td></tr></tbody></table>"), "the total is every case: {html}");
+    assert!(html.contains("marked as flaky, so it is not counted as failed above"), "{html}");
+    // The case still reads Failed, flagged, open, with its raw failure.
+    assert!(html.contains("<td class=\"b-failed\">Failed <span class=\"flaky\""), "{html}");
+    assert!(html.contains("<details class=\"case\" open><summary><span class=\"id\">#201</span>"), "{html}");
+    assert!(html.contains("button &quot;Save&quot; not found"), "{html}");
+    // Only a failure is flaky: a mark on a passing case changes nothing.
+    let mut mark_204: CaseScript =
+        serde_json::from_value(serde_json::json!({ "case_id": 204, "title": "Logout", "steps": [] })).unwrap();
+    mark_204.flaky = Some(v2_lib::autorun::FlakyMark { marked_at: "1".into() });
+    assert_eq!(flaky_count(&run, &[mark_204]), 0);
+}

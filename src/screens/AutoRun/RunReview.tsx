@@ -455,7 +455,7 @@ export default function RunReview(props: {
         </ul>
       )}
 
-      <ResultFilterRow value={filter} onChange={pickFilter} total={run.cases.length} counts={counts} />
+      <ResultFilterRow value={filter} onChange={pickFilter} total={run.cases.length} counts={counts} flaky={flakyCount} />
       {flakyCount > 0 && (
         <p className="text-xs text-warning">
           {flakyCount} failed case{flakyCount === 1 ? " is" : "s are"} marked as flaky, so {flakyCount === 1 ? "it is" : "they are"} not counted as failed here. Still sent as failed.

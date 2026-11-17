@@ -74,9 +74,11 @@ import {
   lastRecords,
   lastResultFor,
   lastResults,
-  type ResultBucket,
+  lastResultWithFlaky,
+  type LastResult,
   type ResultFilter,
 } from "./verdicts";
+import { useFlakyMarks } from "./flaky";
 import type { AutoRunTab } from "./useAutoRunReadiness";
 
 /** The screen's tabs, in order. The arrow keys walk this list. Setup is
@@ -98,7 +100,7 @@ const TABS: { id: AutoRunTab; label: string }[] = [
 const MAX_IDS_IN_TOAST = 10;
 
 /** The filter that lets every case through. */
-const NO_FILTER: ReadonlySet<ResultBucket> = new Set();
+const NO_FILTER: ReadonlySet<LastResult> = new Set();
 /** No card open. */
 const NONE_OPEN: ReadonlySet<number> = new Set();
 /** One shared empty list, so a card with no divergence is not redrawn. */
@@ -469,7 +471,7 @@ export default function AutoRun({
   /** The last results the Test cases tab shows. Empty is every case. Lives
    * here, not in the tab, so it outlasts a trip to another tab and is gone
    * once the screen is left. */
-  const [lastFilter, setLastFilter] = useState<ReadonlySet<ResultBucket>>(new Set());
+  const [lastFilter, setLastFilter] = useState<ReadonlySet<LastResult>>(new Set());
   /** Only the cases marked as a suspected defect. Kept like the filter above. */
   const [defectsOnly, setDefectsOnly] = useState(false);
   /** Only the cases that already have a script. A view choice remembered
@@ -551,12 +553,15 @@ export default function AutoRun({
    * cannot be read there never will be: either way every case shows. */
   const runsReady = runs.data !== undefined;
   const runsFailed = runs.isError && !runsReady;
-  const activeFilter: ReadonlySet<ResultBucket> = runsReady ? lastFilter : NO_FILTER;
-  const lastOf = (i: number) => lastResultFor(last, rows[i].id);
+  const activeFilter: ReadonlySet<LastResult> = runsReady ? lastFilter : NO_FILTER;
+  /** Cases the person marked Flaky: a last result of Failed on one reads
+   * Flaky, and is counted so rather than as failed (as Past runs counts it). */
+  const flakyIds = useFlakyMarks();
+  const lastOf = (i: number): LastResult => lastResultWithFlaky(lastResultFor(last, rows[i].id), rows[i].id, flakyIds);
   /** How many of ALL the rows each result holds, whatever is pressed. */
-  const lastCounts = RESULT_BUCKETS.reduce(
+  const lastCounts = [...RESULT_BUCKETS, "Flaky" as const].reduce(
     (acc, b) => ({ ...acc, [b]: rows.filter((_, i) => lastOf(i) === b).length }),
-    {} as Record<ResultBucket, number>,
+    {} as Record<LastResult, number>,
   );
   /** The rows the filters and the search let through, by index in `rows`.
    * Everything that acts on "what is shown" (Select all shown, a group's
@@ -649,7 +654,7 @@ export default function AutoRun({
     });
   };
 
-  const toggleLast = (b: ResultBucket) =>
+  const toggleLast = (b: LastResult) =>
     setLastFilter((prev) => {
       const next = new Set(prev);
       if (next.has(b)) next.delete(b);
