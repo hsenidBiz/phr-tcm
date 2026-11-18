@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use v2_lib::app_settings::{AppSettings, AutorunMode};
 use v2_lib::modules::{Module, HIDDEN_UNTIL_UNLOCKED};
-use v2_lib::simple_mode::{is_new_install, modules_to_switch_on, settle_on_start_in, settle_simple_mode, switch_all_on_with};
+use v2_lib::simple_mode::{is_new_install, modules_to_switch_on, settle_on_start_in, settle_simple_mode, set_app_simple_mode_with, switch_all_on_with};
 
 fn on(ms: &[Module]) -> BTreeSet<Module> {
     ms.iter().copied().collect()
@@ -61,13 +61,38 @@ fn turning_it_off_after_on_leaves_the_modules_on() {
     let d = tempfile::tempdir().unwrap();
     let mut st = BTreeSet::new();
     let mut s = AppSettings::default();
-    switch_all_on_with(&mut st, &mut s, d.path());
+    let a = set_app_simple_mode_with(&mut st, &mut s, d.path(), true).unwrap();
+    assert!(a.not_switched_on.is_empty());
+    assert_eq!(a.settings.app_simple_mode, Some(true));
     let modules_before = st.clone();
-    // "Off" only changes the saved choice (the command saves it and touches no module).
-    s.app_simple_mode = Some(false);
-    v2_lib::app_settings::save(d.path(), &s).unwrap();
+    assert_eq!(modules_before.len(), 5);
+    let b = set_app_simple_mode_with(&mut st, &mut s, d.path(), false).unwrap();
+    assert_eq!(b.settings.app_simple_mode, Some(false));
+    assert!(b.not_switched_on.is_empty());
     assert_eq!(st, modules_before);
     assert_eq!(v2_lib::modules::saved(d.path()).unwrap(), modules_before);
+    assert_eq!(v2_lib::app_settings::load(d.path()).app_simple_mode, Some(false));
+}
+
+#[test]
+fn any_other_sign_of_an_earlier_launch_is_an_existing_install() {
+    for marker in ["cache.json", "databases.json", "extras.json", "writing-style.json"] {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(marker), "{}").unwrap();
+        assert!(!is_new_install(d.path()), "{marker}");
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir(d.path().join("autorun")).unwrap();
+    assert!(!is_new_install(d.path()));
+
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("cache.json"), "{}").unwrap();
+    let new_install = is_new_install(d.path());
+    let mut st = BTreeSet::new();
+    let mut s = AppSettings::default();
+    settle_on_start_in(d.path(), new_install, &mut st, &mut s);
+    assert_eq!(s.app_simple_mode, Some(false));
+    assert!(st.is_empty());
 }
 
 #[test]

@@ -31,10 +31,18 @@ pub fn modules_to_switch_on(on: &BTreeSet<Module>) -> Vec<Module> {
 }
 
 /// Whether `dir` is a first launch. Must be asked BEFORE anything at
-/// start-up writes into `dir`: a saved module choice or saved settings mean
-/// an earlier launch.
+/// start-up writes into `dir`: any data an earlier launch left (the same
+/// test the modules use, `modules::existing_install`) or a saved module
+/// choice or saved settings mean an earlier launch.
 pub fn is_new_install(dir: &Path) -> bool {
-    !dir.join("modules.json").exists() && !dir.join("app-settings.json").exists()
+    !crate::modules::existing_install(dir) && !dir.join("modules.json").exists() && !dir.join("app-settings.json").exists()
+}
+
+/// What settling writes, or `None` when a value is already saved: the
+/// Simple mode choice and `switch_markers_migrated` (a new install has no old
+/// markers to migrate). The one decision both start-up paths use.
+pub fn settled_values(saved: Option<bool>, new_install: bool) -> Option<(Option<bool>, bool)> {
+    saved.is_none().then(|| (settle_simple_mode(None, new_install), new_install))
 }
 
 /// Switch each missing module on through `set` (which answers the modules on
@@ -75,12 +83,11 @@ pub fn switch_all_on_with(state: &mut BTreeSet<Module>, settings: &mut AppSettin
 /// value once and, for a new install, switch every module on. `new_install`
 /// comes from `is_new_install`, asked before anything wrote into `dir`.
 pub fn settle_on_start_in(dir: &Path, new_install: bool, state: &mut BTreeSet<Module>, settings: &mut AppSettings) -> Vec<String> {
-    if settings.app_simple_mode.is_some() {
+    let Some((mode, migrated)) = settled_values(settings.app_simple_mode, new_install) else {
         return Vec::new();
-    }
-    settings.app_simple_mode = settle_simple_mode(None, new_install);
-    // A new install has no old switch markers to migrate.
-    settings.switch_markers_migrated = new_install;
+    };
+    settings.app_simple_mode = mode;
+    settings.switch_markers_migrated = migrated;
     if let Err(e) = crate::app_settings::save(dir, settings) {
         crate::applog::warn(format!("settling Simple mode failed: {e}"));
     }
@@ -94,13 +101,12 @@ pub fn settle_on_start_in(dir: &Path, new_install: bool, state: &mut BTreeSet<Mo
 /// Settle Simple mode for this process, once, at start-up (after the modules
 /// and settings are loaded). `new_install` is read before `cache::init`.
 pub fn settle_on_start(new_install: bool) {
-    let now = crate::app_settings::current();
-    if now.app_simple_mode.is_some() {
+    let Some((mode, migrated)) = settled_values(crate::app_settings::current().app_simple_mode, new_install) else {
         return;
-    }
+    };
     if let Err(e) = crate::app_settings::update(|s| {
-        s.app_simple_mode = settle_simple_mode(None, new_install);
-        s.switch_markers_migrated = new_install;
+        s.app_simple_mode = mode;
+        s.switch_markers_migrated = migrated;
     }) {
         crate::applog::warn(format!("settling Simple mode failed: {e}"));
         return;
@@ -115,4 +121,19 @@ pub fn switch_all_on() -> Vec<String> {
     switch_all_on_via(crate::modules::current(), |m| {
         crate::commands::modules::modules_set_now(m, true, false).map(|a| a.on)
     })
+}
+
+/// The testable half of `set_app_simple_mode`: save the choice into `dir`,
+/// then (on) switch every module on. A module that fails is named and the
+/// choice stays saved; off changes no module.
+pub fn set_app_simple_mode_with(
+    state: &mut BTreeSet<Module>,
+    settings: &mut AppSettings,
+    dir: &Path,
+    on: bool,
+) -> Result<SimpleModeAnswer, String> {
+    settings.app_simple_mode = Some(on);
+    crate::app_settings::save(dir, settings)?;
+    let not_switched_on = if on { switch_all_on_with(state, settings, dir) } else { Vec::new() };
+    Ok(SimpleModeAnswer { settings: settings.clone(), not_switched_on })
 }
