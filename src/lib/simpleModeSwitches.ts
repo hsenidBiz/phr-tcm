@@ -8,25 +8,45 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { commands } from "../bindings";
-import { markApiWritesSetFor, turnOnApiWritesWhereUnset } from "./apiTemplates";
+import { turnOnApiWritesWhereUnset } from "./apiTemplates";
 import { useEnvironments } from "./environments";
-import { markNetworkToolsSetFor, turnOnNetworkToolsWhereUnset } from "./networkTools";
+import { turnOnNetworkToolsWhereUnset } from "./networkTools";
 
 /** The key the app's settings are cached under (Settings, Background, ...). */
 const APP_SETTINGS_KEY = ["app-settings"] as const;
 
-/** Mark both switches as chosen for each environment, leaving them as they are. */
-export function markAllAsSet(envIds: string[]): void {
-  markApiWritesSetFor(envIds);
-  markNetworkToolsSetFor(envIds);
+/** Simple mode's own record that an environment existed before it did. Read
+ * only by Simple mode: the switches' person-set markers stay a person's, so
+ * nothing else that reads them (the Modules page's first Auto Run switch-on)
+ * changes for an upgrade. */
+const BASELINE_BASE = "tcm-v2-simple-baseline";
+
+/** Record the given environments as ones Simple mode never switches on,
+ * leaving every switch and person-set marker alone. */
+export function markBaseline(envIds: string[]): void {
+  try {
+    for (const id of envIds) localStorage.setItem(`${BASELINE_BASE}:${id}`, "1");
+  } catch {
+    // storage unavailable -> nothing to record
+  }
 }
 
-/** Switch both switches on for each environment with no marker for that
- * switch. Writes no marker, and returns how many each changed. */
+function inBaseline(id: string): boolean {
+  try {
+    return localStorage.getItem(`${BASELINE_BASE}:${id}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Switch both switches on for each environment outside the baseline, except
+ * a switch a person has chosen. Writes no marker, and returns how many each
+ * changed. */
 export function turnOnUnsetSwitches(envIds: string[]): { apiWrites: number; networkTools: number } {
+  const ids = envIds.filter((id) => !inBaseline(id));
   return {
-    apiWrites: turnOnApiWritesWhereUnset(envIds),
-    networkTools: turnOnNetworkToolsWhereUnset(envIds),
+    apiWrites: turnOnApiWritesWhereUnset(ids),
+    networkTools: turnOnNetworkToolsWhereUnset(ids),
   };
 }
 
@@ -38,6 +58,8 @@ export function useSimpleModeSwitches(): void {
   const settings = useQuery({ queryKey: APP_SETTINGS_KEY, queryFn: () => commands.getAppSettings() });
   const envs = useEnvironments();
   const migrating = useRef(false);
+  // The local baseline is written once; a failed save retries only the save.
+  const baselineWritten = useRef(false);
 
   const loaded = settings.data !== undefined;
   const migrated = settings.data?.switch_markers_migrated;
@@ -48,7 +70,10 @@ export function useSimpleModeSwitches(): void {
   useEffect(() => {
     if (!loaded || !envIds || migrated !== false || migrating.current) return;
     migrating.current = true;
-    markAllAsSet(envIds);
+    if (!baselineWritten.current) {
+      markBaseline(envIds);
+      baselineWritten.current = true;
+    }
     void commands
       .setSwitchMarkersMigrated()
       .then((res) => {

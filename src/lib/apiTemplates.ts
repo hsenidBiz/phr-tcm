@@ -78,16 +78,6 @@ export function apiWritesSnapshot(): boolean {
   return loadApiWrites();
 }
 
-/** Record, for each environment, that its switch counts as chosen, without
- * changing the switch. Used once for installs that predate Simple mode. */
-export function markApiWritesSetFor(envIds: string[]): void {
-  try {
-    for (const id of envIds) localStorage.setItem(envKeyFor(API_WRITES_SET_BASE, id), "1");
-  } catch {
-    // storage unavailable -> nothing to mark
-  }
-}
-
 /** Switch the write switch on for every environment nobody has chosen it for,
  * and return how many that changed. Writes no marker: a default, not a choice. */
 export function turnOnApiWritesWhereUnset(envIds: string[]): number {

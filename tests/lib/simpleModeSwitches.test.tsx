@@ -22,7 +22,8 @@ vi.mock("../../src/lib/environments", () => ({
 
 import { saveApiWrites } from "../../src/lib/apiTemplates";
 import { setActiveEnvId } from "../../src/lib/activeEnv";
-import { markAllAsSet, turnOnUnsetSwitches, useSimpleModeSwitches } from "../../src/lib/simpleModeSwitches";
+import { turnOnNetworkToolsWhereUnset } from "../../src/lib/networkTools";
+import { markBaseline, turnOnUnsetSwitches, useSimpleModeSwitches } from "../../src/lib/simpleModeSwitches";
 
 const SETTINGS = ["app-settings"];
 const ENVS = ["environments"];
@@ -41,7 +42,10 @@ beforeEach(() => {
   getAppSettings.mockReset();
   getAppSettings.mockReturnValue(new Promise(() => {}));
 });
-afterEach(() => localStorage.clear());
+afterEach(() => {
+  localStorage.clear();
+  setActiveEnvId("");
+});
 
 function mount(s: object, ids: string[]) {
   qc.setQueryData(SETTINGS, s);
@@ -54,16 +58,23 @@ const update = (key: string[], v: unknown) =>
     await new Promise((r) => setTimeout(r, 0));
   });
 
-test("markAllAsSet writes both markers and leaves the switches alone", () => {
+test("markBaseline writes only Simple mode's own marker and leaves the switches and person-set markers alone", () => {
   localStorage.setItem("tcm-v2-api-writes:a", "1");
-  markAllAsSet(["a", "b"]);
-  for (const id of ["a", "b"]) {
-    expect(localStorage.getItem(`tcm-v2-api-writes-set:${id}`)).toBe("1");
-    expect(localStorage.getItem(`tcm-v2-network-tools-set:${id}`)).toBe("1");
-  }
+  markBaseline(["a", "b"]);
+  expect(localStorage.getItem("tcm-v2-simple-baseline:a")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-simple-baseline:b")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-api-writes-set:a")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-network-tools-set:b")).toBeNull();
   expect(api("a")).toBe("1");
   expect(api("b")).toBeNull();
   expect(net("a")).toBeNull();
+});
+
+test("turnOnUnsetSwitches skips baseline environments", () => {
+  markBaseline(["a"]);
+  expect(turnOnUnsetSwitches(["a", "b"])).toEqual({ apiWrites: 1, networkTools: 1 });
+  expect(api("a")).toBeNull();
+  expect(net("b")).toBe("1");
 });
 
 test("turnOnUnsetSwitches changes only environments without a marker and counts them", () => {
@@ -85,14 +96,18 @@ test("existing_environments_keep_their_switches_after_turning_simple_on", async 
   expect(setSwitchMarkersMigrated).toHaveBeenCalledTimes(1);
 
   await update(SETTINGS, settings({ app_simple_mode: true }));
-  expect(api("A")).toBeNull();
-  expect(net("B")).toBeNull();
+  for (const id of ["A", "B"]) {
+    expect(api(id)).toBeNull();
+    expect(net(id)).toBeNull();
+  }
 
   await update(ENVS, list("A", "B", "C"));
   expect(api("C")).toBe("1");
   expect(net("C")).toBe("1");
-  expect(api("A")).toBeNull();
-  expect(net("B")).toBeNull();
+  for (const id of ["A", "B"]) {
+    expect(api(id)).toBeNull();
+    expect(net(id)).toBeNull();
+  }
   expect(setSwitchMarkersMigrated).toHaveBeenCalledTimes(1);
 });
 
@@ -130,4 +145,25 @@ test("nothing happens before the settings have loaded", async () => {
   await act(async () => {});
   expect(api("A")).toBeNull();
   expect(setSwitchMarkersMigrated).not.toHaveBeenCalled();
+});
+
+test("after the migration the Modules page's first Auto Run switch-on still turns Network tools on", async () => {
+  setSwitchMarkersMigrated.mockResolvedValue({ status: "ok", data: settings({}) });
+  mount(settings({ switch_markers_migrated: false }), ["A"]);
+  await act(async () => {});
+  expect(localStorage.getItem("tcm-v2-network-tools-set:A")).toBeNull();
+  expect(turnOnNetworkToolsWhereUnset(["A"])).toBe(1);
+  expect(net("A")).toBe("1");
+});
+
+test("a failed save retries only the save, never marking later environments", async () => {
+  setSwitchMarkersMigrated.mockResolvedValue({ status: "error", error: "nope" });
+  mount(settings({ switch_markers_migrated: false }), ["A"]);
+  await act(async () => {});
+  expect(setSwitchMarkersMigrated).toHaveBeenCalledTimes(1);
+
+  await update(ENVS, list("A", "B"));
+  expect(setSwitchMarkersMigrated).toHaveBeenCalledTimes(2);
+  expect(localStorage.getItem("tcm-v2-simple-baseline:A")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-simple-baseline:B")).toBeNull();
 });

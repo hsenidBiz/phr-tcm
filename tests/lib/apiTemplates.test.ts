@@ -4,7 +4,6 @@ import { setActiveEnvId } from "../../src/lib/activeEnv";
 import {
   apiWritesSnapshot,
   loadApiWrites,
-  markApiWritesSetFor,
   saveApiWrites,
   subscribeApiWrites,
   turnOnApiWritesWhereUnset,
@@ -52,15 +51,6 @@ test("choosing the switch either way writes the person-set marker", () => {
   saveApiWrites(false);
   expect(localStorage.getItem("tcm-v2-api-writes-set:env-a")).toBe("1");
   expect(localStorage.getItem("tcm-v2-api-writes:env-a")).toBeNull();
-});
-
-test("marking environments as set leaves their switches alone", () => {
-  localStorage.setItem("tcm-v2-api-writes:env-a", "1");
-  markApiWritesSetFor(["env-a", "env-b"]);
-  expect(localStorage.getItem("tcm-v2-api-writes-set:env-a")).toBe("1");
-  expect(localStorage.getItem("tcm-v2-api-writes-set:env-b")).toBe("1");
-  expect(localStorage.getItem("tcm-v2-api-writes:env-a")).toBe("1");
-  expect(localStorage.getItem("tcm-v2-api-writes:env-b")).toBeNull();
 });
 
 test("turning the switch on where unset leaves an environment a person chose alone", () => {
