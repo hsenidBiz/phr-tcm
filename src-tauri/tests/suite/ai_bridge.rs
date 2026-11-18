@@ -5836,6 +5836,21 @@ async fn the_writing_guide_documents_step_attachments() {
     }
 }
 
+/// The writing guide points the assistant at `get_bugs` for a case that
+/// failed before and before it files a bug.
+#[tokio::test]
+async fn the_writing_guide_points_at_get_bugs() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "allowedValues": ["Login"] })))
+        .mount(&server)
+        .await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.10.3").await;
+    assert_eq!(status, 200);
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("`get_bugs`") && flat.contains("already filed"), "the writing guide should name get_bugs: {flat}");
+}
+
 /// An id in remove_attachments that a step still lists stays (carried wins);
 /// an existing attachment on a case with no id cannot be copied.
 #[tokio::test]

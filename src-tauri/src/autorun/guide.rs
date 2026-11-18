@@ -2622,6 +2622,7 @@ person and never changes the script; add `proposal` (optional) with what you sug
   Auto Run`, and never count as passed, until the person rules.
 - An `app` divergence does not block. The check stays as the case says, so the run fails at that step:
   a real bug must surface as a failure. After that run, mark it with `mark_autorun_suspected_defect`.
+  Before you report it as a new defect, call `get_bugs` with the case's id as `case_id`: it may be already filed.
 - Either way, save the script as the case says and name every divergence in your report.
 
 The person rules on the case in Auto Run:

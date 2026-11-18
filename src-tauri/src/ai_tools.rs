@@ -135,6 +135,7 @@ pub const CORE_TOOLS: &[&str] = &[
     // read of the app's own state, so no module owns it.
     "get_current_pbi",
     "get_test_cases",
+    "get_bugs",
     "check_spec_coverage",
     "transform_cases",
     // Finishing a draft is part of writing one. A set that cannot be

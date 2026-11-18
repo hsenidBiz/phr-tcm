@@ -580,6 +580,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             }), &[]),
         },
         {
+            "name": "get_bugs",
+            "description": "Bugs from Azure DevOps, read only. Pass `pbi_id` for the bugs on a PBI (the bugs linked to it and to its test cases), `case_id` for the bugs linked to one test case, `bug_ids` to read specific bugs by their own ids, or combine them: `pbi_id` with `case_id` gives the bugs on both, and `pbi_id` with `bug_ids` narrows to those ids, listing any id the PBI has no bug for under `not_on_pbi` and any id that is not a bug under `not_a_bug`. Each bug has its state, severity, priority, assignee, tags, area and iteration paths, repro steps, system info and the ids of the test cases and PBIs it links to. Use it before you file or write up a bug, to check it is not a duplicate that is already filed; when a test case failed before, to see whether its failure has a bug; and whenever the person names a bug by its id. `titles_only` returns ids, titles and states, for a quick duplicate check.",
+            "inputSchema": schema(serde_json::json!({
+                "pbi_id": { "type": "integer", "description": "Work item id of the PBI whose bugs to read" },
+                "case_id": { "type": "integer", "description": "Work item id of a test case whose linked bugs to read" },
+                "bug_ids": { "type": "array", "items": { "type": "integer" }, "description": "Bug work item ids to read (up to 200)" },
+                "limit": { "type": "integer", "description": "Max bugs (default 5, cap 20)" },
+                "offset": { "type": "integer", "description": "Skip this many bugs - page through a PBI with more than the cap" },
+                "titles_only": { "type": "boolean", "description": "Return only ids, titles and states (cap 200) - use for duplicate checking instead of pulling full repro steps" },
+            }), &[]),
+        },
+        {
             "name": "search_test_suites",
             "description": "The test plans and suites in the current project, one row per suite with its plan id, suite id, type (staticTestSuite, requirementTestSuite, dynamicTestSuite), the PBI a requirement suite is bound to, and its parent suite. Filter with `query` against the plan name, the suite name, or a PBI id - a project can hold hundreds of plans, so filter rather than reading all of them. Use it to find a suite before calling get_suite_test_cases, or to read how a feature's cases are organised across plans. Served from a ten-minute cache; pass `refresh` after suites were created or moved.",
             "inputSchema": schema(serde_json::json!({
@@ -2541,6 +2553,44 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             }
             params.push(format!("limit={limit}&offset={offset}"));
             let mut target = format!("/test-cases?{}", params.join("&"));
+            if args["titles_only"].as_bool().unwrap_or(false) {
+                target.push_str("&titles_only=true");
+            }
+            call("GET", &target, "")
+        })(),
+        "get_bugs" => (|| -> Result<(u16, String), String> {
+            let limit = match int_arg(&args, "limit") {
+                Ok(n) => n.unwrap_or(5),
+                Err(why) => return Ok((400, why)),
+            };
+            let offset = match int_arg(&args, "offset") {
+                Ok(n) => n.unwrap_or(0),
+                Err(why) => return Ok((400, why)),
+            };
+            let mut params: Vec<String> = vec![];
+            for (arg, key) in [("pbi_id", "pbi"), ("case_id", "case")] {
+                match int_arg(&args, arg) {
+                    Ok(Some(id)) => params.push(format!("{key}={id}")),
+                    Ok(None) => {}
+                    Err(why) => return Ok((400, why)),
+                }
+            }
+            // Read the way get_test_cases reads its ids: a bare number is a
+            // one-id list, and a string passes through so the bridge refuses
+            // a malformed id by name.
+            let ids: Vec<String> = match &args["bug_ids"] {
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .map(|i| i.as_i64().map(|n| n.to_string()).unwrap_or_else(|| i.as_str().unwrap_or_default().trim().to_string()))
+                    .collect(),
+                serde_json::Value::Number(n) => vec![n.to_string()],
+                _ => vec![],
+            };
+            if !ids.is_empty() {
+                params.push(format!("ids={}", ids.iter().map(|i| urlencoding::encode(i)).collect::<Vec<_>>().join(",")));
+            }
+            params.push(format!("limit={limit}&offset={offset}"));
+            let mut target = format!("/bugs?{}", params.join("&"));
             if args["titles_only"].as_bool().unwrap_or(false) {
                 target.push_str("&titles_only=true");
             }
