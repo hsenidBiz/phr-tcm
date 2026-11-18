@@ -1317,7 +1317,8 @@ pub async fn submit_queue(
                     vec![format!("The spec order could not be set in Azure DevOps: {}", e.user_text())]
                 }
             };
-            for reason in notes {
+            let simple = crate::app_settings::current().app_simple_mode == Some(true);
+            for reason in crate::run_order::simple_mode_notes(notes, simple) {
                 let _ = crate::events::RunOrderNotSaved { reason }.emit(&app);
             }
         }

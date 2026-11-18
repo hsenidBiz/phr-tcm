@@ -720,7 +720,7 @@ async fn a_suite_that_never_caught_up_is_ordered_for_what_it_has_and_says_so() {
     .await;
     assert_eq!(
         notes,
-        vec!["Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong (Simple mode hides that screen; turn it off in Settings).".to_string()]
+        vec!["Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong.".to_string()]
     );
     let patch = body_of(&server, wiremock::http::Method::PATCH, SUITE_PATH).await.expect("a reorder PATCH");
     assert_eq!(patched_ids(&patch), vec![101, 50]);
@@ -906,4 +906,21 @@ async fn a_deleted_suite_is_forgotten_so_the_next_upload_resolves_it_again() {
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].starts_with("The spec order could not be set in Azure DevOps: "), "{}", notes[0]);
     assert!(cached_suite(&server.uri(), "acme", "Web", 42).is_none());
+}
+
+#[test]
+fn the_suite_order_note_points_at_settings_only_in_simple_mode() {
+    use v2_lib::run_order::simple_mode_notes;
+    let other = "The spec order could not be set in Azure DevOps: nope".to_string();
+    let notes = vec![NOTE_SUITE_BEHIND.to_string(), other.clone()];
+    // Off: today's exact text.
+    assert_eq!(simple_mode_notes(notes.clone(), false), notes);
+    assert!(NOTE_SUITE_BEHIND.ends_with("Set it in Suite Management if it looks wrong."));
+    // On: the note that names Suite Management says how to get it back.
+    let on = simple_mode_notes(notes, true);
+    assert_eq!(
+        on[0],
+        "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong (Simple mode hides that screen; turn it off in Settings)."
+    );
+    assert_eq!(on[1], other);
 }
