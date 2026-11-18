@@ -48,11 +48,12 @@ struct World {
     server: MockServer,
     items: BTreeMap<i32, Item>,
     types: Vec<&'static str>,
+    hidden: Vec<i32>,
 }
 
 impl World {
     async fn new() -> World {
-        World { server: MockServer::start().await, items: BTreeMap::new(), types: vec!["Bug", "Task"] }
+        World { server: MockServer::start().await, items: BTreeMap::new(), types: vec!["Bug", "Task"], hidden: vec![] }
     }
 
     fn add(&mut self, id: i32, kind: &str, title: &str, links: &[(&str, i32)]) {
@@ -99,6 +100,7 @@ impl World {
                 .mount(&self.server)
                 .await;
         }
+        let hidden = self.hidden.clone();
         Mock::given(wm_method("GET"))
             .and(wm_path("/acme/_apis/wit/workitems"))
             .respond_with(move |req: &Request| {
@@ -108,7 +110,22 @@ impl World {
                     .find(|(k, _)| k == "ids")
                     .map(|(_, v)| v.split(',').filter_map(|s| s.parse().ok()).collect())
                     .unwrap_or_default();
-                let value: Vec<serde_json::Value> = ids.iter().filter_map(|i| snapshot.get(i).cloned()).collect();
+                // As Azure DevOps does: an unreadable id fails the batch, unless
+                // errorPolicy=omit, which answers null for it.
+                let omit = req.url.query_pairs().any(|(k, v)| k == "errorPolicy" && v == "omit");
+                if !omit && ids.iter().any(|i| hidden.contains(i)) {
+                    return ResponseTemplate::new(404);
+                }
+                let value: Vec<serde_json::Value> = ids
+                    .iter()
+                    .filter_map(|i| {
+                        if hidden.contains(i) {
+                            Some(serde_json::Value::Null)
+                        } else {
+                            snapshot.get(i).cloned()
+                        }
+                    })
+                    .collect();
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": value}))
             })
             .mount(&self.server)
@@ -207,17 +224,81 @@ async fn pbi_and_ids_list_outsiders_under_not_on_pbi() {
 }
 
 #[tokio::test]
-async fn a_renamed_bug_type_is_still_a_bug() {
-    // A process without "Bug" files them as Issue (detect_bug_type).
+async fn an_issue_project_reads_issues_as_bugs_with_their_description() {
+    // A process without "Bug" files them as Issue (detect_bug_type), with
+    // the repro steps in System.Description.
     let mut w = World::new().await;
     w.types = vec!["Issue", "Task"];
     w.add(42, "Product Backlog Item", "PBI", &[(CHILD, 101), (CHILD, 102)]);
     w.add(101, "Issue", "An issue", &[]);
+    w.items.get_mut(&101).unwrap().extra = serde_json::json!({
+        "System.Description": "<div>Click <b>Save</b></div>",
+        "Microsoft.VSTS.TCM.ReproSteps": "wrong field",
+    });
     w.add(102, "Bug", "Not this project's bug type", &[]);
     let client = w.start().await;
     let (status, v, body) = get(&client, "/bugs?pbi=42").await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(ids_of(&v), vec![101]);
+    assert_eq!(v["bugs"][0]["repro_steps"], "Click Save");
+}
+
+/// The bugs TCM itself files: Related to the case AND to the PBI, no parent.
+#[tokio::test]
+async fn a_bug_filed_by_tcm_sorts_its_case_and_its_pbi_by_type() {
+    let mut w = World::new().await;
+    w.add(42, "Product Backlog Item", "PBI", &[(TESTED_BY, 201), (RELATED, 301)]);
+    w.add(201, "Test Case", "Case", &[(RELATED, 301)]);
+    w.bug(301, &[(RELATED, 201), (RELATED, 42)]);
+    let client = w.start().await;
+    let (status, v, body) = get(&client, "/bugs?pbi=42").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(ids_of(&v), vec![301]);
+    assert_eq!(v["bugs"][0]["linked_test_cases"], serde_json::json!([201]));
+    assert_eq!(v["bugs"][0]["linked_pbis"], serde_json::json!([42]));
+}
+
+/// One linked item Azure DevOps cannot read does not fail the PBI lookup.
+#[tokio::test]
+async fn an_unreadable_linked_item_is_left_out_of_a_pbi_lookup() {
+    let mut w = World::new().await;
+    w.add(42, "Product Backlog Item", "PBI", &[(CHILD, 101), (RELATED, 777)]);
+    w.bug(101, &[(PARENT, 42), (RELATED, 777)]);
+    w.hidden = vec![777];
+    let client = w.start().await;
+    let (status, v, body) = get(&client, "/bugs?pbi=42").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(ids_of(&v), vec![101]);
+    // Asking for the unreadable id itself is still reported.
+    let (status, _, _) = get(&client, "/bugs?ids=777").await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn pbi_and_case_together_give_the_bugs_on_both() {
+    let mut w = World::new().await;
+    w.add(42, "Product Backlog Item", "PBI", &[(TESTED_BY, 201), (TESTED_BY, 202)]);
+    w.add(201, "Test Case", "Case 1", &[(RELATED, 301), (RELATED, 302)]);
+    w.add(202, "Test Case", "Case 2", &[(RELATED, 302)]);
+    w.bug(301, &[]);
+    w.bug(302, &[]);
+    let client = w.start().await;
+    let (status, v, body) = get(&client, "/bugs?pbi=42&case=202").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(ids_of(&v), vec![302]);
+}
+
+#[tokio::test]
+async fn a_test_case_id_with_a_pbi_is_not_a_bug_rather_than_not_on_the_pbi() {
+    let mut w = World::new().await;
+    w.add(42, "Product Backlog Item", "PBI", &[(CHILD, 101)]);
+    w.bug(101, &[]);
+    w.add(201, "Test Case", "Case", &[]);
+    let client = w.start().await;
+    let (status, v, body) = get(&client, "/bugs?pbi=42&ids=201,101").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(v["not_a_bug"], serde_json::json!([201]));
+    assert!(v.get("not_on_pbi").is_none(), "{body}");
 }
 
 #[tokio::test]
@@ -269,6 +350,8 @@ async fn paging_caps_at_20_and_titles_only_at_200() {
     assert_eq!(ids_of(&v).len(), 20, "capped at 20");
     let (_, v, _) = get(&client, "/bugs?pbi=42&limit=5&offset=203").await;
     assert_eq!(ids_of(&v), vec![1001, 1000], "offset pages through, newest first");
+    assert_eq!(v["offset"], 203);
+    assert_eq!(v["offset"], 203);
     let (_, v, _) = get(&client, "/bugs?pbi=42&titles_only=true").await;
     assert_eq!(ids_of(&v).len(), 200, "titles_only is capped at 200");
     assert_eq!(v["total"], 205);
