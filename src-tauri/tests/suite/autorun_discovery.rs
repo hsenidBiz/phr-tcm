@@ -6386,6 +6386,57 @@ async fn page_false_leaves_the_memory_alone() {
     v2_lib::autorun::page_compact::forget(v2_lib::autorun::slots::SlotNo(2));
 }
 
+/// A batch whose page changed since the reader's last page ends with what
+/// changed, not the whole page.
+#[tokio::test]
+async fn a_batch_ends_with_the_changes_to_the_page() {
+    use std::sync::atomic::AtomicUsize;
+    use v2_lib::autorun::page_changes::CHANGES_HEADER;
+    let _held = crate::serial::page_menu();
+    let _leases = crate::serial::account_leases();
+    let n = v2_lib::autorun::slots::SlotNo(2);
+    v2_lib::autorun::page_compact::forget(n);
+    let dir = root_with_recipe_and_account();
+    let page = FakePage { href: "https://hr.example.internal/hr/leave/form", ..FakePage::default() };
+    let clicks = AtomicUsize::new(0);
+    let base: Vec<String> = ["A", "B", "C", "D", "E", "F"].iter().map(|s| s.to_string()).collect();
+    let d = ScriptedDriver::new(move |method, params| match method {
+        "Accessibility.getFullAXTree" => {
+            let mut names = base.clone();
+            if clicks.load(Ordering::SeqCst) >= 2 {
+                names.push("Brand new".into());
+            }
+            Ok(buttons_tree(&names))
+        }
+        "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+            clicks.fetch_add(1, Ordering::SeqCst);
+            page.answer(method, params)
+        }
+        _ => page.answer(method, params),
+    });
+    let (mut held, _) = slot(d, exploring("Leave"));
+    let mut texts = Vec::new();
+    for _ in 0..2 {
+        let (status, text) = Box::pin(compacted_with(
+            n,
+            "a:",
+            false,
+            changes_mode("{}"),
+            Box::pin(async {
+                discover_actions_in(&mut held, dir.path(), ORG, PROJECT, &[click("#a")], None, None, true, &no_stop()).await
+            }),
+        ))
+        .await;
+        assert_eq!(status, 200, "{text}");
+        texts.push(text);
+    }
+    assert!(!texts[0].contains(CHANGES_HEADER) && texts[0].contains("button \"A\""), "{}", texts[0]);
+    assert!(texts[1].lines().any(|l| l == CHANGES_HEADER), "{}", texts[1]);
+    assert!(texts[1].contains("button \"Brand new\""), "{}", texts[1]);
+    assert!(!texts[1].contains("button \"A\""), "{}", texts[1]);
+    v2_lib::autorun::page_compact::forget(n);
+}
+
 #[tokio::test]
 async fn a_failed_answer_remembers_nothing() {
     let _held = crate::serial::page_menu();
@@ -6843,6 +6894,124 @@ async fn a_tried_fill_form_stops_at_a_failed_field() {
     // The stand-in never reaches the answer, and no value of the failed or
     // the unrun field does either; only the field that ran shows its own.
     assert!(!text.contains('\u{1}') && !text.contains("hunter2-value") && !text.contains("Lee"), "{text}");
+}
+
+/// A form page that fails every accessibility query once something has been
+/// typed, with `err`: the control a field was to be matched to went away.
+fn form_page_failing_after_typing(
+    controls: Vec<FormControl>,
+    typed: Arc<Mutex<Vec<String>>>,
+    err: fn() -> v2_lib::browser::cdp::CdpError,
+) -> ScriptedDriver {
+    let seen = typed.clone();
+    form_page(controls, typed, None).answering_first(move |method, _| {
+        (method == "Accessibility.queryAXTree" && !seen.lock().unwrap().is_empty()).then(|| Err(err()))
+    })
+}
+
+fn stale_node() -> v2_lib::browser::cdp::CdpError {
+    v2_lib::browser::cdp::CdpError::Protocol { method: "DOM.resolveNode".into(), message: "No node with given id found".into() }
+}
+
+fn browser_closed() -> v2_lib::browser::cdp::CdpError {
+    v2_lib::browser::cdp::CdpError::Closed
+}
+
+/// A tried `fill_form` over `driver`, its session (an explore one when given).
+async fn tried_on(driver: ScriptedDriver, session: Option<&str>, root: &std::path::Path) -> (u16, String) {
+    let (browser, _) = slot(driver, exploring("Leave"));
+    let mut b = browser.unwrap();
+    let form = v2_lib::autorun::action_help::fill_form_ask(&fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }),
+    ))
+    .expect("a form");
+    let mut tabs_case = None;
+    v2_lib::ai_bridge::try_fill_form(
+        &mut b.d, &mut tabs_case, &mut b.account, &mut b.lease, root, ORG, PROJECT, 0, Some("Leave"), session, &form,
+    )
+    .await
+}
+
+fn two_text_boxes() -> Vec<FormControl> {
+    vec![text_box("First name"), text_box("Last name")]
+}
+
+/// A protocol refusal while matching a field fails that field, not the
+/// whole call: the page is still answered and the actions that worked listed.
+#[tokio::test]
+async fn a_stale_node_fails_one_field_and_the_page_is_still_answered() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let page = form_page_failing_after_typing(two_text_boxes(), typed.clone(), stale_node);
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "First name").contains("ok {"), "{text}");
+    assert!(field_line(&text, "Last name").contains("failed:"), "{text}");
+    assert_eq!(listed_actions(&text).len(), 1, "{text}");
+    assert!(text.contains("\n\nPage: ") || text.contains("button \"Save\""), "no page: {text}");
+    assert!(!text.contains("Lee"), "{text}");
+}
+
+/// A browser that is really gone still ends the call.
+#[tokio::test]
+async fn a_closed_browser_still_ends_the_form() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let page = form_page_failing_after_typing(two_text_boxes(), typed.clone(), browser_closed);
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_ne!(status, 200, "{text}");
+    assert!(field_line(&text, "Last name").contains("failed:"), "{text}");
+}
+
+#[tokio::test]
+async fn a_tried_fill_form_fails_one_field_on_a_stale_node() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (status, text) = tried_on(form_page_failing_after_typing(two_text_boxes(), typed, stale_node), None, dir.path()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("failed:"), "{text}");
+    assert_eq!(tried_json(&text)["actions"].as_array().unwrap().len(), 1, "{text}");
+    assert!(!text.contains("Lee"), "{text}");
+}
+
+/// A browser that is gone mid-form: the answer is still a 503, and it keeps
+/// the fields that had worked.
+#[tokio::test]
+async fn a_tried_fill_form_keeps_earlier_fields_when_the_browser_goes() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (status, text) = tried_on(form_page_failing_after_typing(two_text_boxes(), typed, browser_closed), None, dir.path()).await;
+    assert_eq!(status, 503, "{text}");
+    let v = tried_json(&text);
+    assert_eq!(v["actions"].as_array().unwrap().len(), 1, "{text}");
+    let lines = v["lines"].as_array().unwrap();
+    assert!(lines.iter().any(|l| l.as_str().unwrap().contains("Last name: failed:")), "{lines:?}");
+    assert!(!text.contains("Lee"), "{text}");
+}
+
+/// A write line an earlier field's try said (the saves it sent) is not lost
+/// when a later field is the last to run.
+#[tokio::test]
+async fn a_tried_fill_form_keeps_an_earlier_fields_write_lines() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let session = v2_lib::autorun::explore::begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut d = form_page(two_text_boxes(), typed, None);
+    d.on_call_events.push(("Input.insertText".into(), sent("1", "POST", "https://hr.example.internal/hr/leave/save?id=5")));
+    let (status, text) = tried_on(d, Some(&session), dir.path()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("ok"), "{text}");
+    assert!(text.contains("Saves it sent: POST /hr/leave/save."), "the first field's write line was lost: {text}");
+    assert_eq!(tried_json(&text)["actions"].as_array().unwrap().len(), 2, "{text}");
 }
 
 #[tokio::test]

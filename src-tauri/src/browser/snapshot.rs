@@ -544,6 +544,11 @@ fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Opt
         Some(b) => printed_lines(nodes, frames, Some(b)).0,
     };
     if lines.is_empty() {
+        // An empty page is what the reader was given too: the next read is
+        // compared with it, so the page that comes back is not "unchanged".
+        if within.is_none() {
+            let _ = crate::autorun::page_changes::apply(&whole, 1);
+        }
         let text = if within.is_some() { EMPTY_WITHIN } else { EMPTY };
         return PageRead { text: text.to_string(), lines: vec![], cut: within.is_some(), page_lines };
     }

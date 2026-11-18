@@ -623,12 +623,17 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
     form: &crate::autorun::action_help::FillForm,
 ) -> (u16, String) {
     use crate::autorun::action_help::{action_budget, call_elapsed_ms, did_not_answer, CALL_BUDGET_MS};
-    use crate::browser::fill_form::{plan_field, within_target, Planned};
+    use crate::browser::fill_form::{browser_is_gone, plan_field, within_target, Planned};
     let mut header = "fill_form".to_string();
     let mut within = None;
     if let Some(w) = &form.within {
         match within_target(d, w).await {
-            Err(e) => return (503, e.to_string()),
+            Err(e) if browser_is_gone(&e) => return (503, e.to_string()),
+            Err(e) => {
+                let why = one_short_line(&e.to_string());
+                let lines = [header.clone(), format!("   within: failed: {why}")];
+                return (200, with_fill_form_json(format!("failed: {why}"), &lines, &[]));
+            }
             Ok(Err(why)) => {
                 let lines = [header.clone(), format!("   within: failed: {why}")];
                 return (200, with_fill_form_json(format!("failed: {why}"), &lines, &[]));
@@ -642,6 +647,9 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
     let mut lines = vec![header];
     let mut ran: Vec<crate::browser::actions::Action> = Vec::new();
     let mut last: Option<String> = None;
+    // What each field that worked said after its first line (a write the
+    // guard let through, the saves it sent): kept for the answer's head.
+    let mut extras: Vec<String> = Vec::new();
     let mut failure: Option<String> = None;
     for (label, value) in &form.fields {
         if action_budget(1, call_elapsed_ms()).is_none() {
@@ -652,7 +660,15 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
         }
         let planned = match plan_field(d, within.as_ref(), label, value).await {
             Ok(p) => p,
-            Err(e) => return (503, e.to_string()),
+            Err(e) => {
+                let why = one_short_line(&e.to_string());
+                lines.push(format!("   {label}: failed: {why}"));
+                if browser_is_gone(&e) {
+                    return (503, with_fill_form_json(with_extras(e.to_string(), &extras), &lines, &ran));
+                }
+                failure = Some(why);
+                break;
+            }
         };
         let action = match planned {
             Planned::AlreadySet => {
@@ -672,12 +688,13 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
         .await;
         if status != 200 {
             // Refused, or the browser failed: nothing after this can run.
-            return (status, text);
+            return (status, with_fill_form_json(with_extras(text, &extras), &lines, &ran));
         }
         if text.starts_with("ok") {
             lines.push(format!("   {label}: ok {}", serde_json::to_string(&action).unwrap_or_default()));
             ran.push(action);
-            last = Some(text);
+            extras.extend(text.lines().skip(1).map(str::to_string));
+            last = Some(text.lines().next().unwrap_or("").to_string());
             continue;
         }
         let first = text.lines().next().unwrap_or("");
@@ -693,7 +710,13 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
         (None, Some(last)) => last,
         (None, None) => "ok: every field was already set - nothing done".to_string(),
     };
-    (200, with_fill_form_json(head, &lines, &ran))
+    (200, with_fill_form_json(with_extras(head, &extras), &lines, &ran))
+}
+
+/// `answer` with the lines earlier fields said after their first line.
+fn with_extras(answer: String, extras: &[String]) -> String {
+    extras.iter().fold(answer, |a, line| format!("{a}
+{line}"))
 }
 
 /// `answer` with the `fill_form:` line after it.

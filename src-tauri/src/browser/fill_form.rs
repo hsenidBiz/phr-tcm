@@ -12,6 +12,13 @@ use crate::autorun::action_help::FieldValue;
 pub const FORM_ROLES: [&str; 8] =
     ["textbox", "searchbox", "spinbutton", "combobox", "listbox", "checkbox", "radio", "switch"];
 
+/// Is the browser itself gone (closed, its socket failed, or it stopped
+/// answering)? Any other error is about the page - a node that went stale, a
+/// refusal of one call - and fails one field, not the whole step.
+pub fn browser_is_gone(e: &CdpError) -> bool {
+    matches!(e, CdpError::Closed | CdpError::Transport(_) | CdpError::Timeout { .. })
+}
+
 /// What one field comes to.
 #[allow(clippy::large_enum_variant)] // the shape is fixed by the plan
 #[derive(Debug, Clone, PartialEq)]

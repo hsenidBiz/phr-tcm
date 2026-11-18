@@ -767,8 +767,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                     "description": "Instead of `action`: several, in order, at most 20.",
                     "items": { "type": "object" },
                 },
-                "stop_on_failure": { "type": "boolean", "description": "Optional, with `actions`: false carries on past a failed action. True when left out." },
-                "page": { "type": ["boolean", "string"], "description": "Optional: false leaves the page out of the answer (it is still recorded as seen; get_autorun_page reads it). \"full\" gives the whole tree: by default the side menu is answered in full only when it changed since your last answer." },
+                "stop_on_failure": { "type": "boolean", "description": "Optional, with `actions` (or one `fill_form`): false carries on past a failed action or field. True when left out." },
+                "page": { "type": ["boolean", "string"], "description": "Optional: by default the page is answered as what changed since your last page from this browser. \"whole\" gives the usual page, \"full\" the whole tree (the side menu is otherwise answered in full only when it changed since your last answer), false leaves the page out (it is still recorded as seen; get_autorun_page reads it)." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its script is marked no_save, every save the page tries is BLOCKED for this call only (named in `blocked_writes`), so name it on every call for such a case." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save." },
@@ -1895,13 +1895,21 @@ pub const DISCOVER_ACTION_OR_ACTIONS: &str =
 pub const STOP_ON_FAILURE_GOES_WITH_ACTIONS: &str =
     "`stop_on_failure` goes with `actions`: one `action` has nothing after it to stop";
 
+/// Is this raw action a `fill_form`? It has fields after it to stop, so it may
+/// carry `stop_on_failure`.
+fn is_fill_form(action: &serde_json::Value) -> bool {
+    action.get("kind").and_then(|k| k.as_str()) == Some("fill_form")
+}
+
 /// `discover_autorun_actions`: one `action` through the one-action route,
 /// whose answer is the richer one (dialogs, address change, writes), or
 /// `actions` through the batch route. The arguments travel whole either
 /// way: each route reads its own named fields.
 fn discover_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
     match (given(args, "action"), given(args, "actions")) {
-        (true, false) if given(args, "stop_on_failure") => Ok((400, STOP_ON_FAILURE_GOES_WITH_ACTIONS.to_string())),
+        (true, false) if given(args, "stop_on_failure") && !is_fill_form(&args["action"]) => {
+            Ok((400, STOP_ON_FAILURE_GOES_WITH_ACTIONS.to_string()))
+        }
         (true, false) => call("POST", "/autorun-discover-action", &args.to_string()),
         (false, true) => call("POST", "/autorun-discover-actions", &args.to_string()),
         _ => Ok((400, DISCOVER_ACTION_OR_ACTIONS.to_string())),

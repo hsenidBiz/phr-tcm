@@ -210,6 +210,22 @@ async fn a_plus_line_past_the_cap_is_filed() {
     page_compact::forget(SlotNo(3));
 }
 
+/// An empty page is what the reader was given: the page that comes back is
+/// compared with nothing, not called unchanged.
+#[tokio::test]
+async fn an_empty_page_in_between_is_remembered() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = buttons(&names(30));
+    read(Mode::Changes, "https://h/p", &a, 120).await;
+    let empty = read(Mode::Changes, "https://h/p", &[], 120).await;
+    assert!(empty.text.contains("nothing a locator could name"), "{}", empty.text);
+    let back = read(Mode::Changes, "https://h/p", &a, 120).await;
+    assert_ne!(back.text, UNCHANGED_PAGE, "page A after an empty page was called unchanged");
+    assert!(back.text.contains("Do 5"), "{}", back.text);
+    page_compact::forget(SlotNo(3));
+}
+
 #[tokio::test]
 async fn a_failed_scope_remembers_nothing() {
     let _g = serial::page_menu();

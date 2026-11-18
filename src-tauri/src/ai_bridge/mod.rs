@@ -739,11 +739,7 @@ pub async fn route_as(
         // A try for a case another assistant works on was refused at the top.
         ("POST", "/autorun-try") => {
             let mut seen = None;
-            let tried = Box::pin(autorun_try(ctx, body, &mut seen, slot));
-            let answer = match changes_mode(body) {
-                Some(_) => crate::autorun::page_changes::scoped(slot, &page_owner(caller), crate::autorun::page_changes::Mode::Remember, tried).await,
-                None => tried.await,
-            };
+            let answer = Box::pin(autorun_try(ctx, body, &mut seen, slot)).await;
             with_overrides_seen(answer, seen, slot)
         }
         // Discovery: the assistant opens the Auto Run browser itself, signs

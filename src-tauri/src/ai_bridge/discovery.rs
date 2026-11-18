@@ -513,6 +513,9 @@ pub(crate) struct Heard {
     pub(crate) case_id: Option<i32>,
     /// The discovery is an explore session: nothing it learns is filed.
     pub(crate) explore: bool,
+    /// Every action the call's `fill_form` steps ran (the fields expanded),
+    /// so the sign-in check sees them as it sees the call's own actions.
+    pub(crate) filled: Vec<crate::browser::actions::Action>,
 }
 
 /// What the page answered one action of a discovery call.
@@ -1395,7 +1398,14 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
-    retake_print_after_call(slot, root, organization, project, stood, actions).await;
+    // A `fill_form` stands for the fills it ran: the sign-in check reads those.
+    let expanded: Vec<crate::browser::actions::Action> = actions
+        .iter()
+        .filter(|a| crate::autorun::action_help::fill_form_ask(a).is_none())
+        .cloned()
+        .chain(heard.filled.iter().cloned())
+        .collect();
+    retake_print_after_call(slot, root, organization, project, stood, &expanded).await;
     answer
 }
 
@@ -1632,7 +1642,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
     stop: &std::sync::atomic::AtomicBool,
 ) -> FillFormOutcome {
     use crate::autorun::action_help::{action_budget, call_elapsed_ms, no_answer, CALL_BUDGET_MS};
-    use crate::browser::fill_form::{plan_field, within_target, Planned};
+    use crate::browser::fill_form::{browser_is_gone, plan_field, within_target, Planned};
     let mut out = FillFormOutcome::default();
     out.row.at = at;
     let mut header = format!("{}. fill_form", at + 1);
@@ -1648,7 +1658,11 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
                 out.row.header = header;
                 out.row.fields.push(FieldRow::Said(format!("within: failed: {}", one_short_line(&e.to_string()))));
                 out.failed = true;
-                out.stopped = Some((503, e.to_string()));
+                if browser_is_gone(&e) {
+                    out.stopped = Some((503, e.to_string()));
+                } else {
+                    out.detail = one_short_line(&e.to_string());
+                }
                 return out;
             }
             Ok(Err(why)) => {
@@ -1718,8 +1732,18 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
             Err(e) => {
                 out.row.fields.push(FieldRow::Said(format!("{label}: failed: {}", one_short_line(&e.to_string()))));
                 out.failed = true;
-                out.stopped = Some((503, e.to_string()));
-                break;
+                if browser_is_gone(&e) {
+                    out.stopped = Some((503, e.to_string()));
+                    break;
+                }
+                if out.detail.is_empty() {
+                    out.detail = one_short_line(&e.to_string());
+                }
+                if stop_on_failure {
+                    stop_here(&mut out, total - k - 1);
+                    break;
+                }
+                continue;
             }
         };
         let (action, locator, matched) = match planned {
@@ -1747,6 +1771,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
         let sighting = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
         let idx = *next_field;
         *next_field += 1;
+        heard.filled.push(action.clone());
         let (status, body) =
             discover_action_heard(slot, root, organization, project, &action, None, None, heard, idx, false).await;
         if status != 200 {
@@ -2304,6 +2329,11 @@ pub(crate) async fn autorun_discover_action(
     // A `fill_form` answers as a batch of one does: its field lines, the
     // actions it ran, and the page.
     if crate::autorun::action_help::fill_form_ask(&action).is_some() {
+        let stop_on_failure = match v.get("stop_on_failure") {
+            None | Some(serde_json::Value::Null) => true,
+            Some(serde_json::Value::Bool(b)) => *b,
+            Some(_) => return (400, format!("\"stop_on_failure\" is true or false. Expected {SHAPE}.")),
+        };
         batch_stop(n).store(false, std::sync::atomic::Ordering::SeqCst);
         let _going = BatchGoing::begin(n);
         let mut slot = crate::commands::autorun::session_slot(n).lock().await;
@@ -2316,7 +2346,7 @@ pub(crate) async fn autorun_discover_action(
             std::slice::from_ref(&action),
             None,
             area.as_deref(),
-            true,
+            stop_on_failure,
             batch_stop(n),
             page_wanted(body),
         )
