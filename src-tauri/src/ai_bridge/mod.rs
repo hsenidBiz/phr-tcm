@@ -739,7 +739,11 @@ pub async fn route_as(
         // A try for a case another assistant works on was refused at the top.
         ("POST", "/autorun-try") => {
             let mut seen = None;
-            let answer = autorun_try(ctx, body, &mut seen, slot).await;
+            let tried = Box::pin(autorun_try(ctx, body, &mut seen, slot));
+            let answer = match changes_mode(body) {
+                Some(_) => crate::autorun::page_changes::scoped(slot, &page_owner(caller), crate::autorun::page_changes::Mode::Remember, tried).await,
+                None => tried.await,
+            };
             with_overrides_seen(answer, seen, slot)
         }
         // Discovery: the assistant opens the Auto Run browser itself, signs
@@ -751,7 +755,7 @@ pub async fn route_as(
             let mut seen = None;
             // A new discovery may be a new reader of this slot: it is told the whole page.
             crate::autorun::page_compact::forget(slot);
-            let answer = Box::pin(compacted(slot, &page_owner(caller), page_full(body), Box::pin(async { without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body) }))).await;
+            let answer = Box::pin(compacted_with(slot, &page_owner(caller), page_full(body), changes_mode(body).map(|_| crate::autorun::page_changes::Mode::Remember), Box::pin(async { without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body) }))).await;
             // A start refused or failed before it opened a browser does not
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
@@ -777,12 +781,12 @@ pub async fn route_as(
         }
         ("POST", "/autorun-discover-action") => {
             let mut seen = None;
-            let answer = Box::pin(compacted(slot, &page_owner(caller), page_full(body), Box::pin(async { without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body) }))).await;
+            let answer = Box::pin(compacted_with(slot, &page_owner(caller), page_full(body), changes_mode(body), Box::pin(async { without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body) }))).await;
             with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         ("POST", "/autorun-discover-actions") => {
             let mut seen = None;
-            let answer = Box::pin(compacted(slot, &page_owner(caller), page_full(body), Box::pin(async { without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body) }))).await;
+            let answer = Box::pin(compacted_with(slot, &page_owner(caller), page_full(body), changes_mode(body), Box::pin(async { without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body) }))).await;
             with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         // A replay going has already ended any discovery, and holds the

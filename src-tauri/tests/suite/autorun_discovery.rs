@@ -6348,3 +6348,55 @@ async fn a_tried_action_with_an_unknown_key_is_refused() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &extra.to_string(), "1.0.0").await;
     assert_eq!((status, out.as_str()), (400, "action 1: screenshot does not take zoom - it takes: full_page"));
 }
+
+// ------------------------------------- page changes through a route's wrapper
+
+use v2_lib::ai_bridge::{changes_mode, compacted_with};
+use v2_lib::autorun::page_changes::UNCHANGED_PAGE;
+
+/// A discovery answer's page read the way the discover routes wrap it.
+async fn routed(body: &str, driver: ScriptedDriver, status: u16) -> String {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(driver, exploring("Leave"));
+    let n = v2_lib::autorun::slots::SlotNo(2);
+    let (got, text) = compacted_with(n, "a:", false, changes_mode(body), async {
+        let (_, text) = page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+        (status, text)
+    })
+    .await;
+    assert_eq!(got, status);
+    text
+}
+
+#[tokio::test]
+async fn page_false_leaves_the_memory_alone() {
+    let _held = crate::serial::page_menu();
+    let _leases = crate::serial::account_leases();
+    v2_lib::autorun::page_compact::forget(v2_lib::autorun::slots::SlotNo(2));
+    let base: Vec<&str> = vec!["A", "B", "C", "D", "E", "F"];
+    let mut more = base.clone();
+    more.push("Brand new");
+    let mut other = base.clone();
+    other.push("Seen only with page false");
+    routed("{}", buttons_page(LEAVE_PAGE, &base), 200).await;
+    routed(r#"{"page":false}"#, buttons_page(LEAVE_PAGE, &other), 200).await;
+    let third = routed("{}", buttons_page(LEAVE_PAGE, &more), 200).await;
+    assert!(third.starts_with("page: changes since"), "{third}");
+    assert!(third.contains("Brand new") && !third.contains("Seen only"), "{third}");
+    v2_lib::autorun::page_compact::forget(v2_lib::autorun::slots::SlotNo(2));
+}
+
+#[tokio::test]
+async fn a_failed_answer_remembers_nothing() {
+    let _held = crate::serial::page_menu();
+    let _leases = crate::serial::account_leases();
+    v2_lib::autorun::page_compact::forget(v2_lib::autorun::slots::SlotNo(2));
+    let base: Vec<&str> = vec!["A", "B", "C", "D", "E", "F"];
+    routed("{}", buttons_page(LEAVE_PAGE, &base), 500).await;
+    let second = routed("{}", buttons_page(LEAVE_PAGE, &base), 200).await;
+    assert!(!second.starts_with(UNCHANGED_PAGE), "a failed answer was remembered: {second}");
+    // The 200 answer is remembered: the same page again is unchanged.
+    let third = routed("{}", buttons_page(LEAVE_PAGE, &base), 200).await;
+    assert!(third.starts_with(UNCHANGED_PAGE), "{third}");
+    v2_lib::autorun::page_compact::forget(v2_lib::autorun::slots::SlotNo(2));
+}

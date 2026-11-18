@@ -86,3 +86,149 @@ fn the_fragment_does_not_change_the_address() {
     assert!(same_address("https://h/p#a", "https://h/p#b"));
     assert!(!same_address("https://h/p", "https://h/q"));
 }
+
+// ------------------------------------------------- the scope around a read
+
+use v2_lib::ai_bridge::page_whole;
+use v2_lib::autorun::page_changes::{note_address, scoped, Mode, UNCHANGED_PAGE};
+use v2_lib::browser::snapshot::{render_frames_read, AxNode};
+
+fn ax(id: &str, role: &str, name: &str, children: &[&str]) -> AxNode {
+    AxNode {
+        id: id.into(),
+        role: role.into(),
+        name: name.into(),
+        value: None,
+        ignored: false,
+        children: children.iter().map(|s| s.to_string()).collect(),
+        focusable: false,
+        disabled: false,
+        backend: None,
+        required: false,
+        protected: false,
+    }
+}
+
+/// A main holding one button per name.
+fn buttons(names: &[String]) -> Vec<AxNode> {
+    let ids: Vec<String> = (0..names.len()).map(|i| format!("b{i}")).collect();
+    let kids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let mut nodes = vec![ax("0", "RootWebArea", "App", &["main"]), ax("main", "main", "", &kids)];
+    for (i, n) in names.iter().enumerate() {
+        nodes.push(ax(&format!("b{i}"), "button", n, &[]));
+    }
+    nodes
+}
+
+fn names(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("Do {i}")).collect()
+}
+
+/// Read `nodes` at `address` inside a scope for slot 3's reader `a:`, as a 200.
+async fn read(mode: Mode, address: &str, nodes: &[AxNode], limit: usize) -> v2_lib::browser::snapshot::PageRead {
+    let mut got = None;
+    scoped(SlotNo(3), "a:", mode, async {
+        note_address(address);
+        got = Some(render_frames_read(nodes, &[], limit));
+        (200, String::new())
+    })
+    .await;
+    got.unwrap()
+}
+
+#[tokio::test]
+async fn a_second_read_with_one_new_line_answers_changes() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = names(30);
+    let mut b = a.clone();
+    b.push("Brand new".into());
+    read(Mode::Changes, "https://h/p", &buttons(&a), 120).await;
+    let second = read(Mode::Changes, "https://h/p", &buttons(&b), 120).await;
+    assert!(second.text.starts_with(CHANGES_HEADER), "{}", second.text);
+    assert!(second.text.contains("+  button \"Brand new\""), "{}", second.text);
+    assert!(!second.text.contains("Do 5"), "{}", second.text);
+    page_compact::forget(SlotNo(3));
+}
+
+#[tokio::test]
+async fn the_same_page_twice_answers_unchanged() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = buttons(&names(30));
+    read(Mode::Changes, "https://h/p", &a, 120).await;
+    assert_eq!(read(Mode::Changes, "https://h/p", &a, 120).await.text, UNCHANGED_PAGE);
+    page_compact::forget(SlotNo(3));
+}
+
+#[tokio::test]
+async fn a_changed_address_answers_the_usual_page() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = buttons(&names(30));
+    read(Mode::Changes, "https://h/p", &a, 120).await;
+    let other = read(Mode::Changes, "https://h/q", &a, 120).await;
+    assert_eq!(other.text, render_frames_read(&a, &[], 120).text);
+    // The fragment is not a different page.
+    assert_eq!(read(Mode::Changes, "https://h/q#top", &a, 120).await.text, UNCHANGED_PAGE);
+    page_compact::forget(SlotNo(3));
+}
+
+#[tokio::test]
+async fn a_page_changed_everywhere_answers_the_usual_page() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    read(Mode::Changes, "https://h/p", &buttons(&names(10)), 120).await;
+    let b: Vec<String> = (0..10).map(|i| format!("Other {i}")).collect();
+    let second = read(Mode::Changes, "https://h/p", &buttons(&b), 120).await;
+    assert_eq!(second.text, render_frames_read(&buttons(&b), &[], 120).text);
+    page_compact::forget(SlotNo(3));
+}
+
+#[tokio::test]
+async fn remember_mode_prints_the_usual_page_and_remembers_it() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = buttons(&names(30));
+    let first = read(Mode::Remember, "https://h/p", &a, 120).await;
+    assert_eq!(first.text, render_frames_read(&a, &[], 120).text);
+    assert_eq!(read(Mode::Changes, "https://h/p", &a, 120).await.text, UNCHANGED_PAGE);
+    page_compact::forget(SlotNo(3));
+}
+
+#[tokio::test]
+async fn a_plus_line_past_the_cap_is_filed() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = names(130);
+    let mut b = a.clone();
+    b.insert(124, "Far down".into());
+    read(Mode::Changes, "https://h/p", &buttons(&a), 120).await;
+    let second = read(Mode::Changes, "https://h/p", &buttons(&b), 120).await;
+    assert!(second.text.contains("Far down"), "{}", second.text);
+    assert!(second.lines.iter().any(|l| l.name == "Far down"), "the changed line past the cap was not filed");
+    page_compact::forget(SlotNo(3));
+}
+
+#[tokio::test]
+async fn a_failed_scope_remembers_nothing() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = buttons(&names(30));
+    scoped(SlotNo(3), "a:", Mode::Changes, async {
+        note_address("https://h/p");
+        render_frames_read(&a, &[], 120);
+        (500, String::new())
+    })
+    .await;
+    assert!(remembered(SlotNo(3), "a:").is_none());
+    page_compact::forget(SlotNo(3));
+}
+
+#[test]
+fn page_whole_reads_the_option() {
+    assert!(page_whole(r#"{"page":"whole"}"#));
+    assert!(page_whole(r#"{"page":" Whole "}"#));
+    assert!(!page_whole(r#"{"page":"full"}"#));
+    assert!(!page_whole("{}"));
+}

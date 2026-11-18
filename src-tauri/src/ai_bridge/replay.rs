@@ -615,7 +615,7 @@ pub(crate) async fn run_assistant_replay(
         // Where the browser stands: before the step, or at the failure it
         // stopped on (a browser that went is never `StoppedAt`).
         ReplayEnd::Ready { .. } | ReplayEnd::StoppedAt { .. } => {
-            let answer = match compacted(n, &reader, full, host.page(n, org, project)).await {
+            let answer = match compacted_with(n, &reader, full, Some(crate::autorun::page_changes::Mode::Remember), host.page(n, org, project)).await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };

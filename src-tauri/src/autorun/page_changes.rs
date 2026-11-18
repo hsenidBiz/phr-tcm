@@ -197,3 +197,102 @@ pub fn remember_whole(n: SlotNo, owner: &str, address: &str, lines: Vec<String>)
 pub fn forget(n: SlotNo) {
     LAST.lock().unwrap_or_else(|e| e.into_inner()).retain(|(slot, _, _, _)| *slot != n.index());
 }
+
+/// What a read inside `scoped` does with the page it reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Print the usual page and remember it.
+    Remember,
+    /// Print only what changed since the last page the reader was given, when
+    /// that is shorter, and remember the page.
+    Changes,
+}
+
+struct Scope {
+    mode: Mode,
+    before: Option<(String, Vec<String>)>,
+    address: Mutex<String>,
+    got: Mutex<Option<(String, Vec<String>)>>,
+}
+
+tokio::task_local! {
+    static SCOPE: Scope;
+}
+
+/// What a whole-page read prints.
+#[derive(Debug, PartialEq)]
+pub enum Applied {
+    /// The usual page.
+    Usual,
+    /// The page is exactly what the reader has.
+    Unchanged,
+    /// Only these changes.
+    Changes(Vec<Change>),
+}
+
+/// Run `fut` (a page read answering `(status, text)`) for slot `n`'s reader
+/// `owner`. A whole-page read inside it (no `within`) is compared with, and
+/// remembered as, what the reader was given; a status other than 200 remembers
+/// nothing.
+pub async fn scoped<F: std::future::Future<Output = (u16, String)>>(n: SlotNo, owner: &str, mode: Mode, fut: F) -> (u16, String) {
+    let scope = Scope {
+        mode,
+        before: remembered(n, owner),
+        address: Mutex::new(String::new()),
+        got: Mutex::new(None),
+    };
+    let (answer, got) = SCOPE
+        .scope(scope, async {
+            let answer = fut.await;
+            let got = SCOPE.with(|s| s.got.lock().unwrap_or_else(|e| e.into_inner()).take());
+            (answer, got)
+        })
+        .await;
+    if answer.0 == 200 {
+        if let Some((address, lines)) = got {
+            remember_whole(n, owner, &address, lines);
+        }
+    }
+    answer
+}
+
+/// Is a read running inside `scoped`?
+pub fn active() -> bool {
+    SCOPE.try_with(|_| ()).is_ok()
+}
+
+/// The address of the page being read (a read inside `scoped` calls this
+/// before it renders).
+pub fn note_address(address: &str) {
+    let _ = SCOPE.try_with(|s| *s.address.lock().unwrap_or_else(|e| e.into_inner()) = address.to_string());
+}
+
+/// A whole-page read inside `scoped` has `whole` (its uncut, uncollapsed
+/// printed lines); the usual page would print `usual_lines` lines. Notes the
+/// page as the reader's to remember, and says what to print.
+pub fn apply(whole: &[String], usual_lines: usize) -> Applied {
+    SCOPE
+        .try_with(|s| {
+            let address = s.address.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            *s.got.lock().unwrap_or_else(|e| e.into_inner()) = Some((address.clone(), whole.to_vec()));
+            if s.mode != Mode::Changes {
+                return Applied::Usual;
+            }
+            let Some((old_address, old)) = &s.before else {
+                return Applied::Usual;
+            };
+            if !same_address(old_address, &address) {
+                return Applied::Usual;
+            }
+            let changes = diff(old, whole);
+            if changes.is_empty() {
+                return Applied::Unchanged;
+            }
+            if render(&changes).lines().count() < usual_lines {
+                Applied::Changes(changes)
+            } else {
+                Applied::Usual
+            }
+        })
+        .unwrap_or(Applied::Usual)
+}

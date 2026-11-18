@@ -92,6 +92,28 @@ pub fn page_full(body: &str) -> bool {
         .is_some_and(|v| v.get("page").and_then(|p| p.as_str()).is_some_and(|p| p.trim().eq_ignore_ascii_case("full")))
 }
 
+/// Whether a call's body asked for the usual page, printed whole, rather than
+/// only what changed (`"page": "whole"`).
+pub fn page_whole(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|v| v.get("page").and_then(|p| p.as_str()).is_some_and(|p| p.trim().eq_ignore_ascii_case("whole")))
+}
+
+/// How a discovery call's page is read for changes: not at all when its body
+/// left the page out, remembered whole when it asked for `full` or `whole`,
+/// and as changes otherwise.
+pub fn changes_mode(body: &str) -> Option<crate::autorun::page_changes::Mode> {
+    use crate::autorun::page_changes::Mode;
+    if !page_wanted(body) {
+        None
+    } else if page_full(body) || page_whole(body) {
+        Some(Mode::Remember)
+    } else {
+        Some(Mode::Changes)
+    }
+}
+
 /// Who reads the pages of a call: the caller as `kept::owner_of` names it.
 pub fn page_owner(caller: &crate::autorun::agents::Caller) -> String {
     crate::autorun::kept::owner_of(caller)
@@ -107,18 +129,28 @@ pub(crate) fn page_of(text: &str) -> Option<String> {
     }
 }
 
+/// `compacted_with`, with no page memory for changes.
+pub async fn compacted<F: std::future::Future<Output = (u16, String)>>(n: SlotNo, owner: &str, full: bool, read: F) -> (u16, String) {
+    compacted_with(n, owner, full, None, read).await
+}
+
 /// `read` (a call that reads the page) for slot `n`'s reader `owner`: the
 /// landmarks that reader already has are one line each in the page it
-/// reads (`page_compact`), unless `full`; and what the answer printed is what
+/// reads (`page_compact`), unless `full`; with `changes` it is also scoped for
+/// the page memory (`page_changes`); and what the answer printed is what
 /// the reader is remembered to have. A failed answer remembers nothing.
-pub async fn compacted<F: std::future::Future<Output = (u16, String)>>(
+pub async fn compacted_with<F: std::future::Future<Output = (u16, String)>>(
     n: SlotNo,
     owner: &str,
     full: bool,
+    changes: Option<crate::autorun::page_changes::Mode>,
     read: F,
 ) -> (u16, String) {
     use crate::autorun::page_compact::{known_for, remember, scoped};
-    let answer = scoped(known_for(n, owner, full), read).await;
+    let answer = match changes {
+        Some(mode) => scoped(known_for(n, owner, full), crate::autorun::page_changes::scoped(n, owner, mode, read)).await,
+        None => scoped(known_for(n, owner, full), read).await,
+    };
     if answer.0 == 200 {
         if let Some(page) = page_of(&answer.1) {
             remember(n, owner, &page);

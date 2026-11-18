@@ -25,7 +25,7 @@ pub(crate) async fn autorun_page(ctx: &BridgeContext, target: &str, n: SlotNo, o
     // the page, or the lines of a query, are answered as they are.
     if within.is_none() && query.is_none() {
         let full = q(target, "page").is_some_and(|p| p.trim().eq_ignore_ascii_case("full"));
-        return Box::pin(compacted(n, owner, full, read)).await;
+        return Box::pin(compacted_with(n, owner, full, Some(crate::autorun::page_changes::Mode::Remember), read)).await;
     }
     read.await
 }
@@ -481,8 +481,7 @@ pub async fn current_page<D: crate::browser::cdp::Driver>(d: &mut D) -> (String,
 /// The address is only checked against the allowed origins and cut to its
 /// path: it is never logged or answered whole.
 pub(crate) async fn page_address<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
-    let href = crate::browser::page::eval_value(d, "location.href").await;
-    let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let href = crate::browser::snapshot::address(d).await;
     let title = crate::browser::page::eval_value(d, "document.title").await;
     let title = title.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     (href, title)
