@@ -20,6 +20,7 @@ import { ListToolbar, ToolbarSwitch } from "../../components/ui/list-toolbar";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
+import { useAppSimpleMode } from "../../lib/appSimpleMode";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
@@ -342,6 +343,7 @@ export default function AutoRun({
    * or the assistant's discovery holding the browser. Said in the title. */
   const runBlocked = runBlockedReason(background, discovering);
   const { mode, setMode, loading: modeLoading } = useAutoRunMode();
+  const appSimple = useAppSimpleMode().on;
   /** Simple leaves out the authoring actions; until the mode is known the screen is Advanced. */
   const simple = !modeLoading && mode === "simple";
   /** The plan the supervised pane pauses by at each reset point. */
@@ -790,7 +792,8 @@ export default function AutoRun({
   const modeSwitch = (
     <div className="flex justify-end">
       <div role="group" aria-label="Auto Run mode" className="flex rounded-md border border-border p-0.5">
-        {(["simple", "advanced"] as const).map((m) => {
+        {/* App Simple mode holds Auto Run in Simple: only that option is offered. */}
+        {(appSimple ? (["simple"] as const) : (["simple", "advanced"] as const)).map((m) => {
           const pressed = !modeLoading && mode === m;
           return (
             <button

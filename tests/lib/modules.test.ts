@@ -160,16 +160,16 @@ test("a refused save during the first hydrate still ends hydrated, with Rust's a
   expect([...modulesSnapshot()]).toEqual(["db_access"]);
 });
 
-const HIDDEN = ["import", "edit", "suites", "manage", "apitemplates"];
+const HIDDEN = ["import", "edit", "suites", "manage", "apitemplates", "playwright"];
 
-test("Simple mode hides exactly five screens, and off shows them as before", () => {
+test("Simple mode hides exactly six screens, and off shows them as before", () => {
   expect([...SIMPLE_HIDDEN_SECTIONS].sort()).toEqual([...HIDDEN].sort());
   const all = new Set(ALL_MODULES);
   for (const id of HIDDEN) {
     expect(sectionShown(id, all, true)).toBe(false);
     expect(sectionShown(id, all, false)).toBe(true);
   }
-  for (const id of ["manual", "view", "run", "ai", "autorun", "playwright", "settings"]) {
+  for (const id of ["manual", "view", "run", "ai", "autorun", "settings"]) {
     expect(sectionShown(id, all, true)).toBe(true);
     expect(sectionShown(id, all, false)).toBe(true);
   }
@@ -189,4 +189,7 @@ test("leaveTarget sends a Simple-hidden screen to Auto Run and an off module to 
   expect(leaveTarget("playwright", false, true, false)).toBe("manual");
   expect(leaveTarget("playwright", false, false, false)).toBeNull();
   expect(leaveTarget("manual", true, true, true)).toBeNull();
+  // A remembered Playwright tab opens Auto Run in Simple mode, even with the module on.
+  expect(leaveTarget("playwright", true, true, true)).toBe("autorun");
+  expect(leaveTarget("playwright", true, true, false)).toBeNull();
 });

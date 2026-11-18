@@ -233,7 +233,10 @@ export default function Sidebar<T extends string = Section>({
     >
       {list.map(({ id, label, icon: Icon, tone, note, group }, index) => {
         // The first row of a group carries the group's heading above it.
-        const heading = group && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
+        // Simple mode leaves Tools holding Auto Run alone, so it drops that
+        // heading: a title over one row says nothing.
+        const alone = simple && group === "advanced";
+        const heading = group && !alone && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;
         // A row with a badge already says it is new; the bare "new" is for rows without one.

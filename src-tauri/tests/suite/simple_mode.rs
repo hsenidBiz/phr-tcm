@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use v2_lib::app_settings::{AppSettings, AutorunMode};
 use v2_lib::modules::{Module, HIDDEN_UNTIL_UNLOCKED};
-use v2_lib::simple_mode::{is_new_install, modules_to_switch_on, settle_on_start_in, settle_simple_mode, set_app_simple_mode_with, switch_all_on_with};
+use v2_lib::simple_mode::{is_new_install, set_autorun_mode_with, SIMPLE_NO_ADVANCED, modules_to_switch_on, settle_on_start_in, settle_simple_mode, set_app_simple_mode_with, switch_all_on_with};
 
 fn on(ms: &[Module]) -> BTreeSet<Module> {
     ms.iter().copied().collect()
@@ -178,7 +178,8 @@ fn without_comments(src: &str) -> String {
 /// is not there. (A tool name such as `list_api_templates` is not a screen.)
 #[test]
 fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
-    const SCREENS: [&str; 6] = [
+    const SCREENS: [&str; 7] = [
+        "Playwright tab",
         "Import Test Cases",
         "Update Test Cases",
         "Search Suites",
@@ -240,4 +241,52 @@ fn no_tool_or_route_sets_the_app_simple_mode() {
             assert!(!writes, "{}:{}: {line}", f.display(), n + 1);
         }
     }
+}
+
+#[test]
+fn turning_simple_mode_on_holds_auto_run_in_simple_even_with_the_modules_already_on() {
+    let d = tempfile::tempdir().unwrap();
+    let mut st: BTreeSet<Module> = Module::ALL.into_iter().filter(|m| *m != HIDDEN_UNTIL_UNLOCKED).collect();
+    let mut s = AppSettings { autorun_mode: Some(AutorunMode::Advanced), ..AppSettings::default() };
+    let a = set_app_simple_mode_with(&mut st, &mut s, d.path(), true).unwrap();
+    assert_eq!(a.settings.autorun_mode, Some(AutorunMode::Simple));
+    assert_eq!(v2_lib::app_settings::load(d.path()).autorun_mode, Some(AutorunMode::Simple));
+}
+
+#[test]
+fn a_new_install_starts_with_auto_run_in_simple() {
+    let d = tempfile::tempdir().unwrap();
+    let mut st = BTreeSet::new();
+    let mut s = AppSettings { autorun_mode: Some(AutorunMode::Advanced), ..AppSettings::default() };
+    settle_on_start_in(d.path(), true, &mut st, &mut s);
+    assert_eq!(s.autorun_mode, Some(AutorunMode::Simple));
+    assert_eq!(v2_lib::app_settings::load(d.path()).autorun_mode, Some(AutorunMode::Simple));
+}
+
+#[test]
+fn an_existing_install_keeps_its_auto_run_mode_at_start_up() {
+    let d = tempfile::tempdir().unwrap();
+    let mut st = BTreeSet::new();
+    let mut s = AppSettings { autorun_mode: Some(AutorunMode::Advanced), ..AppSettings::default() };
+    settle_on_start_in(d.path(), false, &mut st, &mut s);
+    assert_eq!(s.autorun_mode, Some(AutorunMode::Advanced));
+}
+
+#[test]
+fn advanced_is_refused_while_simple_mode_is_on_and_allowed_after_it_is_off() {
+    let d = tempfile::tempdir().unwrap();
+    let mut st = BTreeSet::new();
+    let mut s = AppSettings::default();
+    set_app_simple_mode_with(&mut st, &mut s, d.path(), true).unwrap();
+    let e = set_autorun_mode_with(&mut s, d.path(), AutorunMode::Advanced).unwrap_err();
+    assert_eq!(e, SIMPLE_NO_ADVANCED);
+    assert_eq!(s.autorun_mode, Some(AutorunMode::Simple));
+    // Simple itself is always fine.
+    assert_eq!(set_autorun_mode_with(&mut s, d.path(), AutorunMode::Simple).unwrap().autorun_mode, Some(AutorunMode::Simple));
+    // Off leaves Simple; Advanced can then be picked.
+    let off = set_app_simple_mode_with(&mut st, &mut s, d.path(), false).unwrap();
+    assert_eq!(off.settings.autorun_mode, Some(AutorunMode::Simple));
+    let adv = set_autorun_mode_with(&mut s, d.path(), AutorunMode::Advanced).unwrap();
+    assert_eq!(adv.autorun_mode, Some(AutorunMode::Advanced));
+    assert_eq!(v2_lib::app_settings::load(d.path()).autorun_mode, Some(AutorunMode::Advanced));
 }

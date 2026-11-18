@@ -20,7 +20,8 @@ export const playwright: Screen = {
   summary:
     "Work with your clone of the team's Playwright repo without leaving the app: run its tests, manage its test accounts, and keep the repo's copies of your Auto Run scripts up to date. " +
     "The app runs only the repo's own commands, in the clone, and never commits, pulls or pushes. " +
-    "Playwright is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears in the sidebar under Auto Run.",
+    "Playwright is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears in the sidebar under Auto Run." +
+    " Hidden while Simple mode is on (Settings).",
   shots: [],
   controls: [],
   tips: [

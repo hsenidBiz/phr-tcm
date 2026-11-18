@@ -247,7 +247,7 @@ Scripting here is done in five roles, each with its own short rules:
   with your first `start_autorun_discovery` with `explore` true of a session.
 
 The writer's, healer's and case rewriter's rules are built on the team's Playwright repo, the one set
-on the Playwright tab, read fresh each time they are given: first Test Case Manager's own rules for
+on the Playwright tab (which you cannot open; if the repo needs changing, say that to the person - "If the app is in Simple mode, ask the person to turn Simple mode off in Settings."), read fresh each time they are given: first Test Case Manager's own rules for
 the role, which win wherever the two differ, then the repo's own agent files (its planner and
 generator for the writer, its healer for the healer, spec-editor for the case rewriter), then a note
 on which Test Case Manager tools do what those files name. With no repo set, or a file missing from

@@ -30,11 +30,11 @@ function setup() {
 test("in Simple mode a jump to a hidden screen opens Auto Run; every other screen is untouched", () => {
   setAppSimpleModeForTest(true);
   const { go, setSection } = setup();
-  for (const id of ["import", "edit", "suites", "manage", "apitemplates"] as const) {
+  for (const id of ["import", "edit", "suites", "manage", "apitemplates", "playwright"] as const) {
     act(() => go(id));
     expect(setSection).toHaveBeenLastCalledWith("autorun");
   }
-  for (const id of ["manual", "run", "playwright", "settings"] as const) {
+  for (const id of ["manual", "run", "settings"] as const) {
     act(() => go(id));
     expect(setSection).toHaveBeenLastCalledWith(id);
   }

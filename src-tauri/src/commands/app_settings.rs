@@ -115,10 +115,14 @@ pub fn set_autorun_failed_video(on: bool) -> Result<AppSettings, String> {
     })
 }
 
-/// Pick Simple or Advanced Auto Run.
+/// Pick Simple or Advanced Auto Run. Advanced is refused while the app's
+/// Simple mode is on.
 #[tauri::command]
 #[specta::specta]
 pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, String> {
+    if let Some(why) = crate::simple_mode::autorun_mode_refusal(app_settings::current().app_simple_mode, mode) {
+        return Err(why.to_string());
+    }
     app_settings::update(|s| s.autorun_mode = Some(mode)).map_err(|e| {
         crate::applog::warn(format!("saving the Auto Run mode failed: {e}"));
         "The setting could not be saved. Settings → Logs has the details.".to_string()
@@ -137,7 +141,7 @@ pub async fn set_app_simple_mode(app: tauri::AppHandle, on: bool) -> Result<crat
         &mut (),
         on,
         |_, on| {
-            app_settings::update(|s| s.app_simple_mode = Some(on)).map(|_| ()).map_err(|e| {
+            app_settings::update(|s| crate::simple_mode::apply_simple_choice(s, on)).map(|_| ()).map_err(|e| {
                 crate::applog::warn(format!("saving the Simple mode setting failed: {e}"));
                 "The setting could not be saved. Settings → Logs has the details.".to_string()
             })

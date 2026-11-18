@@ -996,7 +996,7 @@ export default function Settings({
         <SettingRow
           asLabel
           name="Simple mode"
-          description="Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates."
+          description="Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates."
           control={
             <Switch
               checked={appSettings.data?.app_simple_mode ?? false}

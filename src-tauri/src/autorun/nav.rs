@@ -1660,9 +1660,11 @@ pub fn direct_urls_allowed(nav: &NavFile, simple: bool) -> bool {
     nav.direct_urls && !simple
 }
 
-/// Whether Auto Run is in Simple mode now.
+/// Whether Auto Run is in Simple mode now: its own mode, or the app's Simple
+/// mode, which holds Auto Run in Simple.
 pub fn simple_now() -> bool {
-    crate::app_settings::current().autorun_mode == Some(crate::app_settings::AutorunMode::Simple)
+    let s = crate::app_settings::current();
+    s.autorun_mode == Some(crate::app_settings::AutorunMode::Simple) || s.app_simple_mode == Some(true)
 }
 
 /// What `auto_run_set_direct_urls` answers while Auto Run is in Simple (the

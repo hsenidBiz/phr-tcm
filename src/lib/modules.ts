@@ -158,6 +158,7 @@ export const SIMPLE_HIDDEN_SECTIONS: ReadonlySet<string> = new Set([
   "suites",
   "manage",
   "apitemplates",
+  "playwright",
 ]);
 
 /** Whether a section is offered with these modules on (and, in Simple mode,

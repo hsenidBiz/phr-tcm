@@ -191,7 +191,7 @@ export const autoRun: Screen = {
         "It hides the Discovery, Components and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
         "A script card shows one header line, with the steps Auto Run does itself marked **Done by Auto Run** and the assistant's notes folded away under **Assistant notes**. " +
         "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
-        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going.",
+        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Simple mode** is on in Settings, only **Simple** is offered; turn Simple mode off to pick **Advanced**.",
       tips: [
         "If the Discovery row or the sign-in recipe tools are what stops a run, Auto Run shows them anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
         "An assistant can see which mode you are in but cannot change it. In Simple it offers to do the hidden work for you, or asks you to switch to Advanced.",

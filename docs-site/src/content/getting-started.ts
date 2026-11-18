@@ -81,7 +81,7 @@ export const gettingStarted: Screen = {
         "Lists the test case screens under **Test Case Management**: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
         "With the matching modules switched on in Settings, a second group at the bottom, below them, lists Auto Run, Playwright and API Templates. " +
         "Click one to open it. The highlighted row is the screen you are on. " +
-        "With **Simple mode** on in Settings, the sidebar lists only Manual Entry, View Test Cases, Run Tests, AI Bridge and Auto Run (and Playwright, which has no shortcut); the screens it hides come back when you turn Simple mode off.",
+        "With **Simple mode** on in Settings, the sidebar lists only Manual Entry, View Test Cases, Run Tests, AI Bridge and Auto Run, with no separate group heading above Auto Run; the screens it hides, Playwright among them, come back when you turn Simple mode off.",
       tips: [
         "The Ctrl+number shortcuts follow the sidebar: [[Ctrl+1]] opens the first row, [[Ctrl+2]] the second, and so on, up to [[Ctrl+9]]. Playwright and API Templates have no shortcut. In the full sidebar that is [[Ctrl+1]] to [[Ctrl+8]] for the test case screens and [[Ctrl+9]] for Auto Run when it is switched on.",
         "With Simple mode on the numbers close up: [[Ctrl+1]] is Manual Entry, [[Ctrl+2]] is View Test Cases, [[Ctrl+3]] is Run Tests, [[Ctrl+4]] is AI Bridge and [[Ctrl+5]] is Auto Run.",

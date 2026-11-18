@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::app_settings::AppSettings;
+use crate::app_settings::{AppSettings, AutorunMode};
 use crate::modules::{Module, HIDDEN_UNTIL_UNLOCKED};
 
 /// What `set_app_simple_mode` answers: the settings as saved, and the names
@@ -17,6 +17,35 @@ use crate::modules::{Module, HIDDEN_UNTIL_UNLOCKED};
 pub struct SimpleModeAnswer {
     pub settings: AppSettings,
     pub not_switched_on: Vec<String>,
+}
+
+/// What a request for Advanced Auto Run answers while app Simple mode is on.
+pub const SIMPLE_NO_ADVANCED: &str = "Turn Simple mode off in Settings to use Advanced.";
+
+/// Save the Simple mode choice into `s`. Turning it on also holds Auto Run in
+/// its Simple mode (so every Auto Run Simple rule follows); turning it off
+/// leaves Auto Run's mode as it is. The one place both paths go through.
+pub fn apply_simple_choice(s: &mut AppSettings, on: bool) {
+    s.app_simple_mode = Some(on);
+    if on {
+        s.autorun_mode = Some(AutorunMode::Simple);
+    }
+}
+
+/// Why Auto Run's mode may not be set to `mode` right now, or `None`.
+pub fn autorun_mode_refusal(app_simple: Option<bool>, mode: AutorunMode) -> Option<&'static str> {
+    (app_simple == Some(true) && mode == AutorunMode::Advanced).then_some(SIMPLE_NO_ADVANCED)
+}
+
+/// The testable half of `set_autorun_mode`: refuse Advanced while app Simple
+/// mode is on, else save the mode into `dir`.
+pub fn set_autorun_mode_with(settings: &mut AppSettings, dir: &Path, mode: AutorunMode) -> Result<AppSettings, String> {
+    if let Some(why) = autorun_mode_refusal(settings.app_simple_mode, mode) {
+        return Err(why.to_string());
+    }
+    settings.autorun_mode = Some(mode);
+    crate::app_settings::save(dir, settings)?;
+    Ok(settings.clone())
 }
 
 /// A new install starts in Simple mode; an install that already had data
@@ -88,6 +117,9 @@ pub fn settle_on_start_in(dir: &Path, new_install: bool, state: &mut BTreeSet<Mo
     };
     settings.app_simple_mode = mode;
     settings.switch_markers_migrated = migrated;
+    if mode == Some(true) {
+        settings.autorun_mode = Some(AutorunMode::Simple);
+    }
     if let Err(e) = crate::app_settings::save(dir, settings) {
         crate::applog::warn(format!("settling Simple mode failed: {e}"));
     }
@@ -107,6 +139,9 @@ pub fn settle_on_start(new_install: bool) {
     if let Err(e) = crate::app_settings::update(|s| {
         s.app_simple_mode = mode;
         s.switch_markers_migrated = migrated;
+        if mode == Some(true) {
+            s.autorun_mode = Some(AutorunMode::Simple);
+        }
     }) {
         crate::applog::warn(format!("settling Simple mode failed: {e}"));
         return;
@@ -149,7 +184,7 @@ pub fn set_app_simple_mode_with(
         &mut (state, &mut *settings),
         on,
         |(_, s), on| {
-            s.app_simple_mode = Some(on);
+            apply_simple_choice(s, on);
             crate::app_settings::save(dir, s)
         },
         |(st, s)| switch_all_on_with(st, s, dir),
