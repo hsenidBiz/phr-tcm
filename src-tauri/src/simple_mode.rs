@@ -123,17 +123,36 @@ pub fn switch_all_on() -> Vec<String> {
     })
 }
 
-/// The testable half of `set_app_simple_mode`: save the choice into `dir`,
-/// then (on) switch every module on. A module that fails is named and the
-/// choice stays saved; off changes no module.
+/// The one path `set_app_simple_mode` and its testable twin both take, over
+/// a context `ctx` of the caller's own: `save` stores the choice, then (on)
+/// `switch` brings every module on, answering the names that failed. A
+/// failure to switch leaves the choice saved; off changes no module.
+pub fn set_app_simple_mode_via<C>(
+    ctx: &mut C,
+    on: bool,
+    save: impl FnOnce(&mut C, bool) -> Result<(), String>,
+    switch: impl FnOnce(&mut C) -> Vec<String>,
+) -> Result<Vec<String>, String> {
+    save(ctx, on)?;
+    Ok(if on { switch(ctx) } else { Vec::new() })
+}
+
+/// The testable half of `set_app_simple_mode`, against a state and
+/// directory of the caller's own.
 pub fn set_app_simple_mode_with(
     state: &mut BTreeSet<Module>,
     settings: &mut AppSettings,
     dir: &Path,
     on: bool,
 ) -> Result<SimpleModeAnswer, String> {
-    settings.app_simple_mode = Some(on);
-    crate::app_settings::save(dir, settings)?;
-    let not_switched_on = if on { switch_all_on_with(state, settings, dir) } else { Vec::new() };
+    let not_switched_on = set_app_simple_mode_via(
+        &mut (state, &mut *settings),
+        on,
+        |(_, s), on| {
+            s.app_simple_mode = Some(on);
+            crate::app_settings::save(dir, s)
+        },
+        |(st, s)| switch_all_on_with(st, s, dir),
+    )?;
     Ok(SimpleModeAnswer { settings: settings.clone(), not_switched_on })
 }

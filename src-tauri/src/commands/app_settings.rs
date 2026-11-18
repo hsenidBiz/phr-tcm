@@ -132,17 +132,20 @@ pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, 
 #[tauri::command]
 #[specta::specta]
 pub async fn set_app_simple_mode(app: tauri::AppHandle, on: bool) -> Result<crate::simple_mode::SimpleModeAnswer, String> {
-    app_settings::update(|s| s.app_simple_mode = Some(on)).map_err(|e| {
-        crate::applog::warn(format!("saving the Simple mode setting failed: {e}"));
-        "The setting could not be saved. Settings → Logs has the details.".to_string()
-    })?;
-    let mut not_switched_on = Vec::new();
-    if on {
-        let before = crate::modules::current();
-        not_switched_on = crate::simple_mode::switch_all_on();
-        if crate::modules::current() != before {
-            crate::commands::modules::resync_commands_blocking(&app).await;
-        }
+    let before = crate::modules::current();
+    let not_switched_on = crate::simple_mode::set_app_simple_mode_via(
+        &mut (),
+        on,
+        |_, on| {
+            app_settings::update(|s| s.app_simple_mode = Some(on)).map(|_| ()).map_err(|e| {
+                crate::applog::warn(format!("saving the Simple mode setting failed: {e}"));
+                "The setting could not be saved. Settings → Logs has the details.".to_string()
+            })
+        },
+        |_| crate::simple_mode::switch_all_on(),
+    )?;
+    if crate::modules::current() != before {
+        crate::commands::modules::resync_commands_blocking(&app).await;
     }
     Ok(crate::simple_mode::SimpleModeAnswer { settings: app_settings::current(), not_switched_on })
 }
