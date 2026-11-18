@@ -226,5 +226,5 @@ export function announceMentions(added: AppNotification[]): void {
     announce(added[0].title, added[0].body);
     return;
   }
-  announce(`${added.length} new mentions`, summarizeLines(added.map((n) => n.title)));
+  announce(`${added.length} new mentions`, summarizeLines(added.map((n) => ({ text: n.title }))));
 }

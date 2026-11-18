@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AssignedItem } from "../../src/bindings";
-import { announce, appIsInView, summarize } from "../../src/lib/assignedAlerts";
+import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { alertListText, announce, appIsInView, summarize } from "../../src/lib/assignedAlerts";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { toast } from "../../src/lib/toast";
 
@@ -30,22 +32,76 @@ afterEach(() => vi.restoreAllMocks());
 test("a single assignment names the item", () => {
   const { title, body } = summarize([item(143783, "Participants - inconsistencies", "Bug")]);
   expect(title).toBe("Bug #143783 assigned to you");
-  expect(body).toBe("Participants - inconsistencies");
+  expect(body).toEqual({ items: [{ text: "Participants - inconsistencies" }], more: 0 });
+  expect(alertListText(body)).toBe("Participants - inconsistencies");
 });
 
 test("several are counted, with the first few listed", () => {
   const { title, body } = summarize([item(1, "One"), item(2, "Two"), item(3, "Three")]);
   expect(title).toBe("3 work items assigned to you");
-  expect(body).toContain("#1 One");
-  expect(body).toContain("#3 Three");
-  expect(body).not.toContain("more");
+  expect(body.items.map((i) => i.id)).toEqual([1, 2, 3]);
+  expect(body.more).toBe(0);
 });
 
 test("a long list is truncated rather than dumped", () => {
-  const many = Array.from({ length: 9 }, (_, i) => item(i + 1, `Item ${i + 1}`));
+  const many = Array.from({ length: 4 }, (_, i) => item(i + 1, `Item ${i + 1}`));
   const { body } = summarize(many);
-  expect(body).toContain("…and 6 more");
-  expect(body.split("\n")).toHaveLength(4);
+  expect(body.items).toHaveLength(3);
+  expect(body.more).toBe(1);
+});
+
+test("the toast lists each item as its own block: id, type, clamped title, then 'and N more'", () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const long = "A very long work item title ".repeat(12);
+  const { title, body } = summarize([
+    item(170597, long, "Bug"),
+    item(170598, "Second"),
+    item(170599, "Third"),
+    item(170600, "Fourth"),
+  ]);
+  announce(title, body);
+  const opts = vi.mocked(toast.info).mock.calls[0][1] as { description: ReactNode };
+  render(<div>{opts.description}</div>);
+  const blocks = screen.getAllByTestId("alert-item");
+  expect(blocks).toHaveLength(3);
+  expect(blocks[0]).toHaveTextContent("#170597");
+  expect(blocks[0]).toHaveTextContent("Bug");
+  expect(blocks[0]).toHaveTextContent("A very long work item title");
+  expect(blocks[1]).toHaveTextContent("#170598");
+  expect(blocks[2]).toHaveTextContent("Third");
+  expect(blocks[1].className).toContain("border-border");
+  expect(blocks[0].querySelector(".line-clamp-2")).not.toBeNull();
+  expect(screen.getByText("#170597").className).toContain("font-mono");
+  expect(screen.getByText("and 1 more")).toBeInTheDocument();
+});
+
+test("a single item's toast keeps its title, clamped to two lines", () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const { title, body } = summarize([item(5, "Only one")]);
+  announce(title, body);
+  const opts = vi.mocked(toast.info).mock.calls[0][1] as { description: ReactNode };
+  render(<div>{opts.description}</div>);
+  expect(screen.getAllByTestId("alert-item")).toHaveLength(1);
+  expect(screen.getByText("Only one").className).toContain("line-clamp-2");
+  expect(screen.queryByText(/more/)).toBeNull();
+});
+
+test("the OS text is one short line per item, then '…and N more'", async () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  const long = "x".repeat(200);
+  const { title, body } = summarize([item(1, long), item(2, "Two"), item(3, "Three"), item(4, "Four"), item(5, "Five")]);
+  const text = alertListText(body);
+  const lines = text.split("\n");
+  expect(lines).toHaveLength(4);
+  expect(lines.slice(0, 3).every((l) => l.length <= 70)).toBe(true);
+  expect(lines[0].endsWith("…")).toBe(true);
+  expect(lines[1]).toBe("#2 Two");
+  expect(lines[3]).toBe("…and 2 more");
+  announce(title, body);
+  await vi.waitFor(() => expect(sendNotification).toHaveBeenCalledWith({ title, body: text }));
+  expect(toast.info).not.toHaveBeenCalled();
 });
 
 /** A toast behind another window is the same as no notification, so the

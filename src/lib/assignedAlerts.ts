@@ -6,30 +6,61 @@
 // in Rust or repeated per caller, so there is one definition of "is the
 // user looking at this" and one definition of "how does this reach them".
 
+import { createElement } from "react";
 import type { AssignedItem } from "../bindings";
+import { AlertListView } from "../components/AlertListView";
 import { toast } from "./toast";
 
-/** The first three lines, then how many more - the shape any list
- * collapses to once there is too much to read at a glance. */
-export function summarizeLines(lines: string[]): string {
-  const shown = lines.slice(0, 3);
-  const rest = lines.length - shown.length;
-  return rest > 0 ? `${shown.join("\n")}\n…and ${rest} more` : shown.join("\n");
+/** One entry of an alert list: the work item's id and type when known, and
+ * the words (its title, or a mention's headline). */
+export interface AlertItem {
+  id?: number;
+  type?: string;
+  text: string;
 }
 
-/** One line per item, or a count once there are too many to read. */
-export function summarize(items: AssignedItem[]): { title: string; body: string } {
+/** What several alerts collapse to: the first few, then how many more. */
+export interface AlertList {
+  items: AlertItem[];
+  more: number;
+}
+
+/** How many entries an alert shows before it says "and N more". */
+const SHOWN = 3;
+/** The longest an OS notification line gets, ellipsis included. */
+const OS_LINE_MAX = 70;
+
+/** The first three entries, then how many more - the shape any list
+ * collapses to once there is too much to read at a glance. */
+export function summarizeLines(items: AlertItem[]): AlertList {
+  return { items: items.slice(0, SHOWN), more: Math.max(0, items.length - SHOWN) };
+}
+
+/** One entry per item, or a count once there are too many to read. */
+export function summarize(items: AssignedItem[]): { title: string; body: AlertList } {
   if (items.length === 1) {
     const i = items[0];
     return {
       title: `${i.work_item_type} #${i.id} assigned to you`,
-      body: i.title,
+      body: { items: [{ text: i.title }], more: 0 },
     };
   }
   return {
     title: `${items.length} work items assigned to you`,
-    body: summarizeLines(items.map((i) => `#${i.id} ${i.title}`)),
+    body: summarizeLines(items.map((i) => ({ id: i.id, type: i.work_item_type, text: i.title }))),
   };
+}
+
+function clip(line: string): string {
+  return line.length <= OS_LINE_MAX ? line : `${line.slice(0, OS_LINE_MAX - 1).trimEnd()}…`;
+}
+
+/** The plain-text form an OS notification can carry: one line per item,
+ * each cut to a readable length, then "…and N more". */
+export function alertListText(list: AlertList): string {
+  const lines = list.items.map((it) => clip(it.id !== undefined ? `#${it.id} ${it.text}` : it.text));
+  if (list.more > 0) lines.push(`…and ${list.more} more`);
+  return lines.join("\n");
 }
 
 /**
@@ -67,16 +98,21 @@ export async function osNotify(title: string, body: string): Promise<boolean> {
  * that reaches the user this way - a new assignment, a mention - goes
  * through here, so a change to the duration, the fallback or the in-view
  * rule lands in one place instead of drifting between callers. */
-export function announce(title: string, body: string): void {
+export function announce(title: string, body: string | AlertList): void {
+  const inApp = () =>
+    toast.info(title, {
+      description: typeof body === "string" ? body : createElement(AlertListView, { list: body }),
+      duration: 10_000,
+    });
   if (appIsInView()) {
-    toast.info(title, { description: body, duration: 10_000 });
+    inApp();
     return;
   }
-  // Out of view - go to the OS, and fall back to a toast they will find
-  // on return if notifications are refused.
-  osNotify(title, body)
+  // Out of view - go to the OS (plain text only), and fall back to a toast
+  // they will find on return if notifications are refused.
+  osNotify(title, typeof body === "string" ? body : alertListText(body))
     .then((sent) => {
-      if (!sent) toast.info(title, { description: body, duration: 10_000 });
+      if (!sent) inApp();
     })
     .catch(() => {});
 }
