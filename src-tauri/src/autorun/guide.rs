@@ -1933,6 +1933,14 @@ browser (see "Discovering the app"):
   changed since your last answer, else one line saying it did not;
   `page: "full"` on any of them (or on `get_autorun_page`) gives the whole
   tree.
+  After the first answer, a `discover_autorun_actions` page shows only
+  what changed since your last page from that browser: `+` lines that
+  appeared and `-` lines that went, under the lines they sit in, or
+  `page: unchanged since your last answer`. A new address, or changes
+  that are not shorter than the page, gives the usual page.
+  `"page": "whole"` asks for the usual page, `"page": "full"` the whole
+  tree and `"page": false` none. The other page answers keep their usual
+  page.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
   with a text locator on its end. A read counts a text line against every
@@ -2081,6 +2089,18 @@ You open and drive a browser of your own to find what a script needs:
   its file path. It counts as one of the 20, changes nothing and never
   fails the page. It is never saved: a script holding one is refused, since a
   saved script takes its pictures when a step fails.
+- `{ "kind": "fill_form", "within": <locator, optional>, "fields": { "<label>":
+  <text, number or true/false>, ... } }` fills up to 30 fields in order
+  in `discover_autorun_actions` and `try_autorun_action`; it counts as one
+  of the 20. Each label is matched by accessible name to exactly one
+  visible form control (exact name first, then a case-insensitive
+  contains; several matches fail). It fills text boxes, picks native lists
+  by label, and clicks checkboxes, switches and radios only when they need
+  it. Password fields, turning a radio off, custom dropdowns (including an
+  autocomplete text box) and date or time pickers fail: use explicit
+  `fill` actions or a saved component for those. Its answer lists the
+  actions it ran: save those, since a script or component never holds
+  `fill_form` (a save is refused).
 - `save_autorun_area` saves a screen you reached through the menus as an
   area: its name, its test case Module, and the clicks from the home page.
   The app replays the clicks from the home page and saves the area only
