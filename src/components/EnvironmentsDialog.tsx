@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
 import { IconAdd, IconCancel, IconClear, IconConfirm, IconCopyFromEnvironment, IconEdit, IconRemove } from "../lib/actionIcons";
 import { saveSelectedDb } from "../lib/dbServer";
+import { useAppSimpleMode } from "../lib/appSimpleMode";
 import { envKeys, useEnvironments } from "../lib/environments";
 import CopyAutoRunDialog from "./CopyAutoRunDialog";
 import { Button } from "./ui/button";
@@ -22,6 +23,10 @@ import { Switch } from "./ui/switch";
 /** Said beside the Test environment switch. */
 export const TEST_ENVIRONMENT_WARNING =
   "The AI assistant can read the full logins of this environment's accounts. Use only for test environments.";
+
+/** Added to that warning while Simple mode is on: the hidden reset is on. */
+export const TEST_ENVIRONMENT_SIMPLE_CLAUSE =
+  " In Simple mode, Test Case Manager also resets an expired password here by itself.";
 
 /** What sits under the reset switch. */
 export const RESET_EXPIRED_HELP =
@@ -161,6 +166,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
     queryKey: ["db-databases"],
     queryFn: async () => (await commands.dbDatabases()) ?? [],
   });
+  const appSimple = useAppSimpleMode().on;
   const [form, setForm] = useState<Form | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [copyInto, setCopyInto] = useState<EnvView | null>(null);
@@ -171,7 +177,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
   const list = envs.data?.environments ?? [];
   const active = envs.data?.active ?? "";
   const lookup = form ? lookupProblems(form) : {};
-  const lookupInvalid = Object.keys(lookup).length > 0;
+  const lookupInvalid = !appSimple && Object.keys(lookup).length > 0;
   const dbLabel = (id: string) =>
     databases.data?.find((d) => d.id === id)?.label ?? "database not set up any more";
 
@@ -465,70 +471,74 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 yours. 3 to 20 letters, digits or -.
               </span>
             </label>
-            <label className="block space-y-1">
-              <span className="text-xs font-medium text-muted">Password expiry query</span>
-              <Textarea
-                aria-label="Password expiry query"
-                className="min-h-[4rem] font-mono text-xs"
-                value={form.password_expiry_query}
-                onChange={(e) => setForm({ ...form, password_expiry_query: e.target.value })}
-              />
-              <span className="block text-xs text-faint">{PASSWORD_EXPIRY_HINT}</span>
-            </label>
-            <label className="block space-y-1">
-              <span className="text-xs font-medium text-muted">Active session query</span>
-              <Textarea
-                aria-label="Active session query"
-                className="min-h-[4rem] font-mono text-xs"
-                value={form.active_session_query}
-                onChange={(e) => setForm({ ...form, active_session_query: e.target.value })}
-              />
-              <span className="block text-xs text-faint">{ACTIVE_SESSION_HINT}</span>
-            </label>
-            <fieldset className="space-y-2 rounded-md border border-border p-2">
-              <legend className="px-1 text-xs font-medium text-muted">Account lookup</legend>
-              <p className="text-xs text-faint">{ACCOUNT_LOOKUP_HELP}</p>
+            {!appSimple && (
+              <>
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-muted">Account table</span>
-                <Input
-                  aria-label="Account table"
-                  aria-invalid={lookup.table ? true : undefined}
-                  className="w-full font-mono text-xs"
-                  placeholder={DEFAULT_LOOKUP_TABLE}
-                  value={form.lookup_table}
-                  onChange={(e) => setForm({ ...form, lookup_table: e.target.value })}
+                <span className="text-xs font-medium text-muted">Password expiry query</span>
+                <Textarea
+                  aria-label="Password expiry query"
+                  className="min-h-[4rem] font-mono text-xs"
+                  value={form.password_expiry_query}
+                  onChange={(e) => setForm({ ...form, password_expiry_query: e.target.value })}
                 />
-                {lookup.table && <span className="block text-xs text-danger">{lookup.table}</span>}
+                <span className="block text-xs text-faint">{PASSWORD_EXPIRY_HINT}</span>
               </label>
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-muted">Username column</span>
-                <Input
-                  aria-label="Username column"
-                  aria-invalid={lookup.username ? true : undefined}
-                  className="w-full font-mono text-xs"
-                  placeholder={DEFAULT_LOOKUP_USERNAME_COLUMN}
-                  value={form.lookup_username_column}
-                  onChange={(e) => setForm({ ...form, lookup_username_column: e.target.value })}
+                <span className="text-xs font-medium text-muted">Active session query</span>
+                <Textarea
+                  aria-label="Active session query"
+                  className="min-h-[4rem] font-mono text-xs"
+                  value={form.active_session_query}
+                  onChange={(e) => setForm({ ...form, active_session_query: e.target.value })}
                 />
-                {lookup.username && <span className="block text-xs text-danger">{lookup.username}</span>}
+                <span className="block text-xs text-faint">{ACTIVE_SESSION_HINT}</span>
               </label>
-              <label className="block space-y-1">
-                <span className="text-xs font-medium text-muted">Password column</span>
-                <Input
-                  aria-label="Password column"
-                  aria-invalid={lookup.password ? true : undefined}
-                  className="w-full font-mono text-xs"
-                  placeholder="Detected"
-                  value={form.lookup_password_column}
-                  onChange={(e) => setForm({ ...form, lookup_password_column: e.target.value })}
-                />
-                {lookup.password ? (
-                  <span className="block text-xs text-danger">{lookup.password}</span>
-                ) : (
-                  <span className="block text-xs text-faint">{PASSWORD_COLUMN_HELP}</span>
-                )}
-              </label>
-            </fieldset>
+              <fieldset className="space-y-2 rounded-md border border-border p-2">
+                <legend className="px-1 text-xs font-medium text-muted">Account lookup</legend>
+                <p className="text-xs text-faint">{ACCOUNT_LOOKUP_HELP}</p>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-muted">Account table</span>
+                  <Input
+                    aria-label="Account table"
+                    aria-invalid={lookup.table ? true : undefined}
+                    className="w-full font-mono text-xs"
+                    placeholder={DEFAULT_LOOKUP_TABLE}
+                    value={form.lookup_table}
+                    onChange={(e) => setForm({ ...form, lookup_table: e.target.value })}
+                  />
+                  {lookup.table && <span className="block text-xs text-danger">{lookup.table}</span>}
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-muted">Username column</span>
+                  <Input
+                    aria-label="Username column"
+                    aria-invalid={lookup.username ? true : undefined}
+                    className="w-full font-mono text-xs"
+                    placeholder={DEFAULT_LOOKUP_USERNAME_COLUMN}
+                    value={form.lookup_username_column}
+                    onChange={(e) => setForm({ ...form, lookup_username_column: e.target.value })}
+                  />
+                  {lookup.username && <span className="block text-xs text-danger">{lookup.username}</span>}
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-muted">Password column</span>
+                  <Input
+                    aria-label="Password column"
+                    aria-invalid={lookup.password ? true : undefined}
+                    className="w-full font-mono text-xs"
+                    placeholder="Detected"
+                    value={form.lookup_password_column}
+                    onChange={(e) => setForm({ ...form, lookup_password_column: e.target.value })}
+                  />
+                  {lookup.password ? (
+                    <span className="block text-xs text-danger">{lookup.password}</span>
+                  ) : (
+                    <span className="block text-xs text-faint">{PASSWORD_COLUMN_HELP}</span>
+                  )}
+                </label>
+              </fieldset>
+              </>
+            )}
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <Switch
@@ -538,10 +548,10 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 />
                 <span className="text-xs font-medium text-text">Test environment</span>
               </div>
-              <p className="text-xs text-muted">{TEST_ENVIRONMENT_WARNING}</p>
+              <p className="text-xs text-muted">{TEST_ENVIRONMENT_WARNING + (appSimple ? TEST_ENVIRONMENT_SIMPLE_CLAUSE : "")}</p>
             </div>
 
-            {form.id && editing?.test_environment && (
+            {!appSimple && form.id && editing?.test_environment && (
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <Switch

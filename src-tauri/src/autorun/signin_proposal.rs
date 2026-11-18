@@ -197,6 +197,12 @@ fn reset_in_words(page: &PasswordResetPage) -> String {
 }
 
 pub fn view(p: &StoredSignInProposal, env: &Environment) -> SignInProposalView {
+    view_with(p, env, crate::app_settings::current().app_simple_mode == Some(true))
+}
+
+/// `view` with the app's Simple mode given: the reset is already on there, so
+/// there is no switch to offer.
+pub fn view_with(p: &StoredSignInProposal, env: &Environment, app_simple: bool) -> SignInProposalView {
     SignInProposalView {
         address: if env.start_url.trim().is_empty() {
             crate::browser::save_guard::path_of(&p.recipe.start_url)
@@ -209,6 +215,6 @@ pub fn view(p: &StoredSignInProposal, env: &Environment) -> SignInProposalView {
         password_reset: p.recipe.password_reset.as_ref().map(reset_in_words),
         account: p.account.clone(),
         changes: p.changes.clone(),
-        offer_reset_switch: p.recipe.password_reset.is_some() && env.test_environment && !env.reset_expired_passwords,
+        offer_reset_switch: !app_simple && p.recipe.password_reset.is_some() && env.test_environment && !env.reset_expired_passwords,
     }
 }

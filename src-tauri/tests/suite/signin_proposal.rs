@@ -282,3 +282,17 @@ fn the_view_names_no_host_and_no_fixed_text() {
     let own = root("https://env.example.test", true, false);
     assert_eq!(view(&p, &active(own.path()).unwrap()).address, "this environment's address");
 }
+
+#[test]
+fn simple_mode_offers_no_reset_switch_because_it_is_already_on() {
+    let r = with_reset(recipe(json!({
+        "start_url": "https://hr.example.internal/login",
+        "steps": [{ "kind": "fill", "selector": { "css": "#pw" }, "value": "{{password}}" }],
+        "signed_in": { "css": "#home" }
+    })));
+    let p = proposal(r, String::new());
+    let dir = root("", true, false);
+    let env = active(dir.path()).unwrap();
+    assert!(v2_lib::autorun::signin_proposal::view_with(&p, &env, false).offer_reset_switch);
+    assert!(!v2_lib::autorun::signin_proposal::view_with(&p, &env, true).offer_reset_switch);
+}

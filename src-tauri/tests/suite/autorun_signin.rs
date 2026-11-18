@@ -1377,3 +1377,46 @@ async fn a_check_inside_a_menu_signs_in_when_it_is_on_the_page_but_not_visible()
     let out = sign_in(&mut d, dir.path(), &in_menu, &account(), &quick()).await;
     assert!(out.ok, "{}", out.detail);
 }
+
+// ------------------------------------------ app Simple mode keeps the reset on
+
+#[test]
+fn simple_mode_allows_a_reset_in_a_test_environment_with_the_switch_off() {
+    use v2_lib::autorun::signin::{reset_enabled_with, reset_environment_with};
+    let dir = reset_root(true, false);
+    assert!(!reset_enabled_with(dir.path(), false), "today's rule: switch off, no reset");
+    assert!(reset_enabled_with(dir.path(), true));
+    assert!(reset_environment_with(dir.path(), true).is_some());
+
+    // The switch is the person's own and Simple mode never writes it.
+    let saved = v2_lib::environments::read_active(dir.path()).unwrap().unwrap();
+    assert!(!saved.reset_expired_passwords);
+    assert!(!reset_enabled_with(dir.path(), false));
+}
+
+#[test]
+fn simple_mode_never_resets_outside_a_test_environment() {
+    use v2_lib::autorun::signin::reset_enabled_with;
+    for switch in [false, true] {
+        let dir = reset_root(false, switch);
+        assert!(!reset_enabled_with(dir.path(), true), "switch {switch}");
+        assert!(!reset_enabled_with(dir.path(), false), "switch {switch}");
+    }
+}
+
+#[test]
+fn off_simple_mode_the_switch_still_decides() {
+    use v2_lib::autorun::signin::reset_enabled_with;
+    assert!(reset_enabled_with(reset_root(true, true).path(), false));
+    assert!(!reset_enabled_with(reset_root(true, false).path(), false));
+}
+
+#[test]
+fn the_reset_hint_drops_the_hidden_switch_in_simple_mode() {
+    use v2_lib::autorun::signin::{reset_switch_hint, RESET_SWITCH_HINT_SIMPLE};
+    assert_eq!(reset_switch_hint(false), RESET_SWITCH_HINT);
+    assert!(reset_switch_hint(false).contains("turn on Reset expired passwords"));
+    assert_eq!(reset_switch_hint(true), RESET_SWITCH_HINT_SIMPLE);
+    assert!(!reset_switch_hint(true).contains("turn on"));
+    assert!(reset_switch_hint(true).contains("test environment"));
+}
