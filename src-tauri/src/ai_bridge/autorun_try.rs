@@ -251,19 +251,45 @@ pub(crate) async fn autorun_try(
     let answer = crate::autorun::action_help::CALL_STARTED
         .scope(
             std::time::Instant::now(),
-            try_in_session(
-                &mut session.cdp,
-                &mut session.tabs_case,
-                &mut session.account,
-                &mut session.lease,
-                &root,
-                &ctx.org,
-                &ctx.project,
-                case_id,
-                discovery_area.as_deref(),
-                explore_session.as_deref(),
-                &action,
-            ),
+            async {
+                // A `fill_form` is expanded here, field by field, each through
+                // the same path a single try takes; it never reaches
+                // `try_action` as the stand-in.
+                match crate::autorun::action_help::fill_form_ask(&action) {
+                    Some(form) => {
+                        try_fill_form(
+                            &mut session.cdp,
+                            &mut session.tabs_case,
+                            &mut session.account,
+                            &mut session.lease,
+                            &root,
+                            &ctx.org,
+                            &ctx.project,
+                            case_id,
+                            discovery_area.as_deref(),
+                            explore_session.as_deref(),
+                            &form,
+                        )
+                        .await
+                    }
+                    None => {
+                        try_in_session(
+                            &mut session.cdp,
+                            &mut session.tabs_case,
+                            &mut session.account,
+                            &mut session.lease,
+                            &root,
+                            &ctx.org,
+                            &ctx.project,
+                            case_id,
+                            discovery_area.as_deref(),
+                            explore_session.as_deref(),
+                            &action,
+                        )
+                        .await
+                    }
+                }
+            },
         )
         .await;
     let answer = with_wait_notes(answer, &wait_notes);
@@ -571,6 +597,109 @@ pub(crate) fn remember_tried(
     }
     let area = recording_area(root, discovery_area, case);
     remember_refusals_logged(root, organization, project, area.as_deref(), rules);
+}
+
+/// A tried `fill_form`: `within` is resolved once, then each field in order
+/// is matched to one control just before its action runs, and that action
+/// goes through `try_in_session` as a single try does - so its no-save guard,
+/// area routing, case guard and filing apply to each. The first failed field
+/// or action stops it (a try has no `stop_on_failure`); a field already set
+/// adds nothing. The answer is the last field's own (or the failure's), then
+/// a `fill_form:` line holding `{"lines": [...], "actions": [...]}`: the
+/// per-field lines a discovery prints and the actions that worked, ready to
+/// save. No value is logged or put in a failure's words.
+#[allow(clippy::too_many_arguments)]
+pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    tabs_case: &mut Option<i32>,
+    account: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    discovery_area: Option<&str>,
+    explore_session: Option<&str>,
+    form: &crate::autorun::action_help::FillForm,
+) -> (u16, String) {
+    use crate::autorun::action_help::{action_budget, call_elapsed_ms, did_not_answer, CALL_BUDGET_MS};
+    use crate::browser::fill_form::{plan_field, within_target, Planned};
+    let mut header = "fill_form".to_string();
+    let mut within = None;
+    if let Some(w) = &form.within {
+        match within_target(d, w).await {
+            Err(e) => return (503, e.to_string()),
+            Ok(Err(why)) => {
+                let lines = [header.clone(), format!("   within: failed: {why}")];
+                return (200, with_fill_form_json(format!("failed: {why}"), &lines, &[]));
+            }
+            Ok(Ok((target, n))) => {
+                header.push_str(&super::discovery::within_note(w, n));
+                within = Some(target);
+            }
+        }
+    }
+    let mut lines = vec![header];
+    let mut ran: Vec<crate::browser::actions::Action> = Vec::new();
+    let mut last: Option<String> = None;
+    let mut failure: Option<String> = None;
+    for (label, value) in &form.fields {
+        if action_budget(1, call_elapsed_ms()).is_none() {
+            let said = did_not_answer(CALL_BUDGET_MS / 1000);
+            lines.push(format!("   {label}: failed: {said}"));
+            failure = Some(said);
+            break;
+        }
+        let planned = match plan_field(d, within.as_ref(), label, value).await {
+            Ok(p) => p,
+            Err(e) => return (503, e.to_string()),
+        };
+        let action = match planned {
+            Planned::AlreadySet => {
+                lines.push(format!("   {label}: ok, already set - nothing done"));
+                continue;
+            }
+            Planned::Failed(why) => {
+                lines.push(format!("   {label}: failed: {why}"));
+                failure = Some(why);
+                break;
+            }
+            Planned::Act { action, .. } => action,
+        };
+        let (status, text) = try_in_session(
+            d, tabs_case, account, lease, root, organization, project, case_id, discovery_area, explore_session, &action,
+        )
+        .await;
+        if status != 200 {
+            // Refused, or the browser failed: nothing after this can run.
+            return (status, text);
+        }
+        if text.starts_with("ok") {
+            lines.push(format!("   {label}: ok {}", serde_json::to_string(&action).unwrap_or_default()));
+            ran.push(action);
+            last = Some(text);
+            continue;
+        }
+        let first = text.lines().next().unwrap_or("");
+        let detail = one_short_line(first.split_once(':').map_or("", |(_, rest)| rest.trim()));
+        lines.push(format!("   {label}: failed: {detail}"));
+        failure = Some(text);
+        break;
+    }
+    let head = match (failure, last) {
+        // A field's own action failed: its answer is the try's.
+        (Some(f), _) if f.starts_with("failed") => f,
+        (Some(f), _) => format!("failed: {f}"),
+        (None, Some(last)) => last,
+        (None, None) => "ok: every field was already set - nothing done".to_string(),
+    };
+    (200, with_fill_form_json(head, &lines, &ran))
+}
+
+/// `answer` with the `fill_form:` line after it.
+fn with_fill_form_json(answer: String, lines: &[String], actions: &[crate::browser::actions::Action]) -> String {
+    let v = serde_json::json!({ "lines": lines, "actions": actions });
+    format!("{answer}\nfill_form: {v}")
 }
 
 /// Said when a `fill_form` is tried where its fields cannot be expanded.

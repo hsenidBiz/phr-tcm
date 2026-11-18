@@ -6766,3 +6766,99 @@ async fn a_late_refusal_of_a_forms_last_field_stops_the_next_action() {
     let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
     assert_eq!(released, 0, "the action after the refusal ran");
 }
+
+/// A `fill_form` tried: the same fields run through the try path, and the
+/// answer carries the per-field lines and the actions that worked.
+async fn tried_form(
+    controls: Vec<FormControl>,
+    typed: Arc<Mutex<Vec<String>>>,
+    raw: Value,
+) -> (u16, String) {
+    let dir = root_with_recipe_and_account();
+    let (browser, _) = slot(form_page(controls, typed, None), exploring("Leave"));
+    let mut b = browser.unwrap();
+    let form = v2_lib::autorun::action_help::fill_form_ask(&fill_form_action(raw)).expect("a form");
+    let mut tabs_case = None;
+    v2_lib::ai_bridge::try_fill_form(
+        &mut b.d,
+        &mut tabs_case,
+        &mut b.account,
+        &mut b.lease,
+        dir.path(),
+        ORG,
+        PROJECT,
+        0,
+        Some("Leave"),
+        None,
+        &form,
+    )
+    .await
+}
+
+/// The `fill_form` field of a tried answer.
+fn tried_json(text: &str) -> Value {
+    let line = text.lines().find_map(|l| l.strip_prefix("fill_form: ")).unwrap_or_else(|| panic!("no fill_form line: {text}"));
+    serde_json::from_str(line).unwrap()
+}
+
+#[tokio::test]
+async fn a_tried_fill_form_answers_its_actions() {
+    let _leases = crate::serial::account_leases();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (status, text) = tried_form(
+        vec![text_box("First name"), text_box("Last name")],
+        typed.clone(),
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("ok"), "{text}");
+    let v = tried_json(&text);
+    assert_eq!(v["actions"].as_array().unwrap().len(), 2, "{text}");
+    assert_eq!(v["actions"][0]["kind"], "fill");
+    assert_eq!(v["actions"][1]["value"], "Lee");
+    let lines = v["lines"].as_array().unwrap();
+    assert_eq!(lines[0], "fill_form");
+    assert!(lines[1].as_str().unwrap().starts_with("   First name: ok {\"kind\":\"fill\""), "{lines:?}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann", "Lee"]);
+    assert!(!text.contains('\u{1}'), "{text}");
+}
+
+#[tokio::test]
+async fn a_tried_fill_form_stops_at_a_failed_field() {
+    let _leases = crate::serial::account_leases();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let secret = form_control("textbox", "Secret", "input", "password");
+    let (status, text) = tried_form(
+        vec![text_box("First name"), secret, text_box("Last name")],
+        typed.clone(),
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Secret": "hunter2-value", "Last name": "Lee" } }),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("failed: passwords are never typed by an assistant"), "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field after the failure ran");
+    let v = tried_json(&text);
+    assert_eq!(v["actions"].as_array().unwrap().len(), 1);
+    // The stand-in never reaches the answer, and no value of the failed or
+    // the unrun field does either; only the field that ran shows its own.
+    assert!(!text.contains('\u{1}') && !text.contains("hunter2-value") && !text.contains("Lee"), "{text}");
+}
+
+#[tokio::test]
+async fn a_tried_fill_form_leaves_nothing_of_its_values_outside_the_ok_actions() {
+    let _leases = crate::serial::account_leases();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (status, text) = tried_form(
+        vec![text_box("First name")],
+        typed,
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Nowhere": "zz-value" } }),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("failed: no form control is named \"Nowhere\""), "{text}");
+    assert!(!text.contains("zz-value") && !text.contains('\u{1}'), "{text}");
+    let v = tried_json(&text);
+    let lines = v["lines"].to_string();
+    assert!(!lines.contains("zz-value") && !lines.contains('\u{1}'), "{lines}");
+}

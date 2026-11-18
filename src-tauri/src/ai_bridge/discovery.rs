@@ -1659,11 +1659,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
                 return out;
             }
             Ok(Ok((target, n))) => {
-                header.push_str(&format!(" (within {}", w.describe()));
-                if n > 1 {
-                    header.push_str(&format!(": matched {n}, the first used - nth 0"));
-                }
-                header.push(')');
+                header.push_str(&within_note(w, n));
                 within = Some(target);
             }
         }
@@ -1802,6 +1798,16 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
         out.row.tail.push(format!("actions: {}", serde_json::to_string(&out.actions).unwrap_or_default()));
     }
     out
+}
+
+/// The header's note of what a `fill_form`'s `within` matched.
+pub(crate) fn within_note(within: &crate::browser::locator::Target, n: usize) -> String {
+    let mut note = format!(" (within {}", within.describe());
+    if n > 1 {
+        note.push_str(&format!(": matched {n}, the first used - nth 0"));
+    }
+    note.push(')');
+    note
 }
 
 fn fields_count(n: usize) -> String {
