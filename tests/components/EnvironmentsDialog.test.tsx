@@ -6,6 +6,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import EnvironmentsDialog, { LOOKUP_COLUMN_RULE, LOOKUP_NEEDED, LOOKUP_TABLE_RULE, lookupProblems } from "../../src/components/EnvironmentsDialog";
 
 vi.mock("../../src/lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
@@ -13,6 +14,7 @@ afterEach(() => {
   clearMocks();
   vi.clearAllMocks();
   localStorage.clear();
+  resetAppSimpleModeStore();
 });
 
 const DATABASES = [
@@ -537,4 +539,49 @@ test("an account lookup changed while the dialog is open reaches the fields the 
   await waitFor(() => expect(table.value).toBe("dbo.Accounts"));
   expect((screen.getByRole("textbox", { name: "Username column" }) as HTMLInputElement).value).toBe("UserName");
   expect(pwd.value).toBe("Mine");
+});
+
+// ---- app Simple mode ---------------------------------------------------------
+
+const FOUR = [
+  ["textbox", "Password expiry query"],
+  ["textbox", "Active session query"],
+  ["textbox", "Account table"],
+  ["switch", "Reset expired passwords"],
+] as const;
+
+test("with Simple mode off the reset switch, both queries and the account lookup all show", async () => {
+  setAppSimpleModeForTest(false);
+  mount({}, [DEFAULT, { ...QA, test_environment: true }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  await screen.findByRole("textbox", { name: "Name" });
+  for (const [role, name] of FOUR) expect(screen.getByRole(role, { name })).toBeTruthy();
+  expect(screen.getByText("Account lookup")).toBeTruthy();
+});
+
+test("Simple mode hides the reset switch, both queries and the account lookup, and saving keeps their values", async () => {
+  setAppSimpleModeForTest(true);
+  const own: Env = {
+    ...QA,
+    test_environment: true,
+    password_expiry_query: "SELECT 1 FROM t WHERE u IN ({users})",
+    active_session_query: "SELECT s AS since FROM a WHERE u = {user}",
+    account_lookup: { table: "dbo.Users", username_column: "Login", password_column: "Secret" },
+  };
+  const { calls } = mount({ env_save: () => ({ active: DEFAULT.id, environments: [DEFAULT, own] }) }, [DEFAULT, own]);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  await screen.findByRole("textbox", { name: "Name" });
+  for (const [role, name] of FOUR) expect(screen.queryByRole(role, { name })).toBeNull();
+  expect(screen.queryByText("Account lookup")).toBeNull();
+  expect(screen.getByRole("switch", { name: "Test environment" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
+  const sent = calls.find((c) => c.cmd === "env_save")!.args.env as {
+    password_expiry_query: string;
+    active_session_query: string;
+    account_lookup: { table?: string; username_column?: string; password_column?: string };
+  };
+  expect(sent.password_expiry_query).toBe(own.password_expiry_query);
+  expect(sent.active_session_query).toBe(own.active_session_query);
+  expect(sent.account_lookup).toEqual({ table: "dbo.Users", username_column: "Login", password_column: "Secret" });
 });
