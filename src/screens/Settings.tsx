@@ -16,7 +16,8 @@ import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
 import PageSizeSettings from "../components/PageSizeSettings";
-import { useModule } from "../lib/modules";
+import { hydrateModules, useModule } from "../lib/modules";
+import { unattendedRunGoing, useBackgroundRun } from "../lib/backgroundRun";
 import Modules from "./Modules";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
@@ -395,6 +396,22 @@ export default function Settings({
     } catch (e) {
       if (before) qc.setQueryData(["app-settings"], before);
       toast.error(String(e));
+    }
+  };
+
+  const runGoing = unattendedRunGoing(useBackgroundRun());
+  // The modules Rust could not switch on for the last attempt, named.
+  const [simpleFailed, setSimpleFailed] = useState<string[]>([]);
+  const setSimple = async (on: boolean) => {
+    setSimpleFailed([]);
+    try {
+      const r = await commands.setAppSimpleMode(on);
+      if (r.status === "error") throw r.error;
+      qc.setQueryData(["app-settings"], r.data.settings);
+      setSimpleFailed(r.data.not_switched_on);
+      if (on) void hydrateModules();
+    } catch (e) {
+      toast.error(saveFailedMessage(e));
     }
   };
 
@@ -967,6 +984,27 @@ export default function Settings({
           <p aria-live="polite" className="text-xs text-muted">
             {selectedRate.hint}
           </p>
+        </SettingRow>
+        <SettingRow
+          asLabel
+          name="Simple mode"
+          description="Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates."
+          control={
+            <Switch
+              checked={appSettings.data?.app_simple_mode ?? false}
+              disabled={!appSettings.data || runGoing}
+              title={runGoing ? "Wait for the Auto Run run to finish." : undefined}
+              className="disabled:pointer-events-auto"
+              onCheckedChange={(on) => void setSimple(on)}
+              ariaLabel="Simple mode"
+            />
+          }
+        >
+          {simpleFailed.length > 0 && (
+            <p role="alert" className="text-xs text-danger">
+              Could not switch on: {simpleFailed.join(", ")}. Turn Simple mode off and on to try again.
+            </p>
+          )}
         </SettingRow>
         {!simple && (
           <SettingRow

@@ -82,7 +82,8 @@ export default function App() {
   // a page that scrolls inside the shell.
   const [settingsFill, setSettingsFill] = useState(false);
   // The tour skips the stop for a card whose module is off.
-  const tourSteps = useMemo(() => tourStepsFor(modules), [modules]);
+  const tourSimple = useAppSimpleMode().on;
+  const tourSteps = useMemo(() => tourStepsFor(modules, tourSimple), [modules, tourSimple]);
   const [org, setOrgRaw] = useState(initial.org);
   // The home project: where Auto Run, API templates and Playwright keep their
   // files, and what a screen with no PBI falls back to. It is the project the

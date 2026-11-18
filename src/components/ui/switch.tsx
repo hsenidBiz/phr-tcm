@@ -16,6 +16,7 @@ export function Switch({
   ariaLabel,
   ariaDescribedBy,
   disabled = false,
+  title,
   className,
 }: {
   checked: boolean;
@@ -23,6 +24,8 @@ export function Switch({
   ariaLabel?: string;
   ariaDescribedBy?: string;
   disabled?: boolean;
+  /** Shown on hover; with `disabled`, pair it with `disabled:pointer-events-auto`. */
+  title?: string;
   className?: string;
 }) {
   // Set on the first click, so the knob's bounce plays when the user flips
@@ -36,6 +39,7 @@ export function Switch({
       aria-label={ariaLabel}
       aria-describedby={ariaDescribedBy}
       disabled={disabled}
+      title={title}
       className={cn(
         "t-toggle relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full border transition-colors",
         used && "is-init",
