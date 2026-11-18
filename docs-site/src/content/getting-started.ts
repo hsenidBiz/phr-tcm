@@ -80,8 +80,12 @@ export const gettingStarted: Screen = {
       does:
         "Lists the test case screens under **Test Case Management**: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
         "With the matching modules switched on in Settings, a second group at the bottom, below them, lists Auto Run, Playwright and API Templates. " +
-        "Click one to open it. The highlighted row is the screen you are on.",
-      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, and [[Ctrl+9]] opens Auto Run when it is switched on. Playwright and API Templates have no shortcut."],
+        "Click one to open it. The highlighted row is the screen you are on. " +
+        "With **Simple mode** on in Settings, the sidebar lists only Manual Entry, View Test Cases, Run Tests, AI Bridge and Auto Run (and Playwright, which has no shortcut); the screens it hides come back when you turn Simple mode off.",
+      tips: [
+        "The Ctrl+number shortcuts follow the sidebar: [[Ctrl+1]] opens the first row, [[Ctrl+2]] the second, and so on, up to [[Ctrl+9]]. Playwright and API Templates have no shortcut. In the full sidebar that is [[Ctrl+1]] to [[Ctrl+8]] for the test case screens and [[Ctrl+9]] for Auto Run when it is switched on.",
+        "With Simple mode on the numbers close up: [[Ctrl+1]] is Manual Entry, [[Ctrl+2]] is View Test Cases, [[Ctrl+3]] is Run Tests, [[Ctrl+4]] is AI Bridge and [[Ctrl+5]] is Auto Run.",
+      ],
     },
     {
       id: "pbi",
@@ -238,7 +242,7 @@ export const gettingStarted: Screen = {
       locate: { role: "option", nameRe: "^Run Tests" },
       name: "Go to",
       does:
-        "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge, or [[Ctrl+9]] with Auto Run switched on), and Settings at the end.",
+        "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge, or [[Ctrl+9]] with Auto Run switched on; the numbers follow the sidebar, so Simple mode changes them), and Settings at the end.",
     },
     {
       id: "toggle-work",
@@ -301,7 +305,7 @@ export const gettingStarted: Screen = {
   ],
   tips: [
     "The button at the bottom of the sidebar folds it to a strip of icons for more room; hover an icon to see its name, and the same button opens it again.",
-    "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens ([[Ctrl+9]] with Auto Run switched on), and [[Ctrl+Shift+M]] switches to Work Manager and back.",
+    "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens ([[Ctrl+9]] with Auto Run switched on; the numbers follow the sidebar, so they change with Simple mode), and [[Ctrl+Shift+M]] switches to Work Manager and back.",
     "The Product Backlog Item and the screen you were on are remembered, so the app opens where you left it.",
     "With **Treat all projects as one** switched off, the palette also lists your projects under **Switch project**; pick one to move to it. With it on there is no project to switch to.",
     "On a fresh install with **Treat all projects as one** on, the app sets your home project for you, from the only project, the one that already has Auto Run files, or the first Product Backlog Item you pick (a message says so when the organisation has several projects). You can change it in Settings.",

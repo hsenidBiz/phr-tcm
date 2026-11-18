@@ -1098,13 +1098,31 @@ function applyPatches() {
 
   const demoPw = playwrightPatches({ getAppSettings: realGetAppSettings });
   let demoAutorunMode: AutorunMode = "advanced";
+  // App Simple mode is kept in memory too: the one shot that documents its
+  // switch clicks it on, and a reload puts it back off.
+  let demoAppSimpleMode = false;
   const patches = {
     // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
     // Auto Run's Simple/Advanced mode lives in memory here, never in the
     // settings file: every shot starts in Advanced (a reload resets it), and
     // the one that documents the switch clicks Simple.
-    getAppSettings: async () => ({ ...(await demoPw.getAppSettings()), autorun_mode: demoAutorunMode }),
+    getAppSettings: async () => ({
+      ...(await demoPw.getAppSettings()),
+      autorun_mode: demoAutorunMode,
+      app_simple_mode: demoAppSimpleMode,
+    }),
+    setAppSimpleMode: async (on: boolean) => {
+      demoAppSimpleMode = on;
+      return ok({
+        settings: {
+          ...(await demoPw.getAppSettings()),
+          autorun_mode: demoAutorunMode,
+          app_simple_mode: demoAppSimpleMode,
+        },
+        not_switched_on: [] as string[],
+      });
+    },
     setAutorunMode: async (mode: AutorunMode) => {
       demoAutorunMode = mode;
       return ok({ ...(await demoPw.getAppSettings()), autorun_mode: demoAutorunMode });

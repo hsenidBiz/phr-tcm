@@ -331,7 +331,7 @@ pub(crate) async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -
     format!(
         "# Writing test cases for Test Case Manager ({org}/{project})\n\n\
         Produce a JSON array of test cases. The developer imports it via the\n\
-        Import Test Cases tab, reviews, then creates - you never write to Azure DevOps.\n\n\
+        Import Test Cases tab, reviews, then creates - you never write to Azure DevOps. If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings.\n\n\
         ## Use these tools; do not rebuild them\n\
         Do NOT write your own script, generator or one-off parser to produce,\n\
         transform, validate or reformat test cases. Use the tools: they carry\n\

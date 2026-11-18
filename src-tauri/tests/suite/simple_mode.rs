@@ -140,3 +140,49 @@ fn a_saved_value_is_never_overwritten() {
     assert!(!s.switch_markers_migrated);
     assert!(st.is_empty());
 }
+
+const SIMPLE_MODE_NOTE: &str =
+    "If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings.";
+
+fn flat(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Every guide that sends a person to a screen Simple mode hides says what to
+/// do when that screen is not there.
+#[test]
+fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
+    let guides = [
+        ("autorun/guide.rs", flat(&v2_lib::autorun::guide::autorun_guide())),
+        ("api_templates/guide.rs", flat(&v2_lib::api_templates::guide::text(&[], None))),
+        ("ai_bridge/guide_routes.rs", flat(include_str!("../../src/ai_bridge/guide_routes.rs"))),
+    ];
+    for (name, text) in &guides {
+        assert!(text.contains(SIMPLE_MODE_NOTE), "{name} does not carry the Simple mode line");
+    }
+}
+
+/// Simple mode is the person's switch. No assistant tool and no bridge route
+/// may set it: the bridge only carries it, read-only, in /current-pbi.
+#[test]
+fn no_tool_or_route_sets_the_app_simple_mode() {
+    let sources = [
+        ("mcp.rs", include_str!("../../src/mcp.rs")),
+        ("ai_tools.rs", include_str!("../../src/ai_tools.rs")),
+        ("ai_bridge/mod.rs", include_str!("../../src/ai_bridge/mod.rs")),
+        ("ai_bridge/server.rs", include_str!("../../src/ai_bridge/server.rs")),
+        ("ai_bridge/guide_routes.rs", include_str!("../../src/ai_bridge/guide_routes.rs")),
+        ("ai_bridge/template_routes.rs", include_str!("../../src/ai_bridge/template_routes.rs")),
+    ];
+    for (name, src) in sources {
+        for (n, line) in src.lines().enumerate() {
+            let writes = line.contains("set_app_simple_mode")
+                || line.contains("setAppSimpleMode")
+                || line.contains("simple_mode::")
+                || line.contains("app_simple_mode =")
+                || line.contains("app_simple_mode:") && !line.contains("Option<bool>")
+                    && !line.contains("switches.app_simple_mode");
+            assert!(!writes, "{name}:{}: {line}", n + 1);
+        }
+    }
+}
