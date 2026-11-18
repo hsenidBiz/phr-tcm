@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.14",
+    date: "2026-11-18",
+    items: [
+      "In Simple mode, an environment marked as a test environment resets an expired password by itself, without the separate Reset expired passwords switch. Passwords are still only ever reset in test environments.",
+      "In Simple mode, the Environments dialog hides the account lookup, password expiry query and active session query settings. They keep working as before.",
+    ],
+  },
+  {
     version: "2.4.7-beta.13",
     date: "2026-11-18",
     items: [
