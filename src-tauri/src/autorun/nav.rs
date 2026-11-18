@@ -1671,6 +1671,10 @@ pub fn simple_now() -> bool {
 /// Areas dialog hides the switch there, so a person never sees it).
 pub const SIMPLE_NO_ADDRESS_CHANGE: &str = "Switch Auto Run to Advanced to change this.";
 
+/// The same refusal while the app's own Simple mode holds Auto Run in Simple:
+/// Advanced is not available then, so the way out is the app setting.
+pub const APP_SIMPLE_NO_ADDRESS_CHANGE: &str = "Turn Simple mode off in Settings to change this.";
+
 /// While the switch is off, a script with any `navigate` (absolute or
 /// relative) cannot be saved. Names the first case and step it finds.
 pub fn check_no_addresses(nav: &NavFile, simple: bool, scripts: &[CaseScript]) -> Result<(), String> {

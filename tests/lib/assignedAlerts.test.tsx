@@ -149,3 +149,10 @@ test("announce falls back to a toast when the OS notification is refused", async
   );
   expect(sendNotification).not.toHaveBeenCalled();
 });
+
+test("a lone item's OS text keeps its whole title; only a list clips each line", () => {
+  const long = "A".repeat(120);
+  expect(alertListText({ items: [{ text: long }], more: 0 })).toBe(long);
+  const several = alertListText({ items: [{ id: 1, text: long }, { id: 2, text: "short" }], more: 0 });
+  expect(several.split("\n")[0].length).toBeLessThanOrEqual(70);
+});

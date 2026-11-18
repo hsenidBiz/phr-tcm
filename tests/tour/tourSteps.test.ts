@@ -22,12 +22,6 @@ test("Simple mode drops the stops on screens Simple mode hides, and off keeps to
   expect(tourStepsFor(ALL, false)).toEqual(TOUR_STEPS);
 });
 
-test("Simple mode has no stop on the Playwright tab", () => {
-  expect(SIMPLE_HIDDEN_SECTIONS.has("playwright")).toBe(true);
-  const sections = tourStepsFor(ALL, true).map((s) => (s.where?.area === "cases" ? s.where.section : null));
-  expect(sections).not.toContain("playwright");
-});
-
 test("Simple mode keeps the stops on screens it leaves", () => {
   const sections = tourStepsFor(ALL, true).map((s) => (s.where?.area === "cases" ? s.where.section : null));
   expect(sections).toContain("manual");

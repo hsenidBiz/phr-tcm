@@ -1711,7 +1711,11 @@ fn simple_mode_leaves_the_saved_choice_in_the_file() {
 #[test]
 fn changing_the_address_switch_is_refused_in_simple_with_a_plain_sentence() {
     use v2_lib::commands::autorun::refuse_address_change;
-    assert!(refuse_address_change(false).is_ok());
-    let why = refuse_address_change(true).unwrap_err();
+    assert!(refuse_address_change(false, false).is_ok());
+    let why = refuse_address_change(true, false).unwrap_err();
     assert_eq!(why, "Switch Auto Run to Advanced to change this.");
+    // The app's Simple mode holds Auto Run in Simple and refuses Advanced, so
+    // the sentence names the app setting.
+    let why = refuse_address_change(true, true).unwrap_err();
+    assert_eq!(why, "Turn Simple mode off in Settings to change this.");
 }

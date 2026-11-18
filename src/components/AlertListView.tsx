@@ -14,19 +14,19 @@ export function AlertListView({ list }: { list: AlertList }) {
         <span
           key={`${it.id ?? "x"}-${n}`}
           data-testid="alert-item"
-          className={`flex min-w-0 flex-col gap-0.5 py-1.5 first:pt-0 ${n > 0 ? "border-t border-border" : ""}`}
+          className={`flex min-w-0 flex-col gap-0.5 pt-1.5 first:pt-0 ${n === list.items.length - 1 && list.more === 0 ? "" : "pb-1.5"} ${n > 0 ? "border-t border-border" : ""}`}
         >
           {(it.id !== undefined || it.type) && (
-            <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted">
+            <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground">
               {it.id !== undefined && <span className="font-mono">#{it.id}</span>}
               {it.type && <span>{it.type}</span>}
             </span>
           )}
-          <span className="line-clamp-2 break-words text-text">{it.text}</span>
+          <span className="line-clamp-2 break-words">{it.text}</span>
         </span>
       ))}
       {list.more > 0 && (
-        <span className="border-t border-border pt-1.5 text-xs text-muted">and {list.more} more</span>
+        <span className="border-t border-border pt-1.5 text-xs text-muted-foreground">and {list.more} more</span>
       )}
     </span>
   );

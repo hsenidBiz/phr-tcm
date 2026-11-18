@@ -56,9 +56,14 @@ function clip(line: string): string {
 }
 
 /** The plain-text form an OS notification can carry: one line per item,
- * each cut to a readable length, then "…and N more". */
+ * each cut to a readable length when there are several (a lone item keeps
+ * its whole text), then "…and N more". */
 export function alertListText(list: AlertList): string {
-  const lines = list.items.map((it) => clip(it.id !== undefined ? `#${it.id} ${it.text}` : it.text));
+  const several = list.items.length > 1;
+  const lines = list.items.map((it) => {
+    const line = it.id !== undefined ? `#${it.id} ${it.text}` : it.text;
+    return several ? clip(line) : line;
+  });
   if (list.more > 0) lines.push(`…and ${list.more} more`);
   return lines.join("\n");
 }
