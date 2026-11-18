@@ -503,7 +503,7 @@ export default function App() {
                 // Requests panel, which read every project, open the item or
                 // pull request in it.
                 if (target.kind === "pbi") {
-                  void openPbiById(target.id, target.project, simpleMode.on ? "autorun" : "import");
+                  void openPbiById(target.id, target.project, "import");
                   return;
                 }
                 if (target.kind === "auto-run") {

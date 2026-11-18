@@ -1098,6 +1098,9 @@ pub async fn route_as(
             if let Some(mode) = ctx.autorun_mode {
                 answer["autorun_mode"] = serde_json::to_value(mode).unwrap_or_default();
             }
+            if let Some(on) = ctx.app_simple_mode {
+                answer["app_simple_mode"] = serde_json::json!(on);
+            }
             (200, answer.to_string())
         }
         ("GET", "/run-results") => match client {
