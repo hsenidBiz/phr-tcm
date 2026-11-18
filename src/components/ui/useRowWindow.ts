@@ -28,6 +28,9 @@ const NO_MEASURE = () => {};
 /** Lists shorter than this render every row. */
 export const WINDOW_FROM = 150;
 
+/** How many windowed lists hold scroll anchoring off on each scroller. */
+const anchorHolds = new WeakMap<HTMLElement, number>();
+
 function scrollParent(el: HTMLElement | null): HTMLElement | null {
   for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
     const y = getComputedStyle(p).overflowY;
@@ -101,6 +104,28 @@ export function useRowWindow(
     scrollMargin: margin,
     getItemKey: keyOf ? (i) => keyOf(i) : undefined,
   });
+
+  // The virtualizer keeps the page still itself as rows are measured (a
+  // row taller than the estimate moves everything under it). The browser's
+  // scroll anchoring did the same at the same time, and the two corrections
+  // fought: a long group of wrapping rows bounced up and down on the way to
+  // its end. So anchoring is off on the scroller while a windowed list is
+  // in it - counted, since one page can hold several (one per group).
+  useLayoutEffect(() => {
+    const s = scroller.current;
+    if (!windowed || !list || !s) return;
+    const n = (anchorHolds.get(s) ?? 0) + 1;
+    anchorHolds.set(s, n);
+    if (n === 1) s.style.overflowAnchor = "none";
+    return () => {
+      const left = (anchorHolds.get(s) ?? 1) - 1;
+      if (left > 0) anchorHolds.set(s, left);
+      else {
+        anchorHolds.delete(s);
+        s.style.overflowAnchor = "";
+      }
+    };
+  }, [windowed, list]);
 
   if (!windowed) {
     return {
