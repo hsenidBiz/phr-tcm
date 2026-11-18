@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.15",
+    date: "2026-11-18",
+    items: [
+      "Assistants exploring the app now see only what changed on the page after each action, so they read less and finish sooner.",
+      "Assistants can fill a whole form in one step, and get back the exact actions to save in the script.",
+      "Running an API template no longer asks you to turn Simple mode off.",
+    ],
+  },
+  {
     version: "2.4.7-beta.14",
     date: "2026-11-18",
     items: [
