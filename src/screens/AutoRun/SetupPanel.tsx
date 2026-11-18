@@ -1048,17 +1048,19 @@ export default function SetupPanel({
                       )
                     }
                   >
+                    {onOpenFixtures && (
                     <Button
                       size="sm"
                       variant="outline"
                       aria-label="Open fixtures"
                       disabled={!setupReady}
                       title={needsProject}
-                      onClick={() => onOpenFixtures?.()}
+                      onClick={() => onOpenFixtures()}
                     >
                       <IconModuleApiTemplates aria-hidden />
                       Open
                     </Button>
+                    )}
                   </SetupRow>
                   {blockerNote("Fixtures")}
                 </>

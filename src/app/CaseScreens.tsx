@@ -4,7 +4,7 @@ import BridgeStatusBadge from "../components/BridgeStatusBadge";
 import SpecsStatusPill from "../components/SpecsStatusPill";
 import type { Section } from "../components/Sidebar";
 import { askForFixturesView } from "../lib/apiTemplates";
-import type { Module } from "../lib/modules";
+import { sectionShown, type Module } from "../lib/modules";
 import { saveAllProjects } from "../lib/projectScope";
 import type { RunFolderTarget } from "../screens/RunTests";
 import {
@@ -170,10 +170,14 @@ export default function CaseScreens({
           adoProject={project}
           pbi={pbi}
           onOpenPlaywright={() => goToSection("playwright")}
-          onOpenFixtures={() => {
-            askForFixturesView();
-            goToSection("apitemplates");
-          }}
+          onOpenFixtures={
+            sectionShown("apitemplates", modules, simple)
+              ? () => {
+                  askForFixturesView();
+                  goToSection("apitemplates");
+                }
+              : undefined
+          }
           onOpenModules={
             simple
               ? undefined

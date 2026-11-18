@@ -1968,3 +1968,29 @@ test("Simple mode has no Modules card, and starting on Modules shows Settings", 
   expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Back to Settings/ })).not.toBeInTheDocument();
 });
+
+test("a Modules request left over in Simple mode gives the plain page, and turning Simple off does not open Modules", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  setAppSimpleModeForTest(true);
+  const seen: boolean[] = [];
+  render(
+    <QueryClientProvider client={qc}>
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        onFillChange={(fill) => seen.push(fill)}
+        startOnModules
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(seen).not.toContain(true);
+  act(() => setAppSimpleModeForTest(false));
+  expect(await screen.findByRole("button", { name: "Modules" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(seen).not.toContain(true);
+});

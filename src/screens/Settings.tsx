@@ -225,10 +225,16 @@ export default function Settings({
   const autoRunOn = useModule("auto_run");
   // The Modules board scrolls inside its own frame, so while it is open the
   // host must not scroll around it too; leaving Settings hands the scroll back.
+  const showModules = modulesOpen && !simple;
   useEffect(() => {
-    onFillChange?.(modulesOpen);
+    onFillChange?.(showModules);
     return () => onFillChange?.(false);
-  }, [modulesOpen, onFillChange]);
+  }, [showModules, onFillChange]);
+  // A Modules request left over from before Simple mode must not open the
+  // page when Simple mode is turned off again.
+  useEffect(() => {
+    if (simple) setModulesOpen(false);
+  }, [simple]);
   const [gameOpen, setGameOpen] = useState(false);
   const [breakerOpen, setBreakerOpen] = useState(false);
   useEffect(() => {
@@ -780,7 +786,7 @@ export default function Settings({
     </SettingsCard>
   );
 
-  if (modulesOpen && !simple) return <Modules onBack={() => setModulesOpen(false)} />;
+  if (showModules) return <Modules onBack={() => setModulesOpen(false)} />;
 
   return (
     // Two columns on wide windows; below lg everything stacks into one
