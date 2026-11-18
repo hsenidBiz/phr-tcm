@@ -533,6 +533,10 @@ fn within_cap(lines: Vec<Printed>, limit: usize) -> Vec<Printed> {
 
 fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Option<i64>) -> PageRead {
     let (page, missed) = printed_lines(nodes, frames, None);
+    // The whole printed page, before the side menu is collapsed or the limit
+    // cuts it: what a reader is remembered to have (`page_changes`).
+    let whole: Vec<String> = page.iter().map(|(t, _)| t.clone()).collect();
+    let page_data: Vec<Option<SnapLine>> = page.iter().map(|(_, d)| d.clone()).collect();
     let page_lines: Vec<SnapLine> = page.iter().filter_map(|(_, d)| d.clone()).collect();
     let page_lines = (!missed).then_some(page_lines);
     let lines = match within {
@@ -540,6 +544,11 @@ fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Opt
         Some(b) => printed_lines(nodes, frames, Some(b)).0,
     };
     if lines.is_empty() {
+        // An empty page is what the reader was given too: the next read is
+        // compared with it, so the page that comes back is not "unchanged".
+        if within.is_none() {
+            let _ = crate::autorun::page_changes::apply(&whole, 1);
+        }
         let text = if within.is_some() { EMPTY_WITHIN } else { EMPTY };
         return PageRead { text: text.to_string(), lines: vec![], cut: within.is_some(), page_lines };
     }
@@ -558,6 +567,23 @@ fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Opt
             out.push('\n');
         }
         out.push_str(&more_lines(total - limit));
+    }
+    let mut data = data;
+    if within.is_none() {
+        use crate::autorun::page_changes::{apply, render, Applied, UNCHANGED_PAGE};
+        match apply(&whole, out.lines().count()) {
+            Applied::Usual => {}
+            Applied::Unchanged => out = UNCHANGED_PAGE.to_string(),
+            Applied::Changes(changes) => {
+                // What the answer prints is filed too, even past the line limit.
+                for line in changes.iter().filter_map(|c| c.new_index).filter_map(|i| page_data.get(i).cloned().flatten()) {
+                    if !data.contains(&line) {
+                        data.push(line);
+                    }
+                }
+                out = render(&changes);
+            }
+        }
     }
     PageRead { text: out, lines: data, cut: total > limit || missed || within.is_some(), page_lines }
 }
@@ -669,6 +695,13 @@ async fn within_match<D: Driver>(d: &mut D, handle: &page::Handle, by_role: bool
     }
 }
 
+/// The page's full address (empty when it cannot be read). It is only
+/// compared, never logged or answered.
+pub async fn address<D: Driver>(d: &mut D) -> String {
+    let href = page::eval_value(d, "location.href").await;
+    href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
 /// [`snapshot_read`], or with `within` (a DOM node, `within_node`) only
 /// that element's subtree (`render_frames_read_within`).
 pub async fn snapshot_read_within<D: Driver>(d: &mut D, limit: usize, within: Option<i64>) -> Result<PageRead, CdpError> {
@@ -681,6 +714,9 @@ pub async fn snapshot_read_within<D: Driver>(d: &mut D, limit: usize, within: Op
         Err(e) => return Err(e),
     };
     let nodes = parse_nodes(&result);
+    if within.is_none() && crate::autorun::page_changes::active() {
+        crate::autorun::page_changes::note_address(&address(d).await);
+    }
     // Frames inside frames are followed three deep (`MAX_FRAME_DEPTH`; an
     // iframe deeper still prints `DEEP_FRAMES_NOTE`) - written out rather
     // than recursive, because a recursive async fn needs a boxed future,

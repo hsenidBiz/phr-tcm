@@ -151,6 +151,9 @@ pub fn refusal_for(action: &Value, serde_error: &str) -> String {
     if kind == Some(SCREENSHOT_KIND) {
         return SAVED_SCREENSHOT.to_string();
     }
+    if kind == Some(FILL_FORM_KIND) {
+        return SAVED_FILL_FORM.to_string();
+    }
     let why = serde_error.trim().trim_end_matches('.');
     let body = match kind.and_then(|k| example_for(k).map(|example| (k, example))) {
         Some((k, example)) => format!("that is not a {k} action: {why}. A {k} action looks like {example}"),
@@ -349,6 +352,92 @@ pub fn screenshot_from(raw: &Value) -> Option<Result<Action, String>> {
     })
 }
 
+// ---- the discovery's own `fill_form` ----------------------------------------
+
+/// The `kind` of the form a discovery fills in one call. Like `screenshot`,
+/// not an `Action` kind: a saved script never holds one.
+pub const FILL_FORM_KIND: &str = "fill_form";
+
+/// Said to a saved script or component that holds a `fill_form`.
+pub const SAVED_FILL_FORM: &str = "fill_form is a discovery action: save the actions its answer listed";
+
+/// The most fields one `fill_form` may name.
+pub const FILL_FORM_MAX_FIELDS: usize = 30;
+
+/// The marked `check_text` a `fill_form` travels as: this prefix, then the
+/// compact JSON of the raw object (`fill_form_ask` reads it back).
+const FILL_FORM_MARK: &str = "\u{1}fill_form:";
+
+/// One field's value: text (a number is read as its text) or a check state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldValue {
+    Text(String),
+    Bool(bool),
+}
+
+/// A `fill_form` step: where to look and the fields, in the order sent.
+#[derive(Debug, Clone)]
+pub struct FillForm {
+    pub within: Option<crate::browser::locator::Target>,
+    pub fields: Vec<(String, FieldValue)>,
+}
+
+/// The step a marked stand-in carries; `None` for any other action, or a
+/// stand-in whose step cannot be read.
+pub fn fill_form_ask(action: &Action) -> Option<FillForm> {
+    let Action::CheckText { value } = action else { return None };
+    let json = value.strip_prefix(FILL_FORM_MARK)?;
+    let raw: Value = serde_json::from_str(json).ok()?;
+    parse_fill_form(raw.as_object()?).ok()
+}
+
+fn parse_fill_form(o: &serde_json::Map<String, Value>) -> Result<FillForm, String> {
+    let stray: Vec<&str> = o.keys().map(String::as_str).filter(|k| !matches!(*k, "kind" | "within" | "fields")).collect();
+    if !stray.is_empty() {
+        return Err(format!("{FILL_FORM_KIND} does not take {} - it takes: within, fields", stray.join(", ")));
+    }
+    let within = match o.get("within") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            serde_json::from_value::<crate::browser::locator::Target>(v.clone())
+                .map_err(|_| format!("{FILL_FORM_KIND}'s within is a locator such as {{\"role\": \"dialog\", \"name\": \"...\"}}"))?,
+        ),
+    };
+    let Some(Value::Object(map)) = o.get("fields") else {
+        return Err(format!("{FILL_FORM_KIND}'s fields is an object of label: value"));
+    };
+    if map.is_empty() {
+        return Err(format!("{FILL_FORM_KIND} needs at least one field"));
+    }
+    if map.len() > FILL_FORM_MAX_FIELDS {
+        return Err(format!("{FILL_FORM_KIND} takes at most {FILL_FORM_MAX_FIELDS} fields; this has {}", map.len()));
+    }
+    let mut fields = Vec::with_capacity(map.len());
+    for (label, v) in map {
+        if label.trim().is_empty() {
+            return Err(format!("{FILL_FORM_KIND} needs a label for every field"));
+        }
+        let value = match v {
+            Value::String(s) => FieldValue::Text(s.clone()),
+            Value::Number(n) => FieldValue::Text(n.to_string()),
+            Value::Bool(b) => FieldValue::Bool(*b),
+            _ => return Err(format!("{FILL_FORM_KIND}'s value for \"{label}\" is text, a number or true/false")),
+        };
+        fields.push((label.clone(), value));
+    }
+    Ok(FillForm { within, fields })
+}
+
+/// A raw discovery or try action that is a `fill_form`: `None` for any other
+/// kind, else the marked stand-in, or why it was refused.
+pub fn fill_form_from(raw: &Value) -> Option<Result<Action, String>> {
+    let o = raw.as_object()?;
+    if o.get("kind").and_then(Value::as_str) != Some(FILL_FORM_KIND) {
+        return None;
+    }
+    Some(parse_fill_form(o).map(|_| Action::CheckText { value: format!("{FILL_FORM_MARK}{raw}") }))
+}
+
 // ---- keys an action does not have (backlog 87) -------------------------------
 
 /// Each action kind's own field names, in the order the type declares them,
@@ -467,6 +556,14 @@ pub fn refuse_raw_saved_action(raw: &Value) -> Result<(), String> {
         let Some(o) = raw.as_object() else { return Ok(()) };
         if o.get("kind").and_then(Value::as_str) == Some(SCREENSHOT_KIND) {
             return Err(SAVED_SCREENSHOT.to_string());
+        }
+        if o.get("kind").and_then(Value::as_str) == Some(FILL_FORM_KIND) {
+            return Err(SAVED_FILL_FORM.to_string());
+        }
+        if o.get("kind").and_then(Value::as_str) == Some("check_text")
+            && o.get("value").and_then(Value::as_str).is_some_and(|v| v.starts_with(FILL_FORM_MARK))
+        {
+            return Err(SAVED_FILL_FORM.to_string());
         }
         // The stand-in a discovery batch carries a screenshot as is never saved.
         if o.get("kind").and_then(Value::as_str) == Some("check_text")

@@ -136,6 +136,22 @@ async fn a_component_save_with_a_page_script_action_is_refused() {
     assert_eq!(out, format!("\"evaluate\" is not an action and never will be: {NO_PAGE_SCRIPT}"));
 }
 
+#[tokio::test]
+async fn a_component_save_with_a_fill_form_is_refused() {
+    use v2_lib::autorun::action_help::SAVED_FILL_FORM;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.0.clone());
+    let named = json!({ "kind": "fill_form", "fields": { "First name": "Ann" } });
+    let marked = json!({ "kind": "check_text", "value": "\u{1}fill_form:{}" });
+    let nested = json!({ "kind": "when_visible", "selector": "#a", "then": [named.clone()] });
+    for action in [named, marked, nested] {
+        let body = json!({ "name": "fill_it", "description": "d", "inputs": [], "actions": [action] }).to_string();
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-component-save", &body, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (400, SAVED_FILL_FORM), "{out}");
+    }
+}
+
 // ---- Task 19: a repair may not let the page decide whether a failure counts ----
 
 use v2_lib::autorun::edits::Edit;

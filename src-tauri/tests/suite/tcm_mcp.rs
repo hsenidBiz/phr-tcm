@@ -2255,6 +2255,9 @@ fn discover_autorun_actions_takes_one_action_or_several() {
         serde_json::json!({ "action": { "kind": "reload" }, "stop_on_failure": false }),
         STOP_ON_FAILURE_GOES_WITH_ACTIONS,
     );
+    // One `fill_form` has fields after its first, so it may carry the flag.
+    let form = serde_json::json!({ "action": { "kind": "fill_form", "fields": { "Name": "x" } }, "stop_on_failure": false });
+    assert_eq!(reached("discover_autorun_actions", form.clone()), ("POST".into(), "/autorun-discover-action".into(), form));
     let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
     assert!(!names.iter().any(|n| n == "discover_autorun_action"), "the one-action tool is gone: {names:?}");
 }

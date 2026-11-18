@@ -717,7 +717,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "try_autorun_action",
-            "description": "Carry out ONE script action against the open browser, so you can find out whether a repair works before you write it down. Name the case the try is for with `case_id`: a case marked no_save is tried with its saves stopped, as in a run. Answers ok or failed with what the page did, and the picture taken if it failed. Nothing is recorded - this is a rehearsal, not a run. `sign_in` is refused: the person signs in. `{ \"kind\": \"screenshot\" }` (with `\"full_page\": true` for the whole page) takes a picture of the page and answers its file path; it is never saved in a script. An action with a key its kind does not have is refused. Needs a supervised browser to be open.",
+            "description": "Carry out ONE script action against the open browser, so you can find out whether a repair works before you write it down. Name the case the try is for with `case_id`: a case marked no_save is tried with its saves stopped, as in a run. Answers ok or failed with what the page did, and the picture taken if it failed. Nothing is recorded - this is a rehearsal, not a run. `sign_in` is refused: the person signs in. `{ \"kind\": \"screenshot\" }` (with `\"full_page\": true` for the whole page) takes a picture of the page and answers its file path; it is never saved in a script. `{ \"kind\": \"fill_form\", \"within\": <locator, optional>, \"fields\": { \"<label>\": <text, number or true/false> } }` fills 1 to 30 form controls in order, each matched by accessible name to exactly one visible control; it answers the actions it ran as a `fill_form:` line, which you save; fill_form itself is never saved. An action with a key its kind does not have is refused. Needs a supervised browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
@@ -756,7 +756,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "discover_autorun_actions",
-            "description": "Carry out script actions in the discovery browser and see what they did: `action` for ONE or `actions` for SEVERAL (at most 20 actions), never both. One answers the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only). Several run in order once every action is checked - if any would be refused, none runs and the answer names it; they stop at the first action that fails unless `stop_on_failure` is false, and answer one line per action that ran, then the page once. What each page showed is recorded as seen. Any action in the script vocabulary works (a navigate is held to the environment's allowed sites); sign_in and file addresses are refused. In a discovery that must not save (a no_save case named by `case_id`, or `no_save: true`) or a mapping run, a save is blocked: the action fails with the guard's sentence and `blocked_writes` names the request. A click on a save-named control (Save, Save & Continue, Continue, Submit, Add...) also stops every write the page sends in the next 5 seconds, whatever its path; any write that went through is named in `let_through`. A guard this call's own `case_id` or `no_save` sets lasts for this call only; one the discovery started with lasts until it ends. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. A use_component action runs a component, answering its actions as `steps`; `draft` tries one not saved yet, or a change to a saved one, before save_autorun_component. A `draft` that no use_component action names is refused. `{ \"kind\": \"screenshot\" }` (with `\"full_page\": true` for the whole page) takes a picture of the page and answers its file path; it counts as one of the 20 and is never saved in a script. An action with a key its kind does not have is refused. Needs start_autorun_discovery first.",
+            "description": "Carry out script actions in the discovery browser and see what they did: `action` for ONE or `actions` for SEVERAL (at most 20 actions), never both. One answers the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only). Several run in order once every action is checked - if any would be refused, none runs and the answer names it; they stop at the first action that fails unless `stop_on_failure` is false, and answer one line per action that ran, then the page once. What each page showed is recorded as seen. Any action in the script vocabulary works (a navigate is held to the environment's allowed sites); sign_in and file addresses are refused. In a discovery that must not save (a no_save case named by `case_id`, or `no_save: true`) or a mapping run, a save is blocked: the action fails with the guard's sentence and `blocked_writes` names the request. A click on a save-named control (Save, Save & Continue, Continue, Submit, Add...) also stops every write the page sends in the next 5 seconds, whatever its path; any write that went through is named in `let_through`. A guard this call's own `case_id` or `no_save` sets lasts for this call only; one the discovery started with lasts until it ends. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. A use_component action runs a component, answering its actions as `steps`; `draft` tries one not saved yet, or a change to a saved one, before save_autorun_component. A `draft` that no use_component action names is refused. `{ \"kind\": \"screenshot\" }` (with `\"full_page\": true` for the whole page) takes a picture of the page and answers its file path; it counts as one of the 20 and is never saved in a script. `{ \"kind\": \"fill_form\", \"within\": <locator, optional>, \"fields\": { \"<label>\": <text, number or true/false> } }` fills 1 to 30 form controls in order, each matched by accessible name to exactly one visible control; it counts as one of the 20, answers the actions it ran (save those; a script never holds fill_form), and fails on password fields, custom dropdowns and date pickers (use fill actions or a component). After the first answer the page shows only what changed since your last page from this browser (`+`/`-` lines, or `page: unchanged since your last answer`); `\"page\": \"whole\"` gives the usual page, `\"full\"` the whole tree, `false` none. An action with a key its kind does not have is refused. Needs start_autorun_discovery first.",
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
@@ -767,8 +767,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                     "description": "Instead of `action`: several, in order, at most 20.",
                     "items": { "type": "object" },
                 },
-                "stop_on_failure": { "type": "boolean", "description": "Optional, with `actions`: false carries on past a failed action. True when left out." },
-                "page": { "type": ["boolean", "string"], "description": "Optional: false leaves the page out of the answer (it is still recorded as seen; get_autorun_page reads it). \"full\" gives the whole tree: by default the side menu is answered in full only when it changed since your last answer." },
+                "stop_on_failure": { "type": "boolean", "description": "Optional, with `actions` (or one `fill_form`): false carries on past a failed action or field. True when left out." },
+                "page": { "type": ["boolean", "string"], "description": "Optional: by default the page is answered as what changed since your last page from this browser. \"whole\" gives the usual page, \"full\" the whole tree (the side menu is otherwise answered in full only when it changed since your last answer), false leaves the page out (it is still recorded as seen; get_autorun_page reads it)." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its script is marked no_save, every save the page tries is BLOCKED for this call only (named in `blocked_writes`), so name it on every call for such a case." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save." },
@@ -1895,13 +1895,21 @@ pub const DISCOVER_ACTION_OR_ACTIONS: &str =
 pub const STOP_ON_FAILURE_GOES_WITH_ACTIONS: &str =
     "`stop_on_failure` goes with `actions`: one `action` has nothing after it to stop";
 
+/// Is this raw action a `fill_form`? It has fields after it to stop, so it may
+/// carry `stop_on_failure`.
+fn is_fill_form(action: &serde_json::Value) -> bool {
+    action.get("kind").and_then(|k| k.as_str()) == Some("fill_form")
+}
+
 /// `discover_autorun_actions`: one `action` through the one-action route,
 /// whose answer is the richer one (dialogs, address change, writes), or
 /// `actions` through the batch route. The arguments travel whole either
 /// way: each route reads its own named fields.
 fn discover_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
     match (given(args, "action"), given(args, "actions")) {
-        (true, false) if given(args, "stop_on_failure") => Ok((400, STOP_ON_FAILURE_GOES_WITH_ACTIONS.to_string())),
+        (true, false) if given(args, "stop_on_failure") && !is_fill_form(&args["action"]) => {
+            Ok((400, STOP_ON_FAILURE_GOES_WITH_ACTIONS.to_string()))
+        }
         (true, false) => call("POST", "/autorun-discover-action", &args.to_string()),
         (false, true) => call("POST", "/autorun-discover-actions", &args.to_string()),
         _ => Ok((400, DISCOVER_ACTION_OR_ACTIONS.to_string())),

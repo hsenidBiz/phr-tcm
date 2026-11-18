@@ -513,6 +513,9 @@ pub(crate) struct Heard {
     pub(crate) case_id: Option<i32>,
     /// The discovery is an explore session: nothing it learns is filed.
     pub(crate) explore: bool,
+    /// Every action the call's `fill_form` steps ran (the fields expanded),
+    /// so the sign-in check sees them as it sees the call's own actions.
+    pub(crate) filled: Vec<crate::browser::actions::Action>,
 }
 
 /// What the page answered one action of a discovery call.
@@ -951,7 +954,8 @@ pub(crate) async fn discover_action_heard<B: DiscoveryBrowser>(
     // ran it (`autorun::kept`), unless a setup is driving it, a save it sent
     // was stopped, or it typed a login. A keep never fails the action.
     // (A picture changes nothing, so there is nothing to keep of it.)
-    let kept_kind = crate::autorun::action_help::screenshot_ask(action).is_none();
+    let kept_kind = crate::autorun::action_help::screenshot_ask(action).is_none()
+        && crate::autorun::action_help::fill_form_ask(action).is_none();
     if let (Some(session), true) =
         (explore_session.as_deref(), outcome.ok && kept_kind && !setup_running && !mapping && blocked.unwrap_or(0) == 0)
     {
@@ -1047,7 +1051,18 @@ pub(crate) fn draft_for<'a>(
 pub(crate) fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json::Value, last_path: &mut Option<String>) -> String {
     let ok = v["ok"].as_bool().unwrap_or(false);
     let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
-    let mut said = batch_detail(&detail.map(str::to_string).unwrap_or_else(|| describe_action(action)));
+    let said = batch_detail(&detail.map(str::to_string).unwrap_or_else(|| describe_action(action)));
+    let said = format!("{said}{}", answer_notes(v, ok, detail, last_path));
+    format!("{n}. {}: {said}", if ok { "ok" } else { "failed" })
+}
+
+/// What an action's single answer adds to its line, each after a `; `: the
+/// dialogs it raised, the writes it set off (method and path only), the
+/// saves a guard stopped, the page path when it changed (`last_path` is the
+/// one before), whether its page read failed, where its picture is, and what
+/// the page answered it (`page_said`, `app_refused`).
+pub(crate) fn answer_notes(v: &serde_json::Value, ok: bool, detail: Option<&str>, last_path: &mut Option<String>) -> String {
+    let mut said = String::new();
     for dialog in v["dialogs"].as_array().into_iter().flatten().filter_map(|d| d.as_str()) {
         said.push_str(&format!("; dialog {}", one_short_line(dialog)));
     }
@@ -1085,7 +1100,7 @@ pub(crate) fn batch_line(n: usize, action: &crate::browser::actions::Action, v: 
             said.push_str(&format!("; {note}"));
         }
     }
-    format!("{n}. {}: {said}", if ok { "ok" } else { "failed" })
+    said
 }
 
 /// An action's detail on its batch line: one line of at most 200
@@ -1123,9 +1138,17 @@ pub(crate) fn points_back(actions: &[crate::browser::actions::Action], heard: &H
 
 /// The first action of a batch that worked and was refused once it had
 /// ended (from 0): a refusal found within its own reads would have failed it.
-pub(crate) fn refused_once_ended(rows: &[Row], heard: &Heard) -> Option<usize> {
+/// For a `fill_form` step the label of the field that was refused is
+/// returned with the step's position.
+pub(crate) fn refused_once_ended(rows: &[Row], heard: &Heard) -> Option<(usize, Option<String>)> {
     rows.iter().find_map(|row| match row {
-        Row::Ran(k, v) if v["ok"].as_bool() == Some(true) && !heard.of(*k).refused.is_empty() => Some(*k),
+        Row::Ran(k, v) if v["ok"].as_bool() == Some(true) && !heard.of(*k).refused.is_empty() => Some((*k, None)),
+        Row::Form(form) => form.fields.iter().find_map(|f| match f {
+            FieldRow::Ran { label, idx, v, .. } if v["ok"].as_bool() == Some(true) && !heard.of(*idx).refused.is_empty() => {
+                Some((form.at, Some(label.clone())))
+            }
+            _ => None,
+        }),
         _ => None,
     })
 }
@@ -1136,6 +1159,26 @@ pub(crate) fn refused_once_ended(rows: &[Row], heard: &Heard) -> Option<usize> {
 pub(crate) enum Row {
     Said(String),
     Ran(usize, serde_json::Value),
+    /// A `fill_form` step: its fields are put into words with the others.
+    Form(FormRow),
+}
+
+/// A `fill_form` step before the batch is done.
+#[derive(Default)]
+pub(crate) struct FormRow {
+    /// The step's position in the batch (from 0).
+    pub at: usize,
+    pub header: String,
+    pub fields: Vec<FieldRow>,
+    /// Lines after the fields: where it stopped, and the actions it ran.
+    pub tail: Vec<String>,
+}
+
+/// One field of a `fill_form` step: said as it is, or an action that ran
+/// under its own `heard` index with its single answer.
+pub(crate) enum FieldRow {
+    Said(String),
+    Ran { label: String, idx: usize, action: crate::browser::actions::Action, v: serde_json::Value },
 }
 
 /// A batch's rows as its answer's lines (`batch_line`), each action with
@@ -1152,6 +1195,28 @@ pub(crate) fn batch_rows(actions: &[crate::browser::actions::Action], rows: &[Ro
                     Some(action) => batch_line(i + 1, action, &v, &mut last_path),
                     None => String::new(),
                 }
+            }
+            Row::Form(form) => {
+                let mut lines = vec![form.header.clone()];
+                for field in &form.fields {
+                    lines.push(match field {
+                        FieldRow::Said(line) => format!("   {line}"),
+                        FieldRow::Ran { label, idx, action, v } => {
+                            let mut v = v.clone();
+                            heard.put_on(*idx, &mut v);
+                            let ok = v["ok"].as_bool().unwrap_or(false);
+                            let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
+                            let notes = answer_notes(&v, ok, detail, &mut last_path);
+                            if ok {
+                                format!("   {label}: ok {}{notes}", serde_json::to_string(action).unwrap_or_default())
+                            } else {
+                                format!("   {label}: failed: {}{notes}", batch_detail(detail.unwrap_or("")))
+                            }
+                        }
+                    });
+                }
+                lines.extend(form.tail.iter().map(|t| format!("   {t}")));
+                lines.join("\n")
             }
         })
         .collect()
@@ -1333,7 +1398,14 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
-    retake_print_after_call(slot, root, organization, project, stood, actions).await;
+    // A `fill_form` stands for the fills it ran: the sign-in check reads those.
+    let expanded: Vec<crate::browser::actions::Action> = actions
+        .iter()
+        .filter(|a| crate::autorun::action_help::fill_form_ask(a).is_none())
+        .cloned()
+        .chain(heard.filled.iter().cloned())
+        .collect();
+    retake_print_after_call(slot, root, organization, project, stood, &expanded).await;
     answer
 }
 
@@ -1371,6 +1443,8 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
     // An action that worked, refused once it had ended, and how many were
     // then not run.
     let mut refused_after = None;
+    // The `heard` index of each field of a `fill_form`: past the batch's own.
+    let mut next_field = actions.len();
     for (i, action) in actions.iter().enumerate() {
         if stop.swap(false, std::sync::atomic::Ordering::SeqCst) {
             let mut lines = batch_rows(actions, &rows, heard);
@@ -1384,8 +1458,8 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
             if let Some(b) = slot.as_mut() {
                 heard.look_for_refusals(b.parts().driver).await;
             }
-            if let Some(k) = refused_once_ended(&rows, heard) {
-                refused_after = Some((k, actions.len() - i));
+            if let Some((k, field)) = refused_once_ended(&rows, heard) {
+                refused_after = Some((k, field, actions.len() - i));
                 break;
             }
         }
@@ -1400,6 +1474,41 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
             }
             return (504, lines.join("
 "));
+        }
+        // A `fill_form` is the step it stands for, never an action the runner
+        // sees: it fills each field with an action of its own.
+        if let Some(form) = crate::autorun::action_help::fill_form_ask(action) {
+            let mut done =
+                run_fill_form(slot, root, organization, project, &form, heard, i, &mut next_field, stop_on_failure, stop).await;
+            ran = i + 1;
+            blocked += done.blocked;
+            if let Some(left) = done.ended {
+                let what = if left == 1 { "field was" } else { "fields were" };
+                done.row.tail.insert(0, format!("Stopped: {left} {what} not run."));
+            }
+            rows.push(Row::Form(std::mem::take(&mut done.row)));
+            if done.ended.is_some() {
+                let mut lines = batch_rows(actions, &rows, heard);
+                if ran < actions.len() {
+                    lines.push(ended_line(actions.len() - ran));
+                }
+                return (409, lines.join("\n"));
+            }
+            if let Some((status, body)) = done.stopped {
+                let mut lines = batch_rows(actions, &rows, heard);
+                if ran < actions.len() {
+                    lines.push(not_run_line(actions.len() - ran));
+                }
+                if status == 504 {
+                    return (504, lines.join("\n"));
+                }
+                return batch_ended_by_the_browser(slot, (status, body), lines).await;
+            }
+            if stop_on_failure && done.failed {
+                stopped_at = Some((i, done.detail));
+                break;
+            }
+            continue;
         }
         let (status, body) =
             discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false)
@@ -1453,8 +1562,11 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
     let mut lines = batch_rows(actions, &rows, heard);
     let back = stopped_at.and_then(|(i, detail)| points_back(actions, heard, i, &detail));
     match (refused_after, ran < actions.len(), back) {
-        (Some((k, n)), _, _) => {
-            let what = actions.get(k).map(describe_action).unwrap_or_default();
+        (Some((k, field, n)), _, _) => {
+            let mut what = actions.get(k).map(describe_action).unwrap_or_default();
+            if let Some(field) = field {
+                what = format!("{what}, field {field}");
+            }
             lines.push(format!("Stopped: the app refused action {} ({what}) after it ended: {n} not run.", k + 1));
         }
         (None, true, Some(back)) => lines.push(format!("{} {back}", not_run_line(actions.len() - ran))),
@@ -1479,6 +1591,257 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
         return (200, format!("{}\n\nPage: {PAGE_LEFT_OUT}", lines.join("\n")));
     }
     (200, format!("{}\n\n{page}", lines.join("\n")))
+}
+
+/// What one `fill_form` step did (`run_fill_form`).
+#[derive(Default)]
+pub(crate) struct FillFormOutcome {
+    /// The step as the batch puts it into words once everything the page
+    /// answered is known (`Row::Form`).
+    pub row: FormRow,
+    /// Every action it ran that worked, in order: what a save keeps.
+    pub actions: Vec<crate::browser::actions::Action>,
+    /// A field or its action failed.
+    pub failed: bool,
+    /// How many saves a no-save guard or a mapping run stopped meanwhile.
+    pub blocked: usize,
+    /// The browser failed (or the discovery is gone), or the call ran out of
+    /// time (504): nothing after this can run. The body is what failed.
+    pub stopped: Option<(u16, String)>,
+    /// End discovery, Close browser or a release asked the batch to stop
+    /// with this many of the step's fields not yet run.
+    pub ended: Option<usize>,
+    /// The first failure's own words, for the batch's stop line.
+    pub detail: String,
+}
+
+/// The one `fill_form` step at position `at` of a batch: `within` is
+/// resolved once, then each field in order is matched to one control just
+/// before its action runs (an earlier field may show a later one), and that
+/// action goes through `discover_action_heard` as any action does - so the
+/// explore keep, the credential check and the no-save guard apply to each.
+/// Each field is one action of the call: it has its own `heard` index
+/// (`next_field`, past the batch's own), what the page answered it is read
+/// before the next field and put on its own line when the batch is done, and
+/// a refusal of a field that worked, found once it had ended, stops the
+/// step. A field's locator is filed as seen once its action worked. The
+/// actions that worked are listed at the end, ready to be saved. A failed
+/// field stops the step when `stop_on_failure`. No log carries a value; the
+/// actions' own JSON is the answer to the assistant that sent them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    form: &crate::autorun::action_help::FillForm,
+    heard: &mut Heard,
+    at: usize,
+    next_field: &mut usize,
+    stop_on_failure: bool,
+    stop: &std::sync::atomic::AtomicBool,
+) -> FillFormOutcome {
+    use crate::autorun::action_help::{action_budget, call_elapsed_ms, no_answer, CALL_BUDGET_MS};
+    use crate::browser::fill_form::{browser_is_gone, plan_field, within_target, Planned};
+    let mut out = FillFormOutcome::default();
+    out.row.at = at;
+    let mut header = format!("{}. fill_form", at + 1);
+    let mut within = None;
+    if let Some(w) = &form.within {
+        let Some(browser) = slot.as_mut() else {
+            out.row.header = header;
+            out.stopped = Some((409, NO_DISCOVERY.to_string()));
+            return out;
+        };
+        match within_target(browser.parts().driver, w).await {
+            Err(e) => {
+                out.row.header = header;
+                out.row.fields.push(FieldRow::Said(format!("within: failed: {}", one_short_line(&e.to_string()))));
+                out.failed = true;
+                if browser_is_gone(&e) {
+                    out.stopped = Some((503, e.to_string()));
+                } else {
+                    out.detail = one_short_line(&e.to_string());
+                }
+                return out;
+            }
+            Ok(Err(why)) => {
+                out.row.header = header;
+                out.row.fields.push(FieldRow::Said(format!("within: failed: {why}")));
+                out.failed = true;
+                out.detail = why;
+                return out;
+            }
+            Ok(Ok((target, n))) => {
+                header.push_str(&within_note(w, n));
+                within = Some(target);
+            }
+        }
+    }
+    out.row.header = header;
+    let total = form.fields.len();
+    // Said after a field that stopped the step, when fields were left.
+    fn stop_here(out: &mut FillFormOutcome, left: usize) {
+        if left > 0 {
+            out.row.tail.push(fields_not_run(left));
+        }
+    }
+    for (k, (label, value)) in form.fields.iter().enumerate() {
+        if stop.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            out.ended = Some(total - k);
+            break;
+        }
+        // What the page refused the fields before this one since their own
+        // reads: one that worked and was refused stops the step.
+        if k > 0 {
+            if let Some(browser) = slot.as_mut() {
+                heard.look_for_refusals(browser.parts().driver).await;
+            }
+            if stop_on_failure {
+                let refused = out.row.fields.iter().find_map(|f| match f {
+                    FieldRow::Ran { label, idx, v, .. }
+                        if v["ok"].as_bool() == Some(true) && !heard.of(*idx).refused.is_empty() =>
+                    {
+                        Some(label.clone())
+                    }
+                    _ => None,
+                });
+                if let Some(refused) = refused {
+                    out.row
+                        .tail
+                        .push(format!("Stopped: the app refused {refused} after it ended: {} not run.", fields_count(total - k)));
+                    out.failed = true;
+                    out.detail = format!("the app refused {refused} after it ended");
+                    break;
+                }
+            }
+        }
+        if action_budget(1, call_elapsed_ms()).is_none() {
+            out.row.fields.push(FieldRow::Said(format!("{label}: failed: {}", no_answer(at + 1, CALL_BUDGET_MS / 1000))));
+            out.failed = true;
+            out.stopped = Some((504, String::new()));
+            break;
+        }
+        let Some(browser) = slot.as_mut() else {
+            out.stopped = Some((409, NO_DISCOVERY.to_string()));
+            break;
+        };
+        let p = browser.parts();
+        let planned = match plan_field(p.driver, within.as_ref(), label, value).await {
+            Ok(planned) => planned,
+            Err(e) => {
+                out.row.fields.push(FieldRow::Said(format!("{label}: failed: {}", one_short_line(&e.to_string()))));
+                out.failed = true;
+                if browser_is_gone(&e) {
+                    out.stopped = Some((503, e.to_string()));
+                    break;
+                }
+                if out.detail.is_empty() {
+                    out.detail = one_short_line(&e.to_string());
+                }
+                if stop_on_failure {
+                    stop_here(&mut out, total - k - 1);
+                    break;
+                }
+                continue;
+            }
+        };
+        let (action, locator, matched) = match planned {
+            Planned::AlreadySet => {
+                out.row.fields.push(FieldRow::Said(format!("{label}: ok, already set - nothing done")));
+                continue;
+            }
+            Planned::Failed(why) => {
+                out.row.fields.push(FieldRow::Said(format!("{label}: failed: {why}")));
+                out.failed = true;
+                if out.detail.is_empty() {
+                    out.detail = why;
+                }
+                if stop_on_failure {
+                    stop_here(&mut out, total - k - 1);
+                    break;
+                }
+                continue;
+            }
+            Planned::Act { action, locator, matched } => (action, locator, matched),
+        };
+        // Where the control was found, and what files it: read before the
+        // action, which may move the page.
+        let href = page_address(p.driver).await.0;
+        let sighting = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
+        let idx = *next_field;
+        *next_field += 1;
+        heard.filled.push(action.clone());
+        let (status, body) =
+            discover_action_heard(slot, root, organization, project, &action, None, None, heard, idx, false).await;
+        if status != 200 {
+            out.row.fields.push(FieldRow::Said(format!("{label}: failed: {}", one_short_line(&body))));
+            out.failed = true;
+            if out.detail.is_empty() {
+                out.detail = one_short_line(&body);
+            }
+            if said_browser_failed(&(status, body.clone())) || body == NO_DISCOVERY {
+                out.stopped = Some((status, body));
+                break;
+            }
+            if stop_on_failure {
+                stop_here(&mut out, total - k - 1);
+                break;
+            }
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        out.blocked += v["blocked"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
+        let ok = v["ok"].as_bool().unwrap_or(false);
+        let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
+        if !ok && detail.as_deref().is_some_and(|d| d.starts_with(crate::autorun::action_help::DID_NOT_ANSWER)) {
+            // The browser may not answer the next either.
+            out.row.fields.push(FieldRow::Ran { label: label.clone(), idx, action, v });
+            out.failed = true;
+            out.stopped = Some((504, String::new()));
+            break;
+        }
+        if ok {
+            if let Some(seen_at) = &sighting {
+                super::autorun_page::record_matched_targets(seen_at, &href, &[(&locator, matched, matched)]);
+            }
+            out.actions.push(action.clone());
+            out.row.fields.push(FieldRow::Ran { label: label.clone(), idx, action, v });
+            continue;
+        }
+        out.row.fields.push(FieldRow::Ran { label: label.clone(), idx, action, v });
+        out.failed = true;
+        if out.detail.is_empty() {
+            out.detail = detail.unwrap_or_default();
+        }
+        if stop_on_failure {
+            stop_here(&mut out, total - k - 1);
+            break;
+        }
+    }
+    if !out.actions.is_empty() {
+        out.row.tail.push(format!("actions: {}", serde_json::to_string(&out.actions).unwrap_or_default()));
+    }
+    out
+}
+
+/// The header's note of what a `fill_form`'s `within` matched.
+pub(crate) fn within_note(within: &crate::browser::locator::Target, n: usize) -> String {
+    let mut note = format!(" (within {}", within.describe());
+    if n > 1 {
+        note.push_str(&format!(": matched {n}, the first used - nth 0"));
+    }
+    note.push(')');
+    note
+}
+
+fn fields_count(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "field" } else { "fields" })
+}
+
+/// Said when a `fill_form` stopped at a failed field.
+fn fields_not_run(n: usize) -> String {
+    format!("Stopped at the failure: {n} {} not run.", if n == 1 { "field was" } else { "fields were" })
 }
 
 /// Said to a discovery's `use_component` naming a component the project
@@ -1963,6 +2326,36 @@ pub(crate) async fn autorun_discover_action(
         Ok(asked) => asked,
         Err(refused) => return refused,
     };
+    // A `fill_form` answers as a batch of one does: its field lines, the
+    // actions it ran, and the page.
+    if crate::autorun::action_help::fill_form_ask(&action).is_some() {
+        let stop_on_failure = match v.get("stop_on_failure") {
+            None | Some(serde_json::Value::Null) => true,
+            Some(serde_json::Value::Bool(b)) => *b,
+            Some(_) => return (400, format!("\"stop_on_failure\" is true or false. Expected {SHAPE}.")),
+        };
+        batch_stop(n).store(false, std::sync::atomic::Ordering::SeqCst);
+        let _going = BatchGoing::begin(n);
+        let mut slot = crate::commands::autorun::session_slot(n).lock().await;
+        mark_discovery_for(&mut slot, asked);
+        let answer = discover_actions_paged(
+            &mut slot,
+            &root,
+            &ctx.org,
+            &ctx.project,
+            std::slice::from_ref(&action),
+            None,
+            area.as_deref(),
+            stop_on_failure,
+            batch_stop(n),
+            page_wanted(body),
+        )
+        .await;
+        let answer = with_wait_notes(answer, &wait_notes);
+        crate::commands::autorun::publish_discovery_in(n, &slot);
+        *seen = Some(crate::commands::autorun::overrides_of(&slot));
+        return answer;
+    }
     let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     mark_discovery_for(&mut slot, asked);
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;

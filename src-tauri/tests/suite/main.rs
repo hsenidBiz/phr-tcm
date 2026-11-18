@@ -24,6 +24,7 @@ mod serial_order;
 
 mod account_lookup;
 mod action_help;
+mod fill_form;
 mod activity_log;
 mod assistant_activity;
 mod ado;
@@ -216,6 +217,7 @@ mod intake;
 mod markdown;
 mod mcp;
 mod mcp_session;
+mod page_changes;
 mod page_compact;
 mod mentions;
 mod modules;

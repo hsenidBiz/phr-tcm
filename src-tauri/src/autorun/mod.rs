@@ -47,6 +47,7 @@ pub mod roles;
 pub mod network;
 pub mod one_browser;
 pub mod overrides;
+pub mod page_changes;
 pub mod page_compact;
 pub mod password_expiry;
 pub mod page_errors;

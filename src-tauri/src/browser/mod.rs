@@ -83,6 +83,7 @@ pub mod drag;
 pub mod dialogs;
 pub mod no_change;
 pub mod table;
+pub mod fill_form;
 pub mod recording;
 pub mod page_errors;
 pub mod page_messages;
