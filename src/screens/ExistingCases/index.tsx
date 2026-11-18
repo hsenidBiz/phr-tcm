@@ -455,7 +455,7 @@ export default function ExistingCases({
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
-              <div className="flex w-full items-center gap-3 pb-1 pt-2">
+              <div className="flex w-full items-center gap-3 pb-1">
                 {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                 <button
                   aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}

@@ -466,7 +466,7 @@ export default function ViewCases({
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
-              <div className="flex w-full items-center gap-3 pb-1 pt-2">
+              <div className="flex w-full items-center gap-3 pb-1">
                 {/* Left-anchored, controls at fixed x, the rule trails to the
                     right edge: rows are scanned down a shared left edge, and a
                     centered header put the chevron and checkbox at a different

@@ -679,7 +679,7 @@ export default function RunPanel({
             return (
               <Fragment key={name || "__all"}>
                 {name && (
-                      <div className="flex w-full items-center gap-3 px-2 pb-1 pt-2">
+                      <div className="flex w-full items-center gap-3 px-2 pb-1 pt-1">
                         {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                         <button
                           aria-label={`${collapsedGroups.has(name) ? "Expand" : "Collapse"} group ${name}`}

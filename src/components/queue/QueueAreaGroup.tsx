@@ -48,7 +48,7 @@ export default function QueueAreaGroup({
   const pickGroup = () => toggleGroup(all);
   return (
     <div className="space-y-1">
-      <div className="flex w-full items-center gap-3 pb-1 pt-2">
+      <div className="flex w-full items-center gap-3 pb-1 pt-1">
         <button
           type="button"
           aria-label={`${folded ? "Expand" : "Collapse"} area ${g.path}`}

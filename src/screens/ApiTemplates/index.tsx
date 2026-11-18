@@ -429,70 +429,72 @@ export default function ApiTemplates({
               No {view === "flows" ? "flow" : "template"} matches “{search.trim()}”.
             </p>
           ) : (
-            groups.map(({ module, flows: moduleFlows, list }) => (
-              <section key={module} aria-label={module} className="space-y-1">
-                <div className="flex w-full items-center gap-3 pb-1 pt-2">
-                  {/* The chevron and the title both fold the group - clicking
-                      the name is how people expect to open one. */}
-                  <button
-                    aria-label={`${isFolded(module) ? "Expand" : "Collapse"} group ${module}`}
-                    aria-expanded={!isFolded(module)}
-                    title={isFolded(module) ? "Expand group" : "Collapse group"}
-                    className="text-muted transition-colors hover:text-accent"
-                    onClick={() => toggleFolded(foldKey(module))}
-                  >
-                    {isFolded(module) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-                  </button>
-                  <button
-                    className="group"
-                    title={isFolded(module) ? "Expand group" : "Collapse group"}
-                    onClick={() => toggleFolded(foldKey(module))}
-                  >
-                    <h2 className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
-                      {module} ({shownCount(list, moduleFlows)})
-                    </h2>
-                  </button>
-                  <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
-                </div>
-                <Collapse open={!isFolded(module)}>
-                {moduleFlows.length > 0 && (
-                  <div className="space-y-2 pb-2">
-                    {moduleFlows.map((f) => (
-                      <FlowMap
-                        key={f.id}
-                        flow={f}
-                        here={overview.data?.flow_here[f.id] ?? { state: "unconfirmed" }}
-                        templates={onFlow(f.id)}
-                        onOpenTemplate={openFromMap}
-                        onView={() => {
-                          // Rust writes the page and opens it, as the review
-                          // page's tree view does; a failure is a sentence.
-                          unwrapStr(commands.apiTemplatesOpenFlow(org, project, f.id, pagePalette())).catch(
-                            (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)),
-                          );
-                        }}
-                        onRemove={() => setRemovingFlow(f)}
-                      />
-                    ))}
+            <div className="space-y-2">
+              {groups.map(({ module, flows: moduleFlows, list }) => (
+                <section key={module} aria-label={module} className="space-y-1">
+                  <div className="flex w-full items-center gap-3 pb-1">
+                    {/* The chevron and the title both fold the group - clicking
+                        the name is how people expect to open one. */}
+                    <button
+                      aria-label={`${isFolded(module) ? "Expand" : "Collapse"} group ${module}`}
+                      aria-expanded={!isFolded(module)}
+                      title={isFolded(module) ? "Expand group" : "Collapse group"}
+                      className="text-muted transition-colors hover:text-accent"
+                      onClick={() => toggleFolded(foldKey(module))}
+                    >
+                      {isFolded(module) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                    </button>
+                    <button
+                      className="group"
+                      title={isFolded(module) ? "Expand group" : "Collapse group"}
+                      onClick={() => toggleFolded(foldKey(module))}
+                    >
+                      <h2 className="text-sm font-semibold text-muted transition-colors group-hover:text-accent">
+                        {module} ({shownCount(list, moduleFlows)})
+                      </h2>
+                    </button>
+                    <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
                   </div>
-                )}
-                {list.length > 0 && (
-                  <ul className="space-y-1">
-                    {list.map((s) => (
-                      <TemplateRow
-                        key={s.template.id}
-                        saved={s}
-                        open={openIds.has(s.template.id)}
-                        onOpenChange={(open) => setRowOpen(s.template.id, open)}
-                        stage={stageLine(s.template, flowsById)}
-                        onRemove={() => setRemoving(s.template)}
-                      />
-                    ))}
-                  </ul>
-                )}
-                </Collapse>
-              </section>
-            ))
+                  <Collapse open={!isFolded(module)}>
+                  {moduleFlows.length > 0 && (
+                    <div className="space-y-2 pb-2">
+                      {moduleFlows.map((f) => (
+                        <FlowMap
+                          key={f.id}
+                          flow={f}
+                          here={overview.data?.flow_here[f.id] ?? { state: "unconfirmed" }}
+                          templates={onFlow(f.id)}
+                          onOpenTemplate={openFromMap}
+                          onView={() => {
+                            // Rust writes the page and opens it, as the review
+                            // page's tree view does; a failure is a sentence.
+                            unwrapStr(commands.apiTemplatesOpenFlow(org, project, f.id, pagePalette())).catch(
+                              (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)),
+                            );
+                          }}
+                          onRemove={() => setRemovingFlow(f)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {list.length > 0 && (
+                    <ul className="space-y-1">
+                      {list.map((s) => (
+                        <TemplateRow
+                          key={s.template.id}
+                          saved={s}
+                          open={openIds.has(s.template.id)}
+                          onOpenChange={(open) => setRowOpen(s.template.id, open)}
+                          stage={stageLine(s.template, flowsById)}
+                          onRemove={() => setRemoving(s.template)}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                  </Collapse>
+                </section>
+              ))}
+            </div>
           )}
         </>
       )}
