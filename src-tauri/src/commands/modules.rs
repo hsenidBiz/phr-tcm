@@ -53,6 +53,29 @@ fn in_order(on: &BTreeSet<Module>) -> Vec<Module> {
 #[tauri::command]
 #[specta::specta]
 pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Result<ModulesAnswer, String> {
+    let before = modules::current();
+    let answer = modules_set_now(module, on, true)?;
+    // A module off takes its slash commands with it (`effective_disabled`);
+    // re-sync from the bridge's last-known toggles so they vanish/appear now.
+    if modules::current() != before {
+        resync_commands_blocking(&app).await;
+    }
+    Ok(answer)
+}
+
+/// Re-sync the assistant's files on a blocking thread, after a switch.
+pub async fn resync_commands_blocking(app: &tauri::AppHandle) {
+    let again = app.clone();
+    if let Err(e) = tauri::async_runtime::spawn_blocking(move || resync_commands(&again)).await {
+        crate::applog::warn(format!("re-syncing the AI tools' files after a module switch stopped early: {e}"));
+    }
+}
+
+/// One module switch on this process's state, without the file re-sync.
+/// `by_person` is false for a switch the person did not choose themselves
+/// (Simple mode's switch-on): it leaves the "a person switched API Templates"
+/// mark as it was.
+pub fn modules_set_now(module: Module, on: bool, by_person: bool) -> Result<ModulesAnswer, String> {
     modules::refuse_if_locked(module, on, crate::extras::unlocked())?;
     let before = modules::current();
     refuse_if_busy(
@@ -70,24 +93,16 @@ pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Res
     // are changed below inside the one save, never written back whole.
     let was = crate::app_settings::current();
     let mut preview = was.clone();
-    let rec = settle_switch(&before, module, on, &mut preview);
+    let rec = settle_switch(&before, module, on, by_person, &mut preview);
     let mut next = modules::set(module, on).map_err(save_failed)?;
     if rec.as_ref().is_some_and(|r| r.api_templates) {
         next = modules::set(Module::ApiTemplates, true).map_err(save_failed)?;
     }
     if preview != was {
         crate::app_settings::update(|c| {
-            settle_switch(&before, module, on, c);
+            settle_switch(&before, module, on, by_person, c);
         })
         .map_err(settings_save_failed)?;
-    }
-    // A module off takes its slash commands with it (`effective_disabled`);
-    // re-sync from the bridge's last-known toggles so they vanish/appear now.
-    if next != before {
-        let again = app.clone();
-        if let Err(e) = tauri::async_runtime::spawn_blocking(move || resync_commands(&again)).await {
-            crate::applog::warn(format!("re-syncing the AI tools' files after a module switch stopped early: {e}"));
-        }
     }
     Ok(ModulesAnswer { on: in_order(&next), recommended: rec })
 }
@@ -97,14 +112,14 @@ pub async fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Res
 /// only then) applied to `s`, the mark that a person switched API Templates
 /// themselves, and "Auto Run has been on". The caller switches API Templates
 /// when the answer says so, and saves `s` when it changed.
-fn settle_switch(before: &BTreeSet<Module>, module: Module, on: bool, s: &mut AppSettings) -> Option<Recommended> {
+fn settle_switch(before: &BTreeSet<Module>, module: Module, on: bool, by_person: bool, s: &mut AppSettings) -> Option<Recommended> {
     let rec = (module == Module::AutoRun && on && !before.contains(&Module::AutoRun))
         .then(|| recommended::recommended_on_switch(s.auto_run_ever_on, s));
     if let Some(r) = &rec {
         recommended::apply_to_settings(r, s);
         s.auto_run_ever_on = true;
     }
-    if module == Module::ApiTemplates {
+    if module == Module::ApiTemplates && by_person {
         s.api_templates_set = true;
     }
     rec
@@ -208,12 +223,28 @@ pub fn modules_set_with(
     browser_open: bool,
     playwright_busy: bool,
 ) -> Result<ModulesAnswer, String> {
+    modules_set_with_by(state, settings, dir, module, on, true, auto_run_busy, browser_open, playwright_busy)
+}
+
+/// `modules_set_with` with `by_person` (see `modules_set_now`).
+#[allow(clippy::too_many_arguments)]
+pub fn modules_set_with_by(
+    state: &mut BTreeSet<Module>,
+    settings: &mut AppSettings,
+    dir: &Path,
+    module: Module,
+    on: bool,
+    by_person: bool,
+    auto_run_busy: bool,
+    browser_open: bool,
+    playwright_busy: bool,
+) -> Result<ModulesAnswer, String> {
     refuse_if_busy(state, module, on, auto_run_busy, browser_open, playwright_busy)?;
     modules::apply(state, module, on)?;
     let before = state.clone();
     let was = settings.clone();
     let mut updated = was.clone();
-    let rec = settle_switch(&before, module, on, &mut updated);
+    let rec = settle_switch(&before, module, on, by_person, &mut updated);
     let mut next = modules::set_in(state, dir, module, on).map_err(save_failed)?;
     if rec.as_ref().is_some_and(|r| r.api_templates) {
         next = modules::set_in(state, dir, Module::ApiTemplates, true).map_err(save_failed)?;

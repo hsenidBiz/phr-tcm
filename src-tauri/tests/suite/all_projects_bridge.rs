@@ -24,6 +24,7 @@ fn ctx(all_projects: bool) -> BridgeContext {
         all_projects,
         db_no_ask: false,
         autorun_mode: None,
+        app_simple_mode: None,
         gate: Default::default(),
         current_pbi: None,
     }

@@ -75,6 +75,13 @@ pub struct AppSettings {
     pub auto_run_ever_on: bool,
     /// Simple or Advanced Auto Run; `None` until one is picked or settled.
     pub autorun_mode: Option<AutorunMode>,
+    /// App-wide Simple mode; `None` until it is settled at start-up.
+    #[serde(default)]
+    pub app_simple_mode: Option<bool>,
+    /// Whether the webview's old per-screen switch markers have been looked
+    /// at once (a new install has none to look at).
+    #[serde(default)]
+    pub switch_markers_migrated: bool,
     /// The page every browser the app drives shows (`browser::viewport`).
     /// A missing, unreadable or out-of-range value reads as the default, and
     /// leaves the rest of the file alone.
@@ -97,6 +104,8 @@ impl Default for AppSettings {
             api_templates_set: false,
             auto_run_ever_on: false,
             autorun_mode: None,
+            app_simple_mode: None,
+            switch_markers_migrated: false,
             page_size: DEFAULT_PAGE,
         }
     }
