@@ -24,6 +24,7 @@ mod serial_order;
 
 mod account_lookup;
 mod action_help;
+mod fill_form;
 mod activity_log;
 mod assistant_activity;
 mod ado;

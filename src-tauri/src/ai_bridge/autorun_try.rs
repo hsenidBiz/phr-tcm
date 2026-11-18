@@ -26,6 +26,10 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         Some(false) => return "screenshot".to_string(),
         None => {}
     }
+    if let Some(form) = crate::autorun::action_help::fill_form_ask(action) {
+        let n = form.fields.len();
+        return format!("fill_form {n} {}", if n == 1 { "field" } else { "fields" });
+    }
     let kind = serde_json::to_value(action)
         .ok()
         .and_then(|v| v["kind"].as_str().map(str::to_string))
@@ -147,6 +151,9 @@ pub(crate) fn tried_action_from(mut raw: serde_json::Value) -> Result<(crate::br
     // A discovery's own picture, read before any action is (never a script's).
     if let Some(shot) = crate::autorun::action_help::screenshot_from(&raw) {
         return shot.map(|action| (action, Vec::new()));
+    }
+    if let Some(form) = crate::autorun::action_help::fill_form_from(&raw) {
+        return form.map(|action| (action, Vec::new()));
     }
     let default_ms = u32::try_from(crate::browser::timing::Timing::supervised().expect_ms).unwrap_or(u32::MAX);
     let mut notes = crate::autorun::action_help::prepare_repeat(&mut raw)?;
