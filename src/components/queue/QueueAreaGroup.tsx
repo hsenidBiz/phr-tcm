@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { GROUP_BODY, GROUP_COLUMN, GROUP_HEADER_ROW } from "../ui/group-header";
 import type { ReactNode } from "react";
 import { groupIndices, type AreaGroup } from "../../lib/areaGroups";
 import { Checkbox } from "../ui/checkbox";
@@ -47,8 +48,8 @@ export default function QueueAreaGroup({
   // tick box (its toggleGroup).
   const pickGroup = () => toggleGroup(all);
   return (
-    <div className="space-y-1">
-      <div className="flex w-full items-center gap-3 pb-1 pt-2">
+    <div className={GROUP_BODY}>
+      <div className={GROUP_HEADER_ROW}>
         <button
           type="button"
           aria-label={`${folded ? "Expand" : "Collapse"} area ${g.path}`}
@@ -90,7 +91,7 @@ export default function QueueAreaGroup({
         <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
       </div>
       <Collapse open={rows.length + kids.length > 0} animateIn={false}>
-        <div className="space-y-1 pl-4">
+        <div className={`${GROUP_COLUMN} pl-4`}>
           {rows.length > 0 && (
             <div role="grid" aria-multiselectable="true" aria-label={`Cases in ${g.path}`} className="space-y-1">
               {rows.map((i) => renderRow(i))}

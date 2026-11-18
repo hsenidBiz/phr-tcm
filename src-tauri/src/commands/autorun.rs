@@ -4223,6 +4223,19 @@ pub fn auto_run_set_protected(
     Ok(crate::autorun::nav::view(&nav))
 }
 
+/// The switch cannot be changed while Auto Run is in Simple. When the app's
+/// own Simple mode is what holds it there, Advanced is not on offer, so the
+/// sentence points at the app setting instead.
+pub fn refuse_address_change(simple: bool, app_simple: bool) -> Result<(), String> {
+    if app_simple {
+        Err(crate::autorun::nav::APP_SIMPLE_NO_ADDRESS_CHANGE.to_string())
+    } else if simple {
+        Err(crate::autorun::nav::SIMPLE_NO_ADDRESS_CHANGE.to_string())
+    } else {
+        Ok(())
+    }
+}
+
 /// "Scripts may open pages by address", saved the moment it is flipped.
 #[tauri::command]
 #[specta::specta]
@@ -4232,6 +4245,10 @@ pub fn auto_run_set_direct_urls(
     project: String,
     allowed: bool,
 ) -> Result<crate::autorun::nav::NavView, String> {
+    refuse_address_change(
+        crate::autorun::nav::simple_now(),
+        crate::app_settings::current().app_simple_mode == Some(true),
+    )?;
     let nav = crate::autorun::nav::set_direct_urls(&root(&app)?, &organization, &project, allowed)?;
     crate::applog::info(format!(
         "Auto-run: scripts may open pages by address: {}",

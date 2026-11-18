@@ -22,6 +22,7 @@ import ScanProgress from "./ScanProgress";
 import { IconCollapseAll } from "../lib/actionIcons";
 import { applyOutcome, type Outcome } from "./queue/applyOutcome";
 import QueueActionBar from "./queue/QueueActionBar";
+import { GROUP_COLUMN } from "./ui/group-header";
 import QueueAreaGroup from "./queue/QueueAreaGroup";
 import QueueBulkBar from "./queue/QueueBulkBar";
 import QueueHeader from "./queue/QueueHeader";
@@ -506,7 +507,7 @@ export default function QueueSection({
           their area. Display only - each row is handed its real queue
           index, so selection, editing and upload order never notice. */}
       {queue.length > 0 && areaGroups && (
-        <div className="space-y-1">
+        <div className={GROUP_COLUMN}>
           {areaGroups.map((g) => (
             <QueueAreaGroup
               key={g.key}

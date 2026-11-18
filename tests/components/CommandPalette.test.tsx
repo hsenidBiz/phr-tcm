@@ -193,7 +193,7 @@ test("a query's letters find a row as a subsequence, in order, gaps allowed", as
   expect(await screen.findByText("No results.")).toBeInTheDocument();
 });
 
-test("Simple mode leaves the five hidden screens out of the command list; off lists them", async () => {
+test("Simple mode leaves the six hidden screens out of the command list; off lists them", async () => {
   setModulesForTest(ALL_MODULES);
   mockIPC(() => undefined);
   renderPalette();
@@ -205,7 +205,7 @@ test("Simple mode leaves the five hidden screens out of the command list; off li
   act(() => setAppSimpleModeForTest(true));
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   expect(await screen.findByText("Run Tests")).toBeInTheDocument();
-  for (const name of ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates"]) {
+  for (const name of ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates", "Playwright"]) {
     expect(screen.queryByText(name)).not.toBeInTheDocument();
   }
   expect(screen.getByText("Auto Run")).toBeInTheDocument();

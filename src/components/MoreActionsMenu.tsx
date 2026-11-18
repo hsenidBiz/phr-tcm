@@ -48,12 +48,16 @@ export default function MoreActionsMenu({
   actions,
   disabled = false,
   text = "More",
+  toolbar = false,
 }: {
   /** Accessible name for the trigger, e.g. "More actions for Regression". */
   label: string;
   actions: MoreAction[];
   disabled?: boolean;
   text?: string;
+  /** Placed in a ListToolbar: the trigger takes the toolbar's text size,
+   * the one its switches and tick boxes use. */
+  toolbar?: boolean;
 }) {
   const descIds = useId();
   const [open, setOpen] = useState<null | "hover" | "click">(null);
@@ -167,7 +171,8 @@ export default function MoreActionsMenu({
         aria-haspopup="menu"
         aria-expanded={shown}
         className={cn(
-          "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors",
+          "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 font-medium text-muted transition-colors",
+          toolbar ? "text-sm" : "text-xs",
           "hover:border-accent hover:bg-accent-soft hover:text-accent",
           shown && "border-accent bg-accent-soft text-accent",
           disabled && "pointer-events-none opacity-50",

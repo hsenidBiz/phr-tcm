@@ -12,7 +12,7 @@ const screen = (id: string) => {
 };
 
 describe("Simple mode in the guide", () => {
-  test.each(["import-file", "update-test-cases", "search-suites", "suite-management", "api-templates"])(
+  test.each(["import-file", "update-test-cases", "search-suites", "suite-management", "api-templates", "playwright"])(
     "%s says it is hidden while Simple mode is on",
     (id) => {
       expect(screen(id).summary).toContain(HIDDEN);
@@ -25,6 +25,7 @@ describe("Simple mode in the guide", () => {
     expect(group?.title).toBe("Simple mode");
     const control = s.controls.find((c) => c.group === "simple-mode");
     expect(control?.locate).toEqual({ role: "switch", name: "Simple mode" });
+    expect(JSON.stringify(s.controls.find((c) => c.group === "simple-mode"))).toContain("Playwright");
     expect(s.groups?.find((g) => g.id === "modules")?.summary).toContain(HIDDEN);
   });
 

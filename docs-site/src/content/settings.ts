@@ -131,8 +131,8 @@ export const settings: Screen = {
       locate: { role: "switch", name: "Simple mode" },
       name: "Simple mode",
       does:
-        "Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates. " +
-        "Switching it on also switches the modules on, so Auto Run and the rest are ready; switching it off leaves them on and brings the hidden screens back. " +
+        "Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates. " +
+        "Switching it on also switches the modules on, so Auto Run and the rest are ready, and holds Auto Run in its Simple mode (only **Simple** is offered at the top of Auto Run; turning Simple mode off leaves Auto Run in Simple, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
         "A new installation starts with Simple mode on; an installation from before it existed keeps everything and starts with it off. " +
         "Anything that opens a hidden screen, a link or a shortcut, opens Auto Run instead. The switch waits while an unattended Auto Run run is going. If a module could not be switched on, a line under the switch names it; turn Simple mode off and on to try again.",
       tips: ["Your assistant cannot change this setting. If it needs a screen that Simple mode hides, it does that part itself or asks you to turn Simple mode off."],

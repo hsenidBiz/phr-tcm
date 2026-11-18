@@ -1998,7 +1998,7 @@ test("a Modules request left over in Simple mode gives the plain page, and turni
 });
 
 const SIMPLE_LINE =
-  "Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates.";
+  "Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates.";
 
 function simpleSettings(on: boolean) {
   return { close_to_tray: true, close_notice_shown: true, beta_updates: false, app_simple_mode: on };

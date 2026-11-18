@@ -12,7 +12,8 @@ const APP_SETTINGS_KEY = ["app-settings"] as const;
 export function useAutoRunMode(): { mode: AutorunMode; loading: boolean; setMode: (m: AutorunMode) => Promise<void> } {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: APP_SETTINGS_KEY, queryFn: () => commands.getAppSettings() });
-  const mode: AutorunMode = settings.data?.autorun_mode ?? "advanced";
+  // App Simple mode holds Auto Run in Simple, whatever an older save says.
+  const mode: AutorunMode = settings.data?.app_simple_mode === true ? "simple" : (settings.data?.autorun_mode ?? "advanced");
 
   const setMode = async (next: AutorunMode) => {
     const res = await commands.setAutorunMode(next);

@@ -289,7 +289,7 @@ pub(crate) fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool, n: Opt
     });
     let areas: Vec<&str> = nav.modules.iter().map(|m| m.name()).collect();
     for section in [
-        crate::autorun::nav::guide_section(&nav),
+        crate::autorun::nav::guide_section(&nav, crate::autorun::nav::simple_now()),
         crate::autorun::discovery_map::explore_section(&areas, &map, crate::autorun::sessions::now_ms()),
         crate::autorun::discovery_map::rules_section(&map, running_discovery_area(n).as_deref()),
         crate::autorun::components::guide_section(&components),

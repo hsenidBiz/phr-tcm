@@ -184,10 +184,15 @@ export function useAutoRunSetup({
   const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
 
   const discovering = useDiscoveryActive();
+  const { mode: runMode, loading: runModeLoading } = useAutoRunMode();
+  const inSimple = !runModeLoading && runMode === "simple";
   /** The rows that stop a run now, which Simple mode shows again when it
    * hides them. The fixtures entries of the header's reasons below use the
    * same `fixtureBlock` test; its other reasons are its own. */
   const blocking = blockingRows({ signIn, recipeUnreadable: setupReady && recipe.isError, discovering, fixturesFailed, fixturesFailedHere });
+  /** Whether the Fixtures row, and so its header reasons, is shown: Simple
+   * never shows it. */
+  const fixturesShown = !inSimple || shownInSimple("Fixtures", blocking);
   /** What the panel's "Needs attention" is about, each as a few words for
    * its header: something a run cannot go without is missing, or could not
    * be read, or a script uploads a file the Test files folder does not
@@ -202,7 +207,7 @@ export function useAutoRunSetup({
     ...(readiness.missingTestFiles.length > 0
       ? [`${plural(readiness.missingTestFiles.length, "test file")} missing`]
       : []),
-    ...(fixtureBlock(fixturesFailed, fixturesFailedHere)
+    ...(fixtureBlock(fixturesFailed, fixturesFailedHere) && fixturesShown
       ? [
           ...(fixturesFailedHere > 0 ? [`${plural(fixturesFailedHere, "fixture")} failed here - ask the assistant`] : []),
           ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { GROUP_HEADER_ROW } from "../../components/ui/group-header";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useRowKeys } from "../../lib/useRowKeys";
@@ -466,7 +467,7 @@ export default function ViewCases({
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
-              <div className="flex w-full items-center gap-3 pb-1 pt-2">
+              <div className={GROUP_HEADER_ROW}>
                 {/* Left-anchored, controls at fixed x, the rule trails to the
                     right edge: rows are scanned down a shared left edge, and a
                     centered header put the chevron and checkbox at a different

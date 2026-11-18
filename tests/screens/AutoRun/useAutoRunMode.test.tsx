@@ -41,3 +41,10 @@ test("loading is true until the settings have answered", async () => {
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.mode).toBe("simple");
 });
+
+test("the app's Simple mode holds the mode at simple, whatever an older save says", async () => {
+  mockIPC((cmd) => (cmd === "get_app_settings" ? { autorun_mode: "advanced", app_simple_mode: true } : undefined));
+  const { result } = renderHook(() => useAutoRunMode(), { wrapper: wrapper() });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.mode).toBe("simple");
+});

@@ -137,6 +137,7 @@ function CaseCard({
   onEdit,
   onRun,
   runBlocked,
+  hideRun,
   confirmingClear,
   divergences,
   onAskClear,
@@ -160,6 +161,8 @@ function CaseCard({
   /** Why Run waits, when it does: an unattended run is going, or a
    * discovery holds the Auto Run browser. */
   runBlocked?: string;
+  /** Simple mode: no step-by-step run of one case, so no Run button. */
+  hideRun?: boolean;
   /** The suspected-defect Clear is waiting on Keep or Clear. */
   confirmingClear: boolean;
   /** The case's reported divergences, open and recently ruled. */
@@ -418,20 +421,22 @@ function CaseCard({
                 <IconViewScript aria-hidden />
                 View script
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-success text-success hover:border-success hover:bg-success/10 hover:text-success disabled:pointer-events-auto"
-                aria-label={`Run #${c.id}`}
-                // One run at a time: while an unattended run is going, or a
-                // discovery holds the browser, this waits, and its title says why.
-                disabled={Boolean(runBlocked)}
-                title={runBlocked}
-                onClick={() => onRun(c.id)}
-              >
-                <IconRun aria-hidden />
-                Run
-              </Button>
+              {!hideRun && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-success text-success hover:border-success hover:bg-success/10 hover:text-success disabled:pointer-events-auto"
+                  aria-label={`Run #${c.id}`}
+                  // One run at a time: while an unattended run is going, or a
+                  // discovery holds the browser, this waits, and its title says why.
+                  disabled={Boolean(runBlocked)}
+                  title={runBlocked}
+                  onClick={() => onRun(c.id)}
+                >
+                  <IconRun aria-hidden />
+                  Run
+                </Button>
+              )}
             </div>
           )}
         </div>

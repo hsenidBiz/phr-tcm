@@ -56,6 +56,15 @@ test("a blocking hidden row is shown, and only that one", () => {
   }
 });
 
+test("Simple never shows Fixtures, blocking or not; Discovery and Sign-in still come back", () => {
+  const failed = blockingRows({ ...QUIET, fixturesFailed: 1 });
+  expect(failed.has("Fixtures")).toBe(true);
+  expect(shownInSimple("Fixtures", failed)).toBe(false);
+  expect(shownInSimple("Fixtures", new Set())).toBe(false);
+  expect(shownInSimple("Discovery", new Set<SetupRowName>(["Discovery"]))).toBe(true);
+  expect(shownInSimple("Sign-in", new Set<SetupRowName>(["Sign-in"]))).toBe(true);
+});
+
 test("fixtureBlock is true when either count is above zero", () => {
   expect(fixtureBlock(0, 0)).toBe(false);
   expect(fixtureBlock(1, 0)).toBe(true);

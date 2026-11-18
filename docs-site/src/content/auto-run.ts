@@ -188,12 +188,12 @@ export const autoRun: Screen = {
       name: "Simple and Advanced",
       does:
         "Chooses how much of Auto Run you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
-        "It hides the Discovery, Components and Fixtures rows of the Setup panel, the sign-in recipe tools, and the buttons **Replay to step**, **Import scripts** and **Clear scripts**; a script opens to read only, and says **Switch to Advanced to edit.** " +
+        "It hides the Discovery, Components and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
         "A script card shows one header line, with the steps Auto Run does itself marked **Done by Auto Run** and the assistant's notes folded away under **Assistant notes**. " +
         "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
-        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going.",
+        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Simple mode** is on in Settings, only **Simple** is offered; turn Simple mode off to pick **Advanced**.",
       tips: [
-        "If something Simple hides is what stops a run, Auto Run shows it anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
+        "If the Discovery row or the sign-in recipe tools are what stops a run, Auto Run shows them anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
         "An assistant can see which mode you are in but cannot change it. In Simple it offers to do the hidden work for you, or asks you to switch to Advanced.",
       ],
     },
@@ -225,7 +225,7 @@ export const autoRun: Screen = {
         "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
         "With API templates switched on there is a **Fixtures** line too: how many fixtures you have and when one last ran. **Open** beside it takes you to the Fixtures tab of the API Templates screen. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
-        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. It does so when a fixture failed on its last run here, too, and when one failed here and needs the assistant: ask the assistant to make it work on this environment.",
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. In **Advanced** it does so when a fixture failed on its last run here, too, and when one failed here and needs the assistant: ask the assistant to make it work on this environment. Simple leaves fixtures out of this.",
     },
     {
       id: "setup-details",
@@ -301,7 +301,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "More" },
       name: "More",
       does:
-        "**Import scripts** reads one JSON file of scripts. Each one is checked the way an assistant's save is: every element it names must have been seen on the live app, and its test case is read from Azure DevOps, so sign in first. " +
+        "**More** is not shown in Simple. **Import scripts** reads one JSON file of scripts. Each one is checked the way an assistant's save is: every element it names must have been seen on the live app, and its test case is read from Azure DevOps, so sign in first. " +
         "If any script fails, nothing is imported and the message lists each element that was never seen. " +
         "**Clear scripts** removes the scripts of the listed cases from this computer, after asking. Nothing in Azure DevOps changes. " +
         "**Export to Playwright** opens the Playwright tab with the export of this Product Backlog Item's scripts to your clone of the team's Playwright repo.",
@@ -366,7 +366,7 @@ export const autoRun: Screen = {
       group: "watch",
       locate: { role: "button", name: "Run #5002" },
       name: "Run",
-      does: "Runs this one case while you watch. Only a case with a script has it.",
+      does: "Runs this one case while you watch. Only a case with a script has it, and only in **Advanced**: Simple runs cases unattended.",
       tips: [BLOCKED_BY_SETUP],
     },
 
@@ -378,7 +378,7 @@ export const autoRun: Screen = {
       locate: { role: "button", nameRe: "^Run \\d+ selected$" },
       name: "Run N selected",
       does:
-        "Runs the selected cases one after another while you watch, in the order the list shows them. Each case starts in a fresh browser, so one case never passes only because the one before it signed in. " +
+        "Shown in **Advanced** only. Runs the selected cases one after another while you watch, in the order the list shows them. Each case starts in a fresh browser, so one case never passes only because the one before it signed in. " +
         "When the list scrolls away, these buttons float at the bottom right.",
     },
     {
@@ -1012,8 +1012,8 @@ export const autoRun: Screen = {
       title: "Switch between Simple and Advanced",
       steps: [
         "At the top of Auto Run, press **Simple** or **Advanced**.",
-        "In Simple, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, import or clear scripts.",
-        "If a run is stopped by something Simple hides, it is shown with the note to ask the assistant or switch to Advanced.",
+        "In Simple, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
+        "If a run is stopped by Discovery or the sign-in recipe, Simple shows it with the note to ask the assistant or switch to Advanced. A failed fixture is not shown in Simple.",
       ],
     },
     {

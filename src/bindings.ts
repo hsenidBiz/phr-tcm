@@ -1893,7 +1893,10 @@ export const commands = {
 	 *  or is blocked. Read when a run starts.
 	 */
 	setAutorunFailedVideo: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_failed_video", { on })),
-	/**  Pick Simple or Advanced Auto Run. */
+	/**
+	 *  Pick Simple or Advanced Auto Run. Advanced is refused while the app's
+	 *  Simple mode is on.
+	 */
 	setAutorunMode: (mode: AutorunMode) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_mode", { mode })),
 	/**
 	 *  Turn the app-wide Simple mode on or off. On saves the choice, then

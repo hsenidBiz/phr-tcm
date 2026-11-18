@@ -452,17 +452,17 @@ fn with_the_switch_off_any_navigate_absolute_or_relative_is_refused_and_named() 
     let off = NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] };
     for url in ["https://hr.example.internal/hr/leave", "/hr/leave/apply"] {
         let sc = case_with(json!([{ "kind": "navigate", "url": url }]));
-        assert_eq!(check_no_addresses(&off, &[sc.clone()]).unwrap_err(), format!("case 7: {}", no_address(2)));
-        assert!(check_no_addresses(&NavFile::default(), &[sc]).is_ok(), "on by default");
+        assert_eq!(check_no_addresses(&off, false, &[sc.clone()]).unwrap_err(), format!("case 7: {}", no_address(2)));
+        assert!(check_no_addresses(&NavFile::default(), false, &[sc]).is_ok(), "on by default");
     }
     let clicks_only = case_with(json!([{ "kind": "click", "selector": { "role": "link", "name": "Leave" } }]));
-    assert!(check_no_addresses(&off, &[clicks_only]).is_ok());
+    assert!(check_no_addresses(&off, false, &[clicks_only]).is_ok());
 }
 
 #[test]
 fn the_guide_section_is_there_only_while_the_switch_is_off() {
-    assert_eq!(guide_section(&NavFile::default()), "");
-    let text = guide_section(&NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] });
+    assert_eq!(guide_section(&NavFile::default(), false), "");
+    let text = guide_section(&NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] }, false);
     assert!(text.starts_with("## This project's runs start on the module screen"), "{text}");
     for must in ["before step 1", "starts there", "Never use `navigate`", "`sign_in`"] {
         assert!(text.contains(must), "missing {must:?}: {text}");
@@ -1380,8 +1380,8 @@ async fn saving_a_script_with_an_unrecorded_area_is_refused() {
 /// lands - and says when to set `area`, whatever the address switch says.
 #[test]
 fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
-    assert_eq!(guide_section(&NavFile::default()), "", "nothing to say with no areas and addresses allowed");
-    let text = guide_section(&pms_and_leave());
+    assert_eq!(guide_section(&NavFile::default(), false), "", "nothing to say with no areas and addresses allowed");
+    let text = guide_section(&pms_and_leave(), false);
     assert!(!text.contains("## This project's runs start on the module screen"), "addresses are allowed: {text}");
     for line in [
         "- Cycle Setup - PMS - /pms/cycle/setup",
@@ -1396,7 +1396,7 @@ fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
     }
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
     // With the switch off, both sections.
-    let both = guide_section(&NavFile { direct_urls: false, ..pms_and_leave() });
+    let both = guide_section(&NavFile { direct_urls: false, ..pms_and_leave() }, false);
     assert!(both.contains("## This project's runs start on the module screen"));
     assert!(both.contains("- Manage Cycle - PMS - /pms/cycle/manage"));
 }
@@ -1430,7 +1430,7 @@ fn a_dropped_duplicate_area_is_logged_once_per_file() {
 /// the section says to carry it out with `discover_autorun_actions`.
 #[test]
 fn the_areas_section_gives_each_areas_menu_path() {
-    let text = guide_section(&pms_and_leave());
+    let text = guide_section(&pms_and_leave(), false);
     let menu = format!(
         "- Leave - Leave - /hr/leave/apply - menu path: {}, then {}\n",
         path("Leave", "/x").clicks[0].describe(),
@@ -1674,4 +1674,48 @@ fn code_like_names_ending_in_a_tld_word_are_not_bare_hosts() {
     assert_eq!(hide("opened hr.example.app/x"), "opened /x");
     assert_eq!(hide("on box.local:8080"), "on /");
     assert_eq!(hide("on example.com"), "on /");
+}
+
+#[test]
+fn simple_mode_never_lets_scripts_open_pages_by_address_whatever_the_file_says() {
+    use v2_lib::autorun::nav::direct_urls_allowed;
+    let saved_on = NavFile::default();
+    assert!(saved_on.direct_urls, "the file says on");
+    assert!(direct_urls_allowed(&saved_on, false));
+    assert!(!direct_urls_allowed(&saved_on, true), "Simple overrides a saved true");
+    let off = NavFile { direct_urls: false, ..NavFile::default() };
+    assert!(!direct_urls_allowed(&off, false));
+    assert!(!direct_urls_allowed(&off, true));
+
+    // A save with a navigate is refused in Simple, allowed in Advanced.
+    let sc = case_with(json!([{ "kind": "navigate", "url": "/hr/leave/apply" }]));
+    assert_eq!(check_no_addresses(&saved_on, true, &[sc.clone()]).unwrap_err(), format!("case 7: {}", no_address(2)));
+    assert!(check_no_addresses(&saved_on, false, &[sc]).is_ok());
+
+    // The guide carries the module-screen section in Simple only.
+    assert_eq!(guide_section(&saved_on, false), "");
+    assert!(guide_section(&saved_on, true).starts_with("## This project's runs start on the module screen"));
+}
+
+#[test]
+fn simple_mode_leaves_the_saved_choice_in_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = set_direct_urls(dir.path(), "Acme", "Web", true).unwrap();
+    assert!(saved.direct_urls);
+    let loaded = load_nav(dir.path(), "Acme", "Web").unwrap();
+    assert!(loaded.direct_urls, "the raw choice is read back as saved");
+    assert!(!v2_lib::autorun::nav::direct_urls_allowed(&loaded, true));
+    assert!(v2_lib::autorun::nav::direct_urls_allowed(&loaded, false), "Advanced brings it back");
+}
+
+#[test]
+fn changing_the_address_switch_is_refused_in_simple_with_a_plain_sentence() {
+    use v2_lib::commands::autorun::refuse_address_change;
+    assert!(refuse_address_change(false, false).is_ok());
+    let why = refuse_address_change(true, false).unwrap_err();
+    assert_eq!(why, "Switch Auto Run to Advanced to change this.");
+    // The app's Simple mode holds Auto Run in Simple and refuses Advanced, so
+    // the sentence names the app setting.
+    let why = refuse_address_change(true, true).unwrap_err();
+    assert_eq!(why, "Turn Simple mode off in Settings to change this.");
 }

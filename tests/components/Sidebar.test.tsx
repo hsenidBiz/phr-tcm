@@ -336,15 +336,15 @@ test("under reduced motion the ring stays and no sparkle is drawn", () => {
   }
 });
 
-const HIDDEN_ROWS = ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates"];
+const HIDDEN_ROWS = ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates", "Playwright"];
 
-test("Simple mode leaves out the five rows and keeps the rest, live", () => {
+test("Simple mode leaves out the six rows and keeps the rest, live", () => {
   setModulesForTest(ALL_MODULES);
   render(<Sidebar section="manual" onSelect={() => {}} />);
   for (const name of HIDDEN_ROWS) expect(screen.getByRole("button", { name })).toBeInTheDocument();
   act(() => setAppSimpleModeForTest(true));
   for (const name of HIDDEN_ROWS) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-  for (const name of ["Manual Entry", "View Test Cases", "Run Tests", "AI Bridge", "Auto Run", "Playwright"]) {
+  for (const name of ["Manual Entry", "View Test Cases", "Run Tests", "AI Bridge", "Auto Run"]) {
     expect(screen.getByRole("button", { name })).toBeInTheDocument();
   }
   act(() => setAppSimpleModeForTest(false));
@@ -358,6 +358,27 @@ test("number shortcuts follow the visible rows in Simple mode", () => {
   expect(shortcutOrder()).toEqual(["manual", "view", "run", "ai", "autorun"]);
   expect(sectionShortcut("run")).toBe("mod+3");
   expect(sectionShortcut("import")).toBeUndefined();
-  expect(visibleCaseItems().map((i) => i.id)).toEqual(["manual", "view", "run", "ai", "autorun", "playwright", "crystal-reports"]);
+  expect(visibleCaseItems().map((i) => i.id)).toEqual(["manual", "view", "run", "ai", "autorun", "crystal-reports"]);
+});
+
+test("Simple mode drops the Tools heading only when it would sit over one row; off keeps it", () => {
+  setModulesForTest(ALL_MODULES.filter((m) => m !== "crystal_reports"));
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByText("Tools")).toBeInTheDocument();
+  act(() => setAppSimpleModeForTest(true));
+  expect(screen.queryByText("Tools")).not.toBeInTheDocument();
+  expect(screen.getByText("Test Case Management")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Auto Run" })).toBeInTheDocument();
+  act(() => setAppSimpleModeForTest(false));
+  expect(screen.getByText("Tools")).toBeInTheDocument();
+});
+
+test("Simple mode keeps the Tools heading while the group shows two or more rows", () => {
+  setModulesForTest(ALL_MODULES);
+  act(() => setAppSimpleModeForTest(true));
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: "Auto Run" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Crystal Reports" })).toBeInTheDocument();
+  expect(screen.getByText("Tools")).toBeInTheDocument();
 });
 

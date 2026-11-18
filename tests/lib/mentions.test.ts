@@ -327,7 +327,7 @@ test("several new mentions make one announcement, not one each", () => {
   expect(announce).toHaveBeenCalledTimes(1);
   expect(announce).toHaveBeenCalledWith(
     "5 new mentions",
-    "Sam mentioned you on Task #0\nSam mentioned you on Task #1\nSam mentioned you on Task #2\n…and 2 more",
+    { items: [0, 1, 2].map((i) => ({ text: `Sam mentioned you on Task #${i}` })), more: 2 },
   );
 });
 

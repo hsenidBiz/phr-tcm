@@ -62,7 +62,7 @@ export default function PlaywrightNeededDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
-  // Simple mode has no Modules page (and Playwright is on in it).
+  // Simple mode has no Modules page and no Playwright tab.
   const simple = useAppSimpleMode().on;
   return (
     <Modal onClose={onClose} labelledBy={titleId} className={`flex ${MODAL_SHORT} flex-col gap-3 p-5`}>
@@ -76,6 +76,9 @@ export default function PlaywrightNeededDialog({
           : "No Playwright repo is set on the Playwright tab"}
         , so the assistant is using the rules shipped with this version of Test Case Manager until one is set.
       </p>
+      {simple && (
+        <p className="text-xs text-muted">Turn Simple mode off in Settings to set one.</p>
+      )}
       {!playwrightOn && !simple && (
         <p className="text-xs text-muted">
           The Playwright module is off: switch it on in Modules, then set the repo on the Playwright tab.
@@ -86,7 +89,7 @@ export default function PlaywrightNeededDialog({
           <IconCancel aria-hidden />
           Close
         </Button>
-        {playwrightOn ? (
+        {playwrightOn && simple ? null : playwrightOn ? (
           <Button
             size="sm"
             onClick={() => {
