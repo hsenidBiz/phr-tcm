@@ -82,3 +82,13 @@ export function turnOnNetworkToolsWhereUnset(envIds: string[]): number {
   if (changed > 0) notify();
   return changed;
 }
+
+/** Record, for each environment, that its switch counts as chosen, without
+ * changing the switch. Used once for installs that predate Simple mode. */
+export function markNetworkToolsSetFor(envIds: string[]): void {
+  try {
+    for (const id of envIds) localStorage.setItem(envKeyFor(NETWORK_TOOLS_SET_BASE, id), "1");
+  } catch {
+    // storage unavailable -> nothing to mark
+  }
+}

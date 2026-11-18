@@ -62,6 +62,7 @@ import {
   useWaitingNotices,
 } from "./app/useBackendEvents";
 import { useBridgeContextSync } from "./app/useBridgeContextSync";
+import { useSimpleModeSwitches } from "./lib/simpleModeSwitches";
 import { useChangelog } from "./app/useChangelog";
 import { useHomeProject } from "./app/useHomeProject";
 import { useKeyboardShortcuts, useModuleGuards, usePersistPrefs, useStartupEffects } from "./app/useShellEffects";
@@ -324,6 +325,7 @@ export default function App() {
   // assistant names a project when it means another one).
   const bridgeProject = allProjects ? homeProject : project;
   useBridgeContextSync({ signedIn, org, project, bridgeProject, allProjects, pbi, tourOpen });
+  useSimpleModeSwitches();
 
   // The organization's projects, and the home project nobody has to pick.
   const projects = useHomeProject({
