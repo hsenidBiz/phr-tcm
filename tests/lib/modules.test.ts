@@ -3,19 +3,23 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   ALL_MODULES,
   hydrateModules,
+  leaveTarget,
   modulesHydratedSnapshot,
   modulesSnapshot,
   resetModulesStore,
   sectionModule,
   sectionShown,
   setModule,
+  SIMPLE_HIDDEN_SECTIONS,
   shouldLeaveHidden,
   subscribeModules,
 } from "../../src/lib/modules";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 
 afterEach(() => {
   clearMocks();
   resetModulesStore();
+  resetAppSimpleModeStore();
   localStorage.removeItem("tcm-v2-dev-capture");
 });
 
@@ -154,4 +158,35 @@ test("a refused save during the first hydrate still ends hydrated, with Rust's a
   await read;
   expect(modulesHydratedSnapshot()).toBe(true);
   expect([...modulesSnapshot()]).toEqual(["db_access"]);
+});
+
+const HIDDEN = ["import", "edit", "suites", "manage", "apitemplates"];
+
+test("Simple mode hides exactly five screens, and off shows them as before", () => {
+  expect([...SIMPLE_HIDDEN_SECTIONS].sort()).toEqual([...HIDDEN].sort());
+  const all = new Set(ALL_MODULES);
+  for (const id of HIDDEN) {
+    expect(sectionShown(id, all, true)).toBe(false);
+    expect(sectionShown(id, all, false)).toBe(true);
+  }
+  for (const id of ["manual", "view", "run", "ai", "autorun", "playwright", "settings"]) {
+    expect(sectionShown(id, all, true)).toBe(true);
+    expect(sectionShown(id, all, false)).toBe(true);
+  }
+});
+
+test("sectionShown reads the Simple store when not told", () => {
+  const all = new Set(ALL_MODULES);
+  expect(sectionShown("import", all)).toBe(true);
+  setAppSimpleModeForTest(true);
+  expect(sectionShown("import", all)).toBe(false);
+});
+
+test("leaveTarget sends a Simple-hidden screen to Auto Run and an off module to Manual Entry", () => {
+  expect(leaveTarget("import", false, true, true)).toBe("autorun");
+  expect(leaveTarget("import", false, false, true)).toBeNull();
+  expect(leaveTarget("import", true, true, false)).toBeNull();
+  expect(leaveTarget("playwright", false, true, false)).toBe("manual");
+  expect(leaveTarget("playwright", false, false, false)).toBeNull();
+  expect(leaveTarget("manual", true, true, true)).toBeNull();
 });

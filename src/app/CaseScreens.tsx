@@ -1,4 +1,5 @@
 import type { PbiHit } from "../bindings";
+import { useAppSimpleMode } from "../lib/appSimpleMode";
 import BridgeStatusBadge from "../components/BridgeStatusBadge";
 import SpecsStatusPill from "../components/SpecsStatusPill";
 import type { Section } from "../components/Sidebar";
@@ -76,6 +77,7 @@ export default function CaseScreens({
   goToSection,
   changeHomeProject,
 }: Props) {
+  const simple = useAppSimpleMode().on;
   return (
     // key={section} remounts the wrapper on tab switch, so every
     // screen fades up briefly (120ms) instead of snapping in.
@@ -172,10 +174,14 @@ export default function CaseScreens({
             askForFixturesView();
             goToSection("apitemplates");
           }}
-          onOpenModules={() => {
-            goToSection("settings");
-            setStartOnModules(true);
-          }}
+          onOpenModules={
+            simple
+              ? undefined
+              : () => {
+                  goToSection("settings");
+                  setStartOnModules(true);
+                }
+          }
         />
       )}
       {section === "manage" && (

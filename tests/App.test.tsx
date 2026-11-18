@@ -15,6 +15,7 @@ import { setActiveEnvId } from "../src/lib/activeEnv";
 import { cacheKeys, cacheStoredKeys, claimCacheFor } from "../src/lib/cache";
 import { resetForTests as resetNotifications } from "../src/lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "../src/lib/extras";
+import { resetAppSimpleModeStore } from "../src/lib/appSimpleMode";
 import { ALL_MODULES, modulesSnapshot, resetModulesStore } from "../src/lib/modules";
 import { resetSplashForTests } from "../src/lib/splash";
 import { CHANGELOG } from "../src/lib/changelog";
@@ -71,6 +72,7 @@ afterEach(() => {
   resetExtrasStore();
   // The modules store is module-level too.
   resetModulesStore();
+  resetAppSimpleModeStore();
 });
 
 function renderApp() {
@@ -199,6 +201,30 @@ test("a saved Auto Run tab is kept when its module is on, and left once it is of
   renderApp();
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+});
+
+// Simple mode adds the five hidden screens to the redirect: a remembered one
+// opens Auto Run once both the modules and the setting have loaded.
+test("a remembered hidden screen opens Auto Run in Simple mode, and stays put when it is off", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const prefs = JSON.stringify({ org: "acme", project: "proj", section: "import", pbi: null, workMode: false });
+  localStorage.setItem("tcm-v2-prefs", prefs);
+  signedInMocks((cmd) => {
+    if (cmd === "get_app_settings") return { app_simple_mode: true };
+  });
+  const first = renderApp();
+  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Import Test Cases" })).not.toBeInTheDocument();
+  first.unmount();
+  resetModulesStore();
+  resetAppSimpleModeStore();
+
+  localStorage.setItem("tcm-v2-prefs", prefs);
+  signedInMocks((cmd) => {
+    if (cmd === "get_app_settings") return { app_simple_mode: false };
+  });
+  renderApp();
+  expect(await screen.findByRole("heading", { name: "Import Test Cases" })).toBeInTheDocument();
 });
 
 // The loading screen (index.html's #splash) covers the launch until the app
@@ -3067,6 +3093,26 @@ test("in combined mode a PBI notice opens the PBI under the project the search n
   // The home project is not the PBI's to overwrite.
   expect(storedPrefs().project).toBe("Web");
   expect(storedPrefs().pbi).toMatchObject({ id: 77, project: "Payroll" });
+});
+
+test("a PBI notice opens Auto Run on that PBI in Simple mode", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedPbiNotification("Web");
+  signedInMocks((cmd) => {
+    if (cmd === "get_app_settings") return { app_simple_mode: true };
+    if (cmd === "list_projects") return PROJECTS;
+    if (cmd === "search_pbis_all") {
+      return [{ id: 77, title: "Real PBI", work_item_type: "Product Backlog Item", project: "Web" }];
+    }
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "An upload to PBI 77 was interrupted" }));
+  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByText("Real PBI")).toBeInTheDocument();
 });
 
 test("in combined mode a PBI notice whose PBI cannot be found switches nothing", async () => {

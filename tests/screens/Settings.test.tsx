@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import Settings from "../../src/screens/Settings";
@@ -8,6 +8,7 @@ import { CHANGELOG, isBetaVersion } from "../../src/lib/changelog";
 import { RATE_LEVELS } from "../../src/lib/adoRate";
 import { toast } from "../../src/lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../../src/lib/extras";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import { resetModulesStore, setModulesForTest } from "../../src/lib/modules";
 import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../../src/components/settings/useTileLayout";
 import { planClose, planOpen } from "../../src/components/settings/tileSchedule";
@@ -26,6 +27,7 @@ afterEach(() => {
   vi.clearAllMocks();
   resetExtrasStore();
   resetModulesStore();
+  resetAppSimpleModeStore();
   localStorage.removeItem("tcm-v2-dev-capture");
   // The General card reads the project list through the shared cache, which
   // leaves its entries behind; the export test counts what storage holds.
@@ -1940,4 +1942,29 @@ test("with no preview to read, the import confirmation says it replaces Auto Run
     await within(dialog).findByText(/Importing replaces this computer's Auto Run data in every environment with the backup's\./),
   ).toBeInTheDocument();
   restore();
+});
+
+test("Simple mode has no Modules card, and starting on Modules shows Settings", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  setAppSimpleModeForTest(true);
+  renderSettings(qc);
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Modules" })).not.toBeInTheDocument();
+  cleanup();
+
+  render(
+    <QueryClientProvider client={qc}>
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        startOnModules
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Back to Settings/ })).not.toBeInTheDocument();
 });

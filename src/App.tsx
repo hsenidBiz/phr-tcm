@@ -62,6 +62,7 @@ import {
   useWaitingNotices,
 } from "./app/useBackendEvents";
 import { useBridgeContextSync } from "./app/useBridgeContextSync";
+import { useAppSimpleMode, usePublishAppSimpleMode } from "./lib/appSimpleMode";
 import { useSimpleModeSwitches } from "./lib/simpleModeSwitches";
 import { useChangelog } from "./app/useChangelog";
 import { useHomeProject } from "./app/useHomeProject";
@@ -174,7 +175,18 @@ export default function App() {
   }
 
   useStartupEffects();
-  useModuleGuards(section, modules, modulesHydrated, workMode, tourOpen, setSection);
+  usePublishAppSimpleMode();
+  const simpleMode = useAppSimpleMode();
+  useModuleGuards(
+    section,
+    modules,
+    modulesHydrated,
+    workMode,
+    tourOpen,
+    setSection,
+    simpleMode.on,
+    !simpleMode.loading,
+  );
   useKeyboardShortcuts(setSection, setWorkMode);
   useGlobalBackendEvents();
   usePersistPrefs({ org, homeProject, section, pbi, workMode, tourOpen });
@@ -490,7 +502,7 @@ export default function App() {
                 // Requests panel, which read every project, open the item or
                 // pull request in it.
                 if (target.kind === "pbi") {
-                  void openPbiById(target.id, target.project, "import");
+                  void openPbiById(target.id, target.project, simpleMode.on ? "autorun" : "import");
                   return;
                 }
                 if (target.kind === "auto-run") {

@@ -4,9 +4,9 @@ import { applyRateLevel } from "../lib/adoRate";
 import { hydrateExtras, subscribeExtras } from "../lib/extras";
 import {
   hydrateModules,
+  leaveTarget,
   realModulesSnapshot,
   sectionShown,
-  shouldLeaveHidden,
   type Module,
 } from "../lib/modules";
 import { clearNewNav, pruneNewNav } from "../lib/newNav";
@@ -46,6 +46,8 @@ export function useModuleGuards(
   workMode: boolean,
   tourOpen: boolean,
   setSection: Dispatch<SetStateAction<Section>>,
+  simple = false,
+  simpleLoaded = true,
 ) {
   // If the open tab belongs to a module that is switched off (or gets
   // switched off while it is open), move off it rather than leave its
@@ -53,9 +55,17 @@ export function useModuleGuards(
   // same way a fresh install reads, so without the gate a restart with a
   // saved Auto Run tab bounces straight to Manual Entry before
   // hydrateModules' answer comes back.
+  // Simple mode adds the screens it hides: a remembered one opens Auto Run.
+  // Neither answer is acted on before both Rust answers have arrived.
   useEffect(() => {
-    if (shouldLeaveHidden(section, sectionShown(section, modules), modulesHydrated)) setSection("manual");
-  }, [modules, section, modulesHydrated]);
+    const to = leaveTarget(
+      section,
+      sectionShown(section, modules, simple),
+      modulesHydrated && simpleLoaded,
+      simple,
+    );
+    if (to) setSection(to);
+  }, [modules, section, modulesHydrated, simple, simpleLoaded]);
 
   // A sidebar row marked "new" (lib/newNav) is done with once its screen
   // is open, however it was reached: a click, Ctrl+number, the palette, a

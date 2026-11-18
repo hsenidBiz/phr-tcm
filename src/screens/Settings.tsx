@@ -18,6 +18,7 @@ import BackgroundSettings from "../components/BackgroundSettings";
 import PageSizeSettings from "../components/PageSizeSettings";
 import { useModule } from "../lib/modules";
 import Modules from "./Modules";
+import { useAppSimpleMode } from "../lib/appSimpleMode";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
@@ -218,6 +219,8 @@ export default function Settings({
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
+  // Simple mode has no Modules page: every module is on, and nothing offers it.
+  const simple = useAppSimpleMode().on;
   const [modulesOpen, setModulesOpen] = useState(startOnModules);
   const autoRunOn = useModule("auto_run");
   // The Modules board scrolls inside its own frame, so while it is open the
@@ -777,7 +780,7 @@ export default function Settings({
     </SettingsCard>
   );
 
-  if (modulesOpen) return <Modules onBack={() => setModulesOpen(false)} />;
+  if (modulesOpen && !simple) return <Modules onBack={() => setModulesOpen(false)} />;
 
   return (
     // Two columns on wide windows; below lg everything stacks into one
@@ -959,16 +962,18 @@ export default function Settings({
             {selectedRate.hint}
           </p>
         </SettingRow>
-        <SettingRow
-          name="Modules"
-          description="Switch on the parts of the app you need, such as Auto Run."
-          control={
-            <Button size="sm" variant="outline" onClick={() => setModulesOpen(true)}>
-              <IconModules aria-hidden />
-              Modules
-            </Button>
-          }
-        />
+        {!simple && (
+          <SettingRow
+            name="Modules"
+            description="Switch on the parts of the app you need, such as Auto Run."
+            control={
+              <Button size="sm" variant="outline" onClick={() => setModulesOpen(true)}>
+                <IconModules aria-hidden />
+                Modules
+              </Button>
+            }
+          />
+        )}
       </SettingsCard>
 
       {!tiles.spareStack && aiToolsCard}

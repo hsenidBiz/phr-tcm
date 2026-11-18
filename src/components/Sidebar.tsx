@@ -26,6 +26,7 @@ import {
   subscribeSidebar,
 } from "../lib/sidebarState";
 import { modulesSnapshot, sectionShown, useModules, type Module } from "../lib/modules";
+import { appSimpleModeSnapshot, useAppSimpleMode } from "../lib/appSimpleMode";
 import { cn } from "../lib/cn";
 import { clearNewNav, isNewNav, useNewNav } from "../lib/newNav";
 import { reducedMotion } from "../lib/exitGhost";
@@ -123,14 +124,20 @@ const NO_SHORTCUT: ReadonlySet<Section> = new Set<Section>(["playwright", "cryst
  * not a constant: the answer can change while the app runs. Ctrl+1..N and the palette's "mod+N" hints are both
  * read off this list, so a number can never open one screen and be
  * labelled as another. */
-export function visibleCaseItems(on: ReadonlySet<Module> = modulesSnapshot()): Item<Section>[] {
-  return CASE_ITEMS.filter((i) => sectionShown(i.id, on));
+export function visibleCaseItems(
+  on: ReadonlySet<Module> = modulesSnapshot(),
+  simple: boolean = appSimpleModeSnapshot(),
+): Item<Section>[] {
+  return CASE_ITEMS.filter((i) => sectionShown(i.id, on, simple));
 }
 
 /** Section ids in Ctrl+N order: 1-based index = the shortcut digit. Rows in
  * NO_SHORTCUT are skipped, so they have no number and move no one else's. */
-export function shortcutOrder(on: ReadonlySet<Module> = modulesSnapshot()): Section[] {
-  return visibleCaseItems(on)
+export function shortcutOrder(
+  on: ReadonlySet<Module> = modulesSnapshot(),
+  simple: boolean = appSimpleModeSnapshot(),
+): Section[] {
+  return visibleCaseItems(on, simple)
     .map((i) => i.id)
     .filter((id) => !NO_SHORTCUT.has(id));
 }
@@ -139,8 +146,12 @@ export function shortcutOrder(on: ReadonlySet<Module> = modulesSnapshot()): Sect
  * that have no number (Settings, a hidden tab, or a row past the ninth -
  * App's handler answers Ctrl+1..9 only, so a tenth row gets no hint for a
  * key that would do nothing). */
-export function sectionShortcut(section: Section, on: ReadonlySet<Module> = modulesSnapshot()): string | undefined {
-  const n = shortcutOrder(on).indexOf(section);
+export function sectionShortcut(
+  section: Section,
+  on: ReadonlySet<Module> = modulesSnapshot(),
+  simple: boolean = appSimpleModeSnapshot(),
+): string | undefined {
+  const n = shortcutOrder(on, simple).indexOf(section);
   return n === -1 || n >= 9 ? undefined : `mod+${n + 1}`;
 }
 
@@ -178,12 +189,14 @@ export default function Sidebar<T extends string = Section>({
   // Subscribed, so switching a module on or off adds or
   // removes its rail rows at once.
   const on = useModules();
+  // Simple mode closes the rail up around the screens it hides.
+  const simple = useAppSimpleMode().on;
   // Rows a person has just revealed from the Modules page (lib/newNav).
   // Never in a documentation screenshot.
   const marks = useNewNav();
   const showMarks = !isCaptureMode();
   const sparkle = showMarks && !reducedMotion();
-  const list = items ?? (visibleCaseItems(on) as unknown as Item<T>[]);
+  const list = items ?? (visibleCaseItems(on, simple) as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a
   // tour override (or any other future writer) can move it - the toggle
   // below still writes storage and publishes exactly as before.
