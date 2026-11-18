@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.11",
+    date: "2026-11-18",
+    items: [
+      "Settings has a Simple mode switch. It hides Import, Update, Search Suites, Suite Management, API Templates and Modules, keeps every feature switched on, and your assistant can still use API Templates. New installs start in Simple mode; existing installs are unchanged until you switch it on.",
+      "In Simple mode, environments you add get the API write switch and the Network tools on, the number shortcuts follow the rows you can see, and the first-run tour skips the hidden screens.",
+    ],
+  },
+  {
     version: "2.4.7-beta.10",
     date: "2026-11-17",
     items: [
