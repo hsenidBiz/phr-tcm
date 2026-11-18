@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import Settings from "../../src/screens/Settings";
@@ -8,6 +8,8 @@ import { CHANGELOG, isBetaVersion } from "../../src/lib/changelog";
 import { RATE_LEVELS } from "../../src/lib/adoRate";
 import { toast } from "../../src/lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../../src/lib/extras";
+import { publishSimpleSwitchFailures, resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
+import { openRunSetup, resetBackgroundRun, startRun } from "../../src/lib/backgroundRun";
 import { resetModulesStore, setModulesForTest } from "../../src/lib/modules";
 import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../../src/components/settings/useTileLayout";
 import { planClose, planOpen } from "../../src/components/settings/tileSchedule";
@@ -21,11 +23,13 @@ vi.mock("../../src/lib/toast", () => ({
 const realMatchMedia = window.matchMedia;
 
 afterEach(() => {
+  resetBackgroundRun();
   window.matchMedia = realMatchMedia;
   clearMocks();
   vi.clearAllMocks();
   resetExtrasStore();
   resetModulesStore();
+  resetAppSimpleModeStore();
   localStorage.removeItem("tcm-v2-dev-capture");
   // The General card reads the project list through the shared cache, which
   // leaves its entries behind; the export test counts what storage holds.
@@ -1940,4 +1944,188 @@ test("with no preview to read, the import confirmation says it replaces Auto Run
     await within(dialog).findByText(/Importing replaces this computer's Auto Run data in every environment with the backup's\./),
   ).toBeInTheDocument();
   restore();
+});
+
+test("Simple mode has no Modules card, and starting on Modules shows Settings", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  setAppSimpleModeForTest(true);
+  renderSettings(qc);
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Modules" })).not.toBeInTheDocument();
+  cleanup();
+
+  render(
+    <QueryClientProvider client={qc}>
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        startOnModules
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Back to Settings/ })).not.toBeInTheDocument();
+});
+
+test("a Modules request left over in Simple mode gives the plain page, and turning Simple off does not open Modules", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  setAppSimpleModeForTest(true);
+  const seen: boolean[] = [];
+  render(
+    <QueryClientProvider client={qc}>
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        onFillChange={(fill) => seen.push(fill)}
+        startOnModules
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(seen).not.toContain(true);
+  act(() => setAppSimpleModeForTest(false));
+  expect(await screen.findByRole("button", { name: "Modules" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  expect(seen).not.toContain(true);
+});
+
+const SIMPLE_LINE =
+  "Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates.";
+
+function simpleSettings(on: boolean) {
+  return { close_to_tray: true, close_notice_shown: true, beta_updates: false, app_simple_mode: on };
+}
+
+test("the Simple mode switch turns it on through Rust and takes the returned settings", async () => {
+  const calls: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "get_app_settings") return simpleSettings(false);
+    if (cmd === "set_app_simple_mode") {
+      calls.push((args as { on: boolean }).on);
+      return { settings: simpleSettings(true), not_switched_on: [] };
+    }
+    if (cmd === "get_modules") return [];
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  expect(screen.getByText(SIMPLE_LINE)).toBeInTheDocument();
+  await waitFor(() => expect(sw).toBeEnabled());
+  fireEvent.click(sw);
+  await waitFor(() => expect(calls).toEqual([true]));
+  await waitFor(() => expect((qc.getQueryData(["app-settings"]) as { app_simple_mode: boolean }).app_simple_mode).toBe(true));
+});
+
+test("when some modules could not be switched on, the Simple mode row names them", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "get_app_settings") return simpleSettings(false);
+    if (cmd === "set_app_simple_mode") return { settings: simpleSettings(true), not_switched_on: ["Auto Run", "Playwright"] };
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  await waitFor(() => expect(sw).toBeEnabled());
+  fireEvent.click(sw);
+  expect(
+    await screen.findByText("Could not switch on: Auto Run, Playwright. Turn Simple mode off and on to try again."),
+  ).toBeInTheDocument();
+});
+
+test("turning Simple mode off calls set_app_simple_mode(false)", async () => {
+  const calls: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "get_app_settings") return simpleSettings(true);
+    if (cmd === "set_app_simple_mode") {
+      calls.push((args as { on: boolean }).on);
+      return { settings: simpleSettings(false), not_switched_on: [] };
+    }
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(sw);
+  await waitFor(() => expect(calls).toEqual([false]));
+});
+
+test("the Simple mode switch waits while an unattended run is going", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "get_app_settings") return simpleSettings(false);
+      if (cmd === "auto_run_replay") return new Promise(() => {});
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+  act(() => {
+    openRunSetup({
+      org: "acme",
+      project: "Web",
+      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
+      cases: [{ id: 1, title: "Case 1" }],
+      plan: null,
+    });
+  });
+  await act(async () => {
+    void startRun({ account: null, browserName: "edge", watch: false, retryTransient: true, dbReadAccess: true });
+    await Promise.resolve();
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  expect(sw).toBeDisabled();
+  expect(sw).toHaveAttribute("title", "Wait for the Auto Run run to finish.");
+});
+
+test("with no run going the Simple mode switch has no wait title", async () => {
+  mockIPC((cmd) => (cmd === "get_app_settings" ? simpleSettings(false) : undefined));
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  expect(sw).not.toHaveAttribute("title");
+});
+
+test("a double click sends one set_app_simple_mode call, and a switch-on refreshes the modules", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "get_app_settings") return simpleSettings(false);
+    if (cmd === "set_app_simple_mode") return new Promise((r) => setTimeout(() => r({ settings: simpleSettings(true), not_switched_on: [] }), 20));
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  await waitFor(() => expect(sw).toBeEnabled());
+  const before = calls.filter((c) => c === "modules_get").length;
+  fireEvent.click(sw);
+  fireEvent.click(sw);
+  await waitFor(() => expect(calls.filter((c) => c === "set_app_simple_mode")).toHaveLength(1));
+  await waitFor(() => expect(calls.filter((c) => c === "modules_get").length).toBeGreaterThan(before));
+});
+
+test("a switch the webview could not turn on is named in the same line as the modules", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "get_app_settings") return simpleSettings(false);
+    if (cmd === "set_app_simple_mode") {
+      setTimeout(() => publishSimpleSwitchFailures(["Network tools"]), 0);
+      return { settings: simpleSettings(true), not_switched_on: ["Auto Run"] };
+    }
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  await waitFor(() => expect(sw).toBeEnabled());
+  fireEvent.click(sw);
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Simple mode" })).toBeEnabled());
+  act(() => setAppSimpleModeForTest(true));
+  expect(
+    await screen.findByText("Could not switch on: Auto Run, Network tools. Turn Simple mode off and on to try again."),
+  ).toBeInTheDocument();
 });

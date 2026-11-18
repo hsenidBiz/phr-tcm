@@ -18,6 +18,7 @@ import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "../lib/writingStyle"
 import { subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useAutoRunMode } from "../screens/AutoRun/useAutoRunMode";
+import { useAppSimpleMode } from "../lib/appSimpleMode";
 
 type Args = {
   signedIn: boolean;
@@ -76,6 +77,9 @@ export function useBridgeContextSync({
   // until the settings have answered.
   const { mode: autorunModeNow, loading: autorunModeLoading } = useAutoRunMode();
   const autorunMode = autorunModeLoading ? null : autorunModeNow;
+  // The app-wide Simple mode, read-only for the assistant the same way.
+  const { on: appSimpleOn, loading: appSimpleLoading } = useAppSimpleMode();
+  const appSimpleMode = appSimpleLoading ? null : appSimpleOn;
   // The switches above are the ACTIVE environment's, and every push
   // says which environment that is: Rust allows no write from a push for
   // any other one, so a push still on its way when the environment changes
@@ -160,6 +164,7 @@ export function useBridgeContextSync({
               envId,
               allProjects,
               autorunMode,
+              appSimpleMode,
               // The PBI in the top bar, for the assistants' get_current_pbi.
               pbi: bridgePbiId == null ? null : { id: bridgePbiId, title: bridgePbiTitle, project: bridgePbiProject },
             },
@@ -192,6 +197,7 @@ export function useBridgeContextSync({
     apiWrites,
     networkTools,
     autorunMode,
+    appSimpleMode,
     envId,
     bridgePbiId,
     bridgePbiTitle,

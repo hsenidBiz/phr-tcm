@@ -1,7 +1,9 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { commands, type PbiHit } from "../bindings";
 import type { Section } from "../components/Sidebar";
+import { appSimpleModeSnapshot } from "../lib/appSimpleMode";
 import { unwrap } from "../lib/ipc";
+import { SIMPLE_HIDDEN_SECTIONS } from "../lib/modules";
 import { logUi } from "../lib/uiLog";
 import type { RunFolderTarget } from "../screens/RunTests";
 import type { CaseSelection } from "./types";
@@ -39,7 +41,9 @@ export function useAppNavigation({
   // Settings opens on Modules when the "Playwright is needed" dialog sent
   // the person there; any other navigation clears it.
   const [startOnModules, setStartOnModules] = useState(false);
-  const goToSection = (s: Section) => {
+  const goToSection = (target: Section) => {
+    // Simple mode: every way into a hidden screen opens Auto Run instead.
+    const s: Section = appSimpleModeSnapshot() && SIMPLE_HIDDEN_SECTIONS.has(target) ? "autorun" : target;
     logUi(`nav: ${s}`);
     setSection(s);
     setStartOnModules(false);

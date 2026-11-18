@@ -125,6 +125,41 @@ pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, 
     })
 }
 
+/// Turn the app-wide Simple mode on or off. On saves the choice, then
+/// switches every module on (never the held-back one) so nothing Simple mode
+/// hides stops working; a module that fails is named and the choice stays
+/// saved. Off saves the choice and changes no module.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_app_simple_mode(app: tauri::AppHandle, on: bool) -> Result<crate::simple_mode::SimpleModeAnswer, String> {
+    let before = crate::modules::current();
+    let not_switched_on = crate::simple_mode::set_app_simple_mode_via(
+        &mut (),
+        on,
+        |_, on| {
+            app_settings::update(|s| s.app_simple_mode = Some(on)).map(|_| ()).map_err(|e| {
+                crate::applog::warn(format!("saving the Simple mode setting failed: {e}"));
+                "The setting could not be saved. Settings → Logs has the details.".to_string()
+            })
+        },
+        |_| crate::simple_mode::switch_all_on(),
+    )?;
+    if crate::modules::current() != before {
+        crate::commands::modules::resync_commands_blocking(&app).await;
+    }
+    Ok(crate::simple_mode::SimpleModeAnswer { settings: app_settings::current(), not_switched_on })
+}
+
+/// Record that the old per-screen switch markers have been looked at.
+#[tauri::command]
+#[specta::specta]
+pub fn set_switch_markers_migrated() -> Result<AppSettings, String> {
+    app_settings::update(|s| s.switch_markers_migrated = true).map_err(|e| {
+        crate::applog::warn(format!("saving the switch marker migration failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}
+
 /// The page size every browser the app drives shows.
 #[tauri::command]
 #[specta::specta]

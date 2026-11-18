@@ -11,6 +11,7 @@
 import { useSyncExternalStore } from "react";
 import { commands, type Module, type Recommended } from "../bindings";
 import { isCaptureMode } from "../dev/capture";
+import { appSimpleModeSnapshot } from "./appSimpleMode";
 
 export type { Module };
 
@@ -148,8 +149,25 @@ export function sectionModule(section: string): Module | null {
   }
 }
 
-/** Whether a section is offered with these modules on. */
-export function sectionShown(section: string, modules: ReadonlySet<Module> = modulesSnapshot()): boolean {
+/** The screens Simple mode leaves out of the rail, the palette and the
+ * Ctrl+number order. Nothing is deleted: turning Simple mode off brings them
+ * back. */
+export const SIMPLE_HIDDEN_SECTIONS: ReadonlySet<string> = new Set([
+  "import",
+  "edit",
+  "suites",
+  "manage",
+  "apitemplates",
+]);
+
+/** Whether a section is offered with these modules on (and, in Simple mode,
+ * not one of the screens Simple mode hides). */
+export function sectionShown(
+  section: string,
+  modules: ReadonlySet<Module> = modulesSnapshot(),
+  simple: boolean = appSimpleModeSnapshot(),
+): boolean {
+  if (simple && SIMPLE_HIDDEN_SECTIONS.has(section)) return false;
   const m = sectionModule(section);
   return m === null || modules.has(m);
 }
@@ -160,6 +178,19 @@ export function sectionShown(section: string, modules: ReadonlySet<Module> = mod
  * answer arrives (and a module that is on is never bounced at all). */
 export function shouldLeaveHidden(section: string, shown: boolean, hydrated: boolean): boolean {
   return hydrated && !shown && sectionModule(section) !== null;
+}
+
+/** Where the App shell's redirect sends a tab that is no longer offered, or
+ * null to stay. Simple mode sends the screens it hides to Auto Run; a module
+ * that is off sends to Manual Entry. Null until hydration has settled. */
+export function leaveTarget(
+  section: string,
+  shown: boolean,
+  hydrated: boolean,
+  simple: boolean,
+): "autorun" | "manual" | null {
+  if (hydrated && simple && SIMPLE_HIDDEN_SECTIONS.has(section)) return "autorun";
+  return shouldLeaveHidden(section, shown, hydrated) ? "manual" : null;
 }
 
 /** Tests only: back to none on and un-hydrated, without telling anyone. */

@@ -6,7 +6,7 @@
 // all (they are, while the API Templates module is on) - the same shape as the Database Read Access card's create/update/delete
 // switch (dbServer.ts), which this file mirrors.
 
-import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
+import { BRIDGE_SWITCH_KEYS, envKeyFor, envScopedKey, subscribeActiveEnv } from "./activeEnv";
 
 /** Where the API Templates screen remembers which of its tabs was last open. */
 export const API_TEMPLATES_VIEW_KEY = "tcm-v2-api-templates-view";
@@ -27,6 +27,11 @@ export function askForFixturesView(): void {
  * otherwise - so a fresh profile, a cleared one and a new environment all
  * read off, which is the only default a switch like this may have. */
 const apiWritesKey = (): string => envScopedKey(BRIDGE_SWITCH_KEYS.apiWrites);
+
+/** Set to "1" once a person has chosen the switch for an environment, either
+ * way. Without it the switch's state is only a default, which Simple mode may
+ * turn on. */
+const API_WRITES_SET_BASE = "tcm-v2-api-writes-set";
 
 const listeners = new Set<() => void>();
 
@@ -59,6 +64,7 @@ export function loadApiWrites(): boolean {
 
 export function saveApiWrites(on: boolean): void {
   try {
+    localStorage.setItem(envScopedKey(API_WRITES_SET_BASE), "1");
     if (on) localStorage.setItem(apiWritesKey(), "1");
     else localStorage.removeItem(apiWritesKey());
   } catch {
@@ -70,4 +76,24 @@ export function saveApiWrites(on: boolean): void {
 /** A primitive, so `useSyncExternalStore` is happy to re-read it. */
 export function apiWritesSnapshot(): boolean {
   return loadApiWrites();
+}
+
+/** Switch the write switch on for every environment nobody has chosen it for,
+ * and return how many that changed. Writes no marker: a default, not a choice. */
+export function turnOnApiWritesWhereUnset(envIds: string[], onFail?: () => void): number {
+  let changed = 0;
+  try {
+    for (const id of envIds) {
+      if (localStorage.getItem(envKeyFor(API_WRITES_SET_BASE, id)) === "1") continue;
+      const key = envKeyFor(BRIDGE_SWITCH_KEYS.apiWrites, id);
+      if (localStorage.getItem(key) === "1") continue;
+      localStorage.setItem(key, "1");
+      changed += 1;
+    }
+  } catch {
+    // storage unavailable -> whatever was written stays; the caller may say so
+    onFail?.();
+  }
+  if (changed > 0) notify();
+  return changed;
 }

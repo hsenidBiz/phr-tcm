@@ -20,6 +20,7 @@ fn ctx() -> BridgeContext {
         all_projects: false,
         db_no_ask: false,
         autorun_mode: None,
+        app_simple_mode: None,
         gate: Default::default(),
         current_pbi: None,
     }
@@ -1773,6 +1774,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         all_projects: false,
         db_no_ask: false,
         autorun_mode: None,
+        app_simple_mode: None,
         gate: Default::default(),
         current_pbi: None,
     };

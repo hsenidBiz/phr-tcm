@@ -67,6 +67,7 @@ mod auth;
 mod autorun_accounts;
 mod autorun_api_checks;
 mod autorun_recommended;
+mod simple_mode;
 mod autorun_refusals;
 mod autorun_roles;
 mod autorun_slots;

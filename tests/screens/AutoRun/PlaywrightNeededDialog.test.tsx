@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../../src/lib/appSimpleMode";
 import { resetModulesStore, setModulesForTest, useModule } from "../../../src/lib/modules";
 import PlaywrightNeededDialog, { resetPlaywrightNoticeForTests, usePlaywrightNotice } from "../../../src/screens/AutoRun/PlaywrightNeededDialog";
 
@@ -18,6 +19,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  resetAppSimpleModeStore();
   clearMocks();
   resetModulesStore();
 });
@@ -162,3 +164,22 @@ for (const on of [true, false]) {
     expect(problems).toEqual([]);
   });
 }
+
+test("with the module off, the dialog offers Open Modules; in Simple mode it offers neither the button nor its line", async () => {
+  setModulesForTest([]);
+  answer(false);
+  const onOpenModules = vi.fn();
+  mount(<Host onOpenModules={onOpenModules} />);
+  await screen.findByRole("dialog", { name: "Playwright is needed" });
+  expect(screen.getByText(/The Playwright module is off/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open Modules" })).toBeInTheDocument();
+  cleanup();
+
+  resetPlaywrightNoticeForTests();
+  setAppSimpleModeForTest(true);
+  mount(<Host onOpenModules={onOpenModules} />);
+  await screen.findByRole("dialog", { name: "Playwright is needed" });
+  expect(screen.queryByText(/The Playwright module is off/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open Modules" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+});

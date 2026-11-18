@@ -183,3 +183,18 @@ fn the_tool_passes_the_bridges_mode_through_untouched() {
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(r#""autorun_mode":"simple""#));
 }
+
+#[tokio::test]
+async fn get_current_pbi_carries_the_app_simple_mode_only_when_it_is_known() {
+    let ctx = BridgeContext { current_pbi: Some(pbi()), app_simple_mode: Some(true), ..BridgeContext::default() };
+    let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["app_simple_mode"], true);
+    let ctx = BridgeContext { app_simple_mode: Some(false), ..BridgeContext::default() };
+    let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    assert_eq!(body, "No PBI is selected in TCM. App Simple mode: off.");
+    // Unknown: omitted.
+    let ctx = BridgeContext { current_pbi: Some(pbi()), ..BridgeContext::default() };
+    let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    assert!(!body.contains("app_simple_mode"), "{body}");
+}

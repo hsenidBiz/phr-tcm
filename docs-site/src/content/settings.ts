@@ -13,6 +13,7 @@ const MORE = "settings-more";
 const LOGS = "settings-logs";
 const BUG = "settings-report-bug";
 const MODULES = "settings-modules";
+const SIMPLE = "settings-simple-mode";
 
 const OPEN: Step = { click: { role: "button", name: "Settings" } };
 
@@ -33,6 +34,13 @@ export const settings: Screen = {
       id: MODULES,
       route: [OPEN, { scrollTo: { role: "button", name: "Modules" } }],
       alt: "The end of the General card, with the Modules row, and the Auto Run and AI tools cards under it",
+    },
+    // The one shot that documents the switch clicks it on. The sample app answers
+    // in memory (dev/demo.ts), so nothing is saved and a reload puts it back off.
+    {
+      id: SIMPLE,
+      route: [OPEN, { scrollTo: { role: "switch", name: "Simple mode" } }, { click: { role: "switch", name: "Simple mode" } }],
+      alt: "The Simple mode switch in the General card, switched on, with the sidebar showing only the screens it keeps",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
@@ -57,7 +65,13 @@ export const settings: Screen = {
         "Whether the projects show together and your home project, running in the tray, starting with Windows, how fast the app may call Azure DevOps, and the Modules page. " +
         "While **Treat all projects as one** is on and the organization has more than one project, a **Home project** picker appears under it. Auto Run, API Templates and Playwright, and new work items that have no Product Backlog Item, use the home project, because their files and templates belong to one project. Once one is set it can be changed but not cleared.",
     },
-    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Run. Each module can be switched on once the one above it is." },
+    {
+      id: "simple-mode",
+      title: "Simple mode",
+      summary:
+        "A shorter app. It hides Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, and switches the modules on. Nothing is removed: turn it off and everything is back.",
+    },
+    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Run. Each module can be switched on once the one above it is. Hidden while Simple mode is on (Settings)." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
     { id: "updates", title: "Updates", summary: "The version you have, beta builds, and checking for a new version." },
     { id: "backup", title: "Backup and transfer", summary: "Move your settings to another computer." },
@@ -109,6 +123,19 @@ export const settings: Screen = {
       does:
         "How quickly the app sends requests: **Full speed**, **Balanced** or **Gentle**, with the chosen one explained underneath. Azure DevOps limits requests per person, and your browser uses the same allowance. " +
         "**Full speed** is the default; choose **Balanced** if Azure DevOps warns you about usage, or **Gentle** while you are working in Azure DevOps too.",
+    },
+    {
+      id: "simple-mode-switch",
+      shot: SIMPLE,
+      group: "simple-mode",
+      locate: { role: "switch", name: "Simple mode" },
+      name: "Simple mode",
+      does:
+        "Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates. " +
+        "Switching it on also switches the modules on, so Auto Run and the rest are ready; switching it off leaves them on and brings the hidden screens back. " +
+        "A new installation starts with Simple mode on; an installation from before it existed keeps everything and starts with it off. " +
+        "Anything that opens a hidden screen, a link or a shortcut, opens Auto Run instead. The switch waits while an unattended Auto Run run is going. If a module could not be switched on, a line under the switch names it; turn Simple mode off and on to try again.",
+      tips: ["Your assistant cannot change this setting. If it needs a screen that Simple mode hides, it does that part itself or asks you to turn Simple mode off."],
     },
     {
       id: "open-modules",
@@ -241,7 +268,7 @@ export const settings: Screen = {
     },
     {
       id: "start-with-windows",
-      shot: MAIN,
+      shot: MODULES,
       group: "general",
       locate: { role: "switch", name: "Start with Windows" },
       name: "Start with Windows",

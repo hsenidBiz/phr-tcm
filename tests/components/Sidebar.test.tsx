@@ -7,6 +7,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type Section, type WorkSection } from "../../src/components/Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../../src/lib/sidebarState";
 import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest, shouldLeaveHidden, type Module } from "../../src/lib/modules";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import { isNewNav, noteModuleSwitch, resetNewNavForTest } from "../../src/lib/newNav";
 
 afterEach(() => {
@@ -14,6 +15,7 @@ afterEach(() => {
   localStorage.clear();
   resetModulesStore();
   resetNewNavForTest();
+  resetAppSimpleModeStore();
   clearMocks();
 });
 
@@ -333,3 +335,29 @@ test("under reduced motion the ring stays and no sparkle is drawn", () => {
     window.matchMedia = was;
   }
 });
+
+const HIDDEN_ROWS = ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates"];
+
+test("Simple mode leaves out the five rows and keeps the rest, live", () => {
+  setModulesForTest(ALL_MODULES);
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  for (const name of HIDDEN_ROWS) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+  act(() => setAppSimpleModeForTest(true));
+  for (const name of HIDDEN_ROWS) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+  for (const name of ["Manual Entry", "View Test Cases", "Run Tests", "AI Bridge", "Auto Run", "Playwright"]) {
+    expect(screen.getByRole("button", { name })).toBeInTheDocument();
+  }
+  act(() => setAppSimpleModeForTest(false));
+  expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
+});
+
+test("number shortcuts follow the visible rows in Simple mode", () => {
+  setModulesForTest(ALL_MODULES);
+  expect(shortcutOrder()).toContain("import");
+  setAppSimpleModeForTest(true);
+  expect(shortcutOrder()).toEqual(["manual", "view", "run", "ai", "autorun"]);
+  expect(sectionShortcut("run")).toBe("mod+3");
+  expect(sectionShortcut("import")).toBeUndefined();
+  expect(visibleCaseItems().map((i) => i.id)).toEqual(["manual", "view", "run", "ai", "autorun", "playwright", "crystal-reports"]);
+});
+

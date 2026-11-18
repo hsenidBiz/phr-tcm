@@ -29,6 +29,8 @@ fn a_missing_file_is_the_defaults() {
             api_templates_set: false,
             auto_run_ever_on: false,
             autorun_mode: None,
+            app_simple_mode: None,
+            switch_markers_migrated: false,
             page_size: DEFAULT_PAGE,
         }
     );
@@ -63,6 +65,8 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             api_templates_set: false,
             auto_run_ever_on: false,
             autorun_mode: None,
+            app_simple_mode: None,
+            switch_markers_migrated: false,
             page_size: DEFAULT_PAGE,
         }
     );
@@ -85,6 +89,8 @@ fn saved_settings_read_back() {
         api_templates_set: false,
         auto_run_ever_on: false,
         autorun_mode: None,
+        app_simple_mode: None,
+        switch_markers_migrated: false,
         page_size: PageSize { width: 1920, height: 1080 },
     };
     save(d.path(), &s).unwrap();

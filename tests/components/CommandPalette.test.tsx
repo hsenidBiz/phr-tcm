@@ -4,12 +4,14 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, expect, test, vi } from "vitest";
 import CommandPalette from "../../src/components/CommandPalette";
 import { sectionShortcut, shortcutOrder, visibleCaseItems } from "../../src/components/Sidebar";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import { ALL_MODULES, resetModulesStore, setModulesForTest } from "../../src/lib/modules";
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
   resetModulesStore();
+  resetAppSimpleModeStore();
 });
 
 function renderPalette(
@@ -189,4 +191,22 @@ test("a query's letters find a row as a subsequence, in order, gaps allowed", as
   // in order, so no row should match.
   fireEvent.change(input, { target: { value: "emeht elggot" } });
   expect(await screen.findByText("No results.")).toBeInTheDocument();
+});
+
+test("Simple mode leaves the five hidden screens out of the command list; off lists them", async () => {
+  setModulesForTest(ALL_MODULES);
+  mockIPC(() => undefined);
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  expect(await screen.findByText("Suite Management")).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await waitFor(() => expect(screen.queryByPlaceholderText(/Type a command/)).not.toBeInTheDocument());
+
+  act(() => setAppSimpleModeForTest(true));
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  expect(await screen.findByText("Run Tests")).toBeInTheDocument();
+  for (const name of ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates"]) {
+    expect(screen.queryByText(name)).not.toBeInTheDocument();
+  }
+  expect(screen.getByText("Auto Run")).toBeInTheDocument();
 });

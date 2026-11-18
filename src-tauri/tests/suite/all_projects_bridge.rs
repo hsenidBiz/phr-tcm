@@ -24,6 +24,7 @@ fn ctx(all_projects: bool) -> BridgeContext {
         all_projects,
         db_no_ask: false,
         autorun_mode: None,
+        app_simple_mode: None,
         gate: Default::default(),
         current_pbi: None,
     }
@@ -656,6 +657,18 @@ async fn tools_answer_carries_the_autorun_mode_only_when_the_webview_pushed_it()
         let (status, body) = route(&ctx, None, "GET", "/tools", "", "2.4.6").await;
         assert_eq!(status, 200, "{body}");
         assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["autorun_mode"], word);
+    }
+}
+
+#[tokio::test]
+async fn tools_answer_carries_the_app_simple_mode_only_when_the_webview_pushed_it() {
+    let (_, none) = route(&BridgeContext::default(), None, "GET", "/tools", "", "2.4.6").await;
+    assert!(serde_json::from_str::<serde_json::Value>(&none).unwrap().get("app_simple_mode").is_none(), "{none}");
+    for on in [true, false] {
+        let ctx = BridgeContext { app_simple_mode: Some(on), ..BridgeContext::default() };
+        let (status, body) = route(&ctx, None, "GET", "/tools", "", "2.4.6").await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["app_simple_mode"], on);
     }
 }
 

@@ -1895,6 +1895,15 @@ export const commands = {
 	setAutorunFailedVideo: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_failed_video", { on })),
 	/**  Pick Simple or Advanced Auto Run. */
 	setAutorunMode: (mode: AutorunMode) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_mode", { mode })),
+	/**
+	 *  Turn the app-wide Simple mode on or off. On saves the choice, then
+	 *  switches every module on (never the held-back one) so nothing Simple mode
+	 *  hides stops working; a module that fails is named and the choice stays
+	 *  saved. Off saves the choice and changes no module.
+	 */
+	setAppSimpleMode: (on: boolean) => typedError<SimpleModeAnswer, string>(__TAURI_INVOKE("set_app_simple_mode", { on })),
+	/**  Record that the old per-screen switch markers have been looked at. */
+	setSwitchMarkersMigrated: () => typedError<AppSettings, string>(__TAURI_INVOKE("set_switch_markers_migrated")),
 	/**  The page size every browser the app drives shows. */
 	getPageSize: () => __TAURI_INVOKE<PageSize>("get_page_size"),
 	/**
@@ -3093,6 +3102,13 @@ export type AppSettings = {
 	auto_run_ever_on?: boolean,
 	/**  Simple or Advanced Auto Run; `None` until one is picked or settled. */
 	autorun_mode?: AutorunMode | null,
+	/**  App-wide Simple mode; `None` until it is settled at start-up. */
+	app_simple_mode?: boolean | null,
+	/**
+	 *  Whether the webview's old per-screen switch markers have been looked
+	 *  at once (a new install has none to look at).
+	 */
+	switch_markers_migrated?: boolean,
 	/**
 	 *  The page every browser the app drives shows (`browser::viewport`).
 	 *  A missing, unreadable or out-of-range value reads as the default, and
@@ -3487,6 +3503,11 @@ export type BridgeSwitches = {
 	 *  Not a switch: the assistants only read it.
 	 */
 	autorunMode?: AutorunMode | null,
+	/**
+	 *  The app-wide Simple mode (see `BridgeContext::app_simple_mode`). Not a
+	 *  switch: the assistants only read it.
+	 */
+	appSimpleMode?: boolean | null,
 	/**
 	 *  The PBI selected in the top bar, or none (see
 	 *  `BridgeContext::current_pbi`). Not a switch: it rides here so
@@ -8227,6 +8248,15 @@ export type SignInSaveResult = {
 
 export type SignInTrial = {
 	environment: string,
+};
+
+/**
+ *  What `set_app_simple_mode` answers: the settings as saved, and the names
+ *  of the modules that could not be switched on (empty when all came on).
+ */
+export type SimpleModeAnswer = {
+	settings: AppSettings,
+	not_switched_on: string[],
 };
 
 export type SkippedCase = {

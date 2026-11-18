@@ -16,8 +16,10 @@ import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
 import PageSizeSettings from "../components/PageSizeSettings";
-import { useModule } from "../lib/modules";
+import { hydrateModules, useModule } from "../lib/modules";
+import { unattendedRunGoing, useBackgroundRun } from "../lib/backgroundRun";
 import Modules from "./Modules";
+import { publishSimpleSwitchFailures, useAppSimpleMode, useSimpleSwitchFailures } from "../lib/appSimpleMode";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
@@ -218,14 +220,22 @@ export default function Settings({
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
+  // Simple mode has no Modules page: every module is on, and nothing offers it.
+  const simple = useAppSimpleMode().on;
   const [modulesOpen, setModulesOpen] = useState(startOnModules);
   const autoRunOn = useModule("auto_run");
   // The Modules board scrolls inside its own frame, so while it is open the
   // host must not scroll around it too; leaving Settings hands the scroll back.
+  const showModules = modulesOpen && !simple;
   useEffect(() => {
-    onFillChange?.(modulesOpen);
+    onFillChange?.(showModules);
     return () => onFillChange?.(false);
-  }, [modulesOpen, onFillChange]);
+  }, [showModules, onFillChange]);
+  // A Modules request left over from before Simple mode must not open the
+  // page when Simple mode is turned off again.
+  useEffect(() => {
+    if (simple) setModulesOpen(false);
+  }, [simple]);
   const [gameOpen, setGameOpen] = useState(false);
   const [breakerOpen, setBreakerOpen] = useState(false);
   useEffect(() => {
@@ -386,6 +396,30 @@ export default function Settings({
     } catch (e) {
       if (before) qc.setQueryData(["app-settings"], before);
       toast.error(String(e));
+    }
+  };
+
+  const runGoing = unattendedRunGoing(useBackgroundRun());
+  // The modules Rust could not switch on for the last attempt, named.
+  const [simpleFailed, setSimpleFailed] = useState<string[]>([]);
+  const switchFailed = useSimpleSwitchFailures();
+  const simpleNotOn = [...simpleFailed, ...(simple ? switchFailed : [])];
+  const simplePending = useRef(false);
+  const setSimple = async (on: boolean) => {
+    if (simplePending.current) return;
+    simplePending.current = true;
+    setSimpleFailed([]);
+    publishSimpleSwitchFailures([]);
+    try {
+      const r = await commands.setAppSimpleMode(on);
+      if (r.status === "error") throw r.error;
+      qc.setQueryData(["app-settings"], r.data.settings);
+      setSimpleFailed(r.data.not_switched_on);
+      if (on) void hydrateModules();
+    } catch (e) {
+      toast.error(saveFailedMessage(e));
+    } finally {
+      simplePending.current = false;
     }
   };
 
@@ -777,7 +811,7 @@ export default function Settings({
     </SettingsCard>
   );
 
-  if (modulesOpen) return <Modules onBack={() => setModulesOpen(false)} />;
+  if (showModules) return <Modules onBack={() => setModulesOpen(false)} />;
 
   return (
     // Two columns on wide windows; below lg everything stacks into one
@@ -960,15 +994,38 @@ export default function Settings({
           </p>
         </SettingRow>
         <SettingRow
-          name="Modules"
-          description="Switch on the parts of the app you need, such as Auto Run."
+          asLabel
+          name="Simple mode"
+          description="Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates."
           control={
-            <Button size="sm" variant="outline" onClick={() => setModulesOpen(true)}>
-              <IconModules aria-hidden />
-              Modules
-            </Button>
+            <Switch
+              checked={appSettings.data?.app_simple_mode ?? false}
+              disabled={!appSettings.data || runGoing}
+              title={runGoing ? "Wait for the Auto Run run to finish." : undefined}
+              className="disabled:pointer-events-auto"
+              onCheckedChange={(on) => void setSimple(on)}
+              ariaLabel="Simple mode"
+            />
           }
-        />
+        >
+          {simpleNotOn.length > 0 && (
+            <p role="alert" className="text-xs text-danger">
+              Could not switch on: {simpleNotOn.join(", ")}. Turn Simple mode off and on to try again.
+            </p>
+          )}
+        </SettingRow>
+        {!simple && (
+          <SettingRow
+            name="Modules"
+            description="Switch on the parts of the app you need, such as Auto Run."
+            control={
+              <Button size="sm" variant="outline" onClick={() => setModulesOpen(true)}>
+                <IconModules aria-hidden />
+                Modules
+              </Button>
+            }
+          />
+        )}
       </SettingsCard>
 
       {!tiles.spareStack && aiToolsCard}

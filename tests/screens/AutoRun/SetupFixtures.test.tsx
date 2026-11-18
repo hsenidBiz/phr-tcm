@@ -5,7 +5,7 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi, type Mock } from "vitest";
 import { askForFixturesView } from "../../../src/lib/apiTemplates";
 import { resetModulesStore, setModulesForTest } from "../../../src/lib/modules";
 import ApiTemplates from "../../../src/screens/ApiTemplates";
@@ -38,7 +38,7 @@ function fixture(id: string, runs: { at: string; ok: boolean }[], here: unknown 
   };
 }
 
-function mount(saved: ReturnType<typeof fixture>[], onOpenFixtures = vi.fn()) {
+function mount(saved: ReturnType<typeof fixture>[], onOpenFixtures: Mock | null = vi.fn()) {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return [];
@@ -66,7 +66,7 @@ function mount(saved: ReturnType<typeof fixture>[], onOpenFixtures = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="Web" pbi={PBI} onOpenFixtures={onOpenFixtures} />
+      <AutoRun org="acme" project="Web" pbi={PBI} onOpenFixtures={onOpenFixtures ? () => onOpenFixtures() : undefined} />
     </QueryClientProvider>,
   );
   return onOpenFixtures;
@@ -154,4 +154,11 @@ test("the API Templates screen opens on its Fixtures tab once Fixtures were aske
   );
   const tab = await screen.findByRole("tab", { name: /^Fixtures/ });
   expect(tab).toHaveAttribute("aria-selected", "true");
+});
+
+test("with no way to the Fixtures offered, the row has no Open button", async () => {
+  mount([fixture("a", [{ at: stamp(2), ok: true }])], null);
+  await within(summary()).findByText(/1 fixture, last run/);
+  fireEvent.click(within(panel()).getByRole("button", { name: "Show setup details" }));
+  expect(within(panel()).queryByRole("button", { name: "Open fixtures" })).not.toBeInTheDocument();
 });

@@ -11,7 +11,7 @@
  * - one or two short sentences, in the words a tester uses;
  * - nothing about how the app works inside.
  */
-import type { Module } from "../lib/modules";
+import { SIMPLE_HIDDEN_SECTIONS, type Module } from "../lib/modules";
 import type { Section, WorkSection } from "../components/Sidebar";
 
 /** The `data-tour` names the script is allowed to ring. Each one must
@@ -218,8 +218,14 @@ export function sameTourWhere(a: TourWhere | undefined, b: TourWhere | undefined
 /** The tour's stops for these modules on: a stop describing a card that is
  * not there (its module is off) is dropped. Every lookup below takes this
  * array, so a dropped stop is never a destination either. */
-export function tourStepsFor(modules: ReadonlySet<Module>): TourStep[] {
-  return TOUR_STEPS.filter((s) => !s.module || modules.has(s.module));
+export function tourStepsFor(modules: ReadonlySet<Module>, simple: boolean = false): TourStep[] {
+  return TOUR_STEPS.filter((s) => {
+    if (s.module && !modules.has(s.module)) return false;
+    // Simple mode hides some screens: a stop that walks to one would ring
+    // nothing the person can reach.
+    if (simple && s.where?.area === "cases" && SIMPLE_HIDDEN_SECTIONS.has(s.where.section)) return false;
+    return true;
+  });
 }
 
 /**

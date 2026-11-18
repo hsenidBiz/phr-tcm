@@ -128,6 +128,25 @@ pub fn settle_tries(created: usize) -> u32 {
 
 pub const NOTE_SUITE_BEHIND: &str = "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong.";
 
+/// The notes for a person in Simple mode: the one that points at Suite Management
+/// also says that screen is hidden and how to get it back. With Simple mode off
+/// the notes are returned unchanged.
+pub fn simple_mode_notes(notes: Vec<String>, simple: bool) -> Vec<String> {
+    if !simple {
+        return notes;
+    }
+    notes
+        .into_iter()
+        .map(|n| {
+            if n == NOTE_SUITE_BEHIND {
+                format!("{}{}.", n.trim_end_matches('.'), " (Simple mode hides that screen; turn it off in Settings)")
+            } else {
+                n
+            }
+        })
+        .collect()
+}
+
 /// The queue indexes and work item ids that landed (created or updated) in
 /// this upload, in queue order. Built by submit_queue from its results, so
 /// `index` points into the SENT queue.

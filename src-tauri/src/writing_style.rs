@@ -402,6 +402,6 @@ every other field of each case - its title, steps, other tags and the
 rest - stays exactly as it was, and each case keeps its `id`, so the
 file updates those cases and no others. Tell the developer to import
 the file through Import Test Cases, where they see every change
-before anything reaches Azure DevOps. Then report the ids added and
+before anything reaches Azure DevOps. If the app is in Simple mode, ask the person to turn Simple mode off in Settings. Then report the ids added and
 removed and the final Regression count.
 "#;

@@ -1,6 +1,13 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { apiWritesSnapshot, loadApiWrites, saveApiWrites, subscribeApiWrites } from "../../src/lib/apiTemplates";
+import { setActiveEnvId } from "../../src/lib/activeEnv";
+import {
+  apiWritesSnapshot,
+  loadApiWrites,
+  saveApiWrites,
+  subscribeApiWrites,
+  turnOnApiWritesWhereUnset,
+} from "../../src/lib/apiTemplates";
 
 afterEach(() => localStorage.clear());
 
@@ -37,4 +44,19 @@ test("saving notifies subscribers, so App can re-push the bridge context", () =>
   stop();
   saveApiWrites(true);
   expect(seen).toHaveBeenCalledTimes(2);
+});
+
+test("choosing the switch either way writes the person-set marker", () => {
+  setActiveEnvId("env-a");
+  saveApiWrites(false);
+  expect(localStorage.getItem("tcm-v2-api-writes-set:env-a")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-api-writes:env-a")).toBeNull();
+});
+
+test("turning the switch on where unset leaves an environment a person chose alone", () => {
+  localStorage.setItem("tcm-v2-api-writes-set:env-a", "1");
+  expect(turnOnApiWritesWhereUnset(["env-a", "env-b"])).toBe(1);
+  expect(localStorage.getItem("tcm-v2-api-writes:env-a")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-api-writes:env-b")).toBe("1");
+  expect(localStorage.getItem("tcm-v2-api-writes-set:env-b")).toBeNull();
 });

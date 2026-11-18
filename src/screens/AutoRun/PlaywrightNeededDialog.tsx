@@ -10,6 +10,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
 import { commands } from "../../bindings";
+import { useAppSimpleMode } from "../../lib/appSimpleMode";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconModulePlaywright, IconModules } from "../../lib/actionIcons";
@@ -61,6 +62,8 @@ export default function PlaywrightNeededDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
+  // Simple mode has no Modules page (and Playwright is on in it).
+  const simple = useAppSimpleMode().on;
   return (
     <Modal onClose={onClose} labelledBy={titleId} className={`flex ${MODAL_SHORT} flex-col gap-3 p-5`}>
       <h2 id={titleId} className="text-sm font-semibold text-text">
@@ -73,7 +76,7 @@ export default function PlaywrightNeededDialog({
           : "No Playwright repo is set on the Playwright tab"}
         , so the assistant is using the rules shipped with this version of Test Case Manager until one is set.
       </p>
-      {!playwrightOn && (
+      {!playwrightOn && !simple && (
         <p className="text-xs text-muted">
           The Playwright module is off: switch it on in Modules, then set the repo on the Playwright tab.
         </p>
@@ -94,7 +97,7 @@ export default function PlaywrightNeededDialog({
             <IconModulePlaywright aria-hidden />
             Open the Playwright tab
           </Button>
-        ) : (
+        ) : simple ? null : (
           <Button
             size="sm"
             onClick={() => {

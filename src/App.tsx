@@ -62,6 +62,8 @@ import {
   useWaitingNotices,
 } from "./app/useBackendEvents";
 import { useBridgeContextSync } from "./app/useBridgeContextSync";
+import { useAppSimpleMode, usePublishAppSimpleMode } from "./lib/appSimpleMode";
+import { useSimpleModeSwitches } from "./lib/simpleModeSwitches";
 import { useChangelog } from "./app/useChangelog";
 import { useHomeProject } from "./app/useHomeProject";
 import { useKeyboardShortcuts, useModuleGuards, usePersistPrefs, useStartupEffects } from "./app/useShellEffects";
@@ -80,7 +82,8 @@ export default function App() {
   // a page that scrolls inside the shell.
   const [settingsFill, setSettingsFill] = useState(false);
   // The tour skips the stop for a card whose module is off.
-  const tourSteps = useMemo(() => tourStepsFor(modules), [modules]);
+  const tourSimple = useAppSimpleMode().on;
+  const tourSteps = useMemo(() => tourStepsFor(modules, tourSimple), [modules, tourSimple]);
   const [org, setOrgRaw] = useState(initial.org);
   // The home project: where Auto Run, API templates and Playwright keep their
   // files, and what a screen with no PBI falls back to. It is the project the
@@ -173,7 +176,18 @@ export default function App() {
   }
 
   useStartupEffects();
-  useModuleGuards(section, modules, modulesHydrated, workMode, tourOpen, setSection);
+  usePublishAppSimpleMode();
+  const simpleMode = useAppSimpleMode();
+  useModuleGuards(
+    section,
+    modules,
+    modulesHydrated,
+    workMode,
+    tourOpen,
+    setSection,
+    simpleMode.on,
+    !simpleMode.loading,
+  );
   useKeyboardShortcuts(setSection, setWorkMode);
   useGlobalBackendEvents();
   usePersistPrefs({ org, homeProject, section, pbi, workMode, tourOpen });
@@ -324,6 +338,7 @@ export default function App() {
   // assistant names a project when it means another one).
   const bridgeProject = allProjects ? homeProject : project;
   useBridgeContextSync({ signedIn, org, project, bridgeProject, allProjects, pbi, tourOpen });
+  useSimpleModeSwitches();
 
   // The organization's projects, and the home project nobody has to pick.
   const projects = useHomeProject({

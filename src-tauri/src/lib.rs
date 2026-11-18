@@ -45,6 +45,7 @@ pub mod crystal;
 pub mod events;
 pub mod extras;
 pub mod modules;
+pub mod simple_mode;
 pub mod filewatch;
 pub mod guide;
 pub mod help;
@@ -445,6 +446,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_autorun_highlight,
             app_settings::set_autorun_failed_video,
             app_settings::set_autorun_mode,
+            app_settings::set_app_simple_mode,
+            app_settings::set_switch_markers_migrated,
             app_settings::get_page_size,
             app_settings::set_page_size,
             app_settings::reset_page_size,
@@ -723,6 +726,9 @@ pub fn run() {
             // the assigned-items baseline), on disk and shared by the UI and
             // the AI bridge - see cache/mod.rs.
             if let Ok(dir) = app.path().app_data_dir() {
+                // A first launch is read from the folder BEFORE anything
+                // below writes into it (`simple_mode::is_new_install`).
+                let new_install = simple_mode::is_new_install(&dir);
                 cache::init(dir.clone());
                 // This machine's optional extras switch (see extras.rs):
                 // read once here, so the AI bridge can answer from memory.
@@ -733,6 +739,9 @@ pub fn run() {
                 // An install that already runs Auto Run keeps every control
                 // it has today: settle its mode once.
                 crate::autorun::recommended::settle_on_start(&dir);
+                // The app-wide Simple mode: on for a new install (every
+                // module switched on), off for one that already had data.
+                crate::simple_mode::settle_on_start(new_install);
                 // The AI Bridge tab's writing style, read by the guide on each
                 // call (see writing_style.rs).
                 crate::writing_style::init(dir.clone());

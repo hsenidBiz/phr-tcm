@@ -152,6 +152,10 @@ pub struct BridgeContext {
     /// the person can see; no tool sets it. None until the webview has
     /// pushed one, and then the status answer carries no such key.
     pub autorun_mode: Option<crate::app_settings::AutorunMode>,
+    /// Whether the app-wide Simple mode is on, as the webview last pushed
+    /// it. Read-only for an assistant (no tool sets it); `None` until pushed,
+    /// and then the answers carry no such key.
+    pub app_simple_mode: Option<bool>,
     /// The webview's "Treat all projects as one" switch. Read only by the
     /// Azure DevOps routes (from Phase 6); `project` stays the home project
     /// either way.
@@ -261,6 +265,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("api_writes", &self.api_writes)
             .field("network_tools", &self.network_tools)
             .field("autorun_mode", &self.autorun_mode)
+            .field("app_simple_mode", &self.app_simple_mode)
             .field("all_projects", &self.all_projects)
             .field("current_pbi", &self.current_pbi.as_ref().map(|p| p.id))
             .field("db_no_ask", &self.db_no_ask)
@@ -519,12 +524,21 @@ fn current_pbi_answer(ctx: &BridgeContext) -> String {
             if let Some(m) = mode {
                 v["autorun_mode"] = m;
             }
+            if let Some(s) = ctx.app_simple_mode {
+                v["app_simple_mode"] = serde_json::json!(s);
+            }
             v.to_string()
         }
-        None => match mode.as_ref().and_then(|m| m.as_str()) {
-            Some(m) => format!("No PBI is selected in TCM. Auto Run mode: {m}."),
-            None => "No PBI is selected in TCM.".to_string(),
-        },
+        None => {
+            let mut out = "No PBI is selected in TCM.".to_string();
+            if let Some(m) = mode.as_ref().and_then(|m| m.as_str()) {
+                out.push_str(&format!(" Auto Run mode: {m}."));
+            }
+            if let Some(s) = ctx.app_simple_mode {
+                out.push_str(&format!(" App Simple mode: {}.", if s { "on" } else { "off" }));
+            }
+            out
+        }
     }
 }
 
@@ -1083,6 +1097,9 @@ pub async fn route_as(
             // has, and cannot change it. Sent only once the webview has said.
             if let Some(mode) = ctx.autorun_mode {
                 answer["autorun_mode"] = serde_json::to_value(mode).unwrap_or_default();
+            }
+            if let Some(on) = ctx.app_simple_mode {
+                answer["app_simple_mode"] = serde_json::json!(on);
             }
             (200, answer.to_string())
         }

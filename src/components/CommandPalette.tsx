@@ -21,6 +21,7 @@ import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { getTheme, setTheme } from "../lib/theme";
 import { tourRunningSnapshot } from "../tour/tourState";
 import { sectionShortcut, visibleCaseItems, type Section } from "./Sidebar";
+import { useAppSimpleMode } from "../lib/appSimpleMode";
 import { useModules } from "../lib/modules";
 
 /** One row. `value` is unique across the whole palette; `label` is what
@@ -73,6 +74,7 @@ export default function CommandPalette({
 }) {
   const qc = useQueryClient();
   const modules = useModules();
+  const simple = useAppSimpleMode().on;
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -110,10 +112,10 @@ export default function CommandPalette({
       items: [
         // One row per sidebar tab, hint digit = its Ctrl+N slot, both read
         // off the same list App's shortcut handler uses.
-        ...visibleCaseItems(modules).map((i) => ({
+        ...visibleCaseItems(modules, simple).map((i) => ({
           value: `go:${i.id}`,
           label: i.label,
-          keys: sectionShortcut(i.id, modules),
+          keys: sectionShortcut(i.id, modules, simple),
           run: () => onNavigate(i.id),
         })),
         { value: "go:settings", label: "Settings", run: () => onNavigate("settings") },

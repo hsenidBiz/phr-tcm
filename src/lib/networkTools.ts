@@ -66,7 +66,7 @@ export function networkToolsSnapshot(): boolean {
  * chosen yet, and return how many that changed. Writes no marker: this is a
  * default, not a person's choice, so a later choice (or a switch-off) still
  * counts as theirs. */
-export function turnOnNetworkToolsWhereUnset(envIds: string[]): number {
+export function turnOnNetworkToolsWhereUnset(envIds: string[], onFail?: () => void): number {
   let changed = 0;
   try {
     for (const id of envIds) {
@@ -77,7 +77,8 @@ export function turnOnNetworkToolsWhereUnset(envIds: string[]): number {
       changed += 1;
     }
   } catch {
-    // storage unavailable -> whatever was written stays
+    // storage unavailable -> whatever was written stays; the caller may say so
+    onFail?.();
   }
   if (changed > 0) notify();
   return changed;
