@@ -10,6 +10,7 @@
 //! the same client from `ado_testplan` / `work_board`.
 
 pub mod attachments;
+pub mod bugs;
 pub mod endpoints;
 pub mod fanout;
 pub mod rule_errors;
