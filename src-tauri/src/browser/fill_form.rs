@@ -14,6 +14,7 @@ pub const FORM_ROLES: [&str; 8] =
     ["textbox", "searchbox", "spinbutton", "combobox", "listbox", "checkbox", "radio", "switch"];
 
 /// What one field comes to.
+#[allow(clippy::large_enum_variant)] // the shape is fixed by the plan
 #[derive(Debug, Clone, PartialEq)]
 pub enum Planned {
     /// The action to run, the locator it was written with, and how many
@@ -35,8 +36,8 @@ const KIND_JS: &str = r#"function() {
   };
 }"#;
 
-const TEXT_TYPES: [&str; 11] =
-    ["", "text", "email", "number", "tel", "url", "search", "date", "time", "datetime-local", "month"];
+const TEXT_TYPES: [&str; 12] =
+    ["", "text", "email", "number", "tel", "url", "search", "date", "time", "datetime-local", "month", "week"];
 
 fn step(role: &str, label: &str, exact: bool) -> LocatorStep {
     LocatorStep { role: Some(role.to_string()), name: Some(label.to_string()), exact, ..LocatorStep::default() }

@@ -317,3 +317,34 @@ async fn within_is_the_head_of_the_written_chain() {
     assert_eq!(links[0].role.as_deref(), Some("dialog"));
     assert_eq!(links[1].role.as_deref(), Some("textbox"));
 }
+
+#[tokio::test]
+async fn several_contains_matches_fail_naming_the_count() {
+    let msg = failed(
+        plan(
+            vec![control("textbox", "First name", "input", "text"), control("textbox", "Last name", "input", "text")],
+            "Name",
+            text("x"),
+        )
+        .await,
+    );
+    assert!(msg.starts_with("2 form controls match \"Name\""), "{msg}");
+}
+
+#[tokio::test]
+async fn an_exact_single_match_wins_over_contains_matches() {
+    let p = plan(
+        vec![control("textbox", "Email confirm", "input", "email"), control("textbox", "Email", "input", "email")],
+        "Email",
+        text("a@b.c"),
+    )
+    .await;
+    let Planned::Act { locator, .. } = p else { panic!("{p:?}") };
+    assert!(one(&locator).exact);
+}
+
+#[tokio::test]
+async fn a_week_input_is_filled() {
+    let p = plan(vec![control("textbox", "Week", "input", "week")], "Week", text("2026-W01")).await;
+    assert!(matches!(p, Planned::Act { action: Action::Fill { .. }, .. }), "{p:?}");
+}
