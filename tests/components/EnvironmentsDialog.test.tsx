@@ -4,7 +4,7 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import EnvironmentsDialog, { LOOKUP_COLUMN_RULE, LOOKUP_NEEDED, LOOKUP_TABLE_RULE, lookupProblems } from "../../src/components/EnvironmentsDialog";
@@ -584,4 +584,35 @@ test("Simple mode hides the reset switch, both queries and the account lookup, a
   expect(sent.password_expiry_query).toBe(own.password_expiry_query);
   expect(sent.active_session_query).toBe(own.active_session_query);
   expect(sent.account_lookup).toEqual({ table: "dbo.Users", username_column: "Login", password_column: "Secret" });
+});
+
+test("the Test environment warning gains the reset clause only in Simple mode", async () => {
+  const clause = /In Simple mode, Test Case Manager also resets an expired password here by itself\./;
+  setAppSimpleModeForTest(false);
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  await screen.findByText(/The AI assistant can read the full logins/);
+  expect(screen.queryByText(clause)).toBeNull();
+  cleanup();
+  clearMocks();
+  setAppSimpleModeForTest(true);
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  expect(await screen.findByText(clause)).toBeTruthy();
+});
+
+test("a bad saved lookup value cannot disable Save while Simple mode hides the fields", async () => {
+  const bad: Env = { ...QA, account_lookup: { table: "bad table;", username_column: "Login", password_column: "" } };
+  setAppSimpleModeForTest(false);
+  mount({}, [DEFAULT, bad]);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  await screen.findByRole("textbox", { name: "Account table" });
+  expect(screen.getByRole("button", { name: "Save environment" })).toBeDisabled();
+  cleanup();
+  clearMocks();
+  setAppSimpleModeForTest(true);
+  mount({}, [DEFAULT, bad]);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  await screen.findByRole("textbox", { name: "Name" });
+  expect(screen.getByRole("button", { name: "Save environment" })).not.toBeDisabled();
 });

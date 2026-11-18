@@ -24,6 +24,10 @@ import { Switch } from "./ui/switch";
 export const TEST_ENVIRONMENT_WARNING =
   "The AI assistant can read the full logins of this environment's accounts. Use only for test environments.";
 
+/** Added to that warning while Simple mode is on: the hidden reset is on. */
+export const TEST_ENVIRONMENT_SIMPLE_CLAUSE =
+  " In Simple mode, Test Case Manager also resets an expired password here by itself.";
+
 /** What sits under the reset switch. */
 export const RESET_EXPIRED_HELP =
   "When a sign-in lands on the site's password reset page, the app sets a simple new password and signs in with it. The account keeps the new password only once that sign-in works; until then the old one stays saved and the new one is held aside. Off unless you turn it on.";
@@ -173,7 +177,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
   const list = envs.data?.environments ?? [];
   const active = envs.data?.active ?? "";
   const lookup = form ? lookupProblems(form) : {};
-  const lookupInvalid = Object.keys(lookup).length > 0;
+  const lookupInvalid = !appSimple && Object.keys(lookup).length > 0;
   const dbLabel = (id: string) =>
     databases.data?.find((d) => d.id === id)?.label ?? "database not set up any more";
 
@@ -544,7 +548,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 />
                 <span className="text-xs font-medium text-text">Test environment</span>
               </div>
-              <p className="text-xs text-muted">{TEST_ENVIRONMENT_WARNING}</p>
+              <p className="text-xs text-muted">{TEST_ENVIRONMENT_WARNING + (appSimple ? TEST_ENVIRONMENT_SIMPLE_CLAUSE : "")}</p>
             </div>
 
             {!appSimple && form.id && editing?.test_environment && (

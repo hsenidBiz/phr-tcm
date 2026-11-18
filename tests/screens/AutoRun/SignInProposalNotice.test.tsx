@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { SignInProposalView } from "../../../src/bindings";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../../src/lib/appSimpleMode";
 import { toast } from "../../../src/lib/toast";
 import SignInProposalNotice from "../../../src/screens/AutoRun/SignInProposalNotice";
 
@@ -176,4 +177,15 @@ test("a failed proposal read shows a one-line danger state", async () => {
     </QueryClientProvider>,
   );
   expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
+});
+
+test("in Simple mode the notice has no reset box, because the view does not offer it", async () => {
+  setAppSimpleModeForTest(true);
+  try {
+    mount({ ...VIEW, offer_reset_switch: false });
+    await screen.findByText("Proposed by the assistant");
+    expect(screen.queryByRole("checkbox", { name: "Also turn on Reset expired passwords" })).toBeNull();
+  } finally {
+    resetAppSimpleModeStore();
+  }
 });
