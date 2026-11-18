@@ -542,9 +542,9 @@ pub(crate) async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -
         .test-cases folder), which specs are authoritative and what is out of\n\
         scope are theirs to decide, not yours to assume.\n\
         1. Call `get_test_cases` for the PBI you're writing for and mimic\n\
-        their style and granularity.\n\
-        Before you write up a bug, or for a case that failed before, call\n\
-        `get_bugs` (by `pbi_id`, `case_id` or `bug_ids`): it may be already filed.\n\
+        their style and granularity. Before you write up a bug, or for a case\n\
+        that failed before, call `get_bugs` (by `pbi_id`, `case_id` or `bug_ids`):\n\
+        it may be already filed.\n\
         {scenario_step}\
         2. Draft your cases. Write your draft IN SPEC ORDER - cases walking\n\
         down the document, so a reviewer can scroll the spec and the file\n\

@@ -5848,7 +5848,7 @@ async fn the_writing_guide_points_at_get_bugs() {
     let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.10.3").await;
     assert_eq!(status, 200);
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(flat.contains("`get_bugs`") && flat.contains("already filed"), "the writing guide should name get_bugs: {flat}");
+    assert!(flat.contains("Before you write up a bug, or for a case that failed before, call `get_bugs` (by `pbi_id`, `case_id` or `bug_ids`): it may be already filed."), "the writing guide should name get_bugs: {flat}");
 }
 
 /// An id in remove_attachments that a step still lists stays (carried wins);
