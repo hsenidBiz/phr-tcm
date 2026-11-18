@@ -48,6 +48,7 @@ static LAST: Mutex<Vec<(usize, String, Vec<Block>)>> = Mutex::new(Vec::new());
 /// Everything slot `n` has been told is forgotten, whoever the reader.
 pub fn forget(n: SlotNo) {
     LAST.lock().unwrap_or_else(|e| e.into_inner()).retain(|(slot, _, _)| *slot != n.index());
+    super::page_changes::forget(n);
 }
 
 fn indent(line: &str) -> usize {
