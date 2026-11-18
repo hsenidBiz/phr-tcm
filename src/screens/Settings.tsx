@@ -19,7 +19,7 @@ import PageSizeSettings from "../components/PageSizeSettings";
 import { hydrateModules, useModule } from "../lib/modules";
 import { unattendedRunGoing, useBackgroundRun } from "../lib/backgroundRun";
 import Modules from "./Modules";
-import { useAppSimpleMode } from "../lib/appSimpleMode";
+import { publishSimpleSwitchFailures, useAppSimpleMode, useSimpleSwitchFailures } from "../lib/appSimpleMode";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
@@ -402,8 +402,14 @@ export default function Settings({
   const runGoing = unattendedRunGoing(useBackgroundRun());
   // The modules Rust could not switch on for the last attempt, named.
   const [simpleFailed, setSimpleFailed] = useState<string[]>([]);
+  const switchFailed = useSimpleSwitchFailures();
+  const simpleNotOn = [...simpleFailed, ...(simple ? switchFailed : [])];
+  const simplePending = useRef(false);
   const setSimple = async (on: boolean) => {
+    if (simplePending.current) return;
+    simplePending.current = true;
     setSimpleFailed([]);
+    publishSimpleSwitchFailures([]);
     try {
       const r = await commands.setAppSimpleMode(on);
       if (r.status === "error") throw r.error;
@@ -412,6 +418,8 @@ export default function Settings({
       if (on) void hydrateModules();
     } catch (e) {
       toast.error(saveFailedMessage(e));
+    } finally {
+      simplePending.current = false;
     }
   };
 
@@ -1000,9 +1008,9 @@ export default function Settings({
             />
           }
         >
-          {simpleFailed.length > 0 && (
+          {simpleNotOn.length > 0 && (
             <p role="alert" className="text-xs text-danger">
-              Could not switch on: {simpleFailed.join(", ")}. Turn Simple mode off and on to try again.
+              Could not switch on: {simpleNotOn.join(", ")}. Turn Simple mode off and on to try again.
             </p>
           )}
         </SettingRow>

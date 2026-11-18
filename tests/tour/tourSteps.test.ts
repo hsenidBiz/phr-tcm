@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { TOUR_STEPS, tourStepsFor } from "../../src/tour/tourScript";
+import { ALL_MODULES, SIMPLE_HIDDEN_SECTIONS } from "../../src/lib/modules";
+import { TOUR_STEPS, tourDestination, tourStepsFor } from "../../src/tour/tourScript";
 
 test("the Database Read Access stop needs Database Access", () => {
   const off = tourStepsFor(new Set());
@@ -9,18 +10,16 @@ test("the Database Read Access stop needs Database Access", () => {
   expect(on).toEqual(TOUR_STEPS);
 });
 
-import { SIMPLE_HIDDEN_SECTIONS } from "../../src/lib/modules";
-
-const ALL = new Set(["db_access", "autorun", "api_templates"] as never[]);
+const ALL = new Set(ALL_MODULES);
 
 test("Simple mode drops the stops on screens Simple mode hides, and off keeps today's list", () => {
   const simple = tourStepsFor(ALL, true);
-  const dests = simple.map((s) => s.where).filter((w) => w?.area === "cases");
-  for (const w of dests) {
-    expect(SIMPLE_HIDDEN_SECTIONS.has((w as { section: string }).section)).toBe(false);
+  expect(simple.length).toBeLessThan(TOUR_STEPS.length);
+  for (let i = 0; i < simple.length; i++) {
+    const where = tourDestination(i, simple);
+    if (where?.area === "cases") expect(SIMPLE_HIDDEN_SECTIONS.has(where.section)).toBe(false);
   }
-  expect(simple.length).toBeLessThan(tourStepsFor(ALL, false).length);
-  expect(tourStepsFor(ALL, false)).toEqual(tourStepsFor(ALL));
+  expect(tourStepsFor(ALL, false)).toEqual(TOUR_STEPS);
 });
 
 test("Simple mode keeps the stops on screens it leaves", () => {

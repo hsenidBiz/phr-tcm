@@ -80,7 +80,7 @@ export function apiWritesSnapshot(): boolean {
 
 /** Switch the write switch on for every environment nobody has chosen it for,
  * and return how many that changed. Writes no marker: a default, not a choice. */
-export function turnOnApiWritesWhereUnset(envIds: string[]): number {
+export function turnOnApiWritesWhereUnset(envIds: string[], onFail?: () => void): number {
   let changed = 0;
   try {
     for (const id of envIds) {
@@ -91,7 +91,8 @@ export function turnOnApiWritesWhereUnset(envIds: string[]): number {
       changed += 1;
     }
   } catch {
-    // storage unavailable -> whatever was written stays
+    // storage unavailable -> whatever was written stays; the caller may say so
+    onFail?.();
   }
   if (changed > 0) notify();
   return changed;

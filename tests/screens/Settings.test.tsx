@@ -8,7 +8,7 @@ import { CHANGELOG, isBetaVersion } from "../../src/lib/changelog";
 import { RATE_LEVELS } from "../../src/lib/adoRate";
 import { toast } from "../../src/lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../../src/lib/extras";
-import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
+import { publishSimpleSwitchFailures, resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import { openRunSetup, resetBackgroundRun, startRun } from "../../src/lib/backgroundRun";
 import { resetModulesStore, setModulesForTest } from "../../src/lib/modules";
 import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../../src/components/settings/useTileLayout";
@@ -23,6 +23,7 @@ vi.mock("../../src/lib/toast", () => ({
 const realMatchMedia = window.matchMedia;
 
 afterEach(() => {
+  resetBackgroundRun();
   window.matchMedia = realMatchMedia;
   clearMocks();
   vi.clearAllMocks();
@@ -2082,5 +2083,49 @@ test("the Simple mode switch waits while an unattended run is going", async () =
   const sw = await screen.findByRole("switch", { name: "Simple mode" });
   expect(sw).toBeDisabled();
   expect(sw).toHaveAttribute("title", "Wait for the Auto Run run to finish.");
-  resetBackgroundRun();
+});
+
+test("with no run going the Simple mode switch has no wait title", async () => {
+  mockIPC((cmd) => (cmd === "get_app_settings" ? simpleSettings(false) : undefined));
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  expect(sw).not.toHaveAttribute("title");
+});
+
+test("a double click sends one set_app_simple_mode call, and a switch-on refreshes the modules", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "get_app_settings") return simpleSettings(false);
+    if (cmd === "set_app_simple_mode") return new Promise((r) => setTimeout(() => r({ settings: simpleSettings(true), not_switched_on: [] }), 20));
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  await waitFor(() => expect(sw).toBeEnabled());
+  const before = calls.filter((c) => c === "modules_get").length;
+  fireEvent.click(sw);
+  fireEvent.click(sw);
+  await waitFor(() => expect(calls.filter((c) => c === "set_app_simple_mode")).toHaveLength(1));
+  await waitFor(() => expect(calls.filter((c) => c === "modules_get").length).toBeGreaterThan(before));
+});
+
+test("a switch the webview could not turn on is named in the same line as the modules", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "get_app_settings") return simpleSettings(false);
+    if (cmd === "set_app_simple_mode") {
+      setTimeout(() => publishSimpleSwitchFailures(["Network tools"]), 0);
+      return { settings: simpleSettings(true), not_switched_on: ["Auto Run"] };
+    }
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  await waitFor(() => expect(sw).toBeEnabled());
+  fireEvent.click(sw);
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Simple mode" })).toBeEnabled());
+  act(() => setAppSimpleModeForTest(true));
+  expect(
+    await screen.findByText("Could not switch on: Auto Run, Network tools. Turn Simple mode off and on to try again."),
+  ).toBeInTheDocument();
 });

@@ -74,5 +74,30 @@ export function setAppSimpleModeForTest(next: boolean): void {
 export function resetAppSimpleModeStore(): void {
   on = false;
   loaded = false;
+  switchFailures = [];
   notify();
+}
+
+// The per-environment switches Simple mode could not turn on (the webview's
+// half of "turning it on"). Settings reads this beside the modules Rust
+// could not switch on.
+let switchFailures: string[] = [];
+const failureListeners = new Set<() => void>();
+
+function subscribeFailures(cb: () => void): () => void {
+  failureListeners.add(cb);
+  return () => {
+    failureListeners.delete(cb);
+  };
+}
+
+export function publishSimpleSwitchFailures(names: string[]): void {
+  if (names.length === switchFailures.length && names.every((n, i) => n === switchFailures[i])) return;
+  switchFailures = names;
+  for (const l of [...failureListeners]) l();
+}
+
+/** Names of the switches the last Simple mode switch-on could not set. */
+export function useSimpleSwitchFailures(): string[] {
+  return useSyncExternalStore(subscribeFailures, () => switchFailures);
 }

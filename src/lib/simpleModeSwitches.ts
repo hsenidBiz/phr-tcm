@@ -9,6 +9,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { commands } from "../bindings";
 import { turnOnApiWritesWhereUnset } from "./apiTemplates";
+import { publishSimpleSwitchFailures } from "./appSimpleMode";
 import { useEnvironments } from "./environments";
 import { turnOnNetworkToolsWhereUnset } from "./networkTools";
 
@@ -42,12 +43,17 @@ function inBaseline(id: string): boolean {
 /** Switch both switches on for each environment outside the baseline, except
  * a switch a person has chosen. Writes no marker, and returns how many each
  * changed. */
-export function turnOnUnsetSwitches(envIds: string[]): { apiWrites: number; networkTools: number } {
+export function turnOnUnsetSwitches(envIds: string[]): {
+  apiWrites: number;
+  networkTools: number;
+  /** The switches whose storage write failed, by the name a person sees. */
+  failed: string[];
+} {
   const ids = envIds.filter((id) => !inBaseline(id));
-  return {
-    apiWrites: turnOnApiWritesWhereUnset(ids),
-    networkTools: turnOnNetworkToolsWhereUnset(ids),
-  };
+  const failed: string[] = [];
+  const apiWrites = turnOnApiWritesWhereUnset(ids, () => failed.push("API write switch"));
+  const networkTools = turnOnNetworkToolsWhereUnset(ids, () => failed.push("Network tools"));
+  return { apiWrites, networkTools, failed };
 }
 
 /** Runs the one-time marker migration, then keeps the switches on for new
@@ -90,7 +96,7 @@ export function useSimpleModeSwitches(): void {
     // Migration first: until the markers are written, an existing
     // environment would look unchosen.
     if (!loaded || !envIds || migrated !== true || !simple) return;
-    turnOnUnsetSwitches(envIds);
+    publishSimpleSwitchFailures(turnOnUnsetSwitches(envIds).failed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, migrated, simple, envKey]);
 }

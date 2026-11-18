@@ -72,14 +72,14 @@ test("markBaseline writes only Simple mode's own marker and leaves the switches 
 
 test("turnOnUnsetSwitches skips baseline environments", () => {
   markBaseline(["a"]);
-  expect(turnOnUnsetSwitches(["a", "b"])).toEqual({ apiWrites: 1, networkTools: 1 });
+  expect(turnOnUnsetSwitches(["a", "b"])).toEqual({ apiWrites: 1, networkTools: 1, failed: [] });
   expect(api("a")).toBeNull();
   expect(net("b")).toBe("1");
 });
 
 test("turnOnUnsetSwitches changes only environments without a marker and counts them", () => {
   localStorage.setItem("tcm-v2-api-writes-set:a", "1");
-  expect(turnOnUnsetSwitches(["a", "b"])).toEqual({ apiWrites: 1, networkTools: 2 });
+  expect(turnOnUnsetSwitches(["a", "b"])).toEqual({ apiWrites: 1, networkTools: 2, failed: [] });
   expect(api("a")).toBeNull();
   expect(api("b")).toBe("1");
   expect(net("a")).toBe("1");
@@ -166,4 +166,31 @@ test("a failed save retries only the save, never marking later environments", as
   expect(setSwitchMarkersMigrated).toHaveBeenCalledTimes(2);
   expect(localStorage.getItem("tcm-v2-simple-baseline:A")).toBe("1");
   expect(localStorage.getItem("tcm-v2-simple-baseline:B")).toBeNull();
+});
+
+test("a storage write that throws is reported by the name a person sees", () => {
+  const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  try {
+    expect(turnOnUnsetSwitches(["a"]).failed).toEqual(["API write switch", "Network tools"]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("the hook publishes a failed switch-on for Settings to name", async () => {
+  const { useSimpleSwitchFailures } = await import("../../src/lib/appSimpleMode");
+  const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  try {
+    qc.setQueryData(SETTINGS, settings({ app_simple_mode: true }));
+    qc.setQueryData(ENVS, list("a"));
+    const { result } = renderHook(() => ({ f: useSimpleSwitchFailures(), s: useSimpleModeSwitches() }), { wrapper });
+    await update(ENVS, list("a"));
+    expect(result.current.f).toEqual(["API write switch", "Network tools"]);
+  } finally {
+    spy.mockRestore();
+  }
 });
