@@ -83,6 +83,22 @@ export function useRowWindow(
     if (Math.abs(top - margin) > 1) setMargin(top);
   });
 
+  // ...and when the page's content changes size without this list rendering
+  // again: another group folding shut above it moves where it starts, and a
+  // list still working from the old start drew too few rows - a blank band
+  // under the last one - until the page was scrolled.
+  useLayoutEffect(() => {
+    const s = scroller.current;
+    const content = s?.firstElementChild;
+    if (!windowed || !list || !s || !content || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(() => {
+      const top = list.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop;
+      setMargin((m) => (Math.abs(top - m) > 1 ? top : m));
+    });
+    watch.observe(content);
+    return () => watch.disconnect();
+  }, [windowed, list]);
+
   const keyOf = opts.keyOf;
   const pinnedKey = (opts.pinned ?? []).join(",");
   const rangeExtractor = useCallback(
