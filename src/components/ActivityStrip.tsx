@@ -45,7 +45,9 @@ export default function ActivityStrip({ onOpen }: { onOpen: () => void }) {
 
   return (
     <section aria-label="Assistant activity" className="border-b border-border bg-surface px-6 py-1.5 text-xs">
-      <div className="flex items-start justify-between gap-3">
+      {/* The lines sit level with the Open button: centred, so a single
+          line is in the button's middle and several lines centre on it. */}
+      <div className="flex items-center justify-between gap-3">
         <ul className="min-w-0 space-y-0.5 text-muted">
           {shown.map((a) => {
             const slot = a.slot;
