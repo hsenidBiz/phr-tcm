@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.13",
+    date: "2026-11-18",
+    items: [
+      "Your assistant can look up bugs: the ones on a PBI and its test cases, on one test case, or by id, with their repro steps and what each is linked to. It checks for an existing bug before filing a new one.",
+      "Run Tests: a long group shows all its rows when you close a group above it, instead of leaving a gap until you scroll.",
+      "The assistant activity line under the top bar sits level with its Open button.",
+    ],
+  },
+  {
     version: "2.4.7-beta.12",
     date: "2026-11-18",
     items: [
