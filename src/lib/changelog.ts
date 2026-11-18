@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.12",
+    date: "2026-11-18",
+    items: [
+      "In Auto Run's Simple mode, fixtures stay out of sight even when one fails, scripts can never open pages by address, and the More menu and the step-by-step Run buttons are hidden: Simple runs unattended.",
+      "App Simple mode also hides the Playwright tab, keeps Auto Run in its Simple mode, and drops the Tools heading when only Auto Run sits under it.",
+      "Run Tests: a long group no longer bounces up and down when you scroll to its end.",
+      "Group headings sit evenly between groups, and the list toolbars use one text size.",
+      "The work items assigned to you and new mentions notifications list each item on its own, neatly separated.",
+    ],
+  },
+  {
     version: "2.4.7-beta.11",
     date: "2026-11-18",
     items: [
