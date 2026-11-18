@@ -4,13 +4,13 @@
 // publishes the app-settings query into it (`usePublishAppSimpleMode`).
 //
 // While the settings are still loading the store reads as off (show
-// everything), the same rule the Auto Run mode follows. Capture mode (the
-// documentation screenshots) always reads as off, so the guide keeps showing
-// every screen.
+// everything), the same rule the Auto Run mode follows. In the documentation
+// screenshots the sample app answers the setting in memory (dev/demo.ts), off
+// until the one shot that documents the switch clicks it, so the guide keeps
+// showing every screen.
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useSyncExternalStore } from "react";
 import { commands } from "../bindings";
-import { isCaptureMode } from "../dev/capture";
 
 /** The key the app's settings are cached under (Settings, Background, ...). */
 const APP_SETTINGS_KEY = ["app-settings"] as const;
@@ -30,9 +30,9 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-/** Whether Simple mode is on right now. False while loading and in capture mode. */
+/** Whether Simple mode is on right now. False while loading. */
 export function appSimpleModeSnapshot(): boolean {
-  return !isCaptureMode() && loaded && on;
+  return loaded && on;
 }
 
 function loadedSnapshot(): boolean {

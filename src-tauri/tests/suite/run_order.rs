@@ -720,7 +720,7 @@ async fn a_suite_that_never_caught_up_is_ordered_for_what_it_has_and_says_so() {
     .await;
     assert_eq!(
         notes,
-        vec!["Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong.".to_string()]
+        vec!["Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong (Simple mode hides that screen; turn it off in Settings).".to_string()]
     );
     let patch = body_of(&server, wiremock::http::Method::PATCH, SUITE_PATH).await.expect("a reorder PATCH");
     assert_eq!(patched_ids(&patch), vec![101, 50]);

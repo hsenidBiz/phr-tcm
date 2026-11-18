@@ -1216,7 +1216,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "run_api_template",
-            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the account in the Auto Run browser the run is refused, and the answer says so: end the discovery first, or run as another account. An unconfirmed item is worth trying here; a replace changes it for every environment.",
+            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab, which you cannot open: If the app is in Simple mode, ask the person to turn Simple mode off in Settings. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the account in the Auto Run browser the run is refused, and the answer says so: end the discovery first, or run as another account. An unconfirmed item is worth trying here; a replace changes it for every environment.",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "string", "description": "The template's id, from list_api_templates." },
                 "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },

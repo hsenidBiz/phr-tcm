@@ -40,7 +40,7 @@ export const settings: Screen = {
     {
       id: SIMPLE,
       route: [OPEN, { scrollTo: { role: "switch", name: "Simple mode" } }, { click: { role: "switch", name: "Simple mode" } }],
-      alt: "The Simple mode switch in the General card, switched on",
+      alt: "The Simple mode switch in the General card, switched on, with the sidebar showing only the screens it keeps",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
@@ -69,7 +69,7 @@ export const settings: Screen = {
       id: "simple-mode",
       title: "Simple mode",
       summary:
-        "A shorter app. It hides Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, and switches every module on. Nothing is removed: turn it off and everything is back.",
+        "A shorter app. It hides Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, and switches the modules on. Nothing is removed: turn it off and everything is back.",
     },
     { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Run. Each module can be switched on once the one above it is. Hidden while Simple mode is on (Settings)." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
@@ -132,7 +132,7 @@ export const settings: Screen = {
       name: "Simple mode",
       does:
         "Hides Import, Update, Search Suites, Suite Management, API Templates and Modules. Everything keeps working, and your assistant can still use API Templates. " +
-        "Switching it on also switches every module on, so Auto Run and the rest are ready; switching it off leaves them on and brings the hidden screens back. " +
+        "Switching it on also switches the modules on, so Auto Run and the rest are ready; switching it off leaves them on and brings the hidden screens back. " +
         "A new installation starts with Simple mode on; an installation from before it existed keeps everything and starts with it off. " +
         "Anything that opens a hidden screen, a link or a shortcut, opens Auto Run instead. The switch waits while an unattended Auto Run run is going. If a module could not be switched on, a line under the switch names it; turn Simple mode off and on to try again.",
       tips: ["Your assistant cannot change this setting. If it needs a screen that Simple mode hides, it does that part itself or asks you to turn Simple mode off."],

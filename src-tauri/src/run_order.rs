@@ -126,7 +126,7 @@ pub fn settle_tries(created: usize) -> u32 {
     SETTLE_TRIES.saturating_add(extra).min(MAX_SETTLE_TRIES)
 }
 
-pub const NOTE_SUITE_BEHIND: &str = "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong.";
+pub const NOTE_SUITE_BEHIND: &str = "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong (Simple mode hides that screen; turn it off in Settings).";
 
 /// The queue indexes and work item ids that landed (created or updated) in
 /// this upload, in queue order. Built by submit_queue from its results, so

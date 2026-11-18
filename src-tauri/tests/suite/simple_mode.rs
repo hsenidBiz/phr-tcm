@@ -141,24 +141,82 @@ fn a_saved_value_is_never_overwritten() {
     assert!(st.is_empty());
 }
 
-const SIMPLE_MODE_NOTE: &str =
+/// The plan's line, for a part the assistant can do itself; and the form for a
+/// part only the person can do (an import, removing a template).
+const NOTE_FULL: &str =
     "If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings.";
+const NOTE_ASK: &str = "If the app is in Simple mode, ask the person to turn Simple mode off in Settings.";
 
 fn flat(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Every guide that sends a person to a screen Simple mode hides says what to
-/// do when that screen is not there.
+fn src_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+/// Every file under `dir` with one of `exts`.
+fn files_under(dir: &std::path::Path, exts: &[&str], out: &mut Vec<std::path::PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            files_under(&p, exts, out);
+        } else if p.extension().and_then(|x| x.to_str()).is_some_and(|x| exts.contains(&x)) {
+            out.push(p);
+        }
+    }
+}
+
+/// The text of a source file without its `//` comment lines.
+fn without_comments(src: &str) -> String {
+    src.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n")
+}
+
+/// Every guide text the assistant receives: the guide sources, the tool
+/// descriptions, the bridge's route modules and the role files. Wherever one
+/// names a screen Simple mode hides, it also says what to do when that screen
+/// is not there. (A tool name such as `list_api_templates` is not a screen.)
 #[test]
 fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
-    let guides = [
-        ("autorun/guide.rs", flat(&v2_lib::autorun::guide::autorun_guide())),
-        ("api_templates/guide.rs", flat(&v2_lib::api_templates::guide::text(&[], None))),
-        ("ai_bridge/guide_routes.rs", flat(include_str!("../../src/ai_bridge/guide_routes.rs"))),
+    const SCREENS: [&str; 6] = [
+        "Import Test Cases",
+        "Update Test Cases",
+        "Search Suites",
+        "Suite Management",
+        "API Templates",
+        "Settings, Modules",
     ];
-    for (name, text) in &guides {
-        assert!(text.contains(SIMPLE_MODE_NOTE), "{name} does not carry the Simple mode line");
+    let root = src_dir();
+    let mut files = vec![
+        root.join("autorun/guide.rs"),
+        root.join("api_templates/guide.rs"),
+        root.join("writing_style.rs"),
+        root.join("ai_tools.rs"),
+        root.join("mcp.rs"),
+    ];
+    files_under(&root.join("ai_bridge"), &["rs"], &mut files);
+    files_under(&root.join("autorun/roles"), &["md"], &mut files);
+
+    let mut named = 0;
+    for f in &files {
+        let raw = std::fs::read_to_string(f).unwrap();
+        let text = flat(&if f.extension().unwrap() == "rs" { without_comments(&raw) } else { raw });
+        let Some(screen) = SCREENS.iter().find(|s| text.contains(**s)) else { continue };
+        named += 1;
+        assert!(
+            text.contains(NOTE_FULL) || text.contains(NOTE_ASK),
+            "{} names {screen} but has no Simple mode line",
+            f.display()
+        );
+    }
+    assert!(named >= 4, "the scan found only {named} guide sources naming a hidden screen");
+
+    // The two forms are used where they fit: a part only the person can do
+    // never tells the assistant to do it itself.
+    for rel in ["ai_bridge/guide_routes.rs", "api_templates/guide.rs", "writing_style.rs"] {
+        let text = flat(&std::fs::read_to_string(root.join(rel)).unwrap());
+        assert!(!text.contains(NOTE_FULL), "{rel} tells the assistant to do the person's part");
+        assert!(text.contains(NOTE_ASK), "{rel} lacks the ask form");
     }
 }
 
@@ -166,15 +224,12 @@ fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
 /// may set it: the bridge only carries it, read-only, in /current-pbi.
 #[test]
 fn no_tool_or_route_sets_the_app_simple_mode() {
-    let sources = [
-        ("mcp.rs", include_str!("../../src/mcp.rs")),
-        ("ai_tools.rs", include_str!("../../src/ai_tools.rs")),
-        ("ai_bridge/mod.rs", include_str!("../../src/ai_bridge/mod.rs")),
-        ("ai_bridge/server.rs", include_str!("../../src/ai_bridge/server.rs")),
-        ("ai_bridge/guide_routes.rs", include_str!("../../src/ai_bridge/guide_routes.rs")),
-        ("ai_bridge/template_routes.rs", include_str!("../../src/ai_bridge/template_routes.rs")),
-    ];
-    for (name, src) in sources {
+    let root = src_dir();
+    let mut files = vec![root.join("mcp.rs"), root.join("ai_tools.rs")];
+    files_under(&root.join("ai_bridge"), &["rs"], &mut files);
+    assert!(files.len() > 20, "the scan found only {} files", files.len());
+    for f in &files {
+        let src = std::fs::read_to_string(f).unwrap();
         for (n, line) in src.lines().enumerate() {
             let writes = line.contains("set_app_simple_mode")
                 || line.contains("setAppSimpleMode")
@@ -182,7 +237,7 @@ fn no_tool_or_route_sets_the_app_simple_mode() {
                 || line.contains("app_simple_mode =")
                 || line.contains("app_simple_mode:") && !line.contains("Option<bool>")
                     && !line.contains("switches.app_simple_mode");
-            assert!(!writes, "{name}:{}: {line}", n + 1);
+            assert!(!writes, "{}:{}: {line}", f.display(), n + 1);
         }
     }
 }
