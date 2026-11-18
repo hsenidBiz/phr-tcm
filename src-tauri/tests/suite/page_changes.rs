@@ -232,3 +232,49 @@ fn page_whole_reads_the_option() {
     assert!(!page_whole(r#"{"page":"full"}"#));
     assert!(!page_whole("{}"));
 }
+
+// A changes answer names a landmark only as an ancestor of a change: it must
+// not replace what the reader is remembered to have of the other landmarks.
+
+fn two_menus(top_links: usize) -> Vec<AxNode> {
+    let top: Vec<String> = (0..top_links).map(|i| format!("t{i}")).collect();
+    let top_ids: Vec<&str> = top.iter().map(String::as_str).collect();
+    let mut nodes = vec![
+        ax("0", "RootWebArea", "App", &["side", "top", "main"]),
+        ax("side", "navigation", "Side menu", &["s0", "s1"]),
+        ax("top", "navigation", "Top bar", &top_ids),
+        ax("main", "main", "", &["b0"]),
+        ax("s0", "link", "Home", &[]),
+        ax("s1", "link", "Leave", &[]),
+        ax("b0", "button", "Save", &[]),
+    ];
+    for (i, id) in top.iter().enumerate() {
+        nodes.push(ax(id, "link", &format!("Top {i}"), &[]));
+    }
+    nodes
+}
+
+async fn route_read(address: &str, nodes: &[AxNode]) -> String {
+    use v2_lib::ai_bridge::compacted_with;
+    let (_, text) = compacted_with(SlotNo(4), "a:", false, Some(Mode::Changes), async {
+        note_address(address);
+        (200, render_frames_read(nodes, &[], 120).text)
+    })
+    .await;
+    text
+}
+
+#[tokio::test]
+async fn a_changes_answer_does_not_make_the_reader_forget_the_other_menus() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(4));
+    let first = route_read("https://h/p", &two_menus(2)).await;
+    assert!(first.contains("Home") && first.contains("Top 0"), "{first}");
+    let changed = route_read("https://h/p", &two_menus(3)).await;
+    assert!(changed.starts_with(CHANGES_HEADER), "{changed}");
+    assert!(changed.contains(" navigation \"Top bar\""), "the change sits under its landmark: {changed}");
+    let elsewhere = route_read("https://h/q", &two_menus(3)).await;
+    assert!(elsewhere.contains(&page_compact::unchanged_line(1, "Side menu")), "{elsewhere}");
+    assert!(elsewhere.contains("Top 2") && !elsewhere.contains("Top bar\" unchanged"), "the changed menu prints whole: {elsewhere}");
+    page_compact::forget(SlotNo(4));
+}

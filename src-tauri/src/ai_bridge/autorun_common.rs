@@ -152,7 +152,10 @@ pub async fn compacted_with<F: std::future::Future<Output = (u16, String)>>(
         None => scoped(known_for(n, owner, full), read).await,
     };
     if answer.0 == 200 {
-        if let Some(page) = page_of(&answer.1) {
+        // A changes answer names a landmark only as the ancestor of a change:
+        // it is not what the reader has of the page's landmarks.
+        use crate::autorun::page_changes::{CHANGES_HEADER, UNCHANGED_PAGE};
+        if let Some(page) = page_of(&answer.1).filter(|p| !p.lines().any(|l| l == CHANGES_HEADER || l == UNCHANGED_PAGE)) {
             remember(n, owner, &page);
         }
     }
