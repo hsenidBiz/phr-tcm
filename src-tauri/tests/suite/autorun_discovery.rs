@@ -6400,3 +6400,292 @@ async fn a_failed_answer_remembers_nothing() {
     assert!(third.starts_with(UNCHANGED_PAGE), "{third}");
     v2_lib::autorun::page_compact::forget(v2_lib::autorun::slots::SlotNo(2));
 }
+
+// ------------------------------------------------------------- fill_form
+
+/// One control of the fake form: whether it is on the page now, and what
+/// it is.
+#[derive(Clone)]
+struct FormControl {
+    role: &'static str,
+    name: &'static str,
+    tag: &'static str,
+    kind: &'static str,
+    shown: Arc<AtomicBool>,
+    checked: bool,
+}
+
+fn form_control(role: &'static str, name: &'static str, tag: &'static str, kind: &'static str) -> FormControl {
+    FormControl { role, name, tag, kind, shown: Arc::new(AtomicBool::new(true)), checked: false }
+}
+
+fn text_box(name: &'static str) -> FormControl {
+    form_control("textbox", name, "input", "text")
+}
+
+/// A page whose accessibility queries answer from `controls` (those shown),
+/// whose actions work as on `FakePage`, and which holds one Save button.
+/// Text typed is recorded in `typed`; typing `reveals.0` shows `reveals.1`.
+fn form_page(
+    controls: Vec<FormControl>,
+    typed: Arc<Mutex<Vec<String>>>,
+    reveals: Option<(&'static str, Arc<AtomicBool>)>,
+) -> ScriptedDriver {
+    let page = FakePage { href: "https://hr.example.internal/hr/leave/form?token=t0p-secret", ..FakePage::default() };
+    ScriptedDriver::new(move |method, params| {
+        let on = params["objectId"].as_str().unwrap_or("").to_string();
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let at = |on: &str| on.strip_prefix("el").and_then(|n| n.parse::<usize>().ok()).and_then(|i| controls.get(i));
+        match method {
+            "Accessibility.getFullAXTree" => Ok(buttons_tree(&["Save".to_string()])),
+            "Accessibility.queryAXTree" => {
+                let role = params["role"].as_str().unwrap_or("");
+                let nodes: Vec<Value> = controls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.role == role && c.shown.load(Ordering::SeqCst))
+                    .map(|(i, c)| json!({ "name": { "value": c.name }, "backendDOMNodeId": i as i64 }))
+                    .collect();
+                Ok(json!({ "nodes": nodes }))
+            }
+            "DOM.resolveNode" => Ok(json!({ "object": { "objectId": format!("el{}", params["backendNodeId"]) } })),
+            "DOM.describeNode" => {
+                Ok(json!({ "node": { "backendNodeId": on.trim_start_matches("el").parse::<i64>().unwrap_or(0) } }))
+            }
+            "Runtime.callFunctionOn" if f.contains("editable: this.isContentEditable") => {
+                let c = at(&on).expect("a control");
+                Ok(json!({ "result": { "value": {
+                    "tag": c.tag, "type": c.kind, "editable": false, "checked": c.checked
+                } } }))
+            }
+            "Runtime.callFunctionOn" if f.contains("IFRAME") => Ok(json!({ "result": { "value": "element" } })),
+            "Input.insertText" => {
+                let text = params["text"].as_str().unwrap_or("").to_string();
+                if let Some((trigger, shown)) = &reveals {
+                    if text == *trigger {
+                        shown.store(true, Ordering::SeqCst);
+                    }
+                }
+                typed.lock().unwrap().push(text);
+                page.answer(method, params)
+            }
+            _ => page.answer(method, params),
+        }
+    })
+    .with_net_record()
+}
+
+fn fill_form_action(raw: Value) -> Action {
+    v2_lib::autorun::action_help::fill_form_from(&raw).expect("is fill_form").expect("accepted")
+}
+
+/// The line of a batch's answer for field `label`.
+fn field_line<'a>(text: &'a str, label: &str) -> &'a str {
+    text.lines()
+        .find(|l| l.trim_start().starts_with(&format!("{label}:")))
+        .unwrap_or_else(|| panic!("no line for {label}: {text}"))
+}
+
+/// The actions a step listed, as it printed them.
+fn listed_actions(text: &str) -> Vec<Value> {
+    let line =
+        text.lines().find(|l| l.trim_start().starts_with("actions: ")).unwrap_or_else(|| panic!("no actions line: {text}"));
+    serde_json::from_str(line.trim_start().trim_start_matches("actions: ")).unwrap()
+}
+
+#[tokio::test]
+async fn fill_form_runs_each_field_and_lists_the_actions() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let page = form_page(vec![text_box("First name"), text_box("Last name")], typed.clone(), None);
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("1. fill_form\n"), "{text}");
+    let first = field_line(&text, "First name");
+    assert!(first.contains("ok {\"kind\":\"fill\""), "{text}");
+    assert!(first.contains("\"name\":\"First name\"") && first.contains("\"value\":\"Ann\""), "{text}");
+    assert!(field_line(&text, "Last name").contains("\"value\":\"Lee\""), "{text}");
+    let listed = listed_actions(&text);
+    assert_eq!(listed.len(), 2, "{text}");
+    assert_eq!((listed[0]["kind"].as_str(), listed[1]["kind"].as_str()), (Some("fill"), Some("fill")));
+    assert_eq!(*typed.lock().unwrap(), ["Ann", "Lee"]);
+    assert!(!text.contains('\u{1}') && !text.contains("hr.example.internal") && !text.contains("t0p-secret"), "{text}");
+    // Both locators were filed as seen on the page they were found on.
+    let seen = sighted(dir.path(), "Leave");
+    assert!(seen.contains(&"First name".to_string()) && seen.contains(&"Last name".to_string()), "{seen:?}");
+}
+
+#[tokio::test]
+async fn a_failed_field_stops_the_step_by_default() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let secret = form_control("textbox", "Secret", "input", "password");
+    let page = form_page(vec![text_box("First name"), secret, text_box("Last name")], typed.clone(), None);
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Secret": "hunter2-value", "Last name": "Lee" } }),
+    );
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "Secret").contains("failed: passwords are never typed by an assistant"), "{text}");
+    assert!(text.contains("Stopped at the failure: 1 field was not run."), "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field after the failure ran");
+    assert_eq!(listed_actions(&text).len(), 1);
+    // The stand-in the step travels as never reaches the answer, and no
+    // value of the failed field does either.
+    assert!(!text.contains('\u{1}') && !text.contains("fill_form:") && !text.contains("hunter2-value"), "{text}");
+}
+
+#[tokio::test]
+async fn stop_on_failure_false_carries_on() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let page = form_page(vec![text_box("First name"), text_box("Last name")], typed.clone(), None);
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Nowhere": "x", "Last name": "Lee" } }),
+    );
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, false, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "Nowhere").contains("failed: no form control is named \"Nowhere\""), "{text}");
+    assert!(field_line(&text, "Last name").contains("ok {"), "{text}");
+    assert!(!text.contains("not run"), "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann", "Lee"]);
+    assert_eq!(listed_actions(&text).len(), 2);
+}
+
+/// One `fill_form` is a batch of one, and the failure that stopped it stops
+/// the batch after it too.
+#[tokio::test]
+async fn a_single_fill_form_action_answers_like_a_batch() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (mut browser, _) = slot(form_page(vec![text_box("First name")], typed.clone(), None), exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann" } }));
+    let (status, text) = v2_lib::ai_bridge::discover_actions_paged(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        std::slice::from_ref(&form),
+        None,
+        None,
+        true,
+        &no_stop(),
+        false,
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("1. fill_form\n") && text.contains("   First name: ok {"), "{text}");
+    assert!(text.ends_with(&format!("\n\nPage: {}", v2_lib::ai_bridge::PAGE_LEFT_OUT)), "{text}");
+
+    // Followed by an action, a failed field stops it: the action is not run.
+    let (mut browser, _) = slot(form_page(vec![text_box("First name")], typed.clone(), None), exploring("Leave"));
+    let bad = fill_form_action(json!({ "kind": "fill_form", "fields": { "Nowhere": "x" } }));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[bad, click("#a")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("Stopped at the failure: 1 action was not run."), "{text}");
+}
+
+/// The route takes a single `fill_form` as a batch of one: with no
+/// discovery going it is the discovery's own answer, not a refusal of the
+/// action.
+#[tokio::test]
+async fn the_single_action_route_takes_a_fill_form() {
+    let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    set_root(dir.path().to_path_buf());
+    let body = json!({ "action": { "kind": "fill_form", "fields": { "First name": "Ann" } } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert!(!out.contains("not an action kind"), "{out}");
+}
+
+#[tokio::test]
+async fn fill_form_counts_as_one_of_twenty() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let names = ["A1", "A2", "A3", "A4", "A5"];
+    let controls: Vec<FormControl> = names.iter().map(|n| text_box(n)).collect();
+    let (mut browser, _) = slot(form_page(controls, typed.clone(), None), exploring("Leave"));
+    let fields: serde_json::Map<String, Value> = names.iter().map(|n| (n.to_string(), json!("v"))).collect();
+    let mut actions: Vec<Action> = (0..19).map(|_| click("#a")).collect();
+    actions.insert(7, fill_form_action(json!({ "kind": "fill_form", "fields": fields })));
+    assert_eq!(actions.len(), 20);
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\n8. fill_form\n"), "{text}");
+    assert!(text.contains("\n20. ok: "), "{text}");
+    assert_eq!(typed.lock().unwrap().len(), 5);
+}
+
+/// Review focus 5: each field is matched just before it runs, so one an
+/// earlier field shows is found.
+#[tokio::test]
+async fn a_field_shown_by_an_earlier_field_is_found() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let state = text_box("State");
+    state.shown.store(false, Ordering::SeqCst);
+    let shown = state.shown.clone();
+    let page = form_page(vec![text_box("Country"), state], typed.clone(), Some(("Canada", shown)));
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "Country": "Canada", "State": "Ontario" } }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "State").contains("ok {"), "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Canada", "Ontario"]);
+}
+
+/// A `within` that matched two is narrowed and said so, each locator is
+/// written inside it and filed whole.
+#[tokio::test]
+async fn a_within_that_matched_two_is_narrowed_and_filed_whole() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let controls = vec![
+        form_control("dialog", "Add employee", "div", ""),
+        form_control("dialog", "Add employee", "div", ""),
+        text_box("First name"),
+    ];
+    let (mut browser, _) = slot(form_page(controls, typed.clone(), None), exploring("Leave"));
+    let form = fill_form_action(json!({
+        "kind": "fill_form",
+        "within": { "role": "dialog", "name": "Add employee" },
+        "fields": { "First name": "Ann" }
+    }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("1. fill_form (within dialog \"Add employee\": matched 2, the first used - nth 0)\n"), "{text}");
+    let listed = listed_actions(&text);
+    assert_eq!(listed[0]["selector"].as_array().map(Vec::len), Some(2), "{text}");
+    assert_eq!(listed[0]["selector"][0]["nth"], 0, "{text}");
+    let wholes = mapped_area(dir.path(), "Leave").expect("area").wholes;
+    assert!(wholes.iter().any(|w| w.locator.links().len() == 2 && w.matched == 1), "no whole filed");
+}
+
+/// The stand-in is never run as the check it is marked as: tried on its own
+/// it fails in words that carry no value.
+#[tokio::test]
+async fn the_stand_in_never_reaches_the_runner() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "very-private-value" } }));
+    let (status, out) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &form, None, None).await;
+    assert_eq!(status, 200, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["ok"], false, "{out}");
+    assert!(!out.contains("very-private-value") && !out.contains("\\u0001"), "{out}");
+}

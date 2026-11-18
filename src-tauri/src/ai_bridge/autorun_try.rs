@@ -573,6 +573,9 @@ pub(crate) fn remember_tried(
     remember_refusals_logged(root, organization, project, area.as_deref(), rules);
 }
 
+/// Said when a `fill_form` is tried where its fields cannot be expanded.
+pub(crate) const FILL_FORM_NOT_HERE: &str = "fill_form is filled in by discover_autorun_actions, field by field";
+
 /// One action, carried out by the runner's own step loop as a step of one
 /// numbered 0 (`try_in_area` says why), with what it acted on filed when it
 /// worked. `saves_only_counted` is a mapping run's: a stopped save never
@@ -596,6 +599,14 @@ pub(crate) async fn try_action<D: crate::browser::cdp::Driver>(
     // A discovery's `screenshot` takes a picture and acts on nothing.
     if let Some(full_page) = crate::autorun::action_help::screenshot_ask(action) {
         let outcome = take_picture(d, root, full_page).await;
+        let answered = vec![(describe_action(action), outcome.clone())];
+        return Ok(Tried { outcome, dialog: None, steps: Vec::new(), answered });
+    }
+    // A `fill_form` is expanded by the batch that carries it, field by field,
+    // and never reaches the runner: its stand-in would put the values in a
+    // failure's words.
+    if crate::autorun::action_help::fill_form_ask(action).is_some() {
+        let outcome = crate::browser::actions::ActionOutcome::failed(FILL_FORM_NOT_HERE.to_string());
         let answered = vec![(describe_action(action), outcome.clone())];
         return Ok(Tried { outcome, dialog: None, steps: Vec::new(), answered });
     }

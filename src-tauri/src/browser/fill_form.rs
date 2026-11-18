@@ -7,7 +7,6 @@ use super::cdp::{CdpError, Driver};
 use super::locator::{resolve, LocatorStep, Target};
 use super::page;
 use crate::autorun::action_help::FieldValue;
-use serde_json::json;
 
 /// The roles a label may name.
 pub const FORM_ROLES: [&str; 8] =

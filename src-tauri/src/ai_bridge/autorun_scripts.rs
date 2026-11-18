@@ -24,6 +24,13 @@ pub(crate) async fn autorun_component_save(
     if let Some(r) = v.get("actions").and_then(crate::autorun::forbidden_fixes::forbidden_in) {
         return (400, r);
     }
+    // What is sent to be saved is held to what a script's is: no discovery-only
+    // action, whether named or in its stand-in's disguise.
+    for action in v.get("actions").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        if let Err(why) = crate::autorun::action_help::refuse_raw_saved_action(action) {
+            return (400, why);
+        }
+    }
     let draft: Component = match serde_json::from_value(v.clone()) {
         Ok(c) => c,
         Err(e) => return (400, format!("that is not a component: {e}. Expected {SHAPE}.")),
