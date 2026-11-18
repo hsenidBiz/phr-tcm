@@ -54,7 +54,7 @@ import SignInProposalNotice from "./SignInProposalNotice";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
-import { BLOCKER_NOTE, NEVER_SHOWN_IN_SIMPLE, blockingRows, fixtureBlock, shownInSimple, type SetupRowName } from "./blocksRun";
+import { BLOCKER_NOTE, blockingRows, fixtureBlock, shownInSimple, type SetupRowName } from "./blocksRun";
 import { useAutoRunMode } from "./useAutoRunMode";
 
 /** Everything the Setup panel reports, and what the screen needs to know
@@ -190,6 +190,9 @@ export function useAutoRunSetup({
    * hides them. The fixtures entries of the header's reasons below use the
    * same `fixtureBlock` test; its other reasons are its own. */
   const blocking = blockingRows({ signIn, recipeUnreadable: setupReady && recipe.isError, discovering, fixturesFailed, fixturesFailedHere });
+  /** Whether the Fixtures row, and so its header reasons, is shown: Simple
+   * never shows it. */
+  const fixturesShown = !inSimple || shownInSimple("Fixtures", blocking);
   /** What the panel's "Needs attention" is about, each as a few words for
    * its header: something a run cannot go without is missing, or could not
    * be read, or a script uploads a file the Test files folder does not
@@ -204,7 +207,7 @@ export function useAutoRunSetup({
     ...(readiness.missingTestFiles.length > 0
       ? [`${plural(readiness.missingTestFiles.length, "test file")} missing`]
       : []),
-    ...(fixtureBlock(fixturesFailed, fixturesFailedHere) && !(inSimple && NEVER_SHOWN_IN_SIMPLE.has("Fixtures"))
+    ...(fixtureBlock(fixturesFailed, fixturesFailedHere) && fixturesShown
       ? [
           ...(fixturesFailedHere > 0 ? [`${plural(fixturesFailedHere, "fixture")} failed here - ask the assistant`] : []),
           ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),

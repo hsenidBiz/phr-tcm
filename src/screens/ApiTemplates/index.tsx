@@ -1,4 +1,5 @@
 import { define, Term } from "../../components/Term";
+import { GROUP_BODY, GROUP_COLUMN, GROUP_HEADER_ROW } from "../../components/ui/group-header";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -429,10 +430,10 @@ export default function ApiTemplates({
               No {view === "flows" ? "flow" : "template"} matches “{search.trim()}”.
             </p>
           ) : (
-            <div className="space-y-2">
+            <div className={GROUP_COLUMN}>
               {groups.map(({ module, flows: moduleFlows, list }) => (
-                <section key={module} aria-label={module} className="space-y-1">
-                  <div className="flex w-full items-center gap-3 pb-1">
+                <section key={module} aria-label={module} className={GROUP_BODY}>
+                  <div className={GROUP_HEADER_ROW}>
                     {/* The chevron and the title both fold the group - clicking
                         the name is how people expect to open one. */}
                     <button

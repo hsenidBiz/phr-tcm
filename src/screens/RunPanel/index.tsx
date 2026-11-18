@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { GROUP_BODY, GROUP_COLUMN, GROUP_HEADER_ROW } from "../../components/ui/group-header";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { ListSkeleton } from "../../components/ui/list-skeleton";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { clickHow, useRowSelection } from "../../lib/useRowSelection";
@@ -674,12 +675,13 @@ export default function RunPanel({
               </thead>
             </table>
           )}
+          <div className={GROUP_COLUMN}>
           {sections.map(({ name, pts }) => {
             const shown = visibleRows(name, pts);
             return (
-              <Fragment key={name || "__all"}>
+              <div key={name || "__all"} className={GROUP_BODY}>
                 {name && (
-                      <div className="flex w-full items-center gap-3 px-2 pb-1 pt-1">
+                      <div className={`${GROUP_HEADER_ROW} px-2`}>
                         {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                         <button
                           aria-label={`${collapsedGroups.has(name) ? "Expand" : "Collapse"} group ${name}`}
@@ -742,9 +744,10 @@ export default function RunPanel({
                 />
                 </table>
                 </Collapse>
-              </Fragment>
+              </div>
             );
           })}
+          </div>
         </div>
       )}
 

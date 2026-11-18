@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { GROUP_HEADER_ROW } from "../../components/ui/group-header";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
@@ -455,7 +456,7 @@ export default function ExistingCases({
         {ordered.map(({ group, items }) => (
           <div key={group || "__all"} className="space-y-1">
             {group && (
-              <div className="flex w-full items-center gap-3 pb-1">
+              <div className={GROUP_HEADER_ROW}>
                 {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                 <button
                   aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}

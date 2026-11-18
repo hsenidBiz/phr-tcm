@@ -1665,7 +1665,8 @@ pub fn simple_now() -> bool {
     crate::app_settings::current().autorun_mode == Some(crate::app_settings::AutorunMode::Simple)
 }
 
-/// What the Areas dialog and `auto_run_set_direct_urls` say in Simple.
+/// What `auto_run_set_direct_urls` answers while Auto Run is in Simple (the
+/// Areas dialog hides the switch there, so a person never sees it).
 pub const SIMPLE_NO_ADDRESS_CHANGE: &str = "Switch Auto Run to Advanced to change this.";
 
 /// While the switch is off, a script with any `navigate` (absolute or

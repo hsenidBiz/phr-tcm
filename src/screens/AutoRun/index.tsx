@@ -6,6 +6,7 @@
 // person reviewing a finished run and pressing Send (`RunReview`) is the
 // one door out - see `autorun::publish` on the Rust side.
 
+import { GROUP_HEADER_ROW } from "../../components/ui/group-header";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent } from "react";
@@ -1053,7 +1054,7 @@ export default function AutoRun({
                     const shut = collapsed.has(label);
                     return (
                       <div key={label} className="space-y-1">
-                        <div className="flex w-full items-center gap-3 pb-1">
+                        <div className={GROUP_HEADER_ROW}>
                           {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                           <button
                             aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}

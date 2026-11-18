@@ -2198,6 +2198,7 @@ test("the group header row has no top padding, so the gap above equals the gap b
   const header = (await screen.findByRole("checkbox", { name: "Select all in Login" })).parentElement!;
   expect(header).toHaveClass("pb-1");
   expect(header).not.toHaveClass("pt-2");
+  expect(header).not.toHaveClass("pt-1");
 });
 
 test("Advanced shows Import scripts and Clear scripts", async () => {
