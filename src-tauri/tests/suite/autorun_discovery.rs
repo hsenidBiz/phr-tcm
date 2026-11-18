@@ -6689,3 +6689,80 @@ async fn the_stand_in_never_reaches_the_runner() {
     assert_eq!(v["ok"], false, "{out}");
     assert!(!out.contains("very-private-value") && !out.contains("\\u0001"), "{out}");
 }
+
+/// Each field is one action of the call: what the page showed one field is
+/// on that field's line and not repeated on the next.
+#[tokio::test]
+async fn a_message_one_field_raised_is_not_repeated_on_the_next() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut typed_n = 0usize;
+    let d = form_page(vec![text_box("First name"), text_box("Last name")], typed.clone(), None).answering_first(
+        move |method, params| {
+            if method == "Input.insertText" {
+                typed_n += 1;
+                return None;
+            }
+            if method == "Runtime.evaluate" && params["expression"] == v2_lib::browser::page_messages::READ_JS {
+                let messages: Vec<Value> =
+                    if typed_n == 1 { vec![json!({ "text": "Saved.", "where": "page" })] } else { vec![] };
+                return Some(Ok(json!({ "result": { "value": {
+                    "messages": messages, "step": null, "path": "/hr/leave/form"
+                } } })));
+            }
+            None
+        },
+    );
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "First name").contains(r#"the page showed: "Saved.""#), "{text}");
+    assert!(!field_line(&text, "Last name").contains("the page showed"), "repeated on the next field: {text}");
+}
+
+/// A refusal found only after a field that worked had ended stops the step
+/// before the next field, and says which field it was; the field's own line
+/// stays ok with the refusal on it.
+#[tokio::test]
+async fn a_late_refusal_after_a_field_stops_the_step() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut d = form_page(vec![text_box("First name"), text_box("Last name")], typed.clone(), None).answering_first(
+        |method, _| (method == "Network.getResponseBody").then(|| Ok(json!({ "body": REFUSED_BODY, "base64Encoded": false }))),
+    );
+    refused_after_the_first_action(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "First name").contains("ok {") && field_line(&text, "First name").contains("the app refused"), "{text}");
+    assert!(text.contains("Stopped: the app refused First name after it ended: 1 field not run."), "{text}");
+    assert!(!text.contains("Last name: ok"), "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field after the refusal ran");
+}
+
+/// A refusal of the last field, found once the step had ended, stops the
+/// batch before its next action.
+#[tokio::test]
+async fn a_late_refusal_of_a_forms_last_field_stops_the_next_action() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut d = form_page(vec![text_box("First name")], typed.clone(), None).answering_first(
+        |method, _| (method == "Network.getResponseBody").then(|| Ok(json!({ "body": REFUSED_BODY, "base64Encoded": false }))),
+    );
+    refused_after_the_first_action(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann" } }));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("Stopped: the app refused action 1 (fill_form 1 field, field First name) after it ended: 1 not run."), "{text}");
+    let b = browser.as_ref().unwrap();
+    let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
+    assert_eq!(released, 0, "the action after the refusal ran");
+}
