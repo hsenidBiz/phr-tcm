@@ -1652,10 +1652,26 @@ pub fn no_address(step: i32) -> String {
     )
 }
 
+/// Whether scripts may open pages by address: the project's saved switch,
+/// and never while Auto Run is in Simple mode. The saved value is not
+/// changed by Simple, so Advanced brings the person's choice back. Every
+/// reader of the switch goes through here.
+pub fn direct_urls_allowed(nav: &NavFile, simple: bool) -> bool {
+    nav.direct_urls && !simple
+}
+
+/// Whether Auto Run is in Simple mode now.
+pub fn simple_now() -> bool {
+    crate::app_settings::current().autorun_mode == Some(crate::app_settings::AutorunMode::Simple)
+}
+
+/// What the Areas dialog and `auto_run_set_direct_urls` say in Simple.
+pub const SIMPLE_NO_ADDRESS_CHANGE: &str = "Switch Auto Run to Advanced to change this.";
+
 /// While the switch is off, a script with any `navigate` (absolute or
 /// relative) cannot be saved. Names the first case and step it finds.
-pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> {
-    if nav.direct_urls {
+pub fn check_no_addresses(nav: &NavFile, simple: bool, scripts: &[CaseScript]) -> Result<(), String> {
+    if direct_urls_allowed(nav, simple) {
         return Ok(());
     }
     for sc in scripts {
@@ -1705,7 +1721,7 @@ pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> 
 /// repair included).
 pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
     let nav = load_nav(root, org, project)?;
-    check_no_addresses(&nav, scripts)?;
+    check_no_addresses(&nav, simple_now(), scripts)?;
     check_areas(&nav, scripts)?;
     super::marks::check_saved(scripts)?;
     super::page_errors::check_saved(scripts)?;
@@ -1717,9 +1733,9 @@ pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[Cas
 /// What an assistant's guide gains for this project: the module-screen
 /// rule while the switch is off, and the recorded areas while there are
 /// any. Empty when neither applies.
-pub fn guide_section(nav: &NavFile) -> String {
+pub fn guide_section(nav: &NavFile, simple: bool) -> String {
     let mut out = String::new();
-    if !nav.direct_urls {
+    if !direct_urls_allowed(nav, simple) {
         out.push_str(
             "## This project's runs start on the module screen\n\n\
              - The run signs in and goes to the case's module screen before step 1, by the menu path recorded in the app.\n\

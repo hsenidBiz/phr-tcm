@@ -54,7 +54,7 @@ import SignInProposalNotice from "./SignInProposalNotice";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
-import { BLOCKER_NOTE, blockingRows, fixtureBlock, shownInSimple, type SetupRowName } from "./blocksRun";
+import { BLOCKER_NOTE, NEVER_SHOWN_IN_SIMPLE, blockingRows, fixtureBlock, shownInSimple, type SetupRowName } from "./blocksRun";
 import { useAutoRunMode } from "./useAutoRunMode";
 
 /** Everything the Setup panel reports, and what the screen needs to know
@@ -184,6 +184,8 @@ export function useAutoRunSetup({
   const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
 
   const discovering = useDiscoveryActive();
+  const { mode: runMode, loading: runModeLoading } = useAutoRunMode();
+  const inSimple = !runModeLoading && runMode === "simple";
   /** The rows that stop a run now, which Simple mode shows again when it
    * hides them. The fixtures entries of the header's reasons below use the
    * same `fixtureBlock` test; its other reasons are its own. */
@@ -202,7 +204,7 @@ export function useAutoRunSetup({
     ...(readiness.missingTestFiles.length > 0
       ? [`${plural(readiness.missingTestFiles.length, "test file")} missing`]
       : []),
-    ...(fixtureBlock(fixturesFailed, fixturesFailedHere)
+    ...(fixtureBlock(fixturesFailed, fixturesFailedHere) && !(inSimple && NEVER_SHOWN_IN_SIMPLE.has("Fixtures"))
       ? [
           ...(fixturesFailedHere > 0 ? [`${plural(fixturesFailedHere, "fixture")} failed here - ask the assistant`] : []),
           ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),

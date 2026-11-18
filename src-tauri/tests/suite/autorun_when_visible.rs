@@ -119,7 +119,7 @@ fn a_navigate_inside_a_guard_is_still_an_address() {
     ] }))
     .unwrap();
     let off = NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] };
-    assert_eq!(check_no_addresses(&off, &[sc]).unwrap_err(), format!("case 7: {}", no_address(2)));
+    assert_eq!(check_no_addresses(&off, false, &[sc]).unwrap_err(), format!("case 7: {}", no_address(2)));
 }
 
 fn step(actions: Vec<Action>) -> StepScript {

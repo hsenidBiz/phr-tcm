@@ -776,6 +776,7 @@ export default function AutoRun({
         open={openHere.has(c.id)}
         highlighted={highlightId === c.id}
         runBlocked={runBlocked}
+        hideRun={simple}
         confirmingClear={confirmingClear === c.id}
         divergences={divergencesByCase[c.id] ?? EMPTY}
         lastRun={lastRunOf.get(c.id)}
@@ -965,7 +966,7 @@ export default function AutoRun({
                       clicks. Off while nothing shown could be run. */}
                   <label
                     className={cn(
-                      "flex h-10 items-center gap-2 text-xs",
+                      "flex h-10 items-center gap-2 text-sm",
                       shownRunnable.length === 0 ? "text-faint" : "cursor-pointer text-muted",
                     )}
                   >
@@ -986,21 +987,20 @@ export default function AutoRun({
                       Disabled rather than hidden: an item that vanishes the
                       moment it would do nothing invites "where did it go".
                       Danger only on hover, and it still asks first. */}
+                  {/* Every item is an authoring action: Simple has none left, so no
+                      More button there. Advanced, and the mode loading, show it. */}
+                  {!simple && (
                   <span className="ml-auto">
                     <MoreActionsMenu
                       label="More"
+                      toolbar
                       actions={[
-                        // Authoring actions: Advanced only, and shown while the mode loads.
-                        ...(simple
-                          ? []
-                          : [
-                              {
-                                label: "Import scripts",
-                                description: "One JSON file can carry every case in this PBI.",
-                                disabled: importScripts.isPending,
-                                onSelect: () => importScripts.mutate(),
-                              },
-                            ]),
+                        {
+                          label: "Import scripts",
+                          description: "One JSON file can carry every case in this PBI.",
+                          disabled: importScripts.isPending,
+                          onSelect: () => importScripts.mutate(),
+                        },
                         {
                           label: "Execution order",
                           description: "The order Auto Run uses for this PBI, and where the shared state is put back.",
@@ -1023,19 +1023,16 @@ export default function AutoRun({
                               },
                             ]
                           : []),
-                        ...(simple
-                          ? []
-                          : [
-                              {
-                                label: "Clear scripts",
-                                danger: true,
-                                disabled: !rows.some((_, i) => hasScript(i)),
-                                onSelect: () => setClearScriptsOpen(true),
-                              },
-                            ]),
+                        {
+                          label: "Clear scripts",
+                          danger: true,
+                          disabled: !rows.some((_, i) => hasScript(i)),
+                          onSelect: () => setClearScriptsOpen(true),
+                        },
                       ]}
                     />
                   </span>
+                  )}
                 </ListToolbar>
 
                 {cases.isLoading && <ListSkeleton label="Loading test cases…" rows={5} />}
@@ -1056,7 +1053,7 @@ export default function AutoRun({
                     const shut = collapsed.has(label);
                     return (
                       <div key={label} className="space-y-1">
-                        <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                        <div className="flex w-full items-center gap-3 pb-1">
                           {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                           <button
                             aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
@@ -1116,17 +1113,20 @@ export default function AutoRun({
                         {/* One run at a time, said in words beside the
                             buttons it holds back, not only in a title. */}
                         {runGoing && <span className="text-xs text-muted">A run is already going</span>}
-                        <Button
-                          size="sm"
-                          tabIndex={floating ? -1 : undefined}
-                          className="disabled:pointer-events-auto"
-                          disabled={planning || Boolean(runBlocked)}
-                          title={runBlocked}
-                          onClick={() => void startPlanned("supervised")}
-                        >
-                          <IconRun aria-hidden />
-                          Run {selectedInOrder.length} selected
-                        </Button>
+                        {/* Simple runs unattended only: no step-by-step run. */}
+                        {!simple && (
+                          <Button
+                            size="sm"
+                            tabIndex={floating ? -1 : undefined}
+                            className="disabled:pointer-events-auto"
+                            disabled={planning || Boolean(runBlocked)}
+                            title={runBlocked}
+                            onClick={() => void startPlanned("supervised")}
+                          >
+                            <IconRun aria-hidden />
+                            Run {selectedInOrder.length} selected
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"

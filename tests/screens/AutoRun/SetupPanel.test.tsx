@@ -135,13 +135,23 @@ test("discovery_row_shows_in_simple_only_while_a_discovery_holds_the_browser", a
   expect(within(panel()).queryByText(NOTE)).not.toBeInTheDocument();
 });
 
-test("a failed fixture shows the Fixtures row with the note in Simple", async () => {
+test("a failed fixture stays hidden in Simple: no Fixtures row, no header reason", async () => {
   mount({ mode: "simple", fixtures: [FAILED_HERE] });
   await expand();
-  expect(await within(panel()).findByRole("group", { name: "Fixtures" })).toBeInTheDocument();
-  expect(within(panel()).getByText(NOTE)).toBeInTheDocument();
+  expect(row("Fixtures")).not.toBeInTheDocument();
+  expect(within(panel()).queryByText(NOTE)).not.toBeInTheDocument();
+  expect(panel()).not.toHaveTextContent(/fixture/i);
+  expect(within(panel()).queryByText("Needs attention")).not.toBeInTheDocument();
   expect(row("Discovery")).not.toBeInTheDocument();
   expect(row("Components")).not.toBeInTheDocument();
+});
+
+test("a failed fixture still shows the Fixtures row and the header reason in Advanced", async () => {
+  mount({ mode: "advanced", fixtures: [FAILED_HERE] });
+  await expand();
+  expect(await within(panel()).findByRole("group", { name: "Fixtures" })).toBeInTheDocument();
+  expect(within(panel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(panel()).toHaveTextContent("1 fixture failed here - ask the assistant");
 });
 
 test("in Simple the Sign-in row says Ready, not the recipe's own words", async () => {

@@ -1158,7 +1158,7 @@ async fn run_expanded<D: Driver>(
         organization,
         project,
         policy: &policy,
-        direct_urls: nav_file.direct_urls,
+        direct_urls: nav::direct_urls_allowed(&nav_file, nav::simple_now()),
         step: step.step_number,
         popups,
         loaders,

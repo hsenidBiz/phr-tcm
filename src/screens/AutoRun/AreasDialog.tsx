@@ -26,6 +26,7 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { areaKey, sameAreaName } from "../../lib/areaName";
+import { useAutoRunMode } from "./useAutoRunMode";
 
 type Phase =
   | { kind: "list" }
@@ -69,6 +70,10 @@ export default function AreasDialog({
   // What it holds is this environment's: it never outlives a switch.
   useCloseOnEnvironmentChange(onClose);
   const qc = useQueryClient();
+  const { mode, loading: modeLoading } = useAutoRunMode();
+  /** Simple never lets a script open a page by address, so the switch is
+   * not offered there; its saved choice is kept for Advanced. */
+  const simple = !modeLoading && mode === "simple";
   const navKey = ["autorun-nav", org, project];
   const nav = useQuery({
     queryKey: navKey,
@@ -390,19 +395,23 @@ export default function AreasDialog({
         </div>
       )}
 
-      <label className="flex items-center gap-2 text-xs text-muted">
-        <Switch
-          checked={nav.data?.direct_urls ?? true}
-          ariaLabel="Scripts may open pages by address"
-          disabled={!nav.data || setDirect.isPending}
-          onCheckedChange={(on) => setDirect.mutate(on)}
-        />
-        Scripts may open pages by address
-      </label>
-      <p className="text-xs text-faint">
-        Off: a script with a navigate step cannot be saved, and every run starts on the case's module
-        screen.
-      </p>
+      {!simple && (
+        <>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <Switch
+              checked={nav.data?.direct_urls ?? true}
+              ariaLabel="Scripts may open pages by address"
+              disabled={!nav.data || setDirect.isPending}
+              onCheckedChange={(on) => setDirect.mutate(on)}
+            />
+            Scripts may open pages by address
+          </label>
+          <p className="text-xs text-faint">
+            Off: a script with a navigate step cannot be saved, and every run starts on the case's module
+            screen.
+          </p>
+        </>
+      )}
 
       <label className="flex items-center gap-2 text-xs text-muted">
         Record and try as

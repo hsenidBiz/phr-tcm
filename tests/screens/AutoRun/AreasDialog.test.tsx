@@ -116,6 +116,24 @@ test("Remove asks first, and only the confirm removes", async () => {
   expect(await screen.findByText(/No areas yet/)).toBeInTheDocument();
 });
 
+test("the address switch is not offered in Simple, and is in Advanced", async () => {
+  mount((cmd) => {
+    if (cmd === "get_app_settings") return { autorun_mode: "simple" };
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+  });
+  await screen.findByText(/No areas yet/);
+  await waitFor(() => expect(screen.queryByRole("switch", { name: "Scripts may open pages by address" })).toBeNull());
+  expect(screen.queryByText(/Scripts may open pages by address/)).toBeNull();
+  expect(screen.queryByText(/a script with a navigate step cannot be saved/)).toBeNull();
+  cleanup();
+  mount((cmd) => {
+    if (cmd === "get_app_settings") return { autorun_mode: "advanced" };
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+  });
+  expect(await screen.findByRole("switch", { name: "Scripts may open pages by address" })).toBeInTheDocument();
+  expect(screen.getByText(/a script with a navigate step cannot be saved/)).toBeInTheDocument();
+});
+
 test("the address switch saves the moment it is flipped", async () => {
   const sets: unknown[] = [];
   mount((cmd, args) => {

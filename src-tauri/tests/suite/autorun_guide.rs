@@ -1259,7 +1259,7 @@ fn the_areas_section_and_the_guide_give_one_rule_for_area() {
         "modules": [{ "area": "Leave Apply", "module": "Leave", "clicks": [], "arrived": "/hr/leave/apply", "recorded": "2026-10-08T10:00:00Z" }],
     }))
     .expect("a nav file");
-    let areas = flat(&guide_section(&nav));
+    let areas = flat(&guide_section(&nav, false));
     assert!(guide.contains(SET_AREA_RULE), "the guide's discovery section lost the rule: {guide}");
     assert!(areas.contains(SET_AREA_RULE), "the areas section lost the rule: {areas}");
     for text in [&guide, &areas] {
