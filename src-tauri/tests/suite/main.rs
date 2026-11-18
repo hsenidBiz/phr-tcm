@@ -32,6 +32,7 @@ mod ado_boards;
 mod ado_case_meta;
 mod ado_git;
 mod ado_network;
+mod bug_reads;
 mod ado_share;
 mod ado_step_attachments;
 mod ado_testplan;

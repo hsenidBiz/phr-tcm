@@ -2908,3 +2908,11 @@ fn the_sign_in_rule_is_shared_and_no_longer_just_stops() {
         assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "a dash in {name}");
     }
 }
+
+/// A real defect may already be filed: the guide sends the assistant to
+/// `get_bugs` before it reports one as new.
+#[test]
+fn the_guide_points_at_get_bugs_before_a_defect_is_reported() {
+    let g = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(g.contains("call `get_bugs` with the case"), "the guide should name get_bugs");
+}

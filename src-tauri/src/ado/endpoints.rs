@@ -1073,7 +1073,7 @@ fn pbi_search_clause(text: &str) -> String {
 /// itself a Test Case followed the reverse link and returned the PBI
 /// rendered as a test case (2026-08 audit, R-3). Microsoft's own MCP
 /// server compares the rel by equality for the same reason.
-fn is_tested_by_forward(rel: &str) -> bool {
+pub(super) fn is_tested_by_forward(rel: &str) -> bool {
     rel.eq_ignore_ascii_case("Microsoft.VSTS.Common.TestedBy-Forward")
 }
 

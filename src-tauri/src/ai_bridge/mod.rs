@@ -50,6 +50,7 @@ mod autorun_review;
 mod autorun_save;
 mod autorun_scripts;
 mod autorun_try;
+mod bug_reads;
 mod case_reads;
 mod db_tools;
 mod discovery;
@@ -74,6 +75,7 @@ pub use self::autorun_review::*;
 pub use self::autorun_save::*;
 pub use self::autorun_scripts::*;
 pub use self::autorun_try::*;
+use self::bug_reads::bugs;
 pub use self::case_reads::*;
 pub use self::db_tools::*;
 pub use self::discovery::*;
@@ -636,6 +638,10 @@ pub async fn route_as(
         },
         ("GET", "/test-cases") => match client {
             Some(c) => test_cases(ctx, c, target).await,
+            None => (503, "sign in to Test Case Manager first".into()),
+        },
+        ("GET", "/bugs") => match client {
+            Some(c) => bugs(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
         ("GET", "/suites") => match client {

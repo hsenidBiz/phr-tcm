@@ -135,6 +135,7 @@ pub const CORE_TOOLS: &[&str] = &[
     // read of the app's own state, so no module owns it.
     "get_current_pbi",
     "get_test_cases",
+    "get_bugs",
     "check_spec_coverage",
     "transform_cases",
     // Finishing a draft is part of writing one. A set that cannot be
@@ -681,6 +682,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   case's newest run, and refused when the failure is one of the `STOP:` lines.",
             "   When it is a check's value the application gets wrong, call `report_case_divergence` with kind",
             "   app too, if it has not been reported.",
+            "   Before marking it, call `get_bugs` with the case's `case_id`: it may be already filed.",
             "8. Never add a fixed wait. Never lower the number of checks without naming each check given up and",
             "   why in the edit's gives_up (the person sees each one; never give one up because the app fails",
             "   it), and never change a check's value away from the case: the save refuses both otherwise. A",

@@ -712,6 +712,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
             "get_guide",
             "get_current_pbi",
             "get_test_cases",
+            "get_bugs",
             "check_spec_coverage",
             "transform_cases",
             "validate_cases",

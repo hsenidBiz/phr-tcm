@@ -106,6 +106,7 @@ fn tools_list_names_every_tool() {
             "get_guide",
             "get_current_pbi",
             "get_test_cases",
+            "get_bugs",
             "search_test_suites",
             "get_suite_test_cases",
             "get_run_results",
@@ -332,6 +333,48 @@ fn get_test_cases_requires_neither_a_pbi_nor_ids_in_its_schema() {
     // missing when neither is given.
     assert_eq!(tool["inputSchema"]["required"], serde_json::json!([]));
     assert_eq!(tool["inputSchema"]["properties"]["case_ids"]["type"], "array");
+}
+
+/// get_bugs reads bugs by PBI, by their own ids or by a test case, and each
+/// input reaches the bridge as its own query value.
+#[test]
+fn get_bugs_builds_its_bridge_target_from_the_inputs() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, r#"{"bugs":[]}"#.to_string()))
+    };
+    let run = |args: &str| {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"get_bugs","arguments":{args}}}}}"#);
+        handle_message(&req, "1.10.3", &call).unwrap();
+        let (method, path, _) = calls.borrow().last().unwrap().clone();
+        assert_eq!(method, "GET");
+        path
+    };
+    assert_eq!(run(r#"{"pbi_id":42,"limit":3}"#), "/bugs?pbi=42&limit=3&offset=0");
+    assert_eq!(run(r#"{"bug_ids":[11,22]}"#), "/bugs?ids=11,22&limit=5&offset=0");
+    assert_eq!(run(r#"{"case_id":9}"#), "/bugs?case=9&limit=5&offset=0");
+    assert_eq!(run(r#"{"pbi_id":42,"case_id":9}"#), "/bugs?pbi=42&case=9&limit=5&offset=0");
+    assert_eq!(run(r#"{"pbi_id":42,"bug_ids":[7],"offset":5}"#), "/bugs?pbi=42&ids=7&limit=5&offset=5");
+    assert_eq!(run(r#"{"pbi_id":42,"titles_only":true}"#), "/bugs?pbi=42&limit=5&offset=0&titles_only=true");
+}
+
+#[test]
+fn get_bugs_is_listed_with_no_required_input_and_says_when_to_use_it() {
+    let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
+    let call = |_: &str, _: &str, _: &str| Ok((200, "[]".to_string()));
+    let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.10.3", &call).unwrap()).unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_bugs").unwrap();
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!([]));
+    let props = &tool["inputSchema"]["properties"];
+    for (name, ty) in [("pbi_id", "integer"), ("case_id", "integer"), ("bug_ids", "array"), ("limit", "integer"), ("offset", "integer"), ("titles_only", "boolean")] {
+        assert_eq!(props[name]["type"], ty, "{name}");
+    }
+    assert_eq!(props["bug_ids"]["items"]["type"], "integer");
+    let said = tool["description"].as_str().unwrap();
+    for part in ["duplicate", "failed", "not_on_pbi", "not_a_bug"] {
+        assert!(said.contains(part), "description names {part}: {said}");
+    }
 }
 
 #[test]
@@ -561,9 +604,9 @@ fn an_unreachable_bridge_disables_nothing() {
     let resp = v2_lib::mcp::handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    // 56 tools in all; an unreachable bridge cannot say which modules are
+    // 57 tools in all; an unreachable bridge cannot say which modules are
     // on, so the 40 module tools are not offered - and nothing else goes.
-    assert_eq!(names.len(), 56 - 40, "an unreachable bridge must not disable a Core tool: {names:?}");
+    assert_eq!(names.len(), 57 - 40, "an unreachable bridge must not disable a Core tool: {names:?}");
     assert!(names.iter().all(|n| module_of_tool(n).is_none()), "{names:?}");
 }
 
@@ -2809,7 +2852,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 72, "{names:?}");
+        assert_eq!(names.len(), 73, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));

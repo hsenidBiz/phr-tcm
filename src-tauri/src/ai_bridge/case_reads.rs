@@ -26,7 +26,7 @@ pub(crate) async fn test_cases(
     };
     let ids = match q(target, "ids") {
         None => None,
-        Some(v) => match parse_case_ids(&v) {
+        Some(v) => match parse_case_ids(&v, "test case") {
             Ok(ids) => Some(ids),
             Err(msg) => return (400, msg),
         },
@@ -91,24 +91,23 @@ pub(crate) async fn test_cases(
 /// `ids=12,34` as a de-duplicated list in the order given. A token that is
 /// not a whole number is refused rather than dropped, so a typo cannot
 /// quietly return fewer cases than were asked for.
-pub(crate) fn parse_case_ids(raw: &str) -> Result<Vec<i32>, String> {
+pub(crate) fn parse_case_ids(raw: &str, noun: &str) -> Result<Vec<i32>, String> {
     let mut ids: Vec<i32> = vec![];
     for token in raw.split(',').map(str::trim).filter(|t| !t.is_empty()) {
         let id = token
             .trim_start_matches('#')
             .parse::<i32>()
-            .map_err(|_| format!("ids must be test case work item ids, got {token:?}"))?;
+            .map_err(|_| format!("ids must be {noun} work item ids, got {token:?}"))?;
         if !ids.contains(&id) {
             ids.push(id);
         }
     }
     if ids.is_empty() {
-        return Err("ids is empty - pass one or more test case ids, comma-separated".into());
+        return Err(format!("ids is empty - pass one or more {noun} ids, comma-separated"));
     }
     if ids.len() > MAX_CASE_IDS {
-        return Err(format!(
-            "at most {MAX_CASE_IDS} ids per call - for a whole suite use get_suite_test_cases"
-        ));
+        let hint = if noun == "test case" { " - for a whole suite use get_suite_test_cases" } else { "" };
+        return Err(format!("at most {MAX_CASE_IDS} ids per call{hint}"));
     }
     Ok(ids)
 }
