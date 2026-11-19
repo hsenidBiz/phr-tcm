@@ -17,6 +17,9 @@ pub const LIST_VERSION_PATH: &str = "/mcp/list-version";
 /// What a relay request without the connector's id is answered with.
 pub const NEEDS_ID: &str = "a relayed message needs the connector's id";
 
+/// What `GET /mcp/list-version` answers (503) when the tool list could not be read.
+pub const NO_TOOL_LIST: &str = "the tool list could not be read just now";
+
 /// Most sessions kept at once; past that the least recently used goes.
 const MAX_SESSIONS: usize = 64;
 
@@ -91,12 +94,24 @@ pub fn answer(body: &str, id: RelayedIdentity, call: BridgeCall) -> Result<Strin
 }
 
 /// 16 lowercase hex digits naming the tool list the app would answer now: a hash of the `result` of a
-/// `tools/list` answered with no session and no relayed identity.
-pub fn list_version(call: BridgeCall) -> String {
+/// `tools/list` answered with no session and no identity at all (the read is the app's own, so it
+/// registers no assistant). Err when the app's `/tools` answer could not be read: a failure is no version.
+pub fn list_version(call: BridgeCall) -> Result<String, String> {
     let msg = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-    let reply = mcp::handle_message(msg, mcp::PROXY_VERSION, call).unwrap_or_default();
+    let read = std::cell::Cell::new(false);
+    let watched = |m: &str, p: &str, b: &str| {
+        let answer = call(m, p, b);
+        if p == "/tools" {
+            read.set(matches!(answer, Ok((200, _))));
+        }
+        answer
+    };
+    let reply = mcp::with_no_identity(|| mcp::handle_message(msg, mcp::PROXY_VERSION, &watched)).unwrap_or_default();
+    if !read.get() {
+        return Err(NO_TOOL_LIST.to_string());
+    }
     let result = serde_json::from_str::<serde_json::Value>(&reply).map(|v| v["result"].to_string()).unwrap_or_default();
-    Sha256::digest(result.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect()
+    Ok(Sha256::digest(result.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect())
 }
 
 /// The two relay routes, for a request the listener has already token-checked: None for any other
@@ -123,7 +138,10 @@ pub fn route(
                 Err(why) => (400, serde_json::json!({ "error": why }).to_string()),
             })
         }
-        ("GET", LIST_VERSION_PATH) => Some((200, serde_json::json!({ "version": list_version(&call) }).to_string())),
+        ("GET", LIST_VERSION_PATH) => Some(match list_version(&call) {
+            Ok(version) => (200, serde_json::json!({ "version": version }).to_string()),
+            Err(why) => (503, serde_json::json!({ "error": why }).to_string()),
+        }),
         _ => None,
     }
 }

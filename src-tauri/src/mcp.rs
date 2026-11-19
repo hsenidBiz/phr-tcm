@@ -76,15 +76,26 @@ pub struct RelayedIdentity {
 
 thread_local! {
     /// The identity `with_relayed_identity` has in force on this thread.
-    static RELAYED: std::cell::RefCell<Option<RelayedIdentity>> = const { std::cell::RefCell::new(None) };
+    static RELAYED: std::cell::RefCell<Relayed> = const { std::cell::RefCell::new(Relayed::Own) };
 }
 
 /// Puts back what was in force before when it ends, panic included.
-struct RelayedGuard(Option<RelayedIdentity>);
+/// Whose agent headers a bridge request on this thread carries.
+#[derive(Debug, Clone)]
+enum Relayed {
+    /// This process's own.
+    Own,
+    /// A connector's, relayed.
+    As(RelayedIdentity),
+    /// None at all: the default caller, who registers nobody.
+    Nobody,
+}
+
+struct RelayedGuard(Relayed);
 
 impl Drop for RelayedGuard {
     fn drop(&mut self) {
-        RELAYED.with(|r| *r.borrow_mut() = self.0.take());
+        RELAYED.with(|r| *r.borrow_mut() = std::mem::replace(&mut self.0, Relayed::Own));
     }
 }
 
@@ -92,7 +103,14 @@ impl Drop for RelayedGuard {
 /// `AGENT_CLIENT_HEADER` on every bridge request `send_to_bridge_within` makes on this thread. The
 /// app answering a connector's relayed message uses it, so the app's own calls carry the connector's identity.
 pub fn with_relayed_identity<T>(id: RelayedIdentity, f: impl FnOnce() -> T) -> T {
-    let _guard = RelayedGuard(RELAYED.with(|r| r.replace(Some(id))));
+    let _guard = RelayedGuard(RELAYED.with(|r| r.replace(Relayed::As(id))));
+    f()
+}
+
+/// Runs `f` with no agent headers at all on the bridge requests it makes on this thread, so the app
+/// registers no assistant for them (a read the app makes for itself).
+pub fn with_no_identity<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = RelayedGuard(RELAYED.with(|r| r.replace(Relayed::Nobody)));
     f()
 }
 
@@ -3252,11 +3270,15 @@ pub fn send_to_bridge_within(
     }
     // Who is calling: this proxy's id and process, its client, and the
     // subagent this call is for.
+    let own = || (Some(proxy_agent_id().to_string()), Some(std::process::id().to_string()), client_name());
     let (agent_id, pid, client) = match RELAYED.with(|r| r.borrow().clone()) {
-        Some(id) => (id.agent_id, id.pid, id.client),
-        None => (proxy_agent_id().to_string(), Some(std::process::id().to_string()), client_name()),
+        Relayed::Own => own(),
+        Relayed::As(id) => (Some(id.agent_id), id.pid, id.client),
+        Relayed::Nobody => (None, None, None),
     };
-    req = req.header(AGENT_HEADER, agent_id);
+    if let Some(agent_id) = agent_id {
+        req = req.header(AGENT_HEADER, agent_id);
+    }
     if let Some(pid) = pid {
         req = req.header(AGENT_PID_HEADER, pid);
     }

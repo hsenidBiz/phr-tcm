@@ -148,7 +148,10 @@ pub async fn start_listener(
                     .await;
                     match answered {
                         Ok(Some(answer)) => answer,
-                        _ => (404, String::new()),
+                        // A wrong method on a relay path.
+                        Ok(None) => (404, String::new()),
+                        // The route panicked: an answer a connector must not read as "no such route".
+                        Err(_) => (500, String::new()),
                     }
                 } else {
                     note_proxy_version(proxy_version.as_deref(), &state.version);
