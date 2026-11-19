@@ -1064,28 +1064,29 @@ pub(crate) async fn open_session<D: Driver>(
 /// account (the Auto Test run's kept browser): the same `Session`, built
 /// from the same recipe and account, without signing in. On failure, the
 /// report of `req`'s template stopped at `Sign in`.
-pub(crate) async fn open_session_signed_in<D: Driver>(
-    _d: &mut D,
-    root: &Path,
-    req: &RunRequest,
-    _timing: &Timing,
-) -> Result<Session, RunReport> {
+pub(crate) fn open_session_signed_in(root: &Path, req: &RunRequest) -> Result<Session, RunReport> {
     let mut progress = Progress::new();
     progress.at(SIGN_IN, None);
-    let prepared = prepare(root, &req.org, &req.project, &req.account).and_then(|(recipe, account)| {
-        let origin = recipe.origins().into_iter().next().ok_or_else(|| {
-            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Test, Sign-in recipe"
-                .to_string()
-        })?;
-        Ok(Session::new(recipe, account, origin, vec![]))
-    });
-    match prepared {
-        Ok(session) => Ok(session),
+    match prepare_sign_in(root, req) {
+        Ok((recipe, account, origin)) => Ok(Session::new(recipe, account, origin, vec![])),
         Err(e) => {
             progress.fail(None, e);
             Err(finish(req, progress))
         }
     }
+}
+
+/// The recipe and account `req` signs in with, and the start address its
+/// requests go to; `Err` is the sentence for the run's `Sign in` step.
+fn prepare_sign_in(root: &Path, req: &RunRequest) -> Result<(SignInRecipe, Account, String), String> {
+    let (recipe, account) = prepare(root, &req.org, &req.project, &req.account)?;
+    let Some(origin) = recipe.origins().into_iter().next() else {
+        return Err(
+            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Test, Sign-in recipe"
+                .to_string(),
+        );
+    };
+    Ok((recipe, account, origin))
 }
 
 /// Runs `req.template` in a browser `open_session` signed in: its
@@ -1195,19 +1196,12 @@ async fn sign_in_once<D: Driver>(
     progress: &mut Progress,
 ) -> Option<Session> {
     progress.at(SIGN_IN, None);
-    let (recipe, account) = match prepare(root, &req.org, &req.project, &req.account) {
+    let (recipe, account, origin) = match prepare_sign_in(root, req) {
         Ok(x) => x,
         Err(e) => {
             progress.fail(None, e);
             return None;
         }
-    };
-    let Some(origin) = recipe.origins().into_iter().next() else {
-        progress.fail(
-            None,
-            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Test, Sign-in recipe",
-        );
-        return None;
     };
     let ctx = Ctx { root, req, timing, recipe, account, origin, reused: false, on_page: None, in_page: None };
 

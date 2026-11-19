@@ -468,7 +468,7 @@ async fn run_steps_in<D: Driver>(
         Ok(x) => x,
         Err(ran) => return ran,
     };
-    let session = open_session_signed_in(d, root, &first, timing).await;
+    let session = open_session_signed_in(root, &first);
     run_template_steps(d, root, org, project, f, timing, limit, retry_pauses, clock, cancel, &templates, &first, session, &mut ran)
         .await;
     d.set_deadline(None);
@@ -619,17 +619,14 @@ pub async fn run_fixture_for<B: Browsers>(
     source: TrySource,
 ) -> FixtureReport {
     let began = Began::now();
-    let ran = match crate::environments::active(root) {
-        Ok(env) => {
+    let ran = match active_env(root, f) {
+        Some(env) => {
             let ran =
                 run_steps(browsers, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock, fixed, cancel)
                     .await;
             Some((env, ran))
         }
-        Err(e) => {
-            applog::warn(format!("fixture {}: the active environment could not be read: {e}", f.id));
-            None
-        }
+        None => None,
     };
     record_run(root, org, project, f, case_id, source, began, ran)
 }
@@ -655,18 +652,27 @@ pub async fn run_fixture_in<D: Driver>(
     source: TrySource,
 ) -> FixtureReport {
     let began = Began::now();
-    let ran = match crate::environments::active(root) {
-        Ok(env) => {
+    let ran = match active_env(root, f) {
+        Some(env) => {
             let ran = run_steps_in(d, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock, fixed, cancel)
                 .await;
             Some((env, ran))
         }
+        None => None,
+    };
+    record_run(root, org, project, f, case_id, source, began, ran)
+}
+
+/// The active environment a run of `f` is recorded against; `None` (and a
+/// warning in the app log) when it could not be read.
+fn active_env(root: &Path, f: &Fixture) -> Option<crate::environments::Environment> {
+    match crate::environments::active(root) {
+        Ok(env) => Some(env),
         Err(e) => {
             applog::warn(format!("fixture {}: the active environment could not be read: {e}", f.id));
             None
         }
-    };
-    record_run(root, org, project, f, case_id, source, began, ran)
+    }
 }
 
 /// When a fixture run began, and its id.

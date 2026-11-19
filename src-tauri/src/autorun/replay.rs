@@ -1530,7 +1530,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                     // A setup of the kept browser's account
                                     // runs in that browser; any other closes
                                     // it first (`prepare_case_kept`).
-                                    setup::prepare_case_kept(browsers, &mut kept, root, organization, project, &script, timing, cancel)
+                                    Box::pin(setup::prepare_case_kept(browsers, &mut kept, root, organization, project, &script, timing, cancel))
                                         .await
                                         .map(|prepared| (path, prepared.script))
                                 }
@@ -1563,8 +1563,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             // and never after a stop. It gets a fresh draft: the
                             // setup runs again first (the first go may have
                             // changed its draft), and a setup that cannot run
-                            // keeps the first go's record.
-                            let looked_transient = if retry_transient { {
+                            // keeps the first go's record. A first record
+                            // that is itself a fresh rerun (`one_go`) is not
+                            // retried again.
+                            let looked_transient = if retry_transient && first.retried.is_none() { {
                                 let components = super::components::load_components(root, organization, project).unwrap_or_default();
                                 transient::is_transient_with(&first, Some(&ready), &components)
                             } } else { None };

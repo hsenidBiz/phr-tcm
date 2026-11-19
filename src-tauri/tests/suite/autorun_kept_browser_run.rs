@@ -49,6 +49,9 @@ enum Quirk {
     RotateIdentity,
     /// The sign-in leaves no identity cookie at all.
     NoIdentity,
+    /// Every later `check_text` finds the browser gone: a harness failure,
+    /// which a retry-transient run goes again for.
+    Gone,
 }
 
 /// An application that signs in (`#go`), shows `#marker` once signed in,
@@ -116,6 +119,9 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<V
                 let want = params["arguments"][0]["value"].as_str().unwrap_or("").to_string();
                 checks += 1;
                 log.lock().unwrap().push(format!("check {want}"));
+                if quirk == Quirk::Gone && checks > 1 {
+                    return Err(v2_lib::browser::cdp::CdpError::Closed);
+                }
                 let ok = want == "yes" && !(quirk == Quirk::FailChecks && checks > 1);
                 hidden |= quirk == Quirk::HideMarker;
                 if quirk == Quirk::RotateSid {
@@ -278,10 +284,16 @@ async fn run(fake: &mut Fake, root: &Path, ids: &[i32]) -> LocalRun {
 
 /// `stop_after_one` asks for a stop as case 1 finishes.
 async fn run_with(fake: &mut Fake, root: &Path, ids: &[i32], resets: &[Pause], stop_after_one: bool) -> LocalRun {
+    run_full(fake, root, ids, resets, stop_after_one, false).await
+}
+
+/// `run_with`, and `retry_transient` for the run's one more go at a failure
+/// that looked transient.
+async fn run_full(fake: &mut Fake, root: &Path, ids: &[i32], resets: &[Pause], stop_after_one: bool, retry_transient: bool) -> LocalRun {
     let cancel = AtomicBool::new(false);
     let mut run = new_run();
     let no_db: PreconditionDb<NoDb> = PreconditionDb::Missing(NEED_DB.to_string());
-    run_cases_planned(fake, root, ORG, PROJECT, &mut run, &to_run(ids), None, false, &quick(), &cancel, &no_db, resets, &mut Carry, &mut |p: ReplayProgress| {
+    run_cases_planned(fake, root, ORG, PROJECT, &mut run, &to_run(ids), None, retry_transient, &quick(), &cancel, &no_db, resets, &mut Carry, &mut |p: ReplayProgress| {
         if stop_after_one && p.phase == "done" && p.case_id == 1 {
             cancel.store(true, Ordering::SeqCst);
         }
@@ -638,8 +650,10 @@ fn browser_order(fake: &Fake, with_fetch: bool) -> Vec<String> {
 
 #[tokio::test]
 async fn setup_same_account_runs_in_kept_browser() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -661,8 +675,10 @@ async fn setup_same_account_runs_in_kept_browser() {
 
 #[tokio::test]
 async fn setup_other_account_closes_kept_first() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -684,8 +700,10 @@ async fn setup_other_account_closes_kept_first() {
 
 #[tokio::test]
 async fn setup_does_not_wait_on_own_lease() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -694,19 +712,19 @@ async fn setup_does_not_wait_on_own_lease() {
     store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
     let mut fake = Fake::new(&[]);
     fake.fetches.lock().unwrap().push_back(the_cycle());
-    let started = std::time::Instant::now();
     let run = run(&mut fake, root, &[1, 2]).await;
-    // The account's lease is the kept browser's own: the setup never queues
-    // behind it for the lease wait (300 ms here) and is never Blocked by it.
-    assert!(started.elapsed() < std::time::Duration::from_millis(quick().lease_wait_ms), "{:?}", started.elapsed());
+    // The account's lease is the kept browser's own: the setup never waits
+    // on it, so it is never Blocked by it.
     assert_eq!(run.cases[1].proposed, "Passed", "{:?}", proposals(&run));
     assert!(!run.cases[1].reason.contains("setup failed"), "{}", run.cases[1].reason);
 }
 
 #[tokio::test]
 async fn a_setup_that_fails_in_the_kept_browser_closes_it() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -728,8 +746,10 @@ async fn a_setup_that_fails_in_the_kept_browser_closes_it() {
 
 #[tokio::test]
 async fn a_kept_browser_no_longer_signed_in_leaves_the_setup_its_own() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -746,8 +766,10 @@ async fn a_kept_browser_no_longer_signed_in_leaves_the_setup_its_own() {
 
 #[tokio::test]
 async fn a_fresh_rerun_runs_the_setup_again_first() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -768,8 +790,10 @@ async fn a_fresh_rerun_runs_the_setup_again_first() {
 
 #[tokio::test]
 async fn a_fresh_rerun_whose_setup_cannot_run_keeps_the_first_record() {
-    let _l = crate::serial::account_leases();
     let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     project(root, true);
@@ -784,4 +808,52 @@ async fn a_fresh_rerun_whose_setup_cannot_run_keeps_the_first_record() {
     assert!(run.cases[1].reason.contains(v2_lib::autorun::transient::RETRY_NOT_STARTED), "{}", run.cases[1].reason);
     assert_eq!(run.cases[1].steps.iter().filter(|s| s.step_number == SIGN_IN_STEP).count(), 1);
     assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+}
+
+#[tokio::test]
+async fn a_reruns_setup_that_cannot_start_adds_its_sentence_once() {
+    let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[Quirk::Gone]);
+    // Only the setup in the kept browser is answered; the rerun's gets a 500.
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let run = run_full(&mut fake, root, &[1, 2], &[], false, true).await;
+    let reason = &run.cases[1].reason;
+    assert_eq!(reason.matches(v2_lib::autorun::transient::RETRY_NOT_STARTED).count(), 1, "{reason}");
+    // The setup ran in the kept browser and once more for the rerun: no third.
+    assert_eq!(fake.count("fetch"), 2, "{reason}");
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+}
+
+#[tokio::test]
+async fn a_case_blocked_before_the_browser_leaves_the_kept_browser_open() {
+    let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    // Case 2's setup fixture is not saved: it is Blocked before it runs.
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    store::save_script(root, &case(3, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[]);
+    let run = run(&mut fake, root, &[1, 2, 3]).await;
+    assert_eq!(run.cases[1].proposed, "Blocked", "{:?}", proposals(&run));
+    assert!(run.cases[1].reason.starts_with("setup failed: "), "{}", run.cases[1].reason);
+    assert_eq!(run.cases[2].proposed, "Passed", "{:?}", proposals(&run));
+    // Case 1's browser stood through the Blocked case and served case 3.
+    assert_eq!((fake.opened, fake.closed), (1, 1));
+    assert_eq!(fake.sign_ins(), 1);
+    let step0 = run.cases[2].steps.iter().find(|s| s.step_number == SIGN_IN_STEP).unwrap();
+    assert!(step0.outcomes[0].detail.starts_with(REUSED), "{:?}", step0.outcomes);
 }

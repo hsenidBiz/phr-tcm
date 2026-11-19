@@ -386,7 +386,11 @@ where
 ///   a browser of its own, as `prepare_case` does;
 /// - a kept browser that no longer stands signed in is closed, and the
 ///   setup runs in its own;
-/// - a case with no setup (or none that runs) leaves `kept` as it is.
+/// - a case with no setup (or none that runs) leaves `kept` as it is. Only
+///   a case Blocked IN the browser (its setup failed there) counts as
+///   "Blocked before": that closes it. A case blocked before it touched the
+///   browser (a fixture not saved, one not built, the template slot busy, a
+///   refused run) leaves it kept for the next case.
 #[allow(clippy::too_many_arguments)]
 pub async fn prepare_case_kept<B: Browsers>(
     browsers: &mut B,
@@ -553,7 +557,7 @@ where
             // The lease the kept browser holds is the account's: none is
             // taken again, and nothing signs in.
             Some(k) => {
-                run_fixture_in(
+                Box::pin(run_fixture_in(
                     &mut k.driver,
                     root,
                     org,
@@ -567,12 +571,12 @@ where
                     Some(&now.templates),
                     Some(cancel),
                     TrySource::Plain,
-                )
+                ))
                 .await
             }
             None => {
                 before_run(f.account.clone()).await;
-                run_fixture_for(
+                Box::pin(run_fixture_for(
                     browsers,
                     root,
                     org,
@@ -586,7 +590,7 @@ where
                     Some(&now.templates),
                     Some(cancel),
                     TrySource::Plain,
-                )
+                ))
                 .await
             }
         };
