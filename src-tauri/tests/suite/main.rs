@@ -217,6 +217,7 @@ mod import_parser;
 mod intake;
 mod markdown;
 mod mcp;
+mod mcp_relay;
 mod mcp_session;
 mod page_changes;
 mod page_compact;

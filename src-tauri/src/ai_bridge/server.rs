@@ -136,6 +136,20 @@ pub async fn start_listener(
                 let (method, target, tok, body, proxy_version, tool, agent) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
+                } else if let Some(relay_path) = relay_path_of(&target) {
+                    // A connector's relayed MCP message: answered by `mcp_relay` on a blocking thread,
+                    // its bridge calls looping back to this listener (so each is routed, logged and
+                    // counted like any other call, as the connector's agent).
+                    note_proxy_version(proxy_version.as_deref(), &state.version);
+                    let token = state.token.clone();
+                    let answered = tauri::async_runtime::spawn_blocking(move || {
+                        crate::mcp_relay::route(port, &token, &method, relay_path, &body, &agent)
+                    })
+                    .await;
+                    match answered {
+                        Ok(Some(answer)) => answer,
+                        _ => (404, String::new()),
+                    }
                 } else {
                     note_proxy_version(proxy_version.as_deref(), &state.version);
                     let ctx = state.ctx.lock().unwrap().clone();
@@ -175,6 +189,12 @@ pub async fn start_listener(
         }
     });
     Ok((port, token))
+}
+
+/// The relay route a request target names (query left out), or None for any other target.
+fn relay_path_of(target: &str) -> Option<&'static str> {
+    let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
+    [crate::mcp_relay::RELAY_PATH, crate::mcp_relay::LIST_VERSION_PATH].into_iter().find(|p| *p == path)
 }
 
 /// What a buffer of bytes off the socket amounts to so far.

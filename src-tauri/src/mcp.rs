@@ -10,7 +10,7 @@ use std::io::{BufRead, Write};
 
 use crate::modules::Module;
 
-type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
+pub type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
 
 /// This proxy's own version - the build it was compiled from. The release
 /// script refuses to ship unless Cargo.toml and tauri.conf.json agree, so
@@ -63,6 +63,37 @@ impl Drop for CallingTool {
     fn drop(&mut self) {
         CALLING.with(|c| *c.borrow_mut() = None);
     }
+}
+
+/// Who a relayed message speaks for: the connector's id, process id and client name, as the app read
+/// them off the relay request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayedIdentity {
+    pub agent_id: String,
+    pub pid: Option<String>,
+    pub client: Option<String>,
+}
+
+thread_local! {
+    /// The identity `with_relayed_identity` has in force on this thread.
+    static RELAYED: std::cell::RefCell<Option<RelayedIdentity>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Puts back what was in force before when it ends, panic included.
+struct RelayedGuard(Option<RelayedIdentity>);
+
+impl Drop for RelayedGuard {
+    fn drop(&mut self) {
+        RELAYED.with(|r| *r.borrow_mut() = self.0.take());
+    }
+}
+
+/// Runs `f` with `id` named, instead of this process, in `AGENT_HEADER`, `AGENT_PID_HEADER` and
+/// `AGENT_CLIENT_HEADER` on every bridge request `send_to_bridge_within` makes on this thread. The
+/// app answering a connector's relayed message uses it, so the app's own calls carry the connector's identity.
+pub fn with_relayed_identity<T>(id: RelayedIdentity, f: impl FnOnce() -> T) -> T {
+    let _guard = RelayedGuard(RELAYED.with(|r| r.replace(Some(id))));
+    f()
 }
 
 /// The tool a call on this thread is being answered for, if any.
@@ -3221,8 +3252,15 @@ pub fn send_to_bridge_within(
     }
     // Who is calling: this proxy's id and process, its client, and the
     // subagent this call is for.
-    req = req.header(AGENT_HEADER, proxy_agent_id()).header(AGENT_PID_HEADER, std::process::id().to_string());
-    if let Some(client) = client_name() {
+    let (agent_id, pid, client) = match RELAYED.with(|r| r.borrow().clone()) {
+        Some(id) => (id.agent_id, id.pid, id.client),
+        None => (proxy_agent_id().to_string(), Some(std::process::id().to_string()), client_name()),
+    };
+    req = req.header(AGENT_HEADER, agent_id);
+    if let Some(pid) = pid {
+        req = req.header(AGENT_PID_HEADER, pid);
+    }
+    if let Some(client) = client {
         req = req.header(AGENT_CLIENT_HEADER, client);
     }
     if let Some(agent) = calling_agent() {
