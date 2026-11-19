@@ -304,9 +304,18 @@ pub fn effective_disabled_for(disabled: &[String], on: &BTreeSet<crate::modules:
     out
 }
 
-/// `effective_disabled_for` for this process (`modules::current`).
+/// `effective_disabled_for`, then - while `simple` (app Simple mode) - the
+/// tools it hides (`simple_view::SIMPLE_HIDDEN_TOOLS`), added AFTER the core
+/// filter so a core tool (begin_test_case_writing...) can be hidden too.
+/// A view: the saved list is never changed.
+pub fn effective_disabled_under(simple: bool, disabled: &[String], on: &BTreeSet<crate::modules::Module>) -> Vec<String> {
+    crate::simple_view::disabled_under(simple, &effective_disabled_for(disabled, on))
+}
+
+/// `effective_disabled_under` for this process: the modules on now and the
+/// saved Simple mode setting. What the slash commands and agent files follow.
 pub fn effective_disabled(disabled: &[String]) -> Vec<String> {
-    effective_disabled_for(disabled, &crate::modules::current())
+    effective_disabled_under(crate::simple_view::is_on(), disabled, &crate::modules::current())
 }
 
 /// One command per thing a person reaches for by name; every other tool

@@ -455,7 +455,42 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, B
             }
         }
     }
+    // The tools Simple mode hides: named by the app's answer (decided there,
+    // from the saved setting). Only a name this build knows as hidden counts,
+    // and a core tool is added AFTER the core filter above, so it stays off.
+    for t in simple_hidden_from(&answer) {
+        if !off.iter().any(|o| *o == t) {
+            off.push(t);
+        }
+    }
     (off, on)
+}
+
+/// The tools Simple mode hides, as a `/tools` answer names them. Empty when
+/// the answer carries none (Simple mode off, an older app, a failed answer).
+fn simple_hidden_from(answer: &Option<serde_json::Value>) -> Vec<String> {
+    answer
+        .as_ref()
+        .and_then(|v| v["simple_hidden"].as_array().cloned())
+        .map(|a| {
+            a.iter()
+                .filter_map(|n| n.as_str())
+                .filter(|n| crate::simple_view::SIMPLE_HIDDEN_TOOLS.contains(n))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `/tools`'s answer says Simple mode hides `name`.
+pub fn hidden_by_simple_mode(reply: &Result<(u16, String), String>, name: &str) -> bool {
+    match reply {
+        Ok((200, body)) => {
+            let answer = serde_json::from_str::<serde_json::Value>(body).ok();
+            simple_hidden_from(&answer).iter().any(|t| t == name)
+        }
+        _ => false,
+    }
 }
 
 /// Whether the person has let database changes run without being asked:
@@ -512,11 +547,16 @@ pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes 
 /// The proxy's view of `/tools` for one call: what is switched off, which
 /// modules are on, and whether the held-back module is unlocked (which
 /// decides the words of a refusal).
-fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool) {
+fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool, Vec<String>) {
     let reply = call("GET", "/tools", "");
     let unlocked = unlocked_from(&reply);
+    let hidden = crate::simple_view::SIMPLE_HIDDEN_TOOLS
+        .iter()
+        .filter(|t| hidden_by_simple_mode(&reply, t))
+        .map(|t| t.to_string())
+        .collect();
     let (off, on) = tool_policy_from(reply);
-    (off, on, unlocked)
+    (off, on, unlocked, hidden)
 }
 
 /// Every tool this server offers, by name.
@@ -2491,9 +2531,16 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
     let args = &coerced;
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
-    let (off, on, unlocked) = tool_policy(call);
-    let refused = if off.iter().any(|d| d == name) {
+    let (off, on, unlocked, simple_hidden) = tool_policy(call);
+    let refused = if simple_hidden.iter().any(|d| d == name) {
+        // Simple mode's own sentence: the tool has no switch to turn on.
+        Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
+    } else if off.iter().any(|d| d == name) {
         Some(refusal_text_for(name, &on, unlocked))
+    } else if name == "get_guide" && args["topic"].as_str().map(str::trim) == Some("reports") && !simple_hidden.is_empty() {
+        // The reports guide rides on the Crystal Reports tools, which Simple
+        // mode hides: say so, not that a switch is off.
+        Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
     } else if name == "get_guide" {
         guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked)
     } else {

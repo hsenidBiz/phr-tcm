@@ -1,0 +1,248 @@
+//! App Simple mode on the AI Bridge: the assistants read test cases and write
+//! Auto Test scripts, and nothing else of the writing, searching and report
+//! tools. Simple mode is a view and an override - no saved switch changes.
+
+use v2_lib::ai_bridge::{route_timed_simple, BridgeContext, SwitchGate, API_WRITES_OFF};
+use v2_lib::autorun::agents::Caller;
+use v2_lib::simple_view::{
+    context_under, disabled_under, route_refusal, SIMPLE_HIDDEN_ROUTES, SIMPLE_HIDDEN_TOOLS, SIMPLE_HIDES_TOOL,
+};
+
+fn saved() -> BridgeContext {
+    BridgeContext {
+        org: "acme".into(),
+        project: "Web".into(),
+        disabled_tools: vec!["get_bugs".into()],
+        api_writes: false,
+        network_tools: false,
+        gate: SwitchGate { env_id: Some("env-1".into()), ..Default::default() },
+        ..BridgeContext::default()
+    }
+}
+
+async fn ask(simple: bool, ctx: &BridgeContext, method: &str, target: &str, body: &str) -> (u16, String) {
+    route_timed_simple(simple, &Caller::Default, ctx, None, method, target, body, "1.0.0").await
+}
+
+#[test]
+fn the_hidden_list_is_the_writing_tools_the_searches_and_every_report_tool() {
+    for t in [
+        "begin_test_case_writing",
+        "check_spec_coverage",
+        "merge_case_files",
+        "validate_cases",
+        "get_tags",
+        "optimize_cases",
+        "transform_cases",
+        "search_pbis",
+        "search_wiki",
+        "get_wiki_page",
+    ] {
+        assert!(SIMPLE_HIDDEN_TOOLS.contains(&t), "{t}");
+    }
+    for t in v2_lib::ai_tools::CRYSTAL_TOOLS {
+        assert!(SIMPLE_HIDDEN_TOOLS.contains(t), "{t}");
+    }
+    assert_eq!(SIMPLE_HIDDEN_TOOLS.len(), 10 + v2_lib::ai_tools::CRYSTAL_TOOLS.len());
+    // What stays: the reads, the Auto Test, API template, network and database tools.
+    for t in ["get_guide", "get_current_pbi", "get_test_cases", "get_bugs", "search_test_suites", "get_suite_test_cases", "get_run_results"]
+        .into_iter()
+        .chain(v2_lib::ai_tools::module_tools().filter(|t| !v2_lib::ai_tools::CRYSTAL_TOOLS.contains(t)))
+    {
+        assert!(!SIMPLE_HIDDEN_TOOLS.contains(&t), "{t} must stay");
+    }
+}
+
+#[test]
+fn the_webview_mirror_of_the_hidden_list_matches() {
+    let ts = include_str!("../../../src/lib/mcpTools.ts");
+    let block = ts.split("export const SIMPLE_HIDDEN_TOOLS").nth(1).unwrap().split("] as const").next().unwrap();
+    let mut from_ts: Vec<String> = block.split('"').skip(1).step_by(2).map(str::to_string).collect();
+    let mut from_rs: Vec<String> = SIMPLE_HIDDEN_TOOLS.iter().map(|t| t.to_string()).collect();
+    from_ts.sort();
+    from_rs.sort();
+    assert_eq!(from_ts, from_rs);
+}
+
+#[test]
+fn every_hidden_tool_is_a_tool_the_server_offers() {
+    let listed = v2_lib::mcp::all_tool_names();
+    for t in SIMPLE_HIDDEN_TOOLS {
+        assert!(listed.iter().any(|n| n == t), "{t} is not a tool");
+    }
+}
+
+#[test]
+fn simple_mode_adds_to_a_list_it_never_edits() {
+    let list = vec!["get_bugs".to_string(), "search_pbis".to_string()];
+    assert_eq!(disabled_under(false, &list), list);
+    let under = disabled_under(true, &list);
+    assert!(under.contains(&"get_bugs".to_string()));
+    for t in SIMPLE_HIDDEN_TOOLS {
+        assert_eq!(under.iter().filter(|u| *u == t).count(), 1, "{t}");
+    }
+    assert_eq!(list.len(), 2, "the saved list is untouched");
+}
+
+#[test]
+fn the_context_under_simple_mode_forces_the_two_switches_and_off_restores_them() {
+    let ctx = saved();
+    let under = context_under(true, &ctx);
+    assert!(under.network_tools && under.api_writes);
+    assert!(SIMPLE_HIDDEN_TOOLS.iter().all(|t| under.disabled_tools.iter().any(|d| d == t)));
+    assert!(under.disabled_tools.iter().any(|d| d == "get_bugs"));
+    // The stored context is what was saved, and Simple mode off shows it as it was.
+    assert!(!ctx.network_tools && !ctx.api_writes);
+    assert_eq!(ctx.disabled_tools, vec!["get_bugs".to_string()]);
+    let off = context_under(false, &ctx);
+    assert_eq!(off.disabled_tools, ctx.disabled_tools);
+    assert!(!off.network_tools && !off.api_writes);
+}
+
+#[test]
+fn a_context_with_no_active_environment_or_a_hold_gets_no_write_forced_on() {
+    let mut no_env = saved();
+    no_env.gate.env_id = None;
+    let under = context_under(true, &no_env);
+    assert!(!under.api_writes, "no environment, no write");
+    assert!(under.network_tools);
+    let mut held = saved();
+    held.gate.holds = 1;
+    assert!(!context_under(true, &held).api_writes, "a switch in progress holds writes off");
+}
+
+#[tokio::test]
+async fn the_tools_answer_names_the_hidden_tools_under_simple_mode_and_is_as_before_otherwise() {
+    let ctx = saved();
+    let (status, body) = ask(true, &ctx, "GET", "/tools", "").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let disabled: Vec<&str> = v["disabled"].as_array().unwrap().iter().filter_map(|d| d.as_str()).collect();
+    for t in SIMPLE_HIDDEN_TOOLS {
+        assert!(disabled.contains(t), "{t}");
+        assert!(v["simple_hidden"].as_array().unwrap().iter().any(|h| h == t), "{t}");
+    }
+    assert!(disabled.contains(&"get_bugs"));
+    assert_eq!(v["network_tools"], true);
+
+    let (_, body) = ask(false, &ctx, "GET", "/tools", "").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["disabled"], serde_json::json!(["get_bugs"]));
+    assert_eq!(v["network_tools"], false);
+    assert!(v.get("simple_hidden").is_none());
+    assert_eq!(ctx.disabled_tools, vec!["get_bugs".to_string()], "nothing was saved");
+}
+
+#[tokio::test]
+async fn a_hidden_tools_route_is_refused_with_the_simple_mode_sentence() {
+    let ctx = saved();
+    for path in SIMPLE_HIDDEN_ROUTES.iter().copied().chain(["/crystal-open", "/crystal-guide", "/crystal-preview-live"]) {
+        for method in ["GET", "POST"] {
+            assert_eq!(ask(true, &ctx, method, path, "{}").await, (404, SIMPLE_HIDES_TOOL.to_string()), "{method} {path}");
+        }
+        assert!(route_refusal(false, path).is_none(), "{path}");
+    }
+    assert!(SIMPLE_HIDES_TOOL.contains("Simple mode") && SIMPLE_HIDES_TOOL.contains("Settings"));
+    assert!(!SIMPLE_HIDES_TOOL.contains("AI Bridge"), "the row is hidden, there is no switch to name");
+    // The kept routes are not touched.
+    for path in ["/current-pbi", "/tools", "/autorun-page", "/api-template-guide"] {
+        assert!(route_refusal(true, path).is_none(), "{path}");
+    }
+    // With Simple mode off the same route is answered by its own handler, not the sentence.
+    assert_ne!(ask(false, &ctx, "GET", "/tags", "").await.1, SIMPLE_HIDES_TOOL);
+}
+
+#[tokio::test]
+async fn api_templates_run_under_simple_mode_with_the_saved_switch_off() {
+    let _slot = crate::serial::api_template_run();
+    let ctx = saved();
+    assert!(!ctx.api_writes);
+    // Off: refused by the switch's own sentence.
+    let (status, out) = ask(false, &ctx, "POST", "/api-template-prove", "not json").await;
+    assert_eq!((status, out.as_str()), (400, API_WRITES_OFF));
+    // Under Simple mode the switch is not what stops it any more.
+    let (_, out) = ask(true, &ctx, "POST", "/api-template-prove", "not json").await;
+    assert_ne!(out, API_WRITES_OFF);
+    // A context that is not the active environment's still turns no write on.
+    let mut other = saved();
+    other.gate.env_id = None;
+    let (status, out) = ask(true, &other, "POST", "/api-template-prove", "not json").await;
+    assert_eq!((status, out.as_str()), (400, API_WRITES_OFF));
+}
+
+#[test]
+fn the_slash_commands_of_the_hidden_tools_are_not_written_under_simple_mode() {
+    use v2_lib::ai_tools::{command_files_for, effective_disabled_under, COMMANDS};
+    let all_on = v2_lib::modules::Module::ALL.into_iter().collect();
+    let names = |simple: bool| -> Vec<String> {
+        let disabled = effective_disabled_under(simple, &[], &all_on);
+        command_files_for("/home/x", &disabled)
+            .into_iter()
+            .filter_map(|(p, _)| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+            .collect()
+    };
+    let off = names(false);
+    for stem in ["begin-test-case-writing", "optimize"] {
+        assert!(off.iter().any(|n| n == stem), "{stem} is written with Simple mode off");
+    }
+    let on = names(true);
+    for c in COMMANDS.iter().filter(|c| SIMPLE_HIDDEN_TOOLS.contains(&c.tool)) {
+        assert!(!on.iter().any(|n| n == c.stem), "{} is written under Simple mode", c.stem);
+    }
+    for stem in ["begin-test-case-writing", "optimize", "get-wiki-info", "page"] {
+        assert!(!on.iter().any(|n| n == stem), "{stem}");
+    }
+    assert!(on.iter().any(|n| n == "setup"), "an Auto Test command stays");
+}
+
+#[test]
+fn a_command_written_earlier_is_swept_when_simple_mode_hides_its_tool() {
+    use v2_lib::ai_tools::{command_files_in, effective_disabled_under, COMMAND_MARKER};
+    let all_on = v2_lib::modules::Module::ALL.into_iter().collect();
+    let dir = tempfile::tempdir().unwrap();
+    // A copy written earlier, with the marker the sweep looks for.
+    let begin = dir.path().join("begin-test-case-writing.md");
+    let (_, text) = command_files_in(dir.path(), &[]).into_iter().find(|(p, _)| *p == begin).unwrap();
+    assert!(text.contains(COMMAND_MARKER));
+    let under = effective_disabled_under(true, &[], &all_on);
+    assert!(
+        command_files_in(dir.path(), &under).iter().all(|(p, _)| *p != begin),
+        "the file is not in the wanted set, so the sweep removes the earlier copy"
+    );
+}
+
+#[test]
+fn the_proxy_hides_and_refuses_what_the_answer_names() {
+    let hidden = serde_json::json!(SIMPLE_HIDDEN_TOOLS);
+    let answer = serde_json::json!({ "disabled": [], "modules": ["auto_run", "api_templates", "db_access"], "simple_hidden": hidden, "network_tools": true });
+    let (off, _) = v2_lib::mcp::tool_policy_from(Ok((200, answer.to_string())));
+    for t in SIMPLE_HIDDEN_TOOLS {
+        assert!(off.iter().any(|o| o == t), "{t}");
+    }
+    assert!(!off.iter().any(|o| o == "get_test_cases"));
+    // A name this build does not hide is not taken on the answer's word.
+    let odd = serde_json::json!({ "disabled": [], "modules": [], "simple_hidden": ["get_test_cases"] });
+    let (off, _) = v2_lib::mcp::tool_policy_from(Ok((200, odd.to_string())));
+    assert!(!off.iter().any(|o| o == "get_test_cases"));
+
+    let body = answer.to_string();
+    let call = |_: &str, _: &str, _: &str| Ok::<(u16, String), String>((200, body.clone()));
+    let list = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+    let names: Vec<String> = serde_json::from_str::<serde_json::Value>(&list).unwrap()["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    for t in SIMPLE_HIDDEN_TOOLS {
+        assert!(!names.iter().any(|n| n == t), "{t} is listed");
+    }
+    assert!(names.iter().any(|n| n == "get_test_cases") && names.iter().any(|n| n == "save_autorun_script"));
+    for tool in ["search_pbis", "optimize_cases", "open_report"] {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"{tool}","arguments":{{}}}}}}"#);
+        let resp = v2_lib::mcp::handle_message(&req, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{tool}");
+        assert_eq!(v["result"]["content"][0]["text"], SIMPLE_HIDES_TOOL, "{tool}");
+    }
+}

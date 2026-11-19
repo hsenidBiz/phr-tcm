@@ -129,6 +129,8 @@ pub fn register_and_allow(
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
+    // Simple mode's hidden tools lose their commands too, as a switched-off tool does.
+    let disabled_tools = crate::simple_view::disabled_now(&disabled_tools);
     register_server(id, &tcm_server(&exe), working_dir, &disabled_tools, global)?;
     // A tool registered gets its own "always allow" for what the app lets
     // run unasked right now - the database tools while the active
@@ -218,7 +220,7 @@ pub fn match_allow_files_in(
 /// before that and would read as "nothing is switched off".
 pub fn told_disabled(bridge: Option<&std::sync::Mutex<crate::ai_bridge::BridgeContext>>) -> Option<Vec<String>> {
     let ctx = bridge?.lock().unwrap_or_else(|e| e.into_inner());
-    ctx.gate.env_id.is_some().then(|| ctx.disabled_tools.clone())
+    ctx.gate.env_id.is_some().then(|| crate::simple_view::disabled_now(&ctx.disabled_tools))
 }
 
 /// Every tool's own "always allow" made to say what the app says now: the

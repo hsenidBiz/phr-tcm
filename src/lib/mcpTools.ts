@@ -13,6 +13,7 @@
 // module on and nothing left to turn it back on.
 
 import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
+import { appSimpleModeSnapshot } from "./appSimpleMode";
 import { modulesSnapshot, type Module } from "./modules";
 import { isCaptureMode } from "../dev/capture";
 
@@ -462,6 +463,40 @@ export const CRYSTAL_TOOLS = [
   "replace_in_report",
 ] as const;
 
+/** The tools an assistant does not get while app Simple mode is on: it reads
+ * test cases and writes Auto Test scripts, and nothing else of the writing,
+ * searching and report tools. Mirrors `simple_mode.rs`'s `SIMPLE_HIDDEN_TOOLS`
+ * (a test compares them). Rust decides what is hidden from the saved setting;
+ * this only hides the rows and the breakdown text. A view: it never changes
+ * what is saved, so turning Simple mode off brings every row back as it was. */
+export const SIMPLE_HIDDEN_TOOLS = [
+  "begin_test_case_writing",
+  "check_spec_coverage",
+  "merge_case_files",
+  "validate_cases",
+  "get_tags",
+  "optimize_cases",
+  "transform_cases",
+  "search_pbis",
+  "search_wiki",
+  "get_wiki_page",
+  "open_report",
+  "read_report",
+  "edit_report",
+  "compare_reports",
+  "check_report",
+  "preview_report",
+  "preview_report_live",
+  "get_report_parameters",
+  "find_in_report",
+  "replace_in_report",
+] as const;
+
+/** Whether Simple mode hides this tool from the assistants (and so from this screen). */
+export function simpleHidesTool(name: string): boolean {
+  return appSimpleModeSnapshot() && (SIMPLE_HIDDEN_TOOLS as readonly string[]).includes(name);
+}
+
 /** The module a tool belongs to; null for a tool that is part of Core.
  * Mirrors `ai_tools.rs`'s `module_of_tool`. */
 export function moduleOfTool(name: string): Module | null {
@@ -480,6 +515,7 @@ export function moduleOfTool(name: string): Module | null {
  * DISPLAY ONLY: never wire this into `loadDisabledTools` or anything that
  * feeds `register`/`setBridgeContext`. */
 export function toolShown(name: string): boolean {
+  if (simpleHidesTool(name)) return false;
   const m = moduleOfTool(name);
   if (m !== null && !modulesSnapshot().has(m)) return false;
   return !(isCaptureMode() && (m === "auto_run" || m === "api_templates"));
@@ -569,7 +605,7 @@ export function toggleRow(disabled: string[], names: string[]): string[] {
  * screen can honour.
  */
 export function visibleTools(): McpToolInfo[] {
-  return MCP_TOOLS.filter((t) => !isCoreTool(t.name) && moduleOfTool(t.name) === null);
+  return MCP_TOOLS.filter((t) => !isCoreTool(t.name) && moduleOfTool(t.name) === null && !simpleHidesTool(t.name));
 }
 
 /** Tools that were renamed, old name -> new. A saved list naming the old

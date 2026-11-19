@@ -463,9 +463,9 @@ fn sync_files_after_push(
     let (disabled_tools, working_dir) = match running {
         Some(shared) => {
             let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-            (ctx.disabled_tools.clone(), ctx.working_dir.clone())
+            (crate::simple_view::disabled_now(&ctx.disabled_tools), ctx.working_dir.clone())
         }
-        None => (pushed_disabled, pushed_working_dir),
+        None => (crate::simple_view::disabled_now(&pushed_disabled), pushed_working_dir),
     };
     // A tool switched off in the AI Bridge tab loses its slash command too.
     // The tool side already refuses a disabled tool twice - filtered from

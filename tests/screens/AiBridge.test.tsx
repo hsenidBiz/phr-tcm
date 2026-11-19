@@ -4,15 +4,17 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "../../src/components/ui/toaster";
 import { TooltipLayer } from "../../src/components/ui/tooltip";
-import { MCP_TOOLS } from "../../src/lib/mcpTools";
+import { disabledToolsSnapshot, MCP_TOOLS, saveDisabledTools } from "../../src/lib/mcpTools";
 import AiBridge from "../../src/screens/AiBridge";
 import { selectedDbSnapshot, subscribeDbSettings } from "../../src/lib/dbServer";
 import { ALL_MODULES, resetModulesStore, setModulesForTest } from "../../src/lib/modules";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
   resetModulesStore();
+  resetAppSimpleModeStore();
 });
 
 // A fresh store has no module on. Most of this file is about a card or a row
@@ -2025,4 +2027,58 @@ test("the count and Turn all on cover only the rows with a switch", async () => 
   expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
   act(() => setModulesForTest(ALL_MODULES));
   expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
+});
+
+// App Simple mode: the assistants get API templates and the network tools
+// without their switches, and no writing, search or report tools. Only the
+// view changes - nothing is saved.
+function renderSimpleBridge(simple: boolean) {
+  setAppSimpleModeForTest(simple);
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderBridge(qc);
+}
+
+test("Simple mode hides the API templates and Network tools cards, the writing rows and the writing intro", async () => {
+  saveDisabledTools(["search_pbis"]);
+  renderSimpleBridge(true);
+  await screen.findByText("Tools an assistant may use");
+  expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "API templates (create, edit and delete)" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Network tools" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Network tools" })).not.toBeInTheDocument();
+  // The rows the assistants no longer have.
+  for (const label of ["Find a PBI", "Project wiki", "Project tags"]) {
+    expect(screen.queryByRole("switch", { name: label }), label).not.toBeInTheDocument();
+  }
+  // The reads stay.
+  expect(screen.getByRole("switch", { name: "Test Suites" })).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Run results" })).toBeInTheDocument();
+  const card = screen.getByText("AI Tools Breakdown").closest("section")!;
+  expect(card.textContent).not.toMatch(/The best way to write test cases/);
+  for (const label of ["Project tags", "Find a PBI", "Project wiki", "Crystal Reports"]) {
+    expect(within(card).queryByText(label), label).not.toBeInTheDocument();
+  }
+  for (const label of ["Test Suites", "Run results", "Auto Test scripts", "API templates", "Database Read Access"]) {
+    expect(within(card).getByText(label), label).toBeInTheDocument();
+  }
+  // A view, not a save: the switch the person made is still as they left it.
+  expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
+});
+
+test("out of Simple mode the cards, rows and writing intro are all there", async () => {
+  renderSimpleBridge(false);
+  await screen.findByText("Tools an assistant may use");
+  expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Network tools" })).toBeInTheDocument();
+  for (const label of ["Find a PBI", "Project wiki", "Project tags"]) {
+    expect(screen.getByRole("switch", { name: label }), label).toBeInTheDocument();
+  }
+  const card = screen.getByText("AI Tools Breakdown").closest("section")!;
+  expect(card.textContent).toMatch(/The best way to write test cases/);
+  expect(within(card).getByText("Crystal Reports")).toBeInTheDocument();
 });
