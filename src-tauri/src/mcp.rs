@@ -3541,8 +3541,9 @@ pub fn run_stdio_proxy() {
     // stderr is the MCP client's log: the same sentence the assistant gets
     // in `instructions`, where a person reading the client's logs finds it.
     // Said only when this connector answers for itself: an app that relays gives its own list.
-    if !matches!(read_list(), Some(ListSeen::Version(_))) {
-        if let Some(warning) = version_warning(PROXY_VERSION, &version) {
+    // The app is asked only when there is a warning to drop.
+    if let Some(warning) = version_warning(PROXY_VERSION, &version) {
+        if !matches!(read_list(), Some(ListSeen::Version(_))) {
             eprintln!("{warning}");
         }
     }
@@ -3730,7 +3731,9 @@ pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
             };
             // The "tools offered here are the connector's" warning is true only when the connector answers
             // for itself: with an app that relays, the list is the app's own.
+            // Asked only when there is a warning to drop: matching versions make no request here.
             let relaying = method.as_deref() == Some("initialize")
+                && version_warning(PROXY_VERSION, &version).is_some()
                 && watch.as_ref().is_some_and(|w| matches!((w.read)(), Some(ListSeen::Version(_))));
             let said = if relaying { PROXY_VERSION } else { version.as_str() };
             if let Some(resp) = answer_line(&line, said, &call, &book, &relay, &session) {

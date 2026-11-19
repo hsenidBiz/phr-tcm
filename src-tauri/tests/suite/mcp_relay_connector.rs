@@ -425,6 +425,21 @@ fn reader(readings: Vec<Option<ListSeen>>, poll: Duration) -> (Watch, Calls) {
     (Watch { read, poll }, calls)
 }
 
+/// A watch that always reads `a`, counting its calls: every one, and those made on the thread that built it
+/// (the one serving the input), as opposed to the watcher's own.
+fn main_thread_reader(poll: Duration) -> (Watch, Calls, Calls) {
+    let (all, main): (Calls, Calls) = (Arc::new(std::sync::atomic::AtomicUsize::new(0)), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let (a, m, here) = (all.clone(), main.clone(), std::thread::current().id());
+    let read = Arc::new(move || {
+        a.fetch_add(1, Ordering::SeqCst);
+        if std::thread::current().id() == here {
+            m.fetch_add(1, Ordering::SeqCst);
+        }
+        Some(v("a"))
+    });
+    (Watch { read, poll }, all, main)
+}
+
 /// When the held end of the input may come: given the reader's call count and what was written so far.
 type Done = Arc<dyn Fn(usize, &str) -> bool + Send + Sync>;
 
@@ -508,13 +523,22 @@ fn a_change_after_initialize_is_announced_once() {
 }
 
 #[test]
+fn initialize_asks_the_app_nothing_when_the_versions_match() {
+    let (watch, all, main) = main_thread_reader(Duration::from_secs(60));
+    // Held until the watcher's own first reading, so a wrongly made one on this thread would have happened.
+    let (out, _) = serve_watched(&[INIT], v2_lib::mcp::PROXY_VERSION, watch, all, nothing(), Arc::new(|n, _| n >= 1));
+    assert_eq!(main.load(Ordering::SeqCst), 0, "initialize asked the app for the list version");
+    assert!(!out.contains("instructions"), "{out}");
+}
+
+#[test]
 fn a_tools_list_takes_its_reading_before_it_is_answered() {
-    // The poll is a minute: the only reading after the first is the one taken for the list, and it must
-    // already be taken when the app is asked for the list.
-    let (watch, calls) = reader(vec![Some(v("a"))], Duration::from_secs(60));
-    let (out, at_relay) = serve_watched(&[INIT, LIST], "1.0.0", watch, calls, nothing(), Arc::new(|n, _| n >= 3));
-    assert_eq!(at_relay.len(), 1, "{out}");
-    assert!(at_relay[0] >= 2, "the list was asked for before its reading was taken: {at_relay:?}");
+    // Only reads made on the serving thread are counted (the watcher's own run elsewhere), and the version
+    // matches, so initialize reads nothing: the one read there can be is the list's, and the app must
+    // not be asked for the list before it is taken.
+    let (watch, _all, main) = main_thread_reader(Duration::from_secs(60));
+    let (out, at_relay) = serve_watched(&[INIT, LIST], v2_lib::mcp::PROXY_VERSION, watch, main, nothing(), Arc::new(|_, w| w.contains("\"id\":7")));
+    assert_eq!(at_relay, vec![1], "the list was asked for before its reading was taken: {out}");
     assert!(!out.contains("list_changed"), "{out}");
     assert!(out.contains("\"id\":7"), "the list was not answered: {out}");
 }
