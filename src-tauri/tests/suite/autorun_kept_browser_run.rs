@@ -39,6 +39,10 @@ enum Quirk {
     HideMarker,
     /// Every later `check_text` fails.
     FailChecks,
+    /// The page re-issues a non-identity HttpOnly cookie as the steps run.
+    RotateSid,
+    /// The identity cookie changes as the steps run.
+    RotateIdentity,
 }
 
 /// An application that signs in (`#go`), shows `#marker` once signed in,
@@ -46,6 +50,8 @@ enum Quirk {
 fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
     let mut path = "/".to_string();
     let (mut signed_in, mut checks, mut hidden) = (false, 0usize, false);
+    let (mut sid, mut identity) = ("abc", "who");
+    let mut read = false;
     let (mut last_css, mut last_probed) = (String::new(), String::new());
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
@@ -56,8 +62,18 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
                 json!({ "frameId": "F", "loaderId": "L" })
             }
             "Network.getAllCookies" => json!({ "cookies": [
-                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
+                { "name": "sid", "value": sid, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true },
+                { "name": "ehrm85", "value": identity, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
             ] }),
+            // The recorder, for a run that wants a video of failed cases.
+            "Browser.getVersion" => json!({ "product": "Edg/157.0.3456.78" }),
+            "Page.startScreenRecording" => json!({}),
+            "Page.stopScreenRecording" => json!({ "stream": "stream-1" }),
+            "IO.read" => {
+                let data = if std::mem::replace(&mut read, true) { String::new() } else { "AAAAGGZ0eXBtcDQy".to_string() };
+                json!({ "data": data, "base64Encoded": true, "eof": true })
+            }
+            "IO.close" => json!({}),
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" if params["expression"] == "location.href" => {
                 json!({ "result": { "value": format!("https://hr.example.internal{path}") } })
@@ -89,6 +105,12 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
                 log.lock().unwrap().push(format!("check {want}"));
                 let ok = want == "yes" && !(quirk == Quirk::FailChecks && checks > 1);
                 hidden |= quirk == Quirk::HideMarker;
+                if quirk == Quirk::RotateSid {
+                    sid = "reissued";
+                }
+                if quirk == Quirk::RotateIdentity {
+                    identity = "someone-else";
+                }
                 json!({ "result": { "value": ok } })
             }
             "Runtime.callFunctionOn" => {
@@ -130,11 +152,15 @@ struct Fake {
     quirks: Vec<Quirk>,
     opened: usize,
     closed: usize,
+    /// Browsers open now, and the most there ever were together.
+    alive: usize,
+    most_alive: usize,
+    video: bool,
 }
 
 impl Fake {
     fn new(quirks: &[Quirk]) -> Fake {
-        Fake { log: Arc::new(Mutex::new(vec![])), quirks: quirks.to_vec(), opened: 0, closed: 0 }
+        Fake { log: Arc::new(Mutex::new(vec![])), quirks: quirks.to_vec(), opened: 0, closed: 0, alive: 0, most_alive: 0, video: false }
     }
     fn sign_ins(&self) -> usize {
         self.log.lock().unwrap().iter().filter(|l| *l == "sign-in").count()
@@ -143,13 +169,19 @@ impl Fake {
 
 impl Browsers for Fake {
     type D = ScriptedDriver;
+    fn keep_failed_video(&self) -> bool {
+        self.video
+    }
     async fn open(&mut self) -> Result<ScriptedDriver, String> {
         let quirk = self.quirks.get(self.opened).copied().unwrap_or(Quirk::Plain);
         self.opened += 1;
+        self.alive += 1;
+        self.most_alive = self.most_alive.max(self.alive);
         Ok(app(self.log.clone(), quirk))
     }
     async fn close(&mut self, _d: ScriptedDriver) {
         self.closed += 1;
+        self.alive -= 1;
     }
 }
 
@@ -228,6 +260,8 @@ async fn run_with(fake: &mut Fake, root: &Path, ids: &[i32], resets: &[Pause], s
     })
     .await
     .unwrap();
+    // Never more than one signed-in browser at a time.
+    assert!(fake.most_alive <= 1, "{} browsers were open together", fake.most_alive);
     run
 }
 
@@ -434,4 +468,54 @@ async fn blocked_case_between_keeps_browser() {
     assert_eq!(run.cases[2].proposed, "Passed", "{:?}", proposals(&run));
     assert_eq!((fake.opened, fake.closed), (1, 1));
     assert_eq!(fake.sign_ins(), 1);
+}
+
+#[tokio::test]
+async fn a_cookie_the_page_reissues_during_the_steps_still_lets_the_next_case_reuse() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &case(2, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[Quirk::RotateSid]);
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (1, 1));
+    assert_eq!(fake.sign_ins(), 1);
+}
+
+#[tokio::test]
+async fn a_changed_identity_cookie_means_the_next_case_signs_in_fresh() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &case(2, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[Quirk::RotateIdentity]);
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (2, 2));
+    assert_eq!(fake.sign_ins(), 2);
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+}
+
+#[tokio::test]
+async fn the_first_gos_video_is_discarded_when_a_reused_go_is_run_again_fresh() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &case(2, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[Quirk::FailChecks]);
+    fake.video = true;
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert_eq!(run.cases[1].proposed, "Passed", "{:?}", proposals(&run));
+    assert_eq!(run.cases[1].video, None);
+    let videos: Vec<_> = std::fs::read_dir(root.join("shots"))
+        .map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".mp4")).collect())
+        .unwrap_or_default();
+    assert!(videos.is_empty(), "{videos:?}");
 }

@@ -1115,6 +1115,8 @@ async fn one_go<B: Browsers>(
         return Ok(first);
     }
     crate::applog::info(format!("{}: the case did not pass in the browser the case before kept, so it goes again in a fresh one", who(at.case_id)));
+    // Task 3: a case with a setup must run its setup again before this go
+    // (the first go may have changed the draft), as the transient retry does.
     match Box::pin(go_once(browsers, go, at, progress, kept, false)).await {
         Ok((second, _)) => {
             // The first go's video is of a try that is no longer the record.
@@ -1157,9 +1159,10 @@ async fn go_once<B: Browsers>(
         (_, _, mut other) => close_kept(browsers, &mut other).await,
     }
     let was_reused = again.is_some();
+    let mut opening_fresh = opening;
     let (mut d, mut lease, check_ms) = match again {
         Some((d, lease, check_ms)) => (d, lease, Some(check_ms)),
-        None => match browsers.open().await {
+        None => match { opening_fresh = Instant::now(); browsers.open().await } {
             Err(why) => return Err(why),
             // The case's account, held until its browser is closed: a local
             // here, so an end, a stop (this future dropped) and a panic all
@@ -1167,7 +1170,7 @@ async fn go_once<B: Browsers>(
             Ok(d) => (d, Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait()), None),
         },
     };
-    let open_ms = if was_reused { 0 } else { ms(opening.elapsed()) };
+    let open_ms = if was_reused { 0 } else { ms(opening_fresh.elapsed()) };
     // The case's downloads are kept with the run. A browser that
     // will not save them still runs the case: a step that checks a
     // download then says none came.
@@ -1206,9 +1209,15 @@ async fn go_once<B: Browsers>(
     // next one. A stop asked for after the case ends it too.
     let mut ended = kept_browser::ended_from(&rec, go.script, go.account);
     ended.stopped |= go.cancel.load(Ordering::SeqCst);
-    let keep = kept_browser::may_keep(&ended)
-        && go.account.is_some_and(|key| lease.holds(go.root, key))
-        && lease.sign_in_print().is_some();
+    let mut keep = kept_browser::may_keep(&ended) && go.account.is_some_and(|key| lease.holds(go.root, key));
+    if keep {
+        // The case's own pages may have re-issued the sign-in's session
+        // cookie (backlog 44b): the print is taken again when the sign-in is
+        // provably the same one, and a browser whose print could not be
+        // taken again is not kept - the next case would find it changed.
+        let who_key = go.account.map(str::to_string);
+        keep = super::replay_to::retake_after_steps(&mut d, go.root, go.organization, go.project, go.script, i32::MAX, &who_key, &mut lease, go.timing).await;
+    }
     // `run_case_reusing` has already waited for a download still
     // arriving, once, so the browser closes now.
     let closing = Instant::now();

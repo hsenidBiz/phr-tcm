@@ -1086,7 +1086,7 @@ pub fn touches_sign_in(
 /// stays, so the next replay judges the browser by it - and signs in again
 /// if it changed. What was decided is logged, with no path and no value.
 #[allow(clippy::too_many_arguments)]
-async fn retake_after_steps<D: Driver>(
+pub(crate) async fn retake_after_steps<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,
@@ -1096,13 +1096,16 @@ async fn retake_after_steps<D: Driver>(
     account: &Option<String>,
     lease: &mut Held,
     timing: &Timing,
-) {
-    let Some(key) = script.account.as_deref().filter(|k| account.as_deref() == Some(*k)) else { return };
-    let said = |why: &str| crate::applog::info(format!("{}: the sign-in's cookies were not taken again: {why}", who(script.case_id)));
+) -> bool {
+    let Some(key) = account.as_deref() else { return false };
+    let said = |why: &str| {
+        crate::applog::info(format!("{}: the sign-in's cookies were not taken again: {why}", who(script.case_id)));
+        false
+    };
     if !lease.holds(root, key) {
-        return;
+        return false;
     }
-    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return };
+    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return false };
     // Every step the replay could have run: those before `n`, and `n` itself
     // (a replay stopped at a step may have run part of it), and the clean-up.
     let written: Vec<Action> = script
@@ -1120,7 +1123,7 @@ async fn retake_after_steps<D: Driver>(
         return said(&format!("the steps {why}"));
     }
     let origins = recipe.origins();
-    let Some(print) = lease.sign_in_print() else { return };
+    let Some(print) = lease.sign_in_print() else { return false };
     if !print.holds_cookie(IDENTITY_COOKIE) {
         return said("the sign-in left no identity cookie to compare");
     }
@@ -1132,8 +1135,9 @@ async fn retake_after_steps<D: Driver>(
     }
     let shown = signin::already_signed_in_why(d, &recipe, account.as_deref(), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await;
     if shown.is_ok() {
-        let _ = retake_sign_in(d, &origins, lease, "the replay's steps").await;
+        return retake_sign_in(d, &origins, lease, "the replay's steps").await.is_ok();
     }
+    false
 }
 
 /// The cookie that carries the user the server checks the sign-in against
