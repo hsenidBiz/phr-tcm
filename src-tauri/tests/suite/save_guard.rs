@@ -426,7 +426,7 @@ async fn a_beacon_and_a_form_post_are_still_blocked() {
         vec![("POST".to_string(), "/api/Save".to_string()), ("POST".to_string(), "/api/update/beacon".to_string())]
     );
     let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
-    let stopped: Vec<&String> = lines.iter().filter(|l| l.starts_with("Auto Run stopped a save")).collect();
+    let stopped: Vec<&String> = lines.iter().filter(|l| l.starts_with("Auto Test stopped a save")).collect();
     assert!(stopped.iter().any(|l| l.ends_with("POST /api/update/beacon")), "{lines:?}");
     assert!(stopped.iter().all(|l| !l.contains("hr.example") && !l.contains('?')), "{stopped:?}");
 }
@@ -1039,7 +1039,7 @@ async fn a_stopped_save_is_not_carried_into_the_next_case() {
     assert_eq!(held, Some(8));
     assert_eq!(d.save_blocked, None, "case 7's save was carried into case 8");
     let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
-    assert!(lines.iter().any(|l| l == &format!("Auto Run, case 7: {SENTENCE}")), "{lines:?}");
+    assert!(lines.iter().any(|l| l == &format!("Auto Test, case 7: {SENTENCE}")), "{lines:?}");
     // The same case asked again keeps what it has not reported yet.
     d.save_blocked = Some(SENTENCE.to_string());
     guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8, true).await.unwrap();

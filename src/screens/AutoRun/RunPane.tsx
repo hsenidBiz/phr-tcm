@@ -91,7 +91,7 @@ export default function RunPane({
    * needs settings. */
   plan?: PlanView | null;
   onClose: () => void;
-  /** Why Open browser waits, when it does: a discovery holds the Auto Run
+  /** Why Open browser waits, when it does: a discovery holds the Auto Test
    * browser, and opening one would end it. */
   browserBlocked?: string;
 }) {
@@ -574,14 +574,14 @@ export default function RunPane({
       }
       if (account && own !== "" && account !== own) {
         mustSignIn.current = true;
-        setResign(`the Auto Run browser was signed in as ${account} by a replay - sign in again before the next step`);
+        setResign(`the Auto Test browser was signed in as ${account} by a replay - sign in again before the next step`);
       }
       // Its sign-in was forgotten under this pane (the assistant's reset found
       // it gone): nobody is signed in now. A step's expire_session is never
       // said, so the steps after it still meet no session.
       if (!account && wasOpen && own !== "") {
         mustSignIn.current = true;
-        setResign("the Auto Run browser is no longer signed in - sign in again before the next step");
+        setResign("the Auto Test browser is no longer signed in - sign in again before the next step");
       }
     });
     return () => {

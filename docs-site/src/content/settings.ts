@@ -33,7 +33,7 @@ export const settings: Screen = {
     {
       id: MODULES,
       route: [OPEN, { scrollTo: { role: "button", name: "Modules" } }],
-      alt: "The end of the General card, with the Modules row, and the Auto Run and AI tools cards under it",
+      alt: "The end of the General card, with the Modules row, and the Auto Test and AI tools cards under it",
     },
     // The one shot that documents the switch clicks it on. The sample app answers
     // in memory (dev/demo.ts), so nothing is saved and a reload puts it back off.
@@ -63,7 +63,7 @@ export const settings: Screen = {
       title: "General",
       summary:
         "Whether the projects show together and your home project, running in the tray, starting with Windows, how fast the app may call Azure DevOps, and the Modules page. " +
-        "While **Treat all projects as one** is on and the organization has more than one project, a **Home project** picker appears under it. Auto Run, API Templates and Playwright, and new work items that have no Product Backlog Item, use the home project, because their files and templates belong to one project. Once one is set it can be changed but not cleared.",
+        "While **Treat all projects as one** is on and the organization has more than one project, a **Home project** picker appears under it. Auto Test, API Templates and Playwright, and new work items that have no Product Backlog Item, use the home project, because their files and templates belong to one project. Once one is set it can be changed but not cleared.",
     },
     {
       id: "simple-mode",
@@ -71,7 +71,7 @@ export const settings: Screen = {
       summary:
         "A shorter app. It hides Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, and switches the modules on. Nothing is removed: turn it off and everything is back.",
     },
-    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Run. Each module can be switched on once the one above it is. Hidden while Simple mode is on (Settings)." },
+    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Test. Each module can be switched on once the one above it is. Hidden while Simple mode is on (Settings)." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
     { id: "updates", title: "Updates", summary: "The version you have, beta builds, and checking for a new version." },
     { id: "backup", title: "Backup and transfer", summary: "Move your settings to another computer." },
@@ -132,9 +132,9 @@ export const settings: Screen = {
       name: "Simple mode",
       does:
         "Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates. " +
-        "Switching it on also switches the modules on, so Auto Run and the rest are ready, and holds Auto Run in its Simple mode (only **Simple** is offered at the top of Auto Run; turning Simple mode off leaves Auto Run in Simple, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
+        "Switching it on also switches the modules on, so Auto Test and the rest are ready, and holds Auto Test in its Simple mode (only **Simple** is offered at the top of Auto Test; turning Simple mode off leaves Auto Test in Simple, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
         "A new installation starts with Simple mode on; an installation from before it existed keeps everything and starts with it off. " +
-        "Anything that opens a hidden screen, a link or a shortcut, opens Auto Run instead. The switch waits while an unattended Auto Run run is going. If a module could not be switched on, a line under the switch names it; turn Simple mode off and on to try again.",
+        "Anything that opens a hidden screen, a link or a shortcut, opens Auto Test instead. The switch waits while an unattended Auto Test run is going. If a module could not be switched on, a line under the switch names it; turn Simple mode off and on to try again.",
       tips: ["Your assistant cannot change this setting. If it needs a screen that Simple mode hides, it does that part itself or asks you to turn Simple mode off."],
     },
     {
@@ -144,16 +144,16 @@ export const settings: Screen = {
       locate: { role: "button", name: "Modules" },
       name: "Modules",
       does:
-        "Switch on the parts of the app you need, such as Auto Run. Opens a full page, **Modules**, with **Back to Settings** at the top. " +
+        "Switch on the parts of the app you need, such as Auto Test. Opens a full page, **Modules**, with **Back to Settings** at the top. " +
         "At the top sits **Core**, which is always on: Test cases, suites, runs and the board. Under it is one card per module, each with its name, what it is for and its state: **On**, **Off · click to switch on**, or **Locked · needs** the module above it.",
       tips: [
-        "**Database Access**: Connect TCM to your test environments' databases. Your assistant can look data up, and Auto Run uses it to check preconditions and to notice when the VPN drops. It adds the Database Read Access card on the AI Bridge tab.",
+        "**Database Access**: Connect TCM to your test environments' databases. Your assistant can look data up, and Auto Test uses it to check preconditions and to notice when the VPN drops. It adds the Database Read Access card on the AI Bridge tab.",
         "**Writing Style**: Your own rules for how test cases are worded and split into steps. Your assistant follows them instead of the standard guide when it writes cases. It adds the Writing style card on the AI Bridge tab.",
-        "**Auto Run**: Script a test case once, then run it in a browser, watched or unattended, and review the results before they go to Azure DevOps. Includes environments, accounts, areas and test files. It needs Database Access, and adds Auto Run to the sidebar's bottom group and the Environment card on the AI Bridge tab.",
-        "**API Templates**: Create the test data a case needs, such as cycles, drafts and settings, through the app's own pages before the case runs, so every run starts from a known state. It needs Auto Run, and adds API Templates to the sidebar's bottom group.",
-        "**Playwright**: Export passing Auto Run scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync. It needs Auto Run, and adds Playwright to the sidebar's bottom group, under Auto Run.",
-        "With Auto Run on, [[Ctrl+9]] opens it. The screens above it keep [[Ctrl+1]] to [[Ctrl+8]].",
-        "With Auto Run on, Settings also shows an **Auto Run** card with **Browser page size**: the Width and Height of the page every browser the app drives shows, 1280 x 720 until you change it (800 x 600 to 3840 x 2160). **Save** keeps a new size and **Reset to default** puts 1280 x 720 back. A browser that is already open keeps its size; the next one the app opens uses the new one.",
+        "**Auto Test**: Script a test case once, then run it in a browser, watched or unattended, and review the results before they go to Azure DevOps. Includes environments, accounts, areas and test files. It needs Database Access, and adds Auto Test to the sidebar's bottom group and the Environment card on the AI Bridge tab.",
+        "**API Templates**: Create the test data a case needs, such as cycles, drafts and settings, through the app's own pages before the case runs, so every run starts from a known state. It needs Auto Test, and adds API Templates to the sidebar's bottom group.",
+        "**Playwright**: Export passing Auto Test scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync. It needs Auto Test, and adds Playwright to the sidebar's bottom group, under Auto Test.",
+        "With Auto Test on, [[Ctrl+9]] opens it. The screens above it keep [[Ctrl+1]] to [[Ctrl+8]].",
+        "With Auto Test on, Settings also shows an **Auto Test** card with **Browser page size**: the Width and Height of the page every browser the app drives shows, 1280 x 720 until you change it (800 x 600 to 3840 x 2160). **Save** keeps a new size and **Reset to default** puts 1280 x 720 back. A browser that is already open keeps its size; the next one the app opens uses the new one.",
       ],
     },
 
@@ -359,7 +359,7 @@ export const settings: Screen = {
   ],
   tips: [
     "Settings can also be opened from the command palette: press [[Ctrl+K]] and pick **Settings**.",
-    "On a fresh install the home project is set for you: the only project, else the one that already has Auto Run files, else the project of the first Product Backlog Item you pick. A message tells you when that last one happens.",
+    "On a fresh install the home project is set for you: the only project, else the one that already has Auto Test files, else the project of the first Product Backlog Item you pick. A message tells you when that last one happens.",
     "Assistants connected through the AI Bridge follow **Treat all projects as one**: while it is on they search Product Backlog Items, test suites and the wiki across every project.",
   ],
 };

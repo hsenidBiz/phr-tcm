@@ -1,4 +1,4 @@
-// The search box for the Auto Run case list, at the top of the Setup panel.
+// The search box for the Auto Test case list, at the top of the Setup panel.
 // It narrows the list by the case id (with or without its "#") or by words
 // in the title, together with the result filters. Several searches can go
 // in at once, separated by commas: a case shows when it matches any of

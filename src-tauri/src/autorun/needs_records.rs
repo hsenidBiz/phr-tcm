@@ -150,7 +150,7 @@ pub async fn check_needed<S: RowSource>(
                 ));
             }
             DbOutcome::CouldNotRun(said) => {
-                crate::applog::warn(format!("Auto Run needs_records: the find rule of setup {} did not run: {said}", setup.name));
+                crate::applog::warn(format!("Auto Test needs_records: the find rule of setup {} did not run: {said}", setup.name));
                 if crate::api_templates::gate::unreachable(&said) {
                     return NeedsOutcome::Unanswered(DID_NOT_ANSWER.to_string());
                 }

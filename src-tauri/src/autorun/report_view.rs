@@ -1,4 +1,4 @@
-//! The Auto Run report's page: the shell (top bar, sidebar), the lists and
+//! The Auto Test report's page: the shell (top bar, sidebar), the lists and
 //! the detail of a case, Insights, History and the gallery's shell.
 //!
 //! All of it is plain HTML written here - the charts are inline SVG, the
@@ -208,7 +208,7 @@ pub(super) fn topbar(pbi: i32, environment: Option<&str>, when_html: &str, atten
         "<header class=\"topbar\"><button type=\"button\" class=\"icon-btn\" id=\"rail-toggle\" aria-label=\"Show or hide the sidebar\" title=\"Sidebar (Ctrl+B)\">",
     );
     h.push_str(&icon("sidebar"));
-    h.push_str("</button><span class=\"topbar__brand\">Auto Run report</span><span class=\"topbar__run\">");
+    h.push_str("</button><span class=\"topbar__brand\">Auto Test report</span><span class=\"topbar__run\">");
     h.push_str(&format!("<span class=\"topbar__meta mono\">PBI #{pbi}</span>"));
     if let Some(env) = environment.map(str::trim).filter(|e| !e.is_empty()) {
         h.push_str(&format!("<span class=\"topbar__meta\">{}</span>", esc_attr(env)));

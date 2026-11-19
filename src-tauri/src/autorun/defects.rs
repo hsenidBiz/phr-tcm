@@ -144,7 +144,7 @@ pub fn clear_if_passed(root: &Path, case: &CaseRecord) -> Option<i32> {
         Ok(None) => return None,
         Err(e) => {
             crate::applog::warn(format!(
-                "Auto Run: the script of case {} was not read to check its suspected defect: {e}",
+                "Auto Test: the script of case {} was not read to check its suspected defect: {e}",
                 case.case_id
             ));
             return None;
@@ -157,7 +157,7 @@ pub fn clear_if_passed(root: &Path, case: &CaseRecord) -> Option<i32> {
     match store::clear_suspected_defect_at(root, case.case_id, step_number) {
         Ok(true) => {
             crate::applog::info(format!(
-                "Auto Run: the suspected defect at step {step_number} of case {} did not happen in this run and was cleared",
+                "Auto Test: the suspected defect at step {step_number} of case {} did not happen in this run and was cleared",
                 case.case_id
             ));
             Some(step_number)
@@ -167,7 +167,7 @@ pub fn clear_if_passed(root: &Path, case: &CaseRecord) -> Option<i32> {
         Ok(false) => None,
         Err(e) => {
             crate::applog::warn(format!(
-                "Auto Run: the suspected defect at step {step_number} of case {} could not be cleared: {e}",
+                "Auto Test: the suspected defect at step {step_number} of case {} could not be cleared: {e}",
                 case.case_id
             ));
             None

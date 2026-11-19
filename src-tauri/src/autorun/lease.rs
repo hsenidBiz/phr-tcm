@@ -8,12 +8,12 @@
 //! | Holder | Holds the lease | Asks for a held one |
 //! |---|---|---|
 //! | An unattended case | From before its sign-in until its browser is closed at the case's end | Waits |
-//! | A supervised Auto Run browser (main or an assistant's own, by slot) | From a sign-in until it is closed or signs in as another account | Refused at once, by an asker of any slot |
+//! | A supervised Auto Test browser (main or an assistant's own, by slot) | From a sign-in until it is closed or signs in as another account | Refused at once, by an asker of any slot |
 //! | An API template run or prove | For its whole run, its browser's close included | Waits |
-//! | Auto Run setup: the module-path check, Try and recording, and the recorded sign-in's check | Until its own browser is closed | Refused at once |
+//! | Auto Test setup: the module-path check, Try and recording, and the recorded sign-in's check | Until its own browser is closed | Refused at once |
 //!
 //! A waiter waits (up to `WAIT`) only on a holder that ends on its own: a
-//! case or a template run. The supervised browser and Auto Run setup hold an
+//! case or a template run. The supervised browser and Auto Test setup hold an
 //! account until a person closes them, so waiting on them cannot help, and a
 //! waiter is refused at once.
 //!
@@ -50,7 +50,7 @@ const POLL: Duration = Duration::from_millis(250);
 /// Who holds a lease, as the sentence names it to whoever is asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Holder {
-    /// The supervised Auto Run browser in this slot (`autorun::slots`; 0 is
+    /// The supervised Auto Test browser in this slot (`autorun::slots`; 0 is
     /// the main one). Which slot is how a refusal can name the assistant
     /// whose browser holds an account (`ai_bridge::with_holder_named`); every
     /// slot's browser is worded alike to whoever is refused (`seen_by`).
@@ -59,7 +59,7 @@ pub enum Holder {
     Template,
     /// A case of the unattended run with this id.
     Case { run: String },
-    /// Auto Run setup: the module-path check, Try and recording, and the
+    /// Auto Test setup: the module-path check, Try and recording, and the
     /// recorded sign-in's check.
     Setup,
 }
@@ -73,27 +73,27 @@ impl Holder {
             (Holder::Template, _) => "an API template run",
             (Holder::Case { run }, Holder::Case { run: mine }) if run == mine => "another case in this run",
             (Holder::Case { .. }, _) => "an unattended run",
-            (Holder::Setup, _) => "Auto Run setup",
+            (Holder::Setup, _) => "Auto Test setup",
         }
     }
 
     /// The holder's browser as a log line names it: the assistant's browser,
-    /// the main Auto Run browser, or the run that owns it. Never an id or a
+    /// the main Auto Test browser, or the run that owns it. Never an id or a
     /// pid.
     pub fn browser_words(&self) -> String {
         match self {
             Holder::Browser { slot } => match crate::autorun::slots::SlotNo::from_number(*slot) {
                 Some(n) => crate::commands::autorun_slots::whose(n),
-                None => "an Auto Run browser".to_string(),
+                None => "an Auto Test browser".to_string(),
             },
             Holder::Case { .. } => "an unattended run's browser".to_string(),
             Holder::Template => "an API template run's browser".to_string(),
-            Holder::Setup => "Auto Run setup's browser".to_string(),
+            Holder::Setup => "Auto Test setup's browser".to_string(),
         }
     }
 
     /// Whether this holder lets its account go on its own. The supervised
-    /// browser and Auto Run setup hold theirs until a person closes them.
+    /// browser and Auto Test setup hold theirs until a person closes them.
     fn ends_on_its_own(&self) -> bool {
         matches!(self, Holder::Case { .. } | Holder::Template)
     }
@@ -152,18 +152,18 @@ const IN_USE_END: &str = " - try again when it is free";
 
 /// Every holder as a request can name it (`Holder::seen_by`).
 const HOLDER_WORDS: [&str; 5] =
-    ["the Auto Run browser", "an API template run", "another case in this run", "an unattended run", "Auto Run setup"];
+    ["the Auto Test browser", "an API template run", "another case in this run", "an unattended run", "Auto Test setup"];
 
 /// The sentence a refused or timed-out request gets.
 fn in_use(key: &str, holder: &str) -> String {
     format!("{IN_USE_START}{key}{IN_USE_BY}{holder}{IN_USE_END}")
 }
 
-/// How the supervised Auto Run browser is named as a holder.
-pub const BROWSER_WORDS: &str = "the Auto Run browser";
+/// How the supervised Auto Test browser is named as a holder.
+pub const BROWSER_WORDS: &str = "the Auto Test browser";
 
 /// The sentence a request for the account `key` gets while the supervised
-/// Auto Run browser holds it, word for word.
+/// Auto Test browser holds it, word for word.
 pub fn in_use_by_browser(key: &str) -> String {
     in_use(key, BROWSER_WORDS)
 }
@@ -218,7 +218,7 @@ pub fn is_held(env: &str, key: &str) -> bool {
     table().contains_key(&(env.to_string(), key.to_string()))
 }
 
-/// Whether the supervised Auto Run browser or an Auto Run setup browser holds
+/// Whether the supervised Auto Test browser or an Auto Test setup browser holds
 /// an account right now - the two holders only a person closes. Only looks.
 pub fn a_browser_is_held() -> bool {
     table().values().any(|e| matches!(e.holder, Holder::Browser { .. } | Holder::Setup))
@@ -353,13 +353,13 @@ impl Held {
         Held { holder, wait, lease: None, signed_in: None, landing: None, ignored: std::collections::BTreeSet::new() }
     }
 
-    /// The main Auto Run browser's, and the person's paths': a held account
+    /// The main Auto Test browser's, and the person's paths': a held account
     /// is refused at once, never waited for.
     pub fn supervised() -> Self {
         Held::supervised_in(crate::autorun::slots::SlotNo::MAIN)
     }
 
-    /// The Auto Run browser in `slot`'s: a held account is refused at once,
+    /// The Auto Test browser in `slot`'s: a held account is refused at once,
     /// never waited for, and it holds its own as that slot's.
     pub fn supervised_in(slot: crate::autorun::slots::SlotNo) -> Self {
         Held::new(Holder::Browser { slot: slot.0 }, Duration::ZERO)
@@ -370,7 +370,7 @@ impl Held {
         self.holder.browser_words()
     }
 
-    /// Auto Run setup's (a module-path check, Try or recording, or the
+    /// Auto Test setup's (a module-path check, Try or recording, or the
     /// recorded sign-in's check): refused at once, never waited for.
     pub fn setup() -> Self {
         Held::new(Holder::Setup, Duration::ZERO)
@@ -447,7 +447,7 @@ impl Held {
         match crate::browser::session::changed_cookies(d, origins, print, &self.ignored).await {
             Some(changed) if changed.is_empty() => CookieCheck::Same,
             Some(changed) => {
-                crate::applog::info(format!("Auto Run: the sign-in's cookies changed: {}", changed.join(", ")));
+                crate::applog::info(format!("Auto Test: the sign-in's cookies changed: {}", changed.join(", ")));
                 CookieCheck::Changed(changed)
             }
             None => CookieCheck::Unread,

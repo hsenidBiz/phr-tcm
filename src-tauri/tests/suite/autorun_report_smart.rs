@@ -1,4 +1,4 @@
-//! The Auto Run report's analysis views: failures in clusters, a timeline per
+//! The Auto Test report's analysis views: failures in clusters, a timeline per
 //! failed case with its first anomaly, a stability grade, the environment's
 //! history and the comparison with the run before - and the guarantees the
 //! page keeps while it has a script of its own: every value escaped, no

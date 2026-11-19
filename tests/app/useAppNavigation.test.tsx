@@ -1,4 +1,4 @@
-// Every way into a screen Simple mode hides opens Auto Run instead.
+// Every way into a screen Simple mode hides opens Auto Test instead.
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { useAppNavigation } from "../../src/app/useAppNavigation";
@@ -27,7 +27,7 @@ function setup() {
   return { go: result.current.goToSection, setSection };
 }
 
-test("in Simple mode a jump to a hidden screen opens Auto Run; every other screen is untouched", () => {
+test("in Simple mode a jump to a hidden screen opens Auto Test; every other screen is untouched", () => {
   setAppSimpleModeForTest(true);
   const { go, setSection } = setup();
   for (const id of ["import", "edit", "suites", "manage", "apitemplates", "playwright"] as const) {

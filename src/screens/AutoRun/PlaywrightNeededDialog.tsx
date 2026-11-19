@@ -1,11 +1,11 @@
-// Auto Run's assistant takes its scripting rules from the team's Playwright
+// Auto Test's assistant takes its scripting rules from the team's Playwright
 // repo (the clone set on the Playwright tab). When no clone is set, or the
 // setting no longer points at a folder, this says so once per app start -
 // the assistant still works, on the rules shipped with this version.
 //
 // Rust answers whether a clone is set (`pw_rules_status`); asking it also
 // refreshes the assistant's agent files, which is why the question is put
-// every time Auto Run mounts and never served from the cache.
+// every time Auto Test mounts and never served from the cache.
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
@@ -24,7 +24,7 @@ export function resetPlaywrightNoticeForTests(): void {
   shownThisStart = false;
 }
 
-/** Asks pwRulesStatus each time Auto Run mounts (it also refreshes the agent files); open once per app start when clone_set is false. */
+/** Asks pwRulesStatus each time Auto Test mounts (it also refreshes the agent files); open once per app start when clone_set is false. */
 export function usePlaywrightNotice(): { open: boolean; gone: boolean; close: () => void } {
   const status = useQuery({
     queryKey: ["pw-rules-status"],
@@ -70,7 +70,7 @@ export default function PlaywrightNeededDialog({
         Playwright is needed
       </h2>
       <p className="text-xs text-muted">
-        Auto Run&apos;s assistant takes its scripting rules from the team&apos;s Playwright repo.{" "}
+        Auto Test&apos;s assistant takes its scripting rules from the team&apos;s Playwright repo.{" "}
         {gone
           ? "The Playwright repo set on the Playwright tab is no longer there"
           : "No Playwright repo is set on the Playwright tab"}

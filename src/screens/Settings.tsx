@@ -94,7 +94,7 @@ const MOVING_CARDS = ["updates", "backup", "help"] as const;
 
 /** The cards that stack beside those under the changelog when its column
  * has room for two cards across, and otherwise sit in the left column.
- * Auto Run's card is one of them while that module is on (a card the screen
+ * Auto Test's card is one of them while that module is on (a card the screen
  * does not show has no journey and is left out of the slide). */
 const SPARE_CARDS = ["ai-tools", "auto-run", "extras"] as const;
 
@@ -147,19 +147,19 @@ function sentence(message: string): string {
   return /[.!?]$/.test(cap) ? cap : `${cap}.`;
 }
 
-/** What an import would do to the Auto Run data, from Rust's preview. */
+/** What an import would do to the Auto Test data, from Rust's preview. */
 function previewSentence(p: BackupPreview): string {
   const names = p.replaces.join(", ");
   const origin = p.pre_update
-    ? "This backup is from before each environment had its own Auto Run data, so its scripts, areas and templates go into every environment. "
+    ? "This backup is from before each environment had its own Auto Test data, so its scripts, areas and templates go into every environment. "
     : "";
   if (p.replaces.length === 0) {
-    return `${origin}This backup replaces no environment's Auto Run data.`;
+    return `${origin}This backup replaces no environment's Auto Test data.`;
   }
-  return `${origin}Replaces the Auto Run data of ${names}. What they hold now is kept in the removed area for 30 days and can be copied back from Copy Auto Run data….`;
+  return `${origin}Replaces the Auto Test data of ${names}. What they hold now is kept in the removed area for 30 days and can be copied back from Copy Auto Test data….`;
 }
 
-/** After an import: every Auto Run browser is closed (what it held is the
+/** After an import: every Auto Test browser is closed (what it held is the
  * old data's), and the AI tools' own allow files are brought in line with
  * the environment now active - the same reconcile a switch does, which the
  * import command has no working folder for. Neither is worth failing an
@@ -168,9 +168,9 @@ function previewSentence(p: BackupPreview): string {
 async function settleAfterImport(): Promise<void> {
   try {
     const r = await commands.autoRunReleaseBrowser();
-    if (r.status === "error") logUi(`import: Auto Run browsers were not closed: ${r.error}`);
+    if (r.status === "error") logUi(`import: Auto Test browsers were not closed: ${r.error}`);
   } catch {
-    logUi("import: Auto Run browsers were not closed");
+    logUi("import: Auto Test browsers were not closed");
   }
   try {
     const view = await loadEnvironments();
@@ -191,7 +191,7 @@ export default function Settings({
 }: {
   org: string;
   project: string;
-  /** Where Auto Run, API templates, Playwright and new work items without
+  /** Where Auto Test, API templates, Playwright and new work items without
    * a PBI keep their files while the projects show together. */
   homeProject: string;
   onHomeProjectChange: (p: string) => void;
@@ -435,7 +435,7 @@ export default function Settings({
   // Said by Rust when an import cannot go ahead or did not finish: the app
   // has to be restarted, which a toast that fades would not say clearly.
   const [restartNeeded, setRestartNeeded] = useState<string | null>(null);
-  // What importing this file would do to the Auto Run data, for the
+  // What importing this file would do to the Auto Test data, for the
   // confirmation: asked before anything is imported, never cached.
   const preview = useQuery({
     queryKey: ["backup-preview", importPath],
@@ -594,7 +594,7 @@ export default function Settings({
             </p>
             {!preview.data && !preview.isError && (
               <p className="text-sm text-muted">
-                Importing replaces this computer&apos;s Auto Run data in every environment with the backup&apos;s.
+                Importing replaces this computer&apos;s Auto Test data in every environment with the backup&apos;s.
               </p>
             )}
             {preview.isError && (
@@ -750,13 +750,13 @@ export default function Settings({
     </SettingsCard>
   );
 
-  // Only with Auto Run on: it is the one module whose browsers this sets.
+  // Only with Auto Test on: it is the one module whose browsers this sets.
   // Under AI tools, in the same stack and slide as it: with room for two
   // cards across it fills the right column beside Updates instead of
   // sitting alone at the foot of the left one.
   const autoRunCard = autoRunOn && (
     <SettingsCard
-      title="Auto Run"
+      title="Auto Test"
       data-settings-card="auto-run"
       className={cn(tiles.spareStack && LEFT_TRACK_WIDTH)}
     >
@@ -936,7 +936,7 @@ export default function Settings({
         {allProjects && (projects.data?.length ?? 0) > 1 && (
           <SettingRow
             name="Home project"
-            description="Auto Run, API templates, Playwright and new work items without a PBI use this project."
+            description="Auto Test, API templates, Playwright and new work items without a PBI use this project."
             control={
               <Select
                 aria-label="Home project"
@@ -1001,7 +1001,7 @@ export default function Settings({
             <Switch
               checked={appSettings.data?.app_simple_mode ?? false}
               disabled={!appSettings.data || runGoing}
-              title={runGoing ? "Wait for the Auto Run run to finish." : undefined}
+              title={runGoing ? "Wait for the Auto Test run to finish." : undefined}
               className="disabled:pointer-events-auto"
               onCheckedChange={(on) => void setSimple(on)}
               ariaLabel="Simple mode"
@@ -1017,7 +1017,7 @@ export default function Settings({
         {!simple && (
           <SettingRow
             name="Modules"
-            description="Switch on the parts of the app you need, such as Auto Run."
+            description="Switch on the parts of the app you need, such as Auto Test."
             control={
               <Button size="sm" variant="outline" onClick={() => setModulesOpen(true)}>
                 <IconModules aria-hidden />

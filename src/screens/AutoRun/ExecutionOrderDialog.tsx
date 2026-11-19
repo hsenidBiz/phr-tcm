@@ -1,4 +1,4 @@
-// Auto Run's own execution order for a PBI. The list starts in the planned
+// Auto Test's own execution order for a PBI. The list starts in the planned
 // order (the saved one, else the suggested one). When the run pauses, the
 // list is split into batches: a "Batch N (k cases)" heading, then the pause
 // before that batch (settings to set, shared state to put back), then its
@@ -111,7 +111,7 @@ export default function ExecutionOrderDialog({
     >
       <h2 id={titleId} className="text-sm font-semibold text-text">Execution order</h2>
       <p className="text-xs text-muted">
-        The order Auto Run uses for this PBI on this machine. Run Tests keeps its own order.
+        The order Auto Test uses for this PBI on this machine. Run Tests keeps its own order.
       </p>
       {plan?.counts && (
         <p className="text-xs text-warning">
@@ -128,7 +128,7 @@ export default function ExecutionOrderDialog({
             selected={selected}
             onChange={moved}
             onSelect={setSelected}
-            ariaLabel="Auto Run execution order"
+            ariaLabel="Auto Test execution order"
             disabled={busy}
             noteBefore={(id) => {
               const batch = planBatches(plan).find((b) => b.ids[0] === id);

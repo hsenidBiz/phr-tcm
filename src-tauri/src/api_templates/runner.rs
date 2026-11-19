@@ -3,7 +3,7 @@
 //!
 //! The requests have to carry the application's real session cookies and
 //! its anti-forgery token, and the only thing that has those is a browser
-//! that signed in the way a person does. So the runner borrows Auto Run's
+//! that signed in the way a person does. So the runner borrows Auto Test's
 //! machinery: a fresh browser (`Browsers`), the project's sign-in recipe
 //! and the chosen account (`signin::sign_in`), then a navigation to the
 //! template's anti-forgery page to read the token, and finally each step as
@@ -277,7 +277,7 @@ pub const SESSION_ENDED_IN_PAGE: &str = "the explore session's sign-in has ended
 pub struct RunRequest {
     pub org: String,
     pub project: String,
-    /// An Auto Run account key.
+    /// An Auto Test account key.
     pub account: String,
     pub values: serde_json::Map<String, Value>,
     pub mode: Mode,
@@ -724,7 +724,7 @@ impl Ctx<'_> {
     }
 
     /// A failed sign-in, as the person reads it. `SignInOutcome.detail` is
-    /// Auto Run's wording, which can carry a raw browser error or a full
+    /// Auto Test's wording, which can carry a raw browser error or a full
     /// address: it goes to the app log as it is (it is already
     /// password-redacted), and the sentence gets either a fixed one - when
     /// the browser itself failed - or the detail with every address's
@@ -742,7 +742,7 @@ impl Ctx<'_> {
             detail = detail.replace(&origin, "");
         }
         format!(
-            "could not sign in as \"{}\": {} - sign that account in once from Auto Run, then try again",
+            "could not sign in as \"{}\": {} - sign that account in once from Auto Test, then try again",
             self.req.account,
             without_hosts(&detail)
         )
@@ -957,7 +957,7 @@ fn finish(req: &RunRequest, progress: Progress) -> RunReport {
 }
 
 /// The account's lease, in the active environment, before any browser
-/// opens (`autorun::lease`): an unattended case or the Auto Run browser
+/// opens (`autorun::lease`): an unattended case or the Auto Test browser
 /// signed in as it is waited for, up to `timing`'s lease wait, and then the
 /// run is refused with the sentence that says who had it. A fixture takes
 /// it once for all its steps.
@@ -1097,7 +1097,7 @@ pub async fn run_in_page<D: Driver>(
     progress.at(SIGN_IN, None);
     let prepared = prepare(root, &req.org, &req.project, &req.account).and_then(|(recipe, account)| {
         let origin = recipe.origins().into_iter().next().ok_or_else(|| {
-            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Run, Sign-in recipe"
+            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Test, Sign-in recipe"
                 .to_string()
         })?;
         Ok(Session::new(recipe, account, origin, vec![]))
@@ -1177,7 +1177,7 @@ async fn sign_in_once<D: Driver>(
     let Some(origin) = recipe.origins().into_iter().next() else {
         progress.fail(
             None,
-            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Run, Sign-in recipe",
+            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Test, Sign-in recipe",
         );
         return None;
     };

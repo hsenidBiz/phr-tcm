@@ -1,4 +1,4 @@
-// Copy a whole environment's Auto Run data into another ("Copy Auto Run
+// Copy a whole environment's Auto Test data into another ("Copy Auto Test
 // data…" on the environment's row). The sources are the other environments
 // and the removed ones still kept for 30 days. Copying into an environment
 // that already holds data replaces it - after asking - and what it held is
@@ -55,7 +55,7 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
       }
       // Into the environment on screen, every screen reads it again.
       await forgetEnvironmentData(qc);
-      toast.success(`Copied Auto Run data into ${target.name}`);
+      toast.success(`Copied Auto Test data into ${target.name}`);
       onClose();
     } catch (e) {
       toast.error(copyRefusalText(e instanceof Error ? e.message : String(e)));
@@ -71,7 +71,7 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
       className="flex w-full max-w-md flex-col gap-3 p-5"
     >
       <h2 id={titleId} className="text-sm font-semibold text-text">
-        Copy Auto Run data into {target.name}
+        Copy Auto Test data into {target.name}
       </h2>
       {choices.isPending && <p className="text-xs text-muted">Looking for somewhere to copy from…</p>}
       {choices.isError && (

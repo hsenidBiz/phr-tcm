@@ -82,7 +82,7 @@ tauri-plugin-notification = "2.3.3"
 # 2.11.5 already satisfies.
 tauri-plugin-autostart = "=2.5.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
-# Auto Run's expect_download reads a downloaded spreadsheet (xlsx, xls) or
+# Auto Test's expect_download reads a downloaded spreadsheet (xlsx, xls) or
 # CSV to check its headers and cells - see autorun/downloads.rs. Read only.
 calamine = "0.36.1"
 csv = "1.4.0"
@@ -93,7 +93,7 @@ encoding_rs = "0.8.42"
 # api_templates/fixture_run.rs). Already in the build through serde_with;
 # named here for its local clock.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-# Auto Run's expect_download reads a downloaded PDF's text page by page
+# Auto Test's expect_download reads a downloaded PDF's text page by page
 # (MIT, over lopdf) - see autorun/downloads.rs. Read only.
 pdf-extract = "0.12.1"
 # The Crystal Reports module: the .rpt reader/renderer and its SQL Server data
@@ -111,7 +111,7 @@ tauri-plugin-single-instance = "2"
 
 # Each database's login is kept in Windows Credential Manager rather than
 # in a file or the webview's storage - see db/credentials.rs. Each browser
-# Auto Run starts runs in a job object of its own, so its whole process
+# Auto Test starts runs in a job object of its own, so its whole process
 # tree can be ended and nothing else - see browser/tree.rs.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

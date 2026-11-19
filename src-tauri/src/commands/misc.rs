@@ -105,7 +105,7 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
 ///
 /// Velopack's `apply_updates_and_restart` ends in `std::process::exit`,
 /// which skips the tao event loop entirely - `close_autorun_on_exit`
-/// (lib.rs) never runs. Auto Run's browsers are closed here instead,
+/// (lib.rs) never runs. Auto Test's browsers are closed here instead,
 /// before the restart, under the same bound as the exit hook.
 #[tauri::command]
 #[specta::specta]
@@ -114,7 +114,7 @@ pub async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .is_err()
     {
-        crate::applog::warn("Auto Run's browsers were still closing when the update restarted the app");
+        crate::applog::warn("Auto Test's browsers were still closing when the update restarted the app");
     }
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
@@ -439,7 +439,7 @@ pub async fn export_app_backup(
 }
 
 /// What importing a backup file would do, for the confirmation: whether it
-/// is from before each environment had its own Auto Run data, and which
+/// is from before each environment had its own Auto Test data, and which
 /// environments' data it would then replace. Writes nothing.
 #[tauri::command]
 #[specta::specta]

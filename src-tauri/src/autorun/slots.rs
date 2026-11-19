@@ -1,4 +1,4 @@
-//! The Auto Run browser's numbered slots.
+//! The Auto Test browser's numbered slots.
 //!
 //! There are three browsers in all: slot 0, the main one, and `EXTRA_CAP`
 //! more beside it. The main slot is the browser the person and every path
@@ -12,7 +12,7 @@ pub const EXTRA_CAP: usize = 2;
 /// Every browser there can be: the main one and the extras.
 pub const SLOT_COUNT: usize = 1 + EXTRA_CAP;
 
-/// Which of the Auto Run browsers: 0 is the main one.
+/// Which of the Auto Test browsers: 0 is the main one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SlotNo(pub u8);
 

@@ -856,7 +856,7 @@ fn an_unattended_run_keeps_the_proposal_apart_from_the_verdict() {
     assert!(load_run(dir.path(), "../escape").is_err());
 }
 
-// ---- Clearing scripts and results (dev-only Auto Run toolbar) ----------
+// ---- Clearing scripts and results (dev-only Auto Test toolbar) ----------
 
 /// Only the named cases' scripts are removed; everything else on disk is
 /// left alone, and asking to clear an id nobody scripted is not an error -
@@ -970,7 +970,7 @@ fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
     std::fs::write(root.join("reports").join("run-1.html"), "<html></html>").unwrap();
     std::fs::write(root.join("reports").join("run-2.html"), "<html></html>").unwrap();
     std::fs::write(root.join("reports").join("kept-folder").join("inner.txt"), "stay").unwrap();
-    // Beside reports/, not Auto Run's to clear here.
+    // Beside reports/, not Auto Test's to clear here.
     std::fs::write(root.join("settings.json"), "{}").unwrap();
     std::fs::create_dir_all(root.join("scripts")).unwrap();
     std::fs::write(root.join("scripts").join("case-9.json"), "{}").unwrap();
@@ -1057,7 +1057,7 @@ fn clear_runs_leaves_nested_folders_in_shots_and_reports_alone() {
 }
 
 /// A `shots/` or `reports/` that is itself a link (a junction on Windows)
-/// is skipped whole: what it points at is not Auto Run's to clear.
+/// is skipped whole: what it points at is not Auto Test's to clear.
 #[test]
 fn clear_runs_skips_a_shots_or_reports_folder_that_is_a_link() {
     let dir = TempDir::new();
@@ -1326,9 +1326,9 @@ fn emptying_the_supervised_downloads_leaves_the_runs_alone() {
     assert_eq!(empty_supervised_downloads(&root.join("missing")).unwrap(), 0);
 }
 
-// ------------------------------------------------------------ Auto Run's own order
+// ------------------------------------------------------------ Auto Test's own order
 
-/// Auto Run's order for a PBI is kept in `orders/<pbi id>.json` as
+/// Auto Test's order for a PBI is kept in `orders/<pbi id>.json` as
 /// `{ "case_ids": [...] }`, and comes back as it was saved.
 #[test]
 fn an_order_round_trips_per_pbi() {
@@ -1455,7 +1455,7 @@ fn a_review_save_does_not_prune() {
     assert_eq!(count(), 1001, "a review save of a run already on disk does not");
 }
 
-/// The Auto Run screen asks for every case's script at once: one read of
+/// The Auto Test screen asks for every case's script at once: one read of
 /// the folder, one result per id in the order asked, a missing script as
 /// none and an unreadable one as its own error - never failing the others.
 #[test]

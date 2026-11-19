@@ -50,7 +50,7 @@ fn the_blocked_sentences_are_the_designs_own_words() {
     assert_eq!(NO_ACCOUNT, "Choose an account when starting the run, or set Runs as on the script.");
     assert_eq!(
         no_path(" Payroll "),
-        "No menu path recorded for module \"Payroll\" - record one in Auto Run, Areas."
+        "No menu path recorded for module \"Payroll\" - record one in Auto Test, Areas."
     );
 }
 
@@ -299,7 +299,7 @@ fn several_areas_and_none_named_like_the_module_lists_them_instead_of_guessing()
     assert_eq!(
         why,
         "No menu path recorded for module \"Performance\" by its own name - its areas are \"Manage Cycle\", \"My Assessments\": \
-         set the script's area to one of them, or record an area named \"Performance\" in Auto Run, Areas."
+         set the script's area to one of them, or record an area named \"Performance\" in Auto Test, Areas."
     );
     assert!(is_setup_problem(&why), "a run's summary counts it with the other setup problems");
     assert!(find_path(&nav, "Performance").is_none());
@@ -1093,7 +1093,7 @@ fn a_re_record_keeps_the_other_menu_paths() {
 
 // ---- Areas ---------------------------------------------------------------
 
-const UNRECORDED_PMS: &str = "the area \"Appraisals\" is not recorded - record it in Auto Run, Areas";
+const UNRECORDED_PMS: &str = "the area \"Appraisals\" is not recorded - record it in Auto Test, Areas";
 
 /// Two areas under PMS and two under Leave, one of them named after it.
 fn pms_and_leave() -> NavFile {
@@ -1263,12 +1263,12 @@ fn no_area_routes_by_module_as_today() {
         assert_eq!(
             route_for(&nav, blank, Some(" PMS "), Some("hr.admin")),
             Err("No menu path recorded for module \"PMS\" by its own name - its areas are \"Cycle Setup\", \"Manage Cycle\": \
-                 set the script's area to one of them, or record an area named \"PMS\" in Auto Run, Areas."
+                 set the script's area to one of them, or record an area named \"PMS\" in Auto Test, Areas."
                 .to_string())
         );
         assert_eq!(
             route_for(&nav, blank, Some("Payroll"), Some("hr.admin")),
-            Err("No menu path recorded for module \"Payroll\" - record one in Auto Run, Areas.".to_string())
+            Err("No menu path recorded for module \"Payroll\" - record one in Auto Test, Areas.".to_string())
         );
         assert_eq!(
             route_for(&nav, blank, Some("leave"), None),
@@ -1713,8 +1713,8 @@ fn changing_the_address_switch_is_refused_in_simple_with_a_plain_sentence() {
     use v2_lib::commands::autorun::refuse_address_change;
     assert!(refuse_address_change(false, false).is_ok());
     let why = refuse_address_change(true, false).unwrap_err();
-    assert_eq!(why, "Switch Auto Run to Advanced to change this.");
-    // The app's Simple mode holds Auto Run in Simple and refuses Advanced, so
+    assert_eq!(why, "Switch Auto Test to Advanced to change this.");
+    // The app's Simple mode holds Auto Test in Simple and refuses Advanced, so
     // the sentence names the app setting.
     let why = refuse_address_change(true, true).unwrap_err();
     assert_eq!(why, "Turn Simple mode off in Settings to change this.");

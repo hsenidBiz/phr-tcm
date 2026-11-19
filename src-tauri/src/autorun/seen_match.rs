@@ -25,7 +25,7 @@ pub fn norm_name(s: &str) -> String {
 
 /// Is `name` (what sits between the braces) a placeholder the run fills in
 /// from data: a fixture's output or the setup's? `{{prefix}}` and
-/// `{{now:...}}` are not: nothing in Auto Run fills them in.
+/// `{{now:...}}` are not: nothing in Auto Test fills them in.
 pub fn is_data_placeholder(name: &str) -> bool {
     let n = name.trim();
     n.starts_with("fixture.") || n.starts_with("setup.")

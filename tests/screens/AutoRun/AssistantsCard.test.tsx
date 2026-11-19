@@ -170,20 +170,20 @@ test("only a replay has a progress bar", async () => {
   expect(document.querySelector("[data-progress]")).toBeNull();
 });
 
-test("an assistant with no Auto Run browser has no row and no place in the office", async () => {
+test("an assistant with no Auto Test browser has no row and no place in the office", async () => {
   await mount([
     agent({ label: "Assistant 1", slot: null, browser: null, account: null, activity: { kind: "idle" } }),
     agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
   ]);
   expect(screen.queryByText(/^Assistant 1/, { ignore: "script, style" })).toBeNull();
-  expect(screen.queryByText("No Auto Run browser")).toBeNull();
+  expect(screen.queryByText("No Auto Test browser")).toBeNull();
   expect(screen.getByText("1 working")).toBeInTheDocument();
   const walkers = document.querySelectorAll(".assistant-scene__walker");
   expect(walkers).toHaveLength(1);
   expect(walkers[0]).toHaveAttribute("data-slot", "1");
 });
 
-test("the card stays away while only assistants with no Auto Run browser are working", async () => {
+test("the card stays away while only assistants with no Auto Test browser are working", async () => {
   await mount([agent({ slot: null, browser: null, account: null, activity: { kind: "working" } })]);
   expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
   expect(document.querySelector(".assistant-scene")).toBeNull();
@@ -193,7 +193,7 @@ test("names each assistant, its browser and what it does", async () => {
   await mount([agent()]);
   expect(screen.getByRole("heading", { name: "Assistants" })).toBeInTheDocument();
   expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
-  expect(screen.getByText("Main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
+  expect(screen.getByText("Main Auto Test browser, Edge, signed in as hr_admin")).toBeInTheDocument();
   expect(screen.getByText("Replaying case 4521 (step 3 of 7)")).toBeInTheDocument();
 });
 
@@ -226,7 +226,7 @@ test("one assistant in the main browser and one in its own browser read apart, e
       activity: { kind: "discovering", area: "Payroll" },
     }),
   ]);
-  expect(screen.getByText("Main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
+  expect(screen.getByText("Main Auto Test browser, Edge, signed in as hr_admin")).toBeInTheDocument();
   expect(screen.getByText("Its own browser, Edge, signed in as portal.reviewer")).toBeInTheDocument();
   expect(screen.getByText("Discovering Payroll")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: /^Release Assistant \d's browser$/ })).toHaveLength(2);

@@ -34,7 +34,7 @@ use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 use crate::html_escape::esc_attr;
 use crate::webtheme::PagePalette;
 
-/// The result buckets, in the order the report (and the Auto Run screen's
+/// The result buckets, in the order the report (and the Auto Test screen's
 /// filter row) lists them.
 pub const BUCKETS: [&str; 4] = ["Passed", "Failed", "Blocked", "Not run"];
 
@@ -43,7 +43,7 @@ pub const BUCKETS: [&str; 4] = ["Passed", "Failed", "Blocked", "Not run"];
 /// "Blocked" is its own bucket, anything else (nothing proposed, or a word
 /// that is none of the three) is "Not run".
 ///
-/// The Auto Run screen filters with its own copy of this rule
+/// The Auto Test screen filters with its own copy of this rule
 /// (`resultBucket` in src/screens/AutoRun/verdicts.ts). Both are held to
 /// one table, tests/fixtures/verdict_buckets.json, so the screen and this
 /// report can never count a case differently.
@@ -1392,7 +1392,7 @@ pub fn build_smart(
     h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", csp(&[head_js, app_js])));
     h.push_str(&format!("<script>{head_js}</script>"));
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-    h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
+    h.push_str(&format!("<title>Auto Test report - PBI #{}</title>", run.pbi_id));
     h.push_str(&format!("<style>{TOKENS}\n{accent}{STYLE}</style></head><body data-start=\"{start}\">"));
     h.push_str("<a class=\"skip-link\" href=\"#main\">Skip to the report</a>");
     h.push_str("<div class=\"app\" data-rail=\"open\">");
@@ -1402,7 +1402,7 @@ pub fn build_smart(
     h.push_str("<main class=\"app__main\" id=\"main\" tabindex=\"-1\">");
     // On paper only: the run's name and its counts, ahead of everything.
     h.push_str(&format!(
-        "<div class=\"print-only print-head\"><h1 class=\"page__title\">Auto Run report</h1><p>PBI #{}{} \u{b7} {}</p><p>{} passed, {} failed, {} flaky, {} blocked, {} not run</p></div>",
+        "<div class=\"print-only print-head\"><h1 class=\"page__title\">Auto Test report</h1><p>PBI #{}{} \u{b7} {}</p><p>{} passed, {} failed, {} flaky, {} blocked, {} not run</p></div>",
         run.pbi_id,
         run.environment.as_deref().filter(|e| !e.trim().is_empty()).map(|e| format!(" \u{b7} {}", esc_attr(e))).unwrap_or_default(),
         esc_attr(&when),

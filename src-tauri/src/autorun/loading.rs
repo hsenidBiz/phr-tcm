@@ -145,7 +145,7 @@ pub async fn wait_out<D: Driver>(
             }
             if began.elapsed() >= limit {
                 crate::applog::warn(format!(
-                    "Auto Run: the {name} was still up after {} s before {}",
+                    "Auto Test: the {name} was still up after {} s before {}",
                     seconds(limit.as_millis() as u64),
                     action.kind()
                 ));
@@ -155,7 +155,7 @@ pub async fn wait_out<D: Driver>(
         }
         let ms = began.elapsed().as_millis() as u64;
         if ms > NOTED_MS {
-            crate::applog::info(format!("Auto Run: waited {} s for the {name} before {}", seconds(ms), action.kind()));
+            crate::applog::info(format!("Auto Test: waited {} s for the {name} before {}", seconds(ms), action.kind()));
             notes.push(waited(name, ms));
         }
     }

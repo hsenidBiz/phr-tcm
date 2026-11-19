@@ -1391,7 +1391,7 @@ table {
     100% { transform: translateX(0) scale(1); opacity: 1; }
   }
 
-  /* Auto Run: one sweep. The arm starts pointing up-right, so it passes
+  /* Auto Test: one sweep. The arm starts pointing up-right, so it passes
      the lower blip a little over a third of the way round and the upper
      left one at about three quarters. */
   .group:hover .ng-autorun .ng-sweep { animation: ng-sweep 1.1s linear; transform-origin: 12px 12px; }

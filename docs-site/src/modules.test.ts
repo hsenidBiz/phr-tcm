@@ -156,7 +156,7 @@ describe("the content", () => {
   });
 });
 
-/** The exact phrases the Auto Run mode is named by, longest first. Nothing
+/** The exact phrases the Auto Test mode is named by, longest first. Nothing
  * else may say "advanced". */
 const MODE_PHRASES = ["Switch to Advanced to edit.", "Simple and Advanced", "switch to Advanced", "**Advanced**"];
 const withoutModePhrases = (t: string) => MODE_PHRASES.reduce((acc, p) => acc.split(p).join(""), t);
@@ -172,8 +172,8 @@ describe("the Modules section and the old switch", () => {
 
   test("no help text names the Advanced Features switch", () => {
     expect(text).not.toMatch(/advanced feature/i);
-    // The bare word is banned on every screen, Auto Run included, once the
-    // exact phrases of Auto Run's Simple/Advanced mode are taken out.
+    // The bare word is banned on every screen, Auto Test included, once the
+    // exact phrases of Auto Test's Simple/Advanced mode are taken out.
     expect(withoutModePhrases(text)).not.toMatch(/\badvanced\b/i);
   });
 
@@ -185,7 +185,7 @@ describe("the Modules section and the old switch", () => {
     expect(row.locate).toEqual({ role: "button", name: "Modules" });
     const copy = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "screens", "Modules", "modulesCopy.ts"), "utf8");
     const section = JSON.stringify(settings);
-    for (const line of ["Test cases, suites, runs and the board", "Off · click to switch on", "Locked · needs", "Switch on the parts of the app you need, such as Auto Run."]) {
+    for (const line of ["Test cases, suites, runs and the board", "Off · click to switch on", "Locked · needs", "Switch on the parts of the app you need, such as Auto Test."]) {
       expect(section, line).toContain(line);
     }
     const descriptions = [...copy.matchAll(/^\s+"((?:[^"\\]|\\.)+)",?$/gm)].map((m) => m[1]).filter((d) => !/^Lets your AI assistant open, format/.test(d));

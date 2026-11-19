@@ -72,7 +72,7 @@ function renderReview(
   overrides: {
     onClose?: () => void;
     pbiTitle?: string;
-    /** The PBI currently selected on the Auto Run screen - defaults to
+    /** The PBI currently selected on the Auto Test screen - defaults to
      * the fixture run's own `pbi_id` (42), so existing tests keep
      * exercising the same-PBI path unless they say otherwise. */
     pbiId?: number;
@@ -512,7 +512,7 @@ test("sending says what it will do and sends only after the person agrees", asyn
     project: "Web",
     pbiId: 42,
     runId: "run-9",
-    runName: "Leave module - Auto Run",
+    runName: "Leave module - Auto Test",
     cases: [
       { case_id: 1, step_ids: ["2", "3", "4"], shared_steps: [] },
       { case_id: 2, step_ids: ["2"], shared_steps: [] },
@@ -1040,12 +1040,12 @@ test("a run recorded before batches shows no batch heading", async () => {
 
 test("while discovery holds the browser, Replay to step is off and says why", async () => {
   const onReplay = vi.fn();
-  renderReview(RUN, { onReplay, replayBlocked: "Discovery is using the Auto Run browser" });
+  renderReview(RUN, { onReplay, replayBlocked: "Discovery is using the Auto Test browser" });
 
   const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
   const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
   expect(replay).toBeDisabled();
-  expect(replay).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  expect(replay).toHaveAttribute("title", "Discovery is using the Auto Test browser");
   fireEvent.click(replay);
   expect(onReplay).not.toHaveBeenCalled();
 });

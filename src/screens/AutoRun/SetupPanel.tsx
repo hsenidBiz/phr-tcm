@@ -528,7 +528,7 @@ export default function SetupPanel({
   const [testFilesOpen, setTestFilesOpen] = useState(false);
   // The folder of scripts the person picked to import, and the environment it was picked for.
   const [importing, setImporting] = useState<{ folder: string; envName: string } | null>(null);
-  // While the assistant's discovery holds the Auto Run browser, End
+  // While the assistant's discovery holds the Auto Test browser, End
   // discovery is the person's way out of one the assistant never ended.
   // Nothing is lost by ending it - the map keeps what was seen - so it asks
   // no confirm.
@@ -545,9 +545,9 @@ export default function SetupPanel({
     }
     setEnding(false);
   };
-  // Release Auto Run browser: the way out of a browser the app still holds
+  // Release Auto Test browser: the way out of a browser the app still holds
   // after it closed (refused with "close the supervised browser first" while
-  // none is open). It clears every Auto Run browser record and closes only
+  // none is open). It clears every Auto Test browser record and closes only
   // the browsers the app itself opened, so, like Close browser and End
   // discovery, it asks no confirm. Always offered: a held browser that has
   // gone is exactly the one nothing on screen shows.
@@ -602,11 +602,11 @@ export default function SetupPanel({
       size="sm"
       variant="outline"
       disabled={releasing}
-      title="Let go of an Auto Run browser the app still holds after it closed, and close the browsers the app opened"
+      title="Let go of an Auto Test browser the app still holds after it closed, and close the browsers the app opened"
       onClick={() => void releaseBrowser()}
     >
       <IconRelease aria-hidden />
-      Release Auto Run browser
+      Release Auto Test browser
     </Button>
   );
   const releaseMessages = (
@@ -731,7 +731,7 @@ export default function SetupPanel({
                   variant="outline"
                   aria-label="Import scripts into this environment"
                   disabled={!activeEnv}
-                  title={activeEnv ? `Bring Auto Run scripts from a folder into ${activeEnv.name}` : "No environment is active"}
+                  title={activeEnv ? `Bring Auto Test scripts from a folder into ${activeEnv.name}` : "No environment is active"}
                   onClick={async () => {
                     if (!activeEnv) return;
                     try {
@@ -920,7 +920,7 @@ export default function SetupPanel({
                         size="sm"
                         variant="outline"
                         disabled={ending}
-                        title="Close the assistant's discovery browser so Auto Run can run again"
+                        title="Close the assistant's discovery browser so Auto Test can run again"
                         onClick={() => void endDiscovery()}
                       >
                         <IconStop aria-hidden />

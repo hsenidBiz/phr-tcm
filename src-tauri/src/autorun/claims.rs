@@ -11,7 +11,7 @@
 //! when its session is past its grace (`on_sweep`). A holder that is no
 //! longer live (`agents::is_live`) refuses nobody.
 //!
-//! Case ids are unique in the organization and Auto Run works in the home
+//! Case ids are unique in the organization and Auto Test works in the home
 //! project, so a claim is keyed by the case id alone.
 //!
 //! The claims are coordination state, not a cache: they say who is working on
@@ -57,7 +57,7 @@ pub fn held_words(held_ms: u64) -> String {
 /// and how long it has been held, never an id or a pid.
 pub fn case_claimed(case_id: i32, label: &str, held_ms: u64) -> String {
     let held = held_words(held_ms);
-    format!("case {case_id} is being worked on by {label} (held for {held}) - pick another case, or ask the person to release {label} on the Auto Run screen")
+    format!("case {case_id} is being worked on by {label} (held for {held}) - pick another case, or ask the person to release {label} on the Auto Test screen")
 }
 
 /// How long `case_id` has been held at `now_ms`, from the first claim.

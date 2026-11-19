@@ -20,7 +20,6 @@ import { ListToolbar, ToolbarSwitch } from "../../components/ui/list-toolbar";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
-import { useAppSimpleMode } from "../../lib/appSimpleMode";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
@@ -61,7 +60,7 @@ import NetworkWaitPanel from "./NetworkWaitPanel";
 import AssistantsCard from "./AssistantsCard";
 import WaitingForYou from "./WaitingForYou";
 // Recent activity (./RecentActivity) is built and tested but not shown: the
-// owner is still deciding where on Auto Run it belongs (2026-11-13).
+// owner is still deciding where on Auto Test it belongs (2026-11-13).
 import { clearAutoRunFocus, useAutoRunFocus } from "../../lib/autoRunFocus";
 import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
@@ -119,7 +118,7 @@ export default function AutoRun({
   onOpenFixtures,
 }: {
   org: string;
-  /** The project Auto Run's files belong to (the application under test):
+  /** The project Auto Test's files belong to (the application under test):
    * the home project while the projects show together. */
   project: string;
   /** The project the PBI belongs to: where results are sent in Azure
@@ -187,7 +186,7 @@ export default function AutoRun({
   const [confirmingClear, setConfirmingClear] = useState<number | null>(null);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const queryClient = useQueryClient();
-  /** Whether the assistant's discovery holds the Auto Run browser. */
+  /** Whether the assistant's discovery holds the Auto Test browser. */
   const discovering = useDiscoveryActive();
 
   /** What the Setup panel reports, and whether a run has what it needs. */
@@ -342,8 +341,7 @@ export default function AutoRun({
   /** Why every way of starting a run here waits, when it does: a run going,
    * or the assistant's discovery holding the browser. Said in the title. */
   const runBlocked = runBlockedReason(background, discovering);
-  const { mode, setMode, loading: modeLoading } = useAutoRunMode();
-  const appSimple = useAppSimpleMode().on;
+  const { mode, loading: modeLoading } = useAutoRunMode();
   /** Simple leaves out the authoring actions; until the mode is known the screen is Advanced. */
   const simple = !modeLoading && mode === "simple";
   /** The plan the supervised pane pauses by at each reset point. */
@@ -788,46 +786,14 @@ export default function AutoRun({
     );
   };
 
-  /** Simple or Advanced: which Auto Run screen is shown. */
-  const modeSwitch = (
-    <div className="flex justify-end">
-      <div role="group" aria-label="Auto Run mode" className="flex rounded-md border border-border p-0.5">
-        {/* App Simple mode holds Auto Run in Simple: only that option is offered. */}
-        {(appSimple ? (["simple"] as const) : (["simple", "advanced"] as const)).map((m) => {
-          const pressed = !modeLoading && mode === m;
-          return (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={pressed}
-              disabled={runGoing}
-              title={runGoing ? "Wait for the run that is going to finish before changing mode" : undefined}
-              className={cn(
-                "rounded px-2 py-1 text-xs transition-colors disabled:pointer-events-auto disabled:opacity-50",
-                pressed ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
-              )}
-              onClick={() => {
-                if (modeLoading || mode === m) return;
-                void setMode(m).catch((e: Error) => toast.error(`Could not change the mode: ${e.message}`));
-              }}
-            >
-              <span className="label-trim">{m === "simple" ? "Simple" : "Advanced"}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   if (!org || !pbi) {
     return (
       <div className="space-y-4">
-        {modeSwitch}
         {/* What the assistants left for a person to decide. */}
         <WaitingForYou org={org} project={project} />
         {/* Assistants work whatever PBI is open, or none. */}
         <AssistantsCard />
-        <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>
+        <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to run its cases automatically.</p>
         {playwrightNeeded}
       </div>
     );
@@ -857,13 +823,12 @@ export default function AutoRun({
       <div className="space-y-4">
         {/* Who is connected and what each assistant is doing, above the tabs
             (and before a PBI is picked); nothing at all while none is. */}
-        {modeSwitch}
         <WaitingForYou org={org} project={project} />
         <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the
             keyboard a tab list owes: only the chosen tab is in the Tab
             order, and the arrow keys move along. */}
-        <div role="tablist" aria-label="Auto Run sections" className="flex gap-1 border-b border-border">
+        <div role="tablist" aria-label="Auto Test sections" className="flex gap-1 border-b border-border">
           {TABS.map(({ id, label }) => {
             const isOn = shown === id;
             const count = id === "cases" ? caseCount : runCount;
@@ -984,8 +949,8 @@ export default function AutoRun({
                     Select all shown
                   </label>
                   {/* The rare actions. Clear scripts is housekeeping shown
-                      wherever Auto Run is - the whole tab is gated in one
-                      place (the Auto Run module, lib/modules.ts), so no
+                      wherever Auto Test is - the whole tab is gated in one
+                      place (the Auto Test module, lib/modules.ts), so no
                       further gating belongs here, except Export to
                       Playwright, which needs the Playwright module.
                       Disabled rather than hidden: an item that vanishes the
@@ -1007,7 +972,7 @@ export default function AutoRun({
                         },
                         {
                           label: "Execution order",
-                          description: "The order Auto Run uses for this PBI, and where the shared state is put back.",
+                          description: "The order Auto Test uses for this PBI, and where the shared state is put back.",
                           disabled: !rows.some((_, i) => hasScript(i)),
                           onSelect: () => setOrderingOpen(true),
                         },

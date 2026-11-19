@@ -138,7 +138,7 @@ const SYNC: SyncRow[] = [
   { case_id: 4303, title: "A component can be switched off for one grade", state: { kind: "NeverExported" }, exported_at: null, has_script: true, in_repo: false, repo_note: null },
   { case_id: 4401, title: "An employee can apply for a full day", state: { kind: "InRepoNotFromApp" }, exported_at: null, has_script: true, in_repo: true, repo_note: "in specs/apply-leave.spec.ts" },
   { case_id: 4104, title: "Carry forward is capped at the set limit", state: { kind: "ExcludedInRepo" }, exported_at: null, has_script: true, in_repo: true, repo_note: "Excluded in the repo (in leave-type-rules.md)" },
-  { case_id: 4103, title: "A leave type in use cannot be deleted", state: { kind: "OutOfDate", why: "its script is no longer in Auto Run" }, exported_at: "2026-10-02T10:00:00Z", has_script: false, in_repo: true, repo_note: "in leave-types.md and index.json" },
+  { case_id: 4103, title: "A leave type in use cannot be deleted", state: { kind: "OutOfDate", why: "its script is no longer in Auto Test" }, exported_at: "2026-10-02T10:00:00Z", has_script: false, in_repo: true, repo_note: "in leave-types.md and index.json" },
 ];
 
 type CaseTemplate = Omit<PreviewCase, "case_id">;
@@ -161,7 +161,7 @@ const EXPORT_CASES: CaseTemplate[] = [
   { ...base, title: "Admin can create a leave type" },
   { ...base, title: "Admin can edit a leave type's name", in_repo: true, repo_note: "in leave-types.md and index.json", from_app: true },
   { ...base, title: "A leave type with a past end date is refused" },
-  { ...base, title: "No script yet", exportable: false, reason: "no script - record or write one in Auto Run", seg: null, user_key: null, has_script: false },
+  { ...base, title: "No script yet", exportable: false, reason: "no script - record or write one in Auto Test", seg: null, user_key: null, has_script: false },
   { ...base, title: "Carry forward is capped at the set limit", exportable: false, in_repo: true, excluded: true, repo_note: "Excluded in the repo (in leave-type-rules.md)" },
   { ...base, title: "Leave balance shows on the dashboard", exportable: false, reason: "its newest run did not pass", seg: null },
   { ...base, title: "Admin can set a goal for a team", seg: "sl/admin/performance/goal-setting" },
@@ -175,8 +175,8 @@ const EXPORT_CASES: CaseTemplate[] = [
     user_key: "DemoSL.performance.approver",
     add_user_command: "npm run users -- add DemoSL.performance.approver --username approver@demo.example --password <password> --apply",
   },
-  { ...base, title: "No script yet", exportable: false, reason: "no script - record or write one in Auto Run", seg: null, user_key: null, has_script: false },
-  { ...base, title: "No script yet", exportable: false, reason: "no script - record or write one in Auto Run", seg: null, user_key: null, has_script: false },
+  { ...base, title: "No script yet", exportable: false, reason: "no script - record or write one in Auto Test", seg: null, user_key: null, has_script: false },
+  { ...base, title: "No script yet", exportable: false, reason: "no script - record or write one in Auto Test", seg: null, user_key: null, has_script: false },
 ];
 const EXPORT_IDS = [5101, 5102, 5103, 5104, 5105, 5106, 5201, 5202, 5203, 5204, 5205];
 

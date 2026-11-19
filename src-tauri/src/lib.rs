@@ -489,7 +489,7 @@ fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 ///
 /// Velopack starts the app with cwd = `current\`. Every child started
 /// without an explicit cwd - the browser behind "View in Browser" (the
-/// opener plugin calls ShellExecute with no directory), Auto Run's Edge,
+/// opener plugin calls ShellExecute with no directory), Auto Test's Edge,
 /// the `claude mcp add` shell, WebView2's own helpers - inherits that cwd,
 /// and a process's cwd pins the directory against rename. Renaming
 /// `current\` is the first thing Update.exe does when applying an update,
@@ -532,13 +532,13 @@ impl SetupSteps {
         self.last = now;
     }
 
-    /// "cache and settings 12 ms, Auto Run data 240 ms, ..."
+    /// "cache and settings 12 ms, Auto Test data 240 ms, ..."
     fn summary(&self) -> String {
         self.done.iter().map(|(n, ms)| format!("{n} {ms} ms")).collect::<Vec<_>>().join(", ")
     }
 }
 
-/// Auto Run's browsers go with the app (`close_autorun_browsers`). Bounded,
+/// Auto Test's browsers go with the app (`close_autorun_browsers`). Bounded,
 /// so a browser that will not die cannot hold the app's exit. A template
 /// run still going keeps no browser from here on (`held::shut`): it would
 /// outlive the app, with nothing left to close it.
@@ -547,7 +547,7 @@ fn close_autorun_on_exit() {
     tauri::async_runtime::block_on(async {
         let closing = commands::autorun::close_autorun_browsers();
         if tokio::time::timeout(std::time::Duration::from_secs(3), closing).await.is_err() {
-            applog::warn("Auto Run's browsers were still closing when the app exited");
+            applog::warn("Auto Test's browsers were still closing when the app exited");
         }
     });
 }
@@ -641,14 +641,14 @@ pub fn run() {
             // once, here, where `app` is in scope.
             ado::throttle::set_app_handle(app.handle().clone());
             // A discovery starts and ends in the AI bridge, which has no
-            // AppHandle either: Auto Run hears it through this one.
+            // AppHandle either: Auto Test hears it through this one.
             commands::autorun::set_discovery_events(app.handle().clone());
             // The Assistants card hears who is connected and what each is
             // doing, once a second at most, when it changed.
             commands::autorun_slots::spawn_agents_watch(app.handle().clone());
             commands::assistant_activity::spawn_assistant_activity_watch(app.handle().clone());
             // Every script written or removed, whoever did it, is said to
-            // the window: the Auto Run screen reads those scripts again.
+            // the window: the Auto Test screen reads those scripts again.
             {
                 let app = app.handle().clone();
                 autorun::store::on_scripts_changed(move |root, ids| {
@@ -736,7 +736,7 @@ pub fn run() {
                 modules::init(dir.clone());
                 // Close-to-tray and beta updates: read before any page (see app_settings.rs).
                 crate::app_settings::init(dir.clone());
-                // An install that already runs Auto Run keeps every control
+                // An install that already runs Auto Test keeps every control
                 // it has today: settle its mode once.
                 crate::autorun::recommended::settle_on_start(&dir);
                 // The app-wide Simple mode: on for a new install (every
@@ -746,10 +746,10 @@ pub fn run() {
                 // call (see writing_style.rs).
                 crate::writing_style::init(dir.clone());
                 steps.mark("cache and settings");
-                // Auto Run scripts and local runs. The commands reach this
+                // Auto Test scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
-                // where the Auto Run screen actually looks.
+                // where the Auto Test screen actually looks.
                 let shared = dir.join("autorun");
                 // Each environment's own folder is built once, before the
                 // layout is chosen. When it cannot be built the flat folder
@@ -764,7 +764,7 @@ pub fn run() {
                     ),
                 );
                 if started.skipped {
-                    applog::info("Auto Run: the per-environment copy is skipped in a development build");
+                    applog::info("Auto Test: the per-environment copy is skipped in a development build");
                 }
                 if let Some(r) = &started.report {
                     applog::info(autorun::roots::migration_log_line(r));
@@ -777,7 +777,7 @@ pub fn run() {
                     applog::warn(autorun::roots::failure_warning(why, started.failed_starts));
                 }
                 if started.settled_copies > 0 {
-                    applog::info(format!("Auto Run: {} unfinished copy(ies) settled", started.settled_copies));
+                    applog::info(format!("Auto Test: {} unfinished copy(ies) settled", started.settled_copies));
                 }
                 let per_env = started.per_env;
                 if per_env {
@@ -798,17 +798,17 @@ pub fn run() {
                     let moved = autorun::roots::retire_unlisted(&shared, now);
                     if moved > 0 {
                         applog::info(format!(
-                            "Auto Run: {moved} removed environment folder(s) moved to the removed area"
+                            "Auto Test: {moved} removed environment folder(s) moved to the removed area"
                         ));
                     }
                     let swept = autorun::roots::sweep_export_staging(&shared);
                     if swept > 0 {
-                        applog::info(format!("Auto Run: {swept} unfinished Playwright export record copy(ies) discarded"));
+                        applog::info(format!("Auto Test: {swept} unfinished Playwright export record copy(ies) discarded"));
                     }
                     let gone = autorun::roots::purge_removed(&shared, now);
                     if gone > 0 {
                         applog::info(format!(
-                            "Auto Run: {gone} removed environment folder(s) older than 30 days purged"
+                            "Auto Test: {gone} removed environment folder(s) older than 30 days purged"
                         ));
                     }
                 }
@@ -820,7 +820,7 @@ pub fn run() {
                 let now = autorun::sessions::now_ms();
                 let purged: usize = stores.iter().map(|r| autorun::store::purge_deleted_scripts(r, now)).sum();
                 if purged > 0 {
-                    applog::info(format!("Auto Run: {purged} deleted script(s) older than 30 days purged"));
+                    applog::info(format!("Auto Test: {purged} deleted script(s) older than 30 days purged"));
                 }
                 // Downloads whose run is gone, swept here, before any run can
                 // be started and saving into a folder its file does not
@@ -828,7 +828,7 @@ pub fn run() {
                 for r in &stores {
                     autorun::store::sweep_orphan_downloads(r);
                 }
-                steps.mark("Auto Run data");
+                steps.mark("Auto Test data");
             }
             applog::info(format!(
                 "Test Case Manager {} started (set up {} ms after launch; {})",

@@ -1067,7 +1067,7 @@ async fn the_bridge_lists_the_modules_that_are_on() {
     assert_eq!(v["autorun"], serde_json::json!(v2_lib::modules::on(v2_lib::modules::Module::AutoRun)), "{body}");
 }
 
-/// The quirk routes are Auto Run's, but one sent `from: "api"` (the API
+/// The quirk routes are Auto Test's, but one sent `from: "api"` (the API
 /// template tools' names for them) is API Templates' too.
 #[test]
 fn an_api_quirk_needs_api_templates_too() {
@@ -1083,13 +1083,13 @@ fn an_api_quirk_needs_api_templates_too() {
             Some((404, "API Templates is switched off in Modules".to_string())),
             "{path}"
         );
-        assert!(module_guard(path, autorun, &no_api).is_none(), "{path}: an Auto Run quirk needs only Auto Run");
+        assert!(module_guard(path, autorun, &no_api).is_none(), "{path}: an Auto Test quirk needs only Auto Test");
         assert!(module_guard(path, r#"{"text":"x"}"#, &no_api).is_none(), "{path}");
         assert!(module_guard(path, api, &all).is_none(), "{path}");
         assert_eq!(
             module_guard(path, api, &[Module::DbAccess].into_iter().collect()),
-            Some((404, "Auto Run is switched off in Modules".to_string())),
-            "{path}: Auto Run off says Auto Run"
+            Some((404, "Auto Test is switched off in Modules".to_string())),
+            "{path}: Auto Test off says Auto Test"
         );
     }
     let bridge = crate::bridge_source::ai_bridge_source();
@@ -3054,7 +3054,7 @@ async fn agent_bye_marks_the_agent_gone_even_with_auto_run_off() {
     use v2_lib::autorun::agents::{self, AgentHeaders, Caller};
     let _agents = crate::serial::agents();
     agents::clear();
-    // Auto Run (and every other module) off: the guard has nothing to say.
+    // Auto Test (and every other module) off: the guard has nothing to say.
     let none: std::collections::BTreeSet<v2_lib::modules::Module> = Default::default();
     assert_eq!(v2_lib::ai_bridge::module_guard("/agent-bye", "", &none), None);
 
@@ -3140,7 +3140,7 @@ fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
 }
 
 /// The four API template routes - design doc "API templates" §7 and §9.
-/// Every one of them is gated with the Auto Run routes, prove and run are
+/// Every one of them is gated with the Auto Test routes, prove and run are
 /// refused while the person's switch is off, and guide and list answer
 /// either way.
 mod api_template_routes {
@@ -3206,7 +3206,7 @@ mod api_template_routes {
             let (status, body) = module_guard_for(path, &Default::default()).unwrap_or_else(|| panic!("{path} was not refused"));
             assert_eq!(status, 404, "{path}");
             assert_eq!(body, "API Templates is switched off in Modules", "{path}");
-            assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path} refused where Auto Run is offered");
+            assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path} refused where Auto Test is offered");
         }
     }
 

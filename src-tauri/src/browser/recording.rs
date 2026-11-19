@@ -1,5 +1,5 @@
 //! The browser's own screen recorder, used to keep a video of a failed
-//! Auto Run case.
+//! Auto Test case.
 //!
 //! Chromium 153 added `Page.startScreenRecording` and
 //! `Page.stopScreenRecording`: the browser itself encodes the tab into an

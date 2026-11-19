@@ -131,7 +131,7 @@ test("a refused switch leaves the switches' environment where it was", async () 
   expect(activeEnvIdSnapshot()).toBe(DEFAULT.id);
 });
 
-test("treats Auto Run, API template and Playwright export queries as per-environment", () => {
+test("treats Auto Test, API template and Playwright export queries as per-environment", () => {
   for (const k of [
     ["autorun-script", 5],
     ["autorun-nav", "o", "p"],

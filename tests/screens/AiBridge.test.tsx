@@ -139,7 +139,7 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Test Suites", "Run results", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "API templates", "Database Read Access"]) {
+  for (const label of ["Test Suites", "Run results", "Project tags", "Find a PBI", "Project wiki", "Auto Test scripts", "API templates", "Database Read Access"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
@@ -149,7 +149,7 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
     "Build the run sheet",
     "Check a draft",
     "Merge slice files",
-    "Auto Run guide",
+    "Auto Test guide",
   ]) {
     expect(within(card).queryByText(label), label).not.toBeInTheDocument();
   }
@@ -178,7 +178,7 @@ test("the AI Tools Breakdown states the recommended way to write test cases once
 });
 
 // The AI Tools tab's own display gate, toolShown() (the module is on and not
-// capture mode, for the Auto Run and API template tools), hides every render
+// capture mode, for the Auto Test and API template tools), hides every render
 // site - the breakdown-card entry and the numbered-list bullet - in capture
 // mode. It stays out of what gets saved and registered (see
 // mcpTools.test.ts). This is a documented, captured screen; off, the tests
@@ -187,7 +187,7 @@ test("the AI Tools Breakdown states the recommended way to write test cases once
 // The API templates card names no tool, and the help site documents it, so
 // capture mode shows it - with the Environment card - as every module on
 // does. Only the breakdown entries stay hidden.
-test("capture mode hides every mention of the Auto Run tools on the AI Tools tab, but shows the Environment and API templates cards", async () => {
+test("capture mode hides every mention of the Auto Test tools on the AI Tools tab, but shows the Environment and API templates cards", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -198,21 +198,21 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   renderBridge(qc);
 
   await screen.findByText("Tools an assistant may use");
-  expect(screen.queryByLabelText("Auto Run scripts")).not.toBeInTheDocument();
-  expect(screen.queryByText("Auto Run scripts")).not.toBeInTheDocument();
-  expect(screen.queryByText(/Auto Run stays something you drive by hand/)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Auto Test scripts")).not.toBeInTheDocument();
+  expect(screen.queryByText("Auto Test scripts")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Auto Test stays something you drive by hand/)).not.toBeInTheDocument();
   // The tool row's switch is named "API templates"; the card's is not.
   expect(screen.queryByLabelText("API templates")).not.toBeInTheDocument();
   expect(screen.queryByText(/^API templates:/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
   expect(screen.getByRole("switch", { name: "API templates (create, edit and delete)" })).toBeInTheDocument();
-  // The Network tools card is about Auto Run's tools: hidden with them.
+  // The Network tools card is about Auto Test's tools: hidden with them.
   expect(screen.queryByRole("switch", { name: "Network tools" })).not.toBeInTheDocument();
   // Capture mode reports every module on, so the writing style card shows;
   // the old trial switch is gone.
   expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
   expect(screen.queryByText("Test design rules")).not.toBeInTheDocument();
-  // Environments exist for Auto Run, which capture mode shows, so their card
+  // Environments exist for Auto Test, which capture mode shows, so their card
   // shows with it.
   expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
 });
@@ -235,10 +235,10 @@ test("with every module off, only the always-there cards and tools remain", asyn
   expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "API templates (create, edit and delete)" })).not.toBeInTheDocument();
   // No tool row of any module, and no breakdown entry for one.
-  expect(screen.queryByLabelText("Auto Run scripts")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Auto Test scripts")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("API templates")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Database Read Access")).not.toBeInTheDocument();
-  expect(screen.queryByText(/Auto Run stays something you drive by hand/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Auto Test stays something you drive by hand/)).not.toBeInTheDocument();
   expect(screen.queryByText(/^Database Read Access:/)).not.toBeInTheDocument();
   // The reading tools that need no module are still switchable.
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
@@ -268,14 +268,14 @@ test("each card appears with its own module and no other, and no module adds a t
 
   act(() => setModulesForTest(["db_access", "writing_style", "auto_run"]));
   expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
-  expect(screen.queryByRole("switch", { name: "Auto Run scripts" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Auto Test scripts" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "API templates" })).not.toBeInTheDocument();
 
   act(() => setModulesForTest(["db_access", "writing_style", "auto_run", "api_templates"]));
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "API templates" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("switch", { name: "Auto Run scripts" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Auto Test scripts" })).not.toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
@@ -999,14 +999,14 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
   // Five rows, with every module on: the wiki search and its page reader
   // share one switch, so do the suite search and its case reader. The tools
-  // of a module (Auto Run, API templates, Database Read Access and the
+  // of a module (Auto Test, API templates, Database Read Access and the
   // rest) have no row: the module being on is their switch.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
   expect(screen.getByLabelText("Run results")).toBeInTheDocument();
   expect(screen.getByLabelText("Find a PBI")).toBeInTheDocument();
-  for (const label of ["Auto Run scripts", "API templates", "Database Read Access", "Crystal Reports"]) {
+  for (const label of ["Auto Test scripts", "API templates", "Database Read Access", "Crystal Reports"]) {
     expect(within(toolSection).queryByText(label), label).not.toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: label }), label).not.toBeInTheDocument();
   }
@@ -1310,7 +1310,7 @@ test("the API templates switch is off, and stored when turned on", async () => {
 });
 
 /// The Network tools switch is the active environment's own, off by
-/// default, shown while Auto Run is on, and the stored flag is what App
+/// default, shown while Auto Test is on, and the stored flag is what App
 /// pushes to the bridge as networkTools.
 test("the Network tools switch is off, and stored when turned on", async () => {
   dbMocks();
@@ -1370,15 +1370,15 @@ test("running changes without asking needs writes on, and says what each tool ne
   );
 });
 
-/// The Auto Run tools' "always allow" follows the Auto Run module, so the
-/// tab says so only while Auto Run is on.
-test("the tab says Claude Code and Cursor are told to allow the Auto Run tools only while Auto Run is on", async () => {
+/// The Auto Test tools' "always allow" follows the Auto Test module, so the
+/// tab says so only while Auto Test is on.
+test("the tab says Claude Code and Cursor are told to allow the Auto Test tools only while Auto Test is on", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-login");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByText("Signs in as sgdev01db01_devlogin");
   const line =
-    "With Auto Run on, Claude Code and Cursor are told to allow the Auto Run tools (and, with API Templates on, the template tools) without asking.";
+    "With Auto Test on, Claude Code and Cursor are told to allow the Auto Test tools (and, with API Templates on, the template tools) without asking.";
   expect(screen.getByText(line)).toBeInTheDocument();
 
   act(() => setModulesForTest(["db_access", "writing_style"]));
@@ -1688,7 +1688,7 @@ test("a refused switch is shown and nothing moves", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks((cmd) => {
     if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
-    if (cmd === "env_set_active") throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+    if (cmd === "env_set_active") throw "the environment cannot be switched while something is being recorded or run in Auto Test - finish or cancel it first";
     return undefined;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -1767,7 +1767,7 @@ test("a refused switch keeps what was read", async () => {
     if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
     if (cmd === "env_set_active") {
       asked = true;
-      throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+      throw "the environment cannot be switched while something is being recorded or run in Auto Test - finish or cancel it first";
     }
     return undefined;
   });

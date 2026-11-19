@@ -1,5 +1,5 @@
 //! Sending a reviewed run to Azure DevOps as one test run - the ONLY door
-//! out of Auto Run's own data. Reached only from `commands::autorun_publish`,
+//! out of Auto Test's own data. Reached only from `commands::autorun_publish`,
 //! reached only when a person presses Send after reviewing every verdict.
 //! GET, POST and PATCH only - no DELETE, and no plan or suite is ever
 //! created here (that already happened, in Run Tests, before this runs).
@@ -66,7 +66,7 @@ pub fn comment_for(case: &CaseRecord) -> String {
         Some(a) if !a.is_empty() => format!(" as {a}"),
         _ => String::new(),
     };
-    let lead = format!("Auto Run{account_part}: ");
+    let lead = format!("Auto Test{account_part}: ");
     let reason = if case.reason.is_empty() {
         "no reason recorded"
     } else {

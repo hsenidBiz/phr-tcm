@@ -1,9 +1,9 @@
 /**
- * A request to open Auto Run with one thing in view: the accounts, the
+ * A request to open Auto Test with one thing in view: the accounts, the
  * sign-in, or a case.
  *
  * Whoever asks (a bell notification, the Waiting for you list) calls
- * requestAutoRunFocus and goes to the Auto Run section; the screen reads it
+ * requestAutoRunFocus and goes to the Auto Test section; the screen reads it
  * with useAutoRunFocus and calls clearAutoRunFocus once it has shown the
  * thing. Module scope, like submitRun, so the request outlives the screen
  * that was not mounted yet when it was made.

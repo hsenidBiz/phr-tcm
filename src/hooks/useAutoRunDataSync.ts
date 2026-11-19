@@ -2,7 +2,7 @@
 // discovery map and its summary, quirks, test files, proposed accounts,
 // fixtures - changes outside the screen. Rust says so after every write
 // (`autorun-data-changed`, and `api-templates-changed` for fixtures), and the
-// matching queries are read again, so the Auto Run screen shows it without a
+// matching queries are read again, so the Auto Test screen shows it without a
 // reload. The discovery map writes once per page read, so the events are
 // gathered and answered once per burst. Used once, by App, where something
 // is always mounted.

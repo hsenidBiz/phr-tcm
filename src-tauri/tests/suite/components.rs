@@ -146,7 +146,7 @@ fn a_corrupt_file_names_itself_and_reset_moves_it_aside() {
     std::fs::write(&path, "{ not json").unwrap();
     let err = load_components(dir.path(), "o", "p").unwrap_err();
     assert!(err.contains("the components file projects/"), "{err}");
-    assert!(err.contains("-components.json could not be read; Reset it in Auto Run"), "{err}");
+    assert!(err.contains("-components.json could not be read; Reset it in Auto Test"), "{err}");
     assert!(!err.contains(dir.path().to_str().unwrap()), "{err}");
     assert!(put(dir.path(), "o", "p", component("d")).is_err());
     let aside = reset_components(dir.path(), "o", "p").unwrap();
@@ -695,7 +695,7 @@ fn load_components_command_counts_users() {
 
     // A damaged file is the load's refusal, which offers Reset.
     std::fs::write(components_path(dir.path(), "o", "p"), "{ not json").unwrap();
-    assert!(components_view(dir.path(), "o", "p").unwrap_err().contains("Reset it in Auto Run"));
+    assert!(components_view(dir.path(), "o", "p").unwrap_err().contains("Reset it in Auto Test"));
 }
 
 // ---- a change is checked against the scripts that use it ----

@@ -1,4 +1,4 @@
-//! Sync: keeping the clone's copies of our Auto Run scripts current.
+//! Sync: keeping the clone's copies of our Auto Test scripts current.
 //!
 //! - **The export record.** Every export (`pw_export::export::write_recorded`)
 //!   records, for each case it wrote, the fingerprint of what it read, when,
@@ -315,7 +315,7 @@ pub struct SyncRow {
     pub state: SyncState,
     /// When it was last exported, UTC.
     pub exported_at: Option<String>,
-    /// Whether Auto Run still has its script, so Update can export it.
+    /// Whether Auto Test still has its script, so Update can export it.
     pub has_script: bool,
     /// The repo has it in at least one place (`pw_repo::presence`).
     pub in_repo: bool,
@@ -357,7 +357,7 @@ fn same(a: &Option<String>, b: &str) -> bool {
 
 /// Every case recorded for this clone and project, and every script saved
 /// in this project that never was, each with its state, by case id.
-/// `root` is Auto Run's store, `dir` the records' folder. Read only, but
+/// `root` is Auto Test's store, `dir` the records' folder. Read only, but
 /// for a record that cannot be parsed (`load`).
 pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &str) -> Result<Vec<SyncRow>, String> {
     // One open of the clone and one walk of its suites: the sections come
@@ -401,7 +401,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
             (None, _) if found.has(id) => SyncState::InRepoNotFromApp,
             (None, _) => SyncState::NeverExported,
             (Some(_), _) if !(found.has_feature_section(id) && raw.contains(&id)) => SyncState::NotInRepo,
-            (Some(_), None) => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
+            (Some(_), None) => SyncState::OutOfDate { why: "its script is no longer in Auto Test".into() },
             (Some(r), Some(_)) => match fingerprints.of(root, org, project, id, &r.module)? {
                 Some(now) if now.hash == r.fingerprint.hash => SyncState::Current,
                 // An export from before the handover was part of the fingerprint
@@ -410,7 +410,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
                     SyncState::Current
                 }
                 Some(now) => SyncState::OutOfDate { why: changed(&r.fingerprint.parts, &now.parts) },
-                None => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
+                None => SyncState::OutOfDate { why: "its script is no longer in Auto Test".into() },
             },
         };
         rows.push(SyncRow {

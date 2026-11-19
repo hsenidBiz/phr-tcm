@@ -20,7 +20,7 @@
 //! filters on the flag, never on the log-off time, which older rows leave
 //! empty.
 //!
-//! A session this app itself holds - its Auto Run browser has the account,
+//! A session this app itself holds - its Auto Test browser has the account,
 //! or it signed in as the account within the reuse window and still keeps
 //! that session (`session_is_ours`) - does not count: the site's row for it
 //! stays at flag 1 after the browser closes, and it is this app's own
@@ -136,7 +136,7 @@ fn when_words(since: &str) -> String {
 /// Which of a login's active-session rows are this app's own.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ours {
-    /// An Auto Run browser holds the account now: every row is ours.
+    /// An Auto Test browser holds the account now: every row is ours.
     held: bool,
     /// The sign-in this app saved, still within `session_minutes`.
     saved: Option<SavedFacts>,
@@ -206,7 +206,7 @@ pub fn signed_in_elsewhere(key: &str, rows: &[ActiveRow], ours: impl Into<Ours>)
     ))
 }
 
-/// Whether the account's session is this app's own: an Auto Run browser
+/// Whether the account's session is this app's own: an Auto Test browser
 /// holds it now, or its saved session is within `session_minutes` - the
 /// sign-in this app made earlier and still reuses, whose row the site keeps
 /// at flag 1 after the browser closes. Row by row, see `session_ownership`.
@@ -240,13 +240,13 @@ impl<D: crate::api_templates::gate::StageDb> RowSource for StageRows<'_, D> {
 
 async fn ask<S: RowSource>(rows: &S, asked: &str) -> Result<String, CheckFailed> {
     rows.select(asked).await.map_err(|said| {
-        crate::applog::warn(format!("Auto Run: the active session query did not run: {said}"));
+        crate::applog::warn(format!("Auto Test: the active session query did not run: {said}"));
         run_failed(&said)
     })
 }
 
 fn unread(why: String) -> CheckFailed {
-    crate::applog::warn(format!("Auto Run: the active session query's answer was not read: {why}"));
+    crate::applog::warn(format!("Auto Test: the active session query's answer was not read: {why}"));
     CheckFailed::QueryFailed(why)
 }
 

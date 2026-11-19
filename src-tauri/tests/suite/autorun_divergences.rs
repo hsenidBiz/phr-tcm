@@ -165,7 +165,7 @@ fn a_reported_data_divergence_is_stored_open_and_blocks_its_case() {
     assert_eq!(d.status, DivergenceStatus::Open);
     assert_eq!(
         run_sentence(d),
-        "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run"
+        "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Test"
     );
     assert!(blocking(&list, 1).is_none());
     assert_eq!(open_for(&list, 147556).len(), 1);
@@ -512,8 +512,8 @@ async fn a_bad_kind_names_the_three() {
 #[test]
 fn the_route_is_auto_runs() {
     let (status, body) =
-        module_guard_for("/autorun-divergence", &Default::default()).expect("refused outside Auto Run");
-    assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
+        module_guard_for("/autorun-divergence", &Default::default()).expect("refused outside Auto Test");
+    assert_eq!((status, body.as_str()), (404, "Auto Test is switched off in Modules"));
     assert!(module_guard_for("/autorun-divergence", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
 }
 
@@ -637,7 +637,7 @@ async fn the_failures_answer_lists_the_cases_divergences() {
         lines,
         vec![
             format!("- case 7 step 1 (d3): a person ruled on {day} that the case stands - leave the check as it is; a failure there is the data's or the application's (mark_autorun_suspected_defect, or tell the person).").as_str(),
-            "- case 7 step 2 (data, d1): needs a ruling - the case says \"exactly 4 levels\", the app shows \"6 levels\". Leave the script as the case says; the person rules in Auto Run.",
+            "- case 7 step 2 (data, d1): needs a ruling - the case says \"exactly 4 levels\", the app shows \"6 levels\". Leave the script as the case says; the person rules in Auto Test.",
             "- case 7 step 3 (rewrite, d2): the person is rewriting the case - repair that step's checks to the case as it now reads, declared in edits; the repair closes it.",
         ]
     );
@@ -699,7 +699,7 @@ async fn a_save_says_the_case_needs_a_ruling() {
     assert_eq!(status, 200, "{out}");
     assert!(
         out.lines().any(|l| l
-            == "case 7: needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run - runs are Blocked until then"),
+            == "case 7: needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Test - runs are Blocked until then"),
         "{out}"
     );
     // A dry run says it too, and writes nothing.
@@ -1057,7 +1057,7 @@ mod assistant {
         let answer = ruling_answer(&list, &picks, Ruling::CaseStands);
         assert_eq!(answer.matches("Ruled d1 ").count(), 1, "a duplicate counts once: {answer}");
         assert!(answer.contains("Ruled d3 (case 147556 step 4): the person said the app is wrong, so the case stands, on the person's words."), "{answer}");
-        assert!(answer.ends_with("The person can undo each of these on the case card in Auto Run."), "{answer}");
+        assert!(answer.ends_with("The person can undo each of these on the case card in Auto Test."), "{answer}");
     }
 
     #[test]

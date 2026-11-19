@@ -1,4 +1,4 @@
-//! With Auto Run on, Claude Code is told to allow its Auto Run tools without
+//! With Auto Test on, Claude Code is told to allow its Auto Test tools without
 //! asking: the app writes `CLAUDE_AUTORUN_RULES` (and, with API Templates on,
 //! `CLAUDE_API_TEMPLATE_RULES`) into the allow file it already keeps for the
 //! database switch, and only ever those entries. Every test here works in
@@ -204,7 +204,7 @@ fn the_database_switch_decides_its_own_entries_alone() {
         let (db_side, other) = if db { (&plan.put, &plan.take) } else { (&plan.take, &plan.put) };
         assert!(CLAUDE_DB_RULES.iter().all(|r| db_side.contains(r)), "db={db}");
         assert!(CLAUDE_DB_RULES.iter().all(|r| !other.contains(r)), "db={db}");
-        assert!(CLAUDE_AUTORUN_RULES.iter().all(|r| plan.put.contains(r)), "Auto Run's go in whatever db is ({db})");
+        assert!(CLAUDE_AUTORUN_RULES.iter().all(|r| plan.put.contains(r)), "Auto Test's go in whatever db is ({db})");
         assert!(CLAUDE_API_TEMPLATE_RULES.iter().all(|r| plan.take.contains(r)), "API Templates is off");
     }
 }
@@ -240,7 +240,7 @@ fn auto_run_off_takes_its_rules_out_and_leaves_the_persons() {
     m.apply(&state(false, api_on(), &[]));
     assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES) && has_all(&m.allow(), CLAUDE_API_TEMPLATE_RULES));
 
-    // Auto Run off takes API Templates with it (the module tree).
+    // Auto Test off takes API Templates with it (the module tree).
     m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
     let held = m.allow();
     assert!(has_none(&held, CLAUDE_AUTORUN_RULES) && has_none(&held, CLAUDE_API_TEMPLATE_RULES), "{held:?}");
@@ -304,7 +304,7 @@ fn the_database_switch_and_the_module_rules_do_not_depend_on_each_other() {
 
     m.apply(&state(false, auto_run_on(), &[]));
     assert!(has_none(&m.allow(), CLAUDE_DB_RULES), "the database switch took its own out");
-    assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES), "and nothing of Auto Run's");
+    assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES), "and nothing of Auto Test's");
 
     m.apply(&state(true, mods(&[Module::DbAccess]), &[]));
     assert!(has_all(&m.allow(), CLAUDE_DB_RULES) && has_none(&m.allow(), CLAUDE_AUTORUN_RULES));
@@ -442,7 +442,7 @@ fn cursor_gets_the_same_rules_in_its_allowlist() {
 // ------------------------------------------------------------ whose rules they are
 
 /// The owner's own hand-written rule, with the same name as one the app
-/// writes, is theirs: Auto Run going off leaves it.
+/// writes, is theirs: Auto Test going off leaves it.
 #[test]
 fn a_hand_written_rule_stays_when_auto_run_goes_off() {
     let mine = "mcp__tcm__start_autorun_discovery";

@@ -1,5 +1,5 @@
 //! A project's Test files (`v2_lib::test_files`) and the two things that
-//! upload them: an API template step's `files`, and Auto Run's `upload`
+//! upload them: an API template step's `files`, and Auto Test's `upload`
 //! action. The run-level checks for templates (what reaches the page, the
 //! report and the activity log) are in `api_templates_runner.rs`, beside
 //! the fake browser they need.
@@ -241,7 +241,7 @@ fn the_size_cap_holds_on_add_and_on_read() {
 fn a_missing_file_says_where_to_add_it() {
     let dir = tempfile::tempdir().unwrap();
     let err = check_for_run(dir.path(), "cv.pdf", "the step \"Attach\"").unwrap_err();
-    assert_eq!(err, "add \"cv.pdf\" to Test files (Auto Run or API Templates) - the step \"Attach\" uploads it");
+    assert_eq!(err, "add \"cv.pdf\" to Test files (Auto Test or API Templates) - the step \"Attach\" uploads it");
 }
 
 // --- the commands' gate ---
@@ -251,7 +251,7 @@ fn every_command_is_refused_where_auto_run_is_not_offered() {
     let root = tempfile::tempdir().unwrap();
     let picked = tempfile::tempdir().unwrap();
     let file = write(picked.path(), "cv.pdf", b"%PDF-x");
-    let refused = "Auto Run is switched off in Modules";
+    let refused = "Auto Test is switched off in Modules";
     assert_eq!(list_at(false, root.path(), ORG, PROJECT).unwrap_err(), refused);
     assert_eq!(add_at(false, root.path(), ORG, PROJECT, &file, false).unwrap_err(), refused);
     assert_eq!(remove_at(false, root.path(), ORG, PROJECT, "cv.pdf").unwrap_err(), refused);
@@ -334,7 +334,7 @@ mod assistant_saves {
                 "saved": "bad-row.csv",
                 "size": "16 bytes",
                 "replaced": false,
-                "use": "Refer to it by its name: an Auto Run upload action's file, or a template's files."
+                "use": "Refer to it by its name: an Auto Test upload action's file, or a template's files."
             })
         );
         let names: Vec<(String, u32)> = list(&b.folder()).unwrap().into_iter().map(|f| (f.name, f.size)).collect();
@@ -845,7 +845,7 @@ fn a_built_request_without_the_files_bytes_is_refused_with_the_sentence() {
     let err = build_request(&template().steps[0], &vars(), &BTreeMap::new()).unwrap_err();
     assert_eq!(
         err,
-        "add \"appraisal form.pdf\" to Test files (Auto Run or API Templates) - the step \"Attach\" uploads it"
+        "add \"appraisal form.pdf\" to Test files (Auto Test or API Templates) - the step \"Attach\" uploads it"
     );
 }
 
@@ -910,7 +910,7 @@ fn an_export_with_no_uploads_stays_version_1_and_both_versions_read() {
     assert_eq!(read_doc(&v3).unwrap_err(), NEWER);
 }
 
-// --- Auto Run: the upload action ---
+// --- Auto Test: the upload action ---
 
 #[test]
 fn upload_reads_and_writes_like_the_other_actions() {
@@ -1240,7 +1240,7 @@ async fn a_file_missing_from_test_files_fails_the_step_before_the_page_is_touche
     let out = run_step(&mut d, root.path(), ORG, PROJECT, &upload_step("cv.pdf"), &quick(), &mut account).await.unwrap();
     assert!(!out[0].ok);
     assert!(
-        out[0].detail.starts_with("add \"cv.pdf\" to Test files (Auto Run or API Templates) - this step uploads it"),
+        out[0].detail.starts_with("add \"cv.pdf\" to Test files (Auto Test or API Templates) - this step uploads it"),
         "{}",
         out[0].detail
     );

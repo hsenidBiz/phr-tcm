@@ -118,7 +118,7 @@ pub enum AreaRoute<'a> {
 /// Said when the run has no route for the case: this project records no
 /// menu paths, so there is no area to go back to.
 pub const NO_AREA_IN_RUN: &str =
-    "return_to_area has nowhere to go: this project has no areas recorded - record them on the Auto Run Setup tab";
+    "return_to_area has nowhere to go: this project has no areas recorded - record them on the Auto Test Setup tab";
 
 /// Said in a watched run, or a try, of a script that names no area: only an
 /// unattended run knows the case's Module, from which a default area comes.
@@ -127,7 +127,7 @@ pub const NEEDS_SCRIPT_AREA: &str =
 
 /// Said when there is no sign-in recipe to start the trip from.
 pub const NO_HOME_FOR_AREA: &str =
-    "return_to_area needs the project's sign-in recipe or site address to start from - set one on the Auto Run Setup tab";
+    "return_to_area needs the project's sign-in recipe or site address to start from - set one on the Auto Test Setup tab";
 
 /// The route a watched run's (or a try's) `return_to_area` takes: the area
 /// the case's saved script names, from the recipe's home - the same parts
@@ -1310,7 +1310,7 @@ async fn run_expanded<D: Driver>(
                             None => as_action_outcome(&signed),
                             Some(rt) => {
                                 let who_key = who.key.clone();
-                                let who = format!("Auto Run, step {}", step.step_number);
+                                let who = format!("Auto Test, step {}", step.step_number);
                                 let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &who, Some(&who_key)).await;
                                 if !went.ok {
                                     blocked = Some(AFTER_UNREACHED);
@@ -1754,7 +1754,7 @@ async fn after_session_refused<D: Driver>(
     let age = super::sessions::saved_session_age_minutes(here.root, key);
     super::sessions::forget_session(here.root, key);
     crate::applog::info(format!(
-        "Auto Run, step {step_number}: {}; it is signed in fresh",
+        "Auto Test, step {step_number}: {}; it is signed in fresh",
         signin::session_refused_line(&lease.browser_words(), key, refusal, age)
     ));
     let (r, who) = match signin::prepare(here.root, here.organization, here.project, key) {
@@ -1851,7 +1851,7 @@ async fn plain<D: Driver>(
 /// ANY element to match (`is_on_page_within`; hidden and off-window ones
 /// count as there), runs the `then` only when nothing matched at all, and
 /// passes with `SHOWN_SKIPPED` otherwise; a locator whose frame cannot be
-/// entered fails the step, since Auto Run could not look. A guard inside the
+/// entered fails the step, since Auto Test could not look. A guard inside the
 /// `then` runs the same way, and its sentence is said among the others. The
 /// guard stops at its first failure, and that failure is the step's, said
 /// after what already ran. `GuardTrace` on the outcome records, guard by
@@ -2150,7 +2150,7 @@ async fn return_to_area<D: Driver>(
     account: Option<&str>,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
-    let who = format!("Auto Run, step {step_number}");
+    let who = format!("Auto Test, step {step_number}");
     if let Some(name) = action.area_named() {
         return match named_route(areas, name) {
             Ok(rt) => {

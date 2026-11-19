@@ -96,7 +96,7 @@ fn an_unknown_size_stays_zero() {
 ///
 /// Velopack launches the app with cwd = `current\`, and every child the
 /// app starts without an explicit cwd - the browser behind "View in
-/// Browser", Auto Run's Edge, `claude mcp add` - inherits it. A process's
+/// Browser", Auto Test's Edge, `claude mcp add` - inherits it. A process's
 /// cwd pins that directory against rename, and renaming `current\` is the
 /// first thing Update.exe does when applying an update. On 2026-08-21 a
 /// user's 1.20.2 -> 1.20.5 update failed three times with "os error 32"

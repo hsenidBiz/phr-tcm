@@ -1,6 +1,6 @@
 //! A browser the app still holds after it is gone: before anything is
 //! refused only because a browser is held, a dead one is let go; a held
-//! browser that fails to answer is let go right there; and Release Auto Run
+//! browser that fails to answer is let go right there; and Release Auto Test
 //! browser clears every record and closes only the app's own browsers.
 //!
 //! No real browser here: the slot holds a fake whose liveness the test
@@ -170,7 +170,7 @@ async fn a_page_read_from_a_dead_browser_says_none_is_open_and_clears_it() {
 
     let (status, said) = let_go_if_silent(&mut slot, answer).await;
     assert_eq!((status, said.as_str()), (409, BROWSER_GONE));
-    assert!(said.contains("no Auto Run browser is open"), "{said}");
+    assert!(said.contains("no Auto Test browser is open"), "{said}");
     assert!(!said.contains("http") && !said.contains("127.0.0.1") && !said.contains('?'), "{said}");
     assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "a long dash: {said}");
     assert!(slot.is_none() && closed.load(Ordering::SeqCst));
@@ -216,7 +216,7 @@ impl Ends for AppBrowser {
     }
 }
 
-/// Release clears every Auto Run browser record and closes the app's own
+/// Release clears every Auto Test browser record and closes the app's own
 /// browsers - only those in its registry, which holds nothing but browsers
 /// the app started in jobs of its own. With nothing held it says so.
 #[tokio::test(flavor = "multi_thread")]
@@ -258,14 +258,14 @@ async fn release_is_refused_while_a_template_run_is_going() {
 /// closed, and any that would not close yet. No long dash.
 #[test]
 fn the_release_sentence_says_what_was_released() {
-    assert_eq!(released_sentence(true, 0, 0), "the Auto Run browser is released and closed");
+    assert_eq!(released_sentence(true, 0, 0), "the Auto Test browser is released and closed");
     assert_eq!(
         released_sentence(true, 2, 0),
-        "the Auto Run browser is released and closed, and 2 more of the app's own browsers were closed"
+        "the Auto Test browser is released and closed, and 2 more of the app's own browsers were closed"
     );
     assert_eq!(
         released_sentence(false, 2, 1),
-        "no Auto Run browser was held; 1 of the app's own browsers was closed; 1 would not close yet, and Windows ends it when the app exits"
+        "no Auto Test browser was held; 1 of the app's own browsers was closed; 1 would not close yet, and Windows ends it when the app exits"
     );
     for s in [released_sentence(false, 0, 0), released_sentence(true, 3, 2)] {
         assert!(!s.contains('\u{2014}') && !s.contains('\u{2013}'), "{s}");
@@ -290,7 +290,7 @@ async fn the_assistant_releases_through_its_route() {
     assert_eq!(
         v2_lib::ai_tools::module_of_tool("reset_autorun_browser"),
         Some(v2_lib::modules::Module::AutoRun),
-        "not on the Auto Run gate"
+        "not on the Auto Test gate"
     );
     let guide = include_str!("../../src/autorun/guide.rs");
     assert!(guide.contains("`reset_autorun_browser` with `release: true`"), "the guide does not name it");
@@ -595,7 +595,7 @@ async fn a_discovery_naming_the_other_browser_closes_the_replays() {
 }
 
 /// The person's End discovery closes the assistant's discovery browser so
-/// Auto Run can run again (the mapping run's summary kept); the
+/// Auto Test can run again (the mapping run's summary kept); the
 /// assistant's end_autorun_discovery releases it too, unless it asks to keep
 /// the browser (`keep_browser`), signed in, for its next replay.
 #[tokio::test]
@@ -790,13 +790,13 @@ fn the_browser_is_marked_with_who_opened_it() {
     assert_eq!((ReplayBy::Person.opens_as(), ReplayBy::Assistant.opens_as()), (OpenedBy::Person, OpenedBy::Assistant));
 }
 
-/// A template refused its account because the Auto Run browser holds it
+/// A template refused its account because the Auto Test browser holds it
 /// names the release when the assistant opened that browser.
 #[test]
 fn a_template_held_off_by_the_assistants_browser_names_the_release() {
     use v2_lib::ai_bridge::{template_report_hint, FREE_IT_WITH_RELEASE};
     use v2_lib::autorun::lease::in_use_by_browser;
-    assert_eq!(in_use_by_browser("automation"), "the account automation was in use by the Auto Run browser - try again when it is free");
+    assert_eq!(in_use_by_browser("automation"), "the account automation was in use by the Auto Test browser - try again when it is free");
     let report = |detail: String| serde_json::json!({ "ok": false, "steps": [{ "detail": detail }] }).to_string();
     let refused = report(in_use_by_browser("automation"));
     let v: serde_json::Value = serde_json::from_str(&template_report_hint(refused.clone(), "automation", true)).unwrap();
@@ -981,7 +981,7 @@ async fn a_reset_with_no_browser_says_so() {
 }
 
 /// The assistant's tool and route: `reset_autorun_browser` posts to
-/// `/autorun-reset`, on the Auto Run gate beside release.
+/// `/autorun-reset`, on the Auto Test gate beside release.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_assistant_resets_through_its_route() {
     let _a = crate::serial::autorun();
@@ -996,7 +996,7 @@ async fn the_assistant_resets_through_its_route() {
     assert_eq!(
         v2_lib::ai_tools::module_of_tool("reset_autorun_browser"),
         Some(v2_lib::modules::Module::AutoRun),
-        "not on the Auto Run gate"
+        "not on the Auto Test gate"
     );
     // A replay is refused before it waits for the browser.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
@@ -1020,7 +1020,7 @@ pub(crate) fn assert_a_persons_sentence(said: &str, who: &str) {
         format!("Ended the discovery in {who}, kept what it found, and closed the browser."),
         format!("Released {who} and closed it."),
         gone,
-        "No Auto Run browser was held, so there was nothing to release.".to_string(),
+        "No Auto Test browser was held, so there was nothing to release.".to_string(),
         v2_lib::commands::autorun_slots::PERSONS_BROWSER_KEPT.to_string(),
     ];
     assert!(allowed.iter().any(|a| a == said), "not one of the card's sentences: {said}");
@@ -1064,19 +1064,19 @@ async fn the_cards_release_answers_in_its_own_sentences() {
     assert!(slot.is_none() && closed.load(Ordering::SeqCst));
 
     let (mut slot, closed) = held(true, None);
-    let said = release_answer_in(&mut slot, "the main Auto Run browser").await;
-    assert_a_persons_sentence(&said, "the main Auto Run browser");
+    let said = release_answer_in(&mut slot, "the main Auto Test browser").await;
+    assert_a_persons_sentence(&said, "the main Auto Test browser");
     assert_eq!(said, v2_lib::commands::autorun_slots::PERSONS_BROWSER_KEPT);
     assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
 
     let mut none: Option<HeldOne> = None;
     let said = release_answer_in(&mut none, who).await;
     assert_a_persons_sentence(&said, who);
-    assert!(said.starts_with("No Auto Run browser was held"), "{said}");
+    assert!(said.starts_with("No Auto Test browser was held"), "{said}");
 
     // The main browser, bound to no assistant, is named as itself.
     let (mut slot, _) = left_open_by_assistant(false, None);
-    let said = release_answer_in(&mut slot, "the main Auto Run browser").await;
-    assert_a_persons_sentence(&said, "the main Auto Run browser");
-    assert!(said.starts_with("The main Auto Run browser had already closed"), "{said}");
+    let said = release_answer_in(&mut slot, "the main Auto Test browser").await;
+    assert_a_persons_sentence(&said, "the main Auto Test browser");
+    assert!(said.starts_with("The main Auto Test browser had already closed"), "{said}");
 }

@@ -80,7 +80,7 @@ pub enum ReplayEnd {
     /// watched start blocks it.
     Blocked(String),
     /// The stop control (Stop, Close browser, Open browser replacing it,
-    /// Release Auto Run browser or the app exiting) ended the replay before
+    /// Release Auto Test browser or the app exiting) ended the replay before
     /// step `step` finished.
     Stopped { step: i32 },
     /// The browser closed under the replay before step `step` finished: its
@@ -152,10 +152,10 @@ pub fn step_said(k: i32, cleanup: Option<i32>) -> String {
 }
 
 /// Why a replay the stop control ended stopped.
-pub const ASKED_TO_STOP: &str = "it was asked to stop (Stop, Close browser or Release Auto Run browser)";
+pub const ASKED_TO_STOP: &str = "it was asked to stop (Stop, Close browser or Release Auto Test browser)";
 
 /// Why a replay whose browser closed under it stopped.
-pub const BROWSER_CLOSED: &str = "the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
+pub const BROWSER_CLOSED: &str = "the Auto Test browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
 
 /// What the panes hear once a replay has opened the supervised browser:
 /// nothing when one was open already (`had_browser`).
@@ -189,7 +189,7 @@ pub fn sign_in_forgotten_event(
 /// guarding case `other`'s draft with a guard the replay may not lift (the
 /// person's, for the assistant's replay: `commands::autorun::ReplayBy::may_lift`).
 pub fn guarding_other_case(other: i32) -> String {
-    format!("the Auto Run browser is guarding case {other}'s draft, and the page tried to save")
+    format!("the Auto Test browser is guarding case {other}'s draft, and the page tried to save")
 }
 
 /// The supervised browser a replay leaves open: the account KEY it holds,
@@ -214,14 +214,14 @@ pub fn left_open_line(left: &LeftOpen) -> String {
             None => ("", String::new()),
         };
         return format!(
-            "The Auto Run browser stays open on this step{signed}: discovery actions and component saves are refused until start_autorun_discovery takes it over{templates}. Do not release it between replays: reset_autorun_browser's release is for a broken browser."
+            "The Auto Test browser stays open on this step{signed}: discovery actions and component saves are refused until start_autorun_discovery takes it over{templates}. Do not release it between replays: reset_autorun_browser's release is for a broken browser."
         );
     }
     let blocked = match &left.account {
         Some(key) => format!("discovery actions, component saves and template runs as {key}"),
         None => "discovery actions and component saves".to_string(),
     };
-    format!("The person's Auto Run browser stays open on this step: {blocked} are refused until the person closes it.")
+    format!("The person's Auto Test browser stays open on this step: {blocked} are refused until the person closes it.")
 }
 
 /// A step the replay ran outside `main`: the tab it ran in, as a live
@@ -545,7 +545,7 @@ pub fn check(root: &Path, organization: &str, project: &str, req: &ReplayRequest
 
 /// How the application log names a replay.
 fn who(case_id: i32) -> String {
-    format!("Auto Run replay, case {case_id}")
+    format!("Auto Test replay, case {case_id}")
 }
 
 /// Whether this outcome is the browser having gone away.
@@ -980,7 +980,7 @@ pub async fn retake_sign_in<D: Driver>(
     if let Some(old) = lease.sign_in_print() {
         if let Some(changed) = crate::browser::session::changed_cookies(d, origins, old, lease.ignored_in_print()).await {
             if !changed.is_empty() {
-                crate::applog::info(format!("Auto Run: {by} re-issued the sign-in's cookies: {}", changed.join(", ")));
+                crate::applog::info(format!("Auto Test: {by} re-issued the sign-in's cookies: {}", changed.join(", ")));
             }
         }
     }
@@ -1481,7 +1481,7 @@ async fn run_steps_marked<D: Driver>(
         // An earlier part of the same case that posted (`wrote_before`) counts the same way.
         if look_only {
             crate::applog::info(format!(
-                "Auto Run: a look-only replay sent a request the save guard let through: {}",
+                "Auto Test: a look-only replay sent a request the save guard let through: {}",
                 d.net_posted_paths(mark).join(", ")
             ));
             Some(Unclean::Posted)

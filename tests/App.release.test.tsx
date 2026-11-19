@@ -1,4 +1,4 @@
-// The App shell as a RELEASE build sees it: Auto Run, API Templates and
+// The App shell as a RELEASE build sees it: Auto Test, API Templates and
 // Playwright exist only while their module is switched on - a release build
 // starts with none on, and there is no build-kind shortcut in the webview
 // (Rust starts a development build with every module on instead).
@@ -32,9 +32,9 @@ afterEach(() => {
 
 // Switching a module off while one of its screens is the open tab must not
 // leave its heading over a blank body: the redirect moves off it. API
-// Templates hangs off Auto Run, so switching Auto Run off takes it too (Rust
+// Templates hangs off Auto Test, so switching Auto Test off takes it too (Rust
 // answers with what is left on).
-test("switching Auto Run off while API Templates is open lands on Manual Entry", async () => {
+test("switching Auto Test off while API Templates is open lands on Manual Entry", async () => {
   const { default: App } = await import("../src/App");
   const modules = await import("../src/lib/modules");
   const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
@@ -70,7 +70,7 @@ test("switching Auto Run off while API Templates is open lands on Manual Entry",
   await act(() => modules.setModule("auto_run", false));
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "API Templates" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
   modules.resetModulesStore();
 });
 
@@ -104,6 +104,6 @@ test("a saved API Templates tab is left on a fresh install", async () => {
   );
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "API Templates" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
   modules.resetModulesStore();
 });

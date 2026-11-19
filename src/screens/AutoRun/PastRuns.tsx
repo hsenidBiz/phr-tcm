@@ -77,7 +77,7 @@ export default function PastRuns({
    * components. */
   org: string;
   project: string;
-  /** The PBI currently selected on the Auto Run screen. A run reviewed
+  /** The PBI currently selected on the Auto Test screen. A run reviewed
    * here is sent with THIS PBI's title and step ids (see `RunReview`), so
    * a run saved under a different PBI must never be offered for review
    * while some other PBI is selected - it would be sent under the wrong
@@ -89,7 +89,7 @@ export default function PastRuns({
    * selected: the pane it opens saves under this PBI. */
   onReplay?: (caseId: number, title: string, step: number) => void;
   /** Why Replay to step waits, when it does: an unattended run is going,
-   * or a discovery holds the Auto Run browser. */
+   * or a discovery holds the Auto Test browser. */
   replayBlocked?: string;
   /** Which results the list shows. Held by the screen, not here: this panel
    * unmounts whenever another tab is shown, and a person who picked Failed
@@ -134,7 +134,7 @@ export default function PastRuns({
 
   /** Housekeeping: wipe every saved run and screenshot on this machine,
    * including runs already sent to Azure DevOps - the confirm dialog says
-   * so before this ever runs. Shown wherever Auto Run is (dev, or
+   * so before this ever runs. Shown wherever Auto Test is (dev, or
    * unlocked); the tab is gated in one place, so no gating here. */
   const clearRuns = useMutation({
     mutationFn: () => unwrapStr(commands.autoRunClearRuns()),
@@ -147,7 +147,7 @@ export default function PastRuns({
   });
 
   /** One run as a page opened in the person's browser: Rust writes it to
-   * the Auto Run folder and opens it, so there is nothing to pick or save.
+   * the Auto Test folder and opens it, so there is nothing to pick or save.
    * The run's time goes as this screen shows it, so the report reads in the
    * person's own locale. */
   const openReport = useMutation({
@@ -336,7 +336,7 @@ export default function PastRuns({
         <Modal onClose={() => setClearOpen(false)} className="flex w-full max-w-md flex-col gap-4 p-5">
           <h2 className="text-sm font-semibold text-text">Clear results?</h2>
           <p className="text-xs text-muted">
-            This removes every Auto Run result and picture on this machine, including runs already
+            This removes every Auto Test result and picture on this machine, including runs already
             sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.
           </p>
           <div className="flex justify-end gap-2">

@@ -281,7 +281,7 @@ const NO_PATH_START: &str = "No menu path recorded for module \"";
 const UNRECORDED_AREA_START: &str = "the area \"";
 
 pub fn no_path(module: &str) -> String {
-    format!("{NO_PATH_START}{}\" - record one in Auto Run, Areas.", module.trim())
+    format!("{NO_PATH_START}{}\" - record one in Auto Test, Areas.", module.trim())
 }
 
 /// Why a case with no `area` is not run when its module has several areas
@@ -290,7 +290,7 @@ pub fn no_default_area(module: &str, areas: &[&str]) -> String {
     let names = areas.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
     format!(
         "{NO_PATH_START}{}\" by its own name - its areas are {names}: set the script's area to one of them, \
-         or record an area named \"{}\" in Auto Run, Areas.",
+         or record an area named \"{}\" in Auto Test, Areas.",
         module.trim(),
         module.trim()
     )
@@ -299,7 +299,7 @@ pub fn no_default_area(module: &str, areas: &[&str]) -> String {
 /// Why a case whose script names an area the project has not recorded is
 /// not run, and the start of why such a script is not saved (spec §9).
 pub fn unrecorded_area(area: &str) -> String {
-    format!("{UNRECORDED_AREA_START}{}\" is not recorded - record it in Auto Run, Areas", area.trim())
+    format!("{UNRECORDED_AREA_START}{}\" is not recorded - record it in Auto Test, Areas", area.trim())
 }
 
 /// How two module (or area) names are compared: trimmed, case ignored.
@@ -342,7 +342,7 @@ fn as_areas(mut nav: NavFile, org: &str, project: &str, file: &Path) -> NavFile 
         let key = module_key(&m.area);
         match kept.iter().find(|k| !key.is_empty() && module_key(&k.area) == key) {
             Some(first) => dropped.push(format!(
-                "Auto Run areas for {org} / {project}: \"{}\" differs from \"{}\" only in case - kept the first, left this one out",
+                "Auto Test areas for {org} / {project}: \"{}\" differs from \"{}\" only in case - kept the first, left this one out",
                 m.area, first.area
             )),
             None => kept.push(m),
@@ -1653,25 +1653,25 @@ pub fn no_address(step: i32) -> String {
 }
 
 /// Whether scripts may open pages by address: the project's saved switch,
-/// and never while Auto Run is in Simple mode. The saved value is not
+/// and never while Auto Test is in Simple mode. The saved value is not
 /// changed by Simple, so Advanced brings the person's choice back. Every
 /// reader of the switch goes through here.
 pub fn direct_urls_allowed(nav: &NavFile, simple: bool) -> bool {
     nav.direct_urls && !simple
 }
 
-/// Whether Auto Run is in Simple mode now: its own mode, or the app's Simple
-/// mode, which holds Auto Run in Simple.
+/// Whether Auto Test is in Simple mode now: its own mode, or the app's Simple
+/// mode, which holds Auto Test in Simple.
 pub fn simple_now() -> bool {
     let s = crate::app_settings::current();
     s.autorun_mode == Some(crate::app_settings::AutorunMode::Simple) || s.app_simple_mode == Some(true)
 }
 
-/// What `auto_run_set_direct_urls` answers while Auto Run is in Simple (the
+/// What `auto_run_set_direct_urls` answers while Auto Test is in Simple (the
 /// Areas dialog hides the switch there, so a person never sees it).
-pub const SIMPLE_NO_ADDRESS_CHANGE: &str = "Switch Auto Run to Advanced to change this.";
+pub const SIMPLE_NO_ADDRESS_CHANGE: &str = "Switch Auto Test to Advanced to change this.";
 
-/// The same refusal while the app's own Simple mode holds Auto Run in Simple:
+/// The same refusal while the app's own Simple mode holds Auto Test in Simple:
 /// Advanced is not available then, so the way out is the app setting.
 pub const APP_SIMPLE_NO_ADDRESS_CHANGE: &str = "Turn Simple mode off in Settings to change this.";
 

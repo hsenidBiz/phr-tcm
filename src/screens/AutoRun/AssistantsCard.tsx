@@ -1,4 +1,4 @@
-// The Assistants card: every connected assistant that has an Auto Run browser
+// The Assistants card: every connected assistant that has an Auto Test browser
 // (one without is left out), the browser it has, what it is doing, and the three things a person can do about it - Stop its replay,
 // End its discovery, Release its browser. It draws nothing until an assistant
 // is doing something: while every connected assistant is idle (or none is
@@ -26,7 +26,7 @@ export { isWorking };
 
 /** Which browser the assistant has, and who is signed in there. */
 function browserText(a: AgentView): string {
-  let text = a.own_browser ? "Its own browser" : "Main Auto Run browser";
+  let text = a.own_browser ? "Its own browser" : "Main Auto Test browser";
   if (a.browser) text += `, ${a.browser}`;
   if (a.account) text += `, signed in as ${a.account}`;
   return text;
@@ -93,7 +93,7 @@ export default function AssistantsCard() {
     }
   }
 
-  // An assistant connected without an Auto Run browser has nothing here to
+  // An assistant connected without an Auto Test browser has nothing here to
   // stop or release: it gets no row and no place in the office.
   const shown = agents.filter((a) => a.slot !== null);
   const workingCount = shown.filter((a) => isWorking(a.activity)).length;

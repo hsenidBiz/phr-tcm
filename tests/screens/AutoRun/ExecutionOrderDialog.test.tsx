@@ -1,4 +1,4 @@
-// Auto Run's Execution order dialog: the planned order with its batches and
+// Auto Test's Execution order dialog: the planned order with its batches and
 // the pauses between them, moving cases, and the two ways of keeping or
 // dropping an order.
 

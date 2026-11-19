@@ -18,7 +18,7 @@ use crate::browser::viewport::{PageSize, DEFAULT_PAGE};
 
 const FILE: &str = "app-settings.json";
 
-/// How much of Auto Run a person sees: Simple keeps to the everyday path,
+/// How much of Auto Test a person sees: Simple keeps to the everyday path,
 /// Advanced shows everything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
@@ -49,31 +49,31 @@ pub struct AppSettings {
     /// and a launch goes straight in while Microsoft still accepts it
     /// (`crate::saved_session`). Off: every launch signs in in the browser.
     pub stay_signed_in: bool,
-    /// Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
+    /// Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Test scripts export
     /// into. Empty until the person picks one.
     pub playwright_clone: String,
-    /// Auto Run pauses briefly on each element before it clicks, fills or
+    /// Auto Test pauses briefly on each element before it clicks, fills or
     /// drags (the outline is drawn either way), in a watched run and in the supervised
     /// browser, which covers the recording sign-in replays and the AI
     /// bridge's discovery and try-an-action paths too
     /// (`Timing::supervised`). Off skips the pause. An unwatched run never
     /// pauses.
     pub autorun_highlight: bool,
-    /// Keep a video of an unattended Auto Run case that failed or was
+    /// Keep a video of an unattended Auto Test case that failed or was
     /// blocked (`browser::recording`). Off by default: a recording is only
     /// made while it is on, and a case that passes keeps none. A machine-wide
     /// choice like the highlight, read once when a run starts.
     pub autorun_failed_video: bool,
     /// The failed-case video switch was set by a person (not left at its
-    /// default), so switching Auto Run on never overrides it.
+    /// default), so switching Auto Test on never overrides it.
     pub autorun_failed_video_set: bool,
     /// API Templates was switched on or off by a person, so switching Auto
     /// Run on never overrides it.
     pub api_templates_set: bool,
-    /// Auto Run has been on at some point (or left files behind). Once
+    /// Auto Test has been on at some point (or left files behind). Once
     /// true it never goes back; it decides whether a switch-on is the first.
     pub auto_run_ever_on: bool,
-    /// Simple or Advanced Auto Run; `None` until one is picked or settled.
+    /// Simple or Advanced Auto Test; `None` until one is picked or settled.
     pub autorun_mode: Option<AutorunMode>,
     /// App-wide Simple mode; `None` until it is settled at start-up.
     #[serde(default)]

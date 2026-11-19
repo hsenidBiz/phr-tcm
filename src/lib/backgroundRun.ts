@@ -3,7 +3,7 @@
  *
  * An unattended run is one long IPC call (`auto_run_replay`) with progress
  * and reset pauses arriving as events. It used to live in the dialog that
- * started it, so leaving Auto Run unmounted the only thing listening: the
+ * started it, so leaving Auto Test unmounted the only thing listening: the
  * run went on in Rust, but its progress and its finish were lost. Here the
  * call, its promise and its listeners belong to the module for the run's
  * whole life, and every view (the run window, the title-bar pill, the Auto
@@ -11,7 +11,7 @@
  *
  * One run at a time. The store holds:
  * - `run`: the run being set up, going, or ended and not yet looked at;
- * - `review`: a finished run whose review the Auto Run screen should open
+ * - `review`: a finished run whose review the Auto Test screen should open
  *   (App takes the person there, the screen opens it and clears this).
  *
  * The same `useSyncExternalStore` shape as the app's other stores
@@ -89,7 +89,7 @@ export type BackgroundRun = {
 /** The network wait as the store holds it. */
 export type NetworkWaitView = AutorunNetworkWait & { since?: number };
 
-/** A finished run whose review the Auto Run screen should open. */
+/** A finished run whose review the Auto Test screen should open. */
 export type ReviewRequest = {
   org: string;
   project: string;
@@ -182,7 +182,7 @@ export function unattendedRunGoing(s: BackgroundRunState = state): boolean {
   return s.run?.phase === "running";
 }
 
-/** Whether the Auto Run browser is taken: a run going, or the assistant's
+/** Whether the Auto Test browser is taken: a run going, or the assistant's
  * discovery holding it. Every Run button waits, and no run starts. */
 export function runIsGoing(s: BackgroundRunState = state, discovering: boolean = discoveryIsActive()): boolean {
   return unattendedRunGoing(s) || discovering;
@@ -193,7 +193,7 @@ export const RUN_GOING_REASON = "An unattended run is already going. Wait for it
 
 /** Why a Run button (or Replay to step, or Open browser) waits, or
  * undefined when nothing holds it: a run going says so first, then a
- * discovery holding the Auto Run browser. One sentence per cause. */
+ * discovery holding the Auto Test browser. One sentence per cause. */
 export function runBlockedReason(s: BackgroundRunState, discovering: boolean): string | undefined {
   if (unattendedRunGoing(s)) return RUN_GOING_REASON;
   if (discovering) return DISCOVERY_BUSY;
@@ -296,14 +296,14 @@ function onNetworkWait(gen: number, w: AutorunNetworkWait) {
     if (r.networkWait?.run_id === w.run_id && r.networkWait.before_case_id === w.before_case_id) return;
     patchRun({ networkWait: { ...w, since: Date.now() } });
     announce(
-      "Auto Run paused",
+      "Auto Test paused",
       "The company network is unreachable. Reconnect the VPN - the run carries on by itself.",
     );
     return;
   }
   patchRun({ networkWait: null });
   if (w.ended === "gave_up") {
-    announce("Auto Run stopped", "The company network was unreachable for 30 minutes.");
+    announce("Auto Test stopped", "The company network was unreachable for 30 minutes.");
   }
 }
 
@@ -454,7 +454,7 @@ export async function answerRunReset(continueRun: boolean): Promise<void> {
   }));
 }
 
-/** Review on the pill or the toast: hands the finished run to the Auto Run
+/** Review on the pill or the toast: hands the finished run to the Auto Test
  * screen, on Past runs, and lets the run go. */
 export function reviewFinishedRun(): void {
   const r = state.run;
@@ -465,7 +465,7 @@ export function reviewFinishedRun(): void {
   });
 }
 
-/** The Auto Run screen opened the review. */
+/** The Auto Test screen opened the review. */
 export function clearReviewRequest(): void {
   if (state.review) setState({ ...state, review: null });
 }

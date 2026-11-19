@@ -184,16 +184,16 @@ test("a copy refused because the environment changed is put in screen wording", 
   );
 });
 
-test("a copy refused because Auto Run is busy says so in copy wording", async () => {
+test("a copy refused because Auto Test is busy says so in copy wording", async () => {
   mount({}, "to", {
     auto_run_copy_case: () => {
-      throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+      throw "the environment cannot be switched while something is being recorded or run in Auto Test - finish or cancel it first";
     },
   });
   await pick("Copy to", "QA");
   fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Nothing can be copied while something is open or running in Auto Run - finish or close it first.",
+    "Nothing can be copied while something is open or running in Auto Test - finish or close it first.",
   );
 });
 

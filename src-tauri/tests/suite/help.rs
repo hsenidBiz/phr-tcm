@@ -57,9 +57,9 @@ fn the_guide_address_names_the_modules_that_are_on() {
     );
     let some = guide_address(index, &mods(&[Module::AutoRun, Module::DbAccess])).expect("a file URL");
     assert!(some.contains("/help/index.html?modules=db_access,auto_run"), "{some}");
-    // Transitional for one release: while Auto Run is on the query also
+    // Transitional for one release: while Auto Test is on the query also
     // carries the old flag, so a guide downloaded under an earlier version
-    // still shows its Auto Run pages. Nothing else carries it.
+    // still shows its Auto Test pages. Nothing else carries it.
     assert!(
         on.ends_with("?modules=db_access,writing_style,auto_run,api_templates,playwright,crystal_reports&advanced=1"),
         "{on}"

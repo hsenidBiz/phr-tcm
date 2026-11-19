@@ -803,7 +803,7 @@ fn the_preview_names_the_environments_a_pre_update_import_replaces() {
     let _ = std::fs::remove_dir_all(&dst);
 }
 
-/// After an import replaced the list, the Auto Run folder in use is the new
+/// After an import replaced the list, the Auto Test folder in use is the new
 /// active environment's, and an import that left no environment at all makes
 /// none (Default is the list's job, with the chosen database).
 #[test]

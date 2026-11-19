@@ -207,14 +207,14 @@ the board's test count.
   the app is split into optional modules, chosen per machine on the Modules
   page (Settings, General, Modules): Database Access, Writing Style, Auto
   Run, API Templates and Playwright.
-- Modules form a tree. Auto Run needs Database Access, and API Templates and
-  Playwright need Auto Run. A module whose parent is off shows Locked;
+- Modules form a tree. Auto Test needs Database Access, and API Templates and
+  Playwright need Auto Test. A module whose parent is off shows Locked;
   switching a module off switches off everything under it.
 - Off only hides. Scripts, runs, templates and settings stay on this
   computer for when the module comes back, and a module's assistant tools
   appear and disappear with it.
 
-### Auto Run
+### Auto Test
 - The app drives a real browser (Edge or Chrome, over the DevTools
   protocol) through a test case's steps from a script, either with you
   watching and deciding each result or unattended while you work on
@@ -243,7 +243,7 @@ the board's test count.
 - Points the app at your clone of the team's Playwright repo: an overview of
   what the repo holds, a runner for its tests (hidden, shown or debug, with
   a count check before a run, live output and past reports), management of
-  the repo's test accounts, and Export and Sync, which turn Auto Run scripts
+  the repo's test accounts, and Export and Sync, which turn Auto Test scripts
   into the repo's specs and update only the ones that changed.
 - The app runs only the repo's own commands inside the clone. It never
   commits, pulls or pushes.
@@ -263,9 +263,9 @@ the board's test count.
 - Treat all projects as one (General, on by default): PBIs, test suites,
   the board and pull requests span every project, and new test cases go to
   the PBI's own project. While it is on and the organization has several
-  projects, a Home project picker sets the project that Auto Run, API
+  projects, a Home project picker sets the project that Auto Test, API
   Templates and Playwright use. A new install takes its home project from
-  the only project, the one that already has Auto Run files, or the first
+  the only project, the one that already has Auto Test files, or the first
   PBI you pick.
 - The changelog, the app's own log, Copy log, Open log folder and Report
   a bug. Report a bug opens a prefilled GitHub issue with your log
@@ -306,7 +306,7 @@ are enforced in code and by tests.
 - Windows Credential Manager holds the refresh token, the database
   logins and each environment's default password. A database password
   never reaches the web layer, only whether one is saved. The exception is
-  Auto Run's test-account passwords: they are saved in a plain JSON file
+  Auto Test's test-account passwords: they are saved in a plain JSON file
   beside your scripts, on this machine, so every tester can run the same
   scripts with their own logins, and the Accounts dialog receives them
   through one IPC call. Proposed accounts keep the passwords read from the
@@ -381,7 +381,7 @@ debugging tools behind the same gates.
 
 A development build runs beside the installed app. It has its own identity
 (`src-tauri/src/dev_identity.rs`): the bundle identifier with `.dev` appended,
-which gives it its own settings, cache, Auto Run data, accounts, logs, guide
+which gives it its own settings, cache, Auto Test data, accounts, logs, guide
 folder, browser profile and single-instance lock; its own Windows Credential
 Manager entries, so a dev sign-in never reads or replaces the installed app's
 saved session or database logins; its own handshake file for the AI tools'
@@ -449,11 +449,11 @@ src-tauri/                  Rust core
                             assistants talk to
     db/                     Database Access: sqlcmd, statement guard, logins
     modules.rs              The optional modules and their tree
-    autorun/, browser/      Auto Run: scripts, runs, accounts; the browser
+    autorun/, browser/      Auto Test: scripts, runs, accounts; the browser
                             driver (DevTools protocol)
     api_templates/          API Templates: recipes, fixtures, flows
     pw_repo/, pw_export/    Playwright: the repo's runner and accounts;
-                            export and sync of Auto Run scripts
+                            export and sync of Auto Test scripts
     cache/                  The on-disk cache (data that survives a restart)
     auth.rs                 MSAL PKCE loopback sign-in and in-memory token
     saved_session.rs        Stay signed in: the refresh token kept in

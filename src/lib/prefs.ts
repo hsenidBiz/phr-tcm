@@ -16,7 +16,7 @@ export type Prefs = {
 
 // Every value of the Section union - kept in sync with Sidebar.tsx's own
 // CASE_ITEMS plus "settings". Missing one here silently downgrades a saved
-// tab to "manual" on the next launch (that hid a real bug in Auto Run: see
+// tab to "manual" on the next launch (that hid a real bug in Auto Test: see
 // lib/modules.ts's shouldLeaveHidden and its test).
 const SECTIONS: Section[] = [
   "manual",

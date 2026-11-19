@@ -19,12 +19,12 @@ pub struct SimpleModeAnswer {
     pub not_switched_on: Vec<String>,
 }
 
-/// What a request for Advanced Auto Run answers while app Simple mode is on.
+/// What a request for Advanced Auto Test answers while app Simple mode is on.
 pub const SIMPLE_NO_ADVANCED: &str = "Turn Simple mode off in Settings to use Advanced.";
 
-/// Save the Simple mode choice into `s`. Turning it on also holds Auto Run in
-/// its Simple mode (so every Auto Run Simple rule follows); turning it off
-/// leaves Auto Run's mode as it is. The one place both paths go through.
+/// Save the Simple mode choice into `s`. Turning it on also holds Auto Test in
+/// its Simple mode (so every Auto Test Simple rule follows); turning it off
+/// leaves Auto Test's mode as it is. The one place both paths go through.
 pub fn apply_simple_choice(s: &mut AppSettings, on: bool) {
     s.app_simple_mode = Some(on);
     if on {
@@ -32,7 +32,7 @@ pub fn apply_simple_choice(s: &mut AppSettings, on: bool) {
     }
 }
 
-/// Why Auto Run's mode may not be set to `mode` right now, or `None`.
+/// Why Auto Test's mode may not be set to `mode` right now, or `None`.
 pub fn autorun_mode_refusal(app_simple: Option<bool>, mode: AutorunMode) -> Option<&'static str> {
     (app_simple == Some(true) && mode == AutorunMode::Advanced).then_some(SIMPLE_NO_ADVANCED)
 }
@@ -84,7 +84,7 @@ pub fn switch_all_on_via(
     let mut failed = Vec::new();
     for m in modules_to_switch_on(&on) {
         if on.contains(&m) {
-            continue; // an earlier switch brought it on (Auto Run's recommended items)
+            continue; // an earlier switch brought it on (Auto Test's recommended items)
         }
         match set(m) {
             Ok(now) => on = now.into_iter().collect(),
@@ -98,7 +98,7 @@ pub fn switch_all_on_via(
 }
 
 /// The testable half of the switch-on: every module on in `state`, saved
-/// into `dir`, with the Auto Run recommended features applied to `settings`
+/// into `dir`, with the Auto Test recommended features applied to `settings`
 /// and the API Templates mark left as it was.
 pub fn switch_all_on_with(state: &mut BTreeSet<Module>, settings: &mut AppSettings, dir: &Path) -> Vec<String> {
     let start = state.clone();

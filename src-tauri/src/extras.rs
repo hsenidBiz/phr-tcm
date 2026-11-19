@@ -9,7 +9,7 @@
 //!
 //! Beside it, a second flag: Settings' old Enable Advanced Features switch
 //! (`advanced`). It gates nothing either; with `unlocked` it is read once,
-//! when `modules.json` is first created, so an upgrade keeps Auto Run, API
+//! when `modules.json` is first created, so an upgrade keeps Auto Test, API
 //! Templates and Playwright on where either was. The two are saved in the
 //! same file and each save keeps the other's value.
 //!

@@ -67,7 +67,7 @@ pub fn other_module(area: &ModulePath) -> String {
 
 /// The assistant's answer to a repair that was saved.
 pub fn repaired_answer(name: &str, reason: &str) -> String {
-    format!("area \"{name}\" repaired: {reason}. The person can put the old path back in Auto Run, Areas.")
+    format!("area \"{name}\" repaired: {reason}. The person can put the old path back in Auto Test, Areas.")
 }
 
 /// The area after a repair: the new clicks, where they arrive and the page

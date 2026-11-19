@@ -120,7 +120,7 @@ function aiToolsRepository(): string | null {
  * (Rust falls back to the first shipped database on null).
  *
  * On the first list ever, a Default made earlier WITHOUT the card's choice
- * (Auto Run can reach the environments before this tab does) is brought in
+ * (Auto Test can reach the environments before this tab does) is brought in
  * line with the card, once. */
 export async function loadEnvironments(): Promise<EnvListView> {
   const known = await knownDatabaseIds();

@@ -92,7 +92,7 @@
     "words": "1 expectation unchecked"
   },
   {
-    "name": "steps done by Auto Run leave out their sentences",
+    "name": "steps done by Auto Test leave out their sentences",
     "script": {
       "case_id": 7,
       "title": "t",
@@ -109,12 +109,12 @@
     "words": "1 expectation unchecked"
   },
   {
-    "name": "an old script's opening sentence-only step is done by Auto Run",
+    "name": "an old script's opening sentence-only step is done by Auto Test",
     "script": {
       "case_id": 8,
       "title": "t",
       "steps": [
-        { "step_number": 1, "actions": [], "unchecked": "Auto Run opens the app" },
+        { "step_number": 1, "actions": [], "unchecked": "Auto Test opens the app" },
         { "step_number": 2, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "the PDF cannot be read" }
       ]
     },

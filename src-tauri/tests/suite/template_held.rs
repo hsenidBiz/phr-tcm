@@ -56,7 +56,7 @@ fn take_after_put_returns_the_entry_once() {
     assert!(matches!(held::take::<Tag>(ENV, key, fingerprint()), Taken::Nothing), "handed back twice");
 }
 
-/// `held::any` is what Modules asks before Auto Run is switched off: true
+/// `held::any` is what Modules asks before Auto Test is switched off: true
 /// while a template run's browser is kept, false once it is taken out.
 #[test]
 fn any_says_whether_a_browser_is_kept() {
@@ -569,7 +569,7 @@ async fn quitting_changing_environment_or_signing_out_closes_the_held_browser() 
     let mut b = Keeping::new(vec![first_page(&mut r)], &kept_closed);
     let closed = || kept_closed.load(Ordering::SeqCst);
 
-    // Quitting (and an update restart): Auto Run's exit close.
+    // Quitting (and an update restart): Auto Test's exit close.
     assert!(run(&r, &mut b, template()).await.ok);
     tokio::time::timeout(Duration::from_secs(5), v2_lib::commands::autorun::close_autorun_browsers())
         .await

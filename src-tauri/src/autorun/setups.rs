@@ -2,7 +2,7 @@
 //! a find rule, so a record a test needs can be handed back (an existing test
 //! record) or built (in an explore session) days later, by name.
 //!
-//! The file is `projects/<slug>-setups.json` under the Auto Run folder, with
+//! The file is `projects/<slug>-setups.json` under the Auto Test folder, with
 //! its own write lock and never the components file. A setup holds actions,
 //! template names, a find rule, and for each create it made only the request
 //! line (`METHOD /path`) and where the id sat in the answer. It never holds a
@@ -84,7 +84,7 @@ pub fn setups_path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}-setups.json", project_slug(org, project)))
 }
 
-/// The file as the person can find it under the Auto Run folder; a refusal
+/// The file as the person can find it under the Auto Test folder; a refusal
 /// names this, never a full path.
 fn setups_file_name(org: &str, project: &str) -> String {
     format!("projects/{}-setups.json", project_slug(org, project))

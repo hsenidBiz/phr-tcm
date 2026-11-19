@@ -1,7 +1,7 @@
 //! A development build beside the installed app.
 //!
 //! `npm run tauri dev` can run while the installed app is open, without
-//! either one touching the other's settings, cache, Auto Run data, accounts,
+//! either one touching the other's settings, cache, Auto Test data, accounts,
 //! saved sign-in or database logins. A development build (`ai_tools::dev_build`)
 //! has its own identity; a release build's is unchanged, byte for byte.
 //!

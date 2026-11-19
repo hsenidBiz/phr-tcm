@@ -21,7 +21,7 @@ const ROWS: SyncRow[] = [
   { case_id: 11, title: "Eleven", state: { kind: "OutOfDate", why: "changed since the export: steps" }, exported_at: "2026-10-01T10:00:00Z", has_script: true, ...IN },
   { case_id: 12, title: "Twelve", state: { kind: "NotInRepo" }, exported_at: "2026-10-01T10:00:00Z", has_script: true, ...OUT },
   { case_id: 13, title: "Thirteen", state: { kind: "NeverExported" }, exported_at: null, has_script: true, ...OUT },
-  { case_id: 14, title: "Fourteen", state: { kind: "OutOfDate", why: "its script is no longer in Auto Run" }, exported_at: "2026-10-01T10:00:00Z", has_script: false, ...IN },
+  { case_id: 14, title: "Fourteen", state: { kind: "OutOfDate", why: "its script is no longer in Auto Test" }, exported_at: "2026-10-01T10:00:00Z", has_script: false, ...IN },
   { case_id: 15, title: "Fifteen", state: { kind: "InRepoNotFromApp" }, exported_at: null, has_script: true, in_repo: true, repo_note: "in specs/fifteen.spec.ts" },
   { case_id: 16, title: "Sixteen", state: { kind: "ExcludedInRepo" }, exported_at: null, has_script: true, in_repo: true, repo_note: "Excluded in the repo (in pc-cycle-setup.md)" },
 ];
@@ -83,7 +83,7 @@ test("each case shows its state", async () => {
   expect(screen.getByText("Current")).toBeTruthy();
   expect(screen.getAllByText("Out of date")).toHaveLength(2);
   expect(screen.getByText("changed since the export: steps")).toBeTruthy();
-  expect(screen.getByText("its script is no longer in Auto Run")).toBeTruthy();
+  expect(screen.getByText("its script is no longer in Auto Test")).toBeTruthy();
   // Each state is a badge in its tone.
   const tone = (text: string) => screen.getByText(text).closest("[class*='bg-']")?.className ?? "";
   expect(tone("Current")).toContain("text-success");

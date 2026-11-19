@@ -51,7 +51,7 @@ pub fn record_change_in<B: DiscoveryBrowser>(
             Ok(_) => {}
             Err(why) if ex::is_unknown_session(&why) => return (404, why),
             Err(why) => {
-                crate::applog::warn(format!("Auto Run explore session: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: {why}"));
                 return (409, ex::CHANGES_UNREADABLE.to_string());
             }
         }
@@ -172,7 +172,7 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
         }
         return match setups::remove(root, org, project, &asked.name) {
             Ok(name) => {
-                crate::applog::info(format!("Auto Run setup {name}: removed"));
+                crate::applog::info(format!("Auto Test setup {name}: removed"));
                 (200, serde_json::json!({ "removed": name }).to_string())
             }
             Err(why) if why == setups::no_such_setup(&asked.name) => (404, why),
@@ -187,7 +187,7 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
         Ok(s) => s,
         Err(why) if ex::is_unknown_session(&why) => return (404, why),
         Err(why) => {
-            crate::applog::warn(format!("Auto Run explore session: {why}"));
+            crate::applog::warn(format!("Auto Test explore session: {why}"));
             return (409, ex::CHANGES_UNREADABLE.to_string());
         }
     };
@@ -256,7 +256,7 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
         Ok(s) => s,
         Err(why) => return (409, why),
     };
-    crate::applog::info(format!("Auto Run setup {}: saved, version {}", saved.saved, saved.version));
+    crate::applog::info(format!("Auto Test setup {}: saved, version {}", saved.saved, saved.version));
     let mut answer = serde_json::json!({
         "saved": saved.saved,
         "version": saved.version,
@@ -324,7 +324,7 @@ pub fn explore_changes(root: &std::path::Path, org: &str, project: &str, body: &
             }
             Err(why) if ex::is_unknown_session(&why) => (404, why),
             Err(why) => {
-                crate::applog::warn(format!("Auto Run explore session: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: {why}"));
                 (409, ex::CHANGES_UNREADABLE.to_string())
             }
         };
@@ -484,7 +484,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
     if no_token_stop {
         let listed = crate::api_templates::store::list(root, &ctx.org, &ctx.project);
         if let Err(why) = &listed {
-            crate::applog::warn(format!("Auto Run explore session: the saved templates could not be read for a token page: {why}"));
+            crate::applog::warn(format!("Auto Test explore session: the saved templates could not be read for a token page: {why}"));
         }
         let pages = listed.as_ref().map(|saved| oo::token_pages(saved)).unwrap_or_default();
         if listed.is_err() {
@@ -517,7 +517,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
     if posts && sent {
         if let Some(session) = &session {
             if let Err(why) = ex::note_writes(root, session, &[("POST".to_string(), oo::request_path(&one))]) {
-                crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: a save could not be noted: {why}"));
             }
         }
     }
@@ -527,7 +527,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
     if writing_get {
         if let Some(session) = &session {
             if let Err(why) = ex::note_writes(root, session, &[("GET".to_string(), oo::request_path(&one))]) {
-                crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: a save could not be noted: {why}"));
             }
         }
     }
@@ -549,7 +549,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
         }
         parts.signed_in.take();
         crate::autorun::sessions::forget_session(root, &req.account);
-        crate::applog::warn("Auto Run explore session: a postback was answered with the sign-in page, so its account is signed out");
+        crate::applog::warn("Auto Test explore session: a postback was answered with the sign-in page, so its account is signed out");
     }
     // A call the run found sent to another site (`SENT_ELSEWHERE` with no
     // answer to read: a cross-origin redirect leaves none) is signed out too.
@@ -573,7 +573,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
         }
         parts.signed_in.take();
         crate::autorun::sessions::forget_session(root, &req.account);
-        crate::applog::warn("Auto Run explore session: a call was answered with the sign-in page, so its account is signed out");
+        crate::applog::warn("Auto Test explore session: a call was answered with the sign-in page, so its account is signed out");
         let v = serde_json::json!({ "ok": false, "signed_out": true, "detail": oo::SIGNED_OUT, "request": request });
         return (502, v.to_string());
     }
@@ -679,7 +679,7 @@ pub async fn send_in<B: DiscoveryBrowser>(
                     }
                 }
                 Err(why) => {
-                    crate::applog::warn(format!("Auto Run explore session: a create could not be kept: {why}"));
+                    crate::applog::warn(format!("Auto Test explore session: a create could not be kept: {why}"));
                     v["change_not_kept"] = serde_json::json!(why);
                 }
             }
@@ -798,7 +798,7 @@ pub async fn explore_undo_in<S: DiscoveryBrowser, B: crate::autorun::replay::Bro
             return if ex::is_unknown_session(&why) {
                 (404, why)
             } else {
-                crate::applog::warn(format!("Auto Run explore session: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: {why}"));
                 (409, ex::CHANGES_UNREADABLE.to_string())
             };
         }
@@ -875,7 +875,7 @@ pub async fn explore_undo_in<S: DiscoveryBrowser, B: crate::autorun::replay::Bro
             Ok(true) => {}
             Ok(false) => not_marked.push(r.id.clone()),
             Err(why) => {
-                crate::applog::warn(format!("Auto Run explore session: an undone create could not be marked: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: an undone create could not be marked: {why}"));
                 not_marked.push(r.id.clone());
             }
         }
@@ -1007,7 +1007,7 @@ pub(crate) fn save_or_match_one_off(
     let saved = match store::list(root, org, project) {
         Ok(saved) => saved,
         Err(e) => {
-            crate::applog::warn(format!("Auto Run explore session: the saved templates could not be read: {e}"));
+            crate::applog::warn(format!("Auto Test explore session: the saved templates could not be read: {e}"));
             return could_not();
         }
     };
@@ -1052,7 +1052,7 @@ pub(crate) fn save_or_match_one_off(
                 if crate::api_templates::check(&t).is_empty() {
                     t.proven = Some(explore_proof(root, org, project, account, report));
                     if let Err(e) = store::save_proven(root, org, project, &t) {
-                        crate::applog::warn(format!("Auto Run explore session: the template could not be replaced: {e}"));
+                        crate::applog::warn(format!("Auto Test explore session: the template could not be replaced: {e}"));
                         return could_not();
                     }
                     crate::applog::info(format!("api template {} replaced by a later working call of the same route", t.id));
@@ -1063,7 +1063,7 @@ pub(crate) fn save_or_match_one_off(
             }
             Ok(true) => {}
             Err(e) => crate::applog::warn(format!(
-                "Auto Run explore session: a template was not replaced, the saved fixtures, flows and setups could not be read: {e}"
+                "Auto Test explore session: a template was not replaced, the saved fixtures, flows and setups could not be read: {e}"
             )),
         }
     }
@@ -1084,12 +1084,12 @@ pub(crate) fn save_or_match_one_off(
     t.sources = vec![format!("explore session {session}")];
     let problems = crate::api_templates::check(&t);
     if !problems.is_empty() {
-        crate::applog::warn(format!("Auto Run explore session: the call is not a template: {}", problems.join("; ")));
+        crate::applog::warn(format!("Auto Test explore session: the call is not a template: {}", problems.join("; ")));
         return could_not();
     }
     t.proven = Some(explore_proof(root, org, project, account, report));
     if let Err(e) = store::save_proven(root, org, project, &t) {
-        crate::applog::warn(format!("Auto Run explore session: the template could not be saved: {e}"));
+        crate::applog::warn(format!("Auto Test explore session: the template could not be saved: {e}"));
         return could_not();
     }
     log_explore_run(root, org, project, account, report, &id);
@@ -1110,20 +1110,20 @@ pub fn finish_explore<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Option<crate
     let run = browser.parts().discovery.as_mut()?.explore.take()?;
     let session = run.session?;
     let Some(root) = crate::autorun::store::configured_root() else {
-        crate::applog::warn("Auto Run explore session: there is no data folder, so its change list is not closed");
+        crate::applog::warn("Auto Test explore session: there is no data folder, so its change list is not closed");
         return None;
     };
     match crate::autorun::explore::end(&root, &session) {
         Ok(end) => {
             crate::applog::info(format!(
-                "Auto Run explore session ended: {} changes listed, {} saves not on the list",
+                "Auto Test explore session ended: {} changes listed, {} saves not on the list",
                 end.changes,
                 end.saves_not_on_the_change_list.len()
             ));
             Some(end)
         }
         Err(why) => {
-            crate::applog::warn(format!("Auto Run explore session: its change list could not be closed: {why}"));
+            crate::applog::warn(format!("Auto Test explore session: its change list could not be closed: {why}"));
             None
         }
     }

@@ -1,6 +1,6 @@
-//! Auto Run preconditions: the records a case relies on, checked through the
+//! Auto Test preconditions: the records a case relies on, checked through the
 //! flow machinery before the case signs in, and validated on every save.
-//! See the design "Auto Run run safety" §2.
+//! See the design "Auto Test run safety" §2.
 
 use crate::common::{cycle_flow_json, FakeStageDb};
 use serde_json::{json, Value};

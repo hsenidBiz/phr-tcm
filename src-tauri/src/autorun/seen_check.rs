@@ -37,7 +37,7 @@
 //!   written, and so must the role (or the rest of the selector).
 //!   A name or a text that is nothing but a placeholder fits nothing
 //!   (`ONLY_A_PLACEHOLDER`): it would stand for any element of its role.
-//!   `{{prefix}}` and `{{now:...}}` are not data placeholders: Auto Run
+//!   `{{prefix}}` and `{{now:...}}` are not data placeholders: Auto Test
 //!   never fills them in, so they stay literal and are refused. Once the
 //!   run has filled a placeholder in, the locator is checked again
 //!   (`check_resolved_inputs`): each value must have the shape of the seen

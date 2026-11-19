@@ -632,7 +632,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_load_nav", // read-only, local: the Setup card's module path count
     "auto_run_load_map", // read-only, local: the Setup card's Discovery line
     "auto_run_load_components", // read-only, local: the Setup card's Components line
-    "auto_run_discovery_active", // read-only, local: whether discovery holds the Auto Run browser
+    "auto_run_discovery_active", // read-only, local: whether discovery holds the Auto Test browser
     "auto_run_end_discovery", // local: ends the assistant's discovery and closes its browser (End discovery); never ADO
     "auto_run_agents", // read-only, local: the Assistants card's list of connected assistants
     "auto_run_waiting_items", // read-only, local: what the assistants left for a person to decide (Waiting for you); never ADO
@@ -1295,7 +1295,7 @@ test("the two sections are one tab list, the screen opens on Test cases, and the
   );
   renderAutoRun(null);
 
-  const list = screen.getByRole("tablist", { name: "Auto Run sections" });
+  const list = screen.getByRole("tablist", { name: "Auto Test sections" });
   expect(within(list).getAllByRole("tab").map((t) => t.textContent?.replace(/\s*\d+$/, ""))).toEqual([
     "Test cases",
     "Past runs",

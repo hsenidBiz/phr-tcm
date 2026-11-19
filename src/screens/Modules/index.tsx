@@ -52,7 +52,7 @@ export default function Modules({ onBack }: { onBack: () => void }) {
     }
   };
 
-  /** The first switch-on of Auto Run: Rust turned its own recommended items
+  /** The first switch-on of Auto Test: Rust turned its own recommended items
    * on; the Network tools are the webview's, per environment, so they are
    * applied here. The settings (mode, video) changed in Rust, so re-read them. */
   const applyRecommended = async (r: Recommended) => {

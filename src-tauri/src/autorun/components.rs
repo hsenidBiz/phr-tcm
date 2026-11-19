@@ -64,7 +64,7 @@ pub fn components_path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}-components.json", project_slug(org, project)))
 }
 
-/// The file as the person can find it under the Auto Run folder; a refusal
+/// The file as the person can find it under the Auto Test folder; a refusal
 /// names this, never a full path.
 fn components_file_name(org: &str, project: &str) -> String {
     format!("projects/{}-components.json", project_slug(org, project))
@@ -107,7 +107,7 @@ pub fn load_components(root: &Path, org: &str, project: &str) -> Result<Componen
     read_file(root, org, project).map_err(|e| {
         let file = components_file_name(org, project);
         match e {
-            ReadError::Damaged => format!("the components file {file} could not be read; Reset it in Auto Run"),
+            ReadError::Damaged => format!("the components file {file} could not be read; Reset it in Auto Test"),
             ReadError::Unreadable(why) => format!("the components file {file} could not be read: {why}"),
         }
     })

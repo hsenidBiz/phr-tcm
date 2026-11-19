@@ -36,7 +36,7 @@ fn no_file_yet_is_an_empty_list_and_a_saved_list_reads_back() {
 }
 
 /// A file written before ids, evidence and retirement existed loads
-/// unchanged - every note active, from Auto Run, with no evidence - and
+/// unchanged - every note active, from Auto Test, with no evidence - and
 /// gains ids, the same ones on every load until a save writes them down.
 #[test]
 fn an_old_quirks_file_loads_unchanged_and_gets_ids() {

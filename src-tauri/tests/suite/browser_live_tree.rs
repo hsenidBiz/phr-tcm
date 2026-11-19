@@ -361,7 +361,7 @@ async fn a_held_browser_is_alive_only_while_its_own_page_answers() {
     assert!(b.close().is_ok());
 }
 
-/// Release Auto Run browser against real processes: a browser the app
+/// Release Auto Test browser against real processes: a browser the app
 /// started is ended through its job, and a program outside the app's jobs
 /// (a harmless `ping` standing in for the person's own Edge) is left
 /// running.

@@ -74,8 +74,8 @@ export const aiBridge: Screen = {
       id: "environment",
       title: "Environment",
       summary:
-        "The site and database Auto Run and API Templates work against. Shown while the Auto Run module is on, in Settings, under General, on the **Modules** page. " +
-        "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Run browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened.",
+        "The site and database Auto Test and API Templates work against. Shown while the Auto Test module is on, in Settings, under General, on the **Modules** page. " +
+        "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Test browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened.",
     },
     {
       id: "api-templates",
@@ -200,8 +200,8 @@ export const aiBridge: Screen = {
       name: "Tool switch",
       does:
         "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted. " +
-        "With **Treat all projects as one** on in Settings, the tools that find Product Backlog Items, test suites and wiki pages search every project, and each hit names its project; the other tools, including Auto Run, API Templates and Playwright, work in your home project. " +
-        "The tools of a module you switched on in Settings (Auto Run, API Templates and Database Access) have no switch here: the module being on is what gives an assistant those tools, and switching the module off takes them away. " +
+        "With **Treat all projects as one** on in Settings, the tools that find Product Backlog Items, test suites and wiki pages search every project, and each hit names its project; the other tools, including Auto Test, API Templates and Playwright, work in your home project. " +
+        "The tools of a module you switched on in Settings (Auto Test, API Templates and Database Access) have no switch here: the module being on is what gives an assistant those tools, and switching the module off takes them away. " +
         "The switch is for the active environment only, and so is **Turn all on** under the list. A new environment starts with every tool on.",
     },
     {
@@ -211,10 +211,10 @@ export const aiBridge: Screen = {
       locate: { role: "combobox", name: "Environment" },
       name: "Environment",
       does:
-        "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
+        "The environment Auto Test and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
         "Switching moves the **Database** below with it, and the environment's name shows in the title bar. " +
         "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking**, **API templates** and **Network tools** switches. Switching shows the new environment's, and they apply to every call an assistant makes from then on; an assistant's own list of tools refreshes when it next asks for it, or when it is restarted. " +
-        "Each environment also keeps its own Auto Run scripts, areas and components, so switching shows that environment's; API templates, flows and fixtures are shared by every environment. " +
+        "Each environment also keeps its own Auto Test scripts, areas and components, so switching shows that environment's; API templates, flows and fixtures are shared by every environment. " +
         "The working repositories, their AI tools switches and the list of databases are the same in every environment.",
     },
     {
@@ -225,9 +225,9 @@ export const aiBridge: Screen = {
       name: "Edit environments",
       does:
         "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
-        "**Copy Auto Run data…** brings another environment's scripts, areas, components, quirks and sign-in recording into this one (never its accounts; API templates, flows and fixtures are shared already); a removed environment's stay available there for 30 days. " +
+        "**Copy Auto Test data…** brings another environment's scripts, areas, components, quirks and sign-in recording into this one (never its accounts; API templates, flows and fixtures are shared already); a removed environment's stay available there for 30 days. " +
         "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -. " +
-        "**Password expiry query** and **Active session query** are two read-only SELECTs you write for your site's database, each with a placeholder for the logins asked about; leave one empty and that check is skipped. The first tells Auto Run when each account's password runs out, so the account list, the proposals and the run window can warn before a sign-in is stopped. The second tells it whether someone is already signed in as an account, and a discovery will not start as an account in use elsewhere. Both need database access on. Hidden while Simple mode is on (Settings). " +
+        "**Password expiry query** and **Active session query** are two read-only SELECTs you write for your site's database, each with a placeholder for the logins asked about; leave one empty and that check is skipped. The first tells Auto Test when each account's password runs out, so the account list, the proposals and the run window can warn before a sign-in is stopped. The second tells it whether someone is already signed in as an account, and a discovery will not start as an account in use elsewhere. Both need database access on. Hidden while Simple mode is on (Settings). " +
         "The **Account table**, **Username column** and **Password column** say where the environment keeps its test logins (PeoplesHR's own table unless you change it); on a test environment the app reads each login's password from there itself. Leave the password column empty and the app finds it, or says which columns it could not tell apart. Hidden while Simple mode is on (Settings). " +
         "On an environment marked **Test environment**, **Reset expired passwords** (off until you switch it on) lets a sign-in that reaches the password reset page set a new password itself and carry on. The new password is kept for the account only after a sign-in with it works, and an environment that is not a test one never resets. Hidden while Simple mode is on (Settings); in Simple mode a test environment resets expired passwords by itself.",
     },
@@ -239,7 +239,7 @@ export const aiBridge: Screen = {
       name: "API templates (create, edit and delete)",
       does:
         "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
-        "Proving and running write real test data through the site's own requests, as your Auto Run accounts, against the active environment's site address, so this is off until you turn it on. " +
+        "Proving and running write real test data through the site's own requests, as your Auto Test accounts, against the active environment's site address, so this is off until you turn it on. " +
         "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab. " +
         "The switch is the active environment's own, named on the card; in a new environment it starts off.",
     },

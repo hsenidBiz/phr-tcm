@@ -1,5 +1,5 @@
 //! An explore session's change list: one JSON file per session under
-//! `<Auto Run root>/explore/`, written as the assistant does a plain task
+//! `<Auto Test root>/explore/`, written as the assistant does a plain task
 //! in the app under test with no test case. It outlives the chat: what the
 //! session created, changed or deleted is there for the person to read and
 //! for an undo through Clean up to work from.
@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// The folder under the Auto Run root that holds the change lists.
+/// The folder under the Auto Test root that holds the change lists.
 pub const EXPLORE_DIR: &str = "explore";
 
 /// An explore session going on a discovery (`DiscoveryState::explore`).
@@ -439,7 +439,7 @@ pub fn unaccounted(s: &ExploreSession) -> Vec<String> {
     unaccounted_with(s, &BTreeMap::new())
 }
 
-/// `unaccounted` for the project whose Auto Run root is `root`: a save to a
+/// `unaccounted` for the project whose Auto Test root is `root`: a save to a
 /// route marked as one that only reads (`set_route_kind`) is never listed.
 pub fn unaccounted_in(root: &Path, s: &ExploreSession) -> Vec<String> {
     unaccounted_with(s, &route_kinds(root))
@@ -516,7 +516,7 @@ pub fn check_route_kind(route: &str, kind: RouteKind) -> Result<String, String> 
 }
 
 /// Marks `route` (`METHOD /path`) as one that only reads or one that
-/// writes, in this environment (the Auto Run root). A mark the method already says (a read on a
+/// writes, in this environment (the Auto Test root). A mark the method already says (a read on a
 /// GET, a write on a POST, PUT, PATCH or DELETE) is refused.
 pub fn set_route_kind(root: &Path, route: &str, kind: RouteKind) -> Result<(), String> {
     let line = check_route_kind(route, kind)?;
@@ -872,7 +872,7 @@ fn scrubbed(v: Value) -> Value {
 fn read_for_change(root: &Path, session: &str) -> Result<ExploreSession, String> {
     load_locked(root, session).map_err(|e| {
         if e.starts_with(UNREADABLE) {
-            crate::applog::warn(format!("Auto Run explore session: {e}"));
+            crate::applog::warn(format!("Auto Test explore session: {e}"));
             CHANGES_UNREADABLE.to_string()
         } else {
             e
@@ -882,7 +882,7 @@ fn read_for_change(root: &Path, session: &str) -> Result<ExploreSession, String>
 
 fn write_for_change(root: &Path, s: &ExploreSession) -> Result<(), String> {
     write_locked(root, s).map_err(|e| {
-        crate::applog::warn(format!("Auto Run explore session: the change list could not be written: {e}"));
+        crate::applog::warn(format!("Auto Test explore session: the change list could not be written: {e}"));
         CHANGE_NOT_KEPT.to_string()
     })
 }
@@ -915,7 +915,7 @@ fn keep_made(root: &Path, s: &ExploreSession, kind: &str, id: &str, name: &str) 
         },
     )
     .map_err(|e| {
-        crate::applog::warn(format!("Auto Run explore session: the create could not be put on the test-made list: {e}"));
+        crate::applog::warn(format!("Auto Test explore session: the create could not be put on the test-made list: {e}"));
         CHANGE_NOT_KEPT.to_string()
     })
 }
@@ -1129,7 +1129,7 @@ pub fn list(root: &Path, org: &str, project: &str) -> Vec<ExploreSession> {
         match load_locked(root, stem) {
             Ok(s) if s.organization.eq_ignore_ascii_case(org) && s.project.eq_ignore_ascii_case(project) => out.push(s),
             Ok(_) => {}
-            Err(e) => crate::applog::warn(format!("Auto Run explore session: a change list was skipped: {e}")),
+            Err(e) => crate::applog::warn(format!("Auto Test explore session: a change list was skipped: {e}")),
         }
     }
     out.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| b.session.cmp(&a.session)));

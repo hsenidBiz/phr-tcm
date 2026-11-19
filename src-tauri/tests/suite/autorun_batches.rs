@@ -1,4 +1,4 @@
-//! Auto Run run batches: settings a case needs (`needs_state`) group the
+//! Auto Test run batches: settings a case needs (`needs_state`) group the
 //! cases into batches, and the run pauses before each batch to set what
 //! changes (and to put back what a reset needs). Pure planner tests, plus
 //! the command's half that reads the settings from saved scripts.

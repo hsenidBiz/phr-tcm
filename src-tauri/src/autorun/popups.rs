@@ -73,10 +73,10 @@ pub async fn close_shown<D: Driver>(
         let short = Timing { action_ms: timing.action_ms.min(CLOSE_MS), ..timing.clone() };
         let out = execute_in(d, &Action::Click { selector: p.close.clone() }, &short, &policy.as_runner()).await;
         if out.ok {
-            crate::applog::info(format!("Auto Run: closed the {name} before {}", action.kind()));
+            crate::applog::info(format!("Auto Test: closed the {name} before {}", action.kind()));
             notes.push(closed(name));
         } else {
-            crate::applog::warn(format!("Auto Run: the {name} was showing and could not be closed: {}", out.detail));
+            crate::applog::warn(format!("Auto Test: the {name} was showing and could not be closed: {}", out.detail));
             notes.push(not_closed(name, &out.detail));
         }
     }
@@ -118,9 +118,9 @@ pub async fn close_shown_within<D: Driver>(d: &mut D, recipe: &SignInRecipe, wit
             done[i] = true;
             if out.ok {
                 closed += 1;
-                crate::applog::info(format!("Auto Run: closed the {name} before the discovery's first look"));
+                crate::applog::info(format!("Auto Test: closed the {name} before the discovery's first look"));
             } else {
-                crate::applog::warn(format!("Auto Run: the {name} was showing and could not be closed: {}", out.detail));
+                crate::applog::warn(format!("Auto Test: the {name} was showing and could not be closed: {}", out.detail));
             }
         }
         if done.iter().all(|x| *x) || std::time::Instant::now() >= deadline {

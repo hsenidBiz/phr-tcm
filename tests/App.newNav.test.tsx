@@ -47,7 +47,7 @@ function start(marks: Record<string, string[]> | null) {
 test("starting the app with every module on marks nothing", async () => {
   start(null);
   await screen.findByText("a@b.com");
-  expect(await screen.findByRole("button", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Auto Test" })).toBeInTheDocument();
   expect(newNavSnapshot()).toEqual({});
   expect(screen.queryByRole("button", { name: /\(new\)/ })).not.toBeInTheDocument();
 });
@@ -55,13 +55,13 @@ test("starting the app with every module on marks nothing", async () => {
 test("Ctrl+number opening a marked tab clears its mark", async () => {
   start({ autorun: ["auto_run"] });
   await screen.findByText("a@b.com");
-  expect(await screen.findByRole("button", { name: "Auto Run (new)" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Auto Test (new)" })).toBeInTheDocument();
 
-  // Auto Run is the ninth numbered tab, first of the Tools group.
+  // Auto Test is the ninth numbered tab, first of the Tools group.
   fireEvent.keyDown(window, { key: "9", ctrlKey: true });
-  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Auto Test" })).toBeInTheDocument();
   await waitFor(() => expect(isNewNav("autorun")).toBe(false));
-  expect(screen.getByRole("button", { name: "Auto Run" })).not.toHaveClass("nav-new");
+  expect(screen.getByRole("button", { name: "Auto Test" })).not.toHaveClass("nav-new");
 });
 
 test("the command palette opening a marked tab clears its mark", async () => {

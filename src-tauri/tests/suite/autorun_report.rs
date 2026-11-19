@@ -1,4 +1,4 @@
-//! The Auto Run report: one run as an HTML page opened in the browser.
+//! The Auto Test report: one run as an HTML page opened in the browser.
 //! Everything from the run is escaped, the page's only scripts are its own
 //! inline ones (the new views' tests are in `autorun_report_smart`), every
 //! case has its own section with every step, a failed case shows the step
@@ -169,7 +169,7 @@ fn every_value_is_escaped_and_the_page_carries_no_script() {
 fn the_header_says_when_how_where_and_whether_it_was_sent() {
     let mut run = run_of(SHOT);
     let html = build(&run, &[], "2 Oct 2026, 09:30", &no_shots);
-    assert!(html.contains("<span class=\"topbar__brand\">Auto Run report</span>"));
+    assert!(html.contains("<span class=\"topbar__brand\">Auto Test report</span>"));
     assert!(html.contains("<dt>Ran</dt><dd><time data-ts=\"1786000200000\">2 Oct 2026, 09:30</time></dd>"));
     assert!(html.contains("<dt>Mode</dt><dd>Unattended</dd>"));
     assert!(html.contains("<dt>Environment</dt><dd>QA</dd>"));
@@ -372,7 +372,7 @@ fn opening_is_refused_where_auto_run_is_not_offered() {
     let root = seeded_root(&dir);
 
     let err = write_report_at(false, &root, "Acme", "Web", "run-1786000200000", "x").unwrap_err();
-    assert_eq!(err, "Auto Run is switched off in Modules");
+    assert_eq!(err, "Auto Test is switched off in Modules");
     assert!(!root.join("reports").exists());
 }
 
@@ -1248,7 +1248,7 @@ fn a_bug_can_be_recorded_on_a_run_that_was_already_sent() {
     assert_eq!(back.cases[0].bugs.len(), 1);
 }
 
-/// The flaky rule is held to one table, tests/fixtures/flaky_buckets.json, which the Auto Run
+/// The flaky rule is held to one table, tests/fixtures/flaky_buckets.json, which the Auto Test
 /// screens' test reads too (`isFlakyFailure`), so the report and the screens count alike.
 #[test]
 fn the_flaky_rule_matches_the_table_the_screens_are_held_to() {
@@ -1279,12 +1279,12 @@ fn the_flaky_rule_matches_the_table_the_screens_are_held_to() {
 #[test]
 fn a_passed_cases_unchecked_count_leaves_out_the_steps_done_by_auto_run() {
     let script: CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 309, "title": "t", "steps": [
-        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Run opens the app" },
+        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Test opens the app" },
         { "step_number": 2, "actions": [], "unchecked": "the PDF cannot be read" }
     ] }))
     .unwrap();
     let html = build(&run_with(&[(309, "Passed")]), &[script], "x", &no_shots);
     assert!(html.contains("<span class=\"tone-pass\">Passed, 1 expectation unchecked</span>"), "{html}");
-    assert!(!html.contains("Auto Run opens the app"), "{html}");
+    assert!(!html.contains("Auto Test opens the app"), "{html}");
     assert!(html.contains("<p class=\"unchecked\">1 expectation unchecked in 1 passed case</p>"), "{html}");
 }

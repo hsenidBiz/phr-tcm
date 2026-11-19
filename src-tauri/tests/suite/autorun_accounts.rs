@@ -136,7 +136,7 @@ fn the_account_for_a_run_is_a_real_key_on_this_machine_or_nothing() {
     assert_eq!(account_for_run(dir.path(), Some("Bad Key")).unwrap_err(), "\"Bad Key\" is not a usable account key");
     assert_eq!(
         account_for_run(dir.path(), Some("ghost")).unwrap_err(),
-        "there is no account \"ghost\" on this machine - add it in Auto Run, Accounts"
+        "there is no account \"ghost\" on this machine - add it in Auto Test, Accounts"
     );
 }
 

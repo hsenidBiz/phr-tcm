@@ -338,7 +338,7 @@ pub(crate) fn rule_in_area(
         return (400, "\"after\" is the action that caused it, in a few words (needed unless you remove the rule)".to_string());
     }
     let Some(page) = page else {
-        return (400, "Name the page: the Auto Run browser is not on one.".to_string());
+        return (400, "Name the page: the Auto Test browser is not on one.".to_string());
     };
     let now = crate::autorun::sessions::now_ms();
     let step = named(&rule.step);
@@ -456,7 +456,7 @@ pub(crate) async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crat
         Err(e) => {
             // The raw error goes to the log; the reader gets the sentence
             // that names no address (CLAUDE.md, user-facing errors).
-            crate::applog::warn(format!("Auto Run: a divergence's test case could not be read: {e:?}"));
+            crate::applog::warn(format!("Auto Test: a divergence's test case could not be read: {e:?}"));
             return (502, format!("Azure DevOps error: {}", e.user_text()));
         }
     };
@@ -635,12 +635,12 @@ pub(crate) fn autorun_defect_clear(body: &str) -> (u16, String) {
 /// What `set_autorun_order` says after the order it saved: with
 /// `mode: "replace"` (the default) the call replaced the PBI's whole saved
 /// order, and the PBI's other cases run after the listed ones.
-pub const ORDER_REPLACED: &str = "This replaced the PBI's whole Auto Run order: its other cases run after these, in list order. To add cases ahead of the saved order and keep the rest of it, send mode: \"append\".";
+pub const ORDER_REPLACED: &str = "This replaced the PBI's whole Auto Test order: its other cases run after these, in list order. To add cases ahead of the saved order and keep the rest of it, send mode: \"append\".";
 
-/// `POST /autorun-order`, body `{ pbi_id, case_ids, mode? }`: Auto Run's own
+/// `POST /autorun-order`, body `{ pbi_id, case_ids, mode? }`: Auto Test's own
 /// execution order for the PBI on this machine (`store::save_order`). Run
 /// Tests' order is not touched. Every id must be one of the PBI's test
-/// cases, read from Azure DevOps the way the Auto Run tab lists them; a
+/// cases, read from Azure DevOps the way the Auto Test tab lists them; a
 /// listed case with no saved script is saved in the order and named back.
 pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>, body: &str) -> (u16, String) {
     #[derive(serde::Deserialize)]
@@ -662,7 +662,7 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
         Some(other) => return (400, format!("mode \"{other}\" is not one: send \"replace\" (the default) or \"append\". Expected {shape}.")),
     };
     if o.case_ids.is_empty() {
-        return (400, "case_ids is empty - list the PBI's cases in the order Auto Run should run them".to_string());
+        return (400, "case_ids is empty - list the PBI's cases in the order Auto Test should run them".to_string());
     }
     for (i, id) in o.case_ids.iter().enumerate() {
         if o.case_ids[..i].contains(id) {
@@ -711,9 +711,9 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
         Err(e) => return (500, format!("could not save the order: {e}")),
     };
     let how = if append { "appended" } else { "replaced" };
-    crate::applog::info(format!("AI set Auto Run's order for PBI {} ({how}): {} case(s)", o.pbi_id, saved.len()));
+    crate::applog::info(format!("AI set Auto Test's order for PBI {} ({how}): {} case(s)", o.pbi_id, saved.len()));
     let ids = |list: &[i32]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
-    let mut lines = vec![format!("saved Auto Run's order for PBI {}: {}", o.pbi_id, ids(&o.case_ids))];
+    let mut lines = vec![format!("saved Auto Test's order for PBI {}: {}", o.pbi_id, ids(&o.case_ids))];
     if append {
         lines.push(match kept.is_empty() {
             true => "Appended: the saved order had no other cases.".to_string(),

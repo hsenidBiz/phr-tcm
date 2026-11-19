@@ -30,7 +30,7 @@ export {
   Copy as IconCopy,
   FolderOpen as IconBrowse,
   FileText as IconReport,
-  // Saving a report of a run as a file (Auto Run's Past runs) - a page with
+  // Saving a report of a run as a file (Auto Test's Past runs) - a page with
   // a down arrow, since it writes a file rather than opening one to read.
   FileDown as IconExportReport,
   AppWindow as IconOpenWindow,
@@ -84,23 +84,23 @@ export {
   // The magnifier at the start of every search box (components/ui/search-input).
   Search as IconSearch,
   Trash2 as IconRemove,
-  // Taking a note out of use while keeping it to bring back (Auto Run's
+  // Taking a note out of use while keeping it to bring back (Auto Test's
   // Known quirks) - an archive box, since nothing is deleted.
   Archive as IconRetire,
   ArchiveRestore as IconRestore,
   EyeOff as IconStopWatching,
   Square as IconStop,
   Unplug as IconUnregister,
-  // Wiping saved script FILES for a PBI's cases (Auto Run, dev builds only).
+  // Wiping saved script FILES for a PBI's cases (Auto Test, dev builds only).
   FileX2 as IconClearScripts,
-  // Wiping the saved run RECORDS and their screenshots (Auto Run, dev
+  // Wiping the saved run RECORDS and their screenshots (Auto Test, dev
   // builds only). `Eraser` is already IconClear for something else, so
   // this gets its own glyph rather than reusing that one.
   ListX as IconClearResults,
-  // Taking a suspected-defect mark off an Auto Run case after looking into it:
+  // Taking a suspected-defect mark off an Auto Test case after looking into it:
   // a bug with a line through it, since the case itself stays untouched.
   BugOff as IconClearDefect,
-  // Marking an Auto Run case as one that passes and fails on its own (Flaky): a wave, since its results come and go.
+  // Marking an Auto Test case as one that passes and fails on its own (Flaky): a wave, since its results come and go.
   Waves as IconMarkFlaky,
   // Lifting a hold the user has manually verified is safe to lift - an
   // unlocked padlock, not a check mark, because nothing was confirmed BY
@@ -124,7 +124,7 @@ export {
   // unattended run. One glyph per direction, named for the result.
   ChevronRight as IconShowSteps,
   ChevronDown as IconHideSteps,
-  // The same pair on an Auto Run case card: its script, steps and files -
+  // The same pair on an Auto Test case card: its script, steps and files -
   // and on the Crystal Reports notes, for the fields and the other notes.
   ChevronRight as IconShowDetails,
   ChevronDown as IconHideDetails,
@@ -182,17 +182,17 @@ export {
   // The menu paths an unattended run follows to each module's screen.
   Route as IconModulePaths,
   // What the assistant's discovery has mapped of the live app, area by
-  // area (Auto Run's Setup card) - a map, since what it opens is one.
+  // area (Auto Test's Setup card) - a map, since what it opens is one.
   Map as IconDiscoveryMap,
   // The project's components: steps saved once that scripts use (Auto
   // Run's Setup card) - a puzzle piece, since each fits into a script.
   Puzzle as IconComponents,
   // A project's Test files: the documents scripts and API templates upload
-  // into the application (Auto Run's Setup card, the API Templates tab).
+  // into the application (Auto Test's Setup card, the API Templates tab).
   Files as IconTestFiles,
   // Copying files from this machine into those Test files.
   FileUp as IconAddFiles,
-  // The site a project's runs sign in to and start from (Auto Run's
+  // The site a project's runs sign in to and start from (Auto Test's
   // Setup card) - a globe, since what it opens is a web address.
   Globe as IconSiteAddress,
   // Choosing something on a page by clicking it in the browser - a
@@ -223,7 +223,7 @@ export {
   // case editors' Preview toggle) - an eye, since it only shows what was
   // typed and changes none of it.
   Eye as IconPreview,
-  // Auto Run's case card: look at a saved script, never change it from the
+  // Auto Test's case card: look at a saved script, never change it from the
   // card. An eye, since the button only shows it.
   Eye as IconViewScript,
 } from "lucide-react";

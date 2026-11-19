@@ -80,8 +80,8 @@ test("lists the six modules with their statuses", () => {
   expect(sw(/^Database Access/)).toHaveAccessibleName(/On/);
   expect(sw(/^Writing Style/)).toHaveAttribute("aria-checked", "false");
   expect(sw(/^Writing Style/)).toHaveAccessibleName("Writing Style Off · click to switch on");
-  expect(sw(/^Auto Run/)).toHaveAccessibleName("Auto Run Off · click to switch on");
-  expect(sw(/^API Templates/)).toHaveAccessibleName("API Templates Locked · needs Auto Run");
+  expect(sw(/^Auto Test/)).toHaveAccessibleName("Auto Test Off · click to switch on");
+  expect(sw(/^API Templates/)).toHaveAccessibleName("API Templates Locked · needs Auto Test");
   expect(screen.getByText("Core")).toBeInTheDocument();
   expect(screen.getByText("Test cases, suites, runs and the board")).toBeInTheDocument();
   expect(screen.getByText(/Connect TCM to your test environments' databases/)).toBeInTheDocument();
@@ -94,9 +94,9 @@ test("a locked switch is aria-disabled, names its parent, and does nothing", () 
     return [];
   });
   show([]);
-  const auto = sw(/^Auto Run/);
+  const auto = sw(/^Auto Test/);
   expect(auto).toHaveAttribute("aria-disabled", "true");
-  expect(auto).toHaveAccessibleName("Auto Run Locked · needs Database Access");
+  expect(auto).toHaveAccessibleName("Auto Test Locked · needs Database Access");
   expect(auto).toHaveAccessibleDescription(/Switch on Database Access first/);
   fireEvent.click(auto);
   expect(calls).not.toContain("modules_set");
@@ -112,8 +112,8 @@ test("switching on asks Rust, and follows its answer", async () => {
     }
   });
   show(["db_access"]);
-  fireEvent.click(sw(/^Auto Run/));
-  await waitFor(() => expect(sw(/^Auto Run/)).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(sw(/^Auto Test/));
+  await waitFor(() => expect(sw(/^Auto Test/)).toHaveAttribute("aria-checked", "true"));
   expect(args).toEqual({ module: "auto_run", on: true });
   expect(sw(/^API Templates/)).not.toHaveAttribute("aria-disabled", "true");
 });
@@ -129,7 +129,7 @@ test("Space and Enter toggle a switch from the keyboard", async () => {
   await waitFor(() => expect(ws).toHaveAttribute("aria-checked", "true"));
 });
 
-test("switching Auto Run off asks first and names what goes with it", async () => {
+test("switching Auto Test off asks first and names what goes with it", async () => {
   const calls: unknown[] = [];
   mockIPC((cmd, a) => {
     if (cmd === "modules_set") {
@@ -138,17 +138,17 @@ test("switching Auto Run off asks first and names what goes with it", async () =
     }
   });
   show(["db_access", "auto_run", "api_templates", "playwright"]);
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByText("Switching off Auto Run also switches off API Templates and Playwright.")).toBeInTheDocument();
+  expect(within(dialog).getByText("Switching off Auto Test also switches off API Templates and Playwright.")).toBeInTheDocument();
   expect(calls).toHaveLength(0);
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(calls).toHaveLength(0);
 
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Switch off" }));
-  await waitFor(() => expect(sw(/^Auto Run/)).toHaveAttribute("aria-checked", "false"));
+  await waitFor(() => expect(sw(/^Auto Test/)).toHaveAttribute("aria-checked", "false"));
   expect(calls).toEqual([{ module: "auto_run", on: false }]);
   expect(sw(/^Playwright/)).toHaveAttribute("aria-checked", "false");
 });
@@ -162,14 +162,14 @@ test("a module with nothing under it switches off without asking", async () => {
 });
 
 test("a refusal from Rust is shown and nothing changes", async () => {
-  const busy = "Auto Run can't be switched off while a run is going - stop the run first.";
+  const busy = "Auto Test can't be switched off while a run is going - stop the run first.";
   mockIPC((cmd) => {
     if (cmd === "modules_set") throw busy;
   });
   show(["db_access", "auto_run"]);
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   expect(await screen.findByRole("alert")).toHaveTextContent(busy);
-  expect(sw(/^Auto Run/)).toHaveAttribute("aria-checked", "true");
+  expect(sw(/^Auto Test/)).toHaveAttribute("aria-checked", "true");
 });
 
 test("the light runs before the card lights, unless motion is reduced", async () => {
@@ -426,7 +426,7 @@ test("while one change saves, every switch waits", async () => {
     return new Promise<{ on: Module[]; recommended: null }>((r) => (release = (v) => r({ on: v, recommended: null })));
   });
   show(["db_access"]);
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   await waitFor(() => expect(sets).toHaveLength(1));
   expect(sw(/^Writing Style/)).toHaveAttribute("aria-disabled", "true");
   fireEvent.click(sw(/^Writing Style/));
@@ -447,12 +447,12 @@ test("switching a module on here marks its sidebar row, and off clears it", asyn
   let answer: Module[] = ["db_access", "auto_run"];
   mockIPC((cmd) => (cmd === "modules_set" ? { on: answer, recommended: null } : undefined));
   show(["db_access"]);
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   await waitFor(() => expect(isNewNav("autorun")).toBe(true));
   expect(isNewNav("ai")).toBe(false);
 
   answer = ["db_access"];
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   await waitFor(() => expect(isNewNav("autorun")).toBe(false));
 });
 
@@ -468,7 +468,7 @@ test("a refused switch marks nothing", async () => {
     if (cmd === "modules_set") throw "no";
   });
   show(["db_access"]);
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(isNewNav("autorun")).toBe(false);
 });
@@ -565,7 +565,7 @@ test("switching off drains the power back up the path, the deepest first", async
   show(["db_access", "auto_run", "playwright"]);
   act(() => setModulesForTest(["db_access"]));
   const drain = (m: Module) => document.querySelector<SVGPathElement>(`[data-draining="${m}"]`);
-  // Playwright hangs below Auto Run, so its path empties first.
+  // Playwright hangs below Auto Test, so its path empties first.
   expect(drain("playwright")?.style.animationDelay).toBe("0ms");
   expect(drain("auto_run")?.style.animationDelay).toBe("450ms");
   expect(drain("db_access")).toBeNull();
@@ -641,7 +641,7 @@ function firstSwitchOn(recommended: Record<string, boolean>) {
     return undefined;
   });
   show(["db_access"]);
-  fireEvent.click(sw(/^Auto Run/));
+  fireEvent.click(sw(/^Auto Test/));
 }
 
 test("the first switch-on applies the Network tools per environment and names all three", async () => {
@@ -666,8 +666,8 @@ test("one turned-on item is worded in the singular", async () => {
   expect(localStorage.getItem("tcm-v2-network-tools:e1")).toBeNull();
 });
 
-test("a machine that had Auto Run on before gets no note", async () => {
+test("a machine that had Auto Test on before gets no note", async () => {
   firstSwitchOn({ api_templates: false, video: false, network_tools: false, mode_simple: false });
-  await waitFor(() => expect(sw(/^Auto Run/)).toHaveAttribute("aria-checked", "true"));
+  await waitFor(() => expect(sw(/^Auto Test/)).toHaveAttribute("aria-checked", "true"));
   expect(screen.queryByText(/Also turned on/)).not.toBeInTheDocument();
 });

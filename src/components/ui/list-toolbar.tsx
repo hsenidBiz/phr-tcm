@@ -107,7 +107,7 @@ function useStuck(fullWidth: boolean) {
  * just transparent at rest, so nothing moves when it appears.
  *
  * Stuck, it reaches both sides of the scroller - unless the list shares the
- * page with another column (Auto Run's Setup panel beside its case list):
+ * page with another column (Auto Test's Setup panel beside its case list):
  * there `fullWidth={false}` keeps it in its own column, a bordered box all
  * round instead (owner, 2026-10-27: "the bar crosses the setup screen").
  */

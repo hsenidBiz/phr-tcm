@@ -1,4 +1,4 @@
-//! Auto Run's mode and what the first switch-on turns on.
+//! Auto Test's mode and what the first switch-on turns on.
 
 use std::collections::BTreeSet;
 

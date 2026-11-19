@@ -42,7 +42,7 @@ pub async fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndedBy {
     /// The person's End discovery on the Setup card: it closes the
-    /// assistant's discovery browser so Auto Run can run again.
+    /// assistant's discovery browser so Auto Test can run again.
     Person,
     /// The assistant's `end_autorun_discovery`: the browser is closed and
     /// its account let go (a browser the person opened stays).
@@ -86,7 +86,7 @@ pub async fn end_discovery_releasing<B: DiscoveryBrowser>(slot: &mut Option<B>) 
         // end frees it (and its account) the same way. A person's stays.
         None if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) => {
             close_browser_in(slot);
-            crate::applog::info("Auto Run: the assistant's end closed the browser its replay left open");
+            crate::applog::info("Auto Test: the assistant's end closed the browser its replay left open");
             (200, DISCOVERY_ENDED_RELEASED.to_string())
         }
         None => (200, "no discovery is going".to_string()),
@@ -96,7 +96,7 @@ pub async fn end_discovery_releasing<B: DiscoveryBrowser>(slot: &mut Option<B>) 
 /// End the discovery in `slot` and close its browser, as the person's End
 /// discovery and the assistant's release
 /// (`commands::autorun::release_in_for_assistant`) do: the person ends it
-/// so Auto Run can run again, and release is the repair for a broken
+/// so Auto Test can run again, and release is the repair for a broken
 /// browser, so neither keeps one. The answer is `end_discovery_in`'s, with
 /// the browser closed.
 pub fn end_discovery_closing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
@@ -170,10 +170,10 @@ pub(crate) async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option
         if let Some(browser) = slot.take() {
             crate::browser::tree::blocking(|| browser.close());
         }
-        crate::applog::info("Auto Run discovery ended; its guard would not lift, so its browser is closed");
+        crate::applog::info("Auto Test discovery ended; its guard would not lift, so its browser is closed");
         return Some(Ended { summary, kept: false, explore });
     }
-    crate::applog::info("Auto Run discovery ended; its browser is kept, signed in");
+    crate::applog::info("Auto Test discovery ended; its browser is kept, signed in");
     Some(Ended { summary, kept: true, explore })
 }
 
@@ -193,7 +193,7 @@ pub(crate) fn close_discovery<B: DiscoveryBrowser>(
     if let Some(browser) = slot.take() {
         browser.close();
     }
-    crate::applog::info("Auto Run discovery ended; its browser is closed");
+    crate::applog::info("Auto Test discovery ended; its browser is closed");
     Some((summary, explore))
 }
 
@@ -214,7 +214,7 @@ pub fn finish_mapping<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Option<crate
     let summary = summarize(&run);
     if let Some(place) = &run.place {
         if let Err(why) = save_summary(&place.root, &place.organization, &place.project, &summary) {
-            crate::applog::warn(format!("Auto Run mapping run: its summary could not be kept: {why}"));
+            crate::applog::warn(format!("Auto Test mapping run: its summary could not be kept: {why}"));
         }
     }
     crate::applog::info(log_line(&summary));
@@ -251,7 +251,7 @@ pub async fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>,
         .unwrap_or(false);
     match end_discovery_keeping(slot, !no_save).await {
         Some(ended) => {
-            crate::applog::info("Auto Run: the assistant's replay to a step ended its discovery first");
+            crate::applog::info("Auto Test: the assistant's replay to a step ended its discovery first");
             DiscoveryEnded { ended: true, summary: ended.summary, no_save, explore: ended.explore }
         }
         None => DiscoveryEnded::default(),

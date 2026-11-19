@@ -118,7 +118,7 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
     ]
 }
 
-/// The browser features switched off in every Auto Run browser, as the
+/// The browser features switched off in every Auto Test browser, as the
 /// value of the ONE `--disable-features` switch Chromium honours (a second
 /// switch replaces the first, so any other feature is folded in by
 /// `args_with`). Chrome's breach check ("Change your password") opens a
@@ -168,7 +168,7 @@ pub fn write_password_prefs(profile_dir: &Path) -> std::io::Result<()> {
 /// on (the prompts are a nuisance, a refused launch stops every run). Names
 /// the kind of failure, never a path.
 pub fn prefs_failure_is_logged_only(e: &std::io::Error) -> String {
-    format!("Auto Run could not switch off the browser's password prompts: {:?}", e.kind())
+    format!("Auto Test could not switch off the browser's password prompts: {:?}", e.kind())
 }
 
 /// `launch_args` plus extra switches, kept in front of the start page
@@ -295,12 +295,12 @@ fn sweep_hung_orphans() {
     }
     let hung = close_hung(eligible, &devtools_answers, &mut tree::end_orphan);
     for name in &hung.closed {
-        crate::applog::warn(format!("Auto Run closed a browser left from an earlier run that did not answer (profile {name})"));
+        crate::applog::warn(format!("Auto Test closed a browser left from an earlier run that did not answer (profile {name})"));
     }
     for name in &hung.stuck {
         remember_unendable(name);
         crate::applog::warn(format!(
-            "Auto Run found a browser left from an earlier run that did not answer and could not end it (profile {name}); it is left alone for the rest of this session"
+            "Auto Test found a browser left from an earlier run that did not answer and could not end it (profile {name}); it is left alone for the rest of this session"
         ));
     }
 }
@@ -552,7 +552,7 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
     );
     let exe = candidates.iter().find(|p| p.is_file()).ok_or_else(|| {
         format!(
-            "{} is not installed on this machine - pick the other browser in Auto Run",
+            "{} is not installed on this machine - pick the other browser in Auto Test",
             which.label()
         )
     })?;
@@ -568,7 +568,7 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
     tree::blocking(sweep_hung_orphans);
     let (port, profile_dir) = fresh_profile()?;
     if let Err(e) = write_owner_marker(&profile_dir) {
-        crate::applog::warn(format!("Auto Run could not mark a browser profile as its own: {:?}", e.kind()));
+        crate::applog::warn(format!("Auto Test could not mark a browser profile as its own: {:?}", e.kind()));
     }
     if let Err(e) = write_password_prefs(&profile_dir) {
         crate::applog::warn(prefs_failure_is_logged_only(&e));

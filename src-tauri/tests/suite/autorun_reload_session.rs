@@ -1,4 +1,4 @@
-//! The five actions added for cases Auto Run could not run before: a page
+//! The five actions added for cases Auto Test could not run before: a page
 //! refresh (`reload`, then `return_to_area` - the one way back in a project
 //! that refuses `navigate`), a timed-out session (`expire_session`), and the
 //! keyboard (`press_key`, `expect_focused`). The browser is a fake, as in

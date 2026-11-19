@@ -2,7 +2,7 @@
 //! AI bridge (areas, components, the discovery map and its summary, quirks,
 //! test files, proposed accounts), whoever made it. The app registers one
 //! listener at startup that says so to the window (`AutorunDataChanged`), so
-//! the Auto Run screen reads that data again without a reload.
+//! the Auto Test screen reads that data again without a reload.
 //!
 //! Same shape as the scripts listeners in `store`: process-wide, copied out
 //! of the lock before they run, and a store calls `notify` only after the

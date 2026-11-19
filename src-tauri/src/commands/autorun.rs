@@ -98,7 +98,7 @@ pub(crate) struct Session {
     /// how long it lasts; `None` while nothing guards it. Cleared with the
     /// guard (`lift_guard_of`), and gone with the browser.
     pub(crate) guard_owner: Option<GuardOwner>,
-    /// The Auto Run folder whose `downloads/supervised` this browser saves
+    /// The Auto Test folder whose `downloads/supervised` this browser saves
     /// into, emptied once it closes. `None` when downloads could not be
     /// switched on.
     pub(crate) downloads_root: Option<PathBuf>,
@@ -319,7 +319,7 @@ pub fn settle_guard_owner<D: Driver>(
 pub async fn lift_guard_of<D: Driver>(d: &mut D, guarded_case: &mut Option<i32>, owner: &mut Option<GuardOwner>) -> bool {
     if d.is_guarding_saves() {
         if let Err(e) = d.stop_guarding_saves().await {
-            crate::applog::warn(format!("Auto Run: the no-save guard could not be lifted yet: {e}"));
+            crate::applog::warn(format!("Auto Test: the no-save guard could not be lifted yet: {e}"));
             return false;
         }
     }
@@ -446,7 +446,7 @@ pub struct MappingScreen {
     pub menu: String,
 }
 
-/// The Auto Run folder and project a mapping run's summary is saved under.
+/// The Auto Test folder and project a mapping run's summary is saved under.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MappingPlace {
     pub root: PathBuf,
@@ -647,7 +647,7 @@ pub(crate) fn refuse_discovery_while_busy(n: SlotNo) -> Result<(), String> {
     Ok(())
 }
 
-/// Open the Auto Run browser for the assistant's discovery, in the browser
+/// Open the Auto Test browser for the assistant's discovery, in the browser
 /// named (`edge` or `chrome`). Refused while anything else holds the
 /// browser - the person's browser included, which a discovery never
 /// replaces or takes over. The session is marked a discovery from the
@@ -724,7 +724,7 @@ pub(crate) async fn open_for_discovery(
 /// account, unless it keeps it (`keep_browser`) signed in for its next
 /// replay or discovery, its guard lifted; with no discovery going it still
 /// closes the browser its replay left open. The person's End discovery
-/// closes it so Auto Run can run again.
+/// closes it so Auto Test can run again.
 pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (u16, String) {
     // A batch of actions holding the browser gives way before its next
     // action, so this is not kept waiting behind it.
@@ -756,8 +756,8 @@ pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (
     answer
 }
 
-/// End Discovery on Auto Run's Setup card: the person closes the
-/// assistant's discovery browser so Auto Run can run again
+/// End Discovery on Auto Test's Setup card: the person closes the
+/// assistant's discovery browser so Auto Test can run again
 /// (`ai_bridge::EndedBy::Person`), and the window is told. With no
 /// discovery going this does nothing. Nothing is lost: the map keeps what
 /// was seen, and a mapping run's summary is kept.
@@ -768,7 +768,7 @@ pub async fn auto_run_end_discovery() -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a discovery holds each slot's Auto Run browser, as last
+/// Whether a discovery holds each slot's Auto Test browser, as last
 /// published. Kept beside the sessions rather than read from them, so asking
 /// never waits on the session lock a replay holds while it goes.
 static DISCOVERY_ACTIVE: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
@@ -817,8 +817,8 @@ pub(crate) fn publish_discovery_in(n: SlotNo, slot: &Option<Session>) {
     }
 }
 
-/// Whether the assistant is exploring the app in the Auto Run browser:
-/// Auto Run's runs and Open browser wait while it is.
+/// Whether the assistant is exploring the app in the Auto Test browser:
+/// Auto Test's runs and Open browser wait while it is.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_discovery_active() -> bool {
@@ -1048,7 +1048,7 @@ pub fn auto_run_remove_component(
     name: String,
 ) -> Result<String, String> {
     let removed = crate::autorun::components::remove_unused(&root(&app)?, &organization, &project, &name)?;
-    crate::applog::info(format!("Auto Run component {removed} removed"));
+    crate::applog::info(format!("Auto Test component {removed} removed"));
     Ok(removed)
 }
 
@@ -1065,7 +1065,7 @@ pub fn auto_run_reset_components(app: tauri::AppHandle, organization: String, pr
 /// names the assistant's own way out.
 pub fn busy_browser_sentence(discovering: bool) -> &'static str {
     if discovering {
-        "the assistant is exploring the app in the Auto Run browser - end it with end_autorun_discovery, or press End discovery in Auto Run, Setup, first"
+        "the assistant is exploring the app in the Auto Test browser - end it with end_autorun_discovery, or press End discovery in Auto Test, Setup, first"
     } else {
         "close the supervised browser first"
     }
@@ -1083,8 +1083,8 @@ pub async fn open_session_refusal() -> Option<String> {
 /// Said when an assistant's own browser (a slot beside the main one) is open
 /// where a global check - an unattended run, a recording, the environment
 /// switch - looks. Every caller is the person's own command, so the sentence
-/// is for the person: it says what to do on the Auto Run screen.
-pub const EXTRA_BROWSER_OPEN: &str = "an assistant's Auto Run browser is open - wait for it to finish, or release it on the Assistants card at the top of the Auto Run screen";
+/// is for the person: it says what to do on the Auto Test screen.
+pub const EXTRA_BROWSER_OPEN: &str = "an assistant's Auto Test browser is open - wait for it to finish, or release it on the Assistants card at the top of the Auto Test screen";
 
 /// The lowest slot whose browser is open, if any: the one a global check
 /// names when it refuses.
@@ -1285,7 +1285,7 @@ impl crate::ai_bridge::DiscoveryBrowser for Session {
 
 /// Open the supervised browser into `slot`, which is slot number `n`'s
 /// session, closing one already there, marked as opened `by`. `root` is the
-/// Auto Run folder its downloads go under (in slot `n`'s own folder). Called
+/// Auto Test folder its downloads go under (in slot `n`'s own folder). Called
 /// with slot `n`'s session lock held.
 async fn open_into(
     root: Result<PathBuf, String>,
@@ -1439,7 +1439,7 @@ pub(crate) fn close_browser(browser: LaunchedBrowser) -> bool {
 
 /// Point slot `n`'s supervised browser at its own downloads folder
 /// (`downloads/supervised` for main), emptied first of whatever an earlier
-/// session left there. Returns the Auto Run folder it lives in, for the
+/// session left there. Returns the Auto Test folder it lives in, for the
 /// close to empty it again.
 async fn keep_supervised_downloads(root: Result<PathBuf, String>, n: SlotNo, cdp: &mut Cdp) -> Result<PathBuf, String> {
     let root = root?;
@@ -1484,10 +1484,10 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     Ok(())
 }
 
-/// Release Auto Run browser, on Auto Run's Setup card: for a browser the
+/// Release Auto Test browser, on Auto Test's Setup card: for a browser the
 /// app still holds after it is gone, so a restart is never needed. A replay
 /// going is stopped (in every slot) and a case's setup between its template
-/// steps; then every Auto Run browser record is cleared - every slot's
+/// steps; then every Auto Test browser record is cleared - every slot's
 /// supervised browser, the discovery in it (a mapping run keeps its summary)
 /// and the replay's, which is that same browser - and the browser closed
 /// through its normal close, with each assistant's hold on it; then the
@@ -1555,7 +1555,7 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
     drop(slots);
     tell_panes_closed();
     let answer = released_sentence(held, others, left);
-    crate::applog::info(format!("Auto Run: {answer}"));
+    crate::applog::info(format!("Auto Test: {answer}"));
     Ok(answer)
 }
 
@@ -1573,7 +1573,7 @@ pub const TEMPLATE_RUN_GOING: &str =
 
 /// Said when the browser's lock did not come free within `RELEASE_WAIT`: a
 /// replay still stopping, or a long step or call still going in it.
-pub const BROWSER_BUSY: &str = "the Auto Run browser is busy - press Release Auto Run browser again in a moment";
+pub const BROWSER_BUSY: &str = "the Auto Test browser is busy - press Release Auto Test browser again in a moment";
 
 /// Whether the supervised browser open now is one the assistant opened,
 /// with no discovery in it, holding the account `key`: what a template
@@ -1589,10 +1589,10 @@ pub async fn assistant_browser_holds(n: SlotNo, key: &str) -> bool {
     }
 }
 
-/// Said to the assistant's release while the person's own Auto Run browser
+/// Said to the assistant's release while the person's own Auto Test browser
 /// is open and answering: only the person closes it.
 pub const PERSONS_BROWSER_OPEN: &str =
-    "the person's Auto Run browser is open - ask them to close it, or to press Release Auto Run browser";
+    "the person's Auto Test browser is open - ask them to close it, or to press Release Auto Test browser";
 
 /// Tell the panes the supervised browser is gone (`AutorunSessionChanged`
 /// with `opened: false`), so a Run Tests pane stops calling it its own.
@@ -1640,17 +1640,17 @@ fn emit_if_main<E: tauri_specta::Event + serde::Serialize + Clone>(n: SlotNo, ap
     }
 }
 
-/// What Release says it did: whether it let a held Auto Run browser go
+/// What Release says it did: whether it let a held Auto Test browser go
 /// (`held`), how many other browsers of the app's own it found running
 /// (`others`), and how many of those would not end (`left`).
 pub fn released_sentence(held: bool, others: usize, left: usize) -> String {
     let closed = others.saturating_sub(left);
     let mut said = match (held, closed) {
-        (false, 0) => "no Auto Run browser was held, and none of the app's own browsers was open - nothing to release".to_string(),
-        (true, 0) => "the Auto Run browser is released and closed".to_string(),
-        (false, n) => format!("no Auto Run browser was held; {n} of the app's own browsers {} closed", if n == 1 { "was" } else { "were" }),
+        (false, 0) => "no Auto Test browser was held, and none of the app's own browsers was open - nothing to release".to_string(),
+        (true, 0) => "the Auto Test browser is released and closed".to_string(),
+        (false, n) => format!("no Auto Test browser was held; {n} of the app's own browsers {} closed", if n == 1 { "was" } else { "were" }),
         (true, n) => format!(
-            "the Auto Run browser is released and closed, and {n} more of the app's own browsers {} closed",
+            "the Auto Test browser is released and closed, and {n} more of the app's own browsers {} closed",
             if n == 1 { "was" } else { "were" }
         ),
     };
@@ -1663,7 +1663,7 @@ pub fn released_sentence(held: bool, others: usize, left: usize) -> String {
     said
 }
 
-/// Release Auto Run browser on Auto Run's Setup card
+/// Release Auto Test browser on Auto Test's Setup card
 /// (`release_autorun_browsers`). Asks no confirm, as Close browser and End
 /// discovery ask none: it closes only browsers the app opened, and the map
 /// keeps what a discovery saw.
@@ -1700,7 +1700,7 @@ pub async fn release_for_assistant(n: SlotNo) -> (u16, String) {
     // Released: the assistant no longer has this browser, a person's left
     // open included.
     crate::commands::autorun_slots::unbind(n);
-    crate::applog::info(format!("Auto Run: the assistant's release: {}", answer.1));
+    crate::applog::info(format!("Auto Test: the assistant's release: {}", answer.1));
     answer
 }
 
@@ -1708,8 +1708,8 @@ pub async fn release_for_assistant(n: SlotNo) -> (u16, String) {
 /// held browser, a test's fake included.
 pub async fn release_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
     match release_outcome_in(slot).await {
-        ReleaseOutcome::AlreadyGone => (200, "the Auto Run browser had already closed; the app let it go, and none is held now".to_string()),
-        ReleaseOutcome::NothingHeld => (200, "no Auto Run browser was held - nothing to release".to_string()),
+        ReleaseOutcome::AlreadyGone => (200, "the Auto Test browser had already closed; the app let it go, and none is held now".to_string()),
+        ReleaseOutcome::NothingHeld => (200, "no Auto Test browser was held - nothing to release".to_string()),
         ReleaseOutcome::EndedDiscovery(status, said) => (status, said),
         ReleaseOutcome::ClosedAssistants => (200, RELEASED_YOURS.to_string()),
         ReleaseOutcome::PersonsKept => (409, PERSONS_BROWSER_OPEN.to_string()),
@@ -1757,9 +1757,9 @@ pub async fn release_outcome_in<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mu
 /// Said by the assistant's release once it closed the browser its own
 /// replay opened.
 pub const RELEASED_YOURS: &str =
-    "closed the Auto Run browser your replay left open; its account is free, and none is held now";
+    "closed the Auto Test browser your replay left open; its account is free, and none is held now";
 
-/// Said by the assistant's reset with no Auto Run browser held (or one that
+/// Said by the assistant's reset with no Auto Test browser held (or one that
 /// had gone, now let go).
 pub const NO_BROWSER_OPEN: &str = "No browser is open.";
 
@@ -1783,7 +1783,7 @@ pub const DISCOVERY_ENDED_AT_RESET: &str = "Ended your discovery (what it mapped
 
 /// Said when the browser's lock did not come free within `RELEASE_WAIT`
 /// for the assistant's reset.
-const BUSY_AT_RESET: &str = "the Auto Run browser is busy - call reset_autorun_browser again in a moment";
+const BUSY_AT_RESET: &str = "the Auto Test browser is busy - call reset_autorun_browser again in a moment";
 
 /// What the assistant's reset says once the browser is clean and still
 /// signed in as `account`.
@@ -1831,7 +1831,7 @@ pub async fn reset_for_assistant(n: SlotNo, organization: &str, project: &str) -
     if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
         answer_between_commands_in(n);
     }
-    crate::applog::info(format!("Auto Run: the assistant's reset: {}", answer.1));
+    crate::applog::info(format!("Auto Test: the assistant's reset: {}", answer.1));
     answer
 }
 
@@ -1959,7 +1959,7 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
         // it), but a reason found before the load is not lost.
         if let Err(why) = &stands {
             crate::applog::info(format!(
-                "Auto Run: the assistant's reset found the sign-in in doubt before the home page failed to open: {}",
+                "Auto Test: the assistant's reset found the sign-in in doubt before the home page failed to open: {}",
                 why.reason()
             ));
         }
@@ -1994,7 +1994,7 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
         (Ok(()), Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
         (verdict, _) => {
             let why = verdict.err().map(|why| why.reason()).unwrap_or_else(|| NotSignedIn::NoAccount.reason());
-            crate::applog::info(format!("Auto Run: the assistant's reset found the sign-in gone: {why}"));
+            crate::applog::info(format!("Auto Test: the assistant's reset found the sign-in gone: {why}"));
             *p.signed_in = None;
             p.lease.forget_sign_in();
             let gone = sign_in_gone_sentence(&why);
@@ -2036,7 +2036,7 @@ pub async fn clear_cookies_for_assistant(n: SlotNo) -> (u16, String) {
     let answer = crate::ai_bridge::let_go_if_silent(&mut slot, answer).await;
     publish_overrides_in(n, &slot);
     tell_panes_in(n, event);
-    crate::applog::info(format!("Auto Run: the assistant's clear of the cookies answered {}", answer.0));
+    crate::applog::info(format!("Auto Test: the assistant's clear of the cookies answered {}", answer.0));
     answer
 }
 
@@ -2095,7 +2095,7 @@ pub async fn clear_cookies_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowse
             o.cookies.retain(|_, set| !crate::browser::session::cookie_belongs(&set.domain, &host));
             if !o.headers.is_empty() {
                 if let Err(e) = crate::browser::cdp::Driver::set_extra_headers(p.driver, &Default::default()).await {
-                    crate::applog::warn(format!("Auto Run: the test headers could not be removed at the sign-out: {e}"));
+                    crate::applog::warn(format!("Auto Test: the test headers could not be removed at the sign-out: {e}"));
                 } else {
                     o.headers.clear();
                 }
@@ -2150,7 +2150,7 @@ fn said_at_reset(
     }
 }
 
-/// Auto Run's browsers go with the app. A recording - or a Start, a check or
+/// Auto Test's browsers go with the app. A recording - or a Start, a check or
 /// a Try still going - is ended the way Cancel ends it, which closes the
 /// recording browser; then the supervised browser is closed. Each takes its
 /// throwaway profile with it (`close_browser`). Called from the app's exit
@@ -2735,7 +2735,7 @@ pub(crate) async fn replay_supervised(
         ReplayBy::Person => "",
         ReplayBy::Assistant => " for the assistant",
     };
-    crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}{who}: {how}"));
+    crate::applog::info(format!("Auto Test replay of case {case_id} to step {step}{who}: {how}"));
     // A replay that stopped on a failure is kept as the case's newest word,
     // for get_autorun_failures and a suspected defect; one that reached its
     // step lets an earlier one go.
@@ -2983,7 +2983,7 @@ pub async fn guard_for_case<D: Driver>(
     }
     if let Some(before) = guarded_case.filter(|c| *c != case_id) {
         if let Some(sentence) = d.take_save_blocked() {
-            crate::applog::warn(format!("Auto Run, case {before}: {sentence}"));
+            crate::applog::warn(format!("Auto Test, case {before}: {sentence}"));
         }
     }
     if no_save {
@@ -2998,7 +2998,7 @@ pub async fn guard_for_case<D: Driver>(
         // answering every paused request as a guarded browser does.
         match d.stop_guarding_saves().await {
             Ok(()) => *guarded_case = None,
-            Err(e) => crate::applog::warn(format!("Auto Run: the no-save guard could not be lifted yet: {e}")),
+            Err(e) => crate::applog::warn(format!("Auto Test: the no-save guard could not be lifted yet: {e}")),
         }
     } else {
         *guarded_case = None;
@@ -3151,7 +3151,7 @@ pub fn auto_run_load_script(
     store::load_script(&root(&app)?, case_id)
 }
 
-/// Every listed case's script in one call - what the Auto Run screen asks
+/// Every listed case's script in one call - what the Auto Test screen asks
 /// for when it opens. Off the main thread, as every read here is: the
 /// window stays responsive while hundreds of files are read.
 #[tauri::command(async)]
@@ -3319,12 +3319,12 @@ pub fn save_script_from_editor(
             Ok(steps) => {
                 for step in steps {
                     crate::applog::info(format!(
-                        "Auto Run: case {case_id} saved in the script editor; its divergence at step {step} is closed"
+                        "Auto Test: case {case_id} saved in the script editor; its divergence at step {step} is closed"
                     ));
                 }
             }
             Err(e) => crate::applog::warn(format!(
-                "Auto Run: case {case_id} saved in the script editor, but its divergence could not be closed: {e}"
+                "Auto Test: case {case_id} saved in the script editor, but its divergence could not be closed: {e}"
             )),
         }
     }
@@ -3344,7 +3344,7 @@ pub fn auto_run_clear_suspected_defect(app: tauri::AppHandle, case_id: i32) -> R
 /// reach it without an `AppHandle`. A case with no mark is left as it is.
 pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<(), String> {
     if store::clear_suspected_defect_any(root, case_id)? {
-        crate::applog::info(format!("Auto Run: the suspected defect on case {case_id} was cleared from the app"));
+        crate::applog::info(format!("Auto Test: the suspected defect on case {case_id} was cleared from the app"));
     }
     Ok(())
 }
@@ -3393,7 +3393,7 @@ pub fn set_flaky(root: &std::path::Path, case_id: i32, flaky: bool) -> Result<()
     let mark = flaky.then(|| crate::autorun::FlakyMark { marked_at: crate::autorun::sessions::now_ms().to_string() });
     store::set_flaky(root, case_id, mark)?;
     crate::applog::info(format!(
-        "Auto Run: case {case_id} was {} flaky from the app",
+        "Auto Test: case {case_id} was {} flaky from the app",
         if flaky { "marked" } else { "unmarked as" }
     ));
     Ok(())
@@ -3446,7 +3446,7 @@ pub fn record_bug_at(
 /// split into batches (`phases`) at each pause, and the pauses: one before
 /// each batch after the first (settings to set, state to put back), and one
 /// before Batch 1 when it needs settings. `counts` is `(this order's
-/// pauses, the suggested order's pauses)`, only when Auto Run's own order
+/// pauses, the suggested order's pauses)`, only when Auto Test's own order
 /// for the PBI needs more pauses than the suggestion. `saved` says whether
 /// the PBI has an order of its own on this machine. Titles are the
 /// screen's: it has the case list.
@@ -3459,7 +3459,7 @@ pub struct PlanView {
     pub saved: bool,
 }
 
-/// The plan for the cases selected on the Auto Run tab, in list order.
+/// The plan for the cases selected on the Auto Test tab, in list order.
 /// Each case's marks come from its saved script; a case with no script
 /// has none. Scripts and orders are kept by work item id, so the
 /// organization and project name the selection's source and nothing more.
@@ -3510,7 +3510,7 @@ pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_or
     }
 }
 
-/// Save Auto Run's own execution order for a PBI on this machine. Only
+/// Save Auto Test's own execution order for a PBI on this machine. Only
 /// the cases given move: the rest of an order already saved keeps its
 /// places (`store::merge_order`). Run Tests' order is separate and is not
 /// changed.
@@ -3531,7 +3531,7 @@ pub fn auto_run_clear_order(app: tauri::AppHandle, pbi_id: i32) -> Result<(), St
 }
 
 /// Import a BUNDLE of scripts from one file - the shape an assistant
-/// writes for a whole PBI, and the shape the Auto Run screen's Import
+/// writes for a whole PBI, and the shape the Auto Test screen's Import
 /// button reads back.
 ///
 /// Takes a PATH, not the file's contents: the frontend used to read the
@@ -3821,7 +3821,7 @@ pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
 /// (`autorun::report`), written atomically to `<root>/reports/<run id>.html`
 /// - the same file, overwritten, on every open. The reports folder sits
 /// beside the shots folder, which is how the page links its pictures
-/// (`../shots/<name>`). "Is Auto Run on" is passed in, the way the
+/// (`../shots/<name>`). "Is Auto Test on" is passed in, the way the
 /// Test files commands take it, so a locked build's refusal is testable.
 /// The run id is checked with `store::safe_run_id` before anything touches
 /// the disk, since it becomes a file name. The scripts on this machine
@@ -3936,7 +3936,7 @@ pub async fn auto_run_open_report(
 
 /// The pure half of [`auto_run_open_download`]: the one path Open may hand
 /// to the default app, a plain name in the run's own download folder
-/// (`store::download_file`). "Is Auto Run on" is passed in, as the
+/// (`store::download_file`). "Is Auto Test on" is passed in, as the
 /// report takes it.
 pub fn download_path_at(
     offered: bool,
@@ -4108,7 +4108,7 @@ pub fn auto_run_add_quirk(
     let (_, list) = update_quirks(&root(&app)?, &organization, &project, |l| {
         record_in(l, &text, "person", FROM_AUTORUN, Vec::new(), now)
     })?;
-    crate::applog::info("Auto Run: a project quirk was added");
+    crate::applog::info("Auto Test: a project quirk was added");
     Ok(list)
 }
 
@@ -4125,7 +4125,7 @@ pub fn auto_run_edit_quirk(
     let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
         crate::autorun::quirks::edit_in(l, &id, &text)
     })?;
-    crate::applog::info("Auto Run: a project quirk was edited");
+    crate::applog::info("Auto Test: a project quirk was edited");
     Ok(list)
 }
 
@@ -4144,7 +4144,7 @@ pub fn auto_run_retire_quirk(
     let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
         crate::autorun::quirks::retire_in(l, &id, reason.as_deref(), None, false, now)
     })?;
-    crate::applog::info("Auto Run: a project quirk was retired");
+    crate::applog::info("Auto Test: a project quirk was retired");
     Ok(list)
 }
 
@@ -4160,7 +4160,7 @@ pub fn auto_run_restore_quirk(
     let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
         crate::autorun::quirks::restore_in(l, &id)
     })?;
-    crate::applog::info("Auto Run: a project quirk was restored");
+    crate::applog::info("Auto Test: a project quirk was restored");
     Ok(list)
 }
 
@@ -4176,7 +4176,7 @@ pub fn auto_run_delete_quirk(
     let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
         crate::autorun::quirks::delete_in(l, &id)
     })?;
-    crate::applog::info("Auto Run: a project quirk was deleted");
+    crate::applog::info("Auto Test: a project quirk was deleted");
     Ok(list)
 }
 
@@ -4223,7 +4223,7 @@ pub fn auto_run_set_protected(
     Ok(crate::autorun::nav::view(&nav))
 }
 
-/// The switch cannot be changed while Auto Run is in Simple. When the app's
+/// The switch cannot be changed while Auto Test is in Simple. When the app's
 /// own Simple mode is what holds it there, Advanced is not on offer, so the
 /// sentence points at the app setting instead.
 pub fn refuse_address_change(simple: bool, app_simple: bool) -> Result<(), String> {
@@ -4352,7 +4352,7 @@ pub async fn refuse_while_a_run_is_going() -> Result<(), String> {
 }
 
 /// Remove the named cases' scripts from this machine, for the "Clear
-/// scripts" button on the (development-only) Auto Run toolbar. Nothing in
+/// scripts" button on the (development-only) Auto Test toolbar. Nothing in
 /// Azure DevOps is touched - scripts never lived there.
 ///
 /// Returns `u32`, not the `usize` `store::clear_scripts` itself returns -
@@ -4368,7 +4368,7 @@ pub async fn auto_run_clear_scripts(app: tauri::AppHandle, case_ids: Vec<i32>) -
 }
 
 /// Remove every saved run and screenshot from this machine, for the
-/// "Clear results" button on the (development-only) Auto Run toolbar.
+/// "Clear results" button on the (development-only) Auto Test toolbar.
 /// Runs already sent to Azure DevOps are removed too - the record there
 /// is the durable one, and the confirm the screen shows says so.
 ///

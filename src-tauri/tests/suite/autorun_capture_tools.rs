@@ -284,7 +284,7 @@ async fn the_route_answers_no_browser_is_open() {
 /// The network tools' routes answer only while the person's Network tools
 /// switch is on: off - the default - every one is refused with the switch's
 /// sentence before anything else is looked at, and `/tools` tells the proxy
-/// so. The routes the other Auto Run tools use are not touched.
+/// so. The routes the other Auto Test tools use are not touched.
 #[tokio::test]
 async fn the_network_routes_refuse_while_the_switch_is_off() {
     use v2_lib::ai_bridge::{network_guard, NETWORK_ROUTES, NETWORK_TOOLS_OFF};
@@ -676,7 +676,7 @@ fn an_import_that_is_not_a_har_is_refused() {
     let (status, _) = call(&mut None, &mut imported, Some(dir.path()), CaptureTool::Import, json!({ "name": "empty" }));
     assert_eq!(status, 400);
     let (status, _) = call(&mut None, &mut imported, None, CaptureTool::Import, json!({ "name": "junk" }));
-    assert_eq!(status, 503, "no Auto Run folder");
+    assert_eq!(status, 503, "no Auto Test folder");
 }
 
 /// An export read back by an import is the same requests, still redacted.

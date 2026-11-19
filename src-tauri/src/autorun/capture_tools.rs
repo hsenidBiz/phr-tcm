@@ -37,7 +37,7 @@ pub const MAX_NAME_CHARS: usize = 80;
 pub const MAX_FILTER_PATH_CHARS: usize = 200;
 /// The largest HAR file an import reads.
 pub const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
-/// TCM's own folder for exports and imports, under the Auto Run root.
+/// TCM's own folder for exports and imports, under the Auto Test root.
 pub const CAPTURES_DIR: &str = "captures";
 /// The resource types the capture keeps, as Chrome names them.
 pub const CAPTURE_TYPES: [&str; 3] = ["XHR", "Fetch", "Document"];
@@ -755,7 +755,7 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
     let text = match serde_json::to_string_pretty(&har) {
         Ok(t) => t,
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: a capture export could not be written as JSON: {e}"));
+            crate::applog::warn(format!("Auto Test: a capture export could not be written as JSON: {e}"));
             return (500, "the capture could not be written as HAR".to_string());
         }
     };
@@ -764,15 +764,15 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
     let replaced = path.exists();
     if let Some(dir) = path.parent() {
         if let Err(e) = crate::autorun::roots::create_dir_all(root, dir) {
-            crate::applog::warn(format!("Auto Run: the captures folder could not be made: {e}"));
+            crate::applog::warn(format!("Auto Test: the captures folder could not be made: {e}"));
             return (500, "the captures folder could not be made - see Settings, Logs".to_string());
         }
     }
     if let Err(e) = crate::autorun::roots::write_file(root, &path, &text) {
-        crate::applog::warn(format!("Auto Run: a capture export could not be saved: {e}"));
+        crate::applog::warn(format!("Auto Test: a capture export could not be saved: {e}"));
         return (500, "the export could not be saved - see Settings, Logs".to_string());
     }
-    crate::applog::info(format!("Auto Run: the assistant exported {} captured requests", oldest_first.len()));
+    crate::applog::info(format!("Auto Test: the assistant exported {} captured requests", oldest_first.len()));
     let out = json!({
         "file": format!("{stem}.har"),
         "folder": CAPTURES_DIR,
@@ -816,7 +816,7 @@ pub fn read_import(root: &Path, args: &Value) -> Result<(String, Vec<Captured>),
         return Err((413, format!("{stem}.har is over {} MB: export a smaller capture", MAX_IMPORT_BYTES / (1024 * 1024))));
     }
     let raw = std::fs::read(&path).map_err(|e| {
-        crate::applog::warn(format!("Auto Run: a capture import could not be read: {e}"));
+        crate::applog::warn(format!("Auto Test: a capture import could not be read: {e}"));
         (500, "the file could not be read - see Settings, Logs".to_string())
     })?;
     let text = String::from_utf8_lossy(&raw);
@@ -834,7 +834,7 @@ pub fn store_import(imported: &mut ImportedSets, stem: String, entries: Vec<Capt
     }
     let n = entries.len();
     let replaced = imported.insert(stem.clone(), Arc::new(entries)).is_some();
-    crate::applog::info(format!("Auto Run: the assistant imported {n} requests from a HAR file"));
+    crate::applog::info(format!("Auto Test: the assistant imported {n} requests from a HAR file"));
     let out = json!({
         "set": stem,
         "requests": n,

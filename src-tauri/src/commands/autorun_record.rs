@@ -52,10 +52,10 @@ pub fn recording_is_going() -> bool {
 }
 
 pub const ALREADY_RECORDING: &str =
-    "something is already being recorded or checked in Auto Run - finish or cancel it first";
+    "something is already being recorded or checked in Auto Test - finish or cancel it first";
 /// Said by an unattended run and the supervised browser while recording (a
 /// module path or a sign-in) or checking.
-pub const RECORDING_BUSY: &str = "something is being recorded or checked in Auto Run - finish or cancel it first";
+pub const RECORDING_BUSY: &str = "something is being recorded or checked in Auto Test - finish or cancel it first";
 
 const WOULD_NOT_LISTEN: &str =
     "the browser would not report clicks - try again, and see Settings, Logs if it keeps happening";
@@ -555,7 +555,7 @@ pub async fn auto_run_record_cancel() -> Result<(), String> {
 
 /// Whether the recorder is held: by a recording, or by a Start, a check or
 /// a Try still going. The Areas dialog asks when it opens - one it
-/// replaced may have left any of these behind (the Auto Run section was
+/// replaced may have left any of these behind (the Auto Test section was
 /// left mid-recording), and Cancel ends each of them. A recording whose
 /// browser was closed has already let go, and Start tidies it away.
 #[tauri::command]

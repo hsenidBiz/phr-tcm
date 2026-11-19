@@ -1,4 +1,4 @@
-//! The files an Auto Run browser downloads, and the names they are kept
+//! The files an Auto Test browser downloads, and the names they are kept
 //! under.
 //!
 //! The browser saves each download under its guid in the folder it was

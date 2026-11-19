@@ -1,7 +1,7 @@
 // An unattended run that carries on in the background.
 //
 // The run lives in lib/backgroundRun, its window and the title-bar pill are
-// mounted beside the screens (as App does), and the Auto Run screen comes
+// mounted beside the screens (as App does), and the Auto Test screen comes
 // and goes as the person moves between sections. What is under test: the
 // run outlives the screen, the pill brings its window back from anywhere,
 // a finish in the background waits for Review instead of opening over the
@@ -184,7 +184,7 @@ test("Run in background closes the window, and the pill reopens it from another 
   fireEvent.click(screen.getByRole("button", { name: "Go to Manual Entry" }));
   expect(screen.getByText("Manual Entry screen")).toBeInTheDocument();
   await emitProgress({ index: 1, case_id: 2, title: "Beta check", phase: "step", step_number: 1 });
-  const pill = screen.getByRole("button", { name: "Auto Run 2 of 2. Open the run window" });
+  const pill = screen.getByRole("button", { name: "Auto Test 2 of 2. Open the run window" });
   expect(pill).toHaveAttribute("title", "Open the run window");
 
   // A click opens the run window right here, over Manual Entry.
@@ -215,9 +215,9 @@ test("a run that finishes in the background waits for Review, which opens it on 
     "The unattended run finished",
     expect.objectContaining({ action: expect.objectContaining({ label: "Review" }) }),
   );
-  const pill = await screen.findByRole("button", { name: "Run finished, Review. Open the finished run's review in Auto Run" });
+  const pill = await screen.findByRole("button", { name: "Run finished, Review. Open the finished run's review in Auto Test" });
 
-  // Review takes the person to Auto Run, on Past runs, with the review open.
+  // Review takes the person to Auto Test, on Past runs, with the review open.
   fireEvent.click(pill);
   expect(await screen.findByRole("listitem", { name: "Case #1 Alpha check" })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: /^Past runs/ })).toHaveAttribute("aria-selected", "true");
@@ -334,7 +334,7 @@ test("a network wait shows on the pill and in the window, is announced once, sur
   await emitWait({}); // a repeat of the same wait is not a second notice
   expect(announce).toHaveBeenCalledTimes(1);
   expect(announce).toHaveBeenCalledWith(
-    "Auto Run paused",
+    "Auto Test paused",
     "The company network is unreachable. Reconnect the VPN - the run carries on by itself.",
   );
   expect(backgroundRunSnapshot().run?.networkWait?.before_case_id).toBe(2);
@@ -367,7 +367,7 @@ test("the end of a network wait clears it; only giving up is announced again", a
   await emitWait({ before_case_id: 4 });
   await emitWait({ before_case_id: 4, waiting: false, ended: "gave_up" });
   expect(announce).toHaveBeenCalledTimes(4);
-  expect(announce).toHaveBeenLastCalledWith("Auto Run stopped", "The company network was unreachable for 30 minutes.");
+  expect(announce).toHaveBeenLastCalledWith("Auto Test stopped", "The company network was unreachable for 30 minutes.");
 });
 
 test("a run that fails in the background says so, and the pill reopens the window on the error", async () => {
@@ -388,7 +388,7 @@ test("a run that fails in the background says so, and the pill reopens the windo
   expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
 });
 
-test("while a run goes, every Run button in Auto Run waits for it and says why", async () => {
+test("while a run goes, every Run button in Auto Test waits for it and says why", async () => {
   mockScreen();
   renderShell();
   await startUnattended();
@@ -429,14 +429,14 @@ test("while discovery holds the browser, no unattended run starts and the pill s
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
 
-  const busy = "Discovery is using the Auto Run browser";
+  const busy = "Discovery is using the Auto Test browser";
   await waitFor(() => {
     for (const b of screen.getAllByRole("button", { name: "Run 2 unattended" })) {
       expect(b).toBeDisabled();
       expect(b).toHaveAttribute("title", busy);
     }
   });
-  expect(screen.getByRole("status", { name: /^Discovering\. Discovery is using the Auto Run browser/ })).toBeInTheDocument();
+  expect(screen.getByRole("status", { name: /^Discovering\. Discovery is using the Auto Test browser/ })).toBeInTheDocument();
 
   // The store refuses too: no setup opens, so nothing can start.
   let opened = true;

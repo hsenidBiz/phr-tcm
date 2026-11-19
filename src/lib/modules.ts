@@ -109,7 +109,7 @@ export async function hydrateModules(): Promise<void> {
 
 /** Switch one module through Rust, then tell every screen what Rust says is
  * on now (switching one off can switch others off). Throws Rust's refusal -
- * changing nothing - when it will not. Returns what switching Auto Run on for
+ * changing nothing - when it will not. Returns what switching Auto Test on for
  * the first time turned on besides (null for any other switch). */
 export async function setModule(m: Module, next: boolean): Promise<Recommended | null> {
   generation += 1;
@@ -182,7 +182,7 @@ export function shouldLeaveHidden(section: string, shown: boolean, hydrated: boo
 }
 
 /** Where the App shell's redirect sends a tab that is no longer offered, or
- * null to stay. Simple mode sends the screens it hides to Auto Run; a module
+ * null to stay. Simple mode sends the screens it hides to Auto Test; a module
  * that is off sends to Manual Entry. Null until hydration has settled. */
 export function leaveTarget(
   section: string,

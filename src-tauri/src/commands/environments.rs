@@ -73,22 +73,22 @@ pub struct EnvInput {
     pub account_lookup: Option<crate::autorun::account_lookup::AccountLookup>,
 }
 
-/// Said while an Auto Run browser holds a signed-in account: the person
+/// Said while an Auto Test browser holds a signed-in account: the person
 /// closes it before the environment changes.
 pub const SWITCH_BROWSER_SIGNED_IN: &str =
-    "the environment cannot be switched while an Auto Run browser is signed in to an account - close it first";
+    "the environment cannot be switched while an Auto Test browser is signed in to an account - close it first";
 
 /// Said when a switch would land in the middle of a run, recording, check
 /// or Try - which would mix two environments' accounts and sessions.
 pub const SWITCH_BUSY: &str =
-    "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+    "the environment cannot be switched while something is being recorded or run in Auto Test - finish or cancel it first";
 /// Said while an API template run holds its slot.
 pub const SWITCH_TEMPLATE_RUNNING: &str =
     "the environment cannot be switched while an API template is running - wait for it to finish first";
-/// Said while the supervised Auto Run browser is open: it is signed in to
+/// Said while the supervised Auto Test browser is open: it is signed in to
 /// the environment it was opened in.
 pub const SWITCH_SUPERVISED_OPEN: &str =
-    "the environment cannot be switched while the supervised browser is open in Auto Run - close it first";
+    "the environment cannot be switched while the supervised browser is open in Auto Test - close it first";
 
 fn has_password(store: &dyn SecretStore, id: &str) -> bool {
     match store.get(&environments::password_target(id)) {
@@ -241,7 +241,7 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     // (`set_active_with`) - which also means no switch can make this the
     // active environment halfway through.
     let refused = |e: String| e.replacen(SWITCH_REFUSED, ADDRESS_CHANGE_REFUSED, 1);
-    // And across every Auto Run browser: no open begins (`opening()`), and
+    // And across every Auto Test browser: no open begins (`opening()`), and
     // each slot's session is locked in slot order - an assistant's only
     // tried briefly, so an address that is in use is refused at once beside
     // an assistant's replay rather than after it. Another environment's
@@ -408,8 +408,8 @@ pub fn move_bridge_to(
     let mut held = bridge.map(|b| b.lock().unwrap_or_else(|e| e.into_inner()));
     let previous = environments::active_id(root)?;
     let file = environments::set_active(root, id)?;
-    // Every Auto Run store now reads and writes the new environment's folder.
-    // If that cannot be made, the file goes back: the list, the Auto Run
+    // Every Auto Test store now reads and writes the new environment's folder.
+    // If that cannot be made, the file goes back: the list, the Auto Test
     // folder and the bridge must all name the same environment.
     // (Before app set-up there is no layout to move: tests of the bridge alone.)
     let selected = if crate::autorun::store::shared_root().is_some() {
@@ -951,7 +951,7 @@ pub fn env_list(
     // environment's folder to exist first.
     let root = crate::autorun::store::shared_root().ok_or_else(|| super::autorun::NO_DATA_DIRECTORY.to_string())?;
     let view = env_list_with(&root, &*secrets.0, current_db.as_deref())?;
-    // No selection here: a list must never move the Auto Run folder (a
+    // No selection here: a list must never move the Auto Test folder (a
     // stale one would undo a switch) or fail for want of a folder. The
     // first read of the root selects the active environment.
     // Once a run, with the working repository the bridge's start could not

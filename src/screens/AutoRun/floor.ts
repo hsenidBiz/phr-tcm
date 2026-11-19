@@ -38,8 +38,8 @@ export function floorOf(
     .map(({ step_number }) => {
       const scriptStep = script.find((ss) => typeof ss === "object" && ss !== null && ss.step_number === step_number);
       if (!scriptStep) return { step_number, state: { kind: "unchecked" as const } };
-      // A step Auto Run performs itself needs no check or reason.
-      if (scriptStep.by_auto_run === true) return { step_number, state: { kind: "explained" as const, reason: "Done by Auto Run" } };
+      // A step Auto Test performs itself needs no check or reason.
+      if (scriptStep.by_auto_run === true) return { step_number, state: { kind: "explained" as const, reason: "Done by Auto Test" } };
       const actions: unknown[] = Array.isArray(scriptStep.actions) ? scriptStep.actions : [];
       const hasCheck = actions.some((a) => {
         const kind = typeof a === "object" && a !== null ? (a as { kind?: unknown }).kind : undefined;

@@ -13,7 +13,7 @@ export function copyRefusalText(message: string): string {
     return "The environment changed while this dialog was open - open it again.";
   }
   if (message.startsWith("the environment cannot be switched")) {
-    return "Nothing can be copied while something is open or running in Auto Run - finish or close it first.";
+    return "Nothing can be copied while something is open or running in Auto Test - finish or close it first.";
   }
   return message;
 }

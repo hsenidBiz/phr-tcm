@@ -1,4 +1,4 @@
-// What the Auto Run screen needs before a run can go anywhere, worked out
+// What the Auto Test screen needs before a run can go anywhere, worked out
 // from answers the screen already has. `undefined` / `null` mean "not known
 // yet" - never "missing" - so a slow read can never open the screen on
 // Setup by itself.

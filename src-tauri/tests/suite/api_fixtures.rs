@@ -1522,7 +1522,7 @@ mod running {
         assert!(!report.ok);
         let failed = report.failed.clone().unwrap();
         assert!(failed.starts_with("step 1: nothing had been captured yet; failed at Sign in: "), "{failed}");
-        assert!(failed.contains("the Auto Run browser"), "says who had it: {failed}");
+        assert!(failed.contains("the Auto Test browser"), "says who had it: {failed}");
         assert_eq!((r.browsers.opened, r.browsers.closed), (0, 0), "no browser was opened");
         let runs = history(&r, "draft-cycle");
         assert_eq!((runs.len(), runs[0].failed_step), (1, Some(1)));

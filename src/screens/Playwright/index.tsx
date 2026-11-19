@@ -1,5 +1,5 @@
 // The Playwright tab: the team's PHR-PLAYWRIGHT-AUTOMATION repo, read from
-// the clone folder Export to Playwright uses. Offered exactly where Auto Run
+// the clone folder Export to Playwright uses. Offered exactly where Auto Test
 // is (lib/extras); Rust refuses its commands everywhere else.
 //
 // A header (the clone folder and its health badges), then four tabs:

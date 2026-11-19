@@ -13,7 +13,7 @@ import { resetModulesStore, setModulesForTest } from "../../../src/lib/modules";
 import { backgroundRunSnapshot, openRunSetup, resetBackgroundRun } from "../../../src/lib/backgroundRun";
 import ReplayPane, { statusOf } from "../../../src/screens/AutoRun/ReplayPane";
 
-// Auto Run sits under Database Access, which these tests expect on.
+// Auto Test sits under Database Access, which these tests expect on.
 beforeEach(() => setModulesForTest(["db_access", "auto_run"]));
 
 afterEach(() => {
@@ -26,7 +26,7 @@ afterEach(() => {
 
 type PaneCase = { id: number; title: string; module?: string; steps?: { action: string; expected: string }[] };
 
-/** Opens the run window on its setup for `cases`, the way the Auto Run
+/** Opens the run window on its setup for `cases`, the way the Auto Test
  * screen's Run N unattended does, and mounts it. Any earlier run in the
  * store is forgotten first, so each mount starts from a fresh setup. */
 function mountPane(cases: PaneCase[], plan: never | null = null) {

@@ -51,7 +51,7 @@ fn a_claimed_case_is_refused_to_another_agent_naming_the_holder() {
     assert_eq!(claims::holder(4521, T0 + 1), Some(key(ID_A)));
     assert_eq!(
         case_claimed(4521, "Assistant 1", 0),
-        "case 4521 is being worked on by Assistant 1 (held for less than a minute) - pick another case, or ask the person to release Assistant 1 on the Auto Run screen"
+        "case 4521 is being worked on by Assistant 1 (held for less than a minute) - pick another case, or ask the person to release Assistant 1 on the Auto Test screen"
     );
     fresh();
 }
@@ -169,7 +169,7 @@ fn a_mapping_run_in_a_browser_nobody_holds_names_the_browser_without_a_label() {
     // The person's main browser, or an assistant that has gone.
     assert_eq!(
         mapping_refusal(SlotNo(1), [true, false, false]),
-        Some(mapping_going("the main Auto Run browser"))
+        Some(mapping_going("the main Auto Test browser"))
     );
     register(ID_A);
     slots::bind(SlotNo::MAIN, &key(ID_A));
@@ -180,12 +180,12 @@ fn a_mapping_run_in_a_browser_nobody_holds_names_the_browser_without_a_label() {
     agents::note_bye(ID_A, T0);
     assert_eq!(
         mapping_refusal(SlotNo(1), [true, false, false]),
-        Some(mapping_going("the main Auto Run browser"))
+        Some(mapping_going("the main Auto Test browser"))
     );
     slots::unbind(SlotNo::MAIN);
     assert_eq!(
         mapping_refusal(SlotNo::MAIN, [false, false, true]),
-        Some(mapping_going("an Auto Run browser"))
+        Some(mapping_going("an Auto Test browser"))
     );
     let said = mapping_going("Assistant 1's browser");
     assert!(!said.contains(ID_A) && !said.contains("4242"), "{said}");

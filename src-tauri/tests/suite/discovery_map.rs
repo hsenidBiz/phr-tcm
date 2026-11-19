@@ -1,4 +1,4 @@
-//! The per-project discovery map: what Auto Run has seen on the live app,
+//! The per-project discovery map: what Auto Test has seen on the live app,
 //! kept as paths and locators only.
 
 use v2_lib::autorun::discovery_map::{

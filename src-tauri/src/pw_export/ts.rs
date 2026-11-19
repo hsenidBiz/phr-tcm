@@ -1,5 +1,5 @@
 //! TypeScript text for the Playwright export: string literals and the
-//! translation of an Auto Run selector into a Playwright locator expression.
+//! translation of an Auto Test selector into a Playwright locator expression.
 
 use crate::browser::locator::{LocatorStep, Target};
 

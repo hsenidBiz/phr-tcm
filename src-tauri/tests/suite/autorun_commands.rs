@@ -293,7 +293,7 @@ fn highlight_off_skips_the_pause_in_the_supervised_browser() {
     assert!(Timing::supervised().highlight_ms > 0);
 }
 
-// ---- Clearing scripts and results (dev-only Auto Run toolbar) ----------
+// ---- Clearing scripts and results (dev-only Auto Test toolbar) ----------
 
 /// `auto_run_clear_scripts` and `auto_run_clear_runs` share this guard
 /// with `auto_run_open_browser`'s own refusal while an unattended run is

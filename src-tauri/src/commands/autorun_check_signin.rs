@@ -3,12 +3,12 @@
 //! `autorun::sign_in_check`; this is who may ask, and when.
 //!
 //! A check opens a browser of its own for each account (never the person's
-//! Auto Run browser), so it holds the same claim an unattended run does
+//! Auto Test browser), so it holds the same claim an unattended run does
 //! while it goes: a run, a second check, a discovery or a replay to a step
 //! that starts is refused, and so is `auto_run_open_browser`, each with the
 //! sentence "a sign-in check is running (<account>) - wait for it or cancel
 //! it". It is refused itself while an unattended run, a replay or a
-//! discovery is using the Auto Run browser. Cancel ends it between
+//! discovery is using the Auto Test browser. Cancel ends it between
 //! accounts and closes the browser of the one it is on.
 
 use crate::autorun::active_login::session_ownership;
@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Why a check cannot begin now, or `None`: another check, an unattended
-/// run, a replay to a step or a discovery has the Auto Run browser.
+/// run, a replay to a step or a discovery has the Auto Test browser.
 pub fn refusal() -> Option<String> {
     if let Some(going) = crate::autorun::sign_in_check::running_sentence() {
         return Some(going);

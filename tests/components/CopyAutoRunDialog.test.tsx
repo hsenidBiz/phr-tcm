@@ -1,4 +1,4 @@
-// Copying a whole environment's Auto Run data into another: the source list
+// Copying a whole environment's Auto Test data into another: the source list
 // (removed environments included), the question before a non-empty target is
 // replaced, and the command's refusal.
 
@@ -64,7 +64,7 @@ test("copies into an empty environment without asking, sending replace=false", a
     sourceKey: "env-00000001",
     replace: false,
   });
-  expect(toast.success).toHaveBeenCalledWith("Copied Auto Run data into QA");
+  expect(toast.success).toHaveBeenCalledWith("Copied Auto Test data into QA");
 });
 
 test("the copy dialog says accounts are not copied and the API library is shared", async () => {
@@ -119,7 +119,7 @@ test("after a needs-confirm refusal the dialog asks, and Replace is the only way
     if (cmd === "env_copy_choices") return { target_empty: empty, sources: SOURCES };
     if (cmd === "env_copy_autorun") {
       calls.push(args as Record<string, unknown>);
-      if (!(args as { replace: boolean }).replace) throw "this environment already has Auto Run data - confirm to replace it";
+      if (!(args as { replace: boolean }).replace) throw "this environment already has Auto Test data - confirm to replace it";
       return { items: 1, kept_aside: true };
     }
     return null;

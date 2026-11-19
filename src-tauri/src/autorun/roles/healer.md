@@ -28,7 +28,7 @@ same job, your own browser, an editor or a sub-agent.
 - Before a 3rd cycle, look at the live page again: the 3rd applies a fix you can name, never a guess. A hard diagnosis may
   need a stronger model.
 - How a repair is made: the case rewriter's rules, which come with your first save.
-- When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
+- When your caller gave you a name, pass it as `agent` on every Auto Test and API template call.
 - A repaired case is done only when a replay of the whole case passes: until then its script is not checked.
 - When you stop without a pass, the case stays failed: never make it pass. Report each failure in order, what each cycle
   changed, your diagnosis, which bound stopped you and every check given up.

@@ -1,4 +1,4 @@
-//! The assistant's test headers and cookies in its Auto Run browser
+//! The assistant's test headers and cookies in its Auto Test browser
 //! (`autorun::overrides`, the `/autorun-headers` and `/autorun-cookie*`
 //! routes): guarded, named in every answer while in place, and taken away
 //! by a reset - only what the assistant set.
@@ -655,7 +655,7 @@ async fn the_changed_names_are_named_never_values() {
     assert!(!lease.same_sign_in(&mut page_on(ORIGIN, after), &origins).await);
     let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
     assert!(
-        lines.iter().any(|l| l == "Auto Run: the sign-in's cookies changed: .ASPXAUTH (changed), ehrm85 (gone)"),
+        lines.iter().any(|l| l == "Auto Test: the sign-in's cookies changed: .ASPXAUTH (changed), ehrm85 (gone)"),
         "{lines:?}"
     );
     assert!(!lines.iter().any(|l| l.contains("-value-")), "a cookie value was logged");
@@ -695,7 +695,7 @@ async fn acting_tools_refuse_in_the_persons_browser() {
         let ((status, said), _) = override_tool_in(SlotNo::MAIN, &mut none, *tool, &args.to_string()).await;
         assert_eq!((status, said.as_str()), (404, NO_BROWSER_OPEN), "{tool:?}");
     }
-    assert!(refused.contains("the person's Auto Run browser is open"), "{refused}");
+    assert!(refused.contains("the person's Auto Test browser is open"), "{refused}");
 
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
     for (tool, args) in &calls {

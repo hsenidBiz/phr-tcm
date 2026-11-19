@@ -272,7 +272,7 @@ pub fn let_through_line(posted: &[(String, String)]) -> Option<String> {
     }
     let list: Vec<String> = posted.iter().map(|(m, p)| format!("{} {}", m.trim().to_ascii_uppercase(), p)).collect();
     Some(format!(
-        "went through the no-save guard (no save word in the path): {} - if one of them saves, a person adds a save word on the Auto Run Setup tab",
+        "went through the no-save guard (no save word in the path): {} - if one of them saves, a person adds a save word on the Auto Test Setup tab",
         list.join(", ")
     ))
 }
@@ -353,7 +353,7 @@ pub fn fetch_enable_all_params() -> Value {
 /// What the log says when a browser refused the typed patterns, followed by
 /// the browser's own reason (about the patterns, never an address).
 pub const TYPED_REFUSED: &str =
-    "Auto Run's Must not save guard pauses every request in this browser, which refused the request types: ";
+    "Auto Test's Must not save guard pauses every request in this browser, which refused the request types: ";
 
 /// A project's own save words as they are kept: trimmed, lowercased, in the
 /// order given, once each. Refused with a sentence that names the word.

@@ -1,5 +1,5 @@
 /**
- * The widths of Auto Run's dialogs, in one place so they stay consistent.
+ * The widths of Auto Test's dialogs, in one place so they stay consistent.
  *
  * Large: the dialogs that show data (scripts, accounts, areas, a run). About
  * 94% of the window, up to 1400px, and no taller than 90% of it.

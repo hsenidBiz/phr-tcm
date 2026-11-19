@@ -410,7 +410,7 @@ pub(crate) const RUN_SHAPE: &str = "{ \"id\": \"<template id>\", \"account\": \"
 /// afterwards. The route arm with the browser factory (`open`) and the
 /// flow database (`open_db`, asked for only by a template on a flow)
 /// handed in, so a test reaches all of it but a real browser and server.
-/// The default caller's: a refusal for an account the Auto Run browser holds
+/// The default caller's: a refusal for an account the Auto Test browser holds
 /// asks main's browser (`api_template_prove_for`).
 pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
@@ -422,9 +422,9 @@ pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::
     api_template_prove_for(Some(SlotNo::MAIN), ctx, body, open, open_db, timing).await
 }
 
-/// `api_template_prove` for a caller whose own Auto Run browser is slot
+/// `api_template_prove` for a caller whose own Auto Test browser is slot
 /// `asker` (none: it has no browser). A proof refused its account because the
-/// Auto Run browser holds it says so only when THAT browser holds it.
+/// Auto Test browser holds it says so only when THAT browser holds it.
 pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     asker: Option<SlotNo>,
     ctx: &BridgeContext,
@@ -556,7 +556,7 @@ pub async fn api_template_prove_with<B: crate::api_templates::held::Keeps, D: cr
 /// `POST /api-template-run`: run a saved template and return its outputs,
 /// or the failing step and what had been created. As
 /// `api_template_prove`, with the browser factory and the flow database
-/// handed in. The default caller's: a refusal for an account the Auto Run
+/// handed in. The default caller's: a refusal for an account the Auto Test
 /// browser holds asks main's browser (`api_template_run_for`).
 pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
@@ -568,7 +568,7 @@ pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::ap
     api_template_run_for(Some(SlotNo::MAIN), ctx, body, open, open_db, timing).await
 }
 
-/// `api_template_run` for a caller whose own Auto Run browser is slot
+/// `api_template_run` for a caller whose own Auto Test browser is slot
 /// `asker` (none: it has no browser), as `api_template_prove_for`.
 pub async fn api_template_run_for<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     asker: Option<SlotNo>,
@@ -732,12 +732,12 @@ pub fn failed_prove_answer(
     if let Some(session) = explore {
         let posts: Vec<(String, String)> = sent.iter().map(|(_, path, _)| ("POST".to_string(), path.clone())).collect();
         let mut kept = ex::note_writes(root, session, &posts).map_err(|why| {
-            crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+            crate::applog::warn(format!("Auto Test explore session: a save could not be noted: {why}"));
         });
         for (_, path, _) in &sent {
             let line = ex::request_line("POST", path);
             if let Err(why) = ex::record_prove_write(root, session, &template.id, &line) {
-                crate::applog::warn(format!("Auto Run explore session: a failed prove's write could not be kept: {why}"));
+                crate::applog::warn(format!("Auto Test explore session: a failed prove's write could not be kept: {why}"));
                 kept = Err(());
             }
         }
@@ -834,7 +834,7 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
     // run captured filled in.
     let sent = sent_posts(&req.template, report, &vars);
     if let Err(why) = ex::note_writes(root, &session, &sent) {
-        crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+        crate::applog::warn(format!("Auto Test explore session: a save could not be noted: {why}"));
     }
 
     let mut v = serde_json::to_value(report).unwrap_or_else(|_| serde_json::json!({ "ok": report.ok }));
@@ -1169,20 +1169,20 @@ pub(crate) async fn run_api_template_request<B: crate::api_templates::held::Keep
     (if report.ok { 200 } else { 502 }, text)
 }
 
-/// Said beside a template run refused its account because the Auto Run
+/// Said beside a template run refused its account because the Auto Test
 /// browser holds it, when the assistant's replay opened that browser.
 pub const FREE_IT_WITH_RELEASE: &str =
-    "The Auto Run browser your replay left open holds this account: close it with reset_autorun_browser and `release: true`, then run the template again.";
+    "The Auto Test browser your replay left open holds this account: close it with reset_autorun_browser and `release: true`, then run the template again.";
 
 /// Does a template run's report say its account `key` was refused because
-/// the Auto Run browser holds it (the lease's own sentence,
+/// the Auto Test browser holds it (the lease's own sentence,
 /// `lease::in_use_by_browser`)?
 pub(crate) fn held_by_the_auto_run_browser(report_json: &str, key: &str) -> bool {
     report_json.contains(&crate::autorun::lease::in_use_by_browser(key))
 }
 
 /// A failed template run's report, with `FREE_IT_WITH_RELEASE` beside it as
-/// `"free_it"` when its account `key` was refused because the Auto Run
+/// `"free_it"` when its account `key` was refused because the Auto Test
 /// browser holds it and that browser is the assistant's own, holding this
 /// very account (`assistant_holds`). Otherwise the report as it was.
 pub fn template_report_hint(report_json: String, key: &str, assistant_holds: bool) -> String {

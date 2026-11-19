@@ -1,6 +1,6 @@
 // Data an assistant adds outside the screen (areas, components, the map,
 // quirks, test files, accounts, fixtures) is read again when Rust says so:
-// the Auto Run screen updates with no reload, and a burst of events is read
+// the Auto Test screen updates with no reload, and a burst of events is read
 // once.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";

@@ -551,7 +551,7 @@ export default function AccountsDialog({
         </p>
       </div>
       {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
-      {/* The tab pattern of the Auto Run screen: only the chosen tab is in
+      {/* The tab pattern of the Auto Test screen: only the chosen tab is in
           the Tab order, and the arrow keys move along. */}
       <div role="tablist" aria-label="Accounts sections" className="flex shrink-0 gap-1 border-b border-border">
         {tabs.map(({ id, label, count }, i) => {
@@ -758,7 +758,7 @@ export default function AccountsDialog({
                 disabled={checkCount === 0 || checking || taken || !projectReady}
                 title={
                   taken
-                    ? "A run or a discovery is using the Auto Run browser"
+                    ? "A run or a discovery is using the Auto Test browser"
                     : !projectReady
                       ? "Pick a project first"
                       : undefined

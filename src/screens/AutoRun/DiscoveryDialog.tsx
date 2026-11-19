@@ -7,7 +7,7 @@
 // (never deleting it) so discovery starts an empty one. Below the areas,
 // the last menu mapping run: when it ran, the modules, what it added,
 // updated, found unchanged and could not reach, and the saves it blocked.
-// Opened from Auto Run's Setup card; the map and the summary are Rust's
+// Opened from Auto Test's Setup card; the map and the summary are Rust's
 // (`autorun/discovery_map.rs`, `autorun/mapping_summary.rs`).
 
 import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";

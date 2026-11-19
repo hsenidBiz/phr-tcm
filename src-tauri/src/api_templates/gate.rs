@@ -86,7 +86,7 @@ pub enum StageState {
 /// Why a check is being run - recorded with it.
 pub struct CheckFor<'a> {
     /// `"gate"`, `"prove"`, `"progress"`, `"save"` or `"precondition"`
-    /// (an Auto Run case's, checked before its sign-in).
+    /// (an Auto Test case's, checked before its sign-in).
     pub purpose: &'static str,
     pub template: Option<&'a str>,
 }

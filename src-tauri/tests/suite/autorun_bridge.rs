@@ -1658,7 +1658,7 @@ async fn page_routes_need_the_supervised_browser() {
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
-    let expected = "no supervised browser is open - the person opens one with Open browser on the Auto Run tab";
+    let expected = "no supervised browser is open - the person opens one with Open browser on the Auto Test tab";
 
     let (status, out) = route(&ctx(), None, "GET", "/autorun-page", "", "1.0.0").await;
     assert_eq!(status, 409, "{out}");
@@ -1976,7 +1976,7 @@ fn a_playwright_selector_is_refused_by_the_probe() {
     use v2_lib::ai_bridge::{probe_target, NOT_A_PLAYWRIGHT_SELECTOR};
     assert_eq!(
         NOT_A_PLAYWRIGHT_SELECTOR,
-        "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors)."
+        "that is a Playwright selector, which Auto Test does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors)."
     );
     for css in ["button:has-text(\"Save\")", "li:text-is(\"Leave\")", "a:text(\"x\")", "div >> text=Save", "BUTTON:HAS-TEXT('x')"] {
         for selector in [serde_json::json!(css), serde_json::json!({ "css": css }), serde_json::json!([{ "css": "form" }, { "css": css }])] {
@@ -2722,7 +2722,7 @@ async fn the_assistant_retires_its_own_quirk_and_never_a_persons() {
 }
 
 /// One list per project, read by both assistants: the API templates
-/// guide ends with the same section as the Auto Run guide, and a note
+/// guide ends with the same section as the Auto Test guide, and a note
 /// filed from API template work says so.
 #[tokio::test]
 async fn the_api_template_guide_ends_with_the_same_quirks_section() {
@@ -2744,7 +2744,7 @@ async fn the_api_template_guide_ends_with_the_same_quirks_section() {
     let line = format!("- [{}] (assistant, API) the leave handler wants a CSRF header\n", quirks[0].id);
     assert!(api.contains("## Known quirks of this application\n\n") && api.contains(&line), "{api}");
     let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
-    assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
+    assert!(autorun.contains(&line), "the same line in the Auto Test guide: {autorun}");
     assert!(
         api.contains("`record_quirk { text, from: \"api\" }`") && api.contains("`record_quirk { retire: id"),
         "the guide names the quirk tool, recording and retiring: {api}"
@@ -2761,7 +2761,7 @@ fn name_the_active_environment(dir: &std::path::Path, name: &str, test_environme
     v2_lib::environments::save_env(dir, env, &known).unwrap();
 }
 
-/// The Auto Run guide explains environments, and the route names the
+/// The Auto Test guide explains environments, and the route names the
 /// active one - with no project open too, since an environment is the
 /// app's, not a project's.
 #[tokio::test]
@@ -3000,7 +3000,7 @@ async fn a_too_long_repair_quirk_has_no_retire_advice() {
 // `dev: bool` seam, exercised directly here.
 
 /// Each route prefix belongs to its module: `/autorun-` and the accounts
-/// routes to Auto Run, `/api-template` to API Templates, the two database
+/// routes to Auto Test, `/api-template` to API Templates, the two database
 /// routes to Database Access; everything else is Core.
 #[test]
 fn each_route_prefix_belongs_to_its_module() {
@@ -3024,8 +3024,8 @@ fn each_route_prefix_belongs_to_its_module() {
 #[test]
 fn each_guard_refuses_with_its_modules_sentence() {
     for (path, m, said) in [
-        ("/autorun-guide", Module::AutoRun, "Auto Run is switched off in Modules"),
-        ("/accounts", Module::AutoRun, "Auto Run is switched off in Modules"),
+        ("/autorun-guide", Module::AutoRun, "Auto Test is switched off in Modules"),
+        ("/accounts", Module::AutoRun, "Auto Test is switched off in Modules"),
         ("/api-template-run", Module::ApiTemplates, "API Templates is switched off in Modules"),
         ("/db-query", Module::DbAccess, "Database Access is switched off in Modules"),
         ("/db-lookup", Module::DbAccess, "Database Access is switched off in Modules"),
@@ -3040,7 +3040,7 @@ fn each_guard_refuses_with_its_modules_sentence() {
 
 /// The guard is applied by PATH, once, before the router's match - so a
 /// route added later is covered by the shape of its name rather than by
-/// somebody remembering to repeat the check. Every Auto Run route is
+/// somebody remembering to repeat the check. Every Auto Test route is
 /// refused outside a development build; nothing else is touched.
 #[test]
 fn the_guard_still_holds_for_every_new_route() {
@@ -3069,11 +3069,11 @@ fn the_guard_still_holds_for_every_new_route() {
         let (status, body) =
             module_guard_for(path, &Default::default()).unwrap_or_else(|| panic!("{path} was not refused"));
         assert_eq!(status, 404, "{path}");
-        assert_eq!(body, "Auto Run is switched off in Modules", "{path}");
+        assert_eq!(body, "Auto Test is switched off in Modules", "{path}");
         assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path} refused in a dev build");
     }
     for path in ["/ping", "/guide", "/test-cases", "/tools"] {
-        assert!(module_guard_for(path, &Default::default()).is_none(), "{path} is not an Auto Run route");
+        assert!(module_guard_for(path, &Default::default()).is_none(), "{path} is not an Auto Test route");
     }
 }
 
@@ -3407,7 +3407,7 @@ async fn get_accounts_names_who_holds_each_account() {
     // holder is named by label once it is bound to an assistant.
     let (v, body) = read(&callers[1]).await;
     assert_eq!(held_by(&v, "hr_admin").as_deref(), Some("your browser"), "{body}");
-    assert_eq!(held_by(&v, "batch").as_deref(), Some("the main Auto Run browser"), "{body}");
+    assert_eq!(held_by(&v, "batch").as_deref(), Some("the main Auto Test browser"), "{body}");
     slots::bind(SlotNo::MAIN, callers[0].key().unwrap());
     let (v, body) = read(&callers[1]).await;
     assert_eq!(held_by(&v, "batch").as_deref(), Some("Assistant 1's browser"), "{body}");
@@ -3420,7 +3420,7 @@ async fn get_accounts_names_who_holds_each_account() {
 /// `get_accounts` carries the project's Test files: by name and human size,
 /// and nothing else - no path, no date. With no project open there is no
 /// folder to read, and a note says so in their place; the accounts still
-/// come. Gated with the other Auto Run routes.
+/// come. Gated with the other Auto Test routes.
 #[tokio::test]
 async fn get_accounts_gives_the_test_files_by_name_and_size_only() {
     use v2_lib::ai_bridge::TEST_FILES_NEED_A_PROJECT;
@@ -3709,7 +3709,7 @@ async fn the_assistant_saves_settings_as_marks() {
     assert_eq!(send(marked).await, (200, "saved 1 script(s): case 7 (unchanged)".to_string()));
 }
 
-// ------------------------------------------------------------ Auto Run's own order
+// ------------------------------------------------------------ Auto Test's own order
 
 /// A signed-in client whose PBI `pbi` is tested by `cases`: the PBI read
 /// with its relations, then the batch read of those cases. The only two
@@ -3773,7 +3773,7 @@ fn scripted(case_id: i32) -> CaseScript {
     }
 }
 
-/// `set_autorun_order` saves Auto Run's own order for the PBI, and names
+/// `set_autorun_order` saves Auto Test's own order for the PBI, and names
 /// every listed case that has no saved script.
 #[tokio::test]
 async fn an_order_is_saved_for_the_pbi_with_a_warning_for_each_case_with_no_script() {
@@ -3791,7 +3791,7 @@ async fn an_order_is_saved_for_the_pbi_with_a_warning_for_each_case_with_no_scri
     assert_eq!(
         lines,
         vec![
-            "saved Auto Run's order for PBI 100: 503, 502, 501, 504",
+            "saved Auto Test's order for PBI 100: 503, 502, 501, 504",
             v2_lib::ai_bridge::ORDER_REPLACED,
             "case 503 has no saved script",
             "case 504 has no saved script",
@@ -3804,8 +3804,8 @@ async fn an_order_is_saved_for_the_pbi_with_a_warning_for_each_case_with_no_scri
     let body = serde_json::json!({ "pbi_id": 100, "case_ids": [502, 501] }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, format!("saved Auto Run's order for PBI 100: 502, 501\n{}", v2_lib::ai_bridge::ORDER_REPLACED));
-    assert!(out.contains("replaced the PBI's whole Auto Run order") && out.contains("mode: \"append\""), "{out}");
+    assert_eq!(out, format!("saved Auto Test's order for PBI 100: 502, 501\n{}", v2_lib::ai_bridge::ORDER_REPLACED));
+    assert!(out.contains("replaced the PBI's whole Auto Test order") && out.contains("mode: \"append\""), "{out}");
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![502, 501]));
 }
 
@@ -3827,7 +3827,7 @@ async fn an_appended_order_keeps_the_rest_of_the_saved_one() {
     assert_eq!(status, 200, "{out}");
     assert_eq!(
         out,
-        "saved Auto Run's order for PBI 100: 504, 502\nAppended: the saved order's other cases run after these, as they were: 501, 503"
+        "saved Auto Test's order for PBI 100: 504, 502\nAppended: the saved order's other cases run after these, as they were: 501, 503"
     );
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![504, 502, 501, 503]));
 
@@ -4349,7 +4349,7 @@ async fn a_dry_run_inside_a_script_is_refused_and_saves_nothing() {
 
 /// A dry run writes nothing and records nothing, refused or not: no
 /// script, no map, no stamp, no repair counted, no quirk. Every file under
-/// the Auto Run folder is the same, byte for byte. A refused dry run
+/// the Auto Test folder is the same, byte for byte. A refused dry run
 /// answers the refusal a save would.
 #[tokio::test]
 async fn a_dry_run_writes_and_records_nothing() {
@@ -4429,7 +4429,7 @@ async fn the_quick_guide_holds_the_rules_and_the_live_sections() {
         assert!(quick.contains(live), "the quick guide has no {live:?}: {quick}");
         assert!(full.contains(live), "the full guide lost {live:?}");
     }
-    for full_only in ["# Writing an Auto Run action script", "## The actions", "## Discovering the app", "## Saving it"] {
+    for full_only in ["# Writing an Auto Test action script", "## The actions", "## Discovering the app", "## Saving it"] {
         assert!(!quick.contains(full_only), "the quick guide carries {full_only:?}");
         assert!(full.contains(full_only), "the full guide has no {full_only:?}");
     }
@@ -5610,7 +5610,7 @@ async fn a_failed_discovery_start_lets_go_of_the_case_it_claimed() {
     assert!(status >= 400 && !out.contains("being worked on"), "{status} {out}");
     assert_eq!(claims::holder(135421, v2_lib::autorun::sessions::now_ms()), None, "A's failed start ended its hold ({a:?})");
     let lines: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
-    assert!(lines.iter().any(|m| m == "Auto Run: case 135421's hold ended - its discovery did not start"), "{lines:?}");
+    assert!(lines.iter().any(|m| m == "Auto Test: case 135421's hold ended - its discovery did not start"), "{lines:?}");
     let (_, out) = start_as(START_B, 135421).await;
     assert!(!out.contains("is being worked on by"), "{out}");
     agents::clear();

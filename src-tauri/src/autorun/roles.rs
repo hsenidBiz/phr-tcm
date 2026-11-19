@@ -55,10 +55,10 @@ impl Role {
     /// description, which is what Claude Code shows and matches on).
     pub fn description(self) -> &'static str {
         match self {
-            Role::Writer => "Choose which of a PBI's test cases to script and write their Auto Run scripts from the live app, under Test Case Manager's writer rules",
-            Role::Healer => "Diagnose and repair failed Auto Run cases within the repair bounds, under Test Case Manager's healer rules",
-            Role::CaseRewriter => "Change a saved Auto Run script or component, for a repair or a rewritten test case, under Test Case Manager's case rewriter rules",
-            Role::Auditor => "Check saved Auto Run scripts against their test cases and report what they miss or fit, never editing, under Test Case Manager's auditor rules",
+            Role::Writer => "Choose which of a PBI's test cases to script and write their Auto Test scripts from the live app, under Test Case Manager's writer rules",
+            Role::Healer => "Diagnose and repair failed Auto Test cases within the repair bounds, under Test Case Manager's healer rules",
+            Role::CaseRewriter => "Change a saved Auto Test script or component, for a repair or a rewritten test case, under Test Case Manager's case rewriter rules",
+            Role::Auditor => "Check saved Auto Test scripts against their test cases and report what they miss or fit, never editing, under Test Case Manager's auditor rules",
             Role::Explorer => "Do a task the person names in the live app with no test case, record every change and report, under Test Case Manager's explorer rules",
         }
     }

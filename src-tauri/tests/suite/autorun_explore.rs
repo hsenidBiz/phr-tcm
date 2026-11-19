@@ -1,6 +1,6 @@
 //! An explore session: a discovery that signs in as a saved account, files
 //! nothing in the discovery map, and keeps its own change list file under
-//! `<Auto Run root>/explore/`. Its end names the saves its browser sent that
+//! `<Auto Test root>/explore/`. Its end names the saves its browser sent that
 //! no change on the list names.
 //!
 //! The real browser is never opened here: the `_in` functions run against
@@ -748,7 +748,7 @@ fn a_change_args_shape_is_said() {
 
 // ---- Undo: the bridge route into Clean up ----
 
-/// Every process-wide thing an undo touches: the Auto Run root (an ended
+/// Every process-wide thing an undo touches: the Auto Test root (an ended
 /// session's change list is closed under it), the template slot, the
 /// activity log, the held browsers and the account leases.
 fn undo_locks() -> impl Sized {

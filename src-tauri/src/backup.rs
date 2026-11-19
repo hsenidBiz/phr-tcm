@@ -5,7 +5,7 @@
 //!   local cache db, pins, watch paths) - collected by the frontend and
 //!   handed in, since only the webview can read it;
 //! - the disk stores under `app_data_dir` (`cache.json` - tags, resolved
-//!   suites and the assigned-items baseline - plus Auto Run scripts and
+//!   suites and the assigned-items baseline - plus Auto Test scripts and
 //!   local runs, and materialized shared drafts).
 //!
 //! What deliberately never travels: credentials. Sign-in tokens live only
@@ -91,7 +91,7 @@ fn excluded(rel: &str) -> bool {
 }
 
 /// `autorun/<a per-environment item>/...` (or the item itself): a file the
-/// flat layout kept at the top of the Auto Run folder. Its second segment.
+/// flat layout kept at the top of the Auto Test folder. Its second segment.
 fn is_flat_original(rel: &str) -> bool {
     let seg = raw_segments(rel);
     seg.first().is_some_and(|s| s.eq_ignore_ascii_case("autorun"))
@@ -150,7 +150,7 @@ pub const FORMAT: u32 = 1;
 /// `(relative_path, bytes)` plus the relative paths skipped for size.
 ///
 /// Once the per-environment folders are in use (`autorun/envs` exists), the
-/// flat originals the update left at the top of the Auto Run folder are not
+/// flat originals the update left at the top of the Auto Test folder are not
 /// read by anything and are left out: each environment's own copy is what
 /// the backup carries.
 pub fn collect_files(data_dir: &Path) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
@@ -299,7 +299,7 @@ pub fn read_doc(path: &Path) -> Result<BackupDoc, String> {
 
 /// Is this backup from before the per-environment layout? No entry under
 /// `autorun/envs/`, and at least one under a per-environment item at the top
-/// of the Auto Run folder (`autorun/scripts/...`, `autorun/projects/...`).
+/// of the Auto Test folder (`autorun/scripts/...`, `autorun/projects/...`).
 /// Only entries an import would accept count.
 pub fn is_pre_update(files: &[BackupFile]) -> bool {
     let mut flat = false;
@@ -403,11 +403,11 @@ fn plan(autorun: &Path, files: &[BackupFile]) -> Result<Plan, String> {
 pub struct BackupPreview {
     pub exported_at: String,
     pub app_version: String,
-    /// The backup is from before each environment had its own Auto Run data.
+    /// The backup is from before each environment had its own Auto Test data.
     pub pre_update: bool,
     /// The backup brings a folder per environment.
     pub post_update: bool,
-    /// The environments whose Auto Run data the import replaces, by name:
+    /// The environments whose Auto Test data the import replaces, by name:
     /// exactly the ones the import will replace. Each replaced folder keeps
     /// its run history, screenshots and Playwright records, and the rest
     /// waits 30 days. Empty when nothing is replaced (a backup of history
@@ -831,7 +831,7 @@ fn copy_records_across(autorun: &Path, from: &str, to: &str) {
 /// disk: it holds passwords and nothing would ever read it.
 fn restore_legacy_accounts(root: &Path, list: &[u8], has_environments: bool) -> Result<(), String> {
     if !has_environments {
-        let failed = |e: String| format!("the Auto Run accounts were restored but could not be given to the active environment: {e}");
+        let failed = |e: String| format!("the Auto Test accounts were restored but could not be given to the active environment: {e}");
         // Makes Default from the restored file when there is no
         // environments file yet (and then removes it).
         let id = crate::environments::active_id(root).map_err(failed)?;
@@ -839,7 +839,7 @@ fn restore_legacy_accounts(root: &Path, list: &[u8], has_environments: bool) -> 
         std::fs::create_dir_all(to.parent().unwrap_or(root)).map_err(|e| failed(e.to_string()))?;
         let text = String::from_utf8_lossy(list);
         crate::ai_tools::atomic_write(&to, &text).map_err(failed)?;
-        crate::applog::info("Backup import: the Auto Run accounts went to the active environment");
+        crate::applog::info("Backup import: the Auto Test accounts went to the active environment");
     }
     match std::fs::remove_file(root.join("accounts.json")) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {

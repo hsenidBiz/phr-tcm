@@ -397,7 +397,7 @@ fn note_check(root: &Path, env_id: &str, c: &SignInCheck, asked_area: Option<&st
         .and_then(|_| std::fs::write(&path, serde_json::to_string_pretty(&marks).unwrap_or_default()));
     if let Err(e) = wrote {
         // The error's words would name the path on this machine.
-        crate::applog::warn(format!("Auto Run sign-in check: the result could not be kept ({:?})", e.kind()));
+        crate::applog::warn(format!("Auto Test sign-in check: the result could not be kept ({:?})", e.kind()));
     }
 }
 
@@ -632,7 +632,7 @@ pub async fn check_accounts<B: Browsers>(
                 (check, keep, asked)
             }
         };
-        crate::applog::info(format!("Auto Run sign-in check as {key}: {}", log_words(&check)));
+        crate::applog::info(format!("Auto Test sign-in check as {key}: {}", log_words(&check)));
         if keep && !env_id.is_empty() {
             note_check(root, &env_id, &check, asked.as_deref());
         }
@@ -692,4 +692,4 @@ async fn one_account<B: Browsers>(
 
 /// Said when a check is asked for while the browser is in use.
 pub const BROWSER_IN_USE: &str =
-    "an unattended run, a replay or a discovery is using the Auto Run browser - wait for it, or stop it first";
+    "an unattended run, a replay or a discovery is using the Auto Test browser - wait for it, or stop it first";

@@ -1,4 +1,4 @@
-//! The Auto Run browser's numbered slots: main is the one the person and
+//! The Auto Test browser's numbered slots: main is the one the person and
 //! every existing path use; two more sit beside it for assistants beyond the
 //! first. These pin the table itself, the state each slot keeps apart, that
 //! main's old names still mean main, and the rules that pick a slot.
@@ -314,7 +314,7 @@ mod routing {
     }
 
     /// A template run (and a proof) that was refused its account because the
-    /// Auto Run browser holds it asks whether the CALLER's own browser does,
+    /// Auto Test browser holds it asks whether the CALLER's own browser does,
     /// not main's: prove and run share the check, and both are given their
     /// caller's slot (none when it has no browser, which then gets no hint).
     #[test]
@@ -715,7 +715,7 @@ mod card {
         assert_eq!(slot_if_any(&caller(ID_B)), None);
         assert!(!NO_BROWSER_OF_YOURS.contains(['\u{2013}', '\u{2014}']));
         assert!(!ALL_BROWSERS_OPEN.contains(['\u{2013}', '\u{2014}']));
-        assert!(ALL_BROWSERS_OPEN.starts_with("3 Auto Run browsers are open already"));
+        assert!(ALL_BROWSERS_OPEN.starts_with("3 Auto Test browsers are open already"));
         fresh();
     }
 
@@ -1138,7 +1138,7 @@ mod card {
         assert_eq!(claims::holder(4521, T0), None);
         let lines = logged();
         let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
-        assert!(after.contains("Auto Run: released Assistant 2's browser (its session ended)"), "{after}");
+        assert!(after.contains("Auto Test: released Assistant 2's browser (its session ended)"), "{after}");
         assert!(!after.contains("(the person released it)"), "the sweep's release was logged as the person's: {after}");
         assert!(!after.contains(ID_B) && !after.contains("4242"), "{after}");
         drop(replay);
@@ -1395,7 +1395,7 @@ mod card {
         assert_eq!(slot_for(&caller(ID_B), Need::Act), Err((409, NO_BROWSER_OF_YOURS.to_string())));
         let lines = logged();
         let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
-        assert!(after.contains("Auto Run: released Assistant 2's browser (no call for 30 minutes or more)"), "{after}");
+        assert!(after.contains("Auto Test: released Assistant 2's browser (no call for 30 minutes or more)"), "{after}");
         assert!(!after.contains(ID_B) && !after.contains("4242"), "{after}");
         assert!(!IDLE_RELEASED.contains('\u{2013}') && !IDLE_RELEASED.contains('\u{2014}'));
         fresh();
@@ -1975,14 +1975,14 @@ mod card {
         release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
         let lines = logged();
         let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
-        assert!(after.contains("Auto Run: released Assistant 1's browser (the person released it)"), "{after}");
+        assert!(after.contains("Auto Test: released Assistant 1's browser (the person released it)"), "{after}");
         assert!(!after.contains(ID_A) && !after.contains("4242"), "{after}");
         let mark = "autorun_slots test: the second label-only release starts here";
         v2_lib::applog::info(mark);
         release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
         let lines = logged();
         let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
-        assert!(after.contains("Auto Run: released the main Auto Run browser (the person released it)"), "{after}");
+        assert!(after.contains("Auto Test: released the main Auto Test browser (the person released it)"), "{after}");
         assert!(!after.contains(ID_A) && !after.contains("4242"), "{after}");
         fresh();
     }
@@ -2048,7 +2048,7 @@ mod global_checks {
         // The person reads this one, not an assistant: it tells them what to
         // do, never to ask someone.
         assert!(!EXTRA_BROWSER_OPEN.contains("ask the person"), "{EXTRA_BROWSER_OPEN}");
-        assert!(EXTRA_BROWSER_OPEN.contains("release it on the Assistants card at the top of the Auto Run screen"), "{EXTRA_BROWSER_OPEN}");
+        assert!(EXTRA_BROWSER_OPEN.contains("release it on the Assistants card at the top of the Auto Test screen"), "{EXTRA_BROWSER_OPEN}");
         assert!(!EXTRA_BROWSER_OPEN.contains('\u{2014}') && !EXTRA_BROWSER_OPEN.contains('\u{2013}'));
     }
 
@@ -2433,7 +2433,7 @@ mod holds_kept {
         fresh();
     }
 
-    /// An unnamed Auto Run call can carry a name, so it is not taken for a
+    /// An unnamed Auto Test call can carry a name, so it is not taken for a
     /// subagent's; another proxy's calls count for nobody here.
     #[test]
     fn an_auto_run_call_or_another_proxy_keeps_nothing() {

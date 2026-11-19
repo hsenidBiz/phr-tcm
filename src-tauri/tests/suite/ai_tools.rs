@@ -76,7 +76,7 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // Only what a person reaches for by name. Everything else the
     // assistant calls on its own when the guide says so; a command per
     // tool made the picker a list of things nobody should have to know.
-    // Auto Run is still in development: its tools are hidden and its
+    // Auto Test is still in development: its tools are hidden and its
     // commands (`setup`, `heal`) are left out with them wherever they are
     // off, so nothing in the picker points at it.
     const TOOLS: [&str; 10] = [
@@ -678,12 +678,12 @@ fn each_module_off_disables_exactly_its_tools() {
     assert_eq!(
         effective_disabled_for(&["save_autorun_script".into()], &all),
         vec!["save_autorun_script"],
-        "with Auto Run on the person's own switch still turns its tools off"
+        "with Auto Test on the person's own switch still turns its tools off"
     );
 }
 
-/// Switching Database Access off while Auto Run is on switches the whole
-/// family off, so every Auto Run, API template and database tool is
+/// Switching Database Access off while Auto Test is on switches the whole
+/// family off, so every Auto Test, API template and database tool is
 /// disabled at once.
 #[test]
 fn database_access_off_takes_the_auto_run_family_tools_with_it() {
@@ -750,21 +750,21 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
     }
 }
 
-/// `/tcm:heal` walks an assistant through failing Auto Run cases. It is an
-/// Auto Run command, so it is written only where the Auto Run tools are
+/// `/tcm:heal` walks an assistant through failing Auto Test cases. It is an
+/// Auto Test command, so it is written only where the Auto Test tools are
 /// offered, and it names only tools the bridge really lists.
 #[test]
 fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let c = COMMANDS.iter().find(|c| c.stem == "heal").expect("a heal command");
     assert_eq!(c.tool, "get_autorun_failures");
-    assert_eq!(c.desc, "Diagnose and repair failing Auto Run cases, one at a time");
+    assert_eq!(c.desc, "Diagnose and repair failing Auto Test cases, one at a time");
     assert_eq!(c.hint, "[case ids, or blank for every failed case in the newest run]");
 
     let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
     let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(
         hidden.iter().all(|(p, _)| p.file_name().unwrap() != "heal.md"),
-        "heal must not be written while Auto Run is off"
+        "heal must not be written while Auto Test is off"
     );
     let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "heal.md"));
@@ -836,14 +836,14 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
 
 /// `/tcm:setup` walks an assistant through getting the app ready to run a
 /// module's cases: environment, accounts, areas, test files and the data
-/// each case needs first. An Auto Run command, so it is written only where
-/// the Auto Run tools are offered, and every tool it names is one the
+/// each case needs first. An Auto Test command, so it is written only where
+/// the Auto Test tools are offered, and every tool it names is one the
 /// bridge really lists.
 #[test]
 fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let c = COMMANDS.iter().find(|c| c.stem == "setup").expect("a setup command");
-    // An Auto Run tool: the guide is Core's now, and the skill must still
-    // be written only where Auto Run is.
+    // An Auto Test tool: the guide is Core's now, and the skill must still
+    // be written only where Auto Test is.
     assert_eq!(c.tool, "start_autorun_discovery");
     assert_eq!(
         c.desc,
@@ -855,7 +855,7 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(
         hidden.iter().all(|(p, _)| p.file_name().unwrap() != "setup.md"),
-        "setup must not be written while Auto Run is off"
+        "setup must not be written while Auto Test is off"
     );
     let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "setup.md"));
@@ -889,7 +889,7 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
     // The real controls, by the names the screens give them.
     for control in [
-        "Auto Run, Setup, Site address",
+        "Auto Test, Setup, Site address",
         "Edit environments",
         "Add selected",
         "Record an area",
@@ -1755,8 +1755,8 @@ fn a_config_with_both_names_reports_both() {
 }
 
 /// `/tcm:discover` walks an assistant through writing a script from what it
-/// saw on the live app. An Auto Run command, so it is written only where
-/// the Auto Run tools are offered; it names its steps in order, and every
+/// saw on the live app. An Auto Test command, so it is written only where
+/// the Auto Test tools are offered; it names its steps in order, and every
 /// tool it names in backticks is one the bridge really lists.
 #[test]
 fn the_discover_command_writes_a_script_from_the_live_app() {
@@ -1769,7 +1769,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(
         hidden.iter().all(|(p, _)| p.file_name().unwrap() != "discover.md"),
-        "discover must not be written while Auto Run is off"
+        "discover must not be written while Auto Test is off"
     );
     let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "discover.md"));
@@ -1815,7 +1815,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "carrying each step's actions out live with `discover_autorun_actions` as you write them",
         "Only once every step has been carried out, save it",
         "Any fix after the save is a repair, declared in `edits`.",
-        "ask the person to record the area in Auto Run",
+        "ask the person to record the area in Auto Test",
         "test name prefix",
         "delete only records carrying that prefix",
         "never read the application's code to write scripts",
@@ -2100,7 +2100,7 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
     // is refused while discovery holds the browser: close, explore, end,
     // then replay - in that order.
     assert!(
-        heal.contains("if the person's Auto Run browser is open and no other assistant is using it, ask them to close it first"),
+        heal.contains("if the person's Auto Test browser is open and no other assistant is using it, ask them to close it first"),
         "{heal}"
     );
     let at = |what: &str| heal.find(what).unwrap_or_else(|| panic!("/tcm:heal never says {what:?}: {heal}"));
@@ -2548,7 +2548,7 @@ fn the_discover_and_heal_commands_say_where_their_rules_come_from() {
     assert!(!heal.contains("three"), "{heal}");
 }
 
-/// The explore tools ride in their modules: the change list with Auto Run,
+/// The explore tools ride in their modules: the change list with Auto Test,
 /// the one-off request and the undo with API Templates.
 #[test]
 fn the_explore_tools_belong_to_their_modules() {
@@ -2561,7 +2561,7 @@ fn the_explore_tools_belong_to_their_modules() {
     }
 }
 
-/// The two ruling tools are Auto Run's.
+/// The two ruling tools are Auto Test's.
 #[test]
 fn the_ruling_tools_belong_to_auto_run() {
     assert_eq!(module_of_tool("rule_case_divergence"), Some(Module::AutoRun));
@@ -2611,10 +2611,10 @@ fn the_commands_do_not_treat_the_browser_as_the_only_one() {
     };
     let heal = flat_of("heal");
     assert!(
-        heal.contains("Discovery needs a browser of its own: if the person's Auto Run browser is open and no other assistant is using it, ask them to close it first."),
+        heal.contains("Discovery needs a browser of its own: if the person's Auto Test browser is open and no other assistant is using it, ask them to close it first."),
         "{heal}"
     );
-    assert!(!heal.contains("Discovery needs the Auto Run browser to itself"), "{heal}");
+    assert!(!heal.contains("Discovery needs the Auto Test browser to itself"), "{heal}");
     let gen = flat_of("gen-tests");
     assert!(gen.contains("At the end, release your browser with `reset_autorun_browser` and release true."), "{gen}");
     assert!(!gen.contains("release the browser"), "{gen}");
@@ -2666,6 +2666,6 @@ fn agent_rules_name_the_sign_in_rule() {
     let heal = heal.split_whitespace().collect::<Vec<_>>().join(" ");
     let at = heal.find("For the sign-in lines").expect("heal step 2 sign-in sentence");
     assert!(heal[at..at + 200].contains("When the sign-in page does not fit"), "{heal}");
-    assert!(heal[..at].contains("put the old path back in Auto Run, Areas."), "the sign-in sentence follows the area exception: {heal}");
+    assert!(heal[..at].contains("put the old path back in Auto Test, Areas."), "the sign-in sentence follows the area exception: {heal}");
     assert!(!healer.contains("Stop at once on a login page"), "healer still stops on a login page outright");
 }

@@ -76,7 +76,7 @@ fn delete_moves_the_script_aside_with_its_deletion_time() {
     assert_eq!(kept, vec![format!("case-13-deleted-{NOW}.json")]);
     assert_eq!(std::fs::read(dir.path().join("deleted-scripts").join(&kept[0])).unwrap(), before, "kept as it was");
     assert_eq!(store::deleted_at(&kept[0]), Some(NOW));
-    assert_eq!(*heard.lock().unwrap(), vec![vec![13]], "the Auto Run screen is told");
+    assert_eq!(*heard.lock().unwrap(), vec![vec![13]], "the Auto Test screen is told");
 
     // Nothing left to delete.
     let (status, body) = autorun_script_delete_at(dir.path(), r#"{"case_id": 13}"#, NOW);
@@ -163,7 +163,7 @@ fn a_delete_needs_a_case_id() {
     }
 }
 
-/// Both tools are listed, offered with Auto Run, and reach their routes;
+/// Both tools are listed, offered with Auto Test, and reach their routes;
 /// neither is an HTTP DELETE, and nothing in the store sends a request.
 #[test]
 fn both_tools_are_listed_and_neither_sends_a_delete() {

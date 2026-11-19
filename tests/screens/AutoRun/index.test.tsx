@@ -1,4 +1,4 @@
-// Grouping and bulk selection on the Auto Run case list.
+// Grouping and bulk selection on the Auto Test case list.
 //
 // The screen reads the case list from Azure DevOps and writes nothing back
 // to it, so every assertion here is about local state: which rows are
@@ -15,6 +15,7 @@ import { resetBackgroundRun } from "../../../src/lib/backgroundRun";
 import { clearPlaywrightExportRequest, playwrightExportSnapshot } from "../../../src/lib/playwrightExport";
 import { resetModulesStore, setModulesForTest } from "../../../src/lib/modules";
 import AutoRun from "../../../src/screens/AutoRun/index";
+import AutoRunModeSwitch from "../../../src/screens/AutoRun/ModeSwitch";
 import { resetPlaywrightNoticeForTests } from "../../../src/screens/AutoRun/PlaywrightNeededDialog";
 import ReplayPane from "../../../src/screens/AutoRun/ReplayPane";
 
@@ -23,7 +24,7 @@ vi.mock("../../../src/lib/toast", () => ({ toast: { success: vi.fn(), error: vi.
 /** What auto_run_load_recipe answers; a test that needs a recipe sets it. */
 let savedRecipe: unknown = null;
 
-// Auto Run's own screen is only ever open while Auto Run (and so Database
+// Auto Test's own screen is only ever open while Auto Test (and so Database
 // Access) is on; "Export to Playwright" also needs the Playwright module.
 beforeEach(() => {
   resetPlaywrightNoticeForTests();
@@ -57,7 +58,7 @@ function caseRow(id: number, title: string) {
   };
 }
 
-/** What the settings answer for the Auto Run mode; unset answers nothing, as
+/** What the settings answer for the Auto Test mode; unset answers nothing, as
  * before there was a mode. "loading" never answers. */
 let autorunMode: "simple" | "advanced" | "loading" | undefined;
 
@@ -127,6 +128,8 @@ function renderScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={qc}>
+      {/* The title row's Simple/Advanced switch, as CaseScreens mounts it. */}
+      <AutoRunModeSwitch />
       <AutoRun org="acme" project="proj" pbi={pbi as never} />
       {/* The unattended run's window, mounted beside the screen as App does. */}
       <ReplayPane />
@@ -491,7 +494,7 @@ test("the Execution order item in More opens the dialog", async () => {
   expect(await screen.findByRole("heading", { name: "Execution order" })).toBeInTheDocument();
 });
 
-// ---- Clear scripts / Clear results (shown wherever Auto Run is: dev, or unlocked) ----
+// ---- Clear scripts / Clear results (shown wherever Auto Test is: dev, or unlocked) ----
 
 /// Export to Playwright lives in the Playwright tab: the menu item only
 /// hands it this PBI's cases (the App shell then opens the tab).
@@ -593,7 +596,7 @@ test("Clear results opens its confirm with the exact sentence and, once confirme
   fireEvent.click(await screen.findByRole("button", { name: "Clear results" }));
   expect(
     await screen.findByText(
-      "This removes every Auto Run result and picture on this machine, including runs already sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.",
+      "This removes every Auto Test result and picture on this machine, including runs already sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.",
     ),
   ).toBeInTheDocument();
 
@@ -663,7 +666,7 @@ test("release_auto_run_browser_is_always_offered_and_releases_without_a_confirm"
     if (cmd === "auto_run_discovery_active") return false;
     if (cmd === "auto_run_release_browser") {
       released.push(cmd);
-      return "the Auto Run browser is released and closed";
+      return "the Auto Test browser is released and closed";
     }
     return null;
   });
@@ -672,11 +675,11 @@ test("release_auto_run_browser_is_always_offered_and_releases_without_a_confirm"
   openSetup();
   // Offered with no discovery going: a browser held after it closed is the
   // one nothing on screen shows.
-  const release = await within(row("Discovery")).findByRole("button", { name: "Release Auto Run browser" });
+  const release = await within(row("Discovery")).findByRole("button", { name: "Release Auto Test browser" });
   fireEvent.click(release);
   // No confirm, as Close browser and End discovery ask none.
   await waitFor(() => expect(released).toEqual(["auto_run_release_browser"]));
-  expect(await screen.findByText("The Auto Run browser is released and closed.")).toBeInTheDocument();
+  expect(await screen.findByText("The Auto Test browser is released and closed.")).toBeInTheDocument();
 });
 
 test("release_auto_run_browser_says_why_it_was_refused", async () => {
@@ -688,7 +691,7 @@ test("release_auto_run_browser_says_why_it_was_refused", async () => {
   renderScreen();
   await screen.findByText("Login - valid credentials");
   openSetup();
-  fireEvent.click(await within(row("Discovery")).findByRole("button", { name: "Release Auto Run browser" }));
+  fireEvent.click(await within(row("Discovery")).findByRole("button", { name: "Release Auto Test browser" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("an unattended run is going - wait for it, or stop it first");
 });
 
@@ -1902,13 +1905,13 @@ function mockWaiting(waiting: { current: unknown }, answers: { runId: string; co
   );
 }
 
-test("coming back to Auto Run finds a run paused at a reset point, and Continue answers it", async () => {
+test("coming back to Auto Test finds a run paused at a reset point, and Continue answers it", async () => {
   const waiting = { current: WAITING as unknown };
   const answers: { runId: string; continueRun: boolean }[] = [];
   mockWaiting(waiting, answers);
   const first = renderScreen();
   await screen.findByRole("region", { name: "Before Batch 2" });
-  // The person leaves Auto Run and comes back: the pause is found again.
+  // The person leaves Auto Test and comes back: the pause is found again.
   first.unmount();
   renderScreen();
   const panel = await screen.findByRole("region", { name: "Before Batch 2" });
@@ -1947,7 +1950,7 @@ test("a pause that comes while the run's own dialog is closed shows the panel", 
   expect(await screen.findByRole("region", { name: "Before Batch 2" })).toBeInTheDocument();
 });
 
-test("coming back to Auto Run finds a run waiting for the network and shows its panel", async () => {
+test("coming back to Auto Test finds a run waiting for the network and shows its panel", async () => {
   mockIPC(
     (cmd) => {
       if (cmd === "list_test_case_fields") return [];
@@ -1965,7 +1968,7 @@ test("coming back to Auto Run finds a run waiting for the network and shows its 
   expect(within(panel).getByText(/Waited 2:0[0-9]/)).toBeInTheDocument();
 });
 
-// ---- Discovery holds the Auto Run browser ----
+// ---- Discovery holds the Auto Test browser ----
 
 test("run_buttons_are_disabled_while_discovery_is_active", async () => {
   let active = true;
@@ -1990,13 +1993,13 @@ test("run_buttons_are_disabled_while_discovery_is_active", async () => {
   const unattended = screen.getByRole("button", { name: "Run 1 unattended" });
   await waitFor(() => expect(supervised).toBeDisabled());
   expect(unattended).toBeDisabled();
-  expect(supervised).toHaveAttribute("title", "Discovery is using the Auto Run browser");
-  expect(unattended).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  expect(supervised).toHaveAttribute("title", "Discovery is using the Auto Test browser");
+  expect(unattended).toHaveAttribute("title", "Discovery is using the Auto Test browser");
 
   openCard(1);
   const cardRun = screen.getByRole("button", { name: "Run #1" });
   expect(cardRun).toBeDisabled();
-  expect(cardRun).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  expect(cardRun).toHaveAttribute("title", "Discovery is using the Auto Test browser");
   fireEvent.click(cardRun);
   expect(screen.queryByRole("button", { name: "Open browser" })).not.toBeInTheDocument();
 
@@ -2012,7 +2015,7 @@ test("run_buttons_are_disabled_while_discovery_is_active", async () => {
   expect(screen.getByRole("button", { name: "Run #1" })).not.toHaveAttribute("title");
 });
 
-test("opening Auto Run with no Playwright repo set says so, with or without a PBI, and the button goes to the Playwright tab", async () => {
+test("opening Auto Test with no Playwright repo set says so, with or without a PBI, and the button goes to the Playwright tab", async () => {
   mockIPC((cmd) => (cmd === "pw_rules_status" ? { clone_set: false } : undefined));
   const onOpenPlaywright = vi.fn();
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -2055,7 +2058,7 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
       <AutoRun org="acme" project="proj" pbi={null} />
     </QueryClientProvider>,
   );
-  expect(screen.getByText("Pick a PBI in the bar above to auto-run its cases.")).toBeInTheDocument();
+  expect(screen.getByText("Pick a PBI in the bar above to run its cases automatically.")).toBeInTheDocument();
   expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
   expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
   first.unmount();
@@ -2075,9 +2078,9 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
   expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
 });
 
-/// Auto Run's files belong to the application under test, so they stay with
+/// Auto Test's files belong to the application under test, so they stay with
 /// the home project; the results go to Azure DevOps, so they follow the PBI.
-test("Auto Run sends results to the PBI's project while its files stay home", async () => {
+test("Auto Test sends results to the PBI's project while its files stay home", async () => {
   const confirmedRun = {
     ...FAILED_RUN,
     cases: [{ ...FAILED_RUN.cases[0], verdict: "Failed" }],
@@ -2113,7 +2116,7 @@ test("Auto Run sends results to the PBI's project while its files stay home", as
 
   await waitFor(() => expect(asked.some((c) => c.cmd === "auto_run_publish")).toBe(true));
   expect(asked.find((c) => c.cmd === "auto_run_publish")?.args.project).toBe("Payroll");
-  // Everything that reads or writes Auto Run's own files uses the home project.
+  // Everything that reads or writes Auto Test's own files uses the home project.
   const filesAsked = asked.filter((c) => c.cmd === "auto_run_load_recipe");
   expect(filesAsked.length).toBeGreaterThan(0);
   expect(filesAsked.every((c) => c.args.project === "Web")).toBe(true);
@@ -2137,7 +2140,7 @@ test("the scripts list carries no environment pill of its own", async () => {
 });
 
 test("shows the per-environment move notice once", async () => {
-  const notes = ["Auto Run moved 3 scripts to Default; other environments start empty.", null];
+  const notes = ["Auto Test moved 3 scripts to Default; other environments start empty.", null];
   let asked = 0;
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) => {
     if (cmd === "auto_run_migration_note") return notes[asked++] ?? null;

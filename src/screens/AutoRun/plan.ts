@@ -1,4 +1,4 @@
-// What the Auto Run screens do with a plan from `auto_run_plan`: ask for
+// What the Auto Test screens do with a plan from `auto_run_plan`: ask for
 // one, and word its batches and the pauses between them. The plan carries
 // no case titles - the screen has the case list and supplies them.
 

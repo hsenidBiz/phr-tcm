@@ -147,7 +147,7 @@ test("nothing happens before the settings have loaded", async () => {
   expect(setSwitchMarkersMigrated).not.toHaveBeenCalled();
 });
 
-test("after the migration the Modules page's first Auto Run switch-on still turns Network tools on", async () => {
+test("after the migration the Modules page's first Auto Test switch-on still turns Network tools on", async () => {
   setSwitchMarkersMigrated.mockResolvedValue({ status: "ok", data: settings({}) });
   mount(settings({ switch_markers_migrated: false }), ["A"]);
   await act(async () => {});

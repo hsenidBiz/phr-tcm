@@ -132,7 +132,7 @@ pub fn register_and_allow(
     register_server(id, &tcm_server(&exe), working_dir, &disabled_tools, global)?;
     // A tool registered gets its own "always allow" for what the app lets
     // run unasked right now - the database tools while the active
-    // environment runs changes without asking, the Auto Run and API
+    // environment runs changes without asking, the Auto Test and API
     // template tools while their modules are on - the same as the ones
     // registered before. Best-effort: the registration worked.
     if let Some(root) = root {
@@ -222,7 +222,7 @@ pub fn told_disabled(bridge: Option<&std::sync::Mutex<crate::ai_bridge::BridgeCo
 }
 
 /// Every tool's own "always allow" made to say what the app says now: the
-/// database entries by the active environment, the Auto Run and API template
+/// database entries by the active environment, the Auto Test and API template
 /// entries by the modules that are on and the tools the person switched off
 /// (`bridge`'s list).
 pub fn sync_allow_files(
@@ -307,7 +307,7 @@ struct AllowFile {
     /// Every entry the database switch writes: `db_query`'s and the live
     /// report preview's (`ai_tools::CLAUDE_DB_RULES` / `CURSOR_DB_ENTRIES`).
     db: &'static [&'static str],
-    /// The Auto Run module's entries, in while it is on
+    /// The Auto Test module's entries, in while it is on
     /// (`ai_tools::CLAUDE_AUTORUN_RULES` / `CURSOR_AUTORUN_ENTRIES`).
     autorun: &'static [&'static str],
     /// The API Templates module's, likewise

@@ -1,4 +1,4 @@
-//! Reading the Auto Run browser's page: the page dump, what is seen and recorded from it, locator probes and inspection.
+//! Reading the Auto Test browser's page: the page dump, what is seen and recorded from it, locator probes and inspection.
 
 use super::*;
 
@@ -798,7 +798,7 @@ pub fn forget_fired_guards(
         return;
     }
     if let Err(why) = crate::autorun::store::remove_unfired_guards(root, script.case_id, &entries) {
-        crate::applog::warn(format!("Auto Run: case {} could not drop a clean-up guard that fired from its script: {why}", script.case_id));
+        crate::applog::warn(format!("Auto Test: case {} could not drop a clean-up guard that fired from its script: {why}", script.case_id));
     }
 }
 
@@ -1140,11 +1140,11 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
         }
     }
     if unchecked > 0 {
-        crate::applog::warn(format!("Auto Run save: {unchecked} refused locator(s) could not be checked on the page"));
+        crate::applog::warn(format!("Auto Test save: {unchecked} refused locator(s) could not be checked on the page"));
     }
     if !recorded.is_empty() {
         crate::applog::info(format!(
-            "Auto Run save: recorded {} of {} refused locator(s) on the current page",
+            "Auto Test save: recorded {} of {} refused locator(s) on the current page",
             recorded.len(),
             targets.len()
         ));
@@ -1240,7 +1240,7 @@ pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locat
 
 /// Said, with 400, to a probe whose CSS holds a Playwright pseudo-selector.
 pub const NOT_A_PLAYWRIGHT_SELECTOR: &str =
-    "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors).";
+    "that is a Playwright selector, which Auto Test does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors).";
 
 /// Is `css` written with a Playwright-only selector (`:text-is`,
 /// `:has-text`, `:text(`, or the `>>` chain), which no browser's CSS takes?

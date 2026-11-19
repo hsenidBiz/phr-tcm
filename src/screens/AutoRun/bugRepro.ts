@@ -1,4 +1,4 @@
-// The Bug dialog's starting point for a case that failed in an Auto Run:
+// The Bug dialog's starting point for a case that failed in an Auto Test:
 // the steps up to and including the failing one, then what the page said.
 
 import type { ActionOutcome, Step } from "../../bindings";

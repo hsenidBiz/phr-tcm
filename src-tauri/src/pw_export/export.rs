@@ -58,7 +58,7 @@ pub struct PreviewCase {
     /// purpose, so it is never exported and cannot be ticked. `repo_note`
     /// then says "Excluded in the repo (in <file>)".
     pub excluded: bool,
-    /// Auto Run has a script for it. The dialog lists only cases that do:
+    /// Auto Test has a script for it. The dialog lists only cases that do:
     /// one without a script has nothing to export.
     pub has_script: bool,
     /// What the person should see before this case is written, one plain
@@ -124,13 +124,13 @@ pub fn nothing_written() -> ExportResult {
 
 /// Everything read once per preview or write.
 struct Ctx {
-    /// Auto Run's store and the project: where a shared draft's current
+    /// Auto Test's store and the project: where a shared draft's current
     /// output is read from (`resolved_script`).
     root: PathBuf,
     org: String,
     project: String,
     clone: Result<ClonedRepo, String>,
-    /// Each case's Module, as Azure DevOps has it: what Auto Run picks a
+    /// Each case's Module, as Azure DevOps has it: what Auto Test picks a
     /// script's area by when the script names none (`nav::route_for`).
     modules: BTreeMap<i32, String>,
     map: ExportMap,
@@ -143,7 +143,7 @@ struct Ctx {
     /// `(key, username)` only; a password is never read out of an Account.
     accounts: Vec<(String, String)>,
     runs: Vec<LocalRun>,
-    /// Auto Run's saved order for the PBI being exported, when the caller
+    /// Auto Test's saved order for the PBI being exported, when the caller
     /// names one and there is one: the order notes repeat it.
     saved_order: Option<Vec<i32>>,
 }
@@ -221,7 +221,7 @@ struct Ready {
     origins: Vec<String>,
 }
 
-/// A case with no Module in a project with no areas: Auto Run runs it, but
+/// A case with no Module in a project with no areas: Auto Test runs it, but
 /// nothing says where in the clone it goes.
 const NO_PLACE: &str =
     "this project has no areas recorded and the case has no Module, so nothing says where it goes in the clone - set its Module in Azure DevOps";
@@ -385,7 +385,7 @@ fn placeholders_in(script: &CaseScript) -> Vec<String> {
 fn resolve_shared(root: &Path, org: &str, project: &str, script: CaseScript) -> Result<(CaseScript, Vec<SharedDraft>), String> {
     let left_over = |names: Vec<String>| {
         names.into_iter().next().map(|n| {
-            format!("a step still holds {{{{{n}}}}}, which TCM has no value to put in - fix the script in Auto Run")
+            format!("a step still holds {{{{{n}}}}}, which TCM has no value to put in - fix the script in Auto Test")
         })
     };
     // Anything but a shared draft's value is not ours to fill.
@@ -569,7 +569,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
         }
     };
     let Some(script) = script else {
-        return fail(pc, "no script - record or write one in Auto Run".into());
+        return fail(pc, "no script - record or write one in Auto Test".into());
     };
     pc.has_script = true;
     pc.title = script.title.clone();
@@ -660,7 +660,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     if let Err(e) = translate::check(&script, &origins) {
         return fail(pc, e.0);
     }
-    // The same names Auto Run resolves (nav::find_area), under the script's spelling.
+    // The same names Auto Test resolves (nav::find_area), under the script's spelling.
     let mut by_name: BTreeMap<String, Vec<Target>> = BTreeMap::new();
     for step in &script.steps {
         for a in step.actions.iter().flat_map(|a| a.each()) {
@@ -669,7 +669,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
                     Some(m) => {
                         by_name.insert(n.to_string(), m.clicks.clone());
                     }
-                    None => return fail(pc, format!("return_to_area names the area \"{n}\", which is not recorded in Auto Run")),
+                    None => return fail(pc, format!("return_to_area names the area \"{n}\", which is not recorded in Auto Test")),
                 }
             }
         }
@@ -736,7 +736,7 @@ fn warnings_for(ctx: &Ctx, id: i32, script: &CaseScript, listed: &[(i32, &CaseSc
     out
 }
 
-/// `modules` is each case's Module (case id to value), as the Auto Run
+/// `modules` is each case's Module (case id to value), as the Auto Test
 /// screen's rows have it.
 pub fn preview_with(
     root: &Path,
@@ -1010,7 +1010,7 @@ fn sibling_script(ctx: &Ctx, id: i32) -> Option<CaseScript> {
 
 /// Writes `case_ids`, all or nothing. A case the repo already has is
 /// refused unless it is in `replace` (`refuse_present`). `pbi_id` is the PBI
-/// they are exported from, when known: its saved Auto Run order goes into
+/// they are exported from, when known: its saved Auto Test order goes into
 /// each test-case file's order notes.
 #[allow(clippy::too_many_arguments)]
 pub fn write_with(

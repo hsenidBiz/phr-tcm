@@ -268,9 +268,9 @@ const detailFor = (b: BoardData["items"][number]): WorkItemDetail => ({
   inline_images: [],
 });
 
-// ------------------------------------------- Auto Run and API Templates
+// ------------------------------------------- Auto Test and API Templates
 
-// What the Auto Run and API Templates screens read: local files on a real
+// What the Auto Test and API Templates screens read: local files on a real
 // machine (scripts, runs, accounts, environments, templates), kept here in
 // memory instead, so sample data never shows - or writes - this machine's
 // own. Every address is under example.test, every account is invented, and
@@ -536,7 +536,7 @@ let environments: EnvListView = {
 };
 
 /** Two sample assistants for the Assistants card: one replaying a case in
- * the main Auto Run browser, one exploring in a browser of its own, each
+ * the main Auto Test browser, one exploring in a browser of its own, each
  * signed in as a different account. */
 const demoAgents: AgentView[] = [
   {
@@ -1104,7 +1104,7 @@ function applyPatches() {
   const patches = {
     // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
-    // Auto Run's Simple/Advanced mode lives in memory here, never in the
+    // Auto Test's Simple/Advanced mode lives in memory here, never in the
     // settings file: every shot starts in Advanced (a reload resets it), and
     // the one that documents the switch clicks Simple.
     getAppSettings: async () => ({
@@ -1132,7 +1132,7 @@ function applyPatches() {
     // site documents it); a click on a module is answered here and never
     // saved to this machine's modules.json.
     modulesGet: () => Promise.resolve(DEMO_MODULES),
-    // The sample app has a Playwright repo set, so Auto Run never opens
+    // The sample app has a Playwright repo set, so Auto Test never opens
     // the "Playwright is needed" dialog in it or in the docs shots.
     pwRulesStatus: async () => ({ clone_set: true, clone_gone: false }),
     modulesSet: () => ok({ on: DEMO_MODULES, recommended: null }),
@@ -1744,7 +1744,7 @@ function applyPatches() {
     resetTestPoints: () => ok(null),
     autoRunPublish: () => ok({ status: "refused" as const, why: "Publishing is off in demo data." }),
 
-    // Auto Run and API Templates read and write local files on a real
+    // Auto Test and API Templates read and write local files on a real
     // machine. In sample data they answer from the in-memory set above,
     // and anything that would open a real browser or read a picked file
     // says it is off.
@@ -1913,11 +1913,11 @@ function applyPatches() {
       autoRunNav = { ...autoRunNav, modules: autoRunNav.modules.filter((m) => m.area !== area) };
       return ok(autoRunNav);
     },
-    // The Auto Run browser is real: sample data opens none. Opening "one"
+    // The Auto Test browser is real: sample data opens none. Opening "one"
     // here lets the run pane be walked through, with every action passing.
     autoRunOpenBrowser: () => ok(null),
     autoRunCloseBrowser: () => ok(null),
-    autoRunReleaseBrowser: () => ok("no Auto Run browser was held, and none of the app's own browsers was open - nothing to release"),
+    autoRunReleaseBrowser: () => ok("no Auto Test browser was held, and none of the app's own browsers was open - nothing to release"),
     autoRunSignIn: (_o: string, _p: string, accountKey: string) =>
       ok({ ok: true, detail: `Signed in as ${accountKey}`, used_saved_session: false, steps: [] }),
     autoRunForgetSession: () => ok(null),
@@ -2163,7 +2163,7 @@ export const CAPTURE_RESET = [
   "tcm-v2-this-sprint",
   "tcm-v2-pr-yours:",
   "tcm-v2-pr-status",
-  // Auto Run's and API Templates' view choices.
+  // Auto Test's and API Templates' view choices.
   "tcm-v2-autorun-group",
   "tcm-v2-autorun-collapsed",
   "tcm-v2-autorun-browser",

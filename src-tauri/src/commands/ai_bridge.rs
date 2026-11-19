@@ -219,7 +219,7 @@ pub struct BridgeSwitches {
     /// `BridgeContext::all_projects`). Not a write switch.
     #[serde(default)]
     pub all_projects: bool,
-    /// Auto Run's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+    /// Auto Test's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
     /// Not a switch: the assistants only read it.
     #[serde(default)]
     pub autorun_mode: Option<crate::app_settings::AutorunMode>,
@@ -494,7 +494,7 @@ fn sync_files_after_push(
     }
     drop(last);
 
-    // The "always allow" the app writes for the Auto Run and API template
+    // The "always allow" the app writes for the Auto Test and API template
     // tools follows the same things - the tools switched off, the
     // repository, the modules - and is written wherever the server is
     // registered, whether or not the command folder exists. Judged on the

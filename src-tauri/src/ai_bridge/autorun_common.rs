@@ -1,4 +1,4 @@
-//! What the Auto Run routes share: the no-save and page-compaction wrappers, the names of who holds a browser or an account, case claims, and the Auto Run guide.
+//! What the Auto Test routes share: the no-save and page-compaction wrappers, the names of who holds a browser or an account, case claims, and the Auto Test guide.
 
 use super::*;
 
@@ -23,7 +23,7 @@ pub fn with_no_save_note(answer: (u16, String), on: bool) -> (u16, String) {
     }
 }
 
-/// Whether the discovery holding slot `n`'s Auto Run browser must not save. Only
+/// Whether the discovery holding slot `n`'s Auto Test browser must not save. Only
 /// looks: a browser someone else holds right now (a run, a replay) is
 /// never waited for, and then there is no discovery to speak of.
 pub(crate) fn discovery_no_save(n: SlotNo) -> bool {
@@ -44,7 +44,7 @@ pub fn discovery_holds_hint(fixture: bool) -> String {
         "or run the template as another account no browser holds"
     };
     format!(
-        "Your discovery holds this account in the Auto Run browser: end it with end_autorun_discovery first (what it mapped is kept) and run again; {other}."
+        "Your discovery holds this account in the Auto Test browser: end it with end_autorun_discovery first (what it mapped is kept) and run again; {other}."
     )
 }
 
@@ -165,7 +165,7 @@ pub async fn compacted_with<F: std::future::Future<Output = (u16, String)>>(
 /// `agents::note_call`, and when the call is the proxy's own (no subagent
 /// name) for a tool that has no `agent` property to carry one, it also counts
 /// as a call of the proxy's named subagents (`agents::touch_named_of`): only
-/// the Auto Run and API template tools can name their caller, and a subagent
+/// the Auto Test and API template tools can name their caller, and a subagent
 /// busy with lookups must not lose its browser and cases for it.
 pub fn note_call_for_tool(
     caller: &crate::autorun::agents::Caller,
@@ -236,7 +236,7 @@ pub fn without_page(answer: (u16, String), body: &str) -> (u16, String) {
 /// opens one; an assistant cannot, and telling it which button to name
 /// is the difference between a dead end and a sentence it can pass on.
 pub(crate) const NO_SUPERVISED_BROWSER: &str =
-    "no supervised browser is open - the person opens one with Open browser on the Auto Run tab";
+    "no supervised browser is open - the person opens one with Open browser on the Auto Test tab";
 
 /// What every page route checks before it reaches for the browser at all:
 /// an unattended run owns the browser while it is going, and the two
@@ -391,7 +391,7 @@ pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Resul
 pub(crate) fn release_failed_start(newly_claimed: Option<i32>, caller: &crate::autorun::agents::Caller, path: &str, status: u16) {
     if let (Some(case), crate::autorun::agents::Caller::Agent(key), "/autorun-discover-start") = (newly_claimed, caller, path) {
         if status != 200 && crate::autorun::claims::release_case(key, case) {
-            crate::applog::info(format!("Auto Run: case {case}'s hold ended - its discovery did not start"));
+            crate::applog::info(format!("Auto Test: case {case}'s hold ended - its discovery did not start"));
         }
     }
 }
@@ -439,13 +439,13 @@ pub fn mapping_going(whose: &str) -> String {
 /// in another slot (`mapping`, per slot: `commands::autorun::mapping_in`), or
 /// None. It names whose browser that is: "{label}'s browser" when the slot is
 /// bound to a live assistant, else the main browser (the person's) or an
-/// Auto Run browser. Never an id, a pid or a login.
+/// Auto Test browser. Never an id, a pid or a login.
 pub fn mapping_refusal(caller_slot: SlotNo, mapping: [bool; SLOT_COUNT]) -> Option<String> {
     let going = SlotNo::all().into_iter().find(|m| *m != caller_slot && mapping[m.index()])?;
     let whose = match label_of_slot(going) {
         Some(label) => format!("{label}'s browser"),
-        None if going.is_main() => "the main Auto Run browser".to_string(),
-        None => "an Auto Run browser".to_string(),
+        None if going.is_main() => "the main Auto Test browser".to_string(),
+        None => "an Auto Test browser".to_string(),
     };
     Some(mapping_going(&whose))
 }

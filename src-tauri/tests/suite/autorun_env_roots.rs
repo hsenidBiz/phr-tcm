@@ -1,4 +1,4 @@
-//! Auto Run's files per environment: the roots, the shared-root
+//! Auto Test's files per environment: the roots, the shared-root
 //! normalisation the shared stores do, the selection of the active
 //! environment, and the tripwire that keeps every `root.join(..)` in the
 //! source classified as per-environment or shared.
@@ -242,7 +242,7 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Files whose `root` is not the Auto Run root (a clone, the help folder).
+/// Files whose `root` is not the Auto Test root (a clone, the help folder).
 const NOT_AUTORUN_ROOTS: [&str; 7] = [
     "pw_repo/",
     "pw_export/clone.rs",
@@ -369,7 +369,7 @@ fn every_root_join_in_src_is_classified() {
         }
     }
     assert!(seen > 20, "the scan saw only {seen} joins on `root`; the tripwire is not looking");
-    assert!(bad.is_empty(), "the Auto Run layout tripwire found:\n{}", bad.join("\n"));
+    assert!(bad.is_empty(), "the Auto Test layout tripwire found:\n{}", bad.join("\n"));
 }
 
 #[test]

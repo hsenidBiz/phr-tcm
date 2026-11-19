@@ -1,5 +1,5 @@
 //! Importing a backup onto a machine that already has the per-environment
-//! layout. A backup from before it has its flat Auto Run files built into one
+//! layout. A backup from before it has its flat Auto Test files built into one
 //! folder per environment (the app-describing items only); a backup from
 //! after it brings a folder per environment. Either way each environment
 //! folder is replaced whole: the live folder keeps its run history, its
@@ -29,14 +29,14 @@ const STEP_BUILT: &str = "built";
 pub const REPLACED_BY_IMPORT: &str = "replaced by an import";
 
 /// Said when the import could not be put in place; the log says why.
-pub const IMPORT_FAILED: &str = "the backup's Auto Run data could not be put in place - see Settings > Logs";
+pub const IMPORT_FAILED: &str = "the backup's Auto Test data could not be put in place - see Settings > Logs";
 /// Said when an earlier import has not finished: a new one would be replayed
 /// over by it at the next start.
 pub const IMPORT_PENDING: &str =
     "an earlier import has not finished - restart the app to finish it first, then import again";
 /// Said when the import stopped part-way and will be finished at the next start.
 pub const IMPORT_UNFINISHED: &str =
-    "the import did not finish - restart the app now and it will be completed; until then do not save changes in Auto Run (see Settings > Logs)";
+    "the import did not finish - restart the app now and it will be completed; until then do not save changes in Auto Test (see Settings > Logs)";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Marker {

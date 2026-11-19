@@ -1,4 +1,4 @@
-//! One Auto Run script, as the raw `.spec.ts` the `/gen-test` stage of the
+//! One Auto Test script, as the raw `.spec.ts` the `/gen-test` stage of the
 //! PHR-PLAYWRIGHT-AUTOMATION repo starts from - or the reason it cannot be
 //! one.
 //!
@@ -680,7 +680,7 @@ fn expect_timeout(own: Option<u32>) -> u64 {
 /// The roles that are a checked state themselves.
 const BOX_ROLES: [&str; 5] = ["checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"];
 
-/// What `expect_checked` asks `toBeChecked` about. Auto Run reads the one box
+/// What `expect_checked` asks `toBeChecked` about. Auto Test reads the one box
 /// inside a wrapper (a switch drawn as a label or a div around its input), but
 /// Playwright rejects `toBeChecked` on anything that is not a checkbox, a
 /// radio or an `aria-checked` widget. The export cannot see the page, so it
@@ -712,11 +712,11 @@ fn poll_opts(timeout: Option<u32>) -> String {
     format!(", {{ timeout: {} }}", expect_timeout(timeout))
 }
 
-/// What `toHaveCSS` compares an `expect_style` value with, as Auto Run
+/// What `toHaveCSS` compares an `expect_style` value with, as Auto Test
 /// compares it (`browser::style`): a colour as the rgb() the browser
 /// reports; a quoted value as written; any other value as a pattern that
 /// ignores case - the whole value for `equals` and `not_equals`
-/// (`whole`), anywhere in it for `contains`. As Auto Run makes each run
+/// (`whole`), anywhere in it for `contains`. As Auto Test makes each run
 /// of spaces one, the pattern takes any run of spaces where the value has
 /// one, and any spaces around a comma.
 fn css_value(want: &str, whole: bool) -> String {

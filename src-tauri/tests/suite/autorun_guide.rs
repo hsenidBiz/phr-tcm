@@ -873,7 +873,7 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(!flat.contains("Allow"), "the guide still names the removed Allow prompt: {flat}");
     assert!(flat.contains("still running, now at step N of M"), "{flat}");
     assert!(flat.contains("again with the same case and step to keep waiting"), "{flat}");
-    assert!(flat.contains("The replay leaves the Auto Run browser open on that step"), "{flat}");
+    assert!(flat.contains("The replay leaves the Auto Test browser open on that step"), "{flat}");
     assert!(flat.contains("carries on from where your last replay of it stood"), "{flat}");
     assert!(flat.contains("\"Carried on from step K\" or \"Started from the beginning\""), "{flat}");
     assert!(flat.contains("(the same first K steps)"), "{flat}");
@@ -920,7 +920,7 @@ fn the_guide_teaches_marking_shared_state() {
         "When you save a script that has marks, send its marks back as they are, or the person's marks are lost.",
         "`set_autorun_order`",
         "does not change Run Tests' order.",
-        "Without a saved order, Auto Run already works out a suggested order from the marks.",
+        "Without a saved order, Auto Test already works out a suggested order from the marks.",
         "A saved order replaces the suggestion for every later run until the person picks Use suggested order, so set one only when a particular order is wanted.",
     ] {
         assert!(flat.contains(term), "the marks section never says {term:?}\n{flat}");
@@ -1585,7 +1585,7 @@ fn the_guide_opens_with_the_quick_rules() {
     use v2_lib::autorun::guide::quick_rules;
     let g = autorun_guide();
     let quick = quick_rules();
-    assert!(g.starts_with("# Writing an Auto Run action script\n\n## Quick rules\n"), "{}", &g[..200]);
+    assert!(g.starts_with("# Writing an Auto Test action script\n\n## Quick rules\n"), "{}", &g[..200]);
     assert_eq!(g.matches(quick.as_str()).count(), 1, "the quick rules are the guide's own, word for word, once");
     assert!(quick.lines().count() <= 45, "the quick rules run to {} lines", quick.lines().count());
     assert!(!quick.contains('\u{2014}') && !quick.contains('\u{2013}'), "no em or en dashes");
@@ -2292,7 +2292,7 @@ fn the_guide_says_never_fit_a_check_to_the_page() {
         "A passing script must mean the case's own expected result was seen",
         "step 2: the check counts 6 but the case says 4 (\"exactly 4 levels\")",
         "`report_case_divergence { case_id, step, case_says, app_shows, kind }`",
-        "needs a ruling: step N: the case says \"...\" but the app shows \"...\" (data) - a person rules on it in Auto Run",
+        "needs a ruling: step N: the case says \"...\" but the app shows \"...\" (data) - a person rules on it in Auto Test",
         "The app is wrong",
         "I fixed the data",
         "The app is right, update the case",
@@ -2696,7 +2696,7 @@ fn the_guide_teaches_expect_no_change_for_a_click_on_a_disabled_control() {
     assert!(!flat.contains('\u{2013}') && !flat.contains('\u{2014}'), "no dash in text an assistant reads");
 }
 
-/// Several assistants can each have an Auto Run browser. The Quick rules and
+/// Several assistants can each have an Auto Test browser. The Quick rules and
 /// the replay part of the full guide say the browser is the reader's own, and
 /// a section of its own tells how to work beside others, including the name a
 /// subagent passes as `agent`.
@@ -2717,7 +2717,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
     assert!(section_titles(&g).contains(&"Working beside other assistants"));
     let section = flat_guide(&guide_section(&g, "Working beside other assistants").expect("the section"));
     for said in [
-        "Up to three Auto Run browsers can be open at once. One assistant working alone always uses the main one, as before.",
+        "Up to three Auto Test browsers can be open at once. One assistant working alone always uses the main one, as before.",
         "Each assistant needs an account of its own: signing an account in anywhere ends its session everywhere else.",
         "`get_accounts` says who uses an account (`in_use_by`)",
         "`propose_accounts` so the person can add one.",
@@ -2729,7 +2729,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
         "When your session ends, a browser of your own is released; the main one is left open for the person.",
         "A browser and the case holds of a subagent with a name are let go after 10 minutes without a call from it, and the main browser is released then only when an assistant opened it (one the person opened never is); any other assistant's own browser is let go after 30.",
         "`reset_autorun_browser` ends its answer with who holds which browser, account and cases now.",
-        "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and API template call; each name gets its own browser.",
+        "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Test and API template call; each name gets its own browser.",
         "A subagent without a name shares your browser.",
         "Tell each subagent to write its report to a file of its own (<name>-report.md, beside its output) before it hands back. If a hand-back fails, read that file instead.",
         "A client that serves several chats through one connection (Claude desktop) is one assistant to the app: give each chat its own `agent` name too.",
@@ -2746,7 +2746,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
     assert_eq!(at("Working beside other assistants"), at("Discovering the app") + 1, "{titles:?}");
 }
 
-/// Auto Run data is per environment now: the assistant must know a save
+/// Auto Test data is per environment now: the assistant must know a save
 /// belongs to the active environment only, and that copying between
 /// environments is the person's action, not a tool it has.
 #[test]
@@ -2754,7 +2754,7 @@ fn guide_says_each_environment_has_its_own_scripts() {
     let g = autorun_guide();
     assert!(g.contains("belongs to the active environment only"), "{g}");
     assert!(g.contains("You cannot copy between environments yourself"), "{g}");
-    assert!(g.contains("Copy Auto Run data"), "{g}");
+    assert!(g.contains("Copy Auto Test data"), "{g}");
     assert!(g.contains("Copy to environment"), "{g}");
     assert!(g.contains("Copy from environment"), "{g}");
 }

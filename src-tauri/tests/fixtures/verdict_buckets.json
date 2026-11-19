@@ -1,5 +1,5 @@
 {
-  "_comment": "Which result bucket a case falls in, for every verdict/proposed pair that matters. Read by BOTH the Rust test (tests/suite/autorun_report.rs, autorun::report::bucket) and the vitest one (tests/screens/AutoRun/verdicts.test.ts, resultBucket) - so the run report and the Auto Run screen can never count a case differently. Add a row here, and both sides are held to it.",
+  "_comment": "Which result bucket a case falls in, for every verdict/proposed pair that matters. Read by BOTH the Rust test (tests/suite/autorun_report.rs, autorun::report::bucket) and the vitest one (tests/screens/AutoRun/verdicts.test.ts, resultBucket) - so the run report and the Auto Test screen can never count a case differently. Add a row here, and both sides are held to it.",
   "cases": [
     { "verdict": "Passed", "proposed": "", "bucket": "Passed" },
     { "verdict": "Failed", "proposed": "", "bucket": "Failed" },

@@ -9,7 +9,7 @@ import { toast } from "../../../src/lib/toast";
 import AccountsDialog, { fillSentence, reseedRows } from "../../../src/screens/AutoRun/AccountsDialog";
 
 vi.mock("../../../src/lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
-// Whether a run or a discovery has the Auto Run browser, as the tests say.
+// Whether a run or a discovery has the Auto Test browser, as the tests say.
 vi.mock("../../../src/lib/backgroundRun", async (original) => ({
   ...(await original<typeof import("../../../src/lib/backgroundRun")>()),
   runIsGoing: () => checkFixture.taken,
@@ -683,13 +683,13 @@ test("accounts are checked one after another, never together", async () => {
 
 test("a refused check is said under its account", async () => {
   mountForCheck(() => {
-    throw new Error("an unattended run, a replay or a discovery is using the Auto Run browser - wait for it, or stop it first");
+    throw new Error("an unattended run, a replay or a discovery is using the Auto Test browser - wait for it, or stop it first");
   });
   await openTab("Check sign-in");
   await screen.findByRole("checkbox", { name: "Check admin" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
   fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
-  expect(await screen.findByText(/using the Auto Run browser/)).toBeInTheDocument();
+  expect(await screen.findByText(/using the Auto Test browser/)).toBeInTheDocument();
 });
 
 test("the last check of an account is shown until it is checked again", async () => {

@@ -4,7 +4,7 @@
  * carries anything a normal install does not show: the DEV BUILD panel, the
  * hidden Extras card, or an unprompted tour, "what's new", update banner or
  * session-expired modal covering the screen. Every module reports on
- * (lib/modules.ts), so Auto Run, API Templates and Playwright are shown.
+ * (lib/modules.ts), so Auto Test, API Templates and Playwright are shown.
  *
  * Unlike dev/demo.ts, this module has no module-level side effects (no
  * dataset built at import time) - it is safe as a plain, always-present

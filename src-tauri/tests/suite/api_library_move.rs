@@ -544,7 +544,7 @@ fn the_move_log_line_names_no_path() {
     assert!(roots::path_free(&line), "{line}");
     assert_eq!(
         line,
-        "Auto Run: API templates, flows and fixtures are now shared by every environment (12 moved, 1 kept aside for 30 days)"
+        "Auto Test: API templates, flows and fixtures are now shared by every environment (12 moved, 1 kept aside for 30 days)"
     );
 }
 
@@ -584,7 +584,7 @@ fn a_copy_whose_source_ran_again_afterwards_confirms_nowhere_from_the_shared_lin
     let copied = run_line("2026-10-08 09:00:00", "run", true);
     put_template(shared, &env_holder(A), &proved);
     put_template(shared, &env_holder(B), &proved);
-    // B holds what Copy Auto Run copied from A; A then ran once more.
+    // B holds what Copy Auto Test copied from A; A then ran once more.
     put_runs(shared, &env_holder(B), ApiKind::Templates, "t", json!([copied.clone()]));
     put_runs(shared, &env_holder(A), ApiKind::Templates, "t", json!([copied, run_line("2026-10-09 09:00:00", "run", false)]));
 

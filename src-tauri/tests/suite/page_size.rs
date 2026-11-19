@@ -157,7 +157,7 @@ fn a_size_outside_the_range_is_refused_with_the_exact_sentence_and_nothing_is_sa
 #[test]
 fn the_guides_and_the_export_say_nothing_new_at_the_default() {
     let guide = autorun_guide();
-    assert!(guide.contains(AUTORUN_SENTENCE), "the Auto Run guide's sentence changed at the default");
+    assert!(guide.contains(AUTORUN_SENTENCE), "the Auto Test guide's sentence changed at the default");
     let api = v2_lib::api_templates::guide::text(&[], None);
     assert!(api.contains(API_SENTENCE), "the API template guide's sentence changed at the default");
     let out = spec();
@@ -188,7 +188,7 @@ fn a_saved_size_is_loaded_at_start_up_and_every_user_of_it_follows() {
         let guide = autorun_guide();
         assert!(!guide.contains("1280 x 720 page at scale 1, the same as"), "still the default wording");
         let now = "1600 x 900 page at scale 1, a size set in Settings rather than Playwright's default of 1280 x 720";
-        assert!(guide.contains(now), "the Auto Run guide does not name the size in force");
+        assert!(guide.contains(now), "the Auto Test guide does not name the size in force");
         let api = v2_lib::api_templates::guide::text(&[], None);
         assert!(api.contains(now), "the API template guide does not name the size in force");
         assert!(!api.contains("1280 x 720 page at scale 1, the same as"));

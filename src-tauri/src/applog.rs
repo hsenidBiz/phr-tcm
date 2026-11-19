@@ -121,7 +121,7 @@ pub fn stamp_of(t: SystemTime) -> String {
 }
 
 /// The same clock as `stamp`, as ISO 8601 UTC "YYYY-MM-DDTHH:MM:SSZ" - the
-/// form Azure DevOps' `asOf` takes, stamped on every saved Auto Run script.
+/// form Azure DevOps' `asOf` takes, stamped on every saved Auto Test script.
 pub fn iso_stamp() -> String {
     iso_of(SystemTime::now())
 }

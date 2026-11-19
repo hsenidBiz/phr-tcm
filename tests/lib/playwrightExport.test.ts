@@ -1,4 +1,4 @@
-// Auto Run's Export to Playwright item opens the Playwright tab: the App
+// Auto Test's Export to Playwright item opens the Playwright tab: the App
 // shell moves there through useOpenOnExportRequest.
 
 import { act, renderHook } from "@testing-library/react";

@@ -208,7 +208,7 @@ impl Default for PagePalette {
 
 impl PagePalette {
     /// The accent the app is wearing in each scheme, for the pages that take
-    /// only that from the palette (the Auto Run report): `(light, dark)`,
+    /// only that from the palette (the Auto Test report): `(light, dark)`,
     /// each `None` when blank or not a plain colour (`safe_color`).
     pub fn accents(&self) -> (Option<String>, Option<String>) {
         let pick = |v: &str| Some(v.trim().to_string()).filter(|v| !v.is_empty() && safe_color(v));

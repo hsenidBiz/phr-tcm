@@ -1,5 +1,5 @@
 // Waiting for you: what the assistants left for a person to decide, at the
-// top of Auto Run. A proposed account or a sign-in. Each row opens the place
+// top of Auto Test. A proposed account or a sign-in. Each row opens the place
 // the decision is made. Nothing is drawn while nothing waits.
 
 import { useEffect, useId, useState } from "react";
@@ -26,7 +26,7 @@ export default function WaitingForYou({
   project,
 }: {
   org: string;
-  /** The project Auto Run's files belong to. */
+  /** The project Auto Test's files belong to. */
   project: string;
 }) {
   const headingId = useId();

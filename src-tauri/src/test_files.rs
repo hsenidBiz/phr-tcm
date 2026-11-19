@@ -1,9 +1,9 @@
 //! The project's Test files: documents a test uploads into the application
-//! under test - from an API template's form step (`files`) or an Auto Run
+//! under test - from an API template's form step (`files`) or an Auto Test
 //! case script's `upload` action.
 //!
 //! They live on this machine only, one folder per organization and project:
-//! `<Auto Run data>/test-files/<project slug>/`, the same slug templates,
+//! `<Auto Test data>/test-files/<project slug>/`, the same slug templates,
 //! flows and sign-in recipes use (`autorun::recipe::project_slug`). A
 //! template or a script refers to a file by its NAME, never by a path, so
 //! the same script runs on every machine that has a file of that name in
@@ -25,7 +25,7 @@ pub const MAX_BYTES: u64 = 25 * 1024 * 1024;
 pub const MAX_NAME_CHARS: usize = 120;
 
 /// Where the person adds and removes test files, for a sentence.
-pub const WHERE: &str = "Test files (Auto Run or API Templates)";
+pub const WHERE: &str = "Test files (Auto Test or API Templates)";
 
 /// One file in a project's Test files.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]

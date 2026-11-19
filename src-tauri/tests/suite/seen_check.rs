@@ -735,7 +735,7 @@ fn a_placeholder_matches_only_a_seen_shape() {
     // So must the element and the attribute.
     refused(serde_json::json!({ "css": "span[data-cycle-id=\"{{setup.cycle_id}}\"]" }), &map);
     refused(serde_json::json!({ "css": "div[data-cycle-key=\"{{setup.cycle_id}}\"]" }), &map);
-    // Not a placeholder the run fills in: Auto Run fills only fixture and
+    // Not a placeholder the run fills in: Auto Test fills only fixture and
     // setup values.
     for id in ["{{cycle_id}}", "{{prefix}}", "{{ prefix }}", "{{now:yyyyMMdd}}"] {
         refused(edit_in_card(id), &map);
@@ -799,7 +799,7 @@ fn a_component_input_placeholder_is_checked_at_run_time() {
     let saved = with(serde_json::json!({ "id": "{{setup.cycle_id}}" }));
     assert_eq!(check_seen(&map, &have, &saved, &[], None), Ok(()));
     // Any other brace pair is still the component's own placeholder, and
-    // a prefix or a time is not filled in by Auto Run.
+    // a prefix or a time is not filled in by Auto Test.
     for id in ["{{cycle_id}}", "{{prefix}}", "{{now:yyyyMMdd}}"] {
         assert_eq!(
             check_seen(&map, &have, &with(serde_json::json!({ "id": id })), &[], None),

@@ -95,7 +95,7 @@ fn tools_list_names_every_tool() {
         .collect();
     // This test binary is a development build (cargo test compiles with
     // debug assertions on), so with nothing disabled and the network tools'
-    // switch on the thirty-six dev-only tools (Auto Run's twenty-nine, then
+    // switch on the thirty-six dev-only tools (Auto Test's twenty-nine, then
     // the API templates row's seven) are listed like any other switchable
     // tool - between merge_case_files and db_lookup, where they sit in the
     // source.
@@ -920,7 +920,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
 fn a_tool_refused_because_its_module_is_off_names_the_module() {
     let none = BTreeSet::new();
     for (name, module) in [
-        ("save_autorun_script", "Auto Run"),
+        ("save_autorun_script", "Auto Test"),
         ("run_api_template", "API Templates"),
         ("db_query", "Database Access"),
     ] {
@@ -975,7 +975,7 @@ fn the_proxy_takes_the_modules_from_the_app() {
 }
 
 /// The answer is mended like a stored choice: a module whose parent is
-/// not named is off, so `auto_run` alone offers no Auto Run tool.
+/// not named is off, so `auto_run` alone offers no Auto Test tool.
 #[test]
 fn the_proxy_mends_a_broken_tree() {
     let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["auto_run"]}"#.into())));
@@ -1265,8 +1265,8 @@ fn listed_names(call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>
     v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
 }
 
-/// The six API template tools ride with the Auto Run ones: listed where
-/// Auto Run is offered (this development build), and - where it is not -
+/// The six API template tools ride with the Auto Test ones: listed where
+/// Auto Test is offered (this development build), and - where it is not -
 /// disabled first and refused with "not available", exactly as the Auto
 /// Run tools are.
 #[test]
@@ -1598,7 +1598,7 @@ fn the_validation_rule_tool_asks_for_the_message_and_reaches_its_route() {
     );
 }
 
-/// With the Auto Run row switched off and the API templates row on, the app
+/// With the Auto Test row switched off and the API templates row on, the app
 /// leaves `record_quirk` out of the disabled list (the tool rides in both
 /// rows), so the API templates assistant still has it.
 #[test]
@@ -1623,7 +1623,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
 /// With only the API templates row on, the API templates row is the one
 /// reason `record_quirk` is offered, so a quirk sent without `from` is that
 /// assistant's: `from: "api"` is filled in, as `record_app_quirk` did. A
-/// `from` the caller sent is kept, and with the Auto Run row on nothing is
+/// `from` the caller sent is kept, and with the Auto Test row on nothing is
 /// filled in.
 #[test]
 fn with_only_the_api_templates_row_on_a_quirk_without_from_is_the_api_assistants() {
@@ -1653,7 +1653,7 @@ fn with_only_the_api_templates_row_on_a_quirk_without_from_is_the_api_assistants
     let (_, body) = posted(AUTORUN_ROW_OFF, r#"{"text":"a line","from":"autorun"}"#);
     assert_eq!(body["from"], "autorun", "a `from` the caller sent is kept");
     let (_, body) = posted(r#"{"disabled":[]}"#, r#"{"text":"a line"}"#);
-    assert!(body.get("from").is_none(), "nothing filled in while the Auto Run row is on: {body}");
+    assert!(body.get("from").is_none(), "nothing filled in while the Auto Test row is on: {body}");
 }
 
 /// `get_guide` follows the row switches as well as the modules, as the old
@@ -1677,7 +1677,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
     let core = guide_of(r#"{"disabled":[],"modules":["writing_style"]}"#);
     assert_eq!(core["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing"]));
     let d = core["description"].as_str().unwrap();
-    for gone in ["autorun", "api_templates", "reports", "Auto Run", "Crystal", "Quick rules"] {
+    for gone in ["autorun", "api_templates", "reports", "Auto Test", "Crystal", "Quick rules"] {
         assert!(!d.contains(gone), "a Core-only description names {gone:?}: {d}");
     }
     for part in ["quick", "section", "full"] {
@@ -1687,7 +1687,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
     let reports = guide_of(r#"{"disabled":[],"modules":["writing_style","crystal_reports"]}"#);
     assert_eq!(reports["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing", "reports"]));
 
-    // Every module on, the Auto Run row switched off: no autorun topic, its
+    // Every module on, the Auto Test row switched off: no autorun topic, its
     // parts gone, the others there.
     const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","set_account_lookup","get_accounts","check_autorun_sign_in","inspect_sign_in_page","propose_sign_in_recipe","save_test_file","get_autorun_network_wait","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
     let g = guide_of(ROW_OFF);
@@ -1770,9 +1770,9 @@ fn the_merged_tools_refuse_the_mixes_they_used_to_ignore() {
     }
 }
 
-/// The two account tools belong to the Auto Run row: listed while that row
-/// is on and Auto Run is offered, gone when the row is switched off, and
-/// "not available" where Auto Run is not offered at all.
+/// The two account tools belong to the Auto Test row: listed while that row
+/// is on and Auto Test is offered, gone when the row is switched off, and
+/// "not available" where Auto Test is not offered at all.
 #[test]
 fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_offered() {
     const ACCOUNT_TOOLS: [&str; 3] = ["propose_accounts", "set_account_lookup", "get_accounts"];
@@ -1908,8 +1908,8 @@ fn get_accounts_also_gives_the_test_files() {
     assert!(d.contains("Never write a username or password into a script"), "{d}");
 }
 
-/// `save_test_file` rides with the Auto Run tools, where `get_accounts` shows the Test files: listed
-/// only while Auto Run (and so, below it, API Templates) is on, refused as "not available" otherwise,
+/// `save_test_file` rides with the Auto Test tools, where `get_accounts` shows the Test files: listed
+/// only while Auto Test (and so, below it, API Templates) is on, refused as "not available" otherwise,
 /// and a call forwards its arguments whole to `/test-file-save`.
 #[test]
 fn save_test_file_is_offered_only_with_auto_run_or_api_templates() {
@@ -1953,9 +1953,9 @@ fn save_test_file_is_offered_only_with_auto_run_or_api_templates() {
     assert_eq!(sent, serde_json::json!({ "name": "a.txt", "text": "x" }));
 }
 
-/// `replay_autorun_to_step` is one of the Auto Run tools: listed with them
-/// where Auto Run is offered, gone with the row switched off, and refused as
-/// "not available" where Auto Run is not offered. A call forwards its
+/// `replay_autorun_to_step` is one of the Auto Test tools: listed with them
+/// where Auto Test is offered, gone with the row switched off, and refused as
+/// "not available" where Auto Test is not offered. A call forwards its
 /// arguments to `/autorun-replay`, and the description says what the
 /// assistant must know before calling it.
 #[test]
@@ -2110,9 +2110,9 @@ fn the_descriptions_keep_the_browser_between_replays() {
     }
 }
 
-/// `set_autorun_order` is one of the Auto Run tools: listed with them where
-/// Auto Run is offered, gone with the row switched off, and refused as "not
-/// available" where Auto Run is not offered. A call forwards its arguments
+/// `set_autorun_order` is one of the Auto Test tools: listed with them where
+/// Auto Test is offered, gone with the row switched off, and refused as "not
+/// available" where Auto Test is not offered. A call forwards its arguments
 /// to `/autorun-order`, and the description says what the order is for and
 /// that Run Tests' order is not changed.
 #[test]
@@ -2136,7 +2136,7 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
-        Ok((200, "saved Auto Run's order for PBI 100: 503, 501".into()))
+        Ok((200, "saved Auto Test's order for PBI 100: 503, 501".into()))
     };
     let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.0.0", &call).unwrap()).unwrap();
     assert_ne!(v["result"]["isError"], serde_json::json!(true), "{v}");
@@ -2161,10 +2161,10 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     assert!(!d.contains('\u{2014}'), "{d}");
 }
 
-/// The five discovery tools, Release and Reset ride with the Auto Run tools, exactly as
-/// `probe_autorun_locator` does: listed where Auto Run is offered, gone and
+/// The five discovery tools, Release and Reset ride with the Auto Test tools, exactly as
+/// `probe_autorun_locator` does: listed where Auto Test is offered, gone and
 /// refused "switched off" when the person's list names them, refused "not
-/// available" where Auto Run is not offered. Each call forwards its
+/// available" where Auto Test is not offered. Each call forwards its
 /// arguments whole to its own bridge route.
 #[test]
 fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
@@ -2462,7 +2462,7 @@ fn rides_with_the_auto_run_tools(tools: &[(&str, &str, serde_json::Value, serde_
     }
 }
 
-/// The two component tools ride with the Auto Run tools as discovery's
+/// The two component tools ride with the Auto Test tools as discovery's
 /// do, and reach the save and retire routes with their arguments whole.
 /// `discover_autorun_actions` says it takes a `use_component` with a
 /// `draft`, and the save says it needs that live try first.
@@ -2756,8 +2756,8 @@ fn the_guide_takes_a_section_and_the_page_takes_within() {
     }
 }
 
-/// `get_autorun_network_wait` rides with the Auto Run tools: listed where
-/// Auto Run is offered, refused as "not available" where it is not, and a
+/// `get_autorun_network_wait` rides with the Auto Test tools: listed where
+/// Auto Test is offered, refused as "not available" where it is not, and a
 /// plain read of `/autorun-network-wait` that takes no arguments.
 #[test]
 fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
@@ -2790,7 +2790,7 @@ fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
     assert!(list.contains("nothing you call can"), "{list}");
 }
 
-/// The six network tools are Auto Run's, behind their own switch: listed
+/// The six network tools are Auto Test's, behind their own switch: listed
 /// only while the app says `network_tools: true` (a development app with
 /// every module on, in this file), refused as "not available" where Auto
 /// Run is not offered, and refused naming the Network tools switch where
@@ -2830,7 +2830,7 @@ fn the_network_tools_are_auto_run_tools_behind_their_own_switch() {
 
 /// With the switch off - the app says so, says nothing, or cannot be asked
 /// and the proxy falls back to the saved modules - the six are neither
-/// listed nor callable, while the rest of Auto Run is. Only an explicit
+/// listed nor callable, while the rest of Auto Test is. Only an explicit
 /// `true` turns them on.
 #[test]
 fn the_network_tools_are_off_until_the_app_says_yes() {
@@ -3601,7 +3601,7 @@ fn db_querys_description_names_the_held_back_module_only_when_unlocked() {
 }
 
 /// The four saved-setup tools reach their routes, carry the agent property,
-/// and are listed with Auto Run on and absent with it off.
+/// and are listed with Auto Test on and absent with it off.
 #[test]
 fn the_setup_tools_are_listed_and_reach_their_routes() {
     let cases = [
@@ -3639,15 +3639,15 @@ fn the_setup_tools_are_listed_and_reach_their_routes() {
             assert!(!text.contains(bad), "{name} has a dash");
         }
     }
-    // With Auto Run off the four are gone.
+    // With Auto Test off the four are gone.
     let off = listed_names(&stub(200, r#"{"disabled":[],"modules":["writing_style"]}"#));
     for (name, _) in cases {
-        assert!(!off.iter().any(|n| n == name), "{name} offered with Auto Run off");
+        assert!(!off.iter().any(|n| n == name), "{name} offered with Auto Test off");
     }
 }
 
 /// The two sign-in proposal tools reach their routes and are listed with
-/// Auto Run on and absent with it off.
+/// Auto Test on and absent with it off.
 #[test]
 fn the_sign_in_proposal_tools_are_listed_and_reach_their_routes() {
     let cases = [("inspect_sign_in_page", "/autorun-inspect-sign-in"), ("propose_sign_in_recipe", "/autorun-propose-sign-in")];
@@ -3688,10 +3688,10 @@ fn the_sign_in_proposal_tools_are_listed_and_reach_their_routes() {
     assert_eq!(required("propose_sign_in_recipe"), ["account"], "recipe or password_reset, exactly one, is the Rust side's to check");
     let props = tools.iter().find(|t| t["name"] == "propose_sign_in_recipe").unwrap()["inputSchema"]["properties"].clone();
     assert!(props["recipe"].is_object() && props["password_reset"].is_object());
-    // With Auto Run off the two are gone.
+    // With Auto Test off the two are gone.
     let off = listed_names(&stub(200, r#"{"disabled":[],"modules":["writing_style"]}"#));
     for (name, _) in cases {
-        assert!(!off.iter().any(|n| n == name), "{name} offered with Auto Run off");
+        assert!(!off.iter().any(|n| n == name), "{name} offered with Auto Test off");
     }
 }
 
@@ -4009,7 +4009,7 @@ fn the_agent_name_is_held_for_the_call_only() {
     assert_eq!(sent, serde_json::json!({ "marker": 7 }), "{body}");
 }
 
-/// `agent` is a property of the Auto Run and API template tools, never
+/// `agent` is a property of the Auto Test and API template tools, never
 /// required, and of no other tool: the writing job (`begin_test_case_writing`,
 /// read back by `get_tags`) is keyed by the full caller, name included, so a
 /// subagent that named itself on one of those two and not the other would read
@@ -4037,12 +4037,12 @@ fn every_auto_run_and_template_tool_takes_an_agent() {
     }
     let said = v2_lib::mcp::AGENT_PROPERTY_DESCRIPTION;
     assert!(said.contains("1 to 32 letters, digits, spaces, dots, underscores or hyphens"), "{said}");
-    assert!(said.contains("Each name gets an Auto Run browser of its own; leave it out when you work alone."), "{said}");
+    assert!(said.contains("Each name gets an Auto Test browser of its own; leave it out when you work alone."), "{said}");
     assert!(said.contains("one of several subagents of one session, or one of several chats served by one connection"), "{said}");
     assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
 }
 
-/// A tool that reaches a route which uses an Auto Run browser (the routes
+/// A tool that reaches a route which uses an Auto Test browser (the routes
 /// `commands::autorun_slots::need_of` gives a slot) is one the assistant can
 /// name itself on. Each tool is called with a few argument shapes through a
 /// recording bridge, and every route it reaches is asked of `need_of`, so a
@@ -4129,17 +4129,17 @@ fn an_agent_argument_reaches_the_app_as_a_header_not_in_the_body() {
     assert_eq!(v2_lib::mcp::calling_agent(), None);
 }
 
-/// Each Auto Run tool that said "the browser" as if there were one says whose
+/// Each Auto Test tool that said "the browser" as if there were one says whose
 /// browser it is, and `get_accounts` says what `in_use_by` is.
 #[test]
 fn the_tool_descriptions_say_whose_browser_it_is() {
     let tools = tools_by_name("{}");
     let said = |name: &str| description_of(&tools, name);
     let page = said("get_autorun_page");
-    assert!(page.contains("your Auto Run browser, or the person's when you have none"), "{page}");
+    assert!(page.contains("your Auto Test browser, or the person's when you have none"), "{page}");
     assert!(!page.contains("or your discovery browser"), "{page}");
     let probe = said("probe_autorun_locator");
-    assert!(probe.contains("your Auto Run browser, or the person's when you have none"), "{probe}");
+    assert!(probe.contains("your Auto Test browser, or the person's when you have none"), "{probe}");
     assert!(!probe.contains("Ask the open browser"), "{probe}");
     assert!(said("replay_autorun_to_step").contains("stops your own replay that is still going"));
     let start = said("start_autorun_discovery");

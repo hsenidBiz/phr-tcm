@@ -1,4 +1,4 @@
-//! What the first switch-on of Auto Run turns on for a person who has never
+//! What the first switch-on of Auto Test turns on for a person who has never
 //! used it, and how an install that already runs it keeps its controls.
 //!
 //! Pure decisions live here; `commands::modules` applies them.
@@ -20,7 +20,7 @@ pub struct Recommended {
     pub mode_simple: bool,
 }
 
-/// An install that already runs Auto Run and never picked a mode gets
+/// An install that already runs Auto Test and never picked a mode gets
 /// Advanced, so nothing it has today is hidden. Anything else is unchanged.
 pub fn settle_mode_on_upgrade(mode: Option<AutorunMode>, auto_run_on: bool) -> Option<AutorunMode> {
     match (mode, auto_run_on) {
@@ -29,7 +29,7 @@ pub fn settle_mode_on_upgrade(mode: Option<AutorunMode>, auto_run_on: bool) -> O
     }
 }
 
-/// What switching Auto Run on turns on. Nothing when Auto Run was used
+/// What switching Auto Test on turns on. Nothing when Auto Test was used
 /// before; otherwise each item a person has not already chosen for.
 pub fn recommended_on_switch(auto_run_used_before: bool, s: &AppSettings) -> Recommended {
     if auto_run_used_before {
@@ -55,11 +55,11 @@ fn holds_a_file(dir: &Path) -> bool {
     })
 }
 
-/// Whether Auto Run's OWN work exists under the shared Auto Run folder: at
+/// Whether Auto Test's OWN work exists under the shared Auto Test folder: at
 /// least one saved script or one run record, in an environment folder or in
 /// the older flat layout. Nothing else counts - the environments file, the
 /// proposals, the last-fill notes, a migration or failed-start note and empty
-/// folders are all written whether or not Auto Run was ever on. The seed
+/// folders are all written whether or not Auto Test was ever on. The seed
 /// folder is a template, not work.
 pub fn autorun_has_own_work(dir: &Path) -> bool {
     let mut roots = vec![dir.to_path_buf()];
@@ -67,7 +67,7 @@ pub fn autorun_has_own_work(dir: &Path) -> bool {
     roots.iter().any(|r| ["scripts", "runs"].iter().any(|item| holds_a_file(&r.join(item))))
 }
 
-/// Once true, always true: Auto Run is on now, or has saved scripts or runs.
+/// Once true, always true: Auto Test is on now, or has saved scripts or runs.
 pub fn settle_ever_on(ever_on: bool, auto_run_on: bool, has_own_work: bool) -> bool {
     ever_on || auto_run_on || has_own_work
 }
@@ -89,7 +89,7 @@ pub fn settle_on_start(data_dir: &Path) {
             s.autorun_mode = mode;
             s.auto_run_ever_on = ever;
         }) {
-            crate::applog::warn(format!("settling the Auto Run settings failed: {e}"));
+            crate::applog::warn(format!("settling the Auto Test settings failed: {e}"));
         }
     }
 }

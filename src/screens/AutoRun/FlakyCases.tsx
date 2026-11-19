@@ -1,6 +1,6 @@
 // The cases that both passed and failed in their recent runs on one environment, read from the run files on
 // this machine. Quiet: nothing at all when no case is flaky. Each row shows how the case went run by run
-// (oldest first) and the last failure; the person can mark it Flaky, which makes Auto Run count its failures
+// (oldest first) and the last failure; the person can mark it Flaky, which makes Auto Test count its failures
 // apart from the ones that make a run read as failed. Nothing sent to Azure DevOps changes.
 
 import { useQuery } from "@tanstack/react-query";
@@ -54,7 +54,7 @@ export default function FlakyCases() {
         <>
           <p className="text-xs text-faint">
             These cases passed in some recent runs on an environment and failed in others. Marking one as
-            flaky counts its failures apart from real failures in Auto Run. A failure is still sent to Azure
+            flaky counts its failures apart from real failures in Auto Test. A failure is still sent to Azure
             DevOps as failed.
           </p>
           <ul className="space-y-1">

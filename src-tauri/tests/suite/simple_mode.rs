@@ -39,7 +39,7 @@ fn switching_on_brings_every_module_on_and_leaves_the_api_templates_mark() {
     assert_eq!(st, on(&[Module::DbAccess, Module::WritingStyle, Module::AutoRun, Module::ApiTemplates, Module::Playwright]));
     assert!(!s.api_templates_set);
     assert!(!st.contains(&HIDDEN_UNTIL_UNLOCKED));
-    // Auto Run's recommended features, on a machine with no Auto Run work.
+    // Auto Test's recommended features, on a machine with no Auto Test work.
     assert_eq!(s.autorun_mode, Some(AutorunMode::Simple));
     assert!(s.autorun_failed_video);
     // Saved, not only held.

@@ -361,7 +361,7 @@ fn the_clean_up_step_is_named_the_clean_up() {
 #[test]
 fn a_case_that_needs_a_ruling_says_it_is_left_as_fixme() {
     let s = script(json!([[]]), json!({}));
-    let reason = "needs a ruling: step 2: the case says \"a\" but the app shows \"b\" (data) - a person rules on it in Auto Run";
+    let reason = "needs a ruling: step 2: the case says \"a\" but the app shows \"b\" (data) - a person rules on it in Auto Test";
     let h = handover_for(&HandoverInput {
         script: &s,
         shared_drafts: &[],

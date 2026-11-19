@@ -3,7 +3,7 @@
 //! written by either - does not rediscover the same surprise.
 //!
 //! Saved beside the project's sign-in recipe, under its own file. One file
-//! per project, read by both assistants: the Auto Run guide and the API
+//! per project, read by both assistants: the Auto Test guide and the API
 //! templates guide end with the same section.
 //!
 //! The list keeps itself honest. A quirk filed with a repair remembers the
@@ -178,7 +178,7 @@ pub const MAX_QUIRK_CHARS: usize = 300;
 
 /// The MCP tool that records and, with `retire`, retires an assistant's
 /// quirk - named in the cap's refusal and in both guides. One tool for both
-/// assistants: it rides in the Auto Run row and the API templates row
+/// assistants: it rides in the Auto Test row and the API templates row
 /// alike, so either switch on leaves it offered.
 pub const RETIRE_TOOL: &str = "record_quirk";
 
@@ -641,7 +641,7 @@ pub fn product_bugs_for(quirks: &[Quirk], case_id: i32) -> Vec<String> {
         .collect()
 }
 
-/// Appends one note from the Auto Run side, unless the same fact is
+/// Appends one note from the Auto Test side, unless the same fact is
 /// already active, in which case nothing new is written and this returns
 /// `false`.
 pub fn add_quirk(root: &Path, org: &str, project: &str, text: &str, by: &str, now_ms: u64) -> Result<bool, String> {
@@ -874,7 +874,7 @@ fn mark_failed_areas(root: &Path, org: &str, project: &str, cases: &[CaseRecord]
             Ok(Some(script)) => script.area.unwrap_or_default(),
             Ok(None) => continue,
             Err(e) => {
-                crate::applog::warn(format!("Auto Run: case {} was not read to mark its area: {e}", case.case_id));
+                crate::applog::warn(format!("Auto Test: case {} was not read to mark its area: {e}", case.case_id));
                 continue;
             }
         };
@@ -883,7 +883,7 @@ fn mark_failed_areas(root: &Path, org: &str, project: &str, cases: &[CaseRecord]
             continue;
         }
         if let Err(e) = super::discovery_map::mark_failed(root, org, project, area) {
-            crate::applog::warn(format!("Auto Run: the map of area {area:?} was not marked after the run: {e}"));
+            crate::applog::warn(format!("Auto Test: the map of area {area:?} was not marked after the run: {e}"));
         }
     }
 }
@@ -900,7 +900,7 @@ pub fn record_run_evidence(root: &Path, org: &str, project: &str, cases: &[CaseR
     let mut list = match load_quirks(root, org, project) {
         Ok(l) => l,
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: the project's quirks were not updated after the run: {e}"));
+            crate::applog::warn(format!("Auto Test: the project's quirks were not updated after the run: {e}"));
             return false;
         }
     };
@@ -920,7 +920,7 @@ pub fn record_run_evidence(root: &Path, org: &str, project: &str, cases: &[CaseR
             true
         }
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: the project's quirks were not updated after the run: {e}"));
+            crate::applog::warn(format!("Auto Test: the project's quirks were not updated after the run: {e}"));
             false
         }
     }
@@ -983,7 +983,7 @@ pub fn attribution(q: &Quirk) -> String {
 
 /// A Markdown section for an assistant's guide: the ACTIVE notes, each
 /// with its id and evidence, or nothing at all when there are none.
-/// Shared word for word by the Auto Run guide and the API templates guide.
+/// Shared word for word by the Auto Test guide and the API templates guide.
 pub fn quirks_section(quirks: &[Quirk]) -> String {
     let active: Vec<&Quirk> = quirks.iter().filter(|q| q.is_active()).collect();
     if active.is_empty() {

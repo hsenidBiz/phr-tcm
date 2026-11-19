@@ -639,7 +639,7 @@ fn push_unique(breaks: &mut Vec<RenameBreak>, file: &str, what: &str) {
 
 /// What renaming `from` to `to` (both paths under `suites/`) would break in
 /// the clone at `clone`, and what the app updates itself; `maps_root` is the
-/// folder of the app's Auto Run files, where the export settings are kept,
+/// folder of the app's Auto Test files, where the export settings are kept,
 /// and `sync_dir` the folder of the Sync records that say which of them
 /// belong to this clone. Refused, with nothing read beyond the folder names,
 /// for a path the rename itself would refuse. Read only.

@@ -918,7 +918,7 @@ fn the_guide_names_the_accounts_and_origin_but_no_password() {
     // Nothing set up yet: it says what the person has to do, rather than
     // naming no accounts and no host in silence.
     let bare = guide::text(&[], None);
-    assert!(bare.contains("Auto Run"), "{bare}");
+    assert!(bare.contains("Auto Test"), "{bare}");
     assert!(!bare.contains("https://"), "{bare}");
 }
 
@@ -1085,7 +1085,7 @@ fn the_guide_with_no_origin_asks_for_the_site_address() {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         flat.contains(
-            "This project has no site address yet - the person sets it in Auto Run, Setup, Site address \
+            "This project has no site address yet - the person sets it in Auto Test, Setup, Site address \
              (or Edit environments on the AI Bridge tab). Nothing can be proven or run until it has one."
         ),
         "{flat}"

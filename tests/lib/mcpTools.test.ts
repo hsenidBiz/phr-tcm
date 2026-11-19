@@ -78,7 +78,7 @@ test("the suite and wiki summaries name no single project", () => {
   expect(wiki?.summary).toBe("Search the wikis and read the pages they find.");
 });
 
-test("the sign-in tools are labelled and listed with Auto Run", () => {
+test("the sign-in tools are labelled and listed with Auto Test", () => {
   const tool = (name: string) => MCP_TOOLS.find((t) => t.name === name);
   expect(tool("inspect_sign_in_page")?.label).toBe("Inspect a sign-in page");
   expect(tool("propose_sign_in_recipe")?.label).toBe("Propose a sign-in");
@@ -155,7 +155,7 @@ test("the core and per-module tool lists match the Rust side", () => {
   expect(extractList("API_TEMPLATE_TOOLS")).toEqual([...API_TEMPLATE_TOOLS]);
   expect(extractList("DB_TOOLS")).toEqual([...DB_TOOLS]);
   expect(extractList("CRYSTAL_TOOLS")).toEqual([...CRYSTAL_TOOLS]);
-  // The network tools are Auto Run's, behind their own switch besides.
+  // The network tools are Auto Test's, behind their own switch besides.
   expect(extractList("NETWORK_TOOLS")).toEqual([...NETWORK_TOOLS]);
   for (const name of NETWORK_TOOLS) expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
   for (const name of extractList("AUTORUN_TOOLS")) expect(moduleOfTool(name)).toBe("auto_run");
@@ -228,18 +228,18 @@ test("no row carries a module's tool, and the quirk tool is never on a disabled 
     setModulesForTest([...modules]);
     const listed = visibleRows().flatMap((r) => r.names);
     for (const name of moduleTools) expect(listed, `${name} with ${modules.join("+") || "no module"}`).not.toContain(name);
-    expect(visibleRows().some((r) => ["Auto Run scripts", "API templates", "Database Read Access", "Crystal Reports"].includes(r.label))).toBe(false);
+    expect(visibleRows().some((r) => ["Auto Test scripts", "API templates", "Database Read Access", "Crystal Reports"].includes(r.label))).toBe(false);
   }
   saveDisabledTools(["record_quirk", "get_tags"]);
   expect(loadDisabledTools()).toEqual(["get_tags"]);
   localStorage.clear();
 });
 
-/// The Auto Run tools merged into one with an argument. A row switched off
+/// The Auto Test tools merged into one with an argument. A row switched off
 /// under the old names used to carry over to the new ones; module tools have
 /// no switch now, so the old names drop out with the rest - but every old
 /// name still maps to a tool that is there.
-test("the merged Auto Run tools' old names switched off no longer name anything", () => {
+test("the merged Auto Test tools' old names switched off no longer name anything", () => {
   setModulesForTest(["db_access", "auto_run"]);
   const merged: Record<string, string> = {
     discover_autorun_action: "discover_autorun_actions",
@@ -336,7 +336,7 @@ test("only the switchable tools are left, as five rows whatever modules are on",
 /// whichever half of a group it names.
 test("a saved list naming a module's tools loads without them", () => {
   const modules: Record<string, readonly string[]> = {
-    "Auto Run": AUTORUN_TOOLS,
+    "Auto Test": AUTORUN_TOOLS,
     "API templates": API_TEMPLATE_TOOLS,
     "Database Access": DB_TOOLS,
     "the held-back module": CRYSTAL_TOOLS,
@@ -447,9 +447,9 @@ test("every row label is human, with no identifier in it", () => {
 });
 
 /// Capture mode reports every module on, but the AI Tools tab is a
-/// documented, captured screen: it hides the Auto Run and API template
+/// documented, captured screen: it hides the Auto Test and API template
 /// tools in a shot (display only). No module's tool has a row either way.
-test("capture mode hides the Auto Run and API template tools, everything on", () => {
+test("capture mode hides the Auto Test and API template tools, everything on", () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
 
   expect(toolShown("save_autorun_script")).toBe(false);
@@ -462,7 +462,7 @@ test("capture mode hides the Auto Run and API template tools, everything on", ()
 
   localStorage.removeItem("tcm-v2-dev-capture");
   expect(toolShown("save_autorun_script")).toBe(true);
-  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
+  expect(visibleRows().some((r) => r.label === "Auto Test scripts")).toBe(false);
 });
 
 /// Capture mode must never put anything on disk, and no module may change
@@ -547,13 +547,13 @@ test("the ruling tools belong to auto run", () => {
 test("the browser summaries say whose browser it is", () => {
   const summary = (name: string) => MCP_TOOLS.find((t) => t.name === name)?.summary ?? "";
   expect(summary("get_autorun_page")).toBe(
-    "Read the page in the assistant's own Auto Run browser (or the one you opened), one element per line with its locator.",
+    "Read the page in the assistant's own Auto Test browser (or the one you opened), one element per line with its locator.",
   );
   expect(summary("start_autorun_discovery")).toBe(
-    "Open an Auto Run browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
+    "Open an Auto Test browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
   );
-  expect(summary("end_autorun_discovery")).toBe("End the assistant's exploration in its own Auto Run browser.");
+  expect(summary("end_autorun_discovery")).toBe("End the assistant's exploration in its own Auto Test browser.");
   expect(summary("reset_autorun_browser")).toBe(
-    "Give the assistant's own Auto Run browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
+    "Give the assistant's own Auto Test browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
   );
 });

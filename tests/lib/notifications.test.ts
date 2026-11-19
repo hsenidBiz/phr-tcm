@@ -325,7 +325,7 @@ test("proposed accounts are one notice per environment, keyed by the newest prop
   expect(first[0].id).toBe("assistant-waiting:accounts:env-1:1000");
   expect(first[0].kind).toBe("assistant-waiting");
   expect(first[0].title).toBe("3 proposed accounts are waiting for you to accept");
-  expect(first[0].body).toBe("Open Auto Run to accept or decline them.");
+  expect(first[0].body).toBe("Open Auto Test to accept or decline them.");
   expect(first[0].target).toEqual({ kind: "auto-run", project: "Web", focus: { kind: "accounts" } });
   // A newer proposal raises one fresh notice; another environment has its own.
   const newer = noteWaiting("acme", "Web", w("env-1", 2000, 1000, 900, 800));
@@ -345,7 +345,7 @@ test("accepting the newest-stamped accounts does not raise a fresh notice for th
 test("a single proposed account reads in the singular", () => {
   const [n] = noteWaiting("acme", "Web", { env_id: "env-1", items: [acct("hr.sup", 5)] });
   expect(n.title).toBe("1 proposed account is waiting for you to accept");
-  expect(n.body).toBe("Open Auto Run to accept or decline it.");
+  expect(n.body).toBe("Open Auto Test to accept or decline it.");
 });
 
 test("noteWaiting removes the old one-notice-per-account entries and the old divergence notices, nothing else", () => {

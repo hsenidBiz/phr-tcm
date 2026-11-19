@@ -50,7 +50,7 @@ test("setting a module publishes Rust's answer, cascade included, and tells subs
   const seen = vi.fn();
   const off = subscribeModules(seen);
   await setModule("db_access", false);
-  // Rust answered that Auto Run and Playwright went with it.
+  // Rust answered that Auto Test and Playwright went with it.
   expect([...modulesSnapshot()]).toEqual(["writing_style"]);
   expect(seen).toHaveBeenCalledTimes(1);
   off();
@@ -59,7 +59,7 @@ test("setting a module publishes Rust's answer, cascade included, and tells subs
 test("a refusal from Rust is thrown and changes nothing", async () => {
   mockIPC((cmd) => {
     if (cmd === "modules_get") return ["db_access", "auto_run"];
-    if (cmd === "modules_set") throw "Auto Run can't be switched off while a run is going - stop the run first.";
+    if (cmd === "modules_set") throw "Auto Test can't be switched off while a run is going - stop the run first.";
     return undefined;
   });
   await hydrateModules();
@@ -182,14 +182,14 @@ test("sectionShown reads the Simple store when not told", () => {
   expect(sectionShown("import", all)).toBe(false);
 });
 
-test("leaveTarget sends a Simple-hidden screen to Auto Run and an off module to Manual Entry", () => {
+test("leaveTarget sends a Simple-hidden screen to Auto Test and an off module to Manual Entry", () => {
   expect(leaveTarget("import", false, true, true)).toBe("autorun");
   expect(leaveTarget("import", false, false, true)).toBeNull();
   expect(leaveTarget("import", true, true, false)).toBeNull();
   expect(leaveTarget("playwright", false, true, false)).toBe("manual");
   expect(leaveTarget("playwright", false, false, false)).toBeNull();
   expect(leaveTarget("manual", true, true, true)).toBeNull();
-  // A remembered Playwright tab opens Auto Run in Simple mode, even with the module on.
+  // A remembered Playwright tab opens Auto Test in Simple mode, even with the module on.
   expect(leaveTarget("playwright", true, true, true)).toBe("autorun");
   expect(leaveTarget("playwright", true, true, false)).toBeNull();
 });

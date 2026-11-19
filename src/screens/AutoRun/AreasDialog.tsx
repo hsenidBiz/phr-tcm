@@ -43,7 +43,7 @@ type Phase =
 /** How two names are compared: the backend's rule (`areaKey`). */
 const sameName = sameAreaName;
 
-/** The browser the person last picked in Auto Run (the run panes' own
+/** The browser the person last picked in Auto Test (the run panes' own
  * key), so a recording opens in the browser they already chose. */
 export function chosenBrowser(): string {
   try {
@@ -63,7 +63,7 @@ export default function AreasDialog({
 }: {
   org: string;
   project: string;
-  /** The Module values of the cases loaded in Auto Run, for picking. */
+  /** The Module values of the cases loaded in Auto Test, for picking. */
   caseModules: string[];
   onClose: () => void;
 }) {
@@ -148,7 +148,7 @@ export default function AreasDialog({
     };
   }, []);
 
-  // A dialog that was closed with the Auto Run section (a section switch
+  // A dialog that was closed with the Auto Test section (a section switch
   // unmounts it) can leave a recording, a Start, a check or a Try behind,
   // holding the recorder. Nothing else would ever end it, so say so and
   // offer Cancel. Only while this dialog has started nothing of its own.

@@ -1,5 +1,5 @@
 //! Environments: one named website, database and default password, one of
-//! them active. The store is a plain JSON file under the Auto Run root; the
+//! them active. The store is a plain JSON file under the Auto Test root; the
 //! default password lives only in the secret store (`MemoryStore` here -
 //! a test must never write to the real Credential Manager).
 
@@ -1631,13 +1631,13 @@ mod accounts_for_the_assistant {
         assert_eq!(status, 200, "{out}");
     }
 
-    /// The account routes are offered exactly where Auto Run is.
+    /// The account routes are offered exactly where Auto Test is.
     #[test]
     fn the_account_routes_are_gated_like_auto_run() {
         use v2_lib::ai_bridge::{module_guard_for, smells_like_a_write};
         for path in ["/accounts", "/accounts-propose"] {
             let (status, body) = module_guard_for(path, &Default::default()).unwrap_or_else(|| panic!("{path} was not refused"));
-            assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"), "{path}");
+            assert_eq!((status, body.as_str()), (404, "Auto Test is switched off in Modules"), "{path}");
             assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path}");
             assert!(!smells_like_a_write("POST", path) && !smells_like_a_write("GET", path), "{path}");
         }

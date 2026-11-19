@@ -504,11 +504,11 @@ async fn the_route_stores_the_mark_or_refuses_with_the_sentence() {
     assert_eq!((stored.repairs, stored.last_repair.as_deref()), (2, Some("the edit button moved")));
 }
 
-/// Offered only where Auto Run is, like `record_quirk`.
+/// Offered only where Auto Test is, like `record_quirk`.
 #[test]
 fn the_route_is_refused_where_auto_run_is_not_offered() {
-    let (status, body) = module_guard_for("/autorun-defect", &Default::default()).expect("refused outside Auto Run");
-    assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
+    let (status, body) = module_guard_for("/autorun-defect", &Default::default()).expect("refused outside Auto Test");
+    assert_eq!((status, body.as_str()), (404, "Auto Test is switched off in Modules"));
     assert!(module_guard_for("/autorun-defect", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
 }
 
@@ -894,7 +894,7 @@ fn the_result_comment_carries_the_defect_reason() {
         "Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500".into();
     assert_eq!(
         comment_for(&case),
-        "Auto Run: Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500"
+        "Auto Test: Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500"
     );
 }
 

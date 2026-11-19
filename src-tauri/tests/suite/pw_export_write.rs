@@ -23,7 +23,7 @@ pub(crate) const MD_REL: &str = "suites/sl/admin/performance/proficiency-levels/
 pub(crate) struct Fx {
     pub(crate) root: tempfile::TempDir,
     pub(crate) clone: tempfile::TempDir,
-    /// Each case's Module, as the Auto Run screen passes it.
+    /// Each case's Module, as the Auto Test screen passes it.
     pub(crate) modules: std::cell::RefCell<BTreeMap<i32, String>>,
 }
 
@@ -559,7 +559,7 @@ fn a_script_with_no_area_goes_where_auto_run_takes_it_by_the_cases_module() {
     let r = export(&fx, &[140], &docs(&[(140, "One forty")])).unwrap();
     assert!(spec_of(&fx, &r, 140).contains("cur.locator('a.dw')"));
 
-    // A Module with several areas and none named like it: Auto Run's own refusal.
+    // A Module with several areas and none named like it: Auto Test's own refusal.
     fx.click_script(141, "One forty one", "admin", "");
     fx.run("r141", "5", 141, "Passed");
     fx.modules.borrow_mut().insert(141, "Performance".into());
@@ -603,7 +603,7 @@ fn a_project_with_no_areas_exports_with_no_menu_clicks_placed_by_module() {
     assert!(!spec.contains("a.dw") && !spec.contains("a.up"), "{spec}");
     assert!(spec.contains("await cur.locator('#go').first().click();"), "{spec}");
 
-    // A bare return_to_area has nowhere to go - as in Auto Run.
+    // A bare return_to_area has nowhere to go - as in Auto Test.
     fx.script(151, "One fifty one", "admin", "", json!([{ "kind": "return_to_area" }]));
     fx.run("r151", "5", 151, "Passed");
     fx.modules.borrow_mut().insert(151, "Performance".into());
@@ -625,7 +625,7 @@ fn an_area_not_placed_yet_comes_with_a_suggestion_from_its_name() {
     let p = preview_with(fx.root.path(), ORG, PROJECT, &[160], &fx.clone_path(), &fx.modules.borrow()).unwrap();
     assert!(p.suggested.is_empty(), "{:?}", p.suggested);
     assert!(p.areas.contains(&"Unplaced".to_string()));
-    // A case that starts in "Unplaced" - here by its Module, as Auto Run picks
+    // A case that starts in "Unplaced" - here by its Module, as Auto Test picks
     // it for a script with no area - brings the guess.
     fx.click_script(161, "One sixty one", "admin", "");
     fx.run("r161", "5", 161, "Passed");
@@ -899,7 +899,7 @@ fn a_shared_draft_value_is_written_into_the_spec() {
     let spec = fx.read_clone(&format!("suites/_generated/{}", r.cases[0].1));
     assert!(spec.contains("Shared FY26 Draft"), "{spec}");
     assert!(!spec.contains("{{"), "{spec}");
-    // What is saved in Auto Run is untouched: it still holds the placeholder.
+    // What is saved in Auto Test is untouched: it still holds the placeholder.
     let saved = store::load_script(fx.root.path(), 91).unwrap().unwrap();
     assert!(serde_json::to_string(&saved.steps).unwrap().contains("{{fixture.f2.name}}"));
 }

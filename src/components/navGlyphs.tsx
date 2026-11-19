@@ -137,7 +137,7 @@ export function GlyphRun(p: GlyphProps) {
   );
 }
 
-/** Auto Run: a radar sweep - the arm turns once with a fading wedge behind
+/** Auto Test: a radar sweep - the arm turns once with a fading wedge behind
  *  it, and each blip flares as the arm passes. */
 export function GlyphAutoRun(p: GlyphProps) {
   return (

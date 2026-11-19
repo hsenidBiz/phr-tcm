@@ -6,7 +6,7 @@
 //! the same URL). Every per-environment file is keyed on the id:
 //! `accounts/<id>.json`, `sessions/<id>/`, `proposals/<id>.json`.
 //!
-//! The list lives in `environments.json` under the Auto Run root, written
+//! The list lives in `environments.json` under the Auto Test root, written
 //! atomically. The default password is NOT in it: it lives in the secret
 //! store under `password_target(id)`, and the webview only ever learns
 //! whether one is set (see `commands::environments`).
@@ -544,7 +544,7 @@ pub const NO_ENVIRONMENTS: &str = "no environment has been set up yet";
 pub const EXPORT_ENV_UNKNOWN: &str = "that environment is not there any more";
 /// Said when the export records could not be moved to the new export
 /// environment; nothing was changed.
-pub const EXPORT_ENV_NOT_MOVED: &str = "the Playwright export settings could not be moved to that environment - nothing was changed; close anything using the Auto Run files and try again";
+pub const EXPORT_ENV_NOT_MOVED: &str = "the Playwright export settings could not be moved to that environment - nothing was changed; close anything using the Auto Test files and try again";
 
 /// The id the file names as the export environment, when it is listed.
 fn export_id_of(file: &EnvFile) -> Option<&str> {
@@ -908,12 +908,12 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
         crate::autorun::sign_in_check::forget_marks(root, id);
         (file, name)
     };
-    // The Auto Run folder waits in the removed area for 30 days. This runs
+    // The Auto Test folder waits in the removed area for 30 days. This runs
     // after the environments lock is released (the move takes the switch
     // lock), and a failure is logged, not fatal: the environment is gone
     // from the list already.
     if let Err(e) = crate::autorun::roots::retire(&shared, id, &name, "removed", crate::autorun::sessions::now_ms()) {
-        crate::applog::warn(format!("Environments: a removed environment's Auto Run folder stayed in place: {e}"));
+        crate::applog::warn(format!("Environments: a removed environment's Auto Test folder stayed in place: {e}"));
     }
     Ok(file)
 }

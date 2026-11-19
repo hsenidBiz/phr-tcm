@@ -3,7 +3,7 @@
 //! Every page the app attaches to is laid out at one size at a device scale
 //! factor of 1, so a layout seen while a script is written is the layout a
 //! run sees, on any screen and at any Windows display scale. The size is a
-//! setting (Settings, Auto Run, "Browser page size") that ships as 1280 x 720,
+//! setting (Settings, Auto Test, "Browser page size") that ships as 1280 x 720,
 //! Playwright's own default. The scale is not a setting.
 
 use serde::{Deserialize, Serialize};

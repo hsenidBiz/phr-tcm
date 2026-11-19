@@ -1,4 +1,4 @@
-//! Copying one environment's Auto Run data into another, the person's own
+//! Copying one environment's Auto Test data into another, the person's own
 //! action: from another environment, or from a removed one still kept.
 //!
 //! Only what describes the app is copied (`PER_ENV_ITEMS` marked
@@ -17,9 +17,9 @@ use super::roots::{self, CopyTo, PER_ENV_ITEMS};
 use crate::environments::{self, EnvFile};
 use std::path::{Path, PathBuf};
 
-/// Said when the target already holds Auto Run data and the person has not
+/// Said when the target already holds Auto Test data and the person has not
 /// yet agreed to replace it.
-pub const COPY_NEEDS_CONFIRM: &str = "this environment already has Auto Run data - confirm to replace it";
+pub const COPY_NEEDS_CONFIRM: &str = "this environment already has Auto Test data - confirm to replace it";
 /// Said when the source is the target.
 pub const COPY_ONTO_ITSELF: &str = "an environment cannot be copied onto itself";
 /// Said when the source is not one the copy may read from.
@@ -27,7 +27,7 @@ pub const COPY_UNKNOWN_SOURCE: &str = "that source is not there any more";
 /// Said when the target is not a listed environment.
 pub const COPY_UNKNOWN_TARGET: &str = "that environment is not there any more";
 /// Said when the source folder is not there.
-pub const COPY_SOURCE_MISSING: &str = "that source has no Auto Run folder to copy from";
+pub const COPY_SOURCE_MISSING: &str = "that source has no Auto Test folder to copy from";
 /// Said when the source holds nothing a copy would bring: copying it would
 /// only empty the target.
 pub const COPY_NOTHING_TO_COPY: &str = "that source has no scripts, areas, components or quirks to copy";
@@ -54,7 +54,7 @@ pub struct CopySource {
 /// What the copy dialog needs to know about a target.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct CopyChoices {
-    /// The target has no Auto Run data a copy would replace.
+    /// The target has no Auto Test data a copy would replace.
     pub target_empty: bool,
     /// Every other environment, then the removed folders still kept.
     pub sources: Vec<CopySource>,
@@ -446,7 +446,7 @@ pub fn copy_environment_full(
     if let Err(e) = std::fs::remove_file(target.join(MARKER)) {
         log_failure("a copy's note stayed behind", &e.to_string());
     }
-    crate::applog::info(format!("Environments: copied Auto Run data into one environment ({items} item(s))"));
+    crate::applog::info(format!("Environments: copied Auto Test data into one environment ({items} item(s))"));
     Ok(CopyDone { items, kept_aside: retired.is_some() })
 }
 
@@ -720,7 +720,7 @@ fn gather_case(
     // A script that cannot be read is logged; the sentence names no path.
     let load = |root: &Path| {
         store::load_script(root, case_id).map_err(|e| {
-            crate::applog::warn(format!("Auto Run: a script to copy could not be read: {e}"));
+            crate::applog::warn(format!("Auto Test: a script to copy could not be read: {e}"));
             COPY_FAILED.to_string()
         })
     };
@@ -920,7 +920,7 @@ pub fn copy_case(
         return Err(case_copy_replaying(case_id));
     }
     let failed = |what: &str, e: String| {
-        crate::applog::warn(format!("Auto Run: copying case {case_id} to another environment stopped at its {what}: {e}"));
+        crate::applog::warn(format!("Auto Test: copying case {case_id} to another environment stopped at its {what}: {e}"));
         COPY_FAILED.to_string()
     };
     // A push writes into a root that is not the active one: the guard lets
@@ -969,7 +969,7 @@ pub fn copy_case(
         }
         return Err(failed("script", e));
     }
-    crate::applog::info(format!("Auto Run: copied case {case_id} to another environment"));
+    crate::applog::info(format!("Auto Test: copied case {case_id} to another environment"));
     Ok(plan)
 }
 
@@ -981,8 +981,8 @@ pub fn copy_case(
 // like any save. A case that already has a different script here is left
 // unless the person agreed to replace it.
 
-/// Said when the folder holds no Auto Run script files.
-pub const IMPORT_NO_SCRIPTS: &str = "that folder holds no Auto Run scripts (files named case-<number>.json)";
+/// Said when the folder holds no Auto Test script files.
+pub const IMPORT_NO_SCRIPTS: &str = "that folder holds no Auto Test scripts (files named case-<number>.json)";
 /// Said when the import stopped part-way.
 pub const IMPORT_FAILED: &str = "the import did not finish - see Settings > Logs";
 
@@ -1023,7 +1023,7 @@ fn gather_import(from: &Path, target: &Path) -> Result<ImportGather, String> {
     use super::store;
     let dir = if from.join("scripts").is_dir() { from.join("scripts") } else { from.to_path_buf() };
     let entries = std::fs::read_dir(&dir).map_err(|e| {
-        crate::applog::warn(format!("Auto Run: a folder of scripts to import could not be read: {e}"));
+        crate::applog::warn(format!("Auto Test: a folder of scripts to import could not be read: {e}"));
         IMPORT_NO_SCRIPTS.to_string()
     })?;
     let mut plan = ImportScriptsPlan { new: vec![], same: vec![], differ: vec![], unreadable: 0 };
@@ -1107,7 +1107,7 @@ pub fn import_scripts_with(
         }
     }
     let failed = |what: &str, e: String| {
-        crate::applog::warn(format!("Auto Run: importing scripts stopped at {what}: {e}"));
+        crate::applog::warn(format!("Auto Test: importing scripts stopped at {what}: {e}"));
         IMPORT_FAILED.to_string()
     };
     // A case that gained a script since the plan is refused, never overwritten
@@ -1137,7 +1137,7 @@ pub fn import_scripts_with(
         }
     }
     crate::applog::info(format!(
-        "Auto Run: imported {} new scripts, replaced {replaced}, {} left as they were",
+        "Auto Test: imported {} new scripts, replaced {replaced}, {} left as they were",
         g.new.len(),
         if replace { 0 } else { g.differ.len() }
     ));

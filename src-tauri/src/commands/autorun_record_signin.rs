@@ -361,7 +361,7 @@ where
 {
     let recipe = build_recipe(root, organization, project, fields)?;
     let who = find_account(root, account)?.ok_or_else(|| {
-        format!("there is no account \"{account}\" on this machine - add it in Auto Run, Accounts")
+        format!("there is no account \"{account}\" on this machine - add it in Auto Test, Accounts")
     })?;
     rec::check_marker_for(&recipe.signed_in, &who)?;
     drop_a_finished_recording().await;
