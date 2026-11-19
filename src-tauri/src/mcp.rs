@@ -368,7 +368,7 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             // own, so the two can be compared at all.
             let mut result = serde_json::json!({
                 "protocolVersion": v["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),
-                "capabilities": { "tools": {} },
+                "capabilities": { "tools": { "listChanged": true } },
                 "serverInfo": { "name": crate::ai_tools::TCM_SERVER, "version": PROXY_VERSION },
             });
             // `instructions` is where an MCP client hands the server's own
@@ -3218,6 +3218,57 @@ pub fn tools_reply_or_saved_simple(
     }
 }
 
+/// How long the connector waits for the app's answer to one relayed message: a little past the bridge's
+/// own 300 s, so a slow tool call is answered by the app, not abandoned and then run again here.
+pub const RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(310);
+
+/// What the connector sends the app for one message and gets back (status, body); the argument is the
+/// `{"session","message"}` JSON.
+pub type SharedRelay = std::sync::Arc<dyn Fn(&str) -> Result<(u16, String), String> + Send + Sync>;
+
+/// Answers `msg` through the running app when it can, and itself (`local`) when it cannot. A message with
+/// no id is never answered and sends nothing; `initialize` is always the connector's own (the app would
+/// take the client's name for itself); anything else goes to `relay` with the connector's `session`. Only a
+/// 200 carrying a `reply` is used (a null reply is no answer); a transport error, any other status (an
+/// older app answers 404) or a body that is not that is answered by `local`.
+pub fn relay_or_local(
+    msg: &str,
+    session: &str,
+    relay: &dyn Fn(&str) -> Result<(u16, String), String>,
+    local: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(msg) else {
+        return local(msg);
+    };
+    v.get("id")?;
+    if v["method"].as_str() == Some("initialize") {
+        return local(msg);
+    }
+    let body = serde_json::json!({ "session": session, "message": v }).to_string();
+    let reply = match relay(&body) {
+        Ok((200, text)) => serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|mut r| r.get_mut("reply").map(serde_json::Value::take)),
+        _ => None,
+    };
+    match reply {
+        Some(serde_json::Value::Null) => None,
+        Some(reply) => Some(reply.to_string()),
+        None => local(msg),
+    }
+}
+
+/// One relayed message to the running app, the handshake read afresh each time so an app that restarted
+/// is found at its new port and token.
+pub fn relay_to_app(body: &str) -> Result<(u16, String), String> {
+    let hs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(crate::ai_bridge::handshake_path())
+            .map_err(|_| "handshake file missing - is the app running?".to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let port = hs["port"].as_u64().ok_or("bad handshake file")? as u16;
+    let token = hs["token"].as_str().ok_or("bad handshake file")?;
+    send_to_bridge_within(port, token, "POST", crate::mcp_relay::RELAY_PATH, body, RELAY_TIMEOUT)
+}
+
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let reply = bridge_request(method, path, body);
     if method == "GET" && path == "/tools" {
@@ -3323,12 +3374,13 @@ pub fn run_stdio_proxy() {
         eprintln!("{warning}");
     }
     let stdin = std::io::stdin();
-    serve_lines(
+    serve_lines_with(
         stdin.lock(),
         std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout())),
         version,
         std::sync::Arc::new(bridge_call),
         std::sync::Arc::new(crate::mcp_session::SessionBook::new()),
+        Some(std::sync::Arc::new(relay_to_app)),
     );
     // The client closed the pipe and every call has answered: this session is over.
     send_bye();
@@ -3387,17 +3439,36 @@ fn write_response_line<W: Write>(output: &std::sync::Mutex<W>, resp: &str) {
     let _ = out.flush();
 }
 
+/// One line's answer: the app's when `relay` is there and can give it, else the connector's own.
+fn answer_line(
+    line: &str,
+    version: &str,
+    call: &SharedCall,
+    book: &crate::mcp_session::SessionBook,
+    relay: &Option<SharedRelay>,
+    session: &str,
+) -> Option<String> {
+    let local = |m: &str| handle_message_shared(m, version, &**call, book);
+    match relay {
+        Some(relay) => relay_or_local(line, session, &**relay, &local),
+        None => local(line),
+    }
+}
+
 /// Answers one `tools/call` line and writes the response. A panic in the call is answered as an internal
 /// error with the call's own id, so the client is never left waiting on it.
+#[allow(clippy::too_many_arguments)]
 fn answer_call_line<W: Write>(
     line: &str,
     id: Option<serde_json::Value>,
     version: &str,
     call: &SharedCall,
     book: &crate::mcp_session::SessionBook,
+    relay: &Option<SharedRelay>,
+    session: &str,
     output: &std::sync::Mutex<W>,
 ) {
-    let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_message_shared(line, version, &**call, book)));
+    let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| answer_line(line, version, call, book, relay, session)));
     let resp = match answered {
         Ok(resp) => resp,
         Err(_) => id.map(|id| rpc_error(id, -32603, "Internal error")),
@@ -3419,6 +3490,20 @@ pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
     call: SharedCall,
     book: std::sync::Arc<crate::mcp_session::SessionBook>,
 ) {
+    serve_lines_with(input, output, version, call, book, None);
+}
+
+/// `serve_lines`, answering through the running app (`relay_or_local`) under a session id of its own that
+/// every `initialize` renews. `relay` None answers every line here.
+pub fn serve_lines_with<R: BufRead, W: Write + Send + 'static>(
+    input: R,
+    output: std::sync::Arc<std::sync::Mutex<W>>,
+    version: String,
+    call: SharedCall,
+    book: std::sync::Arc<crate::mcp_session::SessionBook>,
+    relay: Option<SharedRelay>,
+) {
+    let mut session = crate::ai_bridge::new_token();
     let version = std::sync::Arc::new(version);
     let in_flight = std::sync::Arc::new(InFlight::default());
     let mut lines = input.lines();
@@ -3442,8 +3527,11 @@ pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
             book.tick(agent.as_deref(), now_ms);
         }
         let is_call = parsed.as_ref().is_some_and(|v| v["method"].as_str() == Some("tools/call"));
+        if parsed.as_ref().is_some_and(|v| v["method"].as_str() == Some("initialize")) {
+            session = crate::ai_bridge::new_token();
+        }
         if !is_call {
-            if let Some(resp) = handle_message_shared(&line, &version, &*call, &book) {
+            if let Some(resp) = answer_line(&line, &version, &call, &book, &relay, &session) {
                 write_response_line(&output, &resp);
             }
             continue;
@@ -3451,15 +3539,16 @@ pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
         let id = parsed.as_ref().and_then(|v| v.get("id").cloned());
         let job = {
             let (line, id, version, call, book, output) = (line.clone(), id.clone(), version.clone(), call.clone(), book.clone(), output.clone());
+            let (relay, session) = (relay.clone(), session.clone());
             let counted = InFlight::enter(&in_flight);
             move || {
                 let _counted = counted;
-                answer_call_line(&line, id, &version, &call, &book, &output);
+                answer_call_line(&line, id, &version, &call, &book, &relay, &session, &output);
             }
         };
         // A thread that cannot be made drops the job (and its count); the call is then answered here.
         if std::thread::Builder::new().name("tcm-mcp-call".into()).spawn(job).is_err() {
-            answer_call_line(&line, id, &version, &call, &book, &output);
+            answer_call_line(&line, id, &version, &call, &book, &relay, &session, &output);
         }
     }
     in_flight.wait_idle();

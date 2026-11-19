@@ -254,3 +254,11 @@ pub fn sign_in_trial() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The process temp folder (`TEMP` / `TMP`), where the app writes its handshake file
+/// (`ai_bridge::handshake_path`). Taken by a test that points it at a folder of its own, to write a
+/// handshake without touching a running app's, and put back before the lock is released.
+pub fn temp_dir_env() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
