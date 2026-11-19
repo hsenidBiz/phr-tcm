@@ -519,7 +519,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
-      db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
+      db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "USRACC_PASSWORD" },
     },
     {
       id: "qa",
@@ -530,7 +530,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
-      db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
+      db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "USRACC_PASSWORD" },
     },
   ],
 };
@@ -1761,7 +1761,7 @@ function applyPatches() {
         password_expiry_query: env.password_expiry_query ?? old?.password_expiry_query ?? "",
         active_session_query: env.active_session_query ?? old?.active_session_query ?? "",
         reset_expired_passwords: old?.reset_expired_passwords ?? false,
-        account_lookup: env.account_lookup ?? old?.account_lookup ?? { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
+        account_lookup: env.account_lookup ?? old?.account_lookup ?? { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "USRACC_PASSWORD" },
       };
       environments = {
         ...environments,

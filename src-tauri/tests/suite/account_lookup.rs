@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use v2_lib::ai_bridge::{accounts_lookup_set_in, accounts_propose_in, BridgeContext};
 use v2_lib::autorun::account_lookup::{
     column_name, detect_password_column, look_up, looks_like_hash, password_candidates, resolve_password_column,
-    table_parts, AccountLookup, Found, NoRows, DEFAULT_TABLE, DEFAULT_USERNAME_COLUMN,
+    table_parts, AccountLookup, Found, NoRows, DEFAULT_PASSWORD_COLUMN, DEFAULT_TABLE, DEFAULT_USERNAME_COLUMN,
 };
 use v2_lib::autorun::accounts::{load_accounts, save_accounts, session_path_for, Account};
 use v2_lib::autorun::setup_find::RowSource;
@@ -39,8 +39,8 @@ impl Fake {
         Fake::new(
             &[
                 ("USRACC_USER_ID", "nvarchar"),
-                ("USRACC_PWD", "nvarchar"),
-                ("USRACC_PWD_ACTIVATE_DATE", "datetime"),
+                ("USRACC_PASSWORD", "nvarchar"),
+                ("USRACC_PASSWORD_ACTIVATE_DATE", "datetime"),
                 ("USRACC_PROMPT_CHANGE_PW", "bit"),
             ],
             rows,
@@ -59,6 +59,11 @@ impl RowSource for Fake {
     }
 }
 
+/// The lookup of a table whose password column is not named: it is detected.
+fn detect() -> AccountLookup {
+    AccountLookup { password_column: String::new(), ..AccountLookup::default() }
+}
+
 fn columns_answer(columns: &[(&str, &str)]) -> String {
     let body: Vec<String> = columns.iter().map(|(n, t)| format!("{n}\t{t}")).collect();
     format!("COLUMN_NAME\tDATA_TYPE\n-----------\t---------\n{}\n\n({} rows affected)\n", body.join("\n"), columns.len())
@@ -67,7 +72,7 @@ fn columns_answer(columns: &[(&str, &str)]) -> String {
 fn rows_answer(rows: &[(&str, &str)]) -> String {
     let body: Vec<String> = rows.iter().map(|(u, p)| format!("{u}\t{p}")).collect();
     format!(
-        "USRACC_USER_ID\tUSRACC_PWD\n--------------\t----------\n{}\n\n({} rows affected)\n",
+        "USRACC_USER_ID\tUSRACC_PASSWORD\n--------------\t---------------\n{}\n\n({} rows affected)\n",
         body.join("\n"),
         rows.len()
     )
@@ -116,7 +121,8 @@ fn identifiers_are_validated() {
 #[test]
 fn the_defaults_are_peopleshr() {
     let d = AccountLookup::default();
-    assert_eq!((d.table.as_str(), d.username_column.as_str(), d.password_column.as_str()), (DEFAULT_TABLE, DEFAULT_USERNAME_COLUMN, ""));
+    assert_eq!((d.table.as_str(), d.username_column.as_str(), d.password_column.as_str()), (DEFAULT_TABLE, DEFAULT_USERNAME_COLUMN, "USRACC_PASSWORD"));
+    assert_eq!(DEFAULT_PASSWORD_COLUMN, "USRACC_PASSWORD");
     assert_eq!(DEFAULT_TABLE, "PeoplesHR.HS_SM_USER_ACCOUNT");
     assert_eq!(DEFAULT_USERNAME_COLUMN, "USRACC_USER_ID");
 }
@@ -247,27 +253,27 @@ async fn it_finds_hashes_and_missing_rows_for_each_login() {
     assert_eq!(found.of("adm1"), Some(&Found::Hash));
     assert_eq!(found.of("emp1"), Some(&Found::Empty));
     assert_eq!(found.of("ghost"), None);
-    assert_eq!(found.password_column, "USRACC_PWD");
+    assert_eq!(found.password_column, "USRACC_PASSWORD");
     assert!(!format!("{found:?}").contains(SECRET), "Debug hides the password");
 }
 
 #[tokio::test]
 async fn it_detects_the_column_once_and_reads_names_before_values() {
     let fake = Fake::standard(&[("sup1", SECRET)]);
-    look_up(&fake, &AccountLookup::default(), &users(&["sup1"])).await.unwrap();
+    look_up(&fake, &detect(), &users(&["sup1"])).await.unwrap();
     let asked = fake.asked();
     assert_eq!(asked.len(), 2, "{asked:?}");
     assert!(asked[0].contains("INFORMATION_SCHEMA.COLUMNS") && !asked[0].contains("sup1"));
     assert_eq!(
         asked[1],
-        "SELECT [USRACC_USER_ID], [USRACC_PWD] FROM [PeoplesHR].[HS_SM_USER_ACCOUNT] WHERE [USRACC_USER_ID] IN (N'sup1')"
+        "SELECT [USRACC_USER_ID], [USRACC_PASSWORD] FROM [PeoplesHR].[HS_SM_USER_ACCOUNT] WHERE [USRACC_USER_ID] IN (N'sup1')"
     );
 }
 
 #[tokio::test]
 async fn a_set_password_column_skips_the_detection() {
     let fake = Fake::standard(&[("sup1", SECRET)]);
-    let lookup = AccountLookup { password_column: "[USRACC_PWD]".into(), ..AccountLookup::default() };
+    let lookup = AccountLookup { password_column: "[USRACC_PASSWORD]".into(), ..AccountLookup::default() };
     let found = look_up(&fake, &lookup, &users(&["sup1"])).await.unwrap();
     assert_eq!(found.of("sup1"), Some(&Found::Password(SECRET.into())));
     assert_eq!(fake.asked().len(), 1);
@@ -293,18 +299,18 @@ async fn failures_are_fixed_sentences_that_never_quote_what_the_database_said() 
     }
     // A table with no columns is a table that is not there.
     let missing = Fake { columns: Ok(columns_answer(&[])), rows: Ok(String::new()), asked: Mutex::new(vec![]) };
-    let err = look_up(&missing, &AccountLookup::default(), &users(&["a"])).await.unwrap_err();
+    let err = look_up(&missing, &detect(), &users(&["a"])).await.unwrap_err();
     assert!(err.contains("not found"), "{err}");
     // An ambiguous column says so, naming the candidates.
     let two = Fake::new(&[("USRACC_USER_ID", "nvarchar"), ("PWD_A", "nvarchar"), ("PASS_B", "nvarchar")], &[]);
-    let err = look_up(&two, &AccountLookup::default(), &users(&["a"])).await.unwrap_err();
+    let err = look_up(&two, &detect(), &users(&["a"])).await.unwrap_err();
     assert!(err.contains("PWD_A") && err.contains("PASS_B") && err.contains("set the password column"), "{err}");
 }
 
 #[tokio::test]
 async fn the_dry_check_reads_column_names_and_never_a_value() {
     let fake = Fake::standard(&[("sup1", SECRET)]);
-    assert_eq!(resolve_password_column(&fake, &AccountLookup::default()).await.unwrap(), "USRACC_PWD");
+    assert_eq!(resolve_password_column(&fake, &detect()).await.unwrap(), "USRACC_PASSWORD");
     assert!(fake.asked().iter().all(|q| q.contains("INFORMATION_SCHEMA")), "{:?}", fake.asked());
     let wrong_user = AccountLookup { username_column: "NOPE".into(), ..AccountLookup::default() };
     assert!(resolve_password_column(&fake, &wrong_user).await.unwrap_err().contains("NOPE"));
@@ -350,7 +356,46 @@ fn an_environment_file_from_before_loads_with_the_defaults() {
     let part: AccountLookup = serde_json::from_value(json!({ "table": "dbo.Users" })).unwrap();
     assert_eq!(part.table, "dbo.Users");
     assert_eq!(part.username_column, DEFAULT_USERNAME_COLUMN);
-    assert_eq!(part.password_column, "");
+    assert_eq!(part.password_column, "USRACC_PASSWORD");
+}
+
+fn loaded_password_column(table: &str, column: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let file = load_or_init(dir.path(), None).unwrap();
+    let mut json: Value = serde_json::from_str(&v2_lib::environments::file_text(&file).unwrap()).unwrap();
+    json["environments"][0]["account_lookup"] =
+        json!({ "table": table, "username_column": "USRACC_USER_ID", "password_column": column });
+    let after = v2_lib::environments::parse_file(json.to_string().as_bytes()).unwrap();
+    after.environments[0].account_lookup.password_column.clone()
+}
+
+#[test]
+fn a_saved_environment_with_no_password_column_reads_the_default_on_the_default_table() {
+    assert_eq!(loaded_password_column(DEFAULT_TABLE, ""), "USRACC_PASSWORD");
+    assert_eq!(loaded_password_column("[PeoplesHR].[HS_SM_USER_ACCOUNT]", ""), "USRACC_PASSWORD");
+    assert_eq!(loaded_password_column(" peopleshr.hs_sm_user_account ", " "), "USRACC_PASSWORD");
+}
+
+#[test]
+fn a_custom_table_with_no_password_column_still_detects_it() {
+    assert_eq!(loaded_password_column("dbo.Users", ""), "");
+}
+
+#[test]
+fn a_named_password_column_is_kept() {
+    assert_eq!(loaded_password_column(DEFAULT_TABLE, "USRACC_PWD"), "USRACC_PWD");
+    assert_eq!(loaded_password_column("dbo.Users", "Secret"), "Secret");
+}
+
+#[test]
+fn an_environment_file_read_from_disk_gets_the_default_password_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = load_or_init(root, None).unwrap();
+    let mut json: Value = serde_json::from_str(&v2_lib::environments::file_text(&file).unwrap()).unwrap();
+    json["environments"][0]["account_lookup"]["password_column"] = json!("");
+    std::fs::write(v2_lib::autorun::roots::shared_of(root).join("environments.json"), json.to_string()).unwrap();
+    assert_eq!(first_env(root).account_lookup.password_column, "USRACC_PASSWORD");
 }
 
 #[tokio::test]
@@ -465,7 +510,7 @@ async fn proposing_on_a_test_environment_looks_the_passwords_up_and_the_table_wi
     let tail = v2_lib::applog::recent(500);
     assert!(tail.iter().all(|l| !l.message.contains(SECRET) && !l.message.contains("Seed-From-Db")), "{tail:?}");
     // The one SELECT carried the usernames and nothing else.
-    assert!(fake.asked().iter().any(|q| q.starts_with("SELECT [USRACC_USER_ID], [USRACC_PWD] FROM [PeoplesHR].[HS_SM_USER_ACCOUNT]")));
+    assert!(fake.asked().iter().any(|q| q.starts_with("SELECT [USRACC_USER_ID], [USRACC_PASSWORD] FROM [PeoplesHR].[HS_SM_USER_ACCOUNT]")));
 }
 
 #[tokio::test]
@@ -509,11 +554,15 @@ async fn a_failed_lookup_still_saves_the_proposal_and_says_why_and_how_to_fix_it
         rows: Ok(String::new()),
         asked: Mutex::new(vec![]),
     };
+    // Detection only runs for a table with no named password column.
+    let id = active_id(root).unwrap();
+    v2_lib::environments::set_account_lookup(root, &id, AccountLookup { table: "dbo.Users".into(), ..detect() }).unwrap();
     let (status, out) = propose(Ok(&missing), vec![proposal("hr.emp", "emp1")]).await;
+    v2_lib::environments::set_account_lookup(root, &id, AccountLookup::default()).unwrap();
     assert_eq!(status, 200, "{out}");
     assert!(out.contains("PWD_A") && out.contains("PASS_B") && out.contains("set the password column"), "{out}");
 
-    let gone = Fake { columns: Err("Invalid object name 'x'".into()), rows: Err(String::new()), asked: Mutex::new(vec![]) };
+    let gone = Fake { columns: Err("Invalid object name 'x'".into()), rows: Err("Invalid object name 'x'".into()), asked: Mutex::new(vec![]) };
     let (status, out) = propose(Ok(&gone), vec![proposal("hr.emp", "emp1")]).await;
     assert_eq!(status, 200, "{out}");
     assert!(out.contains("PeoplesHR.HS_SM_USER_ACCOUNT was not found"), "{out}");
@@ -577,10 +626,10 @@ async fn set_account_lookup_validates_saves_on_the_active_test_environment_and_c
     )
     .await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("The lookup can work") && out.contains("USRACC_PWD"), "{out}");
+    assert!(out.contains("The lookup can work") && out.contains("USRACC_PASSWORD"), "{out}");
     assert_eq!(
         first_env(root).account_lookup,
-        AccountLookup { table: DEFAULT_TABLE.into(), username_column: DEFAULT_USERNAME_COLUMN.into(), password_column: String::new() }
+        AccountLookup { table: DEFAULT_TABLE.into(), username_column: DEFAULT_USERNAME_COLUMN.into(), password_column: DEFAULT_PASSWORD_COLUMN.into() }
     );
     assert!(fake.asked().iter().all(|q| q.contains("INFORMATION_SCHEMA")), "{:?}", fake.asked());
 
@@ -779,7 +828,7 @@ impl Runner for Process {
             });
         }
         let out = if sql.contains("INFORMATION_SCHEMA") {
-            columns_answer(&[("USRACC_USER_ID", "nvarchar"), ("USRACC_PWD", "nvarchar")])
+            columns_answer(&[("USRACC_USER_ID", "nvarchar"), ("USRACC_PASSWORD", "nvarchar")])
         } else {
             let wanted: Vec<String> = sql
                 .split("N'")
@@ -881,11 +930,11 @@ async fn an_unreachable_database_is_said_as_not_answering_through_the_real_mappi
     let mut process = Process::new(vec![]);
     process.unreachable = true;
     let rows = through_run_query(process);
-    let err = look_up(&rows, &AccountLookup { password_column: "USRACC_PWD".into(), ..AccountLookup::default() }, &users(&["a"]))
+    let err = look_up(&rows, &AccountLookup::default(), &users(&["a"]))
         .await
         .unwrap_err();
     assert!(err.contains("did not answer"), "{err}");
-    let err = look_up(&rows, &AccountLookup::default(), &users(&["a"])).await.unwrap_err();
+    let err = look_up(&rows, &detect(), &users(&["a"])).await.unwrap_err();
     assert!(err.contains("did not answer"), "also while reading the column list: {err}");
 }
 
@@ -893,7 +942,7 @@ async fn an_unreachable_database_is_said_as_not_answering_through_the_real_mappi
 async fn more_logins_than_one_answer_holds_are_looked_up_in_chunks() {
     let all: Vec<(String, String)> = (0..450).map(|i| (format!("user{i:04}"), format!("pw-{i}"))).collect();
     let rows = through_run_query(Process::new(all.clone()));
-    let lookup = AccountLookup { password_column: "USRACC_PWD".into(), ..AccountLookup::default() };
+    let lookup = AccountLookup::default();
     let names: Vec<String> = all.iter().map(|(u, _)| u.clone()).collect();
     let found = look_up(&rows, &lookup, &names).await.unwrap();
     for (u, p) in &all {
@@ -908,7 +957,7 @@ async fn more_logins_than_one_answer_holds_are_looked_up_in_chunks() {
 async fn very_long_usernames_chunk_by_statement_length() {
     let all: Vec<(String, String)> = (0..80).map(|i| (format!("{}{i:03}", "x".repeat(400)), format!("pw-{i}"))).collect();
     let rows = through_run_query(Process::new(all.clone()));
-    let lookup = AccountLookup { password_column: "USRACC_PWD".into(), ..AccountLookup::default() };
+    let lookup = AccountLookup::default();
     let names: Vec<String> = all.iter().map(|(u, _)| u.clone()).collect();
     let found = look_up(&rows, &lookup, &names).await.unwrap();
     assert!(all.iter().all(|(u, p)| found.of(u) == Some(&Found::Password(p.clone()))));
@@ -930,7 +979,7 @@ async fn a_table_with_too_many_columns_to_list_asks_for_the_column() {
         exe: PathBuf::from("sqlcmd"),
         conn: parse_connection(DB_PRESETS[0].connection_string).unwrap(),
     };
-    let err = look_up(&rows, &AccountLookup::default(), &users(&["a"])).await.unwrap_err();
+    let err = look_up(&rows, &detect(), &users(&["a"])).await.unwrap_err();
     assert!(err.contains("too many columns") && err.contains("set the password column"), "{err}");
 }
 

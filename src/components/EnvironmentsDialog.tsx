@@ -75,12 +75,13 @@ export const DEFAULT_TEST_PREFIX = "AUTOTEST";
 /** The account lookup a new environment starts with, as Rust's own default. */
 export const DEFAULT_LOOKUP_TABLE = "PeoplesHR.HS_SM_USER_ACCOUNT";
 export const DEFAULT_LOOKUP_USERNAME_COLUMN = "USRACC_USER_ID";
+export const DEFAULT_LOOKUP_PASSWORD_COLUMN = "USRACC_PASSWORD";
 
 /** What sits under the account lookup fields. */
 export const ACCOUNT_LOOKUP_HELP =
   "Where this environment keeps its test logins. On a test environment the app reads each login's password from this table itself, so a password never passes through the AI assistant.";
 export const PASSWORD_COLUMN_HELP =
-  "Leave empty to detect it: the one text column of the table whose name has pass or pwd and is not a date or a flag. If there is none, or several, the lookup says so and asks you to set the column.";
+  "The default is USRACC_PASSWORD. Empty on a custom table means detect it: the one text column of the table whose name has pass or pwd and is not a date or a flag. If there is none, or several, the lookup says so and asks you to set the column.";
 
 /** Said under a table or column name that is not a plain name. */
 export const LOOKUP_TABLE_RULE =
@@ -243,7 +244,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       active_session_query: "",
       lookup_table: DEFAULT_LOOKUP_TABLE,
       lookup_username_column: DEFAULT_LOOKUP_USERNAME_COLUMN,
-      lookup_password_column: "",
+      lookup_password_column: DEFAULT_LOOKUP_PASSWORD_COLUMN,
     });
   };
 
