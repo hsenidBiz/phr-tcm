@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.22",
+    date: "2026-11-19",
+    items: [
+      "Auto Test runs sign in far less often: the next case on the same account carries on in the browser the case before signed in, after a quick check that it is still signed in.",
+      "A case's setup on the same account runs in that browser too, instead of opening and signing in a browser of its own.",
+      "A case that fails in a carried-over browser runs once more in a fresh one, and that fresh run is the result you see.",
+    ],
+  },
+  {
     version: "2.4.7-beta.21",
     date: "2026-11-19",
     items: [
