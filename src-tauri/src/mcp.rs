@@ -2525,7 +2525,15 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     let (off, on, unlocked, simple_hidden) = tool_policy(call);
-    let refused = if simple_hidden.iter().any(|d| d == name) {
+    let refused = if !simple_hidden.is_empty()
+        && crate::ai_tools::NETWORK_TOOLS.contains(&name)
+        && off.iter().any(|d| d == name)
+        && !simple_hidden.iter().any(|d| d == name)
+    {
+        // Under Simple mode (the answer names hidden tools only then) a network
+        // tool is off only for want of an environment; its switch is hidden.
+        Some(crate::simple_view::SIMPLE_NETWORK_NO_ENVIRONMENT.to_string())
+    } else if simple_hidden.iter().any(|d| d == name) {
         // Simple mode's own sentence: the tool has no switch to turn on.
         Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
     } else if off.iter().any(|d| d == name) {

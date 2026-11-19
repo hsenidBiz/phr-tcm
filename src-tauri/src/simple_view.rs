@@ -141,6 +141,20 @@ pub const SIMPLE_API_SWITCHING: &str = "The environment is being switched. Wait 
 pub const SIMPLE_API_NO_ENVIRONMENT: &str =
     "API templates need an environment. Choose one in the Environment card on the AI Bridge tab, then try again.";
 
+/// Simple mode, network tools, no environment chosen yet.
+pub const SIMPLE_NETWORK_NO_ENVIRONMENT: &str =
+    "Network tools need an environment. Choose one in the Environment card on the AI Bridge tab, then try again.";
+
+/// Under `simple`, the network tools' refusal (the plain `NETWORK_TOOLS_OFF`
+/// sentence, which names a switch Simple mode hides) becomes Simple mode's own.
+pub fn reword_network_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContext, answer: (u16, String)) -> (u16, String) {
+    if !(simple && answer.1 == crate::ai_bridge::NETWORK_TOOLS_OFF) {
+        return answer;
+    }
+    let said = if ctx.gate.holds > 0 { SIMPLE_API_SWITCHING } else { SIMPLE_NETWORK_NO_ENVIRONMENT };
+    (answer.0, said.to_string())
+}
+
 /// Under `simple`, an answer that is the plain API switch sentence (from any
 /// of the routes that return it) becomes Simple mode's own, by `ctx`.
 pub fn reword_api_switch_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContext, answer: (u16, String)) -> (u16, String) {

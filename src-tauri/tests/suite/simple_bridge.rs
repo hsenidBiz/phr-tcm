@@ -297,3 +297,45 @@ fn the_proxy_hides_and_refuses_what_the_answer_names() {
         assert_eq!(v["result"]["content"][0]["text"], SIMPLE_HIDES_TOOL, "{tool}");
     }
 }
+
+#[tokio::test]
+async fn the_network_refusal_under_simple_mode_names_the_environment_not_the_hidden_switch() {
+    use v2_lib::ai_bridge::{NETWORK_ROUTES, NETWORK_TOOLS_OFF};
+    use v2_lib::simple_view::{reword_network_refusal, SIMPLE_API_SWITCHING, SIMPLE_NETWORK_NO_ENVIRONMENT};
+    let mut no_env = saved();
+    no_env.gate.env_id = None;
+    // Through the route: no environment -> the environment sentence; Simple off -> the old one.
+    for path in NETWORK_ROUTES {
+        assert_eq!(ask(true, &no_env, "GET", path, "{}").await, (403, SIMPLE_NETWORK_NO_ENVIRONMENT.to_string()), "{path}");
+        assert_eq!(ask(false, &no_env, "GET", path, "{}").await, (403, NETWORK_TOOLS_OFF.to_string()), "{path}");
+    }
+    assert!(SIMPLE_NETWORK_NO_ENVIRONMENT.starts_with("Network tools need an environment."));
+    // While a switch is in progress the sentence is the "being switched" one.
+    let mut switching = saved();
+    switching.gate.holds = 1;
+    let off = (403, NETWORK_TOOLS_OFF.to_string());
+    assert_eq!(reword_network_refusal(true, &switching, off.clone()), (403, SIMPLE_API_SWITCHING.to_string()));
+    assert_eq!(reword_network_refusal(false, &switching, off.clone()), off);
+    // Another answer is never touched.
+    assert_eq!(reword_network_refusal(true, &no_env, (200, "{}".into())), (200, "{}".to_string()));
+}
+
+#[test]
+fn the_proxys_network_refusal_under_simple_mode_names_the_environment() {
+    use v2_lib::simple_view::SIMPLE_NETWORK_NO_ENVIRONMENT;
+    let call_with = |body: String| {
+        move |_: &str, _: &str, _: &str| Ok::<(u16, String), String>((200, body.clone()))
+    };
+    let tool = |call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>| -> String {
+        let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"autorun_har","arguments":{}}}"#;
+        let v: serde_json::Value = serde_json::from_str(&v2_lib::mcp::handle_message(req, "1.0.0", call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true);
+        v["result"]["content"][0]["text"].as_str().unwrap().to_string()
+    };
+    let simple = serde_json::json!({ "disabled": [], "modules": ["db_access", "auto_run"], "network_tools": false, "simple_hidden": SIMPLE_HIDDEN_TOOLS });
+    assert_eq!(tool(&call_with(simple.to_string())), SIMPLE_NETWORK_NO_ENVIRONMENT);
+    // Not Simple: the switch's sentence, as before.
+    let plain = serde_json::json!({ "disabled": [], "modules": ["db_access", "auto_run"], "network_tools": false });
+    let said = tool(&call_with(plain.to_string()));
+    assert!(said.contains("Network tools switch"), "{said}");
+}
