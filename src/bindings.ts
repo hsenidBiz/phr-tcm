@@ -2067,7 +2067,7 @@ export type AccountInput = {
 
 /**
  *  The environment's account lookup: where its test logins and their
- *  passwords are kept. `password_column` empty means "detect it".
+ *  passwords are kept. `password_column` empty means "detect it" (kept only for a custom table).
  */
 export type AccountLookup = {
 	table?: string,
