@@ -348,3 +348,47 @@ async fn a_week_input_is_filled() {
     let p = plan(vec![control("textbox", "Week", "input", "week")], "Week", text("2026-W01")).await;
     assert!(matches!(p, Planned::Act { action: Action::Fill { .. }, .. }), "{p:?}");
 }
+
+fn on(mut c: Control) -> Control {
+    c.checked = true;
+    c
+}
+
+fn is_click(p: &Planned) -> bool {
+    matches!(p, Planned::Act { action: Action::Click { .. }, .. })
+}
+
+#[tokio::test]
+async fn a_switch_is_clicked_only_when_it_is_not_already_as_asked() {
+    let off = || control("switch", "Notify", "button", "");
+    assert!(is_click(&plan(vec![off()], "Notify", FieldValue::Bool(true)).await));
+    assert_eq!(plan(vec![on(off())], "Notify", FieldValue::Bool(true)).await, Planned::AlreadySet);
+    // Turning one off is a click too, and an off one asked off is set.
+    assert!(is_click(&plan(vec![on(off())], "Notify", FieldValue::Bool(false)).await));
+    assert_eq!(plan(vec![off()], "Notify", FieldValue::Bool(false)).await, Planned::AlreadySet);
+}
+
+#[tokio::test]
+async fn a_radio_asked_true_is_clicked_unless_it_is_chosen() {
+    let radio = || control("radio", "Male", "input", "radio");
+    assert!(is_click(&plan(vec![radio()], "Male", FieldValue::Bool(true)).await));
+    assert_eq!(plan(vec![on(radio())], "Male", FieldValue::Bool(true)).await, Planned::AlreadySet);
+}
+
+#[tokio::test]
+async fn a_ticked_checkbox_asked_false_is_clicked() {
+    let ticked = on(control("checkbox", "Active", "input", "checkbox"));
+    assert!(is_click(&plan(vec![ticked], "Active", FieldValue::Bool(false)).await));
+}
+
+#[tokio::test]
+async fn a_textarea_and_a_content_editable_are_filled() {
+    let p = plan(vec![control("textbox", "Notes", "textarea", "")], "Notes", text("hello")).await;
+    let Planned::Act { action: Action::Fill { value, .. }, .. } = p else { panic!("{p:?}") };
+    assert_eq!(value, "hello");
+    let mut rich = control("textbox", "Body", "div", "");
+    rich.editable = true;
+    let p = plan(vec![rich], "Body", text("hi")).await;
+    let Planned::Act { action: Action::Fill { value, .. }, .. } = p else { panic!("{p:?}") };
+    assert_eq!(value, "hi");
+}
