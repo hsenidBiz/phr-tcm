@@ -1,6 +1,6 @@
 //! When an Auto Test case may reuse the signed-in browser the case before
-//! it left open. A pure rule: the run loop asks it, nothing here touches a
-//! browser. Reuse is refused whenever the case before could have left the
+//! it left open. A pure rule: the run loop asks it. Only `close_kept` touches a
+//! browser, to close the one it holds. Reuse is refused whenever the case before could have left the
 //! browser in a state the next case should not inherit.
 
 use super::lease::Held;

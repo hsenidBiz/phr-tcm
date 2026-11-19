@@ -600,6 +600,18 @@ where
                 close_kept(browsers, slot).await;
             }
         }
+        if in_kept && report.ok {
+            // The setup's pages may have re-issued the sign-in's session
+            // cookie: the print is taken again under the same guard a case's
+            // steps use, so the case's own check of the browser finds it the
+            // same. One that cannot be taken again keeps the old print, and
+            // the case's check then opens a fresh browser.
+            if let Some(k) = kept.as_deref_mut().and_then(|slot| slot.as_mut()) {
+                if let Ok(recipe) = super::recipe::load_effective_recipe(root, org, project) {
+                    let _ = super::replay_to::retake_if_same_sign_in(&mut k.driver, &recipe, &f.account, &mut k.lease, timing, id, "the setup").await;
+                }
+            }
+        }
         if !report.ok {
             crate::applog::info(format!("case {id}: setup fixture {} failed, {} made", f.id, report.made.len()));
             if report.failed.as_deref() == Some(fixture_run::RUN_STOPPED) {

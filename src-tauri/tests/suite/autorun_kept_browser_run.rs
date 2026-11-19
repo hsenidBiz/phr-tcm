@@ -43,7 +43,8 @@ enum Quirk {
     HideMarker,
     /// Every later `check_text` fails.
     FailChecks,
-    /// The page re-issues a non-identity HttpOnly cookie as the steps run.
+    /// The page re-issues a non-identity HttpOnly cookie as the steps run,
+    /// and as a template request runs (a setup).
     RotateSid,
     /// The identity cookie changes as the steps run.
     RotateIdentity,
@@ -52,6 +53,8 @@ enum Quirk {
     /// Every later `check_text` finds the browser gone: a harness failure,
     /// which a retry-transient run goes again for.
     Gone,
+    /// The no-save guard cannot be switched on.
+    GuardFails,
 }
 
 /// An application that signs in (`#go`), shows `#marker` once signed in,
@@ -59,7 +62,7 @@ enum Quirk {
 fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<Value>>>) -> ScriptedDriver {
     let mut path = "/".to_string();
     let (mut signed_in, mut checks, mut hidden) = (false, 0usize, false);
-    let (mut sid, mut identity) = ("abc", "who");
+    let (mut sid, mut identity, mut rotations) = ("abc".to_string(), "who", 0usize);
     let mut read = false;
     let (mut last_css, mut last_probed) = (String::new(), String::new());
     let mut d = ScriptedDriver::new(move |method, params| {
@@ -71,7 +74,7 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<V
                 json!({ "frameId": "F", "loaderId": "L" })
             }
             "Network.getAllCookies" => json!({ "cookies": [
-                { "name": "sid", "value": sid, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true },
+                { "name": "sid", "value": sid.as_str(), "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true },
                 { "name": if quirk == Quirk::NoIdentity { "other" } else { "ehrm85" }, "value": identity, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
             ] }),
             // The recorder, for a run that wants a video of failed cases.
@@ -83,6 +86,7 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<V
                 json!({ "data": data, "base64Encoded": true, "eof": true })
             }
             "IO.close" => json!({}),
+            "Network.setBypassServiceWorker" if quirk == Quirk::GuardFails => return Err(v2_lib::browser::cdp::CdpError::Closed),
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" if params["expression"] == "location.href" => {
                 json!({ "result": { "value": format!("https://hr.example.internal{path}") } })
@@ -111,6 +115,10 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<V
             "Runtime.callFunctionOn" if f == TOKEN_FN => json!({ "result": { "value": "tok-123" } }),
             "Runtime.callFunctionOn" if f == FETCH_FN => {
                 log.lock().unwrap().push("fetch".into());
+                if quirk == Quirk::RotateSid {
+                    rotations += 1;
+                    sid = format!("reissued-{rotations}");
+                }
                 let reply = fetches.lock().unwrap().pop_front().unwrap_or_else(|| reply(500, json!({ "error": "no" })));
                 json!({ "result": { "value": reply } })
             }
@@ -125,7 +133,8 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<V
                 let ok = want == "yes" && !(quirk == Quirk::FailChecks && checks > 1);
                 hidden |= quirk == Quirk::HideMarker;
                 if quirk == Quirk::RotateSid {
-                    sid = "reissued";
+                    rotations += 1;
+                    sid = format!("reissued-{rotations}");
                 }
                 if quirk == Quirk::RotateIdentity {
                     identity = "someone-else";
@@ -290,10 +299,15 @@ async fn run_with(fake: &mut Fake, root: &Path, ids: &[i32], resets: &[Pause], s
 /// `run_with`, and `retry_transient` for the run's one more go at a failure
 /// that looked transient.
 async fn run_full(fake: &mut Fake, root: &Path, ids: &[i32], resets: &[Pause], stop_after_one: bool, retry_transient: bool) -> LocalRun {
+    run_gated(fake, root, ids, resets, stop_after_one, retry_transient, &mut Carry).await
+}
+
+/// `run_full` with the run's own gate.
+async fn run_gated<G: ResetGate>(fake: &mut Fake, root: &Path, ids: &[i32], resets: &[Pause], stop_after_one: bool, retry_transient: bool, gate: &mut G) -> LocalRun {
     let cancel = AtomicBool::new(false);
     let mut run = new_run();
     let no_db: PreconditionDb<NoDb> = PreconditionDb::Missing(NEED_DB.to_string());
-    run_cases_planned(fake, root, ORG, PROJECT, &mut run, &to_run(ids), None, retry_transient, &quick(), &cancel, &no_db, resets, &mut Carry, &mut |p: ReplayProgress| {
+    run_cases_planned(fake, root, ORG, PROJECT, &mut run, &to_run(ids), None, retry_transient, &quick(), &cancel, &no_db, resets, gate, &mut |p: ReplayProgress| {
         if stop_after_one && p.phase == "done" && p.case_id == 1 {
             cancel.store(true, Ordering::SeqCst);
         }
@@ -856,4 +870,145 @@ async fn a_case_blocked_before_the_browser_leaves_the_kept_browser_open() {
     assert_eq!(fake.sign_ins(), 1);
     let step0 = run.cases[2].steps.iter().find(|s| s.step_number == SIGN_IN_STEP).unwrap();
     assert!(step0.outcomes[0].detail.starts_with(REUSED), "{:?}", step0.outcomes);
+}
+
+// ---- the final review's findings ------------------------------------------------
+
+/// Reports a data divergence on `case_id`, so it is Blocked before it begins.
+fn needs_a_ruling(root: &Path, case_id: i32) {
+    use v2_lib::autorun::divergences::{report_in, update, DivergenceKind};
+    update(root, ORG, PROJECT, |list| {
+        report_in(list, case_id, 1, "exactly 4 levels", "6 levels", DivergenceKind::Data, 1_700_000_000_000).map(|_| ())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_divergence_blocked_case_in_a_reused_browser_keeps_it_and_is_not_rerun() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    for id in [1, 2, 3] {
+        store::save_script(root, &case(id, "a", "yes")).unwrap();
+    }
+    needs_a_ruling(root, 2);
+    let mut fake = Fake::new(&[]);
+    let run = run(&mut fake, root, &[1, 2, 3]).await;
+    assert_eq!(run.cases.len(), 3, "the blocked case is recorded once");
+    assert_eq!(run.cases[1].proposed, "Blocked", "{:?}", proposals(&run));
+    assert!(run.cases[1].reason.starts_with("needs a ruling"), "{}", run.cases[1].reason);
+    assert_eq!(run.cases[2].proposed, "Passed", "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (1, 1));
+    assert_eq!(fake.sign_ins(), 1);
+    let step0 = run.cases[2].steps.iter().find(|s| s.step_number == SIGN_IN_STEP).unwrap();
+    assert!(step0.outcomes[0].detail.starts_with(REUSED), "{:?}", step0.outcomes);
+}
+
+#[tokio::test]
+async fn a_no_save_guard_that_fails_in_a_reused_browser_closes_it_without_a_rerun() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    let mut guarded = case(2, "a", "yes");
+    guarded.no_save = true;
+    store::save_script(root, &guarded).unwrap();
+    store::save_script(root, &case(3, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[Quirk::GuardFails]);
+    let run = run(&mut fake, root, &[1, 2, 3]).await;
+    assert_eq!(run.cases.len(), 3, "the blocked case is recorded once");
+    assert_eq!(run.cases[1].proposed, "Blocked", "{:?}", proposals(&run));
+    assert!(run.cases[1].reason.starts_with(v2_lib::browser::save_guard::SETUP_FAILED), "{}", run.cases[1].reason);
+    assert_eq!(run.cases[2].proposed, "Passed", "{:?}", proposals(&run));
+    // Case 2 went once, in case 1's browser, which was closed after it; case 3 opened its own.
+    assert_eq!((fake.opened, fake.closed), (2, 2));
+    assert_eq!(fake.sign_ins(), 2);
+    let step0 = run.cases[2].steps.iter().find(|s| s.step_number == SIGN_IN_STEP).unwrap();
+    assert!(!step0.outcomes.last().unwrap().detail.starts_with(REUSED), "{:?}", step0.outcomes);
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+}
+
+#[tokio::test]
+async fn steps_that_go_to_the_sign_in_address_do_not_keep_the_browser() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    // A project that allows opening pages by address.
+    save_nav(root, ORG, PROJECT, &NavFile { direct_urls: true, modules: vec![leave()], save_words: vec![], protected: vec![] }).unwrap();
+    let mut first = case(1, "a", "yes");
+    first.steps[0].actions.insert(0, serde_json::from_value(json!({ "kind": "navigate", "url": "https://hr.example.internal/hr/home/index" })).unwrap());
+    store::save_script(root, &first).unwrap();
+    store::save_script(root, &case(2, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[]);
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (2, 2));
+    assert_eq!(fake.sign_ins(), 2);
+}
+
+#[tokio::test]
+async fn a_cookie_the_setup_reissues_still_lets_the_case_reuse_the_browser() {
+    let _slot = crate::serial::api_template_run();
+    let _log = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[Quirk::RotateSid]);
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!(fake.count("fetch"), 1);
+    assert_eq!((fake.opened, fake.closed), (1, 1));
+    assert_eq!(fake.sign_ins(), 1);
+}
+
+/// A gate whose network is down before the second case; it notes whether the
+/// account was let go while it waited.
+struct DropOnce {
+    asked: usize,
+    let_go: Vec<bool>,
+    root: std::path::PathBuf,
+}
+
+impl ResetGate for DropOnce {
+    async fn wait(&mut self, _reset: &Pause, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
+        true
+    }
+    async fn network(&mut self) -> v2_lib::autorun::network::Network {
+        self.asked += 1;
+        if self.asked == 2 {
+            v2_lib::autorun::network::Network::Unreachable
+        } else {
+            v2_lib::autorun::network::Network::Reachable
+        }
+    }
+    async fn wait_for_network(&mut self, _before: i32, _cancel: &AtomicBool) -> v2_lib::autorun::network::WaitEnd {
+        self.let_go.push(lease::holder_of(&env_of(&self.root), "a").is_none());
+        v2_lib::autorun::network::WaitEnd::Resumed
+    }
+}
+
+#[tokio::test]
+async fn a_network_pause_between_same_account_cases_closes_the_kept_browser() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &case(2, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[]);
+    let mut gate = DropOnce { asked: 0, let_go: vec![], root: root.to_path_buf() };
+    let run = run_gated(&mut fake, root, &[1, 2], &[], false, false, &mut gate).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (2, 2));
+    assert_eq!(fake.sign_ins(), 2);
+    assert_eq!(gate.let_go, vec![true], "the account was let go during the pause");
 }

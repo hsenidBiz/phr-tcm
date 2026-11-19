@@ -976,6 +976,15 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
     }
 }
 
+/// A record of a case Blocked before it began: no step of it ran and it has
+/// no sign-in step, so it touched no page.
+fn blocked_before_it_began(rec: &CaseRecord) -> bool {
+    rec.proposed == "Blocked"
+        && rec.reason != STOPPED_BEFORE_FINISHED
+        && rec.steps.iter().all(|s| s.step_number != SIGN_IN_STEP && s.outcomes.iter().all(|o| !was_run(o)))
+        && rec.cleanup.as_ref().is_none_or(|c| c.outcomes.iter().all(|o| !was_run(o)))
+}
+
 /// One `ReplayProgress`, built from plain values rather than a closure so
 /// it never has to borrow `run` or `progress` - both are busy elsewhere in
 /// the loop this is called from.
@@ -1146,7 +1155,9 @@ async fn one_go<B: Browsers>(
 }
 
 /// `one_go`'s one try (boxed by its caller: a whole case's state is too
-/// much to keep on the run loop's stack). The bool is whether a kept browser was reused.
+/// much to keep on the run loop's stack). The bool is whether a kept browser
+/// was reused and the case is to go again in a fresh one if it does not pass:
+/// false for a case Blocked before it began.
 async fn go_once<B: Browsers>(
     browsers: &mut B,
     go: &Go<'_>,
@@ -1159,12 +1170,12 @@ async fn go_once<B: Browsers>(
     progress(tell(run_id, index, total, case_id, title, "opening", 0, count, ""));
     let opening = Instant::now();
     // The browser the case before kept, when it still stands signed in.
-    let mut again: Option<(B::D, Held, u64)> = None;
+    let mut again: Option<(B::D, Held, u64, kept_browser::Ended)> = None;
     match (reuse, go.account, kept.take()) {
-        (true, Some(key), Some(KeptBrowser { mut driver, lease, .. })) => {
+        (true, Some(key), Some(KeptBrowser { mut driver, lease, ended: before })) => {
             let checking = Instant::now();
             match super::replay_to::signed_in_here_why(&mut driver, go.root, go.organization, go.project, key, &Some(key.to_string()), &lease, go.timing).await {
-                Ok(()) => again = Some((driver, lease, ms(checking.elapsed()))),
+                Ok(()) => again = Some((driver, lease, ms(checking.elapsed()), before)),
                 Err(why) => {
                     crate::applog::info(format!("{}: the browser the case before kept is not reused: {}", who(case_id), why.reason()));
                     browsers.close(driver).await;
@@ -1177,14 +1188,14 @@ async fn go_once<B: Browsers>(
     }
     let was_reused = again.is_some();
     let mut opening_fresh = opening;
-    let (mut d, mut lease, check_ms) = match again {
-        Some((d, lease, check_ms)) => (d, lease, Some(check_ms)),
+    let (mut d, mut lease, check_ms, before) = match again {
+        Some((d, lease, check_ms, before)) => (d, lease, Some(check_ms), Some(before)),
         None => match { opening_fresh = Instant::now(); browsers.open().await } {
             Err(why) => return Err(why),
             // The case's account, held until its browser is closed: a local
             // here, so an end, a stop (this future dropped) and a panic all
             // let it go too.
-            Ok(d) => (d, Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait()), None),
+            Ok(d) => (d, Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait()), None, None),
         },
     };
     let open_ms = if was_reused { 0 } else { ms(opening_fresh.elapsed()) };
@@ -1222,6 +1233,29 @@ async fn go_once<B: Browsers>(
         &mut on_step,
     )
     .await;
+    // A case Blocked before it began (a divergence waiting for a ruling, a
+    // no-save guard that would not go on) touched no page: in a reused
+    // browser that is not the browser's fault, so it stays as it was for the
+    // next case, and the case is not run again in a fresh one. A guard that
+    // failed may have been left half on the page: that browser closes.
+    let mut rerun_fresh = was_reused;
+    if let Some(before) = before.filter(|_| blocked_before_it_began(&rec) && !go.cancel.load(Ordering::SeqCst)) {
+        rerun_fresh = false;
+        let keep_as_was = !rec.reason.starts_with(crate::browser::save_guard::SETUP_FAILED);
+        let closing = Instant::now();
+        if keep_as_was {
+            *kept = Some(KeptBrowser { driver: d, lease, ended: before });
+        } else {
+            browsers.close(d).await;
+            drop(lease);
+        }
+        let phases = rec.phases.get_or_insert_with(CasePhases::default);
+        phases.open_ms = 0;
+        phases.close_ms = if keep_as_was { 0 } else { ms(closing.elapsed()) };
+        phases.total_ms = ms(opening.elapsed());
+        crate::applog::info(format!("{}: {}", who(case_id), phases.line()));
+        return Ok((rec, rerun_fresh));
+    }
     // How the case ended decides whether its browser stays open for the
     // next one. A stop asked for after the case ends it too.
     let mut ended = kept_browser::ended_from(&rec, go.script, go.account);
@@ -1234,11 +1268,18 @@ async fn go_once<B: Browsers>(
         // taken again may keep a print that has gone stale: the next case's
         // check then finds it changed and opens fresh.
         let who_key = go.account.map(str::to_string);
-        // Whether it retook is not asked: a sign-in that left no identity
-        // cookie is kept too. What the lease holds decides, and the next
-        // case's check compares the cookies and the page again.
-        let _ = super::replay_to::retake_after_steps(&mut d, go.root, go.organization, go.project, go.script, i32::MAX, &who_key, &mut lease, go.timing).await;
-        keep = lease.sign_in_print().is_some();
+        // Kept only when the print was taken again, or when the sign-in left
+        // no identity cookie to compare (a site without PeoplesHR's) and the
+        // lease still holds a print: the next case's check compares the
+        // cookies and the page again. Every other decline (the steps touch
+        // the sign-in, the identity cookie changed, the page is not signed
+        // in, the cookies could not be read) closes the browser.
+        let retook = super::replay_to::retake_after_steps(&mut d, go.root, go.organization, go.project, go.script, i32::MAX, &who_key, &mut lease, go.timing).await;
+        keep = match retook {
+            super::replay_to::Retake::Retook => true,
+            super::replay_to::Retake::NoIdentityCookie => lease.sign_in_print().is_some(),
+            super::replay_to::Retake::Declined => false,
+        };
     }
     // `run_case_reusing` has already waited for a download still
     // arriving, once, so the browser closes now.
@@ -1258,7 +1299,7 @@ async fn go_once<B: Browsers>(
     phases.close_ms = close_ms;
     phases.total_ms = ms(opening.elapsed());
     crate::applog::info(format!("{}: {}", who(case_id), phases.line()));
-    Ok((rec, was_reused))
+    Ok((rec, rerun_fresh))
 }
 
 /// Run a selection with no module or run account per case - the shape
@@ -1563,9 +1604,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             // and never after a stop. It gets a fresh draft: the
                             // setup runs again first (the first go may have
                             // changed its draft), and a setup that cannot run
-                            // keeps the first go's record. A first record
-                            // that is itself a fresh rerun (`one_go`) is not
-                            // retried again.
+                            // keeps the first go's record. A fresh rerun
+                            // (`one_go`) whose setup could not start has
+                            // `retried` set and is skipped; a normal fresh
+                            // rerun can still take the transient retry.
                             let looked_transient = if retry_transient && first.retried.is_none() { {
                                 let components = super::components::load_components(root, organization, project).unwrap_or_default();
                                 transient::is_transient_with(&first, Some(&ready), &components)

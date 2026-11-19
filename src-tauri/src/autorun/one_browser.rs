@@ -1,5 +1,7 @@
 //! One browser for a whole unattended run, and a fresh browser context for
-//! each case in it.
+//! each case in it, except a case that reuses the signed-in browser the case
+//! before kept open for the same account (`kept_browser`): that one runs in
+//! the kept browser's own context, whose cookies are the sign-in it reuses.
 //!
 //! A context starts with no cookies and no storage, as a fresh profile
 //! does, so one case still cannot pass only because another signed in -
