@@ -31,7 +31,7 @@ export default function WorkScreens({
     <div key={workSection} className="t-screen-in flex min-h-0 flex-1 flex-col">
       {workSection === "board" ? (
         <>
-          <h1 className="mb-4 text-lg font-semibold">Board</h1>
+          <h1 className="mb-2 text-lg font-semibold">Board</h1>
           <div className="min-h-0 flex-1">
             <WorkBoard
               org={org}
@@ -46,7 +46,7 @@ export default function WorkScreens({
         </>
       ) : workSection === "create" ? (
         <>
-          <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
+          <h1 className="mb-2 text-lg font-semibold">New Work Item</h1>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {/* An item with no parent belongs to the home project; a
                 parent from another project moves it there (the
@@ -60,7 +60,7 @@ export default function WorkScreens({
         </>
       ) : (
         <>
-          <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
+          <h1 className="mb-2 text-lg font-semibold">Pull Requests</h1>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {/* Together the panel lists every project and the
                 home project only fills in for what names none; a

@@ -28,9 +28,10 @@ use std::collections::HashMap;
 /// What a new environment, and one saved before this setting existed, uses.
 pub const DEFAULT_TABLE: &str = "PeoplesHR.HS_SM_USER_ACCOUNT";
 pub const DEFAULT_USERNAME_COLUMN: &str = "USRACC_USER_ID";
+pub const DEFAULT_PASSWORD_COLUMN: &str = "USRACC_PASSWORD";
 
 /// The environment's account lookup: where its test logins and their
-/// passwords are kept. `password_column` empty means "detect it".
+/// passwords are kept. `password_column` empty means "detect it" (kept only for a custom table).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(default)]
 pub struct AccountLookup {
@@ -44,7 +45,7 @@ impl Default for AccountLookup {
         AccountLookup {
             table: DEFAULT_TABLE.to_string(),
             username_column: DEFAULT_USERNAME_COLUMN.to_string(),
-            password_column: String::new(),
+            password_column: DEFAULT_PASSWORD_COLUMN.to_string(),
         }
     }
 }
@@ -139,6 +140,19 @@ impl AccountLookup {
         self.table = self.table.trim().to_string();
         self.username_column = self.username_column.trim().to_string();
         self.password_column = self.password_column.trim().to_string();
+        self
+    }
+
+    /// A lookup saved with no password column on the default table reads as
+    /// the default column; a custom table with none keeps "detect it".
+    pub fn with_default_password_column(mut self) -> Self {
+        let on_default_table = |t: &str| {
+            let plain: String = t.chars().filter(|c| *c != '[' && *c != ']').collect();
+            plain.trim().eq_ignore_ascii_case(DEFAULT_TABLE)
+        };
+        if self.password_column.trim().is_empty() && on_default_table(&self.table) {
+            self.password_column = DEFAULT_PASSWORD_COLUMN.to_string();
+        }
         self
     }
 

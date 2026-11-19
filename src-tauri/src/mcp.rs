@@ -10,7 +10,7 @@ use std::io::{BufRead, Write};
 
 use crate::modules::Module;
 
-type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
+pub type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
 
 /// This proxy's own version - the build it was compiled from. The release
 /// script refuses to ship unless Cargo.toml and tauri.conf.json agree, so
@@ -63,6 +63,55 @@ impl Drop for CallingTool {
     fn drop(&mut self) {
         CALLING.with(|c| *c.borrow_mut() = None);
     }
+}
+
+/// Who a relayed message speaks for: the connector's id, process id and client name, as the app read
+/// them off the relay request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayedIdentity {
+    pub agent_id: String,
+    pub pid: Option<String>,
+    pub client: Option<String>,
+}
+
+thread_local! {
+    /// The identity `with_relayed_identity` has in force on this thread.
+    static RELAYED: std::cell::RefCell<Relayed> = const { std::cell::RefCell::new(Relayed::Own) };
+}
+
+/// Whose agent headers a bridge request on this thread carries.
+#[derive(Debug, Clone)]
+enum Relayed {
+    /// This process's own.
+    Own,
+    /// A connector's, relayed.
+    As(RelayedIdentity),
+    /// None at all: the default caller, who registers nobody.
+    Nobody,
+}
+
+/// Puts back what was in force before when it ends, panic included.
+struct RelayedGuard(Relayed);
+
+impl Drop for RelayedGuard {
+    fn drop(&mut self) {
+        RELAYED.with(|r| *r.borrow_mut() = std::mem::replace(&mut self.0, Relayed::Own));
+    }
+}
+
+/// Runs `f` with `id` named, instead of this process, in `AGENT_HEADER`, `AGENT_PID_HEADER` and
+/// `AGENT_CLIENT_HEADER` on every bridge request `send_to_bridge_within` makes on this thread. The
+/// app answering a connector's relayed message uses it, so the app's own calls carry the connector's identity.
+pub fn with_relayed_identity<T>(id: RelayedIdentity, f: impl FnOnce() -> T) -> T {
+    let _guard = RelayedGuard(RELAYED.with(|r| r.replace(Relayed::As(id))));
+    f()
+}
+
+/// Runs `f` with no agent headers at all on the bridge requests it makes on this thread, so the app
+/// registers no assistant for them (a read the app makes for itself).
+pub fn with_no_identity<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = RelayedGuard(RELAYED.with(|r| r.replace(Relayed::Nobody)));
+    f()
 }
 
 /// The tool a call on this thread is being answered for, if any.
@@ -319,7 +368,7 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             // own, so the two can be compared at all.
             let mut result = serde_json::json!({
                 "protocolVersion": v["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),
-                "capabilities": { "tools": {} },
+                "capabilities": { "tools": { "listChanged": true } },
                 "serverInfo": { "name": crate::ai_tools::TCM_SERVER, "version": PROXY_VERSION },
             });
             // `instructions` is where an MCP client hands the server's own
@@ -3169,6 +3218,208 @@ pub fn tools_reply_or_saved_simple(
     }
 }
 
+/// How long the connector waits for the app's answer to a relayed `tools/call`: a little past the
+/// bridge's own 300 s, so a slow tool call is answered by the app, not abandoned.
+pub const RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(310);
+
+/// How long it waits for any other relayed request (`tools/list`, `ping`...): a hung app must not hold
+/// the connector's reader for minutes when the connector can answer these itself.
+pub const RELAY_QUICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Why a relay request failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayError {
+    /// The request certainly did not reach the app (no handshake, no connection).
+    NotSent(String),
+    /// It may have reached the app, and run.
+    MaySent(String),
+}
+
+/// What the connector sends the app for one message (the `{"session","message"}` JSON) with the time to
+/// wait, and gets back (status, body).
+pub type SharedRelay = std::sync::Arc<dyn Fn(&str, std::time::Duration) -> Result<(u16, String), RelayError> + Send + Sync>;
+
+/// What a `tools/call` is answered when the app did not confirm it finished.
+pub const CALL_UNCONFIRMED: &str =
+    "The app did not confirm this call finished. Check whether it took effect before running it again.";
+
+/// Statuses that mean the app refused the request before running anything: a stale token, an older app
+/// without the route, a body over the limit, a refused body or caller.
+fn refused_before_running(status: u16) -> bool {
+    matches!(status, 400 | 401 | 403 | 404 | 413)
+}
+
+/// Answers `msg` through the running app when it can, and itself (`local`) when it cannot. A message with
+/// no id is never answered and sends nothing; `initialize` is always the connector's own (the app would
+/// take the client's name for itself); anything else goes to `relay` with the connector's `session`. Only a
+/// 200 carrying a `reply` is used (a null reply is no answer). Otherwise `local` answers - except a
+/// `tools/call` the app may have run: that is answered with an error, never run a second time.
+pub fn relay_or_local(
+    msg: &str,
+    session: &str,
+    relay: &dyn Fn(&str, std::time::Duration) -> Result<(u16, String), RelayError>,
+    local: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(msg) else {
+        return local(msg);
+    };
+    let id = v.get("id")?.clone();
+    if v["method"].as_str() == Some("initialize") {
+        return local(msg);
+    }
+    let is_call = v["method"].as_str() == Some("tools/call");
+    let name = v["method"].as_str().and_then(crate::mcp_relay::loggable).unwrap_or("?");
+    let body = serde_json::json!({ "session": session, "message": v }).to_string();
+    let timeout = if is_call { RELAY_TIMEOUT } else { RELAY_QUICK_TIMEOUT };
+    // The failure: one word for the log, and whether the app may have run the message.
+    let failed: (&str, bool) = match relay(&body, timeout) {
+        Ok((200, text)) => match serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|mut r| r.get_mut("reply").map(serde_json::Value::take)) {
+            Some(serde_json::Value::Null) => return None,
+            Some(reply) => return Some(reply.to_string()),
+            None => ("unreadable", true),
+        },
+        Ok((status, _)) => ("status", !refused_before_running(status)),
+        Err(RelayError::NotSent(_)) => ("unreachable", false),
+        Err(RelayError::MaySent(_)) => ("failed", true),
+    };
+    if is_call && failed.1 {
+        crate::applog::info(format!("mcp relay: call unconfirmed ({}) {name}", failed.0));
+        return Some(rpc_error(id, -32603, CALL_UNCONFIRMED));
+    }
+    crate::applog::info(format!("mcp relay: answered locally ({}) {name}", failed.0));
+    local(msg)
+}
+
+/// One relayed message to the running app, the handshake read afresh each time so an app that restarted
+/// is found at its new port and token.
+pub fn relay_to_app(body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
+    relay_to_app_at(&crate::ai_bridge::handshake_path(), body, timeout)
+}
+
+/// `relay_to_app` reading the handshake at `handshake`.
+pub fn relay_to_app_at(handshake: &std::path::Path, body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
+    request_app_at(handshake, "POST", crate::mcp_relay::RELAY_PATH, body, timeout)
+}
+
+/// One request to the running app through the connector's normal send path, the handshake at `handshake`
+/// read afresh each time.
+fn request_app_at(handshake: &std::path::Path, method: &str, path: &str, body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
+    let not_sent = |why: &str| RelayError::NotSent(why.to_string());
+    let text = std::fs::read_to_string(handshake).map_err(|_| not_sent("handshake file missing - is the app running?"))?;
+    let hs: serde_json::Value = serde_json::from_str(&text).map_err(|_| not_sent("bad handshake file"))?;
+    let port = hs["port"].as_u64().ok_or_else(|| not_sent("bad handshake file"))? as u16;
+    let token = hs["token"].as_str().ok_or_else(|| not_sent("bad handshake file"))?;
+    send_to_bridge_typed(port, token, method, path, body, timeout)
+        .map_err(|SendFailure(why, sent)| if sent { RelayError::MaySent(why) } else { RelayError::NotSent(why) })
+}
+
+/// How often the connector asks the app whether its tool list changed.
+pub const LIST_POLL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The notice that tells the client to ask for `tools/list` again.
+pub const LIST_CHANGED: &str = r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#;
+
+/// What one look at the app's tool list showed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListSeen {
+    /// The app's version of its tool list.
+    Version(String),
+    /// The app could not be reached.
+    Down,
+    /// An older app without the route: it can never be watched.
+    Unsupported,
+}
+
+/// Whether `now` is a change worth a notice after `last`. The first reading only records; an app that
+/// cannot be watched never triggers one; going down or coming back counts as a change.
+pub fn notice_due(last: Option<&ListSeen>, now: &ListSeen) -> bool {
+    match last {
+        // An old app replaced by a new one: its tool list may differ from the one answered locally.
+        Some(ListSeen::Unsupported) => matches!(now, ListSeen::Version(_)),
+        None => false,
+        Some(_) if *now == ListSeen::Unsupported => false,
+        Some(last) => last != now,
+    }
+}
+
+/// A reading of the app's tool list, or None when it gave no reading (it could not read its own list).
+pub type SharedListReader = std::sync::Arc<dyn Fn() -> Option<ListSeen> + Send + Sync>;
+
+/// The reading at the handshake `handshake`: 200 a version, 404 unsupported, a failed send down, anything
+/// else (the app could not read its own list) no reading. Gives up after `RELAY_QUICK_TIMEOUT`.
+pub fn read_list_at(handshake: &std::path::Path) -> Option<ListSeen> {
+    match request_app_at(handshake, "GET", crate::mcp_relay::LIST_VERSION_PATH, "", RELAY_QUICK_TIMEOUT) {
+        Ok((200, text)) => serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["version"].as_str().map(|s| ListSeen::Version(s.to_string()))),
+        Ok((404, _)) => Some(ListSeen::Unsupported),
+        Ok(_) => None,
+        Err(_) => Some(ListSeen::Down),
+    }
+}
+
+/// `read_list_at` the running app's handshake.
+pub fn read_list() -> Option<ListSeen> {
+    read_list_at(&crate::ai_bridge::handshake_path())
+}
+
+/// One look: no reading changes nothing; otherwise a due notice is written whole under the output lock, and
+/// the reading becomes `last`.
+pub fn watch_step<W: Write>(last: &mut Option<ListSeen>, now: Option<ListSeen>, out: &std::sync::Mutex<W>) {
+    let Some(now) = now else { return };
+    if notice_due(last.as_ref(), &now) {
+        write_response_line(out, LIST_CHANGED);
+    }
+    *last = Some(now);
+}
+
+/// How the connector watches the app's tool list.
+#[derive(Clone)]
+pub struct Watch {
+    pub read: SharedListReader,
+    pub poll: std::time::Duration,
+}
+
+impl Watch {
+    /// The running app, every `LIST_POLL`.
+    pub fn real() -> Watch {
+        Watch { read: std::sync::Arc::new(read_list), poll: LIST_POLL }
+    }
+}
+
+/// The watcher thread: records a first reading, then looks every `poll`. A reading on `listed` was taken
+/// BEFORE a `tools/list` was answered, so it is recorded without a notice: a change after it is announced
+/// on the next poll, never lost. Ends when `listed` is dropped.
+fn run_watcher<W: Write>(
+    watch: Watch,
+    out: std::sync::Arc<std::sync::Mutex<W>>,
+    listed: std::sync::mpsc::Receiver<Option<ListSeen>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut last: Option<ListSeen> = None;
+    watch_step(&mut last, (watch.read)(), &out);
+    loop {
+        match listed.recv_timeout(watch.poll) {
+            Ok(taken) => {
+                if taken.is_some() {
+                    last = taken;
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let now = (watch.read)();
+                // The input closed while the app was being asked: nothing more is written.
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                watch_step(&mut last, now, &out);
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let reply = bridge_request(method, path, body);
     if method == "GET" && path == "/tools" {
@@ -3210,7 +3461,26 @@ pub fn send_to_bridge_within(
     body: &str,
     timeout: std::time::Duration,
 ) -> Result<(u16, String), String> {
-    let client = reqwest::blocking::Client::builder().connect_timeout(timeout).build().map_err(|e| e.to_string())?;
+    send_to_bridge_typed(port, token, method, path, body, timeout).map_err(|e| e.0)
+}
+
+/// A send that failed: the message, and whether the request may have reached the app (false: it was
+/// certainly not sent - nothing was built, or no connection was made).
+pub struct SendFailure(pub String, pub bool);
+
+/// `send_to_bridge_within`, saying for a failure whether the request may have reached the app.
+pub fn send_to_bridge_typed(
+    port: u16,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<(u16, String), SendFailure> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(timeout.min(std::time::Duration::from_secs(10)))
+        .build()
+        .map_err(|e| SendFailure(e.to_string(), false))?;
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut req = match method {
         "POST" => client.post(&url).body(body.to_string()),
@@ -3221,8 +3491,19 @@ pub fn send_to_bridge_within(
     }
     // Who is calling: this proxy's id and process, its client, and the
     // subagent this call is for.
-    req = req.header(AGENT_HEADER, proxy_agent_id()).header(AGENT_PID_HEADER, std::process::id().to_string());
-    if let Some(client) = client_name() {
+    let own = || (Some(proxy_agent_id().to_string()), Some(std::process::id().to_string()), client_name());
+    let (agent_id, pid, client) = match RELAYED.with(|r| r.borrow().clone()) {
+        Relayed::Own => own(),
+        Relayed::As(id) => (Some(id.agent_id), id.pid, id.client),
+        Relayed::Nobody => (None, None, None),
+    };
+    if let Some(agent_id) = agent_id {
+        req = req.header(AGENT_HEADER, agent_id);
+    }
+    if let Some(pid) = pid {
+        req = req.header(AGENT_PID_HEADER, pid);
+    }
+    if let Some(client) = client {
         req = req.header(AGENT_CLIENT_HEADER, client);
     }
     if let Some(agent) = calling_agent() {
@@ -3233,9 +3514,9 @@ pub fn send_to_bridge_within(
         .header(PROXY_VERSION_HEADER, PROXY_VERSION)
         .timeout(timeout)
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| SendFailure(e.to_string(), !e.is_connect()))?;
     let status = resp.status().as_u16();
-    let text = resp.text().map_err(|e| e.to_string())?;
+    let text = resp.text().map_err(|e| SendFailure(e.to_string(), true))?;
     Ok((status, text))
 }
 
@@ -3259,16 +3540,22 @@ pub fn run_stdio_proxy() {
     let version = read_version();
     // stderr is the MCP client's log: the same sentence the assistant gets
     // in `instructions`, where a person reading the client's logs finds it.
+    // Said only when this connector answers for itself: an app that relays gives its own list.
+    // The app is asked only when there is a warning to drop.
     if let Some(warning) = version_warning(PROXY_VERSION, &version) {
-        eprintln!("{warning}");
+        if !matches!(read_list(), Some(ListSeen::Version(_))) {
+            eprintln!("{warning}");
+        }
     }
     let stdin = std::io::stdin();
-    serve_lines(
+    serve_lines_watching(
         stdin.lock(),
         std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout())),
         version,
         std::sync::Arc::new(bridge_call),
         std::sync::Arc::new(crate::mcp_session::SessionBook::new()),
+        Some(std::sync::Arc::new(relay_to_app)),
+        Some(Watch::real()),
     );
     // The client closed the pipe and every call has answered: this session is over.
     send_bye();
@@ -3321,23 +3608,42 @@ impl Drop for InFlightCall {
 }
 
 /// One response, as one whole line: written and flushed with `output` locked, so two threads' answers never mix.
-fn write_response_line<W: Write>(output: &std::sync::Mutex<W>, resp: &str) {
+pub fn write_response_line<W: Write>(output: &std::sync::Mutex<W>, resp: &str) {
     let mut out = output.lock().unwrap_or_else(|e| e.into_inner());
     let _ = writeln!(out, "{resp}");
     let _ = out.flush();
 }
 
+/// One line's answer: the app's when `relay` is there and can give it, else the connector's own.
+fn answer_line(
+    line: &str,
+    version: &str,
+    call: &SharedCall,
+    book: &crate::mcp_session::SessionBook,
+    relay: &Option<SharedRelay>,
+    session: &str,
+) -> Option<String> {
+    let local = |m: &str| handle_message_shared(m, version, &**call, book);
+    match relay {
+        Some(relay) => relay_or_local(line, session, &**relay, &local),
+        None => local(line),
+    }
+}
+
 /// Answers one `tools/call` line and writes the response. A panic in the call is answered as an internal
 /// error with the call's own id, so the client is never left waiting on it.
+#[allow(clippy::too_many_arguments)]
 fn answer_call_line<W: Write>(
     line: &str,
     id: Option<serde_json::Value>,
     version: &str,
     call: &SharedCall,
     book: &crate::mcp_session::SessionBook,
+    relay: &Option<SharedRelay>,
+    session: &str,
     output: &std::sync::Mutex<W>,
 ) {
-    let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_message_shared(line, version, &**call, book)));
+    let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| answer_line(line, version, call, book, relay, session)));
     let resp = match answered {
         Ok(resp) => resp,
         Err(_) => id.map(|id| rpc_error(id, -32603, "Internal error")),
@@ -3359,6 +3665,36 @@ pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
     call: SharedCall,
     book: std::sync::Arc<crate::mcp_session::SessionBook>,
 ) {
+    serve_lines_with(input, output, version, call, book, None);
+}
+
+/// `serve_lines`, answering through the running app (`relay_or_local`) under a session id of its own that
+/// every `initialize` renews. `relay` None answers every line here.
+pub fn serve_lines_with<R: BufRead, W: Write + Send + 'static>(
+    input: R,
+    output: std::sync::Arc<std::sync::Mutex<W>>,
+    version: String,
+    call: SharedCall,
+    book: std::sync::Arc<crate::mcp_session::SessionBook>,
+    relay: Option<SharedRelay>,
+) {
+    serve_lines_watching(input, output, version, call, book, relay, None);
+}
+
+/// `serve_lines_with`, and with `watch` set, a thread that tells the client when the app's tool list
+/// changed. It starts once the first `initialize` has been answered and stops with the input.
+pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
+    input: R,
+    output: std::sync::Arc<std::sync::Mutex<W>>,
+    version: String,
+    call: SharedCall,
+    book: std::sync::Arc<crate::mcp_session::SessionBook>,
+    relay: Option<SharedRelay>,
+    watch: Option<Watch>,
+) {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut listed: Option<std::sync::mpsc::Sender<Option<ListSeen>>> = None;
+    let mut session = crate::ai_bridge::new_token();
     let version = std::sync::Arc::new(version);
     let in_flight = std::sync::Arc::new(InFlight::default());
     let mut lines = input.lines();
@@ -3382,25 +3718,61 @@ pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
             book.tick(agent.as_deref(), now_ms);
         }
         let is_call = parsed.as_ref().is_some_and(|v| v["method"].as_str() == Some("tools/call"));
+        let method = parsed.as_ref().and_then(|v| v["method"].as_str().map(str::to_string));
+        if method.as_deref() == Some("initialize") {
+            session = crate::ai_bridge::new_token();
+        }
         if !is_call {
-            if let Some(resp) = handle_message_shared(&line, &version, &*call, &book) {
+            // The reading that goes with a list is taken BEFORE the list is answered, so a change that
+            // lands while it is built is announced on the next poll instead of being recorded as seen.
+            let before_list = match (method.as_deref(), &listed, &watch) {
+                (Some("tools/list"), Some(_), Some(watch)) => Some((watch.read)()),
+                _ => None,
+            };
+            // The "tools offered here are the connector's" warning is true only when the connector answers
+            // for itself: with an app that relays, the list is the app's own.
+            // Asked only when there is a warning to drop: matching versions make no request here.
+            let relaying = method.as_deref() == Some("initialize")
+                && version_warning(PROXY_VERSION, &version).is_some()
+                && watch.as_ref().is_some_and(|w| matches!((w.read)(), Some(ListSeen::Version(_))));
+            let said = if relaying { PROXY_VERSION } else { version.as_str() };
+            if let Some(resp) = answer_line(&line, said, &call, &book, &relay, &session) {
                 write_response_line(&output, &resp);
+            }
+            match (method.as_deref(), &listed, &watch) {
+                // The first initialize is answered: the watcher starts.
+                (Some("initialize"), None, Some(watch)) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let (watch, out, stop) = (watch.clone(), output.clone(), stop.clone());
+                    if std::thread::Builder::new().name("tcm-mcp-watch".into()).spawn(move || run_watcher(watch, out, rx, stop)).is_ok() {
+                        listed = Some(tx);
+                    }
+                }
+                (Some("tools/list"), Some(tx), _) => {
+                    if let Some(taken) = before_list {
+                        let _ = tx.send(taken);
+                    }
+                }
+                _ => {}
             }
             continue;
         }
         let id = parsed.as_ref().and_then(|v| v.get("id").cloned());
         let job = {
             let (line, id, version, call, book, output) = (line.clone(), id.clone(), version.clone(), call.clone(), book.clone(), output.clone());
+            let (relay, session) = (relay.clone(), session.clone());
             let counted = InFlight::enter(&in_flight);
             move || {
                 let _counted = counted;
-                answer_call_line(&line, id, &version, &call, &book, &output);
+                answer_call_line(&line, id, &version, &call, &book, &relay, &session, &output);
             }
         };
         // A thread that cannot be made drops the job (and its count); the call is then answered here.
         if std::thread::Builder::new().name("tcm-mcp-call".into()).spawn(job).is_err() {
-            answer_call_line(&line, id, &version, &call, &book, &output);
+            answer_call_line(&line, id, &version, &call, &book, &relay, &session, &output);
         }
     }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    drop(listed);
     in_flight.wait_idle();
 }

@@ -40,12 +40,12 @@ type Env = {
 const DEFAULT: Env = {
   id: "env-00000001", name: "Default", start_url: "", allowed_origins: [],
   db_id: "dev-read", test_environment: false, test_prefix: "AUTOTEST", has_default_password: false,
-  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
+  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "USRACC_PASSWORD" },
 };
 const QA: Env = {
   id: "env-00000002", name: "QA", start_url: "https://qa.example.internal/", allowed_origins: [],
   db_id: "qa-read", test_environment: false, test_prefix: "QATEST", has_default_password: false,
-  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
+  password_expiry_query: "", active_session_query: "", reset_expired_passwords: false, account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "USRACC_PASSWORD" },
 };
 
 /** A small stand-in for the Rust side: the list, plus whatever each command
@@ -125,7 +125,7 @@ test("a new environment is saved with an empty id and the form's fields", async 
     test_prefix: "AUTOTEST",
     password_expiry_query: "",
     active_session_query: "",
-    account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "" },
+    account_lookup: { table: "PeoplesHR.HS_SM_USER_ACCOUNT", username_column: "USRACC_USER_ID", password_column: "USRACC_PASSWORD" },
   });
 });
 
@@ -472,9 +472,9 @@ test("the account lookup starts with PeoplesHR's table, shows an edited environm
   fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
   expect(((await screen.findByRole("textbox", { name: "Account table" })) as HTMLInputElement).value).toBe("PeoplesHR.HS_SM_USER_ACCOUNT");
   expect((screen.getByRole("textbox", { name: "Username column" }) as HTMLInputElement).value).toBe("USRACC_USER_ID");
-  expect((screen.getByRole("textbox", { name: "Password column" }) as HTMLInputElement).value).toBe("");
-  // What is detected when it is empty is said under it.
-  expect(screen.getByText(/Leave empty to detect it/)).toBeInTheDocument();
+  expect((screen.getByRole("textbox", { name: "Password column" }) as HTMLInputElement).value).toBe("USRACC_PASSWORD");
+  // The default, and what is detected when it is empty, is said under it.
+  expect(screen.getByText(/Empty on a custom table means detect it/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Discard" }));
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));

@@ -273,6 +273,14 @@ pub fn validate(file: &EnvFile, known_db_ids: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// An environment saved with no password column on the default table reads
+/// as the default column, so every reader sees it.
+fn default_password_columns(file: &mut EnvFile) {
+    for e in &mut file.environments {
+        e.account_lookup = std::mem::take(&mut e.account_lookup).with_default_password_column();
+    }
+}
+
 fn read(root: &Path) -> Result<Option<EnvFile>, String> {
     let text = match std::fs::read_to_string(file_path(root)) {
         Ok(t) => t,
@@ -280,8 +288,9 @@ fn read(root: &Path) -> Result<Option<EnvFile>, String> {
         Err(e) => return Err(format!("the environments file could not be read: {e}")),
     };
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let file: EnvFile =
+    let mut file: EnvFile =
         serde_json::from_str(text).map_err(|e| format!("the environments file is not readable: {e}"))?;
+    default_password_columns(&mut file);
     check_structure(&file).map_err(|e| format!("the environments file is not readable: {e}"))?;
     Ok(Some(file))
 }
@@ -291,8 +300,9 @@ fn read(root: &Path) -> Result<Option<EnvFile>, String> {
 pub fn parse_file(bytes: &[u8]) -> Result<EnvFile, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "the environments file is not readable".to_string())?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let file: EnvFile =
+    let mut file: EnvFile =
         serde_json::from_str(text).map_err(|e| format!("the environments file is not readable: {e}"))?;
+    default_password_columns(&mut file);
     check_structure(&file).map_err(|e| format!("the environments file is not readable: {e}"))?;
     Ok(file)
 }

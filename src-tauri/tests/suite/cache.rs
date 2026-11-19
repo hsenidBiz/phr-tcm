@@ -362,6 +362,7 @@ const NOT_CACHES: &[(&str, &str, &str)] = &[
     ("api_templates/held.rs", "STORE", "live browser processes kept signed in, closed on drain"),
     ("ai_bridge/guide_routes.rs", "WRITING_JOB_PBIS", "process coordination: the PBI each assistant's current writing job named, kept only until its goodbye or another account's sign-in; nothing fetched, so nothing to go stale"),
     ("autorun/signin_attempts.rs", "ATTEMPTS", "process coordination: how many sign-ins the assistant has made per account and problem, kept for this app session only; nothing fetched, so nothing to go stale"),
+    ("mcp_relay.rs", "SESSIONS", "process coordination: what each connector session has been told (role notes), dropped after 20 idle minutes; nothing fetched, so nothing to go stale"),
     ("mcp.rs", "TOOL_PROPS","this build's own tool schema, derived once from code: nothing fetched, so nothing to go stale"),
 ];
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 
 /**
@@ -28,9 +28,20 @@ export function Switch({
   title?: string;
   className?: string;
 }) {
-  // Set on the first click, so the knob's bounce plays when the user flips
-  // the switch and not once for every switch as a screen appears.
-  const [used, setUsed] = useState(false);
+  // The knob's bounce plays when the switch really changes after the user
+  // flipped it - not once for every switch as a screen appears, and not at
+  // the click itself. A switch whose value comes back from a save changes
+  // only once the save answers; marking it at the click played the bounce
+  // toward the OLD value first, so the knob leapt to the far end and slid
+  // back, then bounced again when the new value arrived.
+  const clicked = useRef(false);
+  const shown = useRef(checked);
+  const [moved, setMoved] = useState(false);
+  useLayoutEffect(() => {
+    if (shown.current === checked) return;
+    shown.current = checked;
+    if (clicked.current) setMoved(true);
+  }, [checked]);
   return (
     <button
       type="button"
@@ -42,7 +53,7 @@ export function Switch({
       title={title}
       className={cn(
         "t-toggle relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full border transition-colors",
-        used && "is-init",
+        moved && "is-init",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         checked
           ? "border-accent bg-accent"
@@ -51,7 +62,7 @@ export function Switch({
         className,
       )}
       onClick={() => {
-        setUsed(true);
+        clicked.current = true;
         onCheckedChange(!checked);
       }}
     >
