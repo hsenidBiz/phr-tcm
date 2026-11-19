@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.17",
+    date: "2026-11-19",
+    items: [
+      "Auto Run is now called Auto Test.",
+      "The Simple and Advanced switch on Auto Test now sits beside the title, so the screen starts right under it.",
+    ],
+  },
+  {
     version: "2.4.7-beta.16",
     date: "2026-11-19",
     items: [
