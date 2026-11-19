@@ -33,6 +33,8 @@ use std::time::Instant;
 pub const SIGN_IN_STEP: i32 = 0;
 /// The runner's own "Go to X" line: after the sign-in, before step 1.
 pub const MODULE_STEP: i32 = -1;
+/// The reason of a case that was stopped before it finished.
+pub const STOPPED_BEFORE_FINISHED: &str = "stopped before it finished";
 const AFTER_FAILED_STEP: &str = runner::AFTER_STEP_BEFORE_FAILED;
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached";
@@ -329,7 +331,7 @@ pub fn propose_with(
         return Proposal { verdict: "Failed", reason };
     }
     if stopped {
-        return Proposal { verdict: "", reason: "stopped before it finished".into() };
+        return Proposal { verdict: "", reason: STOPPED_BEFORE_FINISHED.into() };
     }
     if !script.case_steps().flat_map(|s| &s.actions).any(|a| a.is_check()) {
         return Proposal { verdict: "", reason: "this script checks nothing, so there is nothing to propose".into() };

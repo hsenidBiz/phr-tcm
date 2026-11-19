@@ -3,7 +3,8 @@
 //! browser. Reuse is refused whenever the case before could have left the
 //! browser in a state the next case should not inherit.
 
-use super::replay::SIGN_IN_STEP;
+use super::replay::{SIGN_IN_STEP, STOPPED_BEFORE_FINISHED};
+use super::signin::SIGN_IN_STOPPED;
 use super::runner::AFTER_STOP;
 use super::{CaseRecord, CaseScript};
 use crate::browser::actions::Action;
@@ -41,10 +42,12 @@ pub enum Fresh {
     Paused,
 }
 
+const PASSED: &str = "Passed";
+
 /// True when a browser may be kept after this case at all.
 pub fn may_keep(ended: &Ended) -> bool {
     ended.account.is_some()
-        && ended.proposed == "Passed"
+        && ended.proposed == PASSED
         && !ended.stopped
         && ended.signed_in_ok
         && !ended.script_signs_in
@@ -55,18 +58,18 @@ pub fn may_keep(ended: &Ended) -> bool {
 pub fn may_reuse(before: Option<&Ended>, next: &Next) -> Result<(), Fresh> {
     let Some(b) = before else { return Err(Fresh::NoBrowser) };
     if !may_keep(b) {
-        return Err(if b.account.is_none() {
-            Fresh::AccountChanged
-        } else if b.stopped {
+        return Err(if b.stopped {
             Fresh::BeforeStopped
-        } else if b.proposed != "Passed" {
+        } else if b.proposed != PASSED {
             Fresh::BeforeNotPassed
         } else if !b.signed_in_ok {
             Fresh::BeforeSignInFailed
         } else if b.script_signs_in {
             Fresh::BeforeSignedInByScript
-        } else {
+        } else if b.no_save {
             Fresh::BeforeNoSave
+        } else {
+            Fresh::AccountChanged
         });
     }
     if next.pause_between {
@@ -81,19 +84,23 @@ pub fn may_reuse(before: Option<&Ended>, next: &Next) -> Result<(), Fresh> {
     }
 }
 
-/// Describes how a finished case ended. `account` is the account the run
-/// used, which wins over whatever the script names.
+/// Describes how a finished case ended. Where each field comes from:
+/// `account` is the account the run used (it wins over the script's);
+/// `proposed` is the record's proposal; `stopped` is a record whose reason
+/// is `STOPPED_BEFORE_FINISHED`, or any outcome saying `AFTER_STOP`, or a
+/// sign-in outcome saying `SIGN_IN_STOPPED`; `signed_in_ok` is step 0's last
+/// outcome being ok (true with no step 0); `script_signs_in` is any
+/// `sign_in` action in the script; `no_save` is the script's flag.
 pub fn ended_from(record: &CaseRecord, script: &CaseScript, account: Option<&str>) -> Ended {
-    let signed_in_ok = record
-        .steps
-        .iter()
-        .find(|s| s.step_number == SIGN_IN_STEP)
-        .and_then(|s| s.outcomes.last())
-        .is_none_or(|o| o.ok);
+    let sign_in = record.steps.iter().find(|s| s.step_number == SIGN_IN_STEP);
+    let signed_in_ok = sign_in.and_then(|s| s.outcomes.last()).is_none_or(|o| o.ok);
+    let stopped = record.reason == STOPPED_BEFORE_FINISHED
+        || record.steps.iter().any(|s| s.outcomes.iter().any(|o| o.detail == AFTER_STOP))
+        || sign_in.is_some_and(|s| s.outcomes.iter().any(|o| o.detail.contains(SIGN_IN_STOPPED)));
     Ended {
         account: account.map(str::to_string),
         proposed: record.proposed.clone(),
-        stopped: record.reason.starts_with(AFTER_STOP),
+        stopped,
         signed_in_ok,
         script_signs_in: script
             .steps

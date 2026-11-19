@@ -2,7 +2,9 @@
 //! before it signed in (`autorun::kept_browser`).
 
 use v2_lib::autorun::kept_browser::{ended_from, may_keep, may_reuse, reused_detail, Ended, Fresh, Next};
+use v2_lib::autorun::replay::STOPPED_BEFORE_FINISHED;
 use v2_lib::autorun::runner::AFTER_STOP;
+use v2_lib::autorun::signin::SIGN_IN_STOPPED;
 use v2_lib::autorun::{CaseRecord, CaseScript};
 
 fn before() -> Ended {
@@ -118,11 +120,33 @@ fn ended_from_reads_record() {
     assert!(!ended_from(&record(serde_json::json!([]), "Passed", ""), &script(serde_json::json!([])), Some("a")).script_signs_in);
 }
 
+fn expect_stopped(rec: CaseRecord) {
+    let e = ended_from(&rec, &script(serde_json::json!([])), Some("a"));
+    assert!(e.stopped);
+    assert_eq!(may_reuse(Some(&e), &next()), Err(Fresh::BeforeStopped));
+}
+
 #[test]
-fn ended_from_reads_stop_and_no_save() {
+fn stop_recorded_as_the_reason() {
+    expect_stopped(record(serde_json::json!([]), "", STOPPED_BEFORE_FINISHED));
+}
+
+#[test]
+fn stop_recorded_in_a_step_outcome() {
+    let steps = serde_json::json!([{ "step_number": 1, "outcomes": [{ "ok": false, "detail": AFTER_STOP }] }]);
+    expect_stopped(record(steps, "", ""));
+}
+
+#[test]
+fn stop_during_sign_in_is_a_stop_not_a_failed_sign_in() {
+    let steps = serde_json::json!([{ "step_number": 0, "outcomes": [{ "ok": false, "detail": SIGN_IN_STOPPED }] }]);
+    expect_stopped(record(steps, "", ""));
+}
+
+#[test]
+fn ended_from_reads_no_save() {
     let s = serde_json::from_value::<CaseScript>(serde_json::json!({ "case_id": 1, "title": "t", "steps": [], "no_save": true })).unwrap();
-    let e = ended_from(&record(serde_json::json!([]), "", AFTER_STOP), &s, Some("a"));
-    assert!(e.stopped && e.no_save);
+    assert!(ended_from(&record(serde_json::json!([]), "Passed", ""), &s, Some("a")).no_save);
 }
 
 #[test]
