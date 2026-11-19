@@ -4,6 +4,7 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test } from "vitest";
 import { activeEnvIdSnapshot, setActiveEnvId } from "../../src/lib/activeEnv";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import { QueryClient } from "@tanstack/react-query";
 import { FIXTURES_KEY } from "../../src/screens/ApiTemplates/FixturesTab";
 import { forgetEnvironmentData, isEnvironmentScopedKey, loadEnvironments, switchEnvironment } from "../../src/lib/environments";
@@ -11,6 +12,7 @@ import { forgetEnvironmentData, isEnvironmentScopedKey, loadEnvironments, switch
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  resetAppSimpleModeStore();
 });
 
 const DEFAULT = {
@@ -160,4 +162,21 @@ test("forgetting the environment's data resets every per-environment query and l
   expect(qc.getQueryData(["pw-sync", "c", "o", "p"])).toBeUndefined();
   expect(qc.getQueryData(["environments"])).toEqual({ active: "a" });
   expect(qc.getQueryData(["test-files", "o", "p"])).toEqual([]);
+});
+
+// The repository the AI tools' settings follow: none in Basic mode (the tools
+// register machine-wide there), the working repository otherwise.
+test("the active environment follows the working repository, but in Basic mode follows none", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "D:\repo");
+  const calls = mock(() => []);
+  await loadEnvironments();
+  expect(calls.find((c) => c.cmd === "env_list")!.args).toMatchObject({ workingDir: "D:\repo" });
+  setAppSimpleModeForTest(true);
+  const basic = mock(() => []);
+  await loadEnvironments();
+  expect(basic.find((c) => c.cmd === "env_list")!.args).toMatchObject({ workingDir: null });
+  setAppSimpleModeForTest(false);
+  const off = mock(() => []);
+  await loadEnvironments();
+  expect(off.find((c) => c.cmd === "env_list")!.args).toMatchObject({ workingDir: "D:\repo" });
 });
