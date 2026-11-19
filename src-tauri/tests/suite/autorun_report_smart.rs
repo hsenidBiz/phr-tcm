@@ -963,3 +963,53 @@ fn the_note_names_the_highlighted_bar_and_the_axis_ticks_do_not_wrap() {
     assert!(!html.contains("the lighter bar"));
     assert!(web_file("autorun-report.css").contains(".timeline__tick { position: absolute; top: 2px; white-space: nowrap;"));
 }
+
+// ------------------------------------------------ the shared title start
+
+fn titled(id: i32, title: &str) -> Value {
+    json!({ "case_id": id, "title": title, "verdict": "Passed", "note": "", "steps": [step(1, Some(1000 + id as u64), true, "ok")] })
+}
+
+#[test]
+fn the_shared_title_start_is_whole_segments_only() {
+    use v2_lib::autorun::report::shared_title_start as s;
+    let some = |v: &[&str]| s(v);
+    assert_eq!(
+        some(&["Manage Performance Cycles - Edit on Draft", "Manage Performance Cycles - Pager shows pages"]).as_deref(),
+        Some("Manage Performance Cycles - ")
+    );
+    assert_eq!(some(&["A - B - x", "A - B - y"]).as_deref(), Some("A - B - "));
+    assert_eq!(some(&["A - B - x", "A - C - y"]).as_deref(), Some("A - "));
+    assert_eq!(some(&["Login works", "Logout works"]), None);
+    assert_eq!(some(&["A - B - x"]), None);
+    assert_eq!(some(&[]), None);
+    assert_eq!(some(&["A - ", "A - x"]), None);
+    assert_eq!(some(&["A -  ", "A -  x"]), None);
+    assert_eq!(some(&["Manage - x", "Managers - y"]), None);
+    assert_eq!(some(&["a - x", "A - y"]), None);
+    assert_eq!(some(&["Ünï - é", "Ünï - ü"]).as_deref(), Some("Ünï - "));
+}
+
+fn slowest_panel(html: &str) -> &str {
+    let from = html.find("<h2 class=\"panel__title\">Slowest</h2>").expect("slowest panel");
+    let rest = &html[from..];
+    &rest[..rest.find("Most flaky").unwrap_or(rest.len())]
+}
+
+#[test]
+fn list_labels_drop_the_title_start_the_run_shares_but_hover_keeps_it() {
+    let now = run("run-1", 1_786_000_300_000, "", vec![titled(1, "Manage Cycles - Edit on Draft"), titled(2, "Manage Cycles - Pager shows pages")]);
+    let html = page(&now, &[], &[], &|_| false);
+    let panel = slowest_panel(&html);
+    assert!(panel.contains("title=\"Manage Cycles - Pager shows pages\">Pager shows pages</a>"), "{panel}");
+    assert!(panel.contains("title=\"Manage Cycles - Edit on Draft\">Edit on Draft</a>"), "{panel}");
+}
+
+#[test]
+fn list_labels_are_unchanged_when_the_titles_share_nothing() {
+    let now = run("run-1", 1_786_000_300_000, "", vec![titled(1, "Login works"), titled(2, "Logout works")]);
+    let html = page(&now, &[], &[], &|_| false);
+    let panel = slowest_panel(&html);
+    assert!(panel.contains("title=\"Login works\">Login works</a>"), "{panel}");
+    assert!(panel.contains("title=\"Logout works\">Logout works</a>"), "{panel}");
+}

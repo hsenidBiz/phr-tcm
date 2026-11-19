@@ -561,13 +561,21 @@ pub(super) fn panel(title: &str, meta: &str, lines: &[String], empty: &str) -> S
     )
 }
 
+/// The title without the start every case shares (when it has it).
+fn label_of<'a>(title: &'a str, shared: &str) -> &'a str {
+    if shared.is_empty() { title } else { title.strip_prefix(shared).unwrap_or(title) }
+}
+
 /// A case as a line in a panel: its status glyph, its title as a link, a value.
-pub(super) fn case_line(status: &str, id: i32, title: &str, value: &str) -> String {
+/// `shared` is the title start every case of the run has: the label drops it,
+/// the hover title keeps the whole title.
+pub(super) fn case_line(status: &str, id: i32, title: &str, value: &str, shared: &str) -> String {
     format!(
-        "{}<a class=\"lines__label\" href=\"#case-{id}\" data-case=\"{id}\" title=\"{t}\">{t}</a><span class=\"lines__value mono\">{}</span>",
+        "{}<a class=\"lines__label\" href=\"#case-{id}\" data-case=\"{id}\" title=\"{t}\">{l}</a><span class=\"lines__value mono\">{}</span>",
         glyph(status),
         esc_attr(value),
         t = esc_attr(title),
+        l = esc_attr(label_of(title, shared)),
     )
 }
 
@@ -630,7 +638,7 @@ fn chart(title: &str, values: &[(f64, &RunPoint, String)], flaky: bool) -> Strin
 /// The History view: Trends and Compare, then the per-run table. `titles`
 /// is every case id the compare may name, with its title and its status key
 /// in this run.
-pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, titles: &HashMap<i32, (String, &'static str)>) -> String {
+pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, titles: &HashMap<i32, (String, &'static str)>, shared: &str) -> String {
     let env = environment.map(str::trim).filter(|e| !e.is_empty()).map_or("this environment".to_string(), |e| e.to_string());
     let n = trend.points.len();
     let mut h = format!(
@@ -672,7 +680,7 @@ pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, t
     h.push_str("<div class=\"hist\" id=\"hist-compare\" role=\"tabpanel\" hidden>");
     match &trend.compare {
         None => h.push_str(&format!("<p class=\"compare__base muted\">This is the first run of PBI #{pbi} in {}.</p>", esc_attr(&env))),
-        Some(c) => h.push_str(&compare_html(c, titles)),
+        Some(c) => h.push_str(&compare_html(c, titles, shared)),
     }
     h.push_str("</div>");
 
@@ -697,36 +705,36 @@ pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, t
     h
 }
 
-fn compare_list(title: &str, list: &[i32], titles: &HashMap<i32, (String, &'static str)>, status: &str) -> String {
+fn compare_list(title: &str, list: &[i32], titles: &HashMap<i32, (String, &'static str)>, status: &str, shared: &str) -> String {
     let lines: Vec<String> = list
         .iter()
         .take(MAX_LISTED)
         .map(|id| {
             let (t, now) = titles.get(id).cloned().unwrap_or((format!("Case {id}"), "notrun"));
             let st = if status.is_empty() { now } else { status };
-            format!("{}<a class=\"lines__label\" href=\"#case-{id}\" data-case=\"{id}\" title=\"{t}\">#{id} {t}</a>", glyph(st), t = esc_attr(&t))
+            format!("{}<a class=\"lines__label\" href=\"#case-{id}\" data-case=\"{id}\" title=\"{t}\">#{id} {l}</a>", glyph(st), t = esc_attr(&t), l = esc_attr(label_of(&t, shared)))
         })
         .chain((list.len() > MAX_LISTED).then(|| format!("<span class=\"muted\">and {} more</span>", list.len() - MAX_LISTED)))
         .collect();
     panel(title, &list.len().to_string(), &lines, "None this run.")
 }
 
-fn compare_html(c: &Compare, titles: &HashMap<i32, (String, &'static str)>) -> String {
+fn compare_html(c: &Compare, titles: &HashMap<i32, (String, &'static str)>, shared: &str) -> String {
     let mut h = format!(
         "<p class=\"compare__base muted\">Against the previous run of this PBI, which started {}.</p><div class=\"panels\" id=\"compare-panels\">",
         time_tag(&c.previous_started_at)
     );
     // A blocked case shows the blocked icon: the status is the case's own.
-    h.push_str(&compare_list("New failures", &c.new_failures, titles, ""));
-    h.push_str(&compare_list("Fixed", &c.fixed, titles, "passed"));
-    h.push_str(&compare_list("Still failing", &c.still_failing, titles, ""));
-    h.push_str(&compare_list("New cases", &c.new_cases, titles, ""));
+    h.push_str(&compare_list("New failures", &c.new_failures, titles, "", shared));
+    h.push_str(&compare_list("Fixed", &c.fixed, titles, "passed", shared));
+    h.push_str(&compare_list("Still failing", &c.still_failing, titles, "", shared));
+    h.push_str(&compare_list("New cases", &c.new_cases, titles, "", shared));
     // A case gone from this run is not in it, so it links nowhere.
     let gone: Vec<String> = c
         .missing
         .iter()
         .take(MAX_LISTED)
-        .map(|id| format!("{}<span class=\"lines__label\">#{id} {}</span>", glyph("notrun"), esc_attr(&c.titles.get(id).cloned().unwrap_or_default())))
+        .map(|id| format!("{}<span class=\"lines__label\">#{id} {}</span>", glyph("notrun"), esc_attr(label_of(c.titles.get(id).map(String::as_str).unwrap_or_default(), shared))))
         .collect();
     h.push_str(&panel("Not in this run", &c.missing.len().to_string(), &gone, "None this run."));
     h.push_str("</div>");

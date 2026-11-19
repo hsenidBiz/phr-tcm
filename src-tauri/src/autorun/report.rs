@@ -318,6 +318,32 @@ pub fn action_words(action: &Action) -> String {
     }
 }
 
+/// The longest start every title shares, cut to end right after a " - "
+/// (whole segments only). None for under two titles, no shared separator, or
+/// when dropping it would leave a title blank.
+pub fn shared_title_start(titles: &[&str]) -> Option<String> {
+    let first = titles.first()?;
+    if titles.len() < 2 {
+        return None;
+    }
+    let mut common = first.len();
+    for t in &titles[1..] {
+        common = common.min(first.bytes().zip(t.bytes()).take_while(|(a, b)| a == b).count());
+    }
+    let head = first.get(..common).unwrap_or_else(|| {
+        let mut n = common;
+        while !first.is_char_boundary(n) {
+            n -= 1;
+        }
+        &first[..n]
+    });
+    let end = head.rfind(" - ")? + 3;
+    if titles.iter().any(|t| t[end..].trim().is_empty()) {
+        return None;
+    }
+    Some(first[..end].to_string())
+}
+
 /// An address without its query string or fragment: a script's URL can
 /// carry a token there, and the report is a file people pass around.
 pub fn without_query(url: &str) -> &str {
@@ -1272,21 +1298,22 @@ pub fn build_smart(
     } else {
         format!("Run of {when_tag} \u{b7} compared with the previous {}", if prior == 1 { "run".to_string() } else { format!("{prior} runs") })
     };
+    let shared = shared_title_start(&views.iter().map(|v| v.case.title.as_str()).collect::<Vec<_>>()).unwrap_or_default();
     let line_for = |ids: &[i32], status: &str| -> Vec<String> {
         ids.iter()
             .filter_map(|id| by_id.get(id).copied())
-            .map(|v| report_view::case_line(if status.is_empty() { v.status() } else { status }, v.case.case_id, &v.case.title, ""))
+            .map(|v| report_view::case_line(if status.is_empty() { v.status() } else { status }, v.case.case_id, &v.case.title, "", &shared))
             .collect()
     };
     let cmp = trend.compare.clone().unwrap_or_default();
     let slow_lines: Vec<String> = report_smart::slowest(run, 5)
         .into_iter()
-        .filter_map(|(id, ms)| by_id.get(&id).map(|v| report_view::case_line(v.status(), id, &v.case.title, &report_view::took(ms))))
+        .filter_map(|(id, ms)| by_id.get(&id).map(|v| report_view::case_line(v.status(), id, &v.case.title, &report_view::took(ms), &shared)))
         .collect();
     let order: Vec<i32> = run.cases.iter().map(|c| c.case_id).collect();
     let flaky_lines: Vec<String> = report_smart::most_flaky(&trend.per_case, &order, 5)
         .into_iter()
-        .filter_map(|(id, pct)| by_id.get(&id).map(|v| report_view::case_line(v.status(), id, &v.case.title, &format!("{pct}%"))))
+        .filter_map(|(id, pct)| by_id.get(&id).map(|v| report_view::case_line(v.status(), id, &v.case.title, &format!("{pct}%"), &shared)))
         .collect();
     let mut insights = format!(
         "<section class=\"view page\" id=\"view-insights\"><div class=\"page__head\"><h1 class=\"page__title\">Insights</h1><span class=\"muted\">{sub}</span></div>"
@@ -1363,7 +1390,7 @@ pub fn build_smart(
 
     // ---- History: the titles the compare lists need.
     let titles: std::collections::HashMap<i32, (String, &'static str)> = views.iter().map(|v| (v.case.case_id, (v.case.title.clone(), v.status()))).collect();
-    let history_html = report_view::history_view(&trend, run.pbi_id, run.environment.as_deref(), &titles);
+    let history_html = report_view::history_view(&trend, run.pbi_id, run.environment.as_deref(), &titles, &shared);
 
     // ---- The page.
     let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery }));

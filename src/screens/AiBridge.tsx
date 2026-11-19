@@ -36,6 +36,7 @@ import {
 } from "../lib/environments";
 import { WritingStyleCard } from "../components/WritingStyleCard";
 import { useModule } from "../lib/modules";
+import { useAppSimpleMode } from "../lib/appSimpleMode";
 import { disabledToolsSnapshot, loadDisabledTools, subscribeDisabledTools, toolShown, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { logUi } from "../lib/uiLog";
@@ -103,6 +104,10 @@ export default function AiBridge() {
   const writingOn = useModule("writing_style");
   const autoRunOn = useModule("auto_run");
   const apiTemplatesOn = useModule("api_templates");
+  // App Simple mode: the assistants get API templates and the network tools
+  // without these two switches (Rust turns both on), and no writing, search
+  // or report tools. Only what is SHOWN changes: no saved switch is touched.
+  const { on: simple } = useAppSimpleMode();
 
   // The repository everything on this tab is scoped to: the CURRENT one of
   // the saved list, while its AI-tools switch is on. Read through the
@@ -758,7 +763,10 @@ export default function AiBridge() {
             size="sm"
             variant="outline"
             onClick={() => {
-              saveDisabledTools([]);
+              // Under Simple mode only the rows on screen are turned on; the
+              // hidden ones keep their saved switch.
+              const shown = new Set(visible.flatMap((r) => r.names));
+              saveDisabledTools(simple ? disabled.filter((n) => !shown.has(n)) : []);
             }}
           >
             <IconConfirm aria-hidden />
@@ -1029,7 +1037,7 @@ export default function AiBridge() {
           Shown while the API Templates module is on (capture mode reports
           every module on, since the help site documents it). It names no
           tool, so unlike the tool rows it needs no capture gate. */}
-      {apiTemplatesOn && (
+      {apiTemplatesOn && !simple && (
         <section data-tour="ai-api-templates" className="space-y-3 rounded-md border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">API templates</h2>
           <div className="space-y-1 rounded-md border border-border/60 p-2">
@@ -1056,7 +1064,7 @@ export default function AiBridge() {
           on, Rust neither lists them nor answers their routes. They are
           Auto Test's tools, so Auto Test off takes them too. Shown while Auto Test is on, but not in capture mode, which hides
           the Auto Test tools from the help site's shots (toolShown). */}
-      {autoRunOn && !isCaptureMode() && (
+      {autoRunOn && !isCaptureMode() && !simple && (
         <section className="space-y-3 rounded-md border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">Network tools</h2>
           <div className="space-y-1 rounded-md border border-border/60 p-2">
@@ -1080,6 +1088,7 @@ export default function AiBridge() {
       <div className="flex min-w-0 flex-col gap-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
+        {!simple && (
         <p className="text-sm text-muted">
           The best way to write test cases: ask the assistant to read the
           writing guide and a few example cases, then draft cases for your PBI
@@ -1087,6 +1096,7 @@ export default function AiBridge() {
           Test Cases tab. Keep the file watched, and any problems show up here
           as it saves.
         </p>
+        )}
         <p className="text-sm text-muted">
           {/* No count in the sentence: it went stale twice - the list
               below is the inventory. */}
@@ -1101,15 +1111,21 @@ export default function AiBridge() {
           <li>
             <span className="font-medium text-text">Run results</span> — see how a PBI&apos;s cases did on their last run, with the testers&apos; comments. Off: the assistant sees no results.
           </li>
+          {toolShown("get_tags") && (
           <li>
             <span className="font-medium text-text">Project tags</span> — use the tags your project already has, so it does not invent new ones. Off: it has to guess.
           </li>
+          )}
+          {toolShown("search_pbis") && (
           <li>
             <span className="font-medium text-text">Find a PBI</span> — look up a PBI by its title or number. PBIs only, never bugs or tasks. Off: you give it the id.
           </li>
+          )}
+          {toolShown("search_wiki") && (
           <li>
             <span className="font-medium text-text">Project wiki</span> — search your wiki and read a page, for the background to a requirement. Searching and reading share one switch.
           </li>
+          )}
           {dbOn && (
           <li>
             <span className="font-medium text-text">Database Read Access</span> — find the tables behind a topic and check a value in the database you chose. It can only look, unless you allow changes beside that connection. Off: no database tools.
@@ -1117,12 +1133,12 @@ export default function AiBridge() {
           )}
           {toolShown("save_autorun_script") && (
             <li>
-              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. Off: you run Auto Test by hand.
+              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. {!simple && <>Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. </>}Off: you run Auto Test by hand.
             </li>
           )}
           {toolShown("list_api_templates") && (
             <li>
-              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
+              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. {!simple && <>Testing and running also need the API templates switch above, which is off by default. </>}Off: you do template work by hand.
             </li>
           )}
           {toolShown("open_report") && (

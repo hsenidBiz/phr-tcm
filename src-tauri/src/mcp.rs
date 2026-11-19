@@ -455,7 +455,39 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, B
             }
         }
     }
+    // The tools Simple mode hides: named by the app's answer (decided there,
+    // from the saved setting). Only a name this build knows as hidden counts,
+    // and a core tool is added AFTER the core filter above, so it stays off.
+    for t in simple_hidden_from(&answer) {
+        if !off.iter().any(|o| *o == t) {
+            off.push(t);
+        }
+    }
     (off, on)
+}
+
+/// The tools Simple mode hides, as a `/tools` answer names them. Empty when
+/// the answer carries none (Simple mode off, an older app, a failed answer).
+fn simple_hidden_from(answer: &Option<serde_json::Value>) -> Vec<String> {
+    answer
+        .as_ref()
+        .and_then(|v| v["simple_hidden"].as_array().cloned())
+        .map(|a| {
+            a.iter()
+                .filter_map(|n| n.as_str())
+                .filter(|n| crate::simple_view::SIMPLE_HIDDEN_TOOLS.contains(n))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The tools `/tools`'s answer says Simple mode hides: the body parsed once.
+pub fn simple_hidden_in(reply: &Result<(u16, String), String>) -> Vec<String> {
+    match reply {
+        Ok((200, body)) => simple_hidden_from(&serde_json::from_str::<serde_json::Value>(body).ok()),
+        _ => Vec::new(),
+    }
 }
 
 /// Whether the person has let database changes run without being asked:
@@ -512,11 +544,12 @@ pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes 
 /// The proxy's view of `/tools` for one call: what is switched off, which
 /// modules are on, and whether the held-back module is unlocked (which
 /// decides the words of a refusal).
-fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool) {
+fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool, Vec<String>) {
     let reply = call("GET", "/tools", "");
     let unlocked = unlocked_from(&reply);
+    let hidden = simple_hidden_in(&reply);
     let (off, on) = tool_policy_from(reply);
-    (off, on, unlocked)
+    (off, on, unlocked, hidden)
 }
 
 /// Every tool this server offers, by name.
@@ -2491,9 +2524,24 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
     let args = &coerced;
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
-    let (off, on, unlocked) = tool_policy(call);
-    let refused = if off.iter().any(|d| d == name) {
+    let (off, on, unlocked, simple_hidden) = tool_policy(call);
+    let refused = if !simple_hidden.is_empty()
+        && crate::ai_tools::NETWORK_TOOLS.contains(&name)
+        && off.iter().any(|d| d == name)
+        && !simple_hidden.iter().any(|d| d == name)
+    {
+        // Under Simple mode (the answer names hidden tools only then) a network
+        // tool is off only for want of an environment; its switch is hidden.
+        Some(crate::simple_view::SIMPLE_NETWORK_NO_ENVIRONMENT.to_string())
+    } else if simple_hidden.iter().any(|d| d == name) {
+        // Simple mode's own sentence: the tool has no switch to turn on.
+        Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
+    } else if off.iter().any(|d| d == name) {
         Some(refusal_text_for(name, &on, unlocked))
+    } else if name == "get_guide" && args["topic"].as_str().map(str::trim) == Some("reports") && !simple_hidden.is_empty() {
+        // The reports guide rides on the Crystal Reports tools, which Simple
+        // mode hides: say so, not that a switch is off.
+        Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
     } else if name == "get_guide" {
         guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked)
     } else {
@@ -3081,11 +3129,26 @@ pub fn tools_reply_or_saved(
     reply: Result<(u16, String), String>,
     saved: Option<(BTreeSet<Module>, bool)>,
 ) -> Result<(u16, String), String> {
+    tools_reply_or_saved_simple(reply, saved, false)
+}
+
+/// `tools_reply_or_saved` that also knows whether the saved app settings have
+/// Simple mode on: then the saved answer names the hidden tools too, so a
+/// closed app does not list them.
+pub fn tools_reply_or_saved_simple(
+    reply: Result<(u16, String), String>,
+    saved: Option<(BTreeSet<Module>, bool)>,
+    simple: bool,
+) -> Result<(u16, String), String> {
     match (&reply, saved) {
         (Ok((200, _)), _) | (_, None) => reply,
         (_, Some((on, unlocked))) => {
             let names: Vec<&str> = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect();
-            Ok((200, serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked }).to_string()))
+            let mut answer = serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked });
+            if simple {
+                answer["simple_hidden"] = serde_json::json!(crate::simple_view::SIMPLE_HIDDEN_TOOLS);
+            }
+            Ok((200, answer.to_string()))
         }
     }
 }
@@ -3093,7 +3156,7 @@ pub fn tools_reply_or_saved(
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let reply = bridge_request(method, path, body);
     if method == "GET" && path == "/tools" {
-        return tools_reply_or_saved(reply, crate::modules::saved_on_this_machine());
+        return tools_reply_or_saved_simple(reply, crate::modules::saved_on_this_machine(), crate::simple_view::saved_on_this_machine());
     }
     reply
 }

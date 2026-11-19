@@ -75,7 +75,8 @@ export const aiBridge: Screen = {
       title: "Environment",
       summary:
         "The site and database Auto Test and API Templates work against. Shown while the Auto Test module is on, in Settings, under General, on the **Modules** page. " +
-        "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Test browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened.",
+        "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Test browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened. " +
+        "With **Simple mode** on in Settings, the Network tools and API templates cards are hidden and both are on for assistants once an environment is chosen; assistants can read test cases and write Auto Test scripts, and the test-case writing tools, Find a PBI and the wiki are hidden from them and from **Tools an assistant may use**.",
     },
     {
       id: "api-templates",
@@ -241,7 +242,7 @@ export const aiBridge: Screen = {
         "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
         "Proving and running write real test data through the site's own requests, as your Auto Test accounts, against the active environment's site address, so this is off until you turn it on. " +
         "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab. " +
-        "The switch is the active environment's own, named on the card; in a new environment it starts off.",
+        "The switch is the active environment's own, named on the card; in a new environment it starts off. Hidden while Simple mode is on (Settings), which keeps it on.",
     },
     {
       id: "database",

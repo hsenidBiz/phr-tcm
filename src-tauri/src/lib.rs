@@ -46,6 +46,7 @@ pub mod events;
 pub mod extras;
 pub mod modules;
 pub mod simple_mode;
+pub mod simple_view;
 pub mod filewatch;
 pub mod guide;
 pub mod help;

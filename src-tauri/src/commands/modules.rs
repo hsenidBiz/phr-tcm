@@ -169,7 +169,7 @@ pub fn resync_commands_with(
         let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|(shared, _)| {
             let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-            (std::sync::Arc::clone(shared), ctx.disabled_tools.clone(), ctx.working_dir.clone())
+            (std::sync::Arc::clone(shared), crate::simple_view::disabled_now(&ctx.disabled_tools), ctx.working_dir.clone())
         })
     };
     if let Some((shared, disabled, working_dir)) = wanted {
@@ -201,7 +201,7 @@ pub fn resync_agents_with(
         let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|(shared, _)| {
             let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-            (ctx.disabled_tools.clone(), ctx.working_dir.clone())
+            (crate::simple_view::disabled_now(&ctx.disabled_tools), ctx.working_dir.clone())
         })
     };
     if let Some((disabled, working_dir)) = wanted {

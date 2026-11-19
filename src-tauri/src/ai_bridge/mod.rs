@@ -229,7 +229,7 @@ pub fn set_live_bridge(shared: &SharedBridge) {
 fn live_context() -> Option<BridgeContext> {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.upgrade()?;
     let ctx = live.ctx.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    Some(ctx)
+    Some(crate::simple_view::context_under(crate::simple_view::is_on(), &ctx))
 }
 
 /// `still_allowed` against the active environment and the live context.
@@ -488,8 +488,37 @@ pub async fn route_timed(
     body: &str,
     version: &str,
 ) -> (u16, String) {
+    // Whether app Simple mode is on is read from the SAVED setting here, in
+    // Rust - never from what the webview last pushed.
+    route_timed_simple(crate::simple_view::is_on(), caller, ctx, client, method, target, body, version).await
+}
+
+/// `route_timed` with app Simple mode given, so every combination is
+/// testable. While `simple` the hidden tools' routes are refused (404 with
+/// `simple_view::SIMPLE_HIDES_TOOL`) and the handlers see the context as
+/// `simple_view::context_under` shows it; the stored context, and so every
+/// saved switch, is never touched.
+#[allow(clippy::too_many_arguments)]
+pub async fn route_timed_simple(
+    simple: bool,
+    caller: &crate::autorun::agents::Caller,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    method: &str,
+    target: &str,
+    body: &str,
+    version: &str,
+) -> (u16, String) {
     let started = std::time::Instant::now();
-    let answer = route_as(caller, ctx, client, method, target, body, version).await;
+    let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
+    let under = crate::simple_view::context_under(simple, ctx);
+    let answer = match crate::simple_view::route_refusal(simple, path) {
+        Some(refused) => refused,
+        None => route_as(caller, &under, client, method, target, body, version).await,
+    };
+    let answer = crate::simple_view::name_hidden_in_tools_answer(simple, method, path, answer);
+    let answer = crate::simple_view::reword_api_switch_refusal(simple, &under, answer);
+    let answer = crate::simple_view::reword_network_refusal(simple, &under, answer);
     // One line per call: the route and how long it took, so a slow call can
     // be told from a slow site. The query and the body are never logged.
     crate::applog::debug(call_time_line(method, target, answer.0, started.elapsed().as_millis()));

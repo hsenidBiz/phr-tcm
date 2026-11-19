@@ -643,6 +643,33 @@ fn an_unreachable_bridge_falls_back_to_the_saved_modules() {
     assert!(on.is_empty());
 }
 
+/// With the app closed, the saved app settings decide whether the proxy
+/// lists the tools Simple mode hides: Simple on hides them, off changes nothing.
+#[test]
+fn a_closed_app_with_saved_simple_mode_does_not_list_the_hidden_tools() {
+    use v2_lib::mcp::tools_reply_or_saved_simple;
+    use v2_lib::simple_view::SIMPLE_HIDDEN_TOOLS;
+    let names_with = |simple: bool| -> Vec<String> {
+        let saved = Some((Module::ALL.into_iter().collect::<BTreeSet<Module>>(), false));
+        let call = move |_m: &str, _p: &str, _b: &str| tools_reply_or_saved_simple(Err("connection refused".into()), saved.clone(), simple);
+        let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+    };
+    let on = names_with(true);
+    for t in SIMPLE_HIDDEN_TOOLS {
+        assert!(!on.iter().any(|n| n == t), "{t} is listed with Simple mode saved on");
+    }
+    assert!(on.iter().any(|n| n == "get_test_cases") && on.iter().any(|n| n == "save_autorun_script"));
+    let off = names_with(false);
+    for t in ["begin_test_case_writing", "search_pbis", "optimize_cases"] {
+        assert!(off.iter().any(|n| n == t), "{t} must be listed with Simple mode off");
+    }
+    // A real answer is never replaced by the saved one, Simple or not.
+    let real = Ok((200, r#"{"disabled":[],"modules":[]}"#.to_string()));
+    assert_eq!(tools_reply_or_saved_simple(real.clone(), Some((BTreeSet::new(), false)), true), real);
+}
+
 /// The description is the only thing an assistant reads. It used to name
 /// 21 ops while the server accepted 24; the gap hid replace_in_preconditions
 /// and normalise_citations, and set_comment was reachable when it should

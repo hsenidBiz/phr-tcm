@@ -137,6 +137,7 @@ pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, 
 #[specta::specta]
 pub async fn set_app_simple_mode(app: tauri::AppHandle, on: bool) -> Result<crate::simple_mode::SimpleModeAnswer, String> {
     let before = crate::modules::current();
+    let simple_before = crate::simple_view::is_on();
     let not_switched_on = crate::simple_mode::set_app_simple_mode_via(
         &mut (),
         on,
@@ -148,7 +149,9 @@ pub async fn set_app_simple_mode(app: tauri::AppHandle, on: bool) -> Result<crat
         },
         |_| crate::simple_mode::switch_all_on(),
     )?;
-    if crate::modules::current() != before {
+    // Simple mode hides tools from the assistants (and their slash commands),
+    // so a change of it re-syncs the files just as a module change does.
+    if crate::modules::current() != before || crate::simple_view::is_on() != simple_before {
         crate::commands::modules::resync_commands_blocking(&app).await;
     }
     Ok(crate::simple_mode::SimpleModeAnswer { settings: app_settings::current(), not_switched_on })
