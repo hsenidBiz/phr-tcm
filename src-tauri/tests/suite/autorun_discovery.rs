@@ -7031,3 +7031,352 @@ async fn a_tried_fill_form_leaves_nothing_of_its_values_outside_the_ok_actions()
     let lines = v["lines"].to_string();
     assert!(!lines.contains("zz-value") && !lines.contains('\u{1}'), "{lines}");
 }
+
+// ------------------------------------- fill_form answers: wording and order
+
+/// Breaks the sign-in recipe file once a value has been typed: the next field's
+/// try is then refused before it runs (a 500 that names no value).
+fn recipe_breaks_after_typing(dir: &std::path::Path, d: ScriptedDriver) -> ScriptedDriver {
+    let projects = dir.join("projects");
+    d.answering_first(move |method, _| {
+        if method == "Input.insertText" {
+            for f in std::fs::read_dir(&projects).unwrap().flatten() {
+                std::fs::write(f.path(), "{ not json").unwrap();
+            }
+        }
+        None
+    })
+}
+
+/// A refused field's own line: the lines say which field stopped the step,
+/// and carry no value.
+#[tokio::test]
+async fn a_tried_fill_form_names_the_field_whose_try_was_refused() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let d = recipe_breaks_after_typing(dir.path(), form_page(two_text_boxes(), typed.clone(), None));
+    let (status, text) = tried_on(d, None, dir.path()).await;
+    assert_eq!(status, 500, "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"]);
+    let v = tried_json(&text);
+    let lines: Vec<&str> = v["lines"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
+    assert!(lines[1].starts_with("   First name: ok {"), "{lines:?}");
+    assert!(lines[2].starts_with("   Last name: failed: ") && lines[2].contains("not readable"), "{lines:?}");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(v["actions"].as_array().unwrap().len(), 1, "{text}");
+    assert!(!text.contains("Lee"), "{text}");
+}
+
+/// What a field's try said after its first line comes out in field order:
+/// an earlier field's before the field that failed.
+#[tokio::test]
+async fn a_failed_tried_fill_form_keeps_the_fields_extras_in_field_order() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let session = v2_lib::autorun::explore::begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut d = form_page(two_text_boxes(), typed, None).answering_first(|method, _| {
+        (method == "Network.getResponseBody").then(|| Ok(json!({ "body": REFUSED_BODY, "base64Encoded": false })))
+    });
+    // The first field sends a save; the second sends one the app refuses.
+    d.on_call_events.push(("Input.insertText".into(), sent("1", "POST", "https://hr.example.internal/hr/leave/save?id=5")));
+    let url = "https://hr.example.internal/api/eval-rules";
+    let event = |method: &str, params: Value| Event { method: method.into(), params };
+    d.events_when = Some((
+        Box::new(|method, params| method == "Input.insertText" && params["text"] == "Lee"),
+        vec![
+            event(
+                "Network.requestWillBeSent",
+                json!({ "requestId": "late-1", "type": "XHR", "documentURL": "https://hr.example.internal/hr/leave/first",
+                        "request": { "url": url, "method": "POST" } }),
+            ),
+            event(
+                "Network.responseReceived",
+                json!({ "requestId": "late-1", "response": { "status": 400, "url": url, "mimeType": "application/json" } }),
+            ),
+            event("Network.loadingFinished", json!({ "requestId": "late-1" })),
+        ],
+    ));
+    let (status, text) = tried_on(d, Some(&session), dir.path()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("failed"), "{text}");
+    let first = text.find("Saves it sent: POST /hr/leave/save.").unwrap_or_else(|| panic!("no first save: {text}"));
+    let second = text.find("Saves it sent: POST /api/eval-rules.").unwrap_or_else(|| panic!("no second save: {text}"));
+    assert!(first < second, "the failing field's lines came before an earlier field's: {text}");
+    assert!(!text.contains("Lee\"") || text.matches("Lee").count() <= 1, "{text}");
+}
+
+/// A form page that shows `message` from the first typed value on, until the
+/// next is typed.
+fn form_page_saying(controls: Vec<FormControl>, typed: Arc<Mutex<Vec<String>>>, message: &'static str) -> ScriptedDriver {
+    let mut typed_n = 0usize;
+    form_page(controls, typed, None).answering_first(move |method, params| {
+        if method == "Input.insertText" {
+            typed_n += 1;
+            return None;
+        }
+        if method == "Runtime.evaluate" && params["expression"] == v2_lib::browser::page_messages::READ_JS {
+            let messages: Vec<Value> = if typed_n == 1 { vec![json!({ "text": message, "where": "page" })] } else { vec![] };
+            return Some(Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": "/hr/leave/form" } } })));
+        }
+        None
+    })
+}
+
+/// A step after a `fill_form` fails, and the stop line points back to the
+/// field the page answered with a message - as it does for an action.
+#[tokio::test]
+async fn a_failure_after_a_form_points_back_to_the_field_the_page_answered() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (mut browser, _) = slot(form_page_saying(two_text_boxes(), typed, "Saved."), exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, nowhere()], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "First name").contains(r#"the page showed: "Saved.""#), "{text}");
+    assert!(
+        text.contains(r#"After action 1 (fill_form 2 fields, field "First name") the page showed: "Saved.""#),
+        "no clause pointing back to the field: {text}"
+    );
+}
+
+/// `refused_after_the_first_action`, at the `nth` read of the live notes.
+fn refused_after_alert_read(d: &mut ScriptedDriver, nth: usize) {
+    refused_after_the_first_action(d);
+    let (_, events) = d.events_when.take().expect("armed");
+    let mut notes_read = 0;
+    d.events_when = Some((
+        Box::new(move |method, params| {
+            if method == "Runtime.evaluate" && params["expression"].as_str().is_some_and(|e| e.contains("[role=alert]")) {
+                notes_read += 1;
+            }
+            notes_read == nth
+        }),
+        events,
+    ));
+}
+
+/// A step stopped because the app refused an earlier field after it ended
+/// already says why: no pointer to some other earlier answer is added.
+#[tokio::test]
+async fn a_form_stopped_by_a_late_refusal_gets_no_pointer_back() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut clicks = 0usize;
+    let mut d = form_page(two_text_boxes(), typed.clone(), None).answering_first(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            clicks += 1;
+        }
+        if method == "Network.getResponseBody" {
+            return Some(Ok(json!({ "body": REFUSED_BODY, "base64Encoded": false })));
+        }
+        if method == "Runtime.evaluate" && params["expression"] == v2_lib::browser::page_messages::READ_JS {
+            let messages: Vec<Value> = if clicks == 1 { vec![json!({ "text": "Saved.", "where": "page" })] } else { vec![] };
+            return Some(Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": "/hr/leave/form" } } })));
+        }
+        None
+    });
+    // The click's own two reads of the live notes come first, then the first field's.
+    refused_after_alert_read(&mut d, 4);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), form], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("Stopped: the app refused First name after it ended: 1 field not run."), "{text}");
+    assert!(!text.contains("After action"), "pointed at an answer the refusal is not about: {text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field after the refusal ran");
+}
+
+fn three_text_boxes() -> Vec<FormControl> {
+    vec![text_box("First name"), text_box("Last name"), text_box("Notes")]
+}
+
+/// A browser that goes mid-form: the step says how many of its fields were
+/// not run, and the batch how many of its actions - never one for the other.
+#[tokio::test]
+async fn a_form_the_browser_left_says_how_many_fields_were_not_run() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let page = form_page_failing_after_typing(three_text_boxes(), typed, browser_closed);
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee", "Notes": "n" } }),
+    );
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a"), click("#b")], None, None, true, &no_stop())
+            .await;
+    assert_ne!(status, 200, "{text}");
+    assert!(field_line(&text, "Last name").contains("failed:"), "{text}");
+    assert!(text.contains("   Stopped at the failure: 1 field was not run."), "the form does not say: {text}");
+    assert!(text.contains("\nStopped at the failure: 2 actions were not run."), "the batch does not say: {text}");
+}
+
+/// A stop asked between two fields: the step says how many fields were not
+/// run, the batch how many actions.
+#[tokio::test]
+async fn a_stop_between_two_fields_counts_fields_and_actions_apart() {
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let asks = stop.clone();
+    let page = form_page(three_text_boxes(), typed.clone(), None).answering_first(move |method, params| {
+        if method == "Input.insertText" && params["text"] == "Ann" {
+            asks.store(true, Ordering::SeqCst);
+        }
+        None
+    });
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee", "Notes": "n" } }),
+    );
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &stop).await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field ran after the stop");
+    assert!(field_line(&text, "First name").contains("ok {"), "{text}");
+    assert!(text.contains("   Stopped: 2 fields were not run."), "{text}");
+    assert!(text.ends_with(&ended_line(1)), "{text}");
+    assert!(!text.contains("Last name"), "{text}");
+    // Asked inside the last step's field, nothing of the batch is left.
+    let stop = Arc::new(AtomicBool::new(false));
+    let asks = stop.clone();
+    let page = form_page(two_text_boxes(), Arc::new(Mutex::new(Vec::new())), None).answering_first(move |method, params| {
+        if method == "Input.insertText" && params["text"] == "Ann" {
+            asks.store(true, Ordering::SeqCst);
+        }
+        None
+    });
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee" } }));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form], None, None, true, &stop).await;
+    assert_eq!(status, 409, "{text}");
+    assert!(text.contains("   Stopped: 1 field was not run."), "{text}");
+    assert!(!text.contains("not run - End discovery"), "an action was counted that was never there: {text}");
+}
+
+/// The call's time running out between two fields: the 504 answer keeps the
+/// earlier field's line, names the field that was not started, and counts the
+/// fields and the actions left apart.
+#[tokio::test]
+async fn the_call_budget_running_out_between_fields_answers_504_with_the_earlier_lines() {
+    use v2_lib::autorun::action_help::{CALL_BUDGET_MS, CALL_STARTED};
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    // The call began a second short of its budget ago; the first field's own
+    // second read of the live notes (after its action) takes longer than that.
+    let mut notes_read = 0;
+    let page = form_page(three_text_boxes(), typed.clone(), None).answering_first(move |method, params| {
+        if method == "Runtime.evaluate" && params["expression"].as_str().is_some_and(|e| e.contains("[role=alert]")) {
+            notes_read += 1;
+            if notes_read == 2 {
+                std::thread::sleep(std::time::Duration::from_millis(1800));
+            }
+        }
+        None
+    });
+    let (mut browser, _) = slot(page, exploring("Leave"));
+    let form = fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee", "Notes": "n" } }),
+    );
+    let began = std::time::Instant::now() - std::time::Duration::from_millis(CALL_BUDGET_MS - 1000);
+    let (status, text) = CALL_STARTED
+        .scope(began, discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &no_stop()))
+        .await;
+    assert_eq!(status, 504, "{text}");
+    assert!(field_line(&text, "First name").contains("ok {"), "{text}");
+    assert!(field_line(&text, "Last name").contains("did not answer within 280 s"), "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field ran after the budget was spent");
+    assert!(text.contains("   Stopped at the failure: 1 field was not run."), "{text}");
+    assert!(text.contains("\nStopped at the failure: 1 action was not run."), "{text}");
+    assert!(!text.contains("Notes: "), "{text}");
+}
+
+/// A tried `fill_form` with a `within` that matched two writes the chained
+/// locator, narrowed to the first.
+#[tokio::test]
+async fn a_tried_fill_form_within_two_writes_the_chain_and_nth_0() {
+    let _leases = crate::serial::account_leases();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let controls = vec![
+        form_control("dialog", "Add employee", "div", ""),
+        form_control("dialog", "Add employee", "div", ""),
+        text_box("First name"),
+    ];
+    let (status, text) = tried_form(
+        controls,
+        typed.clone(),
+        json!({ "kind": "fill_form", "within": { "role": "dialog", "name": "Add employee" }, "fields": { "First name": "Ann" } }),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("ok"), "{text}");
+    let v = tried_json(&text);
+    assert_eq!(
+        v["lines"][0], "fill_form (within dialog \"Add employee\": matched 2, the first used - nth 0)",
+        "{text}"
+    );
+    let selector = &v["actions"][0]["selector"];
+    assert_eq!(selector.as_array().map(Vec::len), Some(2), "{text}");
+    assert_eq!(selector[0]["nth"], 0, "{text}");
+    assert_eq!(selector[1]["role"], "textbox", "{text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann"]);
+}
+
+/// A tried `fill_form` whose every field already holds what was asked does
+/// nothing and says so: ok, no actions.
+#[tokio::test]
+async fn a_tried_fill_form_with_every_field_already_set_answers_ok_with_no_actions() {
+    let _leases = crate::serial::account_leases();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let mut active = form_control("checkbox", "Active", "input", "checkbox");
+    active.checked = true;
+    let mut notify = form_control("switch", "Notify", "button", "");
+    notify.checked = true;
+    let (status, text) = tried_form(
+        vec![active, notify],
+        typed.clone(),
+        json!({ "kind": "fill_form", "fields": { "Active": true, "Notify": true } }),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("ok: every field was already set - nothing done"), "{text}");
+    let v = tried_json(&text);
+    assert_eq!(v["actions"], json!([]), "{text}");
+    assert_eq!(v["lines"][1], "   Active: ok, already set - nothing done");
+    assert_eq!(v["lines"][2], "   Notify: ok, already set - nothing done");
+    assert!(typed.lock().unwrap().is_empty());
+}
+
+/// A lone `fill_form` is a batch of one in every way a batch is one, whatever
+/// `stop_on_failure` and `page` say. (The route puts it in the session's
+/// browser slot, which holds a real browser and cannot hold this fake; this is
+/// the deepest layer the route calls.)
+#[tokio::test]
+async fn a_lone_fill_form_carries_on_past_a_failed_field_when_told_to() {
+    use v2_lib::ai_bridge::{discover_actions_paged, PAGE_LEFT_OUT};
+    let _leases = crate::serial::account_leases();
+    let dir = root_with_recipe_and_account();
+    let typed = Arc::new(Mutex::new(Vec::new()));
+    let (mut browser, _) = slot(form_page(two_text_boxes(), typed.clone(), None), exploring("Leave"));
+    let form = fill_form_action(
+        json!({ "kind": "fill_form", "fields": { "Nowhere": "x", "First name": "Ann", "Last name": "Lee" } }),
+    );
+    let (status, text) = discover_actions_paged(
+        &mut browser, dir.path(), ORG, PROJECT, std::slice::from_ref(&form), None, None, false, &no_stop(), true,
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(field_line(&text, "Nowhere").contains("failed: no form control is named"), "{text}");
+    assert!(field_line(&text, "First name").contains("ok {") && field_line(&text, "Last name").contains("ok {"), "{text}");
+    assert!(!text.contains("not run") && !text.contains(PAGE_LEFT_OUT), "{text}");
+    assert!(text.contains("button \"Save\""), "the page was left out: {text}");
+    assert_eq!(*typed.lock().unwrap(), ["Ann", "Lee"]);
+}
