@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.16",
+    date: "2026-11-19",
+    items: [
+      "When an assistant fills a form and stops partway, its answer now says which field stopped it and how many were left, and keeps the notes of every field it filled.",
+      "Assistants are told more clearly which earlier step showed a message on the page.",
+    ],
+  },
+  {
     version: "2.4.7-beta.15",
     date: "2026-11-18",
     items: [
