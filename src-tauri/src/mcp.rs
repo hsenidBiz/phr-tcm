@@ -544,12 +544,22 @@ pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes 
 /// The proxy's view of `/tools` for one call: what is switched off, which
 /// modules are on, and whether the held-back module is unlocked (which
 /// decides the words of a refusal).
-fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool, Vec<String>) {
+fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool, Vec<String>, bool) {
     let reply = call("GET", "/tools", "");
     let unlocked = unlocked_from(&reply);
     let hidden = simple_hidden_in(&reply);
+    let live = answer_is_live(&reply);
     let (off, on) = tool_policy_from(reply);
-    (off, on, unlocked, hidden)
+    (off, on, unlocked, hidden, live)
+}
+
+/// Whether `/tools`'s reply is the running app's own answer: a 200 that is not
+/// the saved answer the proxy builds when the app does not answer.
+pub fn answer_is_live(reply: &Result<(u16, String), String>) -> bool {
+    match reply {
+        Ok((200, body)) => serde_json::from_str::<serde_json::Value>(body).ok().is_some_and(|v| v["saved"].as_bool() != Some(true)),
+        _ => false,
+    }
 }
 
 /// Every tool this server offers, by name.
@@ -2524,14 +2534,18 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
     let args = &coerced;
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
-    let (off, on, unlocked, simple_hidden) = tool_policy(call);
+    let (off, on, unlocked, simple_hidden, live) = tool_policy(call);
     let refused = if !simple_hidden.is_empty()
+        && live
+        && on.contains(&Module::AutoRun)
         && crate::ai_tools::NETWORK_TOOLS.contains(&name)
         && off.iter().any(|d| d == name)
         && !simple_hidden.iter().any(|d| d == name)
     {
         // Under Simple mode (the answer names hidden tools only then) a network
         // tool is off only for want of an environment; its switch is hidden.
+        // Only the running app's own answer says so, and only with Auto Test on;
+        // a closed app or Auto Test off keep their own refusals.
         Some(crate::simple_view::SIMPLE_NETWORK_NO_ENVIRONMENT.to_string())
     } else if simple_hidden.iter().any(|d| d == name) {
         // Simple mode's own sentence: the tool has no switch to turn on.
@@ -3144,7 +3158,9 @@ pub fn tools_reply_or_saved_simple(
         (Ok((200, _)), _) | (_, None) => reply,
         (_, Some((on, unlocked))) => {
             let names: Vec<&str> = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect();
-            let mut answer = serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked });
+            // `saved` marks this as the machine's saved answer, not the app's own:
+            // a refusal worded by what the live app said must not use it.
+            let mut answer = serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked, "saved": true });
             if simple {
                 answer["simple_hidden"] = serde_json::json!(crate::simple_view::SIMPLE_HIDDEN_TOOLS);
             }

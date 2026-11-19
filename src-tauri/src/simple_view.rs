@@ -128,7 +128,8 @@ pub fn api_writes_off_text(simple: bool, ctx: &crate::ai_bridge::BridgeContext) 
     if !simple {
         return crate::ai_bridge::API_WRITES_OFF.to_string();
     }
-    if ctx.gate.holds > 0 {
+    // No environment wins: a switch in progress means nothing without one.
+    if ctx.gate.env_id.is_some() && ctx.gate.holds > 0 {
         SIMPLE_API_SWITCHING.to_string()
     } else {
         SIMPLE_API_NO_ENVIRONMENT.to_string()
@@ -151,7 +152,7 @@ pub fn reword_network_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContex
     if !(simple && answer.1 == crate::ai_bridge::NETWORK_TOOLS_OFF) {
         return answer;
     }
-    let said = if ctx.gate.holds > 0 { SIMPLE_API_SWITCHING } else { SIMPLE_NETWORK_NO_ENVIRONMENT };
+    let said = if ctx.gate.env_id.is_some() && ctx.gate.holds > 0 { SIMPLE_API_SWITCHING } else { SIMPLE_NETWORK_NO_ENVIRONMENT };
     (answer.0, said.to_string())
 }
 

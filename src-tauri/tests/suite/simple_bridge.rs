@@ -339,3 +339,77 @@ fn the_proxys_network_refusal_under_simple_mode_names_the_environment() {
     let said = tool(&call_with(plain.to_string()));
     assert!(said.contains("Network tools switch"), "{said}");
 }
+
+#[test]
+fn the_proxys_simple_network_sentence_needs_the_live_app_and_auto_test_on() {
+    use v2_lib::mcp::tools_reply_or_saved_simple;
+    use v2_lib::simple_view::SIMPLE_NETWORK_NO_ENVIRONMENT;
+    let text_for = |call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>| -> String {
+        let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"autorun_har","arguments":{}}}"#;
+        let v: serde_json::Value = serde_json::from_str(&v2_lib::mcp::handle_message(req, "1.0.0", call).unwrap()).unwrap();
+        v["result"]["content"][0]["text"].as_str().unwrap().to_string()
+    };
+    let live = |modules: serde_json::Value| {
+        let body = serde_json::json!({ "disabled": [], "modules": modules, "network_tools": false, "simple_hidden": SIMPLE_HIDDEN_TOOLS }).to_string();
+        move |_: &str, _: &str, _: &str| Ok::<(u16, String), String>((200, body.clone()))
+    };
+    // Live app, Auto Test on: the environment sentence.
+    assert_eq!(text_for(&live(serde_json::json!(["db_access", "auto_run"]))), SIMPLE_NETWORK_NO_ENVIRONMENT);
+    // Live app, Auto Test off: the module-off sentence.
+    let off = text_for(&live(serde_json::json!([])));
+    assert!(off.contains("not available") && off.contains("Auto Test"), "{off}");
+    assert_ne!(off, SIMPLE_NETWORK_NO_ENVIRONMENT);
+    // App closed (the saved answer, Simple saved on, Auto Test on): not the environment sentence.
+    let saved = Some((v2_lib::modules::Module::ALL.into_iter().collect(), false));
+    let closed = move |_: &str, _: &str, _: &str| tools_reply_or_saved_simple(Err("connection refused".into()), saved.clone(), true);
+    let said = text_for(&closed);
+    assert_ne!(said, SIMPLE_NETWORK_NO_ENVIRONMENT, "{said}");
+}
+
+#[test]
+fn no_environment_wins_over_a_switch_in_progress() {
+    use v2_lib::ai_bridge::NETWORK_TOOLS_OFF;
+    use v2_lib::simple_view::{api_writes_off_text, reword_network_refusal, SIMPLE_API_SWITCHING, SIMPLE_NETWORK_NO_ENVIRONMENT};
+    let mut ctx = saved();
+    ctx.gate.env_id = None;
+    ctx.gate.holds = 1;
+    assert_eq!(api_writes_off_text(true, &ctx), SIMPLE_API_NO_ENVIRONMENT);
+    assert_eq!(
+        reword_network_refusal(true, &ctx, (403, NETWORK_TOOLS_OFF.to_string())).1,
+        SIMPLE_NETWORK_NO_ENVIRONMENT
+    );
+    ctx.gate.env_id = Some("env-1".into());
+    assert_eq!(api_writes_off_text(true, &ctx), SIMPLE_API_SWITCHING);
+}
+
+/// Simple mode (or a module) switched while no bridge ran leaves the files as they were;
+/// the first push after start must write them for the view as it is now.
+#[test]
+fn the_first_push_after_a_switch_made_with_no_bridge_catches_the_files_up() {
+    use std::collections::BTreeSet;
+    use v2_lib::ai_tools::effective_disabled_under;
+    use v2_lib::commands::ai_bridge::sync_needed;
+    use v2_lib::commands::ai_tools::write_commands_with;
+    use v2_lib::modules::Module;
+    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let dir = tempfile::tempdir().unwrap();
+    let has = |f: &str| dir.path().join(f).exists();
+    let key = |simple: bool, on: &BTreeSet<Module>| {
+        (disabled_under(simple, &effective_disabled_under(false, &[], on)), None, on.clone())
+    };
+    // An earlier run wrote the files with Simple mode off.
+    write_commands_with(dir.path(), &effective_disabled_under(false, &[], &all)).unwrap();
+    assert!(has("begin-test-case-writing.md") && has("optimize.md"));
+    // Simple mode was switched on while the bridge was not running. This process remembers nothing,
+    // so the first push syncs - and the files then follow the Simple view.
+    let mut last = None;
+    assert!(v2_lib::commands::ai_bridge::sync_needed(&mut last, key(true, &all)));
+    write_commands_with(dir.path(), &effective_disabled_under(true, &[], &all)).unwrap();
+    assert!(!has("begin-test-case-writing.md") && !has("optimize.md") && has("setup.md"));
+    // The same view again writes nothing; a Simple switch or a module switch does.
+    assert!(!sync_needed(&mut last, key(true, &all)));
+    assert!(sync_needed(&mut last, key(false, &all)));
+    let mut no_playwright = all.clone();
+    no_playwright.remove(&Module::Playwright);
+    assert!(sync_needed(&mut last, key(false, &no_playwright)));
+}
