@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.18",
+    date: "2026-11-19",
+    items: [
+      "In Simple mode, AI Bridge no longer shows the API templates and Network tools switches; both stay on, and assistants only read your test cases and write Auto Test scripts.",
+      "In an Auto Test report, the lists leave out the start every case title shares, so the part that tells cases apart is visible. Hover a name to see it in full.",
+    ],
+  },
+  {
     version: "2.4.7-beta.17",
     date: "2026-11-19",
     items: [
