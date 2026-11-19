@@ -931,7 +931,12 @@ async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
     assert!(is_setup_problem(&rec.reason), "still read as the trip that failed");
 
     let logged: Vec<String> = v2_lib::applog::recent(6000).into_iter().map(|l| l.message).collect();
-    let mine: Vec<&String> = logged.iter().filter(|l| l.starts_with("unattended run, case 4711") && !l.contains(": Took ")).collect();
+    // The line each case writes about its browser (fresh, or kept from the
+    // case before) is no page log: left out of what is counted.
+    let mine: Vec<&String> = logged
+        .iter()
+        .filter(|l| l.starts_with("unattended run, case 4711") && !l.contains(": Took ") && !l.contains("a fresh browser ("))
+        .collect();
     // The first try's page goes to the log before the reload clears it,
     // then the second try's, as a failed trip always logged it.
     assert_eq!(mine.len(), 6, "{mine:?}");
@@ -977,7 +982,10 @@ async fn a_failed_trip_with_nothing_in_the_page_log_logs_nothing_and_keeps_its_s
         .await
         .unwrap();
     assert!(!run.cases[0].reason.contains(PAGE_LOG_NOTE.trim()), "{}", run.cases[0].reason);
-    assert!(!v2_lib::applog::recent(6000).iter().any(|l| l.message.starts_with("unattended run, case 4712") && !l.message.contains(": Took ")));
+    // The line each case writes about its browser is no page log.
+    assert!(!v2_lib::applog::recent(6000).iter().any(|l| {
+        l.message.starts_with("unattended run, case 4712") && !l.message.contains(": Took ") && !l.message.contains("a fresh browser (")
+    }));
 }
 
 #[tokio::test]

@@ -20,11 +20,13 @@
 //! No sentence here carries a host, a query string or a secret: only
 //! fixture ids and names, output names and the runner's own sentences.
 
+use super::kept_browser::{close_kept, KeptBrowser};
 use super::replay::Browsers;
+use super::replay_to::signed_in_here_why;
 use crate::api_templates::here::{self, Here, HereFailure, TrySource};
 use super::{CaseScript, Setup, StepScript};
 use crate::api_templates::fixture::Fixture;
-use crate::api_templates::fixture_run::{self, no_such_fixture, run_fixture_for, Clock};
+use crate::api_templates::fixture_run::{self, no_such_fixture, run_fixture_for, run_fixture_in, Clock};
 use crate::api_templates::runner::{claim, API_TEMPLATE_BUSY, RETRY_PAUSES, RUN_LIMIT};
 use crate::api_templates::{exec, fixture_store, store as template_store, ApiTemplate};
 use crate::browser::timing::Timing;
@@ -373,6 +375,102 @@ where
     .await
 }
 
+/// `prepare_case_within` for an unattended run's case, with the signed-in
+/// browser the case before kept (`kept`, see `kept_browser`) given in:
+///
+/// - a setup whose fixture runs as the kept browser's account runs IN that
+///   browser, under the lease the kept browser already holds and with no
+///   sign-in; the one-at-a-time template slot is taken as for any setup.
+///   Passing, the browser stays kept for the case; failing, it is closed;
+/// - a setup of another account closes the kept browser first and runs in
+///   a browser of its own, as `prepare_case` does;
+/// - a kept browser that no longer stands signed in is closed, and the
+///   setup runs in its own;
+/// - a case with no setup (or none that runs) leaves `kept` as it is. Only
+///   a case Blocked IN the browser (its setup failed there) counts as
+///   "Blocked before": that closes it. A case blocked before it touched the
+///   browser (a fixture not saved, one not built, the template slot busy, a
+///   refused run) leaves it kept for the next case.
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare_case_kept<B: Browsers>(
+    browsers: &mut B,
+    kept: &mut Option<KeptBrowser<B::D>>,
+    root: &Path,
+    org: &str,
+    project: &str,
+    script: &CaseScript,
+    timing: &Timing,
+    cancel: &AtomicBool,
+) -> Result<Prepared, String> {
+    prepare_case_inside(
+        browsers,
+        Some(kept),
+        root,
+        org,
+        project,
+        script,
+        timing,
+        cancel,
+        |_| std::future::ready(()),
+        RUN_LIMIT,
+        &RETRY_PAUSES,
+        Clock::now_local(),
+    )
+    .await
+}
+
+/// `prepare_case_inside` with no kept browser.
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare_case_within<B: Browsers, H, Fut>(
+    browsers: &mut B,
+    root: &Path,
+    org: &str,
+    project: &str,
+    script: &CaseScript,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    before_run: H,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    clock: Clock,
+) -> Result<Prepared, String>
+where
+    H: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    prepare_case_inside(browsers, None, root, org, project, script, timing, cancel, before_run, limit, retry_pauses, clock).await
+}
+
+/// Whether the setup of `account` may run in the kept browser: it is kept
+/// for that account and still stands signed in as it. Any other kept
+/// browser is closed here (never two signed-in browsers), so the setup runs
+/// in one of its own.
+async fn kept_serves<B: Browsers>(
+    browsers: &mut B,
+    kept: &mut Option<KeptBrowser<B::D>>,
+    root: &Path,
+    org: &str,
+    project: &str,
+    account: &str,
+    timing: &Timing,
+) -> bool {
+    let Some(k) = kept.as_mut() else { return false };
+    if k.ended.account.as_deref() != Some(account) {
+        close_kept(browsers, kept).await;
+        return false;
+    }
+    let checked =
+        signed_in_here_why(&mut k.driver, root, org, project, account, &Some(account.to_string()), &k.lease, timing).await;
+    match checked {
+        Ok(()) => true,
+        Err(why) => {
+            crate::applog::info(format!("the browser the case before kept is not used for a setup: {}", why.reason()));
+            close_kept(browsers, kept).await;
+            false
+        }
+    }
+}
+
 /// Everything a case needs from fixtures before it signs in, in order:
 ///
 /// 1. its setup's fixture as saved now: one that is not saved is
@@ -395,8 +493,9 @@ where
 ///
 /// A script that uses no fixture comes back as it is, and nothing is read.
 #[allow(clippy::too_many_arguments)]
-pub async fn prepare_case_within<B: Browsers, H, Fut>(
+async fn prepare_case_inside<B: Browsers, H, Fut>(
     browsers: &mut B,
+    mut kept: Option<&mut Option<KeptBrowser<B::D>>>,
     root: &Path,
     org: &str,
     project: &str,
@@ -448,23 +547,71 @@ where
         if cancel.load(Ordering::SeqCst) {
             return Err(setup_failed(fixture_run::RUN_STOPPED));
         }
-        before_run(f.account.clone()).await;
-        let report = run_fixture_for(
-            browsers,
-            root,
-            org,
-            project,
-            f,
-            timing,
-            limit,
-            retry_pauses,
-            clock,
-            Some(id),
-            Some(&now.templates),
-            Some(cancel),
-            TrySource::Plain,
-        )
-        .await;
+        // The kept browser, when it is the setup's own account and still
+        // signed in; otherwise it is closed here and the setup opens its own.
+        let in_kept = match kept.as_deref_mut() {
+            Some(slot) => kept_serves(browsers, slot, root, org, project, &f.account, timing).await,
+            None => false,
+        };
+        let report = match kept.as_deref_mut().and_then(|slot| slot.as_mut()).filter(|_| in_kept) {
+            // The lease the kept browser holds is the account's: none is
+            // taken again, and nothing signs in.
+            Some(k) => {
+                Box::pin(run_fixture_in(
+                    &mut k.driver,
+                    root,
+                    org,
+                    project,
+                    f,
+                    timing,
+                    limit,
+                    retry_pauses,
+                    clock,
+                    Some(id),
+                    Some(&now.templates),
+                    Some(cancel),
+                    TrySource::Plain,
+                ))
+                .await
+            }
+            None => {
+                before_run(f.account.clone()).await;
+                Box::pin(run_fixture_for(
+                    browsers,
+                    root,
+                    org,
+                    project,
+                    f,
+                    timing,
+                    limit,
+                    retry_pauses,
+                    clock,
+                    Some(id),
+                    Some(&now.templates),
+                    Some(cancel),
+                    TrySource::Plain,
+                ))
+                .await
+            }
+        };
+        if in_kept && !report.ok {
+            // A browser a setup failed in is not kept for the case.
+            if let Some(slot) = kept.as_deref_mut() {
+                close_kept(browsers, slot).await;
+            }
+        }
+        if in_kept && report.ok {
+            // The setup's pages may have re-issued the sign-in's session
+            // cookie: the print is taken again under the same guard a case's
+            // steps use, so the case's own check of the browser finds it the
+            // same. One that cannot be taken again keeps the old print, and
+            // the case's check then opens a fresh browser.
+            if let Some(k) = kept.as_deref_mut().and_then(|slot| slot.as_mut()) {
+                if let Ok(recipe) = super::recipe::load_effective_recipe(root, org, project) {
+                    let _ = super::replay_to::retake_if_same_sign_in(&mut k.driver, &recipe, &f.account, &mut k.lease, timing, id, "the setup").await;
+                }
+            }
+        }
         if !report.ok {
             crate::applog::info(format!("case {id}: setup fixture {} failed, {} made", f.id, report.made.len()));
             if report.failed.as_deref() == Some(fixture_run::RUN_STOPPED) {

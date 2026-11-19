@@ -35,6 +35,7 @@ pub mod forbidden_fixes;
 pub mod guide;
 pub mod har;
 pub mod kept;
+pub mod kept_browser;
 pub mod lease;
 pub mod mapping_summary;
 pub mod marks;

@@ -13,6 +13,11 @@
 //!
 //!     agents()  ->  log_tail()  ->  autorun()
 //!
+//! and, for a test that runs an API template or a setup fixture:
+//!
+//!     api_template_run()  ->  activity_log()  ->  held_browsers()
+//!         ->  account_leases()
+//!
 //! The locks are plain blocking mutexes in one binary whose tests run on
 //! parallel threads, so two tests that take the same pair in opposite orders
 //! can each hold one and wait for the other, and the whole suite hangs with

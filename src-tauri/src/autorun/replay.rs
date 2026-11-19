@@ -15,6 +15,7 @@ use super::components::{ran_actions, ComponentFile, Ran};
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
+use super::kept_browser::{self, close_kept, KeptBrowser};
 use super::{preconditions, quirks, recipe, setup, signin, transient};
 use super::plan::Pause;
 use super::network::{Network, WaitEnd, MAX_NETWORK_RERUNS};
@@ -33,6 +34,8 @@ use std::time::Instant;
 pub const SIGN_IN_STEP: i32 = 0;
 /// The runner's own "Go to X" line: after the sign-in, before step 1.
 pub const MODULE_STEP: i32 = -1;
+/// The reason of a case that was stopped before it finished.
+pub const STOPPED_BEFORE_FINISHED: &str = "stopped before it finished";
 const AFTER_FAILED_STEP: &str = runner::AFTER_STEP_BEFORE_FAILED;
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached";
@@ -329,7 +332,7 @@ pub fn propose_with(
         return Proposal { verdict: "Failed", reason };
     }
     if stopped {
-        return Proposal { verdict: "", reason: "stopped before it finished".into() };
+        return Proposal { verdict: "", reason: STOPPED_BEFORE_FINISHED.into() };
     }
     if !script.case_steps().flat_map(|s| &s.actions).any(|a| a.is_check()) {
         return Proposal { verdict: "", reason: "this script checks nothing, so there is nothing to propose".into() };
@@ -390,9 +393,42 @@ pub async fn run_case_as<D: Driver>(
     record_video: bool,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
-    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, on_step).await;
+    run_case_reusing(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, None, on_step).await
+}
+
+/// `run_case_as` for a browser the case before left signed in as `account`
+/// (`reused` is how long the check that it still was took, in ms): the case
+/// does not wait for the account's lease, which the browser already holds,
+/// or sign in; its step 0 says so (`kept_browser::reused_detail`).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_case_reusing<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    lease: &mut Held,
+    script: &CaseScript,
+    account: Option<&str>,
+    route: Option<&Route>,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    record_video: bool,
+    reused: Option<u64>,
+    on_step: &mut (dyn FnMut(i32) + Send),
+) -> CaseRecord {
+    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, reused, on_step).await;
     d.close_other_tabs().await;
     record
+}
+
+/// The sign-in's cookies, taken again after the app's own pages loaded
+/// (`replay_to::retake_sign_in`), so the next case's check of a kept browser
+/// compares against what the browser holds now. A recipe that cannot be read
+/// leaves the print as it was.
+async fn retake_print<D: Driver>(d: &mut D, root: &Path, organization: &str, project: &str, lease: &mut Held, by: &str) {
+    if let Ok(recipe) = recipe::load_effective_recipe(root, organization, project) {
+        let _ = super::replay_to::retake_sign_in(d, &recipe.origins(), lease, by).await;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -408,6 +444,7 @@ async fn run_case_in<D: Driver>(
     timing: &Timing,
     cancel: &AtomicBool,
     record_video: bool,
+    reused: Option<u64>,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
     let began = Instant::now();
@@ -463,9 +500,14 @@ async fn run_case_in<D: Driver>(
             // A Stop pressed while the case waits for its account ends the
             // wait; one that lands as the account comes free still stops
             // the case before it signs in.
-            let held = tokio::select! {
-                held = lease.hold(root, key) => Some(held),
-                () = stop_asked(cancel) => None,
+            // A reused browser already holds it.
+            let held = if reused.is_some() {
+                Some(Ok(()))
+            } else {
+                tokio::select! {
+                    held = lease.hold(root, key) => Some(held),
+                    () = stop_asked(cancel) => None,
+                }
             };
             match held {
                 Some(Ok(())) if !cancel.load(Ordering::SeqCst) => {}
@@ -482,7 +524,13 @@ async fn run_case_in<D: Driver>(
         }
     }
     if skip.is_none() {
-        if let Some(key) = account {
+        if let (Some(_), Some(check_ms)) = (account, reused) {
+            // Signed in already, by the case before: no sign-in, and the
+            // trip below goes from where the browser stands.
+            sign_in_took = check_ms;
+            let out = ActionOutcome::passed(super::kept_browser::reused_detail(check_ms));
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: vec![out], screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new(), duration_ms: Some(check_ms) });
+        } else if let Some(key) = account {
             let signing_in = Instant::now();
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
@@ -496,6 +544,11 @@ async fn run_case_in<D: Driver>(
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
             sign_in_took = ms(signing_in.elapsed());
+            // What the sign-in left in the browser, for the next case to
+            // check a kept browser against.
+            if ok {
+                retake_print(d, root, organization, project, lease, "the case's sign-in").await;
+            }
             steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new(), duration_ms: Some(sign_in_took) });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
@@ -519,6 +572,11 @@ async fn run_case_in<D: Driver>(
             let reaching = Instant::now();
             let out = trip_to_module(d, root, r, from, timing, &who(script.case_id), account).await;
             area_took = ms(reaching.elapsed());
+            // The app's own pages on the way may have re-issued the
+            // sign-in's cookies.
+            if out.ok && (signed_in == Some(true) || reused.is_some()) {
+                retake_print(d, root, organization, project, lease, "the trip to the module").await;
+            }
             if save_guard::is_blocked(&out.detail) {
                 skip = Some(AFTER_FAILED_STEP);
             } else if !out.ok {
@@ -918,6 +976,15 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
     }
 }
 
+/// A record of a case Blocked before it began: no step of it ran and it has
+/// no sign-in step, so it touched no page.
+fn blocked_before_it_began(rec: &CaseRecord) -> bool {
+    rec.proposed == "Blocked"
+        && rec.reason != STOPPED_BEFORE_FINISHED
+        && rec.steps.iter().all(|s| s.step_number != SIGN_IN_STEP && s.outcomes.iter().all(|o| !was_run(o)))
+        && rec.cleanup.as_ref().is_none_or(|c| c.outcomes.iter().all(|o| !was_run(o)))
+}
+
 /// One `ReplayProgress`, built from plain values rather than a closure so
 /// it never has to borrow `run` or `progress` - both are busy elsewhere in
 /// the loop this is called from.
@@ -1004,6 +1071,7 @@ fn drop_video(root: &Path, record: &CaseRecord) {
 }
 
 /// What one go at a case needs.
+#[derive(Clone, Copy)]
 struct Go<'a> {
     video: &'a VideoPlan,
     root: &'a Path,
@@ -1036,76 +1104,202 @@ pub async fn settle_downloads<D: Driver>(d: &mut D, cancel: &AtomicBool) {
     }
 }
 
-/// One go at a case in a fresh browser: opened, the case run, and the
-/// browser given back. `Err` is why the browser did not open: the case
-/// never ran, so the caller decides what record that leaves.
+/// One go at a case: in the browser the case before kept (`reuse`, when it
+/// still stands signed in as the case's account), otherwise in a fresh one.
+/// The browser is given back, or - when `may_keep` holds for how the case
+/// ended - left in `kept` with the account's lease for the next case. `Err`
+/// is why the browser did not open: the case never ran, so the caller
+/// decides what record that leaves. A case that did not pass in a reused
+/// browser goes once more in a fresh one, and that record is the case's.
 async fn one_go<B: Browsers>(
+    browsers: &mut B,
+    go: &Go<'_>,
+    saved: &CaseScript,
+    at: &Place<'_>,
+    progress: &mut (dyn FnMut(ReplayProgress) + Send),
+    kept: &mut Option<KeptBrowser<B::D>>,
+    reuse: bool,
+) -> Result<CaseRecord, String> {
+    let (first, reused) = Box::pin(go_once(browsers, go, at, progress, kept, reuse)).await?;
+    let again = reused && matches!(first.proposed.as_str(), "Failed" | "Blocked") && !go.cancel.load(Ordering::SeqCst);
+    if !again {
+        return Ok(first);
+    }
+    crate::applog::info(format!("{}: the case did not pass in the browser the case before kept, so it goes again in a fresh one", who(at.case_id)));
+    // A case with a setup runs it again first, in a browser of its own: the
+    // first go may have changed the draft it made. A setup that cannot run
+    // leaves the first record as it is, as the transient retry does.
+    let rerun;
+    let go = if saved.setup.is_some() {
+        close_kept(browsers, kept).await;
+        match setup::prepare_case(browsers, go.root, go.organization, go.project, saved, go.timing, go.cancel).await {
+            Ok(prepared) => {
+                rerun = prepared.script;
+                Go { script: &rerun, ..*go }
+            }
+            Err(not) => return Ok(transient::retry_not_started(first, &not)),
+        }
+    } else {
+        *go
+    };
+    let go = &go;
+    match Box::pin(go_once(browsers, go, at, progress, kept, false)).await {
+        Ok((second, _)) => {
+            // The first go's video is of a try that is no longer the record.
+            drop_video(go.root, &first);
+            Ok(second)
+        }
+        // No fresh go to keep: the first record stands.
+        Err(_) => Ok(first),
+    }
+}
+
+/// `one_go`'s one try (boxed by its caller: a whole case's state is too
+/// much to keep on the run loop's stack). The bool is whether a kept browser
+/// was reused and the case is to go again in a fresh one if it does not pass:
+/// false for a case Blocked before it began.
+async fn go_once<B: Browsers>(
     browsers: &mut B,
     go: &Go<'_>,
     at: &Place<'_>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
-) -> Result<CaseRecord, String> {
+    kept: &mut Option<KeptBrowser<B::D>>,
+    reuse: bool,
+) -> Result<(CaseRecord, bool), String> {
     let (run_id, index, total, case_id, title, count) = (at.run_id, at.index, at.total, at.case_id, at.title, at.count);
     progress(tell(run_id, index, total, case_id, title, "opening", 0, count, ""));
     let opening = Instant::now();
-    match browsers.open().await {
-        Err(why) => Err(why),
-        Ok(mut d) => {
-            let open_ms = ms(opening.elapsed());
-            // The case's downloads are kept with the run. A browser that
-            // will not save them still runs the case: a step that checks a
-            // download then says none came.
-            if let Err(e) = d.enable_downloads(&store::downloads_dir(go.root, run_id)).await {
-                crate::applog::warn(format!("{}: downloads could not be switched on: {e}", who(case_id)));
+    // The browser the case before kept, when it still stands signed in.
+    let mut again: Option<(B::D, Held, u64, kept_browser::Ended)> = None;
+    match (reuse, go.account, kept.take()) {
+        (true, Some(key), Some(KeptBrowser { mut driver, lease, ended: before })) => {
+            let checking = Instant::now();
+            match super::replay_to::signed_in_here_why(&mut driver, go.root, go.organization, go.project, key, &Some(key.to_string()), &lease, go.timing).await {
+                Ok(()) => again = Some((driver, lease, ms(checking.elapsed()), before)),
+                Err(why) => {
+                    crate::applog::info(format!("{}: the browser the case before kept is not reused: {}", who(case_id), why.reason()));
+                    browsers.close(driver).await;
+                    drop(lease);
+                }
             }
-            // The clean-up is no step of the case: its own phase.
-            let tidy = go.script.cleanup_step().map(|s| s.step_number);
-            let mut on_step = |n: i32| {
-                let phase = match n {
-                    SIGN_IN_STEP => "signing_in",
-                    MODULE_STEP => "module",
-                    _ if Some(n) == tidy => "cleanup",
-                    _ => "step",
-                };
-                progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
-            };
+        }
+        // Not wanted: never two signed-in browsers.
+        (_, _, mut other) => close_kept(browsers, &mut other).await,
+    }
+    let was_reused = again.is_some();
+    let mut opening_fresh = opening;
+    let (mut d, mut lease, check_ms, before) = match again {
+        Some((d, lease, check_ms, before)) => (d, lease, Some(check_ms), Some(before)),
+        None => match { opening_fresh = Instant::now(); browsers.open().await } {
+            Err(why) => return Err(why),
             // The case's account, held until its browser is closed: a local
             // here, so an end, a stop (this future dropped) and a panic all
             // let it go too.
-            let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait());
-            let record_video = go.video.decide(&mut d, case_id).await;
-            let mut rec = run_case_as(
-                &mut d,
-                go.root,
-                go.organization,
-                go.project,
-                &mut lease,
-                go.script,
-                go.account,
-                go.route,
-                go.timing,
-                go.cancel,
-                record_video,
-                &mut on_step,
-            )
-            .await;
-            // `run_case_as` has already waited for a download still
-            // arriving, once, so the browser closes now.
-            let closing = Instant::now();
+            Ok(d) => (d, Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait()), None, None),
+        },
+    };
+    let open_ms = if was_reused { 0 } else { ms(opening_fresh.elapsed()) };
+    // The case's downloads are kept with the run. A browser that
+    // will not save them still runs the case: a step that checks a
+    // download then says none came.
+    if let Err(e) = d.enable_downloads(&store::downloads_dir(go.root, run_id)).await {
+        crate::applog::warn(format!("{}: downloads could not be switched on: {e}", who(case_id)));
+    }
+    // The clean-up is no step of the case: its own phase.
+    let tidy = go.script.cleanup_step().map(|s| s.step_number);
+    let mut on_step = |n: i32| {
+        let phase = match n {
+            SIGN_IN_STEP => "signing_in",
+            MODULE_STEP => "module",
+            _ if Some(n) == tidy => "cleanup",
+            _ => "step",
+        };
+        progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
+    };
+    let record_video = go.video.decide(&mut d, case_id).await;
+    let mut rec = run_case_reusing(
+        &mut d,
+        go.root,
+        go.organization,
+        go.project,
+        &mut lease,
+        go.script,
+        go.account,
+        go.route,
+        go.timing,
+        go.cancel,
+        record_video,
+        check_ms,
+        &mut on_step,
+    )
+    .await;
+    // A case Blocked before it began (a divergence waiting for a ruling, a
+    // no-save guard that would not go on) touched no page: in a reused
+    // browser that is not the browser's fault, so it stays as it was for the
+    // next case, and the case is not run again in a fresh one. A guard that
+    // failed may have been left half on the page: that browser closes.
+    let mut rerun_fresh = was_reused;
+    if let Some(before) = before.filter(|_| blocked_before_it_began(&rec) && !go.cancel.load(Ordering::SeqCst)) {
+        rerun_fresh = false;
+        let keep_as_was = !rec.reason.starts_with(crate::browser::save_guard::SETUP_FAILED);
+        let closing = Instant::now();
+        if keep_as_was {
+            *kept = Some(KeptBrowser { driver: d, lease, ended: before });
+        } else {
             browsers.close(d).await;
             drop(lease);
-            let close_ms = ms(closing.elapsed());
-            // Open to close. The case's own parts are measured inside it, so
-            // a case that never got as far as its steps still says how long
-            // the browser took.
-            let phases = rec.phases.get_or_insert_with(CasePhases::default);
-            phases.open_ms = open_ms;
-            phases.close_ms = close_ms;
-            phases.total_ms = ms(opening.elapsed());
-            crate::applog::info(format!("{}: {}", who(case_id), phases.line()));
-            Ok(rec)
         }
+        let phases = rec.phases.get_or_insert_with(CasePhases::default);
+        phases.open_ms = 0;
+        phases.close_ms = if keep_as_was { 0 } else { ms(closing.elapsed()) };
+        phases.total_ms = ms(opening.elapsed());
+        crate::applog::info(format!("{}: {}", who(case_id), phases.line()));
+        return Ok((rec, rerun_fresh));
     }
+    // How the case ended decides whether its browser stays open for the
+    // next one. A stop asked for after the case ends it too.
+    let mut ended = kept_browser::ended_from(&rec, go.script, go.account);
+    ended.stopped |= go.cancel.load(Ordering::SeqCst);
+    let mut keep = kept_browser::may_keep(&ended) && go.account.is_some_and(|key| lease.holds(go.root, key));
+    if keep {
+        // The case's own pages may have re-issued the sign-in's session
+        // cookie (backlog 44b): the print is taken again when the sign-in is
+        // provably the same one, and a browser whose print could not be
+        // taken again may keep a print that has gone stale: the next case's
+        // check then finds it changed and opens fresh.
+        let who_key = go.account.map(str::to_string);
+        // Kept only when the print was taken again, or when the sign-in left
+        // no identity cookie to compare (a site without PeoplesHR's) and the
+        // lease still holds a print: the next case's check compares the
+        // cookies and the page again. Every other decline (the steps touch
+        // the sign-in, the identity cookie changed, the page is not signed
+        // in, the cookies could not be read) closes the browser.
+        let retook = super::replay_to::retake_after_steps(&mut d, go.root, go.organization, go.project, go.script, i32::MAX, &who_key, &mut lease, go.timing).await;
+        keep = match retook {
+            super::replay_to::Retake::Retook => true,
+            super::replay_to::Retake::NoIdentityCookie => lease.sign_in_print().is_some(),
+            super::replay_to::Retake::Declined => false,
+        };
+    }
+    // `run_case_reusing` has already waited for a download still
+    // arriving, once, so the browser closes now.
+    let closing = Instant::now();
+    if keep {
+        *kept = Some(KeptBrowser { driver: d, lease, ended });
+    } else {
+        browsers.close(d).await;
+        drop(lease);
+    }
+    let close_ms = if keep { 0 } else { ms(closing.elapsed()) };
+    // Open to close. The case's own parts are measured inside it, so
+    // a case that never got as far as its steps still says how long
+    // the browser took.
+    let phases = rec.phases.get_or_insert_with(CasePhases::default);
+    phases.open_ms = open_ms;
+    phases.close_ms = close_ms;
+    phases.total_ms = ms(opening.elapsed());
+    crate::applog::info(format!("{}: {}", who(case_id), phases.line()));
+    Ok((rec, rerun_fresh))
 }
 
 /// Run a selection with no module or run account per case - the shape
@@ -1263,8 +1457,17 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
     let quirks = quirks::load_quirks(root, organization, project).unwrap_or_default();
     let video = VideoPlan::new(browsers.keep_failed_video());
 
+    // The signed-in browser the case before left open for the next case on
+    // the same account, with the account's lease. At most one, closed on
+    // every way out of the loop.
+    let mut kept: Option<KeptBrowser<B::D>> = None;
+    // Whether a pause or a network wait came before the case now starting.
+    let mut paused;
+
     'cases: for (i, case) in cases.iter().enumerate() {
+        paused = false;
         if cancel.load(Ordering::SeqCst) {
+            close_kept(browsers, &mut kept).await;
             break;
         }
         // A pause before this case's batch: the case before it has ended
@@ -1276,9 +1479,12 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                 "Auto-run unattended: paused before case {} (batch {})",
                 case.case_id, reset.batch
             ));
-            let paused = Instant::now();
+            // The person sets things at a pause: nothing stays open across it.
+            close_kept(browsers, &mut kept).await;
+            paused = true;
+            let waiting = Instant::now();
             let go_on = gate.wait(reset, &remaining, cancel).await && !cancel.load(Ordering::SeqCst);
-            let waited_ms = u32::try_from(paused.elapsed().as_millis()).unwrap_or(u32::MAX);
+            let waited_ms = u32::try_from(waiting.elapsed().as_millis()).unwrap_or(u32::MAX);
             run.resets.push(ResetRecord {
                 before_case_id: reset.before_case_id,
                 batch: reset.batch,
@@ -1313,6 +1519,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         // The company network, before the case starts: a dropped VPN is
         // waited out here rather than failing the case.
         if !cancel.load(Ordering::SeqCst) && gate.network().await == Network::Unreachable {
+            close_kept(browsers, &mut kept).await;
+            paused = true;
             let end = pause_for_network(gate, run, case.case_id, cancel).await;
             if let Some(why) = network_end_reason(end) {
                 if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {
@@ -1359,9 +1567,14 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                 // and the setup's own run,
                                 // in a browser of its own that is closed, and its
                                 // lease let go, before the case's browser opens.
-                                None => setup::prepare_case(browsers, root, organization, project, &script, timing, cancel)
-                                    .await
-                                    .map(|prepared| (path, prepared.script)),
+                                None => {
+                                    // A setup of the kept browser's account
+                                    // runs in that browser; any other closes
+                                    // it first (`prepare_case_kept`).
+                                    Box::pin(setup::prepare_case_kept(browsers, &mut kept, root, organization, project, &script, timing, cancel))
+                                        .await
+                                        .map(|prepared| (path, prepared.script))
+                                }
                             }
                         }
                     };
@@ -1375,7 +1588,15 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
                             let at = Place { run_id: &run_id, index, total, case_id, title, count };
                             let go = Go { video: &video, root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
-                            let first = one_go(browsers, &go, &at, progress)
+                            // Whether the browser the case before kept can be
+                            // used; either way the app log says which.
+                            let next = kept_browser::Next { account, has_route: route.is_some(), pause_between: paused };
+                            let decision = kept_browser::may_reuse(kept.as_ref().map(|k| &k.ended), &next);
+                            match &decision {
+                                Ok(()) => crate::applog::info(format!("{}: uses the browser the case before kept", who(case_id))),
+                                Err(why) => crate::applog::info(format!("{}: opens a fresh browser ({why:?})", who(case_id))),
+                            }
+                            let first = one_go(browsers, &go, &script, &at, progress, &mut kept, decision.is_ok())
                                 .await
                                 .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
                             // One more go, from sign-in in a fresh browser, for a
@@ -1383,18 +1604,23 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             // and never after a stop. It gets a fresh draft: the
                             // setup runs again first (the first go may have
                             // changed its draft), and a setup that cannot run
-                            // keeps the first go's record.
-                            let looked_transient = if retry_transient { {
+                            // keeps the first go's record. A fresh rerun
+                            // (`one_go`) whose setup could not start has
+                            // `retried` set and is skipped; a normal fresh
+                            // rerun can still take the transient retry.
+                            let looked_transient = if retry_transient && first.retried.is_none() { {
                                 let components = super::components::load_components(root, organization, project).unwrap_or_default();
                                 transient::is_transient_with(&first, Some(&ready), &components)
                             } } else { None };
                             match looked_transient {
                                 Some(why) if !cancel.load(Ordering::SeqCst) => {
+                                    // The second go is always in a fresh browser.
+                                    close_kept(browsers, &mut kept).await;
                                     match setup::prepare_case(browsers, root, organization, project, &script, timing, cancel).await {
                                         Err(not) => transient::retry_not_started(first, &not),
                                         Ok(again) => {
                                             let go = Go { script: &again.script, ..go };
-                                            match one_go(browsers, &go, &at, progress).await {
+                                            match one_go(browsers, &go, &script, &at, progress, &mut kept, false).await {
                                                 Ok(second) => {
                                                     // The first go's video is of a try that is no longer the record.
                                                     if let Some(v) = first.video.as_deref() {
@@ -1436,6 +1662,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                     network_reruns += 1;
                     // This record is dropped: so is the video it wrote.
                     drop_video(root, &record);
+                    close_kept(browsers, &mut kept).await;
+                    paused = true;
                     let end = pause_for_network(gate, run, case_id, cancel).await;
                     if let Some(why) = network_end_reason(end) {
                         if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {
@@ -1468,6 +1696,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         }
         progress(tell(&run_id, index, total, case_id, title, "done", 0, count, &proposed));
     }
+
+    // Whichever way the loop ended, no browser stays open and no account
+    // stays held.
+    close_kept(browsers, &mut kept).await;
 
     // Old pictures go once, now every case is saved - after a Stop or a
     // failed case too, since the loop above ends the same way for all.

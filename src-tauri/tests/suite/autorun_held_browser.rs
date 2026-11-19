@@ -864,8 +864,9 @@ async fn release_refuses_while_a_fixture_cleanup_or_setup_run_holds_its_browser(
     let cleanup = body_of(commands, "pub async fn auto_run_cleanup_run");
     assert!(before(cleanup, "runner::claim()", "run_cleanup("), "a cleanup run opens its browser unclaimed");
     let setup = include_str!("../../src/autorun/setup.rs");
-    let prepare = body_of(setup, "pub async fn prepare_case_within");
+    let prepare = body_of(setup, "async fn prepare_case_inside");
     assert!(before(prepare, "claim()", "run_fixture_for("), "a case's setup opens its browser unclaimed");
+    assert!(before(prepare, "claim()", "run_fixture_in("), "a case's setup runs in the kept browser unclaimed");
     assert!(body_of(setup, "pub async fn check_supervised").contains("prepare_case_within("));
     let autorun = include_str!("../../src/commands/autorun.rs");
     assert!(body_of(autorun, "pub async fn auto_run_check_preconditions").contains("supervised_setup("));

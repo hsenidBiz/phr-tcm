@@ -1085,8 +1085,22 @@ pub fn touches_sign_in(
 /// had, and the page still shows it is signed in. Otherwise the old print
 /// stays, so the next replay judges the browser by it - and signs in again
 /// if it changed. What was decided is logged, with no path and no value.
+/// Why `retake_after_steps` did or did not take the print again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Retake {
+    /// The print was taken again.
+    Retook,
+    /// The sign-in left no identity cookie to compare: the print was not
+    /// touched. A site without PeoplesHR's cookie lands here.
+    NoIdentityCookie,
+    /// Any other reason: the steps touch the sign-in, the identity cookie
+    /// changed, the page is not signed in, the cookies could not be read,
+    /// the lease is not held, or there is no print or recipe.
+    Declined,
+}
+
 #[allow(clippy::too_many_arguments)]
-async fn retake_after_steps<D: Driver>(
+pub(crate) async fn retake_after_steps<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,
@@ -1096,13 +1110,12 @@ async fn retake_after_steps<D: Driver>(
     account: &Option<String>,
     lease: &mut Held,
     timing: &Timing,
-) {
-    let Some(key) = script.account.as_deref().filter(|k| account.as_deref() == Some(*k)) else { return };
-    let said = |why: &str| crate::applog::info(format!("{}: the sign-in's cookies were not taken again: {why}", who(script.case_id)));
+) -> Retake {
+    let Some(key) = account.as_deref() else { return Retake::Declined };
     if !lease.holds(root, key) {
-        return;
+        return Retake::Declined;
     }
-    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return };
+    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return Retake::Declined };
     // Every step the replay could have run: those before `n`, and `n` itself
     // (a replay stopped at a step may have run part of it), and the clean-up.
     let written: Vec<Action> = script
@@ -1114,15 +1127,40 @@ async fn retake_after_steps<D: Driver>(
         .and_then(|file| super::components::expand_actions(&file, &written).map(|(a, _)| a))
     {
         Ok(a) => a,
-        Err(_) => return said("the steps' components could not be read"),
+        Err(_) => {
+            crate::applog::info(format!("{}: the sign-in's cookies were not taken again: the steps' components could not be read", who(script.case_id)));
+            return Retake::Declined;
+        }
     };
     if let Some(why) = touches_sign_in(&ran, &recipe) {
-        return said(&format!("the steps {why}"));
+        crate::applog::info(format!("{}: the sign-in's cookies were not taken again: the steps {why}", who(script.case_id)));
+        return Retake::Declined;
     }
+    retake_if_same_sign_in(d, &recipe, key, lease, timing, script.case_id, "the replay's steps").await
+}
+
+/// The guard half of `retake_after_steps`, for whatever ran in the browser
+/// (a case's steps, a setup): the print is taken again only when the identity
+/// cookie it holds still has its value and the page still shows `key` signed
+/// in. What was decided is logged, with no path and no value.
+pub(crate) async fn retake_if_same_sign_in<D: Driver>(
+    d: &mut D,
+    recipe: &SignInRecipe,
+    key: &str,
+    lease: &mut Held,
+    timing: &Timing,
+    case_id: i32,
+    by: &str,
+) -> Retake {
+    let said = |why: &str| {
+        crate::applog::info(format!("{}: the sign-in's cookies were not taken again: {why}", who(case_id)));
+        Retake::Declined
+    };
     let origins = recipe.origins();
-    let Some(print) = lease.sign_in_print() else { return };
+    let Some(print) = lease.sign_in_print() else { return Retake::Declined };
     if !print.holds_cookie(IDENTITY_COOKIE) {
-        return said("the sign-in left no identity cookie to compare");
+        crate::applog::info(format!("{}: the sign-in's cookies were not taken again: the sign-in left no identity cookie to compare", who(case_id)));
+        return Retake::NoIdentityCookie;
     }
     let Some(changed) = crate::browser::session::changed_cookies(d, &origins, print, lease.ignored_in_print()).await else {
         return said("the browser did not answer while its cookies were read");
@@ -1130,10 +1168,12 @@ async fn retake_after_steps<D: Driver>(
     if changed.iter().any(|c| c.to_ascii_lowercase().starts_with(&format!("{IDENTITY_COOKIE} "))) {
         return said("the identity cookie is not the one the sign-in left");
     }
-    let shown = signin::already_signed_in_why(d, &recipe, account.as_deref(), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await;
-    if shown.is_ok() {
-        let _ = retake_sign_in(d, &origins, lease, "the replay's steps").await;
+    let account = Some(key.to_string());
+    let shown = signin::already_signed_in_why(d, recipe, account.as_deref(), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await;
+    if shown.is_ok() && retake_sign_in(d, &origins, lease, by).await.is_ok() {
+        return Retake::Retook;
     }
+    Retake::Declined
 }
 
 /// The cookie that carries the user the server checks the sign-in against
