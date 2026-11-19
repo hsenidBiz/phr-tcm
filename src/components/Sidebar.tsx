@@ -130,7 +130,7 @@ export function visibleCaseItems(
 ): Item<Section>[] {
   const shown = CASE_ITEMS.filter((i) => sectionShown(i.id, on, simple));
   if (!simple) return shown;
-  // Basic mode: four rows in its own order, no group headings (see `heading`).
+  // Basic mode: its own short list in its own order, no group headings (see `heading`).
   return BASIC_ORDER.flatMap((id) => shown.filter((i) => i.id === id));
 }
 
@@ -241,7 +241,7 @@ export default function Sidebar<T extends string = Section>({
     >
       {list.map(({ id, label, icon: Icon, tone, note, group }, index) => {
         // The first row of a group carries the group's heading above it.
-        // Basic mode shows one flat list of four rows, so no headings at all.
+        // Basic mode shows one flat list, so no headings at all.
         const heading = group && !simple && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;

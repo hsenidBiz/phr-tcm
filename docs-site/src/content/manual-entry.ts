@@ -18,7 +18,8 @@ export const manualEntry: Screen = {
   group: "Test cases",
   summary:
     "Write a test case by hand: a title, its steps and the optional fields, then add it to the queue. " +
-    "The queue is the same one Import Test Cases shows, so cases you write and cases you import are reviewed and uploaded together.",
+    "The queue is the same one Import Test Cases shows, so cases you write and cases you import are reviewed and uploaded together." +
+    " Hidden while Basic mode is on (Settings).",
   shots: [
     { id: FORM, route: [{ nav: "Manual Entry" }], alt: "Manual Entry with an empty form and three cases in the queue" },
     {

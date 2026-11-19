@@ -12,7 +12,7 @@ const screen = (id: string) => {
 };
 
 describe("Basic mode in the guide", () => {
-  test.each(["import-file", "update-test-cases", "search-suites", "suite-management", "api-templates", "playwright"])(
+  test.each(["manual-entry", "import-file", "update-test-cases", "search-suites", "suite-management", "api-templates", "playwright"])(
     "%s says it is hidden while Basic mode is on",
     (id) => {
       expect(screen(id).summary).toContain(HIDDEN);

@@ -73,7 +73,7 @@ export function useBridgeContextSync({
   // Whether an assistant gets the network tools - pushed the same way.
   const networkTools = useSyncExternalStore(subscribeNetworkTools, networkToolsSnapshot);
   // Which Auto Test screen the person has, so an assistant does not send them
-  // to a control Simple hides. Read-only for the assistant; nothing is pushed
+  // to a control Basic mode hides. Read-only for the assistant; nothing is pushed
   // until the settings have answered.
   const { mode: autorunModeNow, loading: autorunModeLoading } = useAutoRunMode();
   const autorunMode = autorunModeLoading ? null : autorunModeNow;

@@ -106,7 +106,10 @@ export const aiBridge: Screen = {
       name: "Working repository",
       does:
         "The repositories your test cases belong to. The dot marks the current one: files written or imported for it go to its **.test-cases** folder, and the AI tools register into it. Click another dot to make that one current.",
-      tips: ["Until a repository is added, this card is all the tab shows."],
+      tips: [
+        "Until a repository is added, this card is all the tab shows.",
+        "With **Basic mode** on in Settings, this card is not shown and your AI tools register for the whole machine instead, so no repository is needed.",
+      ],
     },
     {
       id: "repository-switch",
@@ -448,7 +451,7 @@ export const aiBridge: Screen = {
     {
       title: "Use your own writing style",
       steps: [
-        "In the **Writing style** card, type your team's rules for designing test cases in Markdown, or press **Upload .md** to load them from a file.",
+        "In the **Writing style** card (it is not shown while **Basic mode** is on in Settings), type your team's rules for designing test cases in Markdown, or press **Upload .md** to load them from a file.",
         "Switch on **Use custom writing style**. If you have changed the text, press **Save** to apply both. **Discard changes** goes back to what you saved last.",
         "The assistant follows your style the next time it reads the writing guide. It replaces the standard advice on how many cases to write and which edge cases to cover. The case format and import rules always apply.",
       ],

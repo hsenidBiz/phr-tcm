@@ -226,17 +226,17 @@ export default function TestFilesDialog({
               </h3>
               <ul className="divide-y divide-border/60">
                 {inGroup.map((f) => (
-                  <li key={f.name} className="flex items-center gap-3 py-2">
+                  <li key={f.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
                     <kind.icon aria-hidden className="size-4 shrink-0 text-faint" />
-                    <span className="min-w-0 flex-1 truncate text-sm text-text" title={f.name}>
+                    <span className="min-w-0 flex-1 basis-40 truncate text-sm text-text" title={f.name}>
                       {f.name}
                     </span>
                     <span className="w-20 shrink-0 text-right text-xs tabular-nums text-faint">
                       {fileSize(f.size)}
                     </span>
                     {removing === f.name ? (
-                      <span role="group" aria-label={`Remove ${f.name}?`} className="flex shrink-0 items-center gap-2">
-                        <span className="text-xs text-muted">Remove {f.name}?</span>
+                      <span role="group" aria-label={`Remove ${f.name}?`} className="flex basis-full items-center justify-end gap-2">
+                        <span className="min-w-0 break-all text-xs text-muted">Remove {f.name}?</span>
                         <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(null)}>
                           <IconCancel aria-hidden />
                           Keep

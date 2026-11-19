@@ -1106,7 +1106,7 @@ function applyPatches() {
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
     // Auto Test's Basic/Advanced mode lives in memory here, never in the
     // settings file: every shot starts in Advanced (a reload resets it), and
-    // the one that documents the switch clicks Simple.
+    // the one that documents the switch clicks Basic.
     getAppSettings: async () => ({
       ...(await demoPw.getAppSettings()),
       autorun_mode: demoAutorunMode,
