@@ -1714,8 +1714,8 @@ fn changing_the_address_switch_is_refused_in_simple_with_a_plain_sentence() {
     assert!(refuse_address_change(false, false).is_ok());
     let why = refuse_address_change(true, false).unwrap_err();
     assert_eq!(why, "Switch Auto Test to Advanced to change this.");
-    // The app's Simple mode holds Auto Test in Simple and refuses Advanced, so
+    // The app's Basic mode holds Auto Test in Simple and refuses Advanced, so
     // the sentence names the app setting.
     let why = refuse_address_change(true, true).unwrap_err();
-    assert_eq!(why, "Turn Simple mode off in Settings to change this.");
+    assert_eq!(why, "Turn Basic mode off in Settings to change this.");
 }

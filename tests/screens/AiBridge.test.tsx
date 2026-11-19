@@ -2029,7 +2029,7 @@ test("the count and Turn all on cover only the rows with a switch", async () => 
   expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
 });
 
-// App Simple mode: the assistants get API templates and the network tools
+// App Basic mode: the assistants get API templates and the network tools
 // without their switches, and no writing, search or report tools. Only the
 // view changes - nothing is saved.
 function renderSimpleBridge(simple: boolean) {
@@ -2043,7 +2043,7 @@ function renderSimpleBridge(simple: boolean) {
   return renderBridge(qc);
 }
 
-test("Simple mode hides the API templates and Network tools cards, the writing rows and the writing intro", async () => {
+test("Basic mode hides the API templates and Network tools cards, the writing rows and the writing intro", async () => {
   saveDisabledTools(["search_pbis"]);
   renderSimpleBridge(true);
   await screen.findByText("Tools an assistant may use");
@@ -2073,7 +2073,7 @@ test("Simple mode hides the API templates and Network tools cards, the writing r
   expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
 });
 
-test("out of Simple mode the cards, rows and writing intro are all there", async () => {
+test("out of Basic mode the cards, rows and writing intro are all there", async () => {
   renderSimpleBridge(false);
   await screen.findByText("Tools an assistant may use");
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
@@ -2088,10 +2088,71 @@ test("out of Simple mode the cards, rows and writing intro are all there", async
   expect(card.textContent).toMatch(/API templates switch above, which is off by default/);
 });
 
-test("Turn all on under Simple mode keeps the hidden tools' saved switches", async () => {
+test("Turn all on under Basic mode keeps the hidden tools' saved switches", async () => {
   // One visible row off (Run results) and one hidden row off (Find a PBI).
   saveDisabledTools(["get_run_results", "search_pbis"]);
   renderSimpleBridge(true);
   fireEvent.click(await screen.findByRole("button", { name: "Turn all on" }));
   expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
+});
+
+// Basic mode has no Working repositories card and no Writing style card, and
+// the assistants register machine-wide, so the tab is never gated on a repository.
+function basicBridgeWithNoRepo() {
+  localStorage.removeItem("tcm-v2-working-dir");
+  setAppSimpleModeForTest(true);
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" }];
+    if (cmd === "register_ai_tool" || cmd === "unregister_ai_tool") return null;
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return { calls, ...renderBridge(qc) };
+}
+
+test("Basic mode with no repository shows the tool list, not the repository gate, and no stray cards", async () => {
+  const { container } = basicBridgeWithNoRepo();
+  expect(await screen.findByText("Connect your AI tools")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Working repositories" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Writing style" })).not.toBeInTheDocument();
+  expect(container.querySelector('[data-tour="ai-repos"]')).toBeNull();
+  // The left column opens with the tools card: no empty wrapper before it.
+  const left = container.querySelector('[data-tour="ai-tools"]')!.parentElement!;
+  expect(left.firstElementChild).toBe(container.querySelector('[data-tour="ai-tools"]'));
+});
+
+test("Basic mode detects and registers machine-wide without saving the scope choice", async () => {
+  const { calls } = basicBridgeWithNoRepo();
+  fireEvent.click(await screen.findByRole("button", { name: "Register" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "register_ai_tool")).toBe(true));
+  expect(calls.find((c) => c.cmd === "detect_ai_tools")!.args).toMatchObject({ workingDir: null });
+  expect(calls.find((c) => c.cmd === "register_ai_tool")!.args).toMatchObject({ id: "vscode", workingDir: null, global: true });
+  expect(localStorage.getItem("tcm-v2-ai-scope")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-ai-global-allowed")).toBeNull();
+});
+
+test("Basic mode keeps the repository card away even with a repository saved; off still shows it", async () => {
+  setAppSimpleModeForTest(true);
+  mockIPC((cmd) => (cmd === "bridge_status" ? { port: 1, mcp_exe: "x" } : []));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const first = renderBridge(qc);
+  await screen.findByText("Connect your AI tools");
+  expect(screen.queryByRole("heading", { name: "Working repositories" })).not.toBeInTheDocument();
+  first.unmount();
+  act(() => setAppSimpleModeForTest(false));
+  renderBridge(qc);
+  expect(await screen.findByRole("heading", { name: "Working repositories" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
+});
+
+test("out of Basic mode with no repository, the tab is still only the repository card", async () => {
+  localStorage.removeItem("tcm-v2-working-dir");
+  mockIPC(() => []);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByRole("heading", { name: "Working repositories" })).toBeInTheDocument();
+  expect(screen.queryByText("Connect your AI tools")).not.toBeInTheDocument();
 });

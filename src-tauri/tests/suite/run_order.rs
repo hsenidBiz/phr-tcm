@@ -920,7 +920,7 @@ fn the_suite_order_note_points_at_settings_only_in_simple_mode() {
     let on = simple_mode_notes(notes, true);
     assert_eq!(
         on[0],
-        "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong (Simple mode hides that screen; turn it off in Settings)."
+        "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong (Basic mode hides that screen; turn it off in Settings)."
     );
     assert_eq!(on[1], other);
 }

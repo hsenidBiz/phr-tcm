@@ -29,7 +29,7 @@ export function askForFixturesView(): void {
 const apiWritesKey = (): string => envScopedKey(BRIDGE_SWITCH_KEYS.apiWrites);
 
 /** Set to "1" once a person has chosen the switch for an environment, either
- * way. Without it the switch's state is only a default, which Simple mode may
+ * way. Without it the switch's state is only a default, which Basic mode may
  * turn on. */
 const API_WRITES_SET_BASE = "tcm-v2-api-writes-set";
 

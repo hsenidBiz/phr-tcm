@@ -76,7 +76,7 @@ export const aiBridge: Screen = {
       summary:
         "The site and database Auto Test and API Templates work against. Shown while the Auto Test module is on, in Settings, under General, on the **Modules** page. " +
         "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Test browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened. " +
-        "With **Simple mode** on in Settings, the Network tools and API templates cards are hidden and both are on for assistants once an environment is chosen; assistants can read test cases and write Auto Test scripts, and the test-case writing tools, Find a PBI and the wiki are hidden from them and from **Tools an assistant may use**.",
+        "With **Basic mode** on in Settings, the Network tools and API templates cards are hidden and both are on for assistants once an environment is chosen; assistants can read test cases and write Auto Test scripts, and the test-case writing tools, Find a PBI and the wiki are hidden from them and from **Tools an assistant may use**.",
     },
     {
       id: "api-templates",
@@ -106,7 +106,10 @@ export const aiBridge: Screen = {
       name: "Working repository",
       does:
         "The repositories your test cases belong to. The dot marks the current one: files written or imported for it go to its **.test-cases** folder, and the AI tools register into it. Click another dot to make that one current.",
-      tips: ["Until a repository is added, this card is all the tab shows."],
+      tips: [
+        "Until a repository is added, this card is all the tab shows.",
+        "With **Basic mode** on in Settings, this card is not shown and your AI tools register for the whole machine instead, so no repository is needed.",
+      ],
     },
     {
       id: "repository-switch",
@@ -228,9 +231,9 @@ export const aiBridge: Screen = {
         "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
         "**Copy Auto Test data…** brings another environment's scripts, areas, components, quirks and sign-in recording into this one (never its accounts; API templates, flows and fixtures are shared already); a removed environment's stay available there for 30 days. " +
         "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -. " +
-        "**Password expiry query** and **Active session query** are two read-only SELECTs you write for your site's database, each with a placeholder for the logins asked about; leave one empty and that check is skipped. The first tells Auto Test when each account's password runs out, so the account list, the proposals and the run window can warn before a sign-in is stopped. The second tells it whether someone is already signed in as an account, and a discovery will not start as an account in use elsewhere. Both need database access on. Hidden while Simple mode is on (Settings). " +
-        "The **Account table**, **Username column** and **Password column** say where the environment keeps its test logins (PeoplesHR's own table unless you change it); on a test environment the app reads each login's password from there itself. Leave the password column empty and the app finds it, or says which columns it could not tell apart. Hidden while Simple mode is on (Settings). " +
-        "On an environment marked **Test environment**, **Reset expired passwords** (off until you switch it on) lets a sign-in that reaches the password reset page set a new password itself and carry on. The new password is kept for the account only after a sign-in with it works, and an environment that is not a test one never resets. Hidden while Simple mode is on (Settings); in Simple mode a test environment resets expired passwords by itself.",
+        "**Password expiry query** and **Active session query** are two read-only SELECTs you write for your site's database, each with a placeholder for the logins asked about; leave one empty and that check is skipped. The first tells Auto Test when each account's password runs out, so the account list, the proposals and the run window can warn before a sign-in is stopped. The second tells it whether someone is already signed in as an account, and a discovery will not start as an account in use elsewhere. Both need database access on. Hidden while Basic mode is on (Settings). " +
+        "The **Account table**, **Username column** and **Password column** say where the environment keeps its test logins (PeoplesHR's own table unless you change it); on a test environment the app reads each login's password from there itself. Leave the password column empty and the app finds it, or says which columns it could not tell apart. Hidden while Basic mode is on (Settings). " +
+        "On an environment marked **Test environment**, **Reset expired passwords** (off until you switch it on) lets a sign-in that reaches the password reset page set a new password itself and carry on. The new password is kept for the account only after a sign-in with it works, and an environment that is not a test one never resets. Hidden while Basic mode is on (Settings); in Basic mode a test environment resets expired passwords by itself.",
     },
     {
       id: "api-templates-switch",
@@ -242,7 +245,7 @@ export const aiBridge: Screen = {
         "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
         "Proving and running write real test data through the site's own requests, as your Auto Test accounts, against the active environment's site address, so this is off until you turn it on. " +
         "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab. " +
-        "The switch is the active environment's own, named on the card; in a new environment it starts off. Hidden while Simple mode is on (Settings), which keeps it on.",
+        "The switch is the active environment's own, named on the card; in a new environment it starts off. Hidden while Basic mode is on (Settings), which keeps it on.",
     },
     {
       id: "database",
@@ -448,7 +451,7 @@ export const aiBridge: Screen = {
     {
       title: "Use your own writing style",
       steps: [
-        "In the **Writing style** card, type your team's rules for designing test cases in Markdown, or press **Upload .md** to load them from a file.",
+        "In the **Writing style** card (it is not shown while **Basic mode** is on in Settings), type your team's rules for designing test cases in Markdown, or press **Upload .md** to load them from a file.",
         "Switch on **Use custom writing style**. If you have changed the text, press **Save** to apply both. **Discard changes** goes back to what you saved last.",
         "The assistant follows your style the next time it reads the writing guide. It replaces the standard advice on how many cases to write and which edge cases to cover. The case format and import rules always apply.",
       ],

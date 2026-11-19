@@ -1,5 +1,5 @@
-//! The app-wide Simple mode: its start-up default and the switch-on of every
-//! module. Simple mode hides screens; it never switches anything off.
+//! The app-wide Basic mode: its start-up default and the switch-on of every
+//! module. Basic mode hides screens; it never switches anything off.
 //!
 //! Pure decisions live here; `commands::app_settings` applies them.
 
@@ -19,11 +19,11 @@ pub struct SimpleModeAnswer {
     pub not_switched_on: Vec<String>,
 }
 
-/// What a request for Advanced Auto Test answers while app Simple mode is on.
-pub const SIMPLE_NO_ADVANCED: &str = "Turn Simple mode off in Settings to use Advanced.";
+/// What a request for Advanced Auto Test answers while app Basic mode is on.
+pub const SIMPLE_NO_ADVANCED: &str = "Turn Basic mode off in Settings to use Advanced.";
 
-/// Save the Simple mode choice into `s`. Turning it on also holds Auto Test in
-/// its Simple mode (so every Auto Test Simple rule follows); turning it off
+/// Save the Basic mode choice into `s`. Turning it on also holds Auto Test in
+/// its Basic mode (so every Auto Test Basic rule follows); turning it off
 /// leaves Auto Test's mode as it is. The one place both paths go through.
 pub fn apply_simple_choice(s: &mut AppSettings, on: bool) {
     s.app_simple_mode = Some(on);
@@ -37,7 +37,7 @@ pub fn autorun_mode_refusal(app_simple: Option<bool>, mode: AutorunMode) -> Opti
     (app_simple == Some(true) && mode == AutorunMode::Advanced).then_some(SIMPLE_NO_ADVANCED)
 }
 
-/// The testable half of `set_autorun_mode`: refuse Advanced while app Simple
+/// The testable half of `set_autorun_mode`: refuse Advanced while app Basic
 /// mode is on, else save the mode into `dir`.
 pub fn set_autorun_mode_with(settings: &mut AppSettings, dir: &Path, mode: AutorunMode) -> Result<AppSettings, String> {
     if let Some(why) = autorun_mode_refusal(settings.app_simple_mode, mode) {
@@ -48,7 +48,7 @@ pub fn set_autorun_mode_with(settings: &mut AppSettings, dir: &Path, mode: Autor
     Ok(settings.clone())
 }
 
-/// A new install starts in Simple mode; an install that already had data
+/// A new install starts in Basic mode; an install that already had data
 /// keeps the screens it has. A saved choice is never overwritten.
 pub fn settle_simple_mode(saved: Option<bool>, new_install: bool) -> Option<bool> {
     saved.or(Some(new_install))
@@ -68,7 +68,7 @@ pub fn is_new_install(dir: &Path) -> bool {
 }
 
 /// What settling writes, or `None` when a value is already saved: the
-/// Simple mode choice and `switch_markers_migrated` (a new install has no old
+/// Basic mode choice and `switch_markers_migrated` (a new install has no old
 /// markers to migrate). The one decision both start-up paths use.
 pub fn settled_values(saved: Option<bool>, new_install: bool) -> Option<(Option<bool>, bool)> {
     saved.is_none().then(|| (settle_simple_mode(None, new_install), new_install))
@@ -89,7 +89,7 @@ pub fn switch_all_on_via(
         match set(m) {
             Ok(now) => on = now.into_iter().collect(),
             Err(e) => {
-                crate::applog::warn(format!("Simple mode: could not switch {} on: {e}", m.name()));
+                crate::applog::warn(format!("Basic mode: could not switch {} on: {e}", m.name()));
                 failed.push(m.name().to_string());
             }
         }
@@ -121,7 +121,7 @@ pub fn settle_on_start_in(dir: &Path, new_install: bool, state: &mut BTreeSet<Mo
         settings.autorun_mode = Some(AutorunMode::Simple);
     }
     if let Err(e) = crate::app_settings::save(dir, settings) {
-        crate::applog::warn(format!("settling Simple mode failed: {e}"));
+        crate::applog::warn(format!("settling Basic mode failed: {e}"));
     }
     if new_install {
         switch_all_on_with(state, settings, dir)
@@ -130,7 +130,7 @@ pub fn settle_on_start_in(dir: &Path, new_install: bool, state: &mut BTreeSet<Mo
     }
 }
 
-/// Settle Simple mode for this process, once, at start-up (after the modules
+/// Settle Basic mode for this process, once, at start-up (after the modules
 /// and settings are loaded). `new_install` is read before `cache::init`.
 pub fn settle_on_start(new_install: bool) {
     let Some((mode, migrated)) = settled_values(crate::app_settings::current().app_simple_mode, new_install) else {
@@ -143,7 +143,7 @@ pub fn settle_on_start(new_install: bool) {
             s.autorun_mode = Some(AutorunMode::Simple);
         }
     }) {
-        crate::applog::warn(format!("settling Simple mode failed: {e}"));
+        crate::applog::warn(format!("settling Basic mode failed: {e}"));
         return;
     }
     if new_install {

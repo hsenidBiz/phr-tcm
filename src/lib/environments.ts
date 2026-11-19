@@ -12,6 +12,7 @@ import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { commands, type AutoApproveOutcome, type EnvInput, type EnvListView, type EnvView } from "../bindings";
 import { noteEnvironments } from "./activeEnv";
 import { globalAllowedSnapshot, scopeSnapshot } from "./aiScope";
+import { appSimpleModeSnapshot } from "./appSimpleMode";
 import { saveSelectedDb, selectedDbSnapshot } from "./dbServer";
 import { logUi } from "./uiLog";
 import { workingDirSnapshot } from "./workingDir";
@@ -108,6 +109,8 @@ const EMPTY: EnvListView = { active: "", playwright_export: "", environments: []
  * active environment - the same rule the Run changes without asking switch
  * uses: none while AI tools are registered for the whole machine. */
 function aiToolsRepository(): string | null {
+  // Basic mode registers the AI tools machine-wide, with no repository card.
+  if (appSimpleModeSnapshot()) return null;
   if (globalAllowedSnapshot() && scopeSnapshot() === "global") return null;
   return workingDirSnapshot() || null;
 }

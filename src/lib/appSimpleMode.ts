@@ -1,4 +1,4 @@
-// App Simple mode as the webview sees it. Rust owns the setting
+// App Basic mode as the webview sees it. Rust owns the setting
 // (AppSettings.app_simple_mode); this mirrors it in a module-scope store so a
 // plain function (`sectionShown`) and a hook can both read it. The App shell
 // publishes the app-settings query into it (`usePublishAppSimpleMode`).
@@ -30,7 +30,7 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-/** Whether Simple mode is on right now. False while loading. */
+/** Whether Basic mode is on right now. False while loading. */
 export function appSimpleModeSnapshot(): boolean {
   return loaded && on;
 }
@@ -65,7 +65,7 @@ export function usePublishAppSimpleMode(): void {
   }, [next, settled]);
 }
 
-/** Tests only: set Simple mode and mark the store loaded. */
+/** Tests only: set Basic mode and mark the store loaded. */
 export function setAppSimpleModeForTest(next: boolean): void {
   publishAppSimpleMode(next, true);
 }
@@ -78,7 +78,7 @@ export function resetAppSimpleModeStore(): void {
   notify();
 }
 
-// The per-environment switches Simple mode could not turn on (the webview's
+// The per-environment switches Basic mode could not turn on (the webview's
 // half of "turning it on"). Settings reads this beside the modules Rust
 // could not switch on.
 let switchFailures: string[] = [];
@@ -97,7 +97,7 @@ export function publishSimpleSwitchFailures(names: string[]): void {
   for (const l of [...failureListeners]) l();
 }
 
-/** Names of the switches the last Simple mode switch-on could not set. */
+/** Names of the switches the last Basic mode switch-on could not set. */
 export function useSimpleSwitchFailures(): string[] {
   return useSyncExternalStore(subscribeFailures, () => switchFailures);
 }

@@ -186,7 +186,7 @@ export function useAutoRunSetup({
   const discovering = useDiscoveryActive();
   const { mode: runMode, loading: runModeLoading } = useAutoRunMode();
   const inSimple = !runModeLoading && runMode === "simple";
-  /** The rows that stop a run now, which Simple mode shows again when it
+  /** The rows that stop a run now, which Basic mode shows again when it
    * hides them. The fixtures entries of the header's reasons below use the
    * same `fixtureBlock` test; its other reasons are its own. */
   const blocking = blockingRows({ signIn, recipeUnreadable: setupReady && recipe.isError, discovering, fixturesFailed, fixturesFailedHere });

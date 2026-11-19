@@ -1894,13 +1894,13 @@ export const commands = {
 	 */
 	setAutorunFailedVideo: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_failed_video", { on })),
 	/**
-	 *  Pick Simple or Advanced Auto Test. Advanced is refused while the app's
-	 *  Simple mode is on.
+	 *  Pick Basic or Advanced Auto Test. Advanced is refused while the app's
+	 *  Basic mode is on.
 	 */
 	setAutorunMode: (mode: AutorunMode) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_mode", { mode })),
 	/**
-	 *  Turn the app-wide Simple mode on or off. On saves the choice, then
-	 *  switches every module on (never the held-back one) so nothing Simple mode
+	 *  Turn the app-wide Basic mode on or off. On saves the choice, then
+	 *  switches every module on (never the held-back one) so nothing Basic mode
 	 *  hides stops working; a module that fails is named and the choice stays
 	 *  saved. Off saves the choice and changes no module.
 	 */
@@ -3103,9 +3103,9 @@ export type AppSettings = {
 	 *  true it never goes back; it decides whether a switch-on is the first.
 	 */
 	auto_run_ever_on?: boolean,
-	/**  Simple or Advanced Auto Test; `None` until one is picked or settled. */
+	/**  Basic or Advanced Auto Test; `None` until one is picked or settled. */
 	autorun_mode?: AutorunMode | null,
-	/**  App-wide Simple mode; `None` until it is settled at start-up. */
+	/**  App-wide Basic mode; `None` until it is settled at start-up. */
 	app_simple_mode?: boolean | null,
 	/**
 	 *  Whether the webview's old per-screen switch markers have been looked
@@ -3291,7 +3291,7 @@ export type AutorunEnvironmentChanged = {
 };
 
 /**
- *  How much of Auto Test a person sees: Simple keeps to the everyday path,
+ *  How much of Auto Test a person sees: Basic keeps to the everyday path,
  *  Advanced shows everything.
  */
 export type AutorunMode = "simple" | "advanced";
@@ -3502,12 +3502,12 @@ export type BridgeSwitches = {
 	 */
 	allProjects?: boolean,
 	/**
-	 *  Auto Test's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+	 *  Auto Test's Basic or Advanced mode (see `BridgeContext::autorun_mode`).
 	 *  Not a switch: the assistants only read it.
 	 */
 	autorunMode?: AutorunMode | null,
 	/**
-	 *  The app-wide Simple mode (see `BridgeContext::app_simple_mode`). Not a
+	 *  The app-wide Basic mode (see `BridgeContext::app_simple_mode`). Not a
 	 *  switch: the assistants only read it.
 	 */
 	appSimpleMode?: boolean | null,

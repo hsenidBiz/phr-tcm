@@ -25,7 +25,7 @@ export const suiteManagement: Screen = {
   summary:
     "Organise a test plan's suites. Put a suite's cases in the order they should be run and save that order to Azure DevOps, " +
     "copy cases into another suite, or make a new suite for them." +
-    " Hidden while Simple mode is on (Settings).",
+    " Hidden while Basic mode is on (Settings).",
   shots: [
     { id: PLAN, route: [NAV], alt: "Suite Management showing the PBI's plan with its suite open" },
     {

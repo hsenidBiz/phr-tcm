@@ -1,4 +1,4 @@
-//! The app-wide Simple mode: its start-up default and the switch-on.
+//! The app-wide Basic mode: its start-up default and the switch-on.
 
 use std::collections::BTreeSet;
 
@@ -144,8 +144,8 @@ fn a_saved_value_is_never_overwritten() {
 /// The plan's line, for a part the assistant can do itself; and the form for a
 /// part only the person can do (an import, removing a template).
 const NOTE_FULL: &str =
-    "If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings.";
-const NOTE_ASK: &str = "If the app is in Simple mode, ask the person to turn Simple mode off in Settings.";
+    "If the app is in Basic mode, do that part yourself or ask the person to turn Basic mode off in Settings.";
+const NOTE_ASK: &str = "If the app is in Basic mode, ask the person to turn Basic mode off in Settings.";
 
 fn flat(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -174,7 +174,7 @@ fn without_comments(src: &str) -> String {
 
 /// Every guide text the assistant receives: the guide sources, the tool
 /// descriptions, the bridge's route modules and the role files. Wherever one
-/// names a screen Simple mode hides, it also says what to do when that screen
+/// names a screen Basic mode hides, it also says what to do when that screen
 /// is not there. (A tool name such as `list_api_templates` is not a screen.)
 #[test]
 fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
@@ -206,7 +206,7 @@ fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
         named += 1;
         assert!(
             text.contains(NOTE_FULL) || text.contains(NOTE_ASK),
-            "{} names {screen} but has no Simple mode line",
+            "{} names {screen} but has no Basic mode line",
             f.display()
         );
     }
@@ -221,7 +221,7 @@ fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
     }
 }
 
-/// Simple mode is the person's switch. No assistant tool and no bridge route
+/// Basic mode is the person's switch. No assistant tool and no bridge route
 /// may set it: the bridge only carries it, read-only, in /current-pbi.
 #[test]
 fn no_tool_or_route_sets_the_app_simple_mode() {

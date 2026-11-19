@@ -4223,8 +4223,8 @@ pub fn auto_run_set_protected(
     Ok(crate::autorun::nav::view(&nav))
 }
 
-/// The switch cannot be changed while Auto Test is in Simple. When the app's
-/// own Simple mode is what holds it there, Advanced is not on offer, so the
+/// The switch cannot be changed while Auto Test is in Basic. When the app's
+/// own Basic mode is what holds it there, Advanced is not on offer, so the
 /// sentence points at the app setting instead.
 pub fn refuse_address_change(simple: bool, app_simple: bool) -> Result<(), String> {
     if app_simple {

@@ -192,6 +192,13 @@ export {
   Files as IconTestFiles,
   // Copying files from this machine into those Test files.
   FileUp as IconAddFiles,
+  // What a Test file is, by its extension (the Test files dialog's groups).
+  FileSpreadsheet as IconFileSpreadsheet,
+  FileText as IconFileDocument,
+  FileImage as IconFileImage,
+  FileJson as IconFileData,
+  FileArchive as IconFileArchive,
+  File as IconFileOther,
   // The site a project's runs sign in to and start from (Auto Test's
   // Setup card) - a globe, since what it opens is a web address.
   Globe as IconSiteAddress,

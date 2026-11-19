@@ -161,7 +161,7 @@ function CaseCard({
   /** Why Run waits, when it does: an unattended run is going, or a
    * discovery holds the Auto Test browser. */
   runBlocked?: string;
-  /** Simple mode: no step-by-step run of one case, so no Run button. */
+  /** Basic mode: no step-by-step run of one case, so no Run button. */
   hideRun?: boolean;
   /** The suspected-defect Clear is waiting on Keep or Clear. */
   confirmingClear: boolean;

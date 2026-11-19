@@ -219,14 +219,32 @@ export function sameTourWhere(a: TourWhere | undefined, b: TourWhere | undefined
  * not there (its module is off) is dropped. Every lookup below takes this
  * array, so a dropped stop is never a destination either. */
 export function tourStepsFor(modules: ReadonlySet<Module>, simple: boolean = false): TourStep[] {
-  return TOUR_STEPS.filter((s) => {
-    if (s.module && !modules.has(s.module)) return false;
-    // Simple mode hides some screens: a stop that walks to one would ring
-    // nothing the person can reach.
-    if (simple && s.where?.area === "cases" && SIMPLE_HIDDEN_SECTIONS.has(s.where.section)) return false;
-    return true;
+  const inModules = TOUR_STEPS.filter((s) => !s.module || modules.has(s.module));
+  if (!simple) return inModules;
+  // Basic mode hides some screens (Manual Entry among them): a stop that walks
+  // to one would ring nothing the person can reach. The stops that follow
+  // such a stop and leave `where` out used to ride on its destination, so
+  // each kept stop is given the destination it resolved to in the full
+  // script. The two bar stops (organisation, PBI) move to View Test Cases,
+  // the first screen Basic mode keeps that has both. The Working
+  // repositories stop goes too: Basic mode has no such card.
+  const out: TourStep[] = [];
+  let cur: TourWhere | undefined;
+  TOUR_STEPS.forEach((s, i) => {
+    if (s.module && !modules.has(s.module)) return;
+    if (s.anchor === "ai-repos") return;
+    let d = tourDestination(i);
+    if (d?.area === "cases" && SIMPLE_HIDDEN_SECTIONS.has(d.section)) {
+      if (s.anchor !== "org" && s.anchor !== "pbi") return;
+      d = BASIC_BAR_WHERE;
+    }
+    out.push(s.where === d || (s.where === undefined && d === cur) ? s : { ...s, where: d });
+    cur = d;
   });
+  return out;
 }
+
+const BASIC_BAR_WHERE: TourWhere = cases("view");
 
 /**
  * Where a stop needs the app to be: its own `where`, or - for a stop that

@@ -463,12 +463,12 @@ export const CRYSTAL_TOOLS = [
   "replace_in_report",
 ] as const;
 
-/** The tools an assistant does not get while app Simple mode is on: it reads
+/** The tools an assistant does not get while app Basic mode is on: it reads
  * test cases and writes Auto Test scripts, and nothing else of the writing,
  * searching and report tools. Mirrors `simple_mode.rs`'s `SIMPLE_HIDDEN_TOOLS`
  * (a test compares them). Rust decides what is hidden from the saved setting;
  * this only hides the rows and the breakdown text. A view: it never changes
- * what is saved, so turning Simple mode off brings every row back as it was. */
+ * what is saved, so turning Basic mode off brings every row back as it was. */
 export const SIMPLE_HIDDEN_TOOLS = [
   "begin_test_case_writing",
   "check_spec_coverage",
@@ -492,7 +492,7 @@ export const SIMPLE_HIDDEN_TOOLS = [
   "replace_in_report",
 ] as const;
 
-/** Whether Simple mode hides this tool from the assistants (and so from this screen). */
+/** Whether Basic mode hides this tool from the assistants (and so from this screen). */
 export function simpleHidesTool(name: string): boolean {
   return appSimpleModeSnapshot() && (SIMPLE_HIDDEN_TOOLS as readonly string[]).includes(name);
 }

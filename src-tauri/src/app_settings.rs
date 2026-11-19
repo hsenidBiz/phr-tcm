@@ -18,7 +18,7 @@ use crate::browser::viewport::{PageSize, DEFAULT_PAGE};
 
 const FILE: &str = "app-settings.json";
 
-/// How much of Auto Test a person sees: Simple keeps to the everyday path,
+/// How much of Auto Test a person sees: Basic keeps to the everyday path,
 /// Advanced shows everything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
@@ -73,9 +73,9 @@ pub struct AppSettings {
     /// Auto Test has been on at some point (or left files behind). Once
     /// true it never goes back; it decides whether a switch-on is the first.
     pub auto_run_ever_on: bool,
-    /// Simple or Advanced Auto Test; `None` until one is picked or settled.
+    /// Basic or Advanced Auto Test; `None` until one is picked or settled.
     pub autorun_mode: Option<AutorunMode>,
-    /// App-wide Simple mode; `None` until it is settled at start-up.
+    /// App-wide Basic mode; `None` until it is settled at start-up.
     #[serde(default)]
     pub app_simple_mode: Option<bool>,
     /// Whether the webview's old per-screen switch markers have been looked

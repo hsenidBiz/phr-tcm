@@ -1,4 +1,4 @@
-// Which Setup rows stand between the person and a run, for Simple mode: it
+// Which Setup rows stand between the person and a run, for Basic mode: it
 // hides the rows only an advanced user tends, and a hidden row that stops a
 // run is shown again with a note - except Fixtures, which Simple never shows,
 // failed or not (the assistant sorts a failed fixture out on its own).
@@ -19,7 +19,7 @@ export type SetupRowName =
   | "Fixtures"
   | "Database";
 
-/** The rows Simple mode leaves out unless one of them blocks a run. The
+/** The rows Basic mode leaves out unless one of them blocks a run. The
  * Sign-in row stays, but hides its recipe editor and recording there. */
 export const SIMPLE_HIDDEN: ReadonlySet<SetupRowName> = new Set<SetupRowName>(["Discovery", "Components", "Fixtures"]);
 
@@ -50,7 +50,7 @@ export function blockingRows(input: {
   return out;
 }
 
-/** Whether Simple mode shows `row`: it is not one of the hidden rows, or it
+/** Whether Basic mode shows `row`: it is not one of the hidden rows, or it
  * blocks a run and is not one Simple never shows. */
 export function shownInSimple(row: SetupRowName, blocking: Set<SetupRowName>): boolean {
   if (NEVER_SHOWN_IN_SIMPLE.has(row)) return false;

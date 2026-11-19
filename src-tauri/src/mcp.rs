@@ -504,7 +504,7 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, B
             }
         }
     }
-    // The tools Simple mode hides: named by the app's answer (decided there,
+    // The tools Basic mode hides: named by the app's answer (decided there,
     // from the saved setting). Only a name this build knows as hidden counts,
     // and a core tool is added AFTER the core filter above, so it stays off.
     for t in simple_hidden_from(&answer) {
@@ -515,8 +515,8 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, B
     (off, on)
 }
 
-/// The tools Simple mode hides, as a `/tools` answer names them. Empty when
-/// the answer carries none (Simple mode off, an older app, a failed answer).
+/// The tools Basic mode hides, as a `/tools` answer names them. Empty when
+/// the answer carries none (Basic mode off, an older app, a failed answer).
 fn simple_hidden_from(answer: &Option<serde_json::Value>) -> Vec<String> {
     answer
         .as_ref()
@@ -531,7 +531,7 @@ fn simple_hidden_from(answer: &Option<serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The tools `/tools`'s answer says Simple mode hides: the body parsed once.
+/// The tools `/tools`'s answer says Basic mode hides: the body parsed once.
 pub fn simple_hidden_in(reply: &Result<(u16, String), String>) -> Vec<String> {
     match reply {
         Ok((200, body)) => simple_hidden_from(&serde_json::from_str::<serde_json::Value>(body).ok()),
@@ -1320,7 +1320,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "run_api_template",
-            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history in the app, which you cannot read. It works the same in Simple mode. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the account in the Auto Test browser the run is refused, and the answer says so: end the discovery first, or run as another account. An unconfirmed item is worth trying here; a replace changes it for every environment.",
+            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history in the app, which you cannot read. It works the same in Basic mode. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the account in the Auto Test browser the run is refused, and the answer says so: end the discovery first, or run as another account. An unconfirmed item is worth trying here; a replace changes it for every environment.",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "string", "description": "The template's id, from list_api_templates." },
                 "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
@@ -1748,7 +1748,7 @@ fn guide_sentence(topic: &str) -> &'static str {
     match topic {
         "writing" => "\"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values, the workflow and the transform ops; call it first.",
         "autorun" => "\"autorun\": writing an Auto Test action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide. `role` gives one role's rules.",
-        "playwright_skills" => "\"playwright_skills\": the team's Playwright repo's skills, read fresh from the repo set on the Playwright tab (you cannot open it; if the repo needs changing, ask the person. If the app is in Simple mode, ask the person to turn Simple mode off in Settings.): alone it lists them, `skill` gives one, with how its steps map onto Test Case Manager's tools.",
+        "playwright_skills" => "\"playwright_skills\": the team's Playwright repo's skills, read fresh from the repo set on the Playwright tab (you cannot open it; if the repo needs changing, ask the person. If the app is in Basic mode, ask the person to turn Basic mode off in Settings.): alone it lists them, `skill` gives one, with how its steps map onto Test Case Manager's tools.",
         "playwright_repo" => "\"playwright_repo\": the team's Playwright repo's own files, read fresh: alone its CLAUDE.md (long: in pages, `page` picks one; the first says how many there are), `file` one of its agent files or gen-test.md, the per-case rules /tcm:gen-tests follows.",
         "api_templates" => "\"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template.",
         "reports" => "\"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report.",
@@ -2591,18 +2591,18 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         && off.iter().any(|d| d == name)
         && !simple_hidden.iter().any(|d| d == name)
     {
-        // Under Simple mode (the answer names hidden tools only then) a network
+        // Under Basic mode (the answer names hidden tools only then) a network
         // tool is off only for want of an environment; its switch is hidden.
         // Only the running app's own answer says so, and only with Auto Test on;
         // a closed app or Auto Test off keep their own refusals.
         Some(crate::simple_view::SIMPLE_NETWORK_NO_ENVIRONMENT.to_string())
     } else if simple_hidden.iter().any(|d| d == name) {
-        // Simple mode's own sentence: the tool has no switch to turn on.
+        // Basic mode's own sentence: the tool has no switch to turn on.
         Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
     } else if off.iter().any(|d| d == name) {
         Some(refusal_text_for(name, &on, unlocked))
     } else if name == "get_guide" && args["topic"].as_str().map(str::trim) == Some("reports") && !simple_hidden.is_empty() {
-        // The reports guide rides on the Crystal Reports tools, which Simple
+        // The reports guide rides on the Crystal Reports tools, which Basic
         // mode hides: say so, not that a switch is off.
         Some(crate::simple_view::SIMPLE_HIDES_TOOL.to_string())
     } else if name == "get_guide" {
@@ -3196,7 +3196,7 @@ pub fn tools_reply_or_saved(
 }
 
 /// `tools_reply_or_saved` that also knows whether the saved app settings have
-/// Simple mode on: then the saved answer names the hidden tools too, so a
+/// Basic mode on: then the saved answer names the hidden tools too, so a
 /// closed app does not list them.
 pub fn tools_reply_or_saved_simple(
     reply: Result<(u16, String), String>,

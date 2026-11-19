@@ -29,7 +29,7 @@ export const updateTestCases: Screen = {
   summary:
     "Change test cases that are already in Azure DevOps. Every case linked to the Product Backlog Item is listed; open one to edit it in place, " +
     "or select several to change them together, rename them, move them to another Product Backlog Item or export them." +
-    " Hidden while Simple mode is on (Settings).",
+    " Hidden while Basic mode is on (Settings).",
   shots: [
     { id: LIST, route: [NAV], alt: "Update Test Cases listing the five test cases of the PBI" },
     {

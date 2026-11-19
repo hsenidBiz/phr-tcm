@@ -49,7 +49,7 @@ test("the header switch offers Simple and Advanced and asks Rust for the one cli
     if (cmd === "list_test_case_fields" || cmd === "pbi_test_cases_full") return [];
   });
   renderScreen();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await waitFor(() => expect(calls).toEqual([{ mode: "advanced" }]));
   await waitFor(() => expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-pressed", "true"));
@@ -73,24 +73,24 @@ test("neither option is pressed, and clicks are ignored, until the settings answ
     if (cmd === "list_test_case_fields" || cmd === "pbi_test_cases_full") return [];
   });
   renderScreen();
-  const simple = screen.getByRole("button", { name: "Simple" });
+  const simple = screen.getByRole("button", { name: "Basic" });
   const advanced = screen.getByRole("button", { name: "Advanced" });
   expect(simple).toHaveAttribute("aria-pressed", "false");
   expect(advanced).toHaveAttribute("aria-pressed", "false");
   fireEvent.click(simple);
   expect(calls).not.toContain("set_autorun_mode");
   answer({ autorun_mode: "simple" });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-pressed", "false");
 });
 
-test("with the app in Simple mode the switch offers only Simple, held pressed", async () => {
+test("with the app in Basic mode the switch offers only Simple, held pressed", async () => {
   setAppSimpleModeForTest(true);
   mockIPC((cmd) => {
     if (cmd === "get_app_settings") return { autorun_mode: "simple", app_simple_mode: true };
     if (cmd === "list_test_case_fields" || cmd === "pbi_test_cases_full") return [];
   });
   renderScreen();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(screen.queryByRole("button", { name: "Advanced" })).not.toBeInTheDocument();
 });

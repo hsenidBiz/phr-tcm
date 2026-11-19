@@ -554,7 +554,7 @@ export default function AreasDialog({
               onClick={() => setPhase({ kind: "choose", module: "", area: null, problem: "" })}
             >
               <IconRecord aria-hidden />
-              Record an area…
+              Record an area
             </Button>
             <Button size="sm" variant="ghost" disabled={busy} onClick={onClose}>
               <IconCancel aria-hidden />

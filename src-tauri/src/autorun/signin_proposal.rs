@@ -200,7 +200,7 @@ pub fn view(p: &StoredSignInProposal, env: &Environment) -> SignInProposalView {
     view_with(p, env, crate::app_settings::current().app_simple_mode == Some(true))
 }
 
-/// `view` with the app's Simple mode given: the reset is already on there, so
+/// `view` with the app's Basic mode given: the reset is already on there, so
 /// there is no switch to offer.
 pub fn view_with(p: &StoredSignInProposal, env: &Environment, app_simple: bool) -> SignInProposalView {
     SignInProposalView {

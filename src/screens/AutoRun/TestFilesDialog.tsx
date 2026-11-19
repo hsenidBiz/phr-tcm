@@ -8,12 +8,24 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useId, useState } from "react";
+import { useId, useMemo, useState, type ComponentType } from "react";
 import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
-import { IconAddFiles, IconBrowse, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
+import {
+  IconAddFiles,
+  IconBrowse,
+  IconCancel,
+  IconConfirm,
+  IconFileArchive,
+  IconFileData,
+  IconFileDocument,
+  IconFileImage,
+  IconFileOther,
+  IconFileSpreadsheet,
+  IconRemove,
+} from "../../lib/actionIcons";
 import { fileName } from "../../lib/fileSync";
 import { unwrapStr } from "../../lib/ipc";
 
@@ -38,6 +50,49 @@ export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} bytes`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** The kinds the list is grouped by, in the order they are shown, with the
+ * extensions (lower case) that decide a file's kind. Anything else, and a
+ * name with no extension, is Other. */
+const KINDS: {
+  name: string;
+  extensions: string[];
+  icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+}[] = [
+  { name: "Spreadsheets", extensions: ["xlsx", "xls", "xlsm", "csv", "tsv", "ods"], icon: IconFileSpreadsheet },
+  { name: "Documents", extensions: ["pdf", "doc", "docx", "txt", "rtf", "odt", "md"], icon: IconFileDocument },
+  {
+    name: "Images",
+    extensions: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tif", "tiff"],
+    icon: IconFileImage,
+  },
+  { name: "Data", extensions: ["json", "xml", "yaml", "yml"], icon: IconFileData },
+  { name: "Archives", extensions: ["zip", "7z", "rar", "gz", "tar"], icon: IconFileArchive },
+  { name: "Other", extensions: [], icon: IconFileOther },
+];
+
+/** The index into KINDS for a file name, by its extension (any case). */
+export function fileKindIndex(name: string): number {
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  const i = KINDS.findIndex((k) => k.extensions.includes(ext));
+  return i === -1 ? KINDS.length - 1 : i;
+}
+
+/** The files grouped by kind in KINDS' order, each group sorted by name
+ * without regard to case; a kind with no files is left out. */
+export function groupTestFiles<T extends { name: string }>(files: T[]) {
+  return KINDS.map((kind, i) => ({
+    kind,
+    files: files
+      .filter((f) => fileKindIndex(f.name) === i)
+      .sort((a, b) => {
+        const x = a.name.toLowerCase();
+        const y = b.name.toLowerCase();
+        return x < y ? -1 : x > y ? 1 : 0;
+      }),
+  })).filter((g) => g.files.length > 0);
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -143,6 +198,7 @@ export default function TestFilesDialog({
   };
 
   const list = files.data ?? [];
+  const groups = useMemo(() => groupTestFiles(files.data ?? []), [files.data]);
   const asking = clashes[0];
 
   return (
@@ -160,38 +216,54 @@ export default function TestFilesDialog({
         <p className="text-sm text-muted">No test files yet - add the documents your tests upload.</p>
       )}
       {list.length > 0 && (
-        <ul aria-label="Test files" className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto">
-          {list.map((f) => (
-            <li key={f.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-              <span className="min-w-0 flex-1 break-all text-sm text-text">{f.name}</span>
-              <span className="text-xs text-faint">{fileSize(f.size)}</span>
-              {removing === f.name ? (
-                <span role="group" aria-label={`Remove ${f.name}?`} className="flex items-center gap-2">
-                  <span className="text-xs text-muted">Remove {f.name}?</span>
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(null)}>
-                    <IconCancel aria-hidden />
-                    Keep
-                  </Button>
-                  <Button size="sm" variant="danger" disabled={busy} onClick={() => void remove(f.name)}>
-                    <IconRemove aria-hidden />
-                    Remove
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Remove ${f.name}`}
-                  disabled={busy}
-                  onClick={() => setRemoving(f.name)}
-                >
-                  <IconRemove aria-hidden />
-                  Remove
-                </Button>
-              )}
-            </li>
+        // One labelled wrapper, then one labelled group per kind. Groups are
+        // told apart by the gap between them, wider than the one between rows.
+        <div role="group" aria-label="Test files" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
+          {groups.map(({ kind, files: inGroup }) => (
+            <div key={kind.name} role="group" aria-label={kind.name}>
+              <h3 className="pb-1 text-xs text-muted">
+                {kind.name} · {inGroup.length}
+              </h3>
+              <ul className="divide-y divide-border/60">
+                {inGroup.map((f) => (
+                  <li key={f.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                    <kind.icon aria-hidden className="size-4 shrink-0 text-faint" />
+                    <span className="min-w-0 flex-1 basis-40 truncate text-sm text-text" title={f.name}>
+                      {f.name}
+                    </span>
+                    <span className="w-20 shrink-0 text-right text-xs tabular-nums text-faint">
+                      {fileSize(f.size)}
+                    </span>
+                    {removing === f.name ? (
+                      <span role="group" aria-label={`Remove ${f.name}?`} className="flex basis-full items-center justify-end gap-2">
+                        <span className="min-w-0 break-all text-xs text-muted">Remove {f.name}?</span>
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(null)}>
+                          <IconCancel aria-hidden />
+                          Keep
+                        </Button>
+                        <Button size="sm" variant="danger" disabled={busy} onClick={() => void remove(f.name)}>
+                          <IconRemove aria-hidden />
+                          Remove
+                        </Button>
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Remove ${f.name}`}
+                        disabled={busy}
+                        onClick={() => setRemoving(f.name)}
+                      >
+                        <IconRemove aria-hidden />
+                        Remove
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
 
       {asking && (

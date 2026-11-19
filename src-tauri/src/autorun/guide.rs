@@ -247,7 +247,7 @@ Scripting here is done in five roles, each with its own short rules:
   with your first `start_autorun_discovery` with `explore` true of a session.
 
 The writer's, healer's and case rewriter's rules are built on the team's Playwright repo, the one set
-on the Playwright tab (which you cannot open; if the repo needs changing, ask the person to change it. If the app is in Simple mode, ask the person to turn Simple mode off in Settings.), read fresh each time they are given: first Test Case Manager's own rules for
+on the Playwright tab (which you cannot open; if the repo needs changing, ask the person to change it. If the app is in Basic mode, ask the person to turn Basic mode off in Settings.), read fresh each time they are given: first Test Case Manager's own rules for
 the role, which win wherever the two differ, then the repo's own agent files (its planner and
 generator for the writer, its healer for the healer, spec-editor for the case rewriter), then a note
 on which Test Case Manager tools do what those files name. With no repo set, or a file missing from
@@ -343,7 +343,7 @@ folder of documents for tests, on their machine - by its NAME, never a
 path. Use only a name listed under "Test files" at the end of this guide
 (no such section means the project has none yet); if the case needs a
 file that is not there, ask the person to add it to
-Test files (Auto Test or API Templates) - never invent a name. If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. Point the
+Test files (Auto Test or API Templates) - never invent a name. If the app is in Basic mode, do that part yourself or ask the person to turn Basic mode off in Settings. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. Point the
 selector at the page's file input, or at the button or link that opens
 the file chooser: the input gets the file directly, and a button is
 clicked with the chooser answered for you (a button that opens no chooser
@@ -1126,14 +1126,14 @@ If TCM has none, find it with `search_pbis`, or ask the person for the id. You c
 selection. Only the assistant the person talks to asks: a subagent never asks about the PBI, it uses
 the PBI id it was given.
 
-## Simple mode
+## Basic mode
 
-`get_current_pbi` also says, once the app has told it, whether the person has Auto Test's Simple or
-Advanced screen (`autorun_mode`, or "Auto Test mode: simple." when no PBI is selected). You can read
-it; you cannot change it. The person may be in Simple mode: do not send them
+`get_current_pbi` also says, once the app has told it, whether the person has Auto Test's Basic or
+Advanced screen (`autorun_mode`, or "Auto Test mode: simple." when no PBI is selected; the value "simple" is what the person sees as Basic). You can read
+it; you cannot change it. The person may be in Basic mode: do not send them
 to Discovery, Components, Fixtures or the sign-in recipe; offer to do it, or ask them to switch to
-Advanced. Simple also hides Replay to step, Import scripts and Clear scripts, and shows a script
-read-only. A person in Simple mode still sees what stops a run, so say what you did about it in
+Advanced. Basic also hides Replay to step, Import scripts and Clear scripts, and shows a script
+read-only. A person in Basic mode still sees what stops a run, so say what you did about it in
 plain words.
 
 ## Who the case runs as

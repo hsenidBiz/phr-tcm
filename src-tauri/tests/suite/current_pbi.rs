@@ -192,7 +192,7 @@ async fn get_current_pbi_carries_the_app_simple_mode_only_when_it_is_known() {
     assert_eq!(v["app_simple_mode"], true);
     let ctx = BridgeContext { app_simple_mode: Some(false), ..BridgeContext::default() };
     let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
-    assert_eq!(body, "No PBI is selected in TCM. App Simple mode: off.");
+    assert_eq!(body, "No PBI is selected in TCM. App Basic mode: off.");
     // Unknown: omitted.
     let ctx = BridgeContext { current_pbi: Some(pbi()), ..BridgeContext::default() };
     let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;

@@ -74,7 +74,7 @@ type ScriptEditorProps = {
    * save that names none. */
   org: string;
   project: string;
-  /** Simple mode: the script is shown as text, with nothing to change, save
+  /** Basic mode: the script is shown as text, with nothing to change, save
    * or copy. */
   readOnly?: boolean;
   onClose: () => void;

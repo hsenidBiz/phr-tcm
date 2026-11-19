@@ -104,7 +104,7 @@ export default function AiBridge() {
   const writingOn = useModule("writing_style");
   const autoRunOn = useModule("auto_run");
   const apiTemplatesOn = useModule("api_templates");
-  // App Simple mode: the assistants get API templates and the network tools
+  // App Basic mode: the assistants get API templates and the network tools
   // without these two switches (Rust turns both on), and no writing, search
   // or report tools. Only what is SHOWN changes: no saved switch is touched.
   const { on: simple } = useAppSimpleMode();
@@ -136,7 +136,9 @@ export default function AiBridge() {
   // repository card offers the choice, and "global" lifts the gate below.
   const globalAllowed = useSyncExternalStore(subscribeAiScope, globalAllowedSnapshot);
   const scopeChoice = useSyncExternalStore(subscribeAiScope, scopeSnapshot);
-  const global = globalAllowed && scopeChoice === "global";
+  // Basic mode has no repository card and no choice to make: the assistants
+  // register machine-wide. The stored choice is neither read nor written.
+  const global = simple || (globalAllowed && scopeChoice === "global");
   // What every call below is told: the repository, or null for the whole
   // machine (detection reads the global configs on null; registration is
   // ALSO told `global` explicitly, so null alone can never mean "global").
@@ -527,7 +529,7 @@ export default function AiBridge() {
     // own third column instead of leaving the window's right third empty.
     <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3">
       <div className="flex min-w-0 flex-col gap-6">
-      {repoCard}
+      {!simple && repoCard}
       {/* Whether the bridge is up is the glowing badge beside the tab title
           (BridgeStatusBadge, in App) - the card that said it in a sentence
           has gone. */}
@@ -763,7 +765,7 @@ export default function AiBridge() {
             size="sm"
             variant="outline"
             onClick={() => {
-              // Under Simple mode only the rows on screen are turned on; the
+              // Under Basic mode only the rows on screen are turned on; the
               // hidden ones keep their saved switch.
               const shown = new Set(visible.flatMap((r) => r.names));
               saveDisabledTools(simple ? disabled.filter((n) => !shown.has(n)) : []);
@@ -777,7 +779,7 @@ export default function AiBridge() {
 
       {/* Which rules the writing guide carries: the standard ones, or the
           person's own writing style. Needs the Writing Style module. */}
-      {writingOn && <WritingStyleCard />}
+      {writingOn && !simple && <WritingStyleCard />}
 
       </div>
 

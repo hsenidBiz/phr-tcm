@@ -219,11 +219,11 @@ pub struct BridgeSwitches {
     /// `BridgeContext::all_projects`). Not a write switch.
     #[serde(default)]
     pub all_projects: bool,
-    /// Auto Test's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+    /// Auto Test's Basic or Advanced mode (see `BridgeContext::autorun_mode`).
     /// Not a switch: the assistants only read it.
     #[serde(default)]
     pub autorun_mode: Option<crate::app_settings::AutorunMode>,
-    /// The app-wide Simple mode (see `BridgeContext::app_simple_mode`). Not a
+    /// The app-wide Basic mode (see `BridgeContext::app_simple_mode`). Not a
     /// switch: the assistants only read it.
     #[serde(default)]
     pub app_simple_mode: Option<bool>,
@@ -488,7 +488,7 @@ fn sync_files_after_push(
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     let key: SyncKey = (disabled_tools.clone(), working_dir.clone(), crate::modules::current());
     // The first push of a process always syncs (nothing is remembered yet),
-    // so Simple mode or a module switched while the bridge was not running
+    // so Basic mode or a module switched while the bridge was not running
     // (signed out: nothing is pushed then) is caught up at the first push.
     if sync_needed(&mut last, key) {
         crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());
@@ -518,12 +518,12 @@ fn sync_files_after_push(
 }
 
 /// What the command and agent files follow: the tools switched off (with the
-/// tools Simple mode hides added), the repository and the modules on.
+/// tools Basic mode hides added), the repository and the modules on.
 pub type SyncKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
 
 /// Whether the files must be written for `key`, given what was written last
 /// (and remember `key`). True for the first call of a process, and whenever
-/// the switched-off tools, the repository, the modules or Simple mode (which
+/// the switched-off tools, the repository, the modules or Basic mode (which
 /// is part of the tool list) moved.
 pub fn sync_needed(last: &mut Option<SyncKey>, key: SyncKey) -> bool {
     if last.as_ref() == Some(&key) {

@@ -149,10 +149,11 @@ export function sectionModule(section: string): Module | null {
   }
 }
 
-/** The screens Simple mode leaves out of the rail, the palette and the
- * Ctrl+number order. Nothing is deleted: turning Simple mode off brings them
- * back. */
+/** The screens Basic mode (internally "simple") leaves out of the rail, the
+ * palette and the Ctrl+number order. Nothing is deleted: turning Basic mode
+ * off brings them back. */
 export const SIMPLE_HIDDEN_SECTIONS: ReadonlySet<string> = new Set([
+  "manual",
   "import",
   "edit",
   "suites",
@@ -161,8 +162,8 @@ export const SIMPLE_HIDDEN_SECTIONS: ReadonlySet<string> = new Set([
   "playwright",
 ]);
 
-/** Whether a section is offered with these modules on (and, in Simple mode,
- * not one of the screens Simple mode hides). */
+/** Whether a section is offered with these modules on (and, in Basic mode,
+ * not one of the screens Basic mode hides). */
 export function sectionShown(
   section: string,
   modules: ReadonlySet<Module> = modulesSnapshot(),
@@ -175,23 +176,26 @@ export function sectionShown(
 
 /** Whether the App shell's redirect off a tab that is no longer offered
  * should fire right now. False until hydration settles, so a saved last tab
- * of an off-by-default module is not bounced to Manual Entry before Rust's
+ * of an off-by-default module is not bounced to Manual Entry (Run Tests in
+ * Basic mode) before Rust's
  * answer arrives (and a module that is on is never bounced at all). */
 export function shouldLeaveHidden(section: string, shown: boolean, hydrated: boolean): boolean {
   return hydrated && !shown && sectionModule(section) !== null;
 }
 
 /** Where the App shell's redirect sends a tab that is no longer offered, or
- * null to stay. Simple mode sends the screens it hides to Auto Test; a module
- * that is off sends to Manual Entry. Null until hydration has settled. */
+ * null to stay. Basic mode sends the screens it hides (Manual Entry included)
+ * to Auto Test, and a module that is off to Run Tests; with Basic mode off a
+ * module that is off sends to Manual Entry. Null until hydration has settled. */
 export function leaveTarget(
   section: string,
   shown: boolean,
   hydrated: boolean,
   simple: boolean,
-): "autorun" | "manual" | null {
+): "autorun" | "manual" | "run" | null {
   if (hydrated && simple && SIMPLE_HIDDEN_SECTIONS.has(section)) return "autorun";
-  return shouldLeaveHidden(section, shown, hydrated) ? "manual" : null;
+  if (!shouldLeaveHidden(section, shown, hydrated)) return null;
+  return simple ? "run" : "manual";
 }
 
 /** Tests only: back to none on and un-hydrated, without telling anyone. */

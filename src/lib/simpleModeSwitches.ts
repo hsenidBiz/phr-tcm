@@ -1,9 +1,9 @@
-// Simple mode keeps two switches on for every environment a person has not
+// Basic mode keeps two switches on for every environment a person has not
 // chosen them for: the API write switch and the Network tools. A person's own
 // choice is a marker (apiTemplates.ts, networkTools.ts), and a marker wins.
 //
-// Installs that predate Simple mode have their markers written once, so
-// turning Simple mode on never changes what they already had.
+// Installs that predate Basic mode have their markers written once, so
+// turning Basic mode on never changes what they already had.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
@@ -16,13 +16,13 @@ import { turnOnNetworkToolsWhereUnset } from "./networkTools";
 /** The key the app's settings are cached under (Settings, Background, ...). */
 const APP_SETTINGS_KEY = ["app-settings"] as const;
 
-/** Simple mode's own record that an environment existed before it did. Read
- * only by Simple mode: the switches' person-set markers stay a person's, so
+/** Basic mode's own record that an environment existed before it did. Read
+ * only by Basic mode: the switches' person-set markers stay a person's, so
  * nothing else that reads them (the Modules page's first Auto Test switch-on)
  * changes for an upgrade. */
 const BASELINE_BASE = "tcm-v2-simple-baseline";
 
-/** Record the given environments as ones Simple mode never switches on,
+/** Record the given environments as ones Basic mode never switches on,
  * leaving every switch and person-set marker alone. */
 export function markBaseline(envIds: string[]): void {
   try {
@@ -57,7 +57,7 @@ export function turnOnUnsetSwitches(envIds: string[]): {
 }
 
 /** Runs the one-time marker migration, then keeps the switches on for new
- * environments while Simple mode is on. Does nothing before the settings and
+ * environments while Basic mode is on. Does nothing before the settings and
  * environments have loaded. */
 export function useSimpleModeSwitches(): void {
   const qc = useQueryClient();

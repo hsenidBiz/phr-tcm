@@ -203,9 +203,9 @@ test("a saved Auto Test tab is kept when its module is on, and left once it is o
   expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
 });
 
-// Simple mode adds the five hidden screens to the redirect: a remembered one
+// Basic mode adds the five hidden screens to the redirect: a remembered one
 // opens Auto Test once both the modules and the setting have loaded.
-test("a remembered hidden screen opens Auto Test in Simple mode, and stays put when it is off", async () => {
+test("a remembered hidden screen opens Auto Test in Basic mode, and stays put when it is off", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   const prefs = JSON.stringify({ org: "acme", project: "proj", section: "import", pbi: null, workMode: false });
   localStorage.setItem("tcm-v2-prefs", prefs);
@@ -540,7 +540,7 @@ test("the bridge push carries the Auto Test mode the settings hold", async () =>
   );
 });
 
-test("the bridge push carries the app Simple mode the settings hold", async () => {
+test("the bridge push carries the app Basic mode the settings hold", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   localStorage.setItem("tcm-v2-prefs", JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }));
   localStorage.setItem("tcm-v2-tour-done", "yes");
@@ -3115,7 +3115,7 @@ test("in combined mode a PBI notice opens the PBI under the project the search n
   expect(storedPrefs().pbi).toMatchObject({ id: 77, project: "Payroll" });
 });
 
-test("a PBI notice opens Auto Test on that PBI in Simple mode", async () => {
+test("a PBI notice opens Auto Test on that PBI in Basic mode", async () => {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
   seedPbiNotification("Web");

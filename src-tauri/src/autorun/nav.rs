@@ -1653,27 +1653,27 @@ pub fn no_address(step: i32) -> String {
 }
 
 /// Whether scripts may open pages by address: the project's saved switch,
-/// and never while Auto Test is in Simple mode. The saved value is not
-/// changed by Simple, so Advanced brings the person's choice back. Every
+/// and never while Auto Test is in Basic mode. The saved value is not
+/// changed by Basic, so Advanced brings the person's choice back. Every
 /// reader of the switch goes through here.
 pub fn direct_urls_allowed(nav: &NavFile, simple: bool) -> bool {
     nav.direct_urls && !simple
 }
 
-/// Whether Auto Test is in Simple mode now: its own mode, or the app's Simple
-/// mode, which holds Auto Test in Simple.
+/// Whether Auto Test is in Basic mode now: its own mode, or the app's Basic
+/// mode, which holds Auto Test in Basic.
 pub fn simple_now() -> bool {
     let s = crate::app_settings::current();
     s.autorun_mode == Some(crate::app_settings::AutorunMode::Simple) || s.app_simple_mode == Some(true)
 }
 
-/// What `auto_run_set_direct_urls` answers while Auto Test is in Simple (the
+/// What `auto_run_set_direct_urls` answers while Auto Test is in Basic (the
 /// Areas dialog hides the switch there, so a person never sees it).
 pub const SIMPLE_NO_ADDRESS_CHANGE: &str = "Switch Auto Test to Advanced to change this.";
 
-/// The same refusal while the app's own Simple mode holds Auto Test in Simple:
+/// The same refusal while the app's own Basic mode holds Auto Test in Basic:
 /// Advanced is not available then, so the way out is the app setting.
-pub const APP_SIMPLE_NO_ADDRESS_CHANGE: &str = "Turn Simple mode off in Settings to change this.";
+pub const APP_SIMPLE_NO_ADDRESS_CHANGE: &str = "Turn Basic mode off in Settings to change this.";
 
 /// While the switch is off, a script with any `navigate` (absolute or
 /// relative) cannot be saved. Names the first case and step it finds.
