@@ -3,7 +3,8 @@
 //! browser. Reuse is refused whenever the case before could have left the
 //! browser in a state the next case should not inherit.
 
-use super::replay::{SIGN_IN_STEP, STOPPED_BEFORE_FINISHED};
+use super::lease::Held;
+use super::replay::{Browsers, SIGN_IN_STEP, STOPPED_BEFORE_FINISHED};
 use super::signin::SIGN_IN_STOPPED;
 use super::runner::AFTER_STOP;
 use super::{CaseRecord, CaseScript};
@@ -113,4 +114,21 @@ pub fn ended_from(record: &CaseRecord, script: &CaseScript, account: Option<&str
 /// The note on a case that used the browser the case before signed in.
 pub fn reused_detail(check_ms: u64) -> String {
     format!("used the browser the case before signed in (checked it was still signed in in {check_ms} ms)")
+}
+
+/// A signed-in browser left open after a case, for the next case on the same
+/// account. It owns the account's lease: the lease is held while the browser
+/// is kept and let go when it closes (`close_kept`).
+pub struct KeptBrowser<D> {
+    pub driver: D,
+    pub lease: Held,
+    pub ended: Ended,
+}
+
+/// Closes the kept browser, then lets its lease go. Nothing for `None`.
+pub async fn close_kept<B: Browsers>(browsers: &mut B, kept: &mut Option<KeptBrowser<B::D>>) {
+    if let Some(KeptBrowser { driver, lease, .. }) = kept.take() {
+        browsers.close(driver).await;
+        drop(lease);
+    }
 }
