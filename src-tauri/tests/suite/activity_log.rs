@@ -10,12 +10,15 @@ fn a_record_lands_in_todays_file_for_its_kind() {
     let _g = crate::serial::activity_log();
     let dir = tempfile::tempdir().unwrap();
     activity_log::init(dir.path().to_path_buf());
-    activity_log::record(Kind::Db, json!({ "sql": "SELECT 1" }));
-    let recs = crate::common::activity_records(dir.path(), "db");
+    // The log folder is process-wide and other modules' tests reach the
+    // database code without this lock, so a stray record of theirs can land
+    // in this folder: count only the one this test writes, by its marker.
+    let marker = "SELECT 'activity-log-test-marker'";
+    activity_log::record(Kind::Db, json!({ "sql": marker }));
+    let recs: Vec<_> = crate::common::activity_records(dir.path(), "db").into_iter().filter(|r| r["sql"] == marker).collect();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0]["sql"], "SELECT 1");
     assert!(recs[0]["at"].as_str().unwrap().len() >= 19);
-    assert!(crate::common::activity_records(dir.path(), "api").is_empty());
+    assert!(!crate::common::activity_records(dir.path(), "api").iter().any(|r| r["sql"] == marker));
 }
 
 #[test]
