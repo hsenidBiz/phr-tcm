@@ -338,13 +338,15 @@ fn v(s: &str) -> ListSeen {
 
 #[test]
 fn notice_due_follows_the_table() {
-    let cases: [(Option<ListSeen>, ListSeen, bool); 8] = [
+    let cases: [(Option<ListSeen>, ListSeen, bool); 10] = [
         (None, v("a"), false),
         (Some(v("a")), v("a"), false),
         (Some(v("a")), v("b"), true),
         (Some(v("a")), ListSeen::Down, true),
         (Some(ListSeen::Down), v("a"), true), // down_then_up_is_a_change
-        (Some(ListSeen::Unsupported), v("a"), false),
+        (Some(ListSeen::Unsupported), v("a"), true), // an old app replaced by a new one
+        (Some(ListSeen::Unsupported), ListSeen::Unsupported, false),
+        (Some(ListSeen::Unsupported), ListSeen::Down, false),
         (Some(v("a")), ListSeen::Unsupported, false),
         (Some(ListSeen::Down), ListSeen::Down, false),
     ];
@@ -423,12 +425,16 @@ fn reader(readings: Vec<Option<ListSeen>>, poll: Duration) -> (Watch, Calls) {
     (Watch { read, poll }, calls)
 }
 
-/// Input that gives its lines, then holds the end of the input until `calls` reaches `until` (or 10 s).
+/// When the held end of the input may come: given the reader's call count and what was written so far.
+type Done = Arc<dyn Fn(usize, &str) -> bool + Send + Sync>;
+
+/// Input that gives its lines, then holds the end of the input until `done` says so (or 10 s).
 struct HeldInput {
     data: Vec<u8>,
     pos: usize,
     calls: Calls,
-    until: usize,
+    out: Arc<Mutex<Vec<u8>>>,
+    done: Done,
 }
 
 impl Read for HeldInput {
@@ -440,49 +446,109 @@ impl Read for HeldInput {
             return Ok(n);
         }
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while self.calls.load(Ordering::SeqCst) < self.until && std::time::Instant::now() < deadline {
+        while std::time::Instant::now() < deadline {
+            let written = String::from_utf8_lossy(&self.out.lock().unwrap()).to_string();
+            if (self.done)(self.calls.load(Ordering::SeqCst), &written) {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(2));
         }
         Ok(0)
     }
 }
 
-fn serve_watched(lines: &[&str], watch: Watch, calls: Calls, until: usize) -> String {
-    let relay: SharedRelay = Arc::new(|_b: &str, _t: Duration| Ok((200, r#"{"reply":{"jsonrpc":"2.0","id":7,"result":{}}}"#.to_string())));
+/// `serve_lines_watching` over `lines` for an app of `version`: what was written, and the reader's call
+/// count at each moment the relay was asked (so a test can tell a reading came before the answer). `on_relay`
+/// runs when the relay is asked, as the app starts building its answer.
+fn serve_watched(
+    lines: &[&str],
+    version: &str,
+    watch: Watch,
+    calls: Calls,
+    on_relay: Arc<dyn Fn() + Send + Sync>,
+    done: Done,
+) -> (String, Vec<usize>) {
+    let at_relay = Arc::new(Mutex::new(Vec::<usize>::new()));
+    let relay: SharedRelay = {
+        let (calls, at_relay) = (calls.clone(), at_relay.clone());
+        Arc::new(move |_b: &str, _t: Duration| {
+            at_relay.lock().unwrap().push(calls.load(Ordering::SeqCst));
+            on_relay();
+            Ok((200, r#"{"reply":{"jsonrpc":"2.0","id":7,"result":{}}}"#.to_string()))
+        })
+    };
     let call: SharedCall = Arc::new(|_m: &str, _p: &str, _b: &str| Ok((200, "{}".to_string())));
     let out = Arc::new(Mutex::new(Vec::<u8>::new()));
     let data = format!("{}\n", lines.join("\n")).into_bytes();
-    let input = std::io::BufReader::new(HeldInput { data, pos: 0, calls, until });
-    mcp::serve_lines_watching(input, out.clone(), "1.0.0".to_string(), call, Arc::new(SessionBook::new()), Some(relay), Some(watch));
+    let input = std::io::BufReader::new(HeldInput { data, pos: 0, calls, out: out.clone(), done });
+    mcp::serve_lines_watching(input, out.clone(), version.to_string(), call, Arc::new(SessionBook::new()), Some(relay), Some(watch));
     let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
-    text
+    let at = at_relay.lock().unwrap().clone();
+    (text, at)
+}
+
+fn nothing() -> Arc<dyn Fn() + Send + Sync> {
+    Arc::new(|| {})
 }
 
 #[test]
 fn no_notice_before_initialize() {
     let (watch, calls) = reader(vec![Some(v("a")), Some(v("b"))], Duration::from_millis(5));
-    let out = serve_watched(&[LIST], watch, calls.clone(), 0);
-    std::thread::sleep(Duration::from_millis(50));
+    let (out, _) = serve_watched(&[LIST], "1.0.0", watch, calls.clone(), nothing(), Arc::new(|_, _| true));
     assert_eq!(calls.load(Ordering::SeqCst), 0, "the watcher started before an initialize was answered");
     assert!(!out.contains("list_changed"), "{out}");
 }
 
 #[test]
 fn a_change_after_initialize_is_announced_once() {
-    let (watch, calls) = reader(vec![Some(v("a")), Some(v("a")), Some(v("b"))], Duration::from_millis(5));
-    let out = serve_watched(&[INIT], watch, calls, 6);
+    let (watch, calls) = reader(vec![Some(v("a")), Some(v("a")), Some(v("a")), Some(v("b"))], Duration::from_millis(5));
+    let (out, _) = serve_watched(&[INIT], "1.0.0", watch, calls, nothing(), Arc::new(|n, w| n >= 12 && w.contains("list_changed")));
     assert_eq!(out.matches("notifications/tools/list_changed").count(), 1, "{out}");
     assert!(out.lines().all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()), "{out}");
 }
 
 #[test]
-fn a_tools_list_takes_a_reading_right_away() {
-    // The poll is a minute: the second reading can only be the one taken after the list was answered.
-    let (watch, calls) = reader(vec![Some(v("a")), Some(v("b"))], Duration::from_secs(60));
-    let out = serve_watched(&[INIT, LIST], watch, calls.clone(), 2);
-    assert!(calls.load(Ordering::SeqCst) >= 2, "no reading after the list");
-    assert!(!out.contains("list_changed"), "the list the client just fetched was announced: {out}");
+fn a_tools_list_takes_its_reading_before_it_is_answered() {
+    // The poll is a minute: the only reading after the first is the one taken for the list, and it must
+    // already be taken when the app is asked for the list.
+    let (watch, calls) = reader(vec![Some(v("a"))], Duration::from_secs(60));
+    let (out, at_relay) = serve_watched(&[INIT, LIST], "1.0.0", watch, calls, nothing(), Arc::new(|n, _| n >= 3));
+    assert_eq!(at_relay.len(), 1, "{out}");
+    assert!(at_relay[0] >= 2, "the list was asked for before its reading was taken: {at_relay:?}");
+    assert!(!out.contains("list_changed"), "{out}");
     assert!(out.contains("\"id\":7"), "the list was not answered: {out}");
+}
+
+#[test]
+fn a_change_while_the_list_is_built_is_announced_on_the_next_poll() {
+    // The app changes as it starts answering the list: the reading taken before it is stale, so the
+    // next poll tells the client instead of the change being recorded as seen.
+    let changed = Arc::new(AtomicBool::new(false));
+    let calls: Calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (c, k) = (changed.clone(), calls.clone());
+    let read: mcp::SharedListReader = Arc::new(move || {
+        k.fetch_add(1, Ordering::SeqCst);
+        Some(v(if c.load(Ordering::SeqCst) { "b" } else { "a" }))
+    });
+    let watch = Watch { read, poll: Duration::from_millis(5) };
+    let on_relay: Arc<dyn Fn() + Send + Sync> = Arc::new(move || changed.store(true, Ordering::SeqCst));
+    let (out, _) = serve_watched(&[INIT, LIST], "1.0.0", watch, calls, on_relay, Arc::new(|_, w| w.contains("list_changed")));
+    assert_eq!(out.matches("notifications/tools/list_changed").count(), 1, "{out}");
+    assert!(out.contains("\"id\":7"), "{out}");
+}
+
+#[test]
+fn the_version_warning_is_said_only_when_the_connector_answers_for_itself() {
+    let said = |reading: Option<ListSeen>| {
+        let (watch, calls) = reader(vec![reading], Duration::from_secs(60));
+        let (out, _) = serve_watched(&[INIT], "0.0.1", watch, calls, nothing(), Arc::new(|n, _| n >= 2));
+        let init: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+        init["result"]["instructions"].as_str().is_some_and(|s| s.contains("0.0.1"))
+    };
+    assert!(!said(Some(v("a"))), "the app relays: its list is the app's own");
+    assert!(said(Some(ListSeen::Unsupported)), "an older app is answered for locally");
+    assert!(said(Some(ListSeen::Down)));
+    assert!(said(None));
 }
 
 /// A one-answer server: reads a request, answers `status` with `body`; the thread returns the request line.

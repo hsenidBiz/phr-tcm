@@ -79,7 +79,6 @@ thread_local! {
     static RELAYED: std::cell::RefCell<Relayed> = const { std::cell::RefCell::new(Relayed::Own) };
 }
 
-/// Puts back what was in force before when it ends, panic included.
 /// Whose agent headers a bridge request on this thread carries.
 #[derive(Debug, Clone)]
 enum Relayed {
@@ -91,6 +90,7 @@ enum Relayed {
     Nobody,
 }
 
+/// Puts back what was in force before when it ends, panic included.
 struct RelayedGuard(Relayed);
 
 impl Drop for RelayedGuard {
@@ -3334,7 +3334,9 @@ pub enum ListSeen {
 /// cannot be watched never triggers one; going down or coming back counts as a change.
 pub fn notice_due(last: Option<&ListSeen>, now: &ListSeen) -> bool {
     match last {
-        None | Some(ListSeen::Unsupported) => false,
+        // An old app replaced by a new one: its tool list may differ from the one answered locally.
+        Some(ListSeen::Unsupported) => matches!(now, ListSeen::Version(_)),
+        None => false,
         Some(_) if *now == ListSeen::Unsupported => false,
         Some(last) => last != now,
     }
@@ -3385,13 +3387,13 @@ impl Watch {
     }
 }
 
-/// The watcher thread: records a first reading, then looks every `poll`. A `()` on `listed` means the
-/// client was just answered a `tools/list`, so the reading taken now is recorded without a notice. Ends when
-/// `listed` is dropped.
+/// The watcher thread: records a first reading, then looks every `poll`. A reading on `listed` was taken
+/// BEFORE a `tools/list` was answered, so it is recorded without a notice: a change after it is announced
+/// on the next poll, never lost. Ends when `listed` is dropped.
 fn run_watcher<W: Write>(
     watch: Watch,
     out: std::sync::Arc<std::sync::Mutex<W>>,
-    listed: std::sync::mpsc::Receiver<()>,
+    listed: std::sync::mpsc::Receiver<Option<ListSeen>>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     use std::sync::atomic::Ordering;
@@ -3400,9 +3402,9 @@ fn run_watcher<W: Write>(
     watch_step(&mut last, (watch.read)(), &out);
     loop {
         match listed.recv_timeout(watch.poll) {
-            Ok(()) => {
-                if let Some(now) = (watch.read)() {
-                    last = Some(now);
+            Ok(taken) => {
+                if taken.is_some() {
+                    last = taken;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -3538,8 +3540,11 @@ pub fn run_stdio_proxy() {
     let version = read_version();
     // stderr is the MCP client's log: the same sentence the assistant gets
     // in `instructions`, where a person reading the client's logs finds it.
-    if let Some(warning) = version_warning(PROXY_VERSION, &version) {
-        eprintln!("{warning}");
+    // Said only when this connector answers for itself: an app that relays gives its own list.
+    if !matches!(read_list(), Some(ListSeen::Version(_))) {
+        if let Some(warning) = version_warning(PROXY_VERSION, &version) {
+            eprintln!("{warning}");
+        }
     }
     let stdin = std::io::stdin();
     serve_lines_watching(
@@ -3687,7 +3692,7 @@ pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
     watch: Option<Watch>,
 ) {
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut listed: Option<std::sync::mpsc::Sender<()>> = None;
+    let mut listed: Option<std::sync::mpsc::Sender<Option<ListSeen>>> = None;
     let mut session = crate::ai_bridge::new_token();
     let version = std::sync::Arc::new(version);
     let in_flight = std::sync::Arc::new(InFlight::default());
@@ -3717,7 +3722,18 @@ pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
             session = crate::ai_bridge::new_token();
         }
         if !is_call {
-            if let Some(resp) = answer_line(&line, &version, &call, &book, &relay, &session) {
+            // The reading that goes with a list is taken BEFORE the list is answered, so a change that
+            // lands while it is built is announced on the next poll instead of being recorded as seen.
+            let before_list = match (method.as_deref(), &listed, &watch) {
+                (Some("tools/list"), Some(_), Some(watch)) => Some((watch.read)()),
+                _ => None,
+            };
+            // The "tools offered here are the connector's" warning is true only when the connector answers
+            // for itself: with an app that relays, the list is the app's own.
+            let relaying = method.as_deref() == Some("initialize")
+                && watch.as_ref().is_some_and(|w| matches!((w.read)(), Some(ListSeen::Version(_))));
+            let said = if relaying { PROXY_VERSION } else { version.as_str() };
+            if let Some(resp) = answer_line(&line, said, &call, &book, &relay, &session) {
                 write_response_line(&output, &resp);
             }
             match (method.as_deref(), &listed, &watch) {
@@ -3729,10 +3745,10 @@ pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
                         listed = Some(tx);
                     }
                 }
-                // The list the client was just answered is not announced again: the reply is written
-                // first, then the watcher records its reading.
                 (Some("tools/list"), Some(tx), _) => {
-                    let _ = tx.send(());
+                    if let Some(taken) = before_list {
+                        let _ = tx.send(taken);
+                    }
                 }
                 _ => {}
             }
@@ -3753,7 +3769,7 @@ pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
             answer_call_line(&line, id, &version, &call, &book, &relay, &session, &output);
         }
     }
-    in_flight.wait_idle();
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
     drop(listed);
+    in_flight.wait_idle();
 }
