@@ -3218,55 +3218,93 @@ pub fn tools_reply_or_saved_simple(
     }
 }
 
-/// How long the connector waits for the app's answer to one relayed message: a little past the bridge's
-/// own 300 s, so a slow tool call is answered by the app, not abandoned and then run again here.
+/// How long the connector waits for the app's answer to a relayed `tools/call`: a little past the
+/// bridge's own 300 s, so a slow tool call is answered by the app, not abandoned.
 pub const RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(310);
 
-/// What the connector sends the app for one message and gets back (status, body); the argument is the
-/// `{"session","message"}` JSON.
-pub type SharedRelay = std::sync::Arc<dyn Fn(&str) -> Result<(u16, String), String> + Send + Sync>;
+/// How long it waits for any other relayed request (`tools/list`, `ping`...): a hung app must not hold
+/// the connector's reader for minutes when the connector can answer these itself.
+pub const RELAY_QUICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Why a relay request failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayError {
+    /// The request certainly did not reach the app (no handshake, no connection).
+    NotSent(String),
+    /// It may have reached the app, and run.
+    MaySent(String),
+}
+
+/// What the connector sends the app for one message (the `{"session","message"}` JSON) with the time to
+/// wait, and gets back (status, body).
+pub type SharedRelay = std::sync::Arc<dyn Fn(&str, std::time::Duration) -> Result<(u16, String), RelayError> + Send + Sync>;
+
+/// What a `tools/call` is answered when the app did not confirm it finished.
+pub const CALL_UNCONFIRMED: &str =
+    "The app did not confirm this call finished. Check whether it took effect before running it again.";
+
+/// Statuses that mean the app refused the request before running anything: a stale token, an older app
+/// without the route, a body over the limit, a refused body or caller.
+fn refused_before_running(status: u16) -> bool {
+    matches!(status, 400 | 401 | 403 | 404 | 413)
+}
 
 /// Answers `msg` through the running app when it can, and itself (`local`) when it cannot. A message with
 /// no id is never answered and sends nothing; `initialize` is always the connector's own (the app would
 /// take the client's name for itself); anything else goes to `relay` with the connector's `session`. Only a
-/// 200 carrying a `reply` is used (a null reply is no answer); a transport error, any other status (an
-/// older app answers 404) or a body that is not that is answered by `local`.
+/// 200 carrying a `reply` is used (a null reply is no answer). Otherwise `local` answers - except a
+/// `tools/call` the app may have run: that is answered with an error, never run a second time.
 pub fn relay_or_local(
     msg: &str,
     session: &str,
-    relay: &dyn Fn(&str) -> Result<(u16, String), String>,
+    relay: &dyn Fn(&str, std::time::Duration) -> Result<(u16, String), RelayError>,
     local: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(msg) else {
         return local(msg);
     };
-    v.get("id")?;
+    let id = v.get("id")?.clone();
     if v["method"].as_str() == Some("initialize") {
         return local(msg);
     }
+    let is_call = v["method"].as_str() == Some("tools/call");
+    let name = v["method"].as_str().and_then(crate::mcp_relay::loggable).unwrap_or("?");
     let body = serde_json::json!({ "session": session, "message": v }).to_string();
-    let reply = match relay(&body) {
-        Ok((200, text)) => serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|mut r| r.get_mut("reply").map(serde_json::Value::take)),
-        _ => None,
+    let timeout = if is_call { RELAY_TIMEOUT } else { RELAY_QUICK_TIMEOUT };
+    // The failure: one word for the log, and whether the app may have run the message.
+    let failed: (&str, bool) = match relay(&body, timeout) {
+        Ok((200, text)) => match serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|mut r| r.get_mut("reply").map(serde_json::Value::take)) {
+            Some(serde_json::Value::Null) => return None,
+            Some(reply) => return Some(reply.to_string()),
+            None => ("unreadable", true),
+        },
+        Ok((status, _)) => ("status", !refused_before_running(status)),
+        Err(RelayError::NotSent(_)) => ("unreachable", false),
+        Err(RelayError::MaySent(_)) => ("failed", true),
     };
-    match reply {
-        Some(serde_json::Value::Null) => None,
-        Some(reply) => Some(reply.to_string()),
-        None => local(msg),
+    if is_call && failed.1 {
+        crate::applog::info(format!("mcp relay: call unconfirmed ({}) {name}", failed.0));
+        return Some(rpc_error(id, -32603, CALL_UNCONFIRMED));
     }
+    crate::applog::info(format!("mcp relay: answered locally ({}) {name}", failed.0));
+    local(msg)
 }
 
 /// One relayed message to the running app, the handshake read afresh each time so an app that restarted
 /// is found at its new port and token.
-pub fn relay_to_app(body: &str) -> Result<(u16, String), String> {
-    let hs: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(crate::ai_bridge::handshake_path())
-            .map_err(|_| "handshake file missing - is the app running?".to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let port = hs["port"].as_u64().ok_or("bad handshake file")? as u16;
-    let token = hs["token"].as_str().ok_or("bad handshake file")?;
-    send_to_bridge_within(port, token, "POST", crate::mcp_relay::RELAY_PATH, body, RELAY_TIMEOUT)
+pub fn relay_to_app(body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
+    relay_to_app_at(&crate::ai_bridge::handshake_path(), body, timeout)
+}
+
+/// `relay_to_app` reading the handshake at `handshake`.
+pub fn relay_to_app_at(handshake: &std::path::Path, body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
+    let not_sent = |why: &str| RelayError::NotSent(why.to_string());
+    let text = std::fs::read_to_string(handshake).map_err(|_| not_sent("handshake file missing - is the app running?"))?;
+    let hs: serde_json::Value = serde_json::from_str(&text).map_err(|_| not_sent("bad handshake file"))?;
+    let port = hs["port"].as_u64().ok_or_else(|| not_sent("bad handshake file"))? as u16;
+    let token = hs["token"].as_str().ok_or_else(|| not_sent("bad handshake file"))?;
+    send_to_bridge_typed(port, token, "POST", crate::mcp_relay::RELAY_PATH, body, timeout)
+        .map_err(|SendFailure(why, sent)| if sent { RelayError::MaySent(why) } else { RelayError::NotSent(why) })
 }
 
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
@@ -3310,7 +3348,26 @@ pub fn send_to_bridge_within(
     body: &str,
     timeout: std::time::Duration,
 ) -> Result<(u16, String), String> {
-    let client = reqwest::blocking::Client::builder().connect_timeout(timeout).build().map_err(|e| e.to_string())?;
+    send_to_bridge_typed(port, token, method, path, body, timeout).map_err(|e| e.0)
+}
+
+/// A send that failed: the message, and whether the request may have reached the app (false: it was
+/// certainly not sent - nothing was built, or no connection was made).
+pub struct SendFailure(pub String, pub bool);
+
+/// `send_to_bridge_within`, saying for a failure whether the request may have reached the app.
+pub fn send_to_bridge_typed(
+    port: u16,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<(u16, String), SendFailure> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(timeout.min(std::time::Duration::from_secs(10)))
+        .build()
+        .map_err(|e| SendFailure(e.to_string(), false))?;
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut req = match method {
         "POST" => client.post(&url).body(body.to_string()),
@@ -3344,9 +3401,9 @@ pub fn send_to_bridge_within(
         .header(PROXY_VERSION_HEADER, PROXY_VERSION)
         .timeout(timeout)
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| SendFailure(e.to_string(), !e.is_connect()))?;
     let status = resp.status().as_u16();
-    let text = resp.text().map_err(|e| e.to_string())?;
+    let text = resp.text().map_err(|e| SendFailure(e.to_string(), true))?;
     Ok((status, text))
 }
 

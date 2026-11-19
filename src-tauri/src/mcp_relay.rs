@@ -20,6 +20,10 @@ pub const NEEDS_ID: &str = "a relayed message needs the connector's id";
 /// What `GET /mcp/list-version` answers (503) when the tool list could not be read.
 pub const NO_TOOL_LIST: &str = "the tool list could not be read just now";
 
+/// What `answer` fails with AFTER the message ran: `route` answers it 500, so it is never taken for one of
+/// the 400s that refuse a request before anything runs.
+pub const ANSWER_NOT_JSON: &str = "the answer was not JSON";
+
 /// Most sessions kept at once; past that the least recently used goes.
 const MAX_SESSIONS: usize = 64;
 
@@ -57,7 +61,7 @@ fn valid_session(s: &str) -> bool {
 
 /// A name for the log: lowercase letters, digits, `_` and `/` up to 64, or None. Message text is the
 /// assistant's own, so anything else is not named.
-fn loggable(name: &str) -> Option<&str> {
+pub(crate) fn loggable(name: &str) -> Option<&str> {
     let shaped = !name.is_empty()
         && name.len() <= 64
         && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'/');
@@ -87,7 +91,7 @@ pub fn answer(body: &str, id: RelayedIdentity, call: BridgeCall) -> Result<Strin
     let text = message.to_string();
     let reply = mcp::with_relayed_identity(id, || mcp::handle_message_shared(&text, mcp::PROXY_VERSION, call, &book));
     let reply = match reply {
-        Some(r) => serde_json::from_str::<serde_json::Value>(&r).map_err(|_| "the answer was not JSON".to_string())?,
+        Some(r) => serde_json::from_str::<serde_json::Value>(&r).map_err(|_| ANSWER_NOT_JSON.to_string())?,
         None => serde_json::Value::Null,
     };
     Ok(serde_json::json!({ "reply": reply }).to_string())
@@ -135,7 +139,7 @@ pub fn route(
             let id = RelayedIdentity { agent_id, pid: agent.pid.map(|p| p.to_string()), client: agent.client.clone() };
             Some(match answer(body, id, &call) {
                 Ok(reply) => (200, reply),
-                Err(why) => (400, serde_json::json!({ "error": why }).to_string()),
+                Err(why) => (if why == ANSWER_NOT_JSON { 500 } else { 400 }, serde_json::json!({ "error": why }).to_string()),
             })
         }
         ("GET", LIST_VERSION_PATH) => Some(match list_version(&call) {

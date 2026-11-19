@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use v2_lib::mcp::{self, relay_or_local, SharedCall, SharedRelay};
+use v2_lib::mcp::{self, relay_or_local, RelayError, SharedCall, SharedRelay};
 use v2_lib::mcp_session::SessionBook;
 
 const LIST: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
@@ -31,7 +31,7 @@ fn a_relayed_answer_is_used_as_is() {
     let got = relay_or_local(
         LIST,
         "sess-1",
-        &|b: &str| {
+        &|b: &str, _t: Duration| {
             sent.lock().unwrap().push(b.to_string());
             Ok((200, body.clone()))
         },
@@ -50,27 +50,27 @@ fn a_relayed_answer_is_used_as_is() {
 
 #[test]
 fn a_null_reply_is_no_answer() {
-    let got = relay_or_local(LIST, "s", &|_b: &str| Ok((200, r#"{"reply":null}"#.to_string())), &|_m: &str| Some("local".into()));
+    let got = relay_or_local(LIST, "s", &|_b: &str, _t: Duration| Ok((200, r#"{"reply":null}"#.to_string())), &|_m: &str| Some("local".into()));
     assert_eq!(got, None);
 }
 
 #[test]
 fn an_app_without_the_route_is_answered_locally() {
-    let got = relay_or_local(LIST, "s", &|_b: &str| Ok((404, "unknown route".to_string())), &local_answer);
+    let got = relay_or_local(LIST, "s", &|_b: &str, _t: Duration| Ok((404, "unknown route".to_string())), &local_answer);
     assert_eq!(got, local_answer(LIST));
     assert!(got.is_some());
 }
 
 #[test]
 fn a_closed_app_is_answered_locally() {
-    let got = relay_or_local(LIST, "s", &|_b: &str| Err("handshake file missing - is the app running?".to_string()), &local_answer);
+    let got = relay_or_local(LIST, "s", &|_b: &str, _t: Duration| Err(RelayError::NotSent("handshake file missing - is the app running?".to_string())), &local_answer);
     assert_eq!(got, local_answer(LIST));
 }
 
 #[test]
 fn every_other_failure_is_answered_locally() {
     for (status, body) in [(413u16, "too large"), (500, "boom"), (503, "busy"), (400, "no"), (200, "not json"), (200, r#"{"other":1}"#)] {
-        let got = relay_or_local(LIST, "s", &|_b: &str| Ok((status, body.to_string())), &|_m: &str| Some("local".into()));
+        let got = relay_or_local(LIST, "s", &|_b: &str, _t: Duration| Ok((status, body.to_string())), &|_m: &str| Some("local".into()));
         assert_eq!(got.as_deref(), Some("local"), "{status} {body}");
     }
 }
@@ -85,7 +85,7 @@ fn notifications_are_not_relayed() {
         let got = relay_or_local(
             msg,
             "s",
-            &|_b: &str| {
+            &|_b: &str, _t: Duration| {
                 *relayed.lock().unwrap() += 1;
                 Ok((200, r#"{"reply":{"x":1}}"#.to_string()))
             },
@@ -102,7 +102,7 @@ fn initialize_is_never_relayed() {
     let got = relay_or_local(
         INIT,
         "s",
-        &|_b: &str| {
+        &|_b: &str, _t: Duration| {
             *relayed.lock().unwrap() += 1;
             Ok((200, r#"{"reply":{"x":1}}"#.to_string()))
         },
@@ -121,7 +121,7 @@ fn relay_timeout_is_not_shorter_than_the_bridge_timeout() {
 fn serve(lines: &[&str]) -> (String, Vec<serde_json::Value>) {
     let sent: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
     let log = sent.clone();
-    let relay: SharedRelay = Arc::new(move |b: &str| {
+    let relay: SharedRelay = Arc::new(move |b: &str, _t: Duration| {
         log.lock().unwrap().push(serde_json::from_str(b).unwrap());
         Ok((200, r#"{"reply":{"jsonrpc":"2.0","id":7,"result":{}}}"#.to_string()))
     });
@@ -215,52 +215,115 @@ impl Drop for Listener {
     }
 }
 
-/// The temp folder pointed at `dir` while it lives, put back on drop. `dir` is never deleted: another
-/// test that makes a temp folder meanwhile would find it inside this one.
-struct TempAt {
-    old: Vec<(&'static str, Option<std::ffi::OsString>)>,
-}
-
-impl TempAt {
-    fn new(dir: &std::path::Path) -> TempAt {
-        let old = ["TEMP", "TMP"].iter().map(|k| (*k, std::env::var_os(k))).collect();
-        for k in ["TEMP", "TMP"] {
-            std::env::set_var(k, dir);
-        }
-        TempAt { old }
-    }
-}
-
-impl Drop for TempAt {
-    fn drop(&mut self) {
-        for (k, v) in &self.old {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-    }
-}
-
 #[test]
 fn a_relay_after_an_app_restart_uses_the_new_handshake() {
-    let _lock = crate::serial::temp_dir_env();
-    let dir = std::env::temp_dir().join("tcm-relay-connector-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let _temp = TempAt::new(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let handshake = dir.path().join("handshake.json");
     let (a, b) = (Listener::start(), Listener::start());
-    let handshake = v2_lib::ai_bridge::handshake_path();
-    assert!(handshake.starts_with(&dir), "{handshake:?}");
     let write = |port: u16| std::fs::write(&handshake, format!(r#"{{"port":{port},"token":"tok","version":"1.0.0"}}"#)).unwrap();
     let body = r#"{"session":"s","message":{"jsonrpc":"2.0","id":1,"method":"tools/list"}}"#;
 
     write(a.port);
-    assert_eq!(mcp::relay_to_app(body).unwrap().0, 200);
+    assert_eq!(mcp::relay_to_app_at(&handshake, body, Duration::from_secs(10)).unwrap().0, 200);
     write(b.port);
-    assert_eq!(mcp::relay_to_app(body).unwrap().0, 200);
-    let _ = std::fs::remove_file(&handshake);
+    assert_eq!(mcp::relay_to_app_at(&handshake, body, Duration::from_secs(10)).unwrap().0, 200);
 
     assert_eq!(a.hits.lock().unwrap().len(), 1);
     assert_eq!(b.hits.lock().unwrap().len(), 1);
     assert!(b.hits.lock().unwrap()[0].starts_with("POST /mcp "), "{:?}", b.hits.lock().unwrap());
+}
+
+#[test]
+fn a_missing_handshake_and_a_refused_connection_are_not_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let handshake = dir.path().join("handshake.json");
+    let body = r#"{"session":"s","message":{}}"#;
+    assert!(matches!(mcp::relay_to_app_at(&handshake, body, Duration::from_secs(2)), Err(RelayError::NotSent(_))));
+    // A port nothing listens on: bind, note the port, close.
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    std::fs::write(&handshake, format!(r#"{{"port":{port},"token":"tok"}}"#)).unwrap();
+    let got = mcp::relay_to_app_at(&handshake, body, Duration::from_secs(30));
+    assert!(matches!(got, Err(RelayError::NotSent(_))), "{got:?}");
+}
+
+#[test]
+fn a_silent_app_is_a_may_have_run_failure() {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap();
+    let handshake = dir.path().join("handshake.json");
+    std::fs::write(&handshake, format!(r#"{{"port":{port},"token":"tok"}}"#)).unwrap();
+    let got = mcp::relay_to_app_at(&handshake, r#"{"session":"s","message":{}}"#, Duration::from_millis(300));
+    assert!(matches!(got, Err(RelayError::MaySent(_))), "{got:?}");
+    drop(l);
+}
+
+const CALL: &str = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"save_setup","arguments":{}}}"#;
+
+/// What `relay_or_local` does with `CALL` when the relay answers `answer`: its reply, and whether `local` ran.
+fn call_with(answer: Result<(u16, String), RelayError>) -> (Option<serde_json::Value>, bool) {
+    let local_ran = Mutex::new(false);
+    let got = relay_or_local(CALL, "s", &|_b: &str, _t: Duration| answer.clone(), &|_m: &str| {
+        *local_ran.lock().unwrap() = true;
+        Some("local".into())
+    });
+    let ran = *local_ran.lock().unwrap();
+    (got.and_then(|g| serde_json::from_str(&g).ok()), ran)
+}
+
+#[test]
+fn a_call_the_app_may_have_run_is_answered_with_an_error_not_run_again() {
+    for answer in [
+        Err(RelayError::MaySent("operation timed out".into())),
+        Ok((500, "boom".to_string())),
+        Ok((503, "busy".to_string())),
+        Ok((200, "not json".to_string())),
+        Ok((200, r#"{"other":1}"#.to_string())),
+        Ok((418, "x".to_string())),
+    ] {
+        let (reply, local_ran) = call_with(answer.clone());
+        assert!(!local_ran, "{answer:?}");
+        let reply = reply.unwrap_or_else(|| panic!("{answer:?}"));
+        assert_eq!(reply["id"], 9, "{answer:?}");
+        assert_eq!(reply["error"]["message"], mcp::CALL_UNCONFIRMED);
+        assert!(!reply.to_string().contains("http"), "{reply}");
+    }
+}
+
+#[test]
+fn a_call_the_app_certainly_did_not_run_is_answered_locally() {
+    for answer in [
+        Err(RelayError::NotSent("handshake file missing".into())),
+        Ok((404, "unknown route".to_string())),
+        Ok((401, "x".to_string())),
+        Ok((403, "x".to_string())),
+        Ok((413, "x".to_string())),
+        Ok((400, r#"{"error":"the relay needs a message"}"#.to_string())),
+    ] {
+        let (reply, local_ran) = call_with(answer.clone());
+        assert!(local_ran, "{answer:?}");
+        assert_eq!(reply, None, "{answer:?}"); // "local" is not JSON; it only shows local answered
+    }
+}
+
+#[test]
+fn a_list_is_still_answered_locally_whatever_went_wrong() {
+    for answer in [Err(RelayError::MaySent("timed out".into())), Ok((500, "boom".to_string())), Ok((200, "x".to_string()))] {
+        let got = relay_or_local(LIST, "s", &|_b: &str, _t: Duration| answer.clone(), &|_m: &str| Some("local".into()));
+        assert_eq!(got.as_deref(), Some("local"), "{answer:?}");
+    }
+}
+
+#[test]
+fn a_call_waits_long_and_everything_else_briefly() {
+    assert_eq!(mcp::RELAY_QUICK_TIMEOUT, Duration::from_secs(10));
+    assert!(mcp::RELAY_QUICK_TIMEOUT < mcp::RELAY_TIMEOUT);
+    for (msg, want) in [(CALL, mcp::RELAY_TIMEOUT), (LIST, mcp::RELAY_QUICK_TIMEOUT), (r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#, mcp::RELAY_QUICK_TIMEOUT)] {
+        let seen = Mutex::new(None);
+        relay_or_local(msg, "s", &|_b: &str, t: Duration| {
+            *seen.lock().unwrap() = Some(t);
+            Ok((200, r#"{"reply":null}"#.to_string()))
+        }, &|_m: &str| None);
+        assert_eq!(*seen.lock().unwrap(), Some(want), "{msg}");
+    }
 }
