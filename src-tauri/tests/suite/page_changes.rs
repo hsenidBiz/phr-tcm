@@ -69,6 +69,88 @@ fn an_ancestor_is_printed_once_for_two_changes_under_it() {
     assert_eq!(text.lines().filter(|l| l.starts_with('+') || l.starts_with('-')).count(), 4);
 }
 
+/// Past `MAX_SIDE` (4000) lines on a side, once the common head and tail are
+/// set aside, nothing is aligned: every line left on either side is marked.
+fn rows(n: usize, first: &str, last: &str) -> Vec<String> {
+    let mut lines = v(&["RootWebArea \"x\"", " main \"\""]);
+    lines.push(format!("  button \"{first}\""));
+    lines.extend((1..n - 1).map(|i| format!("  button \"Do {i}\"")));
+    lines.push(format!("  button \"{last}\""));
+    lines
+}
+
+#[test]
+fn a_side_past_the_cutoff_marks_every_line_between_head_and_tail() {
+    // 4000 lines a side: aligned, so only the two edited ends differ.
+    let (old, new) = (rows(4000, "A", "Z"), rows(4000, "A2", "Z2"));
+    let changes = diff(&old, &new);
+    assert_eq!(changes.iter().filter(|c| c.marker == '-').count(), 2);
+    assert_eq!(changes.iter().filter(|c| c.marker == '+').count(), 2);
+    // 4001 lines a side: the same edit marks the whole middle.
+    let (old, new) = (rows(4001, "A", "Z"), rows(4001, "A2", "Z2"));
+    let changes = diff(&old, &new);
+    assert_eq!(changes.iter().filter(|c| c.marker == '-').count(), 4001);
+    assert_eq!(changes.iter().filter(|c| c.marker == '+').count(), 4001);
+    // Either side alone is enough.
+    let few = v(&["RootWebArea \"x\"", " main \"\"", "  button \"Only\""]);
+    let changes = diff(&old, &few);
+    assert_eq!(changes.iter().filter(|c| c.marker == '-').count(), 4001);
+    assert_eq!(changes.iter().filter(|c| c.marker == '+').count(), 1);
+    let changes = diff(&few, &new);
+    assert_eq!(changes.iter().filter(|c| c.marker == '-').count(), 1);
+    assert_eq!(changes.iter().filter(|c| c.marker == '+').count(), 4001);
+}
+
+#[tokio::test]
+async fn a_page_past_the_cutoff_answers_the_usual_page() {
+    let _g = serial::page_menu();
+    page_compact::forget(SlotNo(3));
+    let a = names(4001);
+    let mut b = a.clone();
+    b[0] = "First".into();
+    b[4000] = "Last".into();
+    read(Mode::Changes, "https://h/p", &buttons(&a), 120).await;
+    let second = read(Mode::Changes, "https://h/p", &buttons(&b), 120).await;
+    // Two edited ends would be a short changes answer if they were aligned.
+    assert_eq!(second.text, render_frames_read(&buttons(&b), &[], 120).text);
+    assert!(!second.text.starts_with(CHANGES_HEADER), "{}", second.text);
+    page_compact::forget(SlotNo(3));
+}
+
+#[test]
+fn a_line_that_moves_to_another_container_is_under_its_new_parent() {
+    let old = v(&["RootWebArea \"x\"", " list \"A\"", "  item \"x\"", " list \"B\"", "  item \"y\""]);
+    let new = v(&["RootWebArea \"x\"", " list \"A\"", " list \"B\"", "  item \"y\"", "  item \"x\""]);
+    let want = [
+        CHANGES_HEADER,
+        " RootWebArea \"x\"",
+        "  list \"A\"",
+        "-  item \"x\"",
+        "  list \"B\"",
+        "+  item \"x\"",
+    ]
+    .join("\n");
+    assert_eq!(render(&diff(&old, &new)), want);
+}
+
+/// Two containers that read the same: the line moved from the first to the
+/// second must not look as if it stayed in the first.
+#[test]
+fn a_move_between_identical_containers_is_under_each_container() {
+    let old = v(&["RootWebArea \"x\"", " group \"Row\"", "  button \"Move\"", " group \"Row\"", "  button \"Stay\""]);
+    let new = v(&["RootWebArea \"x\"", " group \"Row\"", " group \"Row\"", "  button \"Stay\"", "  button \"Move\""]);
+    let want = [
+        CHANGES_HEADER,
+        " RootWebArea \"x\"",
+        "  group \"Row\"",
+        "-  button \"Move\"",
+        "  group \"Row\"",
+        "+  button \"Move\"",
+    ]
+    .join("\n");
+    assert_eq!(render(&diff(&old, &new)), want);
+}
+
 #[test]
 fn memory_is_per_slot_and_reader_and_forget_clears_it() {
     let _g = serial::page_menu();

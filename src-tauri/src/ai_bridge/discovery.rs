@@ -1121,18 +1121,59 @@ pub(crate) fn batch_detail(detail: &str) -> String {
 pub(crate) fn names_an_earlier_answer(detail: &str) -> bool {
     use crate::autorun::{refusals::APP_REFUSED, runner::{AFTER_EARLIER, PAGE_SHOWED}};
     detail.find(AFTER_EARLIER).is_some_and(|i| detail[i..].contains(PAGE_SHOWED) || detail[i..].contains(APP_REFUSED))
+        || refused_after_it_ended_by(detail)
+}
+
+const REFUSED_PREFIX: &str = "the app refused ";
+const ENDED_SUFFIX: &str = " after it ended";
+
+/// A `fill_form` step's failure detail when the app refused one of its fields
+/// after the field had ended: the step is stopped by that answer, and says so.
+fn refused_after_it_ended(field: &str) -> String {
+    format!("{REFUSED_PREFIX}{field}{ENDED_SUFFIX}")
+}
+
+/// Is `detail` what `refused_after_it_ended` says?
+fn refused_after_it_ended_by(detail: &str) -> bool {
+    detail.starts_with(REFUSED_PREFIX) && detail.ends_with(ENDED_SUFFIX)
 }
 
 /// Said after a batch stopped at action `failed` (from 0): the last action
-/// before it that the page answered with a message, as the likelier cause.
-/// Nothing when the failed action has a refusal of its own, or its detail
-/// already names an earlier action's answer.
-pub(crate) fn points_back(actions: &[crate::browser::actions::Action], heard: &Heard, failed: usize, detail: &str) -> Option<String> {
+/// (or field of a `fill_form`) before it that the page answered with a
+/// message, as the likelier cause. Nothing when the failed action has a
+/// refusal of its own, or its detail already names an answer (an earlier
+/// action's, or the refusal that stopped a form).
+pub(crate) fn points_back(
+    actions: &[crate::browser::actions::Action],
+    rows: &[Row],
+    heard: &Heard,
+    failed: usize,
+    detail: &str,
+) -> Option<String> {
     if !heard.of(failed).refused.is_empty() || names_an_earlier_answer(detail) {
         return None;
     }
-    let (k, said) = (0..failed).rev().map(|k| (k, heard.of(k).said)).find(|(_, said)| !said.is_empty())?;
-    let what = actions.get(k).map(describe_action).unwrap_or_default();
+    // What ran before the failed step: the step (from 0), the field when it
+    // was a form's, and what the page answered it; in the order it ran.
+    let mut answered: Vec<(usize, Option<&str>, Vec<crate::browser::page_messages::PageMessage>)> = Vec::new();
+    for row in rows {
+        match row {
+            Row::Ran(k, _) if *k < failed => answered.push((*k, None, heard.of(*k).said)),
+            Row::Form(form) if form.at < failed => {
+                for field in &form.fields {
+                    if let FieldRow::Ran { label, idx, .. } = field {
+                        answered.push((form.at, Some(label.as_str()), heard.of(*idx).said));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let (k, field, said) = answered.into_iter().rev().find(|(_, _, said)| !said.is_empty())?;
+    let mut what = actions.get(k).map(describe_action).unwrap_or_default();
+    if let Some(field) = field {
+        what = format!("{what}, field \"{field}\"");
+    }
     Some(format!("After action {} ({what}) {}.", k + 1, crate::autorun::runner::page_showed_note(&said)))
 }
 
@@ -1361,6 +1402,9 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
 /// of the answer when `page` is false (`"page": false`): it is still read,
 /// and what it shows recorded as seen, and a last line says where to read
 /// it (`PAGE_LEFT_OUT`).
+///
+/// A call already inside a `CALL_STARTED` scope keeps that start: its budget
+/// is the outer one's.
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -1377,9 +1421,11 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
     let stood = sign_in_stands_now(slot, root, organization, project).await;
+    // A call that has already begun keeps its own start.
+    let began = crate::autorun::action_help::CALL_STARTED.try_with(|at| *at).unwrap_or_else(|_| std::time::Instant::now());
     let answer = crate::autorun::action_help::CALL_STARTED
         .scope(
-            std::time::Instant::now(),
+            began,
             discover_actions_heard(
                 slot,
                 root,
@@ -1560,12 +1606,12 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
         heard.look_again(b.parts().driver).await;
     }
     let mut lines = batch_rows(actions, &rows, heard);
-    let back = stopped_at.and_then(|(i, detail)| points_back(actions, heard, i, &detail));
+    let back = stopped_at.and_then(|(i, detail)| points_back(actions, &rows, heard, i, &detail));
     match (refused_after, ran < actions.len(), back) {
         (Some((k, field, n)), _, _) => {
             let mut what = actions.get(k).map(describe_action).unwrap_or_default();
             if let Some(field) = field {
-                what = format!("{what}, field {field}");
+                what = format!("{what}, field \"{field}\"");
             }
             lines.push(format!("Stopped: the app refused action {} ({what}) after it ended: {n} not run.", k + 1));
         }
@@ -1709,9 +1755,9 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
                 if let Some(refused) = refused {
                     out.row
                         .tail
-                        .push(format!("Stopped: the app refused {refused} after it ended: {} not run.", fields_count(total - k)));
+                        .push(format!("Stopped: the app refused \"{refused}\" after it ended: {} not run.", fields_count(total - k)));
                     out.failed = true;
-                    out.detail = format!("the app refused {refused} after it ended");
+                    out.detail = refused_after_it_ended(&refused);
                     break;
                 }
             }
@@ -1720,10 +1766,12 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
             out.row.fields.push(FieldRow::Said(format!("{label}: failed: {}", no_answer(at + 1, CALL_BUDGET_MS / 1000))));
             out.failed = true;
             out.stopped = Some((504, String::new()));
+            stop_here(&mut out, total - k - 1);
             break;
         }
         let Some(browser) = slot.as_mut() else {
             out.stopped = Some((409, NO_DISCOVERY.to_string()));
+            stop_here(&mut out, total - k);
             break;
         };
         let p = browser.parts();
@@ -1734,6 +1782,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
                 out.failed = true;
                 if browser_is_gone(&e) {
                     out.stopped = Some((503, e.to_string()));
+                    stop_here(&mut out, total - k - 1);
                     break;
                 }
                 if out.detail.is_empty() {
@@ -1782,6 +1831,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
             }
             if said_browser_failed(&(status, body.clone())) || body == NO_DISCOVERY {
                 out.stopped = Some((status, body));
+                stop_here(&mut out, total - k - 1);
                 break;
             }
             if stop_on_failure {
@@ -1799,6 +1849,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
             out.row.fields.push(FieldRow::Ran { label: label.clone(), idx, action, v });
             out.failed = true;
             out.stopped = Some((504, String::new()));
+            stop_here(&mut out, total - k - 1);
             break;
         }
         if ok {

@@ -62,8 +62,9 @@ enum Op {
 }
 
 /// The lines gone from `old` and new in `new`, in page order, gone before new
-/// within a run.
-fn align(old: &[String], new: &[String]) -> Vec<Op> {
+/// within a run, and for each line of `old` the line of `new` it was matched
+/// with (none for a line that is gone).
+fn align(old: &[String], new: &[String]) -> (Vec<Op>, Vec<Option<usize>>) {
     let mut head = 0;
     while head < old.len() && head < new.len() && old[head] == new[head] {
         head += 1;
@@ -74,11 +75,18 @@ fn align(old: &[String], new: &[String]) -> Vec<Op> {
         ne -= 1;
     }
     let (n, m) = (oe - head, ne - head);
+    let mut matched: Vec<Option<usize>> = vec![None; old.len()];
+    for (k, slot) in matched.iter_mut().enumerate().take(head) {
+        *slot = Some(k);
+    }
+    for k in 0..old.len() - oe {
+        matched[oe + k] = Some(ne + k);
+    }
     let mut ops = Vec::new();
     if n > MAX_SIDE || m > MAX_SIDE {
         ops.extend((head..oe).map(Op::Gone));
         ops.extend((head..ne).map(Op::New));
-        return ops;
+        return (ops, matched);
     }
     // lcs[i][j]: the longest common run of old[head+i..oe] and new[head+j..ne].
     let w = m + 1;
@@ -95,6 +103,7 @@ fn align(old: &[String], new: &[String]) -> Vec<Op> {
     let (mut i, mut j) = (0, 0);
     while i < n || j < m {
         if i < n && j < m && old[head + i] == new[head + j] {
+            matched[head + i] = Some(head + j);
             i += 1;
             j += 1;
         } else if i < n && (j == m || lcs[(i + 1) * w + j] >= lcs[i * w + j + 1]) {
@@ -105,7 +114,7 @@ fn align(old: &[String], new: &[String]) -> Vec<Op> {
             j += 1;
         }
     }
-    ops
+    (ops, matched)
 }
 
 /// A line as printed: which page and line it came from, and its text.
@@ -115,13 +124,25 @@ struct Shown {
     text: String,
 }
 
+/// Is `a`, printed before, the line `b` is: the very same line, or - one from
+/// each page - two that `align` matched with each other (`matched`: for each
+/// line of the old page, the new line it was matched with).
+fn is_same_line(a: &Shown, b: &Shown, matched: &[Option<usize>]) -> bool {
+    match (a.gone, b.gone) {
+        (x, y) if x == y => a.index == b.index,
+        (true, false) => matched.get(a.index).copied().flatten() == Some(b.index),
+        _ => matched.get(b.index).copied().flatten() == Some(a.index),
+    }
+}
+
 /// The changed lines between `old` and `new`, each under its unmarked
 /// ancestors (each ancestor once), in page order. Empty when nothing changed.
 pub fn diff(old: &[String], new: &[String]) -> Vec<Change> {
     let mut out = Vec::new();
     // The chain of lines the last change was printed under, itself included.
     let mut chain: Vec<Shown> = Vec::new();
-    for op in align(old, new) {
+    let (ops, matched) = align(old, new);
+    for op in ops {
         let (gone, index, lines) = match op {
             Op::Gone(i) => (true, i, old),
             Op::New(j) => (false, j, new),
@@ -131,13 +152,10 @@ pub fn diff(old: &[String], new: &[String]) -> Vec<Change> {
             .map(|a| Shown { gone, index: a, text: lines[a].clone() })
             .collect();
         // Skip what the previous change already printed: the same line, or
-        // the same text at the same depth when it came from the other page.
+        // the line of the other page that was matched with it (never one that
+        // only reads the same: two containers can).
         let mut same = 0;
-        while same < want.len()
-            && same < chain.len()
-            && ((chain[same].gone == want[same].gone && chain[same].index == want[same].index)
-                || (chain[same].gone != want[same].gone && chain[same].text == want[same].text))
-        {
+        while same < want.len() && same < chain.len() && is_same_line(&chain[same], &want[same], &matched) {
             same += 1;
         }
         for a in &want[same..] {

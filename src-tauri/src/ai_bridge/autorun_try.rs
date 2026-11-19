@@ -688,6 +688,7 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
         .await;
         if status != 200 {
             // Refused, or the browser failed: nothing after this can run.
+            lines.push(format!("   {label}: failed: {}", one_short_line(&text)));
             return (status, with_fill_form_json(with_extras(text, &extras), &lines, &ran));
         }
         if text.starts_with("ok") {
@@ -713,10 +714,20 @@ pub async fn try_fill_form<D: crate::browser::cdp::Driver>(
     (200, with_fill_form_json(with_extras(head, &extras), &lines, &ran))
 }
 
-/// `answer` with the lines earlier fields said after their first line.
+/// `answer` with the lines earlier fields said after their first line, in
+/// field order: they come before any line the answer's own field said after
+/// its first.
 fn with_extras(answer: String, extras: &[String]) -> String {
-    extras.iter().fold(answer, |a, line| format!("{a}
-{line}"))
+    let (first, own) = match answer.split_once('\n') {
+        Some((first, own)) => (first, Some(own)),
+        None => (answer.as_str(), None),
+    };
+    let mut out = extras.iter().fold(first.to_string(), |a, line| format!("{a}\n{line}"));
+    if let Some(own) = own {
+        out.push('\n');
+        out.push_str(own);
+    }
+    out
 }
 
 /// `answer` with the `fill_form:` line after it.
