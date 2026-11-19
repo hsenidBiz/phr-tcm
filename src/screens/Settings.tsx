@@ -220,7 +220,7 @@ export default function Settings({
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
-  // Simple mode has no Modules page: every module is on, and nothing offers it.
+  // Basic mode has no Modules page: every module is on, and nothing offers it.
   const simple = useAppSimpleMode().on;
   const [modulesOpen, setModulesOpen] = useState(startOnModules);
   const autoRunOn = useModule("auto_run");
@@ -231,8 +231,8 @@ export default function Settings({
     onFillChange?.(showModules);
     return () => onFillChange?.(false);
   }, [showModules, onFillChange]);
-  // A Modules request left over from before Simple mode must not open the
-  // page when Simple mode is turned off again.
+  // A Modules request left over from before Basic mode must not open the
+  // page when Basic mode is turned off again.
   useEffect(() => {
     if (simple) setModulesOpen(false);
   }, [simple]);
@@ -995,8 +995,8 @@ export default function Settings({
         </SettingRow>
         <SettingRow
           asLabel
-          name="Simple mode"
-          description="Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates."
+          name="Basic mode"
+          description="Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style and Working repositories cards in AI Bridge. Everything keeps working, and your assistant can still use API Templates."
           control={
             <Switch
               checked={appSettings.data?.app_simple_mode ?? false}
@@ -1004,13 +1004,13 @@ export default function Settings({
               title={runGoing ? "Wait for the Auto Test run to finish." : undefined}
               className="disabled:pointer-events-auto"
               onCheckedChange={(on) => void setSimple(on)}
-              ariaLabel="Simple mode"
+              ariaLabel="Basic mode"
             />
           }
         >
           {simpleNotOn.length > 0 && (
             <p role="alert" className="text-xs text-danger">
-              Could not switch on: {simpleNotOn.join(", ")}. Turn Simple mode off and on to try again.
+              Could not switch on: {simpleNotOn.join(", ")}. Turn Basic mode off and on to try again.
             </p>
           )}
         </SettingRow>

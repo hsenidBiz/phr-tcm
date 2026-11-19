@@ -58,7 +58,7 @@ const update = (key: string[], v: unknown) =>
     await new Promise((r) => setTimeout(r, 0));
   });
 
-test("markBaseline writes only Simple mode's own marker and leaves the switches and person-set markers alone", () => {
+test("markBaseline writes only Basic mode's own marker and leaves the switches and person-set markers alone", () => {
   localStorage.setItem("tcm-v2-api-writes:a", "1");
   markBaseline(["a", "b"]);
   expect(localStorage.getItem("tcm-v2-simple-baseline:a")).toBe("1");
@@ -119,7 +119,7 @@ test("a new install turns both switches on for Default", async () => {
   expect(setSwitchMarkersMigrated).not.toHaveBeenCalled();
 });
 
-test("with Simple mode off a new environment gets nothing switched on", async () => {
+test("with Basic mode off a new environment gets nothing switched on", async () => {
   mount(settings({ app_simple_mode: false }), ["A"]);
   await update(ENVS, list("A", "C"));
   expect(api("C")).toBeNull();

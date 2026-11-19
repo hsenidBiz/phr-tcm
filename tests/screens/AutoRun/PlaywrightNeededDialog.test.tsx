@@ -165,7 +165,7 @@ for (const on of [true, false]) {
   });
 }
 
-test("with the module off, the dialog offers Open Modules; in Simple mode it offers neither the button nor its line", async () => {
+test("with the module off, the dialog offers Open Modules; in Basic mode it offers neither the button nor its line", async () => {
   setModulesForTest([]);
   answer(false);
   const onOpenModules = vi.fn();
@@ -184,7 +184,7 @@ test("with the module off, the dialog offers Open Modules; in Simple mode it off
   expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
 });
 
-test("in Simple mode the Playwright tab is hidden, so the dialog does not offer to open it", async () => {
+test("in Basic mode the Playwright tab is hidden, so the dialog does not offer to open it", async () => {
   setModulesForTest(["playwright"]);
   setAppSimpleModeForTest(true);
   answer(false);
@@ -192,6 +192,6 @@ test("in Simple mode the Playwright tab is hidden, so the dialog does not offer 
   mount(<Host onOpenPlaywright={onOpenPlaywright} />);
   await screen.findByRole("dialog", { name: "Playwright is needed" });
   expect(screen.queryByRole("button", { name: "Open the Playwright tab" })).not.toBeInTheDocument();
-  expect(screen.getByText("Turn Simple mode off in Settings to set one.")).toBeInTheDocument();
+  expect(screen.getByText("Turn Basic mode off in Settings to set one.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
 });

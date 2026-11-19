@@ -92,7 +92,7 @@ export default function CaseScreens({
         <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
         {section === "ai" && <BridgeStatusBadge />}
         {section === "playwright" && <SpecsStatusPill />}
-        {/* Auto Test's Simple/Advanced switch rides in the title row, at the right. */}
+        {/* Auto Test's Basic/Advanced switch rides in the title row, at the right. */}
         {section === "autorun" && modules.has("auto_run") && <div className="ml-auto"><AutoRunModeSwitch /></div>}
         {TITLE_NOTES[section] && (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">

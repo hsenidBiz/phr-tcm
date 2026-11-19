@@ -114,10 +114,10 @@ fn the_guide_teaches_locators_and_forbids_pauses() {
 #[test]
 fn the_guide_tells_assistants_what_simple_mode_hides() {
     let g = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(g.contains("## Simple mode"), "the guide needs its Simple mode section");
+    assert!(g.contains("## Basic mode"), "the guide needs its Basic mode section");
     assert!(
         g.contains("do not send them to Discovery, Components, Fixtures or the sign-in recipe"),
-        "an assistant must not send a Simple person to a hidden control"
+        "an assistant must not send a Basic person to a hidden control"
     );
     assert!(g.contains("autorun_mode") && g.contains("`get_current_pbi` also says"), "the guide names where an assistant reads the mode");
 }

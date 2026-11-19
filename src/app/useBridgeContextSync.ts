@@ -77,7 +77,7 @@ export function useBridgeContextSync({
   // until the settings have answered.
   const { mode: autorunModeNow, loading: autorunModeLoading } = useAutoRunMode();
   const autorunMode = autorunModeLoading ? null : autorunModeNow;
-  // The app-wide Simple mode, read-only for the assistant the same way.
+  // The app-wide Basic mode, read-only for the assistant the same way.
   const { on: appSimpleOn, loading: appSimpleLoading } = useAppSimpleMode();
   const appSimpleMode = appSimpleLoading ? null : appSimpleOn;
   // The switches above are the ACTIVE environment's, and every push

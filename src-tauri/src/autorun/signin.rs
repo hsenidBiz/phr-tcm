@@ -391,7 +391,7 @@ const PENDING_WORDS: &str = "the site may now expect the other test password; ch
 /// it. Names the switch, never a password.
 pub const RESET_SWITCH_HINT: &str = "to let the app reset it, mark the environment as a test environment and turn on Reset expired passwords in the Environments dialog";
 
-/// The same hint while the app's Simple mode is on: the switch is hidden and
+/// The same hint while the app's Basic mode is on: the switch is hidden and
 /// always on, so only the test-environment mark is the person's to give.
 pub const RESET_SWITCH_HINT_SIMPLE: &str = "to let the app reset it, mark the environment as a test environment in the Environments dialog";
 
@@ -404,7 +404,7 @@ pub fn reset_switch_hint(app_simple: bool) -> &'static str {
     }
 }
 
-/// Whether the app's own Simple mode is on now.
+/// Whether the app's own Basic mode is on now.
 fn app_simple_now() -> bool {
     crate::app_settings::current().app_simple_mode == Some(true)
 }
@@ -549,14 +549,14 @@ pub(crate) fn with_builtin_fields(mut page: super::recipe::PasswordResetPage) ->
 
 /// The environment the app may reset an expired password in: the active
 /// one, when it is marked a test environment AND "Reset expired passwords"
-/// is on (or the app's Simple mode, which keeps it on without changing the
+/// is on (or the app's Basic mode, which keeps it on without changing the
 /// saved switch). Its id. `None` anywhere else - and when the environments cannot be
 /// read, which is never a reason to change a password.
 fn reset_environment(root: &Path) -> Option<String> {
     reset_environment_with(root, app_simple_now())
 }
 
-/// `reset_environment` with the app's Simple mode given.
+/// `reset_environment` with the app's Basic mode given.
 pub fn reset_environment_with(root: &Path, app_simple: bool) -> Option<String> {
     let env = crate::environments::read_active(root).ok().flatten()?;
     (env.test_environment && (env.reset_expired_passwords || app_simple)).then_some(env.id)
@@ -567,7 +567,7 @@ pub fn reset_enabled(root: &Path) -> bool {
     reset_environment(root).is_some()
 }
 
-/// `reset_enabled` with the app's Simple mode given.
+/// `reset_enabled` with the app's Basic mode given.
 pub fn reset_enabled_with(root: &Path, app_simple: bool) -> bool {
     reset_environment_with(root, app_simple).is_some()
 }

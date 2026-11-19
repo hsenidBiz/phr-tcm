@@ -1,6 +1,6 @@
-//! App Simple mode on the AI Bridge: the assistants read test cases and write
+//! App Basic mode on the AI Bridge: the assistants read test cases and write
 //! Auto Test scripts, and nothing else of the writing, searching and report
-//! tools. Simple mode is a view and an override - no saved switch changes.
+//! tools. Basic mode is a view and an override - no saved switch changes.
 
 use v2_lib::ai_bridge::{route_timed_simple, BridgeContext, SwitchGate, API_WRITES_OFF};
 use v2_lib::autorun::agents::Caller;
@@ -92,7 +92,7 @@ fn the_context_under_simple_mode_forces_the_two_switches_and_off_restores_them()
     assert_eq!(under.app_simple_mode, ctx.app_simple_mode, "the webview's push is what carries it");
     assert!(SIMPLE_HIDDEN_TOOLS.iter().all(|t| under.disabled_tools.iter().any(|d| d == t)));
     assert!(under.disabled_tools.iter().any(|d| d == "get_bugs"));
-    // The stored context is what was saved, and Simple mode off shows it as it was.
+    // The stored context is what was saved, and Basic mode off shows it as it was.
     assert!(!ctx.network_tools && !ctx.api_writes);
     assert_eq!(ctx.disabled_tools, vec!["get_bugs".to_string()]);
     let off = context_under(false, &ctx);
@@ -143,13 +143,13 @@ async fn a_hidden_tools_route_is_refused_with_the_simple_mode_sentence() {
         }
         assert!(route_refusal(false, path).is_none(), "{path}");
     }
-    assert!(SIMPLE_HIDES_TOOL.contains("Simple mode") && SIMPLE_HIDES_TOOL.contains("Settings"));
+    assert!(SIMPLE_HIDES_TOOL.contains("Basic mode") && SIMPLE_HIDES_TOOL.contains("Settings"));
     assert!(!SIMPLE_HIDES_TOOL.contains("AI Bridge"), "the row is hidden, there is no switch to name");
     // The kept routes are not touched.
     for path in ["/current-pbi", "/tools", "/autorun-page", "/api-template-guide"] {
         assert!(route_refusal(true, path).is_none(), "{path}");
     }
-    // With Simple mode off the same route is answered by its own handler, not the sentence.
+    // With Basic mode off the same route is answered by its own handler, not the sentence.
     assert_ne!(ask(false, &ctx, "GET", "/tags", "").await.1, SIMPLE_HIDES_TOOL);
 }
 
@@ -161,7 +161,7 @@ async fn api_templates_run_under_simple_mode_with_the_saved_switch_off() {
     // Off: refused by the switch's own sentence.
     let (status, out) = ask(false, &ctx, "POST", "/api-template-prove", "not json").await;
     assert_eq!((status, out.as_str()), (400, API_WRITES_OFF));
-    // Under Simple mode the switch is not what stops it any more.
+    // Under Basic mode the switch is not what stops it any more.
     let (_, out) = ask(true, &ctx, "POST", "/api-template-prove", "not json").await;
     // The next step of the call: the data folder (a test may or may not have one set by another
     // module) and then reading the body. Either way it is not the switch's sentence.
@@ -174,7 +174,7 @@ async fn api_templates_run_under_simple_mode_with_the_saved_switch_off() {
     other.gate.env_id = None;
     let (status, out) = ask(true, &other, "POST", "/api-template-prove", "not json").await;
     assert_eq!(status, 400);
-    assert_ne!(out, API_WRITES_OFF, "the card the plain sentence names is hidden under Simple mode");
+    assert_ne!(out, API_WRITES_OFF, "the card the plain sentence names is hidden under Basic mode");
     assert_eq!(out, SIMPLE_API_NO_ENVIRONMENT);
 }
 
@@ -185,7 +185,7 @@ fn the_api_switch_sentence_under_simple_mode_names_what_is_visible() {
     no_env.gate.env_id = None;
     let mut switching = saved();
     switching.gate.holds = 1;
-    // Off Simple mode the sentence is the old one, whatever the context.
+    // Off Basic mode the sentence is the old one, whatever the context.
     assert_eq!(api_writes_off_text(false, &no_env), API_WRITES_OFF);
     assert_eq!(api_writes_off_text(false, &switching), API_WRITES_OFF);
     assert_eq!(api_writes_off_text(true, &no_env), SIMPLE_API_NO_ENVIRONMENT);
@@ -194,7 +194,7 @@ fn the_api_switch_sentence_under_simple_mode_names_what_is_visible() {
     for said in [SIMPLE_API_NO_ENVIRONMENT, SIMPLE_API_SWITCHING] {
         assert!(!said.contains("API templates switch") && !said.contains("turn it on"), "{said}");
     }
-    assert!(SIMPLE_API_NO_ENVIRONMENT.contains("Environment card"), "names a card Simple mode still shows");
+    assert!(SIMPLE_API_NO_ENVIRONMENT.contains("Environment card"), "names a card Basic mode still shows");
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn the_network_routes_are_open_under_simple_mode_with_the_saved_switch_off() {
     assert!(!ctx.network_tools);
     for path in NETWORK_ROUTES {
         assert!(network_guard(path, ctx.network_tools).is_some(), "{path}: refused by the saved switch");
-        assert!(network_guard(path, context_under(true, &ctx).network_tools).is_none(), "{path}: open under Simple mode");
+        assert!(network_guard(path, context_under(true, &ctx).network_tools).is_none(), "{path}: open under Basic mode");
     }
     assert!(!NETWORK_TOOLS_OFF.is_empty());
 }
@@ -222,11 +222,11 @@ fn the_slash_commands_of_the_hidden_tools_are_not_written_under_simple_mode() {
     };
     let off = names(false);
     for stem in ["begin-test-case-writing", "optimize"] {
-        assert!(off.iter().any(|n| n == stem), "{stem} is written with Simple mode off");
+        assert!(off.iter().any(|n| n == stem), "{stem} is written with Basic mode off");
     }
     let on = names(true);
     for c in COMMANDS.iter().filter(|c| SIMPLE_HIDDEN_TOOLS.contains(&c.tool)) {
-        assert!(!on.iter().any(|n| n == c.stem), "{} is written under Simple mode", c.stem);
+        assert!(!on.iter().any(|n| n == c.stem), "{} is written under Basic mode", c.stem);
     }
     for stem in ["begin-test-case-writing", "optimize", "get-wiki-info", "page"] {
         assert!(!on.iter().any(|n| n == stem), "{stem}");
@@ -245,19 +245,19 @@ fn a_command_written_earlier_is_swept_when_simple_mode_hides_its_tool() {
         n.sort();
         n
     };
-    // Simple mode off: the whole set is written, begin-test-case-writing and optimize included.
+    // Basic mode off: the whole set is written, begin-test-case-writing and optimize included.
     write_commands_with(dir.path(), &effective_disabled_under(false, &[], &all_on)).unwrap();
     for f in ["begin-test-case-writing.md", "optimize.md", "setup.md"] {
-        assert!(names(dir.path()).iter().any(|n| n == f), "{f} written with Simple mode off");
+        assert!(names(dir.path()).iter().any(|n| n == f), "{f} written with Basic mode off");
     }
-    // The same folder synced with Simple mode on: the earlier copies are removed, the Auto Test one stays.
+    // The same folder synced with Basic mode on: the earlier copies are removed, the Auto Test one stays.
     write_commands_with(dir.path(), &effective_disabled_under(true, &[], &all_on)).unwrap();
     let after = names(dir.path());
     for f in ["begin-test-case-writing.md", "optimize.md", "get-wiki-info.md", "page.md"] {
         assert!(!after.iter().any(|n| n == f), "{f} survived: {after:?}");
     }
     assert!(after.iter().any(|n| n == "setup.md"), "{after:?}");
-    // And back: Simple mode off again writes them once more (nothing was saved).
+    // And back: Basic mode off again writes them once more (nothing was saved).
     write_commands_with(dir.path(), &effective_disabled_under(false, &[], &all_on)).unwrap();
     assert!(names(dir.path()).iter().any(|n| n == "begin-test-case-writing.md"));
 }
@@ -382,7 +382,7 @@ fn no_environment_wins_over_a_switch_in_progress() {
     assert_eq!(api_writes_off_text(true, &ctx), SIMPLE_API_SWITCHING);
 }
 
-/// Simple mode (or a module) switched while no bridge ran leaves the files as they were;
+/// Basic mode (or a module) switched while no bridge ran leaves the files as they were;
 /// the first push after start must write them for the view as it is now.
 #[test]
 fn the_first_push_after_a_switch_made_with_no_bridge_catches_the_files_up() {
@@ -397,10 +397,10 @@ fn the_first_push_after_a_switch_made_with_no_bridge_catches_the_files_up() {
     let key = |simple: bool, on: &BTreeSet<Module>| {
         (disabled_under(simple, &effective_disabled_under(false, &[], on)), None, on.clone())
     };
-    // An earlier run wrote the files with Simple mode off.
+    // An earlier run wrote the files with Basic mode off.
     write_commands_with(dir.path(), &effective_disabled_under(false, &[], &all)).unwrap();
     assert!(has("begin-test-case-writing.md") && has("optimize.md"));
-    // Simple mode was switched on while the bridge was not running. This process remembers nothing,
+    // Basic mode was switched on while the bridge was not running. This process remembers nothing,
     // so the first push syncs - and the files then follow the Simple view.
     let mut last = None;
     assert!(v2_lib::commands::ai_bridge::sync_needed(&mut last, key(true, &all)));

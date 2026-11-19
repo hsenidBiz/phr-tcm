@@ -541,7 +541,7 @@ test("an account lookup changed while the dialog is open reaches the fields the 
   expect(pwd.value).toBe("Mine");
 });
 
-// ---- app Simple mode ---------------------------------------------------------
+// ---- app Basic mode ---------------------------------------------------------
 
 const FOUR = [
   ["textbox", "Password expiry query"],
@@ -550,7 +550,7 @@ const FOUR = [
   ["switch", "Reset expired passwords"],
 ] as const;
 
-test("with Simple mode off the reset switch, both queries and the account lookup all show", async () => {
+test("with Basic mode off the reset switch, both queries and the account lookup all show", async () => {
   setAppSimpleModeForTest(false);
   mount({}, [DEFAULT, { ...QA, test_environment: true }]);
   fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
@@ -559,7 +559,7 @@ test("with Simple mode off the reset switch, both queries and the account lookup
   expect(screen.getByText("Account lookup")).toBeTruthy();
 });
 
-test("Simple mode hides the reset switch, both queries and the account lookup, and saving keeps their values", async () => {
+test("Basic mode hides the reset switch, both queries and the account lookup, and saving keeps their values", async () => {
   setAppSimpleModeForTest(true);
   const own: Env = {
     ...QA,
@@ -586,8 +586,8 @@ test("Simple mode hides the reset switch, both queries and the account lookup, a
   expect(sent.account_lookup).toEqual({ table: "dbo.Users", username_column: "Login", password_column: "Secret" });
 });
 
-test("the Test environment warning gains the reset clause only in Simple mode", async () => {
-  const clause = /In Simple mode, Test Case Manager also resets an expired password here by itself\./;
+test("the Test environment warning gains the reset clause only in Basic mode", async () => {
+  const clause = /In Basic mode, Test Case Manager also resets an expired password here by itself\./;
   setAppSimpleModeForTest(false);
   mount();
   fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
@@ -601,7 +601,7 @@ test("the Test environment warning gains the reset clause only in Simple mode", 
   expect(await screen.findByText(clause)).toBeTruthy();
 });
 
-test("a bad saved lookup value cannot disable Save while Simple mode hides the fields", async () => {
+test("a bad saved lookup value cannot disable Save while Basic mode hides the fields", async () => {
   const bad: Env = { ...QA, account_lookup: { table: "bad table;", username_column: "Login", password_column: "" } };
   setAppSimpleModeForTest(false);
   mount({}, [DEFAULT, bad]);

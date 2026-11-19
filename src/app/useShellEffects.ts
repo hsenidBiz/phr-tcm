@@ -55,7 +55,7 @@ export function useModuleGuards(
   // same way a fresh install reads, so without the gate a restart with a
   // saved Auto Test tab bounces straight to Manual Entry before
   // hydrateModules' answer comes back.
-  // Simple mode adds the screens it hides: a remembered one opens Auto Test.
+  // Basic mode adds the screens it hides: a remembered one opens Auto Test.
   // Neither answer is acted on before both Rust answers have arrived.
   useEffect(() => {
     const to = leaveTarget(

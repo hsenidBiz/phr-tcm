@@ -73,7 +73,7 @@ pub async fn resync_commands_blocking(app: &tauri::AppHandle) {
 
 /// One module switch on this process's state, without the file re-sync.
 /// `by_person` is false for a switch the person did not choose themselves
-/// (Simple mode's switch-on): it leaves the "a person switched API Templates"
+/// (Basic mode's switch-on): it leaves the "a person switched API Templates"
 /// mark as it was.
 pub fn modules_set_now(module: Module, on: bool, by_person: bool) -> Result<ModulesAnswer, String> {
     modules::refuse_if_locked(module, on, crate::extras::unlocked())?;

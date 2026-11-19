@@ -24,9 +24,9 @@ import { Switch } from "./ui/switch";
 export const TEST_ENVIRONMENT_WARNING =
   "The AI assistant can read the full logins of this environment's accounts. Use only for test environments.";
 
-/** Added to that warning while Simple mode is on: the hidden reset is on. */
+/** Added to that warning while Basic mode is on: the hidden reset is on. */
 export const TEST_ENVIRONMENT_SIMPLE_CLAUSE =
-  " In Simple mode, Test Case Manager also resets an expired password here by itself.";
+  " In Basic mode, Test Case Manager also resets an expired password here by itself.";
 
 /** What sits under the reset switch. */
 export const RESET_EXPIRED_HELP =

@@ -115,8 +115,8 @@ pub fn set_autorun_failed_video(on: bool) -> Result<AppSettings, String> {
     })
 }
 
-/// Pick Simple or Advanced Auto Test. Advanced is refused while the app's
-/// Simple mode is on.
+/// Pick Basic or Advanced Auto Test. Advanced is refused while the app's
+/// Basic mode is on.
 #[tauri::command]
 #[specta::specta]
 pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, String> {
@@ -129,8 +129,8 @@ pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, 
     })
 }
 
-/// Turn the app-wide Simple mode on or off. On saves the choice, then
-/// switches every module on (never the held-back one) so nothing Simple mode
+/// Turn the app-wide Basic mode on or off. On saves the choice, then
+/// switches every module on (never the held-back one) so nothing Basic mode
 /// hides stops working; a module that fails is named and the choice stays
 /// saved. Off saves the choice and changes no module.
 #[tauri::command]
@@ -143,13 +143,13 @@ pub async fn set_app_simple_mode(app: tauri::AppHandle, on: bool) -> Result<crat
         on,
         |_, on| {
             app_settings::update(|s| crate::simple_mode::apply_simple_choice(s, on)).map(|_| ()).map_err(|e| {
-                crate::applog::warn(format!("saving the Simple mode setting failed: {e}"));
+                crate::applog::warn(format!("saving the Basic mode setting failed: {e}"));
                 "The setting could not be saved. Settings → Logs has the details.".to_string()
             })
         },
         |_| crate::simple_mode::switch_all_on(),
     )?;
-    // Simple mode hides tools from the assistants (and their slash commands),
+    // Basic mode hides tools from the assistants (and their slash commands),
     // so a change of it re-syncs the files just as a module change does.
     if crate::modules::current() != before || crate::simple_view::is_on() != simple_before {
         crate::commands::modules::resync_commands_blocking(&app).await;

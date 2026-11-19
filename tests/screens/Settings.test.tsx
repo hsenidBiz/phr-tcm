@@ -1946,7 +1946,7 @@ test("with no preview to read, the import confirmation says it replaces Auto Tes
   restore();
 });
 
-test("Simple mode has no Modules card, and starting on Modules shows Settings", async () => {
+test("Basic mode has no Modules card, and starting on Modules shows Settings", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   setAppSimpleModeForTest(true);
@@ -1971,7 +1971,7 @@ test("Simple mode has no Modules card, and starting on Modules shows Settings", 
   expect(screen.queryByRole("button", { name: /Back to Settings/ })).not.toBeInTheDocument();
 });
 
-test("a Modules request left over in Simple mode gives the plain page, and turning Simple off does not open Modules", async () => {
+test("a Modules request left over in Basic mode gives the plain page, and turning Simple off does not open Modules", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   setAppSimpleModeForTest(true);
@@ -1998,13 +1998,13 @@ test("a Modules request left over in Simple mode gives the plain page, and turni
 });
 
 const SIMPLE_LINE =
-  "Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates.";
+  "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style and Working repositories cards in AI Bridge. Everything keeps working, and your assistant can still use API Templates.";
 
 function simpleSettings(on: boolean) {
   return { close_to_tray: true, close_notice_shown: true, beta_updates: false, app_simple_mode: on };
 }
 
-test("the Simple mode switch turns it on through Rust and takes the returned settings", async () => {
+test("the Basic mode switch turns it on through Rust and takes the returned settings", async () => {
   const calls: unknown[] = [];
   mockIPC((cmd, args) => {
     if (cmd === "get_app_settings") return simpleSettings(false);
@@ -2017,7 +2017,7 @@ test("the Simple mode switch turns it on through Rust and takes the returned set
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   expect(screen.getByText(SIMPLE_LINE)).toBeInTheDocument();
   await waitFor(() => expect(sw).toBeEnabled());
   fireEvent.click(sw);
@@ -2025,22 +2025,22 @@ test("the Simple mode switch turns it on through Rust and takes the returned set
   await waitFor(() => expect((qc.getQueryData(["app-settings"]) as { app_simple_mode: boolean }).app_simple_mode).toBe(true));
 });
 
-test("when some modules could not be switched on, the Simple mode row names them", async () => {
+test("when some modules could not be switched on, the Basic mode row names them", async () => {
   mockIPC((cmd) => {
     if (cmd === "get_app_settings") return simpleSettings(false);
     if (cmd === "set_app_simple_mode") return { settings: simpleSettings(true), not_switched_on: ["Auto Test", "Playwright"] };
     return undefined;
   });
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   await waitFor(() => expect(sw).toBeEnabled());
   fireEvent.click(sw);
   expect(
-    await screen.findByText("Could not switch on: Auto Test, Playwright. Turn Simple mode off and on to try again."),
+    await screen.findByText("Could not switch on: Auto Test, Playwright. Turn Basic mode off and on to try again."),
   ).toBeInTheDocument();
 });
 
-test("turning Simple mode off calls set_app_simple_mode(false)", async () => {
+test("turning Basic mode off calls set_app_simple_mode(false)", async () => {
   const calls: unknown[] = [];
   mockIPC((cmd, args) => {
     if (cmd === "get_app_settings") return simpleSettings(true);
@@ -2051,13 +2051,13 @@ test("turning Simple mode off calls set_app_simple_mode(false)", async () => {
     return undefined;
   });
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
   fireEvent.click(sw);
   await waitFor(() => expect(calls).toEqual([false]));
 });
 
-test("the Simple mode switch waits while an unattended run is going", async () => {
+test("the Basic mode switch waits while an unattended run is going", async () => {
   mockIPC(
     (cmd) => {
       if (cmd === "get_app_settings") return simpleSettings(false);
@@ -2080,15 +2080,15 @@ test("the Simple mode switch waits while an unattended run is going", async () =
     await Promise.resolve();
   });
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   expect(sw).toBeDisabled();
   expect(sw).toHaveAttribute("title", "Wait for the Auto Test run to finish.");
 });
 
-test("with no run going the Simple mode switch has no wait title", async () => {
+test("with no run going the Basic mode switch has no wait title", async () => {
   mockIPC((cmd) => (cmd === "get_app_settings" ? simpleSettings(false) : undefined));
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   expect(sw).not.toHaveAttribute("title");
 });
 
@@ -2101,7 +2101,7 @@ test("a double click sends one set_app_simple_mode call, and a switch-on refresh
     return undefined;
   });
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   await waitFor(() => expect(sw).toBeEnabled());
   const before = calls.filter((c) => c === "modules_get").length;
   fireEvent.click(sw);
@@ -2120,12 +2120,12 @@ test("a switch the webview could not turn on is named in the same line as the mo
     return undefined;
   });
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const sw = await screen.findByRole("switch", { name: "Simple mode" });
+  const sw = await screen.findByRole("switch", { name: "Basic mode" });
   await waitFor(() => expect(sw).toBeEnabled());
   fireEvent.click(sw);
-  await waitFor(() => expect(screen.getByRole("switch", { name: "Simple mode" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Basic mode" })).toBeEnabled());
   act(() => setAppSimpleModeForTest(true));
   expect(
-    await screen.findByText("Could not switch on: Auto Test, Network tools. Turn Simple mode off and on to try again."),
+    await screen.findByText("Could not switch on: Auto Test, Network tools. Turn Basic mode off and on to try again."),
   ).toBeInTheDocument();
 });

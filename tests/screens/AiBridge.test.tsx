@@ -2029,7 +2029,7 @@ test("the count and Turn all on cover only the rows with a switch", async () => 
   expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
 });
 
-// App Simple mode: the assistants get API templates and the network tools
+// App Basic mode: the assistants get API templates and the network tools
 // without their switches, and no writing, search or report tools. Only the
 // view changes - nothing is saved.
 function renderSimpleBridge(simple: boolean) {
@@ -2043,7 +2043,7 @@ function renderSimpleBridge(simple: boolean) {
   return renderBridge(qc);
 }
 
-test("Simple mode hides the API templates and Network tools cards, the writing rows and the writing intro", async () => {
+test("Basic mode hides the API templates and Network tools cards, the writing rows and the writing intro", async () => {
   saveDisabledTools(["search_pbis"]);
   renderSimpleBridge(true);
   await screen.findByText("Tools an assistant may use");
@@ -2073,7 +2073,7 @@ test("Simple mode hides the API templates and Network tools cards, the writing r
   expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
 });
 
-test("out of Simple mode the cards, rows and writing intro are all there", async () => {
+test("out of Basic mode the cards, rows and writing intro are all there", async () => {
   renderSimpleBridge(false);
   await screen.findByText("Tools an assistant may use");
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
@@ -2088,7 +2088,7 @@ test("out of Simple mode the cards, rows and writing intro are all there", async
   expect(card.textContent).toMatch(/API templates switch above, which is off by default/);
 });
 
-test("Turn all on under Simple mode keeps the hidden tools' saved switches", async () => {
+test("Turn all on under Basic mode keeps the hidden tools' saved switches", async () => {
   // One visible row off (Run results) and one hidden row off (Find a PBI).
   saveDisabledTools(["get_run_results", "search_pbis"]);
   renderSimpleBridge(true);

@@ -741,7 +741,7 @@ pub fn run() {
                 // An install that already runs Auto Test keeps every control
                 // it has today: settle its mode once.
                 crate::autorun::recommended::settle_on_start(&dir);
-                // The app-wide Simple mode: on for a new install (every
+                // The app-wide Basic mode: on for a new install (every
                 // module switched on), off for one that already had data.
                 crate::simple_mode::settle_on_start(new_install);
                 // The AI Bridge tab's writing style, read by the guide on each

@@ -1,4 +1,4 @@
-// The Simple / Advanced switch for Auto Test. It sits in the screen's title
+// The Basic / Advanced switch for Auto Test. It sits in the screen's title
 // row (app/CaseScreens.tsx), at the right, so the screen starts straight
 // under the title instead of under a row of its own.
 import { useAppSimpleMode } from "../../lib/appSimpleMode";
@@ -13,7 +13,7 @@ export default function AutoRunModeSwitch() {
   const runGoing = unattendedRunGoing(useBackgroundRun());
   return (
     <div role="group" aria-label="Auto Test mode" className="flex rounded-md border border-border p-0.5">
-      {/* App Simple mode holds Auto Test in Simple: only that option is offered. */}
+      {/* App Basic mode holds Auto Test in Basic: only that option is offered. */}
       {(appSimple ? (["simple"] as const) : (["simple", "advanced"] as const)).map((m) => {
         const pressed = !modeLoading && mode === m;
         return (
@@ -32,7 +32,7 @@ export default function AutoRunModeSwitch() {
               void setMode(m).catch((e: Error) => toast.error(`Could not change the mode: ${e.message}`));
             }}
           >
-            <span className="label-trim">{m === "simple" ? "Simple" : "Advanced"}</span>
+            <span className="label-trim">{m === "simple" ? "Basic" : "Advanced"}</span>
           </button>
         );
       })}

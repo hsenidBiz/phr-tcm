@@ -765,7 +765,7 @@ export default function AiBridge() {
             size="sm"
             variant="outline"
             onClick={() => {
-              // Under Simple mode only the rows on screen are turned on; the
+              // Under Basic mode only the rows on screen are turned on; the
               // hidden ones keep their saved switch.
               const shown = new Set(visible.flatMap((r) => r.names));
               saveDisabledTools(simple ? disabled.filter((n) => !shown.has(n)) : []);

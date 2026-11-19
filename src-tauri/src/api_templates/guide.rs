@@ -19,7 +19,7 @@ a run sees.
 
 A template is saved ONLY by a proving run in which every step passed. There
 is no tool that sends a free-form request, and none that removes a
-template: removing one is the person's, on the API Templates tab. If the app is in Simple mode, ask the person to turn Simple mode off in Settings.
+template: removing one is the person's, on the API Templates tab. If the app is in Basic mode, ask the person to turn Basic mode off in Settings.
 
 ## The format
 

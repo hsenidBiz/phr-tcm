@@ -128,7 +128,7 @@ function renderScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={qc}>
-      {/* The title row's Simple/Advanced switch, as CaseScreens mounts it. */}
+      {/* The title row's Basic/Advanced switch, as CaseScreens mounts it. */}
       <AutoRunModeSwitch />
       <AutoRun org="acme" project="proj" pbi={pbi as never} />
       {/* The unattended run's window, mounted beside the screen as App does. */}
@@ -2158,14 +2158,14 @@ test("shows the per-environment move notice once", async () => {
   expect(toast.info).toHaveBeenCalledTimes(1);
 });
 
-// ---- Simple mode: what the run side leaves out ----
+// ---- Basic mode: what the run side leaves out ----
 
 test("Simple has no More button: Import, Clear, Execution order and Export to Playwright are all authoring actions", async () => {
   autorunMode = "simple";
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(screen.queryByRole("button", { name: "More" })).toBeNull();
   expect(screen.queryByRole("menuitem", { name: "Execution order" })).toBeNull();
   expect(screen.queryByRole("menuitem", { name: "Export to Playwright" })).toBeNull();
@@ -2227,7 +2227,7 @@ test("in Simple the open card has no Run button, only View script", async () => 
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   openCard(1);
   expect(screen.getByRole("button", { name: "View script for #1" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run #1" })).toBeNull();
@@ -2250,7 +2250,7 @@ test("in Simple the selection bar keeps Run N unattended but has no Run N select
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   fireEvent.click(screen.getAllByRole("checkbox")[0]);
   expect(await screen.findByRole("button", { name: "Run 1 unattended" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run 1 selected" })).toBeNull();
@@ -2261,7 +2261,7 @@ test("in Simple, View script opens the script to read only", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   openCard(1);
   fireEvent.click(screen.getByRole("button", { name: "View script for #1" }));
   expect(await screen.findByText("Switch to Advanced to edit.")).toBeInTheDocument();
@@ -2286,7 +2286,7 @@ test("Simple keeps the run window with its options", async () => {
   mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2]);
   renderScreen();
   await screen.findByText("Alpha check");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
   fireEvent.click(await screen.findByRole("button", { name: "Run 2 unattended" }));
@@ -2301,7 +2301,7 @@ test("Simple keeps the network-wait panel", async () => {
     cmd === "auto_run_waiting_network" ? { run_id: "run-7", before_case_id: 2, waited_s: 125, give_up_in_s: 1675 } : null,
   );
   renderScreen();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(await screen.findByRole("region", { name: "Paused - the company network is unreachable" })).toBeInTheDocument();
 });
 
@@ -2313,6 +2313,6 @@ test("Simple keeps the Assistants card", async () => {
   };
   mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => (cmd === "auto_run_agents" ? [agent] : null));
   renderScreen();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Simple" })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
 });

@@ -644,7 +644,7 @@ fn an_unreachable_bridge_falls_back_to_the_saved_modules() {
 }
 
 /// With the app closed, the saved app settings decide whether the proxy
-/// lists the tools Simple mode hides: Simple on hides them, off changes nothing.
+/// lists the tools Basic mode hides: Simple on hides them, off changes nothing.
 #[test]
 fn a_closed_app_with_saved_simple_mode_does_not_list_the_hidden_tools() {
     use v2_lib::mcp::tools_reply_or_saved_simple;
@@ -658,12 +658,12 @@ fn a_closed_app_with_saved_simple_mode_does_not_list_the_hidden_tools() {
     };
     let on = names_with(true);
     for t in SIMPLE_HIDDEN_TOOLS {
-        assert!(!on.iter().any(|n| n == t), "{t} is listed with Simple mode saved on");
+        assert!(!on.iter().any(|n| n == t), "{t} is listed with Basic mode saved on");
     }
     assert!(on.iter().any(|n| n == "get_test_cases") && on.iter().any(|n| n == "save_autorun_script"));
     let off = names_with(false);
     for t in ["begin_test_case_writing", "search_pbis", "optimize_cases"] {
-        assert!(off.iter().any(|n| n == t), "{t} must be listed with Simple mode off");
+        assert!(off.iter().any(|n| n == t), "{t} must be listed with Basic mode off");
     }
     // A real answer is never replaced by the saved one, Simple or not.
     let real = Ok((200, r#"{"disabled":[],"modules":[]}"#.to_string()));

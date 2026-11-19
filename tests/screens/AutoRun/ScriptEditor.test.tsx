@@ -1153,7 +1153,7 @@ test("the readable script shows a when_hidden and the guard inside it, each unde
   expect(one).toHaveTextContent('Click the "Apply template" button');
 });
 
-// Simple mode opens the script to read, never to change.
+// Basic mode opens the script to read, never to change.
 test("read-only: the script shows as text with nothing to edit, save or copy", async () => {
   setActiveEnvId("env-00000001");
   const env = (n: number) => ({

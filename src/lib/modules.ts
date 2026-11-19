@@ -162,8 +162,8 @@ export const SIMPLE_HIDDEN_SECTIONS: ReadonlySet<string> = new Set([
   "playwright",
 ]);
 
-/** Whether a section is offered with these modules on (and, in Simple mode,
- * not one of the screens Simple mode hides). */
+/** Whether a section is offered with these modules on (and, in Basic mode,
+ * not one of the screens Basic mode hides). */
 export function sectionShown(
   section: string,
   modules: ReadonlySet<Module> = modulesSnapshot(),

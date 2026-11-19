@@ -149,12 +149,12 @@ pub struct BridgeContext {
     /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
     /// default.
     pub network_tools: bool,
-    /// Whether the person is in Auto Test's Simple or Advanced mode, as the
+    /// Whether the person is in Auto Test's Basic or Advanced mode, as the
     /// webview last pushed it. An assistant reads it to know which controls
     /// the person can see; no tool sets it. None until the webview has
     /// pushed one, and then the status answer carries no such key.
     pub autorun_mode: Option<crate::app_settings::AutorunMode>,
-    /// Whether the app-wide Simple mode is on, as the webview last pushed
+    /// Whether the app-wide Basic mode is on, as the webview last pushed
     /// it. Read-only for an assistant (no tool sets it); `None` until pushed,
     /// and then the answers carry no such key.
     pub app_simple_mode: Option<bool>,
@@ -488,12 +488,12 @@ pub async fn route_timed(
     body: &str,
     version: &str,
 ) -> (u16, String) {
-    // Whether app Simple mode is on is read from the SAVED setting here, in
+    // Whether app Basic mode is on is read from the SAVED setting here, in
     // Rust - never from what the webview last pushed.
     route_timed_simple(crate::simple_view::is_on(), caller, ctx, client, method, target, body, version).await
 }
 
-/// `route_timed` with app Simple mode given, so every combination is
+/// `route_timed` with app Basic mode given, so every combination is
 /// testable. While `simple` the hidden tools' routes are refused (404 with
 /// `simple_view::SIMPLE_HIDES_TOOL`) and the handlers see the context as
 /// `simple_view::context_under` shows it; the stored context, and so every
@@ -566,7 +566,7 @@ fn current_pbi_answer(ctx: &BridgeContext) -> String {
                 out.push_str(&format!(" Auto Test mode: {m}."));
             }
             if let Some(s) = ctx.app_simple_mode {
-                out.push_str(&format!(" App Simple mode: {}.", if s { "on" } else { "off" }));
+                out.push_str(&format!(" App Basic mode: {}.", if s { "on" } else { "off" }));
             }
             out
         }

@@ -1,18 +1,18 @@
-//! How app Simple mode looks to the assistants: a VIEW over the saved
-//! settings, never a change to them. While the saved Simple mode setting is on,
+//! How app Basic mode looks to the assistants: a VIEW over the saved
+//! settings, never a change to them. While the saved Basic mode setting is on,
 //! the tools an assistant gets are trimmed (the writing, search and report
 //! tools are hidden and refused) and API templates and the network tools are
-//! on whatever their switches say. Turning Simple mode off shows every saved
+//! on whatever their switches say. Turning Basic mode off shows every saved
 //! switch exactly as it was. Nothing here writes the setting
 //! (`simple_mode` owns that), so it can be read from the bridge and the proxy.
 
-/// What a call to a tool Simple mode hides answers.
-pub const SIMPLE_HIDES_TOOL: &str = "Simple mode hides this tool. Turn Simple mode off in Settings to use it.";
+/// What a call to a tool Basic mode hides answers.
+pub const SIMPLE_HIDES_TOOL: &str = "Basic mode hides this tool. Turn Basic mode off in Settings to use it.";
 
-/// The tools an assistant does not get while app Simple mode is on: it reads
+/// The tools an assistant does not get while app Basic mode is on: it reads
 /// test cases and writes Auto Test scripts, and nothing else of the writing,
 /// searching and report tools. The ONE list: `src/lib/mcpTools.ts` mirrors it
-/// (a test compares the two). Simple mode only hides them - no saved switch
+/// (a test compares the two). Basic mode only hides them - no saved switch
 /// changes - so turning it off brings them all back.
 pub const SIMPLE_HIDDEN_TOOLS: &[&str] = &[
     "begin_test_case_writing",
@@ -38,7 +38,7 @@ pub const SIMPLE_HIDDEN_TOOLS: &[&str] = &[
 ];
 
 /// The bridge routes of the hidden tools, answered 404 with `SIMPLE_HIDES_TOOL`
-/// while Simple mode is on. Every Crystal Reports route starts with
+/// while Basic mode is on. Every Crystal Reports route starts with
 /// `CRYSTAL_ROUTE_PREFIX`.
 pub const SIMPLE_HIDDEN_ROUTES: &[&str] = &[
     "/begin",
@@ -54,12 +54,12 @@ pub const SIMPLE_HIDDEN_ROUTES: &[&str] = &[
 ];
 pub const CRYSTAL_ROUTE_PREFIX: &str = "/crystal-";
 
-/// Whether the saved app setting has Simple mode on, in this process.
+/// Whether the saved app setting has Basic mode on, in this process.
 pub fn is_on() -> bool {
     matches!(crate::app_settings::current().app_simple_mode, Some(true))
 }
 
-/// Whether a bridge route belongs to a tool Simple mode hides.
+/// Whether a bridge route belongs to a tool Basic mode hides.
 pub fn hides_route(path: &str) -> bool {
     SIMPLE_HIDDEN_ROUTES.contains(&path) || path.starts_with(CRYSTAL_ROUTE_PREFIX)
 }
@@ -93,7 +93,7 @@ pub fn disabled_now(saved: &[String]) -> Vec<String> {
 /// templates on - but only where a write could be on at all (a context for
 /// the active environment, with no switch in progress), so the rule that a
 /// push for another environment turns no write on still holds. A view only:
-/// the stored context keeps the saved values, so turning Simple mode off
+/// the stored context keeps the saved values, so turning Basic mode off
 /// brings every one back.
 pub fn context_under(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> crate::ai_bridge::BridgeContext {
     let mut out = ctx.clone();
@@ -111,7 +111,7 @@ pub fn context_under(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> cra
 }
 
 
-/// Whether the SAVED settings in this machine's app data folder have Simple
+/// Whether the SAVED settings in this machine's app data folder have Basic
 /// mode on: what the `--mcp` proxy reads when the app is closed, from the
 /// same folder as `modules::saved_on_this_machine`.
 pub fn saved_on_this_machine() -> bool {
@@ -121,9 +121,9 @@ pub fn saved_on_this_machine() -> bool {
 }
 
 /// What an API template call answers while its switch is not on (see
-/// `API_WRITES_OFF`). Under Simple mode the API templates card is hidden, so
+/// `API_WRITES_OFF`). Under Basic mode the API templates card is hidden, so
 /// the plain sentence would point at a control nobody can see: say why
-/// instead. `ctx` is the context a handler was given (Simple's view of it).
+/// instead. `ctx` is the context a handler was given (Basic's view of it).
 pub fn api_writes_off_text(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> String {
     if !simple {
         return crate::ai_bridge::API_WRITES_OFF.to_string();
@@ -136,18 +136,18 @@ pub fn api_writes_off_text(simple: bool, ctx: &crate::ai_bridge::BridgeContext) 
     }
 }
 
-/// Simple mode, API templates, a switch of environment still in progress.
+/// Basic mode, API templates, a switch of environment still in progress.
 pub const SIMPLE_API_SWITCHING: &str = "The environment is being switched. Wait for it to finish, then try again.";
-/// Simple mode, API templates, no environment chosen yet.
+/// Basic mode, API templates, no environment chosen yet.
 pub const SIMPLE_API_NO_ENVIRONMENT: &str =
     "API templates need an environment. Choose one in the Environment card on the AI Bridge tab, then try again.";
 
-/// Simple mode, network tools, no environment chosen yet.
+/// Basic mode, network tools, no environment chosen yet.
 pub const SIMPLE_NETWORK_NO_ENVIRONMENT: &str =
     "Network tools need an environment. Choose one in the Environment card on the AI Bridge tab, then try again.";
 
 /// Under `simple`, the network tools' refusal (the plain `NETWORK_TOOLS_OFF`
-/// sentence, which names a switch Simple mode hides) becomes Simple mode's own.
+/// sentence, which names a switch Basic mode hides) becomes Basic mode's own.
 pub fn reword_network_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContext, answer: (u16, String)) -> (u16, String) {
     if !(simple && answer.1 == crate::ai_bridge::NETWORK_TOOLS_OFF) {
         return answer;
@@ -157,7 +157,7 @@ pub fn reword_network_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContex
 }
 
 /// Under `simple`, an answer that is the plain API switch sentence (from any
-/// of the routes that return it) becomes Simple mode's own, by `ctx`.
+/// of the routes that return it) becomes Basic mode's own, by `ctx`.
 pub fn reword_api_switch_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContext, answer: (u16, String)) -> (u16, String) {
     if simple && answer.1 == crate::ai_bridge::API_WRITES_OFF {
         (answer.0, api_writes_off_text(true, ctx))
@@ -166,9 +166,9 @@ pub fn reword_api_switch_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeCon
     }
 }
 
-/// Under Simple mode the proxy is told which tools are hidden, by name,
+/// Under Basic mode the proxy is told which tools are hidden, by name,
 /// because it drops a core tool from `disabled` (a core tool has no switch).
-/// Added to the `/tools` answer only then, so with Simple mode off the answer
+/// Added to the `/tools` answer only then, so with Basic mode off the answer
 /// is what it always was.
 pub fn name_hidden_in_tools_answer(simple: bool, method: &str, path: &str, answer: (u16, String)) -> (u16, String) {
     if !(simple && method == "GET" && path == "/tools" && answer.0 == 200) {

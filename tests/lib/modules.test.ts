@@ -191,7 +191,7 @@ test("leaveTarget sends a Simple-hidden screen to Auto Test and an off module to
   expect(leaveTarget("manual", true, true, true)).toBe("autorun");
   expect(leaveTarget("manual", true, true, false)).toBeNull();
   expect(leaveTarget("autorun", false, true, true)).toBe("run");
-  // A remembered Playwright tab opens Auto Test in Simple mode, even with the module on.
+  // A remembered Playwright tab opens Auto Test in Basic mode, even with the module on.
   expect(leaveTarget("playwright", true, true, true)).toBe("autorun");
   expect(leaveTarget("playwright", true, true, false)).toBeNull();
 });

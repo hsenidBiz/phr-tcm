@@ -129,7 +129,7 @@ pub fn register_and_allow(
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
-    // Simple mode's hidden tools lose their commands too, as a switched-off tool does.
+    // Basic mode's hidden tools lose their commands too, as a switched-off tool does.
     let disabled_tools = crate::simple_view::disabled_now(&disabled_tools);
     register_server(id, &tcm_server(&exe), working_dir, &disabled_tools, global)?;
     // A tool registered gets its own "always allow" for what the app lets
@@ -1364,7 +1364,7 @@ pub fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(
 
 /// `write_commands_in` for a disabled set already made effective
 /// (`ai_tools::effective_disabled_under`), so a caller - a test - can say
-/// whether app Simple mode is on without touching the process-wide setting.
+/// whether app Basic mode is on without touching the process-wide setting.
 pub fn write_commands_with(dir: &std::path::Path, effective: &[String]) -> Result<(), String> {
     // An earlier version wrote one top-level GLOBAL file. Leaving it would
     // put `/tcm-testcases` in the picker beside the namespaced set. Only
