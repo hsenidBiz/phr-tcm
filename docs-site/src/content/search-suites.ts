@@ -29,7 +29,7 @@ export const searchSuites: Screen = {
   summary:
     "Browse every test plan in the organization and the suites inside it. Find a suite by name, see its test cases and their last outcomes, " +
     "and open it where you need it: in the browser, in Update Test Cases, in Run Tests or in Suite Management." +
-    " Hidden while Simple mode is on (Settings).",
+    " Hidden while Basic mode is on (Settings).",
   shots: [
     { id: TREE, route: OPEN_SUITE, alt: "A test plan's folder opened, with one suite showing its test points" },
     {

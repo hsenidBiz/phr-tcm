@@ -39,7 +39,7 @@ export const importFile: Screen = {
   summary:
     "Bring test cases in from a JSON file or a colleague's share link, check them in the queue, then upload them to the Product Backlog Item. " +
     "A case that carries an id updates that exact work item; a case without one is created new." +
-    " Hidden while Simple mode is on (Settings).",
+    " Hidden while Basic mode is on (Settings).",
   shots: [
     { id: QUEUE, route: [{ nav: "Import Test Cases" }], alt: "Import Test Cases with three cases in the queue" },
     {

@@ -158,7 +158,7 @@ describe("the content", () => {
 
 /** The exact phrases the Auto Test mode is named by, longest first. Nothing
  * else may say "advanced". */
-const MODE_PHRASES = ["Switch to Advanced to edit.", "Simple and Advanced", "switch to Advanced", "**Advanced**"];
+const MODE_PHRASES = ["Switch to Advanced to edit.", "Basic and Advanced", "switch to Advanced", "**Advanced**"];
 const withoutModePhrases = (t: string) => MODE_PHRASES.reduce((acc, p) => acc.split(p).join(""), t);
 
 describe("the Modules section and the old switch", () => {
@@ -166,14 +166,14 @@ describe("the Modules section and the old switch", () => {
 
   test("the mode's phrases are taken out, and a stray advanced next to them is not", () => {
     expect(withoutModePhrases("Press **Advanced** to switch to Advanced.")).not.toMatch(/\badvanced\b/i);
-    expect(withoutModePhrases("Simple and Advanced. Open the advanced options.")).toMatch(/\badvanced\b/i);
+    expect(withoutModePhrases("Basic and Advanced. Open the advanced options.")).toMatch(/\badvanced\b/i);
     expect(withoutModePhrases(text.replace("Hide setup details", "Hide advanced setup details"))).toMatch(/\badvanced\b/i);
   });
 
   test("no help text names the Advanced Features switch", () => {
     expect(text).not.toMatch(/advanced feature/i);
     // The bare word is banned on every screen, Auto Test included, once the
-    // exact phrases of Auto Test's Simple/Advanced mode are taken out.
+    // exact phrases of Auto Test's Basic/Advanced mode are taken out.
     expect(withoutModePhrases(text)).not.toMatch(/\badvanced\b/i);
   });
 

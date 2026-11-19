@@ -84,8 +84,8 @@ export const autoRun: Screen = {
     },
     {
       id: MODE,
-      route: [NAV, READY, { click: { role: "button", name: "Simple" } }, { waitFor: { css: '[aria-label="Auto Test mode"] [aria-pressed="true"]' } }, { waitFor: { role: "list", name: "Setup summary" } }],
-      alt: "The top of Auto Test in Simple mode, with the Simple and Advanced switch at the right, above the Assistants and the cases",
+      route: [NAV, READY, { click: { role: "button", name: "Basic" } }, { waitFor: { css: '[aria-label="Auto Test mode"] [aria-pressed="true"]' } }, { waitFor: { role: "list", name: "Setup summary" } }],
+      alt: "The top of Auto Test in Basic mode, with the Basic and Advanced switch at the right, above the Assistants and the cases",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], size: TALL, alt: "Two scripted cases selected, with the buttons that run them" },
     {
@@ -169,7 +169,7 @@ export const autoRun: Screen = {
     },
   ],
   groups: [
-    { id: "mode", title: "Simple and Advanced", summary: "Which Auto Test screen you see: the everyday path, or every tool." },
+    { id: "mode", title: "Basic and Advanced", summary: "Which Auto Test screen you see: the everyday path, or every tool." },
     { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
     { id: "scripts", title: "Write a script", summary: "What the app does at each step of a case, and the rules the case runs under." },
     { id: "watch", title: "Run while you watch", summary: "The app does the steps; you see them happen and decide the result." },
@@ -185,16 +185,16 @@ export const autoRun: Screen = {
       shot: MODE,
       group: "mode",
       locate: { role: "group", name: "Auto Test mode" },
-      name: "Simple and Advanced",
+      name: "Basic and Advanced",
       does:
-        "Chooses how much of Auto Test you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
+        "Chooses how much of Auto Test you see. **Basic** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
         "It hides the Discovery, Components and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
         "A script card shows one header line, with the steps Auto Test does itself marked **Done by Auto Test** and the assistant's notes folded away under **Assistant notes**. " +
         "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
-        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Simple mode** is on in Settings, only **Simple** is offered; turn Simple mode off to pick **Advanced**.",
+        "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Basic mode** is on in Settings, only **Basic** is offered; turn Basic mode off to pick **Advanced**.",
       tips: [
         "If the Discovery row or the sign-in recipe tools are what stops a run, Auto Test shows them anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
-        "An assistant can see which mode you are in but cannot change it. In Simple it offers to do the hidden work for you, or asks you to switch to Advanced.",
+        "An assistant can see which mode you are in but cannot change it. In Basic it offers to do the hidden work for you, or asks you to switch to Advanced.",
       ],
     },
     // --- Test cases ------------------------------------------------------------
@@ -225,7 +225,7 @@ export const autoRun: Screen = {
         "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
         "With API templates switched on there is a **Fixtures** line too: how many fixtures you have and when one last ran. **Open** beside it takes you to the Fixtures tab of the API Templates screen. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
-        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. In **Advanced** it does so when a fixture failed on its last run here, too, and when one failed here and needs the assistant: ask the assistant to make it work on this environment. Simple leaves fixtures out of this.",
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. In **Advanced** it does so when a fixture failed on its last run here, too, and when one failed here and needs the assistant: ask the assistant to make it work on this environment. Basic leaves fixtures out of this.",
     },
     {
       id: "setup-details",
@@ -301,7 +301,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "More" },
       name: "More",
       does:
-        "**More** is not shown in Simple. **Import scripts** reads one JSON file of scripts. Each one is checked the way an assistant's save is: every element it names must have been seen on the live app, and its test case is read from Azure DevOps, so sign in first. " +
+        "**More** is not shown in Basic. **Import scripts** reads one JSON file of scripts. Each one is checked the way an assistant's save is: every element it names must have been seen on the live app, and its test case is read from Azure DevOps, so sign in first. " +
         "If any script fails, nothing is imported and the message lists each element that was never seen. " +
         "**Clear scripts** removes the scripts of the listed cases from this computer, after asking. Nothing in Azure DevOps changes. " +
         "**Export to Playwright** opens the Playwright tab with the export of this Product Backlog Item's scripts to your clone of the team's Playwright repo.",
@@ -366,7 +366,7 @@ export const autoRun: Screen = {
       group: "watch",
       locate: { role: "button", name: "Run #5002" },
       name: "Run",
-      does: "Runs this one case while you watch. Only a case with a script has it, and only in **Advanced**: Simple runs cases unattended.",
+      does: "Runs this one case while you watch. Only a case with a script has it, and only in **Advanced**: Basic runs cases unattended.",
       tips: [BLOCKED_BY_SETUP],
     },
 
@@ -1009,11 +1009,11 @@ export const autoRun: Screen = {
   ],
   howTo: [
     {
-      title: "Switch between Simple and Advanced",
+      title: "Switch between Basic and Advanced",
       steps: [
-        "At the top of Auto Test, press **Simple** or **Advanced**.",
-        "In Simple, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
-        "If a run is stopped by Discovery or the sign-in recipe, Simple shows it with the note to ask the assistant or switch to Advanced. A failed fixture is not shown in Simple.",
+        "At the top of Auto Test, press **Basic** or **Advanced**.",
+        "In Basic, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
+        "If a run is stopped by Discovery or the sign-in recipe, Basic shows it with the note to ask the assistant or switch to Advanced. A failed fixture is not shown in Basic.",
       ],
     },
     {

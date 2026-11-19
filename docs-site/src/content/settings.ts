@@ -39,8 +39,8 @@ export const settings: Screen = {
     // in memory (dev/demo.ts), so nothing is saved and a reload puts it back off.
     {
       id: SIMPLE,
-      route: [OPEN, { scrollTo: { role: "switch", name: "Simple mode" } }, { click: { role: "switch", name: "Simple mode" } }],
-      alt: "The Simple mode switch in the General card, switched on, with the sidebar showing only the screens it keeps",
+      route: [OPEN, { scrollTo: { role: "switch", name: "Basic mode" } }, { click: { role: "switch", name: "Basic mode" } }],
+      alt: "The Basic mode switch in the General card, switched on, with the sidebar showing only the screens it keeps",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
@@ -67,11 +67,11 @@ export const settings: Screen = {
     },
     {
       id: "simple-mode",
-      title: "Simple mode",
+      title: "Basic mode",
       summary:
-        "A shorter app. It hides Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, and switches the modules on. Nothing is removed: turn it off and everything is back.",
+        "A shorter app. It hides Manual Entry, Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, trims the AI Bridge tab (no Writing style or Working repositories cards), and switches the modules on. Nothing is removed: turn it off and everything is back.",
     },
-    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Test. Each module can be switched on once the one above it is. Hidden while Simple mode is on (Settings)." },
+    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Test. Each module can be switched on once the one above it is. Hidden while Basic mode is on (Settings)." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
     { id: "updates", title: "Updates", summary: "The version you have, beta builds, and checking for a new version." },
     { id: "backup", title: "Backup and transfer", summary: "Move your settings to another computer." },
@@ -128,14 +128,14 @@ export const settings: Screen = {
       id: "simple-mode-switch",
       shot: SIMPLE,
       group: "simple-mode",
-      locate: { role: "switch", name: "Simple mode" },
-      name: "Simple mode",
+      locate: { role: "switch", name: "Basic mode" },
+      name: "Basic mode",
       does:
-        "Hides Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules. Everything keeps working, and your assistant can still use API Templates. " +
-        "Switching it on also switches the modules on, so Auto Test and the rest are ready, and holds Auto Test in its Simple mode (only **Simple** is offered at the top of Auto Test; turning Simple mode off leaves Auto Test in Simple, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
-        "A new installation starts with Simple mode on; an installation from before it existed keeps everything and starts with it off. " +
-        "Anything that opens a hidden screen, a link or a shortcut, opens Auto Test instead. The switch waits while an unattended Auto Test run is going. If a module could not be switched on, a line under the switch names it; turn Simple mode off and on to try again.",
-      tips: ["Your assistant cannot change this setting. If it needs a screen that Simple mode hides, it does that part itself or asks you to turn Simple mode off."],
+        "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style and Working repositories cards in AI Bridge, where your AI tools then register machine-wide. Everything keeps working, and your assistant can still use API Templates. " +
+        "Switching it on also switches the modules on, so Auto Test and the rest are ready, and holds Auto Test in its Basic mode (only **Basic** is offered at the top of Auto Test; turning Basic mode off leaves Auto Test in Basic, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
+        "A new installation starts with Basic mode on; an installation from before it existed keeps everything and starts with it off. " +
+        "Anything that opens a hidden screen, a link or a shortcut, opens Auto Test instead. The switch waits while an unattended Auto Test run is going. If a module could not be switched on, a line under the switch names it; turn Basic mode off and on to try again.",
+      tips: ["Your assistant cannot change this setting. If it needs a screen that Basic mode hides, it does that part itself or asks you to turn Basic mode off."],
     },
     {
       id: "open-modules",
