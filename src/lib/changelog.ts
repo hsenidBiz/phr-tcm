@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.19",
+    date: "2026-11-19",
+    items: [
+      "In Simple mode, when an assistant cannot use a tool, it is told the real reason: no environment chosen yet, or the app not running.",
+    ],
+  },
+  {
     version: "2.4.7-beta.18",
     date: "2026-11-19",
     items: [
