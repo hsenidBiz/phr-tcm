@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.20",
+    date: "2026-11-19",
+    items: [
+      "Assistants now see TCM's tools change within a few seconds of an update or a module being switched, without restarting the editor (after one more restart once this update is installed).",
+      "The account lookup's password column now defaults to USRACC_PASSWORD on every environment that uses the standard account table.",
+      "Switches slide smoothly once when turned on or off, and pages have less space under their titles.",
+    ],
+  },
+  {
     version: "2.4.7-beta.19",
     date: "2026-11-19",
     items: [
