@@ -1402,6 +1402,9 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
 /// of the answer when `page` is false (`"page": false`): it is still read,
 /// and what it shows recorded as seen, and a last line says where to read
 /// it (`PAGE_LEFT_OUT`).
+///
+/// A call already inside a `CALL_STARTED` scope keeps that start: its budget
+/// is the outer one's.
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -1608,7 +1611,7 @@ pub(crate) async fn discover_actions_heard<B: DiscoveryBrowser>(
         (Some((k, field, n)), _, _) => {
             let mut what = actions.get(k).map(describe_action).unwrap_or_default();
             if let Some(field) = field {
-                what = format!("{what}, field {field}");
+                what = format!("{what}, field \"{field}\"");
             }
             lines.push(format!("Stopped: the app refused action {} ({what}) after it ended: {n} not run.", k + 1));
         }
@@ -1752,7 +1755,7 @@ pub(crate) async fn run_fill_form<B: DiscoveryBrowser>(
                 if let Some(refused) = refused {
                     out.row
                         .tail
-                        .push(format!("Stopped: the app refused {refused} after it ended: {} not run.", fields_count(total - k)));
+                        .push(format!("Stopped: the app refused \"{refused}\" after it ended: {} not run.", fields_count(total - k)));
                     out.failed = true;
                     out.detail = refused_after_it_ended(&refused);
                     break;

@@ -6791,7 +6791,7 @@ async fn a_late_refusal_after_a_field_stops_the_step() {
         discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
     assert!(field_line(&text, "First name").contains("ok {") && field_line(&text, "First name").contains("the app refused"), "{text}");
-    assert!(text.contains("Stopped: the app refused First name after it ended: 1 field not run."), "{text}");
+    assert!(text.contains("Stopped: the app refused \"First name\" after it ended: 1 field not run."), "{text}");
     assert!(!text.contains("Last name: ok"), "{text}");
     assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field after the refusal ran");
 }
@@ -6812,7 +6812,7 @@ async fn a_late_refusal_of_a_forms_last_field_stops_the_next_action() {
     let (status, text) =
         discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
-    assert!(text.contains("Stopped: the app refused action 1 (fill_form 1 field, field First name) after it ended: 1 not run."), "{text}");
+    assert!(text.contains("Stopped: the app refused action 1 (fill_form 1 field, field \"First name\") after it ended: 1 not run."), "{text}");
     let b = browser.as_ref().unwrap();
     let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
     assert_eq!(released, 0, "the action after the refusal ran");
@@ -7104,7 +7104,7 @@ async fn a_failed_tried_fill_form_keeps_the_fields_extras_in_field_order() {
     let first = text.find("Saves it sent: POST /hr/leave/save.").unwrap_or_else(|| panic!("no first save: {text}"));
     let second = text.find("Saves it sent: POST /api/eval-rules.").unwrap_or_else(|| panic!("no second save: {text}"));
     assert!(first < second, "the failing field's lines came before an earlier field's: {text}");
-    assert!(!text.contains("Lee\"") || text.matches("Lee").count() <= 1, "{text}");
+    assert!(!text.contains("Lee"), "the failing field's value is never answered: {text}");
 }
 
 /// A form page that shows `message` from the first typed value on, until the
@@ -7187,7 +7187,7 @@ async fn a_form_stopped_by_a_late_refusal_gets_no_pointer_back() {
     let (status, text) =
         discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), form], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
-    assert!(text.contains("Stopped: the app refused First name after it ended: 1 field not run."), "{text}");
+    assert!(text.contains("Stopped: the app refused \"First name\" after it ended: 1 field not run."), "{text}");
     assert!(!text.contains("After action"), "pointed at an answer the refusal is not about: {text}");
     assert_eq!(*typed.lock().unwrap(), ["Ann"], "a field after the refusal ran");
 }
@@ -7270,14 +7270,14 @@ async fn the_call_budget_running_out_between_fields_answers_504_with_the_earlier
     let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let typed = Arc::new(Mutex::new(Vec::new()));
-    // The call began a second short of its budget ago; the first field's own
+    // The call began five seconds short of its budget ago; the first field's own
     // second read of the live notes (after its action) takes longer than that.
     let mut notes_read = 0;
     let page = form_page(three_text_boxes(), typed.clone(), None).answering_first(move |method, params| {
         if method == "Runtime.evaluate" && params["expression"].as_str().is_some_and(|e| e.contains("[role=alert]")) {
             notes_read += 1;
             if notes_read == 2 {
-                std::thread::sleep(std::time::Duration::from_millis(1800));
+                std::thread::sleep(std::time::Duration::from_millis(6000));
             }
         }
         None
@@ -7286,7 +7286,9 @@ async fn the_call_budget_running_out_between_fields_answers_504_with_the_earlier
     let form = fill_form_action(
         json!({ "kind": "fill_form", "fields": { "First name": "Ann", "Last name": "Lee", "Notes": "n" } }),
     );
-    let began = std::time::Instant::now() - std::time::Duration::from_millis(CALL_BUDGET_MS - 1000);
+    let began = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_millis(CALL_BUDGET_MS - 5000))
+        .expect("clock too young for this test");
     let (status, text) = CALL_STARTED
         .scope(began, discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[form, click("#a")], None, None, true, &no_stop()))
         .await;

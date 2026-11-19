@@ -129,8 +129,7 @@ fn a_line_that_moves_to_another_container_is_under_its_new_parent() {
         "  list \"B\"",
         "+  item \"x\"",
     ]
-    .join("
-");
+    .join("\n");
     assert_eq!(render(&diff(&old, &new)), want);
 }
 
@@ -148,8 +147,7 @@ fn a_move_between_identical_containers_is_under_each_container() {
         "  group \"Row\"",
         "+  button \"Move\"",
     ]
-    .join("
-");
+    .join("\n");
     assert_eq!(render(&diff(&old, &new)), want);
 }
 
