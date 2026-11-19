@@ -484,12 +484,13 @@ fn sync_files_after_push(
     // And on the modules: a module switched off takes its commands with it
     // (`ai_tools::effective_disabled`), so the next push after a switch
     // re-syncs even with the same toggles.
-    type SyncKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
     static LAST: std::sync::Mutex<Option<SyncKey>> = std::sync::Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     let key: SyncKey = (disabled_tools.clone(), working_dir.clone(), crate::modules::current());
-    if last.as_ref() != Some(&key) {
-        *last = Some(key);
+    // The first push of a process always syncs (nothing is remembered yet),
+    // so Simple mode or a module switched while the bridge was not running
+    // (signed out: nothing is pushed then) is caught up at the first push.
+    if sync_needed(&mut last, key) {
         crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());
     }
     drop(last);
@@ -514,6 +515,22 @@ fn sync_files_after_push(
             Some(disabled_tools),
         ));
     }
+}
+
+/// What the command and agent files follow: the tools switched off (with the
+/// tools Simple mode hides added), the repository and the modules on.
+pub type SyncKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
+
+/// Whether the files must be written for `key`, given what was written last
+/// (and remember `key`). True for the first call of a process, and whenever
+/// the switched-off tools, the repository, the modules or Simple mode (which
+/// is part of the tool list) moved.
+pub fn sync_needed(last: &mut Option<SyncKey>, key: SyncKey) -> bool {
+    if last.as_ref() == Some(&key) {
+        return false;
+    }
+    *last = Some(key);
+    true
 }
 
 fn mcp_exe_path() -> String {
