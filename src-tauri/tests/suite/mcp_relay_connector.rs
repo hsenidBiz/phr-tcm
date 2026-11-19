@@ -327,3 +327,218 @@ fn a_call_waits_long_and_everything_else_briefly() {
         assert_eq!(*seen.lock().unwrap(), Some(want), "{msg}");
     }
 }
+
+// --- the connector telling the client the list changed ---
+
+use mcp::{notice_due, watch_step, ListSeen, Watch, LIST_CHANGED};
+
+fn v(s: &str) -> ListSeen {
+    ListSeen::Version(s.to_string())
+}
+
+#[test]
+fn notice_due_follows_the_table() {
+    let cases: [(Option<ListSeen>, ListSeen, bool); 8] = [
+        (None, v("a"), false),
+        (Some(v("a")), v("a"), false),
+        (Some(v("a")), v("b"), true),
+        (Some(v("a")), ListSeen::Down, true),
+        (Some(ListSeen::Down), v("a"), true), // down_then_up_is_a_change
+        (Some(ListSeen::Unsupported), v("a"), false),
+        (Some(v("a")), ListSeen::Unsupported, false),
+        (Some(ListSeen::Down), ListSeen::Down, false),
+    ];
+    for (last, now, want) in cases {
+        assert_eq!(notice_due(last.as_ref(), &now), want, "{last:?} -> {now:?}");
+    }
+}
+
+/// `watch_step` over `readings`; what was written.
+fn watched(readings: Vec<Option<ListSeen>>) -> String {
+    let out = Mutex::new(Vec::<u8>::new());
+    let mut last = None;
+    for r in readings {
+        watch_step(&mut last, r, &out);
+    }
+    String::from_utf8(out.into_inner().unwrap()).unwrap()
+}
+
+#[test]
+fn an_old_app_never_triggers_a_notice() {
+    assert_eq!(watched(vec![Some(ListSeen::Unsupported); 3]), "");
+}
+
+#[test]
+fn one_change_one_notice() {
+    let out = watched(vec![Some(v("a")), Some(v("a")), Some(v("b")), Some(v("b")), Some(v("b"))]);
+    assert_eq!(out, format!("{LIST_CHANGED}\n"));
+}
+
+#[test]
+fn a_reading_the_app_could_not_give_sends_nothing() {
+    // A 503 between two equal versions is no reading: no notice, and the version before it still stands.
+    assert_eq!(watched(vec![Some(v("a")), None, Some(v("a"))]), "");
+    assert_eq!(watched(vec![Some(v("a")), None, Some(v("b"))]), format!("{LIST_CHANGED}\n"));
+}
+
+#[test]
+fn a_notice_never_lands_inside_another_line() {
+    let out = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let reply = format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"pad":"{}"}}}}"#, "x".repeat(20_000));
+    let writer = {
+        let (out, reply) = (out.clone(), reply.clone());
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                mcp::write_response_line(&out, &reply);
+            }
+        })
+    };
+    let mut last = Some(v("a"));
+    for i in 0..50 {
+        watch_step(&mut last, Some(v(if i % 2 == 0 { "b" } else { "a" })), &*out);
+    }
+    writer.join().unwrap();
+    let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
+    let mut notices = 0;
+    for line in text.lines() {
+        if line == LIST_CHANGED {
+            notices += 1;
+        } else {
+            assert_eq!(line, reply, "a notice split a reply");
+        }
+    }
+    assert_eq!(notices, 50);
+}
+
+type Calls = Arc<std::sync::atomic::AtomicUsize>;
+
+/// A watch whose reader gives `readings` in turn (then repeats the last) and counts its calls.
+fn reader(readings: Vec<Option<ListSeen>>, poll: Duration) -> (Watch, Calls) {
+    let calls: Calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c = calls.clone();
+    let read = Arc::new(move || {
+        let i = c.fetch_add(1, Ordering::SeqCst);
+        readings[i.min(readings.len() - 1)].clone()
+    });
+    (Watch { read, poll }, calls)
+}
+
+/// Input that gives its lines, then holds the end of the input until `calls` reaches `until` (or 10 s).
+struct HeldInput {
+    data: Vec<u8>,
+    pos: usize,
+    calls: Calls,
+    until: usize,
+}
+
+impl Read for HeldInput {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos < self.data.len() {
+            let n = buf.len().min(self.data.len() - self.pos);
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            return Ok(n);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while self.calls.load(Ordering::SeqCst) < self.until && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Ok(0)
+    }
+}
+
+fn serve_watched(lines: &[&str], watch: Watch, calls: Calls, until: usize) -> String {
+    let relay: SharedRelay = Arc::new(|_b: &str, _t: Duration| Ok((200, r#"{"reply":{"jsonrpc":"2.0","id":7,"result":{}}}"#.to_string())));
+    let call: SharedCall = Arc::new(|_m: &str, _p: &str, _b: &str| Ok((200, "{}".to_string())));
+    let out = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let data = format!("{}\n", lines.join("\n")).into_bytes();
+    let input = std::io::BufReader::new(HeldInput { data, pos: 0, calls, until });
+    mcp::serve_lines_watching(input, out.clone(), "1.0.0".to_string(), call, Arc::new(SessionBook::new()), Some(relay), Some(watch));
+    let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
+    text
+}
+
+#[test]
+fn no_notice_before_initialize() {
+    let (watch, calls) = reader(vec![Some(v("a")), Some(v("b"))], Duration::from_millis(5));
+    let out = serve_watched(&[LIST], watch, calls.clone(), 0);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the watcher started before an initialize was answered");
+    assert!(!out.contains("list_changed"), "{out}");
+}
+
+#[test]
+fn a_change_after_initialize_is_announced_once() {
+    let (watch, calls) = reader(vec![Some(v("a")), Some(v("a")), Some(v("b"))], Duration::from_millis(5));
+    let out = serve_watched(&[INIT], watch, calls, 6);
+    assert_eq!(out.matches("notifications/tools/list_changed").count(), 1, "{out}");
+    assert!(out.lines().all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()), "{out}");
+}
+
+#[test]
+fn a_tools_list_takes_a_reading_right_away() {
+    // The poll is a minute: the second reading can only be the one taken after the list was answered.
+    let (watch, calls) = reader(vec![Some(v("a")), Some(v("b"))], Duration::from_secs(60));
+    let out = serve_watched(&[INIT, LIST], watch, calls.clone(), 2);
+    assert!(calls.load(Ordering::SeqCst) >= 2, "no reading after the list");
+    assert!(!out.contains("list_changed"), "the list the client just fetched was announced: {out}");
+    assert!(out.contains("\"id\":7"), "the list was not answered: {out}");
+}
+
+/// A one-answer server: reads a request, answers `status` with `body`; the thread returns the request line.
+fn status_server(status: &str, body: &str) -> (u16, std::thread::JoinHandle<String>) {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let reply = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+    let h = std::thread::spawn(move || {
+        let (mut s, _) = l.accept().unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut raw = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+            match s.read(&mut chunk) {
+                Ok(n) if n > 0 => raw.extend_from_slice(&chunk[..n]),
+                _ => break,
+            }
+        }
+        let _ = s.write_all(reply.as_bytes());
+        String::from_utf8_lossy(&raw).lines().next().unwrap_or("").to_string()
+    });
+    (port, h)
+}
+
+#[test]
+fn the_reading_comes_from_the_apps_list_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let handshake = dir.path().join("handshake.json");
+    let at = |port: u16| std::fs::write(&handshake, format!(r#"{{"port":{port},"token":"tok"}}"#)).unwrap();
+
+    let (port, hit) = status_server("200 OK", r#"{"version":"0123456789abcdef"}"#);
+    at(port);
+    assert_eq!(mcp::read_list_at(&handshake), Some(v("0123456789abcdef")));
+    assert!(hit.join().unwrap().starts_with("GET /mcp/list-version "));
+
+    let (port, _h) = status_server("404 Not Found", "unknown route");
+    at(port);
+    assert_eq!(mcp::read_list_at(&handshake), Some(ListSeen::Unsupported));
+
+    let (port, _h) = status_server("503 Service Unavailable", "the tool list could not be read just now");
+    at(port);
+    assert_eq!(mcp::read_list_at(&handshake), None);
+
+    let (port, _h) = status_server("200 OK", "not json");
+    at(port);
+    assert_eq!(mcp::read_list_at(&handshake), None);
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    at(port);
+    assert_eq!(mcp::read_list_at(&handshake), Some(ListSeen::Down));
+    std::fs::remove_file(&handshake).unwrap();
+    assert_eq!(mcp::read_list_at(&handshake), Some(ListSeen::Down));
+}
+
+#[test]
+fn the_poll_is_five_seconds() {
+    assert_eq!(mcp::LIST_POLL, Duration::from_secs(5));
+    assert_eq!(LIST_CHANGED, r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#);
+}

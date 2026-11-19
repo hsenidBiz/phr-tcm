@@ -3298,13 +3298,124 @@ pub fn relay_to_app(body: &str, timeout: std::time::Duration) -> Result<(u16, St
 
 /// `relay_to_app` reading the handshake at `handshake`.
 pub fn relay_to_app_at(handshake: &std::path::Path, body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
+    request_app_at(handshake, "POST", crate::mcp_relay::RELAY_PATH, body, timeout)
+}
+
+/// One request to the running app through the connector's normal send path, the handshake at `handshake`
+/// read afresh each time.
+fn request_app_at(handshake: &std::path::Path, method: &str, path: &str, body: &str, timeout: std::time::Duration) -> Result<(u16, String), RelayError> {
     let not_sent = |why: &str| RelayError::NotSent(why.to_string());
     let text = std::fs::read_to_string(handshake).map_err(|_| not_sent("handshake file missing - is the app running?"))?;
     let hs: serde_json::Value = serde_json::from_str(&text).map_err(|_| not_sent("bad handshake file"))?;
     let port = hs["port"].as_u64().ok_or_else(|| not_sent("bad handshake file"))? as u16;
     let token = hs["token"].as_str().ok_or_else(|| not_sent("bad handshake file"))?;
-    send_to_bridge_typed(port, token, "POST", crate::mcp_relay::RELAY_PATH, body, timeout)
+    send_to_bridge_typed(port, token, method, path, body, timeout)
         .map_err(|SendFailure(why, sent)| if sent { RelayError::MaySent(why) } else { RelayError::NotSent(why) })
+}
+
+/// How often the connector asks the app whether its tool list changed.
+pub const LIST_POLL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The notice that tells the client to ask for `tools/list` again.
+pub const LIST_CHANGED: &str = r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#;
+
+/// What one look at the app's tool list showed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListSeen {
+    /// The app's version of its tool list.
+    Version(String),
+    /// The app could not be reached.
+    Down,
+    /// An older app without the route: it can never be watched.
+    Unsupported,
+}
+
+/// Whether `now` is a change worth a notice after `last`. The first reading only records; an app that
+/// cannot be watched never triggers one; going down or coming back counts as a change.
+pub fn notice_due(last: Option<&ListSeen>, now: &ListSeen) -> bool {
+    match last {
+        None | Some(ListSeen::Unsupported) => false,
+        Some(_) if *now == ListSeen::Unsupported => false,
+        Some(last) => last != now,
+    }
+}
+
+/// A reading of the app's tool list, or None when it gave no reading (it could not read its own list).
+pub type SharedListReader = std::sync::Arc<dyn Fn() -> Option<ListSeen> + Send + Sync>;
+
+/// The reading at the handshake `handshake`: 200 a version, 404 unsupported, a failed send down, anything
+/// else (the app could not read its own list) no reading. Gives up after `RELAY_QUICK_TIMEOUT`.
+pub fn read_list_at(handshake: &std::path::Path) -> Option<ListSeen> {
+    match request_app_at(handshake, "GET", crate::mcp_relay::LIST_VERSION_PATH, "", RELAY_QUICK_TIMEOUT) {
+        Ok((200, text)) => serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["version"].as_str().map(|s| ListSeen::Version(s.to_string()))),
+        Ok((404, _)) => Some(ListSeen::Unsupported),
+        Ok(_) => None,
+        Err(_) => Some(ListSeen::Down),
+    }
+}
+
+/// `read_list_at` the running app's handshake.
+pub fn read_list() -> Option<ListSeen> {
+    read_list_at(&crate::ai_bridge::handshake_path())
+}
+
+/// One look: no reading changes nothing; otherwise a due notice is written whole under the output lock, and
+/// the reading becomes `last`.
+pub fn watch_step<W: Write>(last: &mut Option<ListSeen>, now: Option<ListSeen>, out: &std::sync::Mutex<W>) {
+    let Some(now) = now else { return };
+    if notice_due(last.as_ref(), &now) {
+        write_response_line(out, LIST_CHANGED);
+    }
+    *last = Some(now);
+}
+
+/// How the connector watches the app's tool list.
+#[derive(Clone)]
+pub struct Watch {
+    pub read: SharedListReader,
+    pub poll: std::time::Duration,
+}
+
+impl Watch {
+    /// The running app, every `LIST_POLL`.
+    pub fn real() -> Watch {
+        Watch { read: std::sync::Arc::new(read_list), poll: LIST_POLL }
+    }
+}
+
+/// The watcher thread: records a first reading, then looks every `poll`. A `()` on `listed` means the
+/// client was just answered a `tools/list`, so the reading taken now is recorded without a notice. Ends when
+/// `listed` is dropped.
+fn run_watcher<W: Write>(
+    watch: Watch,
+    out: std::sync::Arc<std::sync::Mutex<W>>,
+    listed: std::sync::mpsc::Receiver<()>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut last: Option<ListSeen> = None;
+    watch_step(&mut last, (watch.read)(), &out);
+    loop {
+        match listed.recv_timeout(watch.poll) {
+            Ok(()) => {
+                if let Some(now) = (watch.read)() {
+                    last = Some(now);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let now = (watch.read)();
+                // The input closed while the app was being asked: nothing more is written.
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                watch_step(&mut last, now, &out);
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
 }
 
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
@@ -3431,13 +3542,14 @@ pub fn run_stdio_proxy() {
         eprintln!("{warning}");
     }
     let stdin = std::io::stdin();
-    serve_lines_with(
+    serve_lines_watching(
         stdin.lock(),
         std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout())),
         version,
         std::sync::Arc::new(bridge_call),
         std::sync::Arc::new(crate::mcp_session::SessionBook::new()),
         Some(std::sync::Arc::new(relay_to_app)),
+        Some(Watch::real()),
     );
     // The client closed the pipe and every call has answered: this session is over.
     send_bye();
@@ -3490,7 +3602,7 @@ impl Drop for InFlightCall {
 }
 
 /// One response, as one whole line: written and flushed with `output` locked, so two threads' answers never mix.
-fn write_response_line<W: Write>(output: &std::sync::Mutex<W>, resp: &str) {
+pub fn write_response_line<W: Write>(output: &std::sync::Mutex<W>, resp: &str) {
     let mut out = output.lock().unwrap_or_else(|e| e.into_inner());
     let _ = writeln!(out, "{resp}");
     let _ = out.flush();
@@ -3560,6 +3672,22 @@ pub fn serve_lines_with<R: BufRead, W: Write + Send + 'static>(
     book: std::sync::Arc<crate::mcp_session::SessionBook>,
     relay: Option<SharedRelay>,
 ) {
+    serve_lines_watching(input, output, version, call, book, relay, None);
+}
+
+/// `serve_lines_with`, and with `watch` set, a thread that tells the client when the app's tool list
+/// changed. It starts once the first `initialize` has been answered and stops with the input.
+pub fn serve_lines_watching<R: BufRead, W: Write + Send + 'static>(
+    input: R,
+    output: std::sync::Arc<std::sync::Mutex<W>>,
+    version: String,
+    call: SharedCall,
+    book: std::sync::Arc<crate::mcp_session::SessionBook>,
+    relay: Option<SharedRelay>,
+    watch: Option<Watch>,
+) {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut listed: Option<std::sync::mpsc::Sender<()>> = None;
     let mut session = crate::ai_bridge::new_token();
     let version = std::sync::Arc::new(version);
     let in_flight = std::sync::Arc::new(InFlight::default());
@@ -3584,12 +3712,29 @@ pub fn serve_lines_with<R: BufRead, W: Write + Send + 'static>(
             book.tick(agent.as_deref(), now_ms);
         }
         let is_call = parsed.as_ref().is_some_and(|v| v["method"].as_str() == Some("tools/call"));
-        if parsed.as_ref().is_some_and(|v| v["method"].as_str() == Some("initialize")) {
+        let method = parsed.as_ref().and_then(|v| v["method"].as_str().map(str::to_string));
+        if method.as_deref() == Some("initialize") {
             session = crate::ai_bridge::new_token();
         }
         if !is_call {
             if let Some(resp) = answer_line(&line, &version, &call, &book, &relay, &session) {
                 write_response_line(&output, &resp);
+            }
+            match (method.as_deref(), &listed, &watch) {
+                // The first initialize is answered: the watcher starts.
+                (Some("initialize"), None, Some(watch)) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let (watch, out, stop) = (watch.clone(), output.clone(), stop.clone());
+                    if std::thread::Builder::new().name("tcm-mcp-watch".into()).spawn(move || run_watcher(watch, out, rx, stop)).is_ok() {
+                        listed = Some(tx);
+                    }
+                }
+                // The list the client was just answered is not announced again: the reply is written
+                // first, then the watcher records its reading.
+                (Some("tools/list"), Some(tx), _) => {
+                    let _ = tx.send(());
+                }
+                _ => {}
             }
             continue;
         }
@@ -3609,4 +3754,6 @@ pub fn serve_lines_with<R: BufRead, W: Write + Send + 'static>(
         }
     }
     in_flight.wait_idle();
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    drop(listed);
 }
