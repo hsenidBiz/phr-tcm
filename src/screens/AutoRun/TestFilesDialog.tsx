@@ -1,8 +1,8 @@
-// A project's Test files: the documents its Auto Run scripts and API
+// A project's Test files: the documents its Auto Test scripts and API
 // templates upload into the application, by name. They live on this
 // machine only, in the project's own folder (`src-tauri/src/test_files.rs`);
 // Rust copies a picked file in, lists the folder and removes a file - a
-// local delete, nothing else. Opened from Auto Run's Setup card and from
+// local delete, nothing else. Opened from Auto Test's Setup card and from
 // the API Templates tab, which share the query key below, so one updates
 // the other.
 

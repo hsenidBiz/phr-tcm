@@ -192,7 +192,7 @@ pub fn check_saved_all(root: &Path, org: &str, project: &str, scripts: &[CaseScr
     }
     let fixtures: Vec<Fixture> = fixture_store::list(root, org, project)
         .map_err(|e| {
-            crate::applog::warn(format!("Auto Run setup: the fixtures could not be read: {e}"));
+            crate::applog::warn(format!("Auto Test setup: the fixtures could not be read: {e}"));
             "the fixtures could not be read to check the script - see Settings, Logs".to_string()
         })?
         .into_iter()
@@ -249,7 +249,7 @@ fn substitute_steps(steps: &[StepScript], vars: &BTreeMap<String, Value>) -> Res
         return Ok(steps.to_vec());
     }
     serde_json::from_value(walk(&steps_value(steps), vars)).map_err(|e| {
-        crate::applog::warn(format!("Auto Run setup: the filled-in steps did not read back: {e}"));
+        crate::applog::warn(format!("Auto Test setup: the filled-in steps did not read back: {e}"));
         "the script's fixture values could not be filled in - see Settings, Logs".to_string()
     })
 }
@@ -616,7 +616,7 @@ impl<D: crate::browser::cdp::Driver> Browsers for NoBrowsers<D> {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct SetupView {
     pub fixture_name: String,
-    /// The Auto Run account the fixture runs as (a key, never a login).
+    /// The Auto Test account the fixture runs as (a key, never a login).
     pub account: String,
     /// Each step as `<template name>: <params>`.
     pub steps: Vec<String>,
@@ -670,12 +670,12 @@ pub async fn make_way<D: crate::browser::cdp::Driver>(
     let ended = crate::browser::actions::execute_with(d, &crate::browser::actions::Action::ExpireSession, timing).await;
     if !ended.ok {
         crate::applog::info(format!(
-            "the Auto Run browser's session as {key} could not be ended before a setup; its lease is let go all the same"
+            "the Auto Test browser's session as {key} could not be ended before a setup; its lease is let go all the same"
         ));
     }
     *account = None;
     lease.let_go();
-    crate::applog::info(format!("the Auto Run browser let go of {key} for a setup"));
+    crate::applog::info(format!("the Auto Test browser let go of {key} for a setup"));
 }
 
 /// The stop for a supervised start's setup: set by Close (`stop`), heard

@@ -1,5 +1,5 @@
 //! The API template format - the JSON shape written to
-//! `<Auto Run data>/templates/<org-project slug>/<template-id>.json` - and
+//! `<Auto Test data>/templates/<org-project slug>/<template-id>.json` - and
 //! every check a draft must pass before it may be proven. See the design
 //! doc, "API templates" §4, for the format and its rules; the fixture in
 //! `tests/suite/api_templates.rs` mirrors that section's example.

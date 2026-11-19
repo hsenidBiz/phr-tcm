@@ -420,11 +420,11 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     for (end, sentence) in [
-        (ReplayEnd::Stopped { step: 2 }, "Started from the beginning. The replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"),
+        (ReplayEnd::Stopped { step: 2 }, "Started from the beginning. The replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Test browser)"),
         // The browser closing under it says so, and why, at step 1 too.
         (
             ReplayEnd::BrowserGone { step: 1, why: None, outcomes: vec![] },
-            "Started from the beginning. Replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
+            "Started from the beginning. Replay stopped at step 1: the Auto Test browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
         ),
     ] {
         let host = leak(FakeHost::ending(end));
@@ -484,7 +484,7 @@ async fn database_read_access_follows_the_db_query_switch() {
     assert_eq!(host.replays(), vec![ReplayRequest { case_id: ID, step: 2, db_read_access: false }]);
 }
 
-/// The route is an Auto Run one: gated with the others, and with no app
+/// The route is an Auto Test one: gated with the others, and with no app
 /// behind the bridge (a test, or before setup) it says so rather than
 /// running anything.
 #[tokio::test]
@@ -528,7 +528,7 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     let host = leak(FakeHost { discovering: true, ..FakeHost::ending(stopped) });
     let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} Started from the beginning. The replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"));
+    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} Started from the beginning. The replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Test browser)"));
 
     let host = leak(FakeHost::ready());
     let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
@@ -1119,17 +1119,17 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
     let mine = LeftOpen { account: Some("admin".into()), by_assistant: true };
     assert_eq!(
         left_open_line(&mine),
-        "The Auto Run browser stays open on this step, signed in: discovery actions and component saves are refused until start_autorun_discovery takes it over, and template runs as admin until a release (reset_autorun_browser) frees it (a discovery keeps its sign-in). Do not release it between replays: reset_autorun_browser's release is for a broken browser."
+        "The Auto Test browser stays open on this step, signed in: discovery actions and component saves are refused until start_autorun_discovery takes it over, and template runs as admin until a release (reset_autorun_browser) frees it (a discovery keeps its sign-in). Do not release it between replays: reset_autorun_browser's release is for a broken browser."
     );
     let nobody = LeftOpen { account: None, by_assistant: true };
     assert_eq!(
         left_open_line(&nobody),
-        "The Auto Run browser stays open on this step: discovery actions and component saves are refused until start_autorun_discovery takes it over. Do not release it between replays: reset_autorun_browser's release is for a broken browser."
+        "The Auto Test browser stays open on this step: discovery actions and component saves are refused until start_autorun_discovery takes it over. Do not release it between replays: reset_autorun_browser's release is for a broken browser."
     );
     let theirs = LeftOpen { account: None, by_assistant: false };
     assert_eq!(
         left_open_line(&theirs),
-        "The person's Auto Run browser stays open on this step: discovery actions and component saves are refused until the person closes it."
+        "The person's Auto Test browser stays open on this step: discovery actions and component saves are refused until the person closes it."
     );
 
     let host = leak(FakeHost { left_open: Some(mine.clone()), ..FakeHost::ready() });
@@ -1378,11 +1378,11 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
     );
 
     // A replay the app refused names them too, read under its lock.
-    let mut refused = FakeHost::ending(ReplayEnd::Refused("the person's Auto Run browser is open".into()));
+    let mut refused = FakeHost::ending(ReplayEnd::Refused("the person's Auto Test browser is open".into()));
     refused.overrides = changed.clone();
     let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(4), leak(refused), WAIT).await;
     assert_eq!(status, 409);
-    assert_eq!(text, "the person's Auto Run browser is open\nChanged for testing: header X-Feature; cookie culture.");
+    assert_eq!(text, "the person's Auto Test browser is open\nChanged for testing: header X-Feature; cookie culture.");
 
     // A refusal before the replay took the browser names them as last
     // published.

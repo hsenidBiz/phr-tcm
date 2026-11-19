@@ -45,7 +45,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
   {
     name: "save_autorun_script",
-    label: "Save Auto Run scripts",
+    label: "Save Auto Test scripts",
     summary: "Save browser scripts for a PBI's cases - one call covers the whole set.",
   },
   {
@@ -61,7 +61,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "get_autorun_page",
     label: "See the open page",
-    summary: "Read the page in the assistant's own Auto Run browser (or the one you opened), one element per line with its locator.",
+    summary: "Read the page in the assistant's own Auto Test browser (or the one you opened), one element per line with its locator.",
   },
   {
     name: "probe_autorun_locator",
@@ -81,7 +81,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "start_autorun_discovery",
     label: "Start exploring",
-    summary: "Open an Auto Run browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
+    summary: "Open an Auto Test browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
   },
   {
     name: "discover_autorun_actions",
@@ -96,12 +96,12 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "end_autorun_discovery",
     label: "Stop exploring",
-    summary: "End the assistant's exploration in its own Auto Run browser.",
+    summary: "End the assistant's exploration in its own Auto Test browser.",
   },
   {
     name: "reset_autorun_browser",
-    label: "Reset the Auto Run browser",
-    summary: "Give the assistant's own Auto Run browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
+    label: "Reset the Auto Test browser",
+    summary: "Give the assistant's own Auto Test browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
   },
   {
     name: "save_autorun_component",
@@ -116,7 +116,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "search_autorun_requests",
     label: "Captured requests",
-    summary: "The requests the page in the Auto Run browser made, newest first, with secrets hidden - all, or found by path, method, status, type or body text.",
+    summary: "The requests the page in the Auto Test browser made, newest first, with secrets hidden - all, or found by path, method, status, type or body text.",
   },
   {
     name: "get_autorun_request",
@@ -126,7 +126,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "autorun_capture",
     label: "The capture filter",
-    summary: "Which requests the Auto Run browser's capture keeps from now on, how many it keeps, and the imported sets.",
+    summary: "Which requests the Auto Test browser's capture keeps from now on, how many it keeps, and the imported sets.",
   },
   {
     name: "autorun_har",
@@ -136,12 +136,12 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "set_autorun_headers",
     label: "Set test headers",
-    summary: "Extra request headers for the assistant's Auto Run browser, to test an edge case; named in every answer until reset.",
+    summary: "Extra request headers for the assistant's Auto Test browser, to test an edge case; named in every answer until reset.",
   },
   {
     name: "autorun_cookies",
     label: "Cookies",
-    summary: "The Auto Run browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden; set one that is not the sign-in's, or clear them all: a real sign-out.",
+    summary: "The Auto Test browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden; set one that is not the sign-in's, or clear them all: a real sign-out.",
   },
   {
     name: "record_explore_change",
@@ -175,7 +175,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   {
     name: "get_autorun_failures",
-    label: "Auto Run failures",
+    label: "Auto Test failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
   },
   {
@@ -210,8 +210,8 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   {
     name: "set_autorun_order",
-    label: "Set Auto Run's order",
-    summary: "Set the order Auto Run runs a PBI's cases in on this machine. Run Tests' order is not changed.",
+    label: "Set Auto Test's order",
+    summary: "Set the order Auto Test runs a PBI's cases in on this machine. Run Tests' order is not changed.",
   },
   {
     name: "propose_accounts",
@@ -241,7 +241,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "propose_sign_in_recipe",
     label: "Propose a sign-in",
-    summary: "Try a sign-in recipe with a saved account and leave it for you to approve or reject in Auto Run, Setup.",
+    summary: "Try a sign-in recipe with a saved account and leave it for you to approve or reject in Auto Test, Setup.",
   },
   {
     name: "save_test_file",
@@ -423,7 +423,7 @@ export const AUTORUN_TOOLS = [
   "run_setup",
 ] as const;
 
-/** The network tools: Auto Run's (in AUTORUN_TOOLS and its row), and
+/** The network tools: Auto Test's (in AUTORUN_TOOLS and its row), and
  * besides that behind the Network tools switch (networkTools.ts), which Rust
  * enforces - mirroring `ai_tools.rs`'s `NETWORK_TOOLS`. */
 export const NETWORK_TOOLS = [
@@ -474,7 +474,7 @@ export function moduleOfTool(name: string): Module | null {
 
 /** Whether the AI Tools screen should show a module's tool (in its breakdown
  * and cards) right now: its module is on (capture mode's view: every
- * module), hidden again in capture mode for the Auto Run and API template
+ * module), hidden again in capture mode for the Auto Test and API template
  * tools - the screen is documented and captured, so a shot must never name
  * them. Whether a tool is OFFERED is Rust's call, from the real modules.
  * DISPLAY ONLY: never wire this into `loadDisabledTools` or anything that
@@ -610,7 +610,7 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
 };
 
 /** Whether Database Read Access is on: the Database Access module is on.
- * Auto Run's precondition checks follow it - while it is off, none is run. */
+ * Auto Test's precondition checks follow it - while it is off, none is run. */
 export function dbReadAccessOn(): boolean {
   return modulesSnapshot().has("db_access");
 }

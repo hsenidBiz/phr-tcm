@@ -1,4 +1,4 @@
-//! The one-time copy of the flat Auto Run folder into a folder per
+//! The one-time copy of the flat Auto Test folder into a folder per
 //! environment, and the seed a first environment made afterwards takes.
 
 use std::path::{Path, PathBuf};
@@ -191,7 +191,7 @@ fn migration_log_line_names_no_path() {
         active_name: "Default".into(),
         runs_by_env: vec![],
     });
-    assert!(line.starts_with("Auto Run: Auto Run moved 3 scripts to Default"), "{line}");
+    assert!(line.starts_with("Auto Test: Auto Test moved 3 scripts to Default"), "{line}");
     assert!(!line.contains('\\') && !line.contains('/'), "{line}");
 }
 
@@ -906,7 +906,7 @@ fn migration_notice_counts_and_names_no_path() {
     let said = roots::migration_notice(&r);
     assert_eq!(
         said,
-        "Auto Run moved 117 scripts to Default; other environments start empty. 70 runs went to QA Automation and 12 to Default, as each run names. The old Auto Run folders are kept as a backup and are no longer read."
+        "Auto Test moved 117 scripts to Default; other environments start empty. 70 runs went to QA Automation and 12 to Default, as each run names. The old Auto Test folders are kept as a backup and are no longer read."
     );
     let one = roots::migration_notice(&MigrationReport {
         scripts: 1,
@@ -915,7 +915,7 @@ fn migration_notice_counts_and_names_no_path() {
     });
     assert_eq!(
         one,
-        "Auto Run moved 1 script to Default; other environments start empty. The old Auto Run folders are kept as a backup and are no longer read."
+        "Auto Test moved 1 script to Default; other environments start empty. The old Auto Test folders are kept as a backup and are no longer read."
     );
     for text in [said, one] {
         assert!(!text.contains('\\') && !text.contains('/'), "{text}");

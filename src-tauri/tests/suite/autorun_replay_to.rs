@@ -346,7 +346,7 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     })
     .await;
     assert_eq!(end, ReplayEnd::Stopped { step: 2 });
-    assert_eq!(end.sentence(), "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)");
+    assert_eq!(end.sentence(), "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Test browser)");
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
 }
 
@@ -504,7 +504,7 @@ async fn the_browser_closing_mid_replay_ends_it_saying_the_browser_closed() {
     })
     .await;
     assert_eq!(end, ReplayEnd::BrowserGone { step: 2, why: None, outcomes: vec![] });
-    assert!(end.sentence().starts_with("replay stopped at step 2: the Auto Run browser closed"), "{}", end.sentence());
+    assert!(end.sentence().starts_with("replay stopped at step 2: the Auto Test browser closed"), "{}", end.sentence());
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
 }
 
@@ -1092,7 +1092,7 @@ fn a_stop_before_the_browser_opens_ends_the_replay_there() {
     cancel.store(true, Ordering::SeqCst);
     let end = stopped_before_opening(&cancel).expect("the stop was ignored");
     assert_eq!(end, ReplayEnd::Stopped { step: 1 });
-    assert_eq!(end.sentence(), "the replay was stopped at step 1: it was asked to stop (Stop, Close browser or Release Auto Run browser)");
+    assert_eq!(end.sentence(), "the replay was stopped at step 1: it was asked to stop (Stop, Close browser or Release Auto Test browser)");
 }
 
 /// The person's command answers with the sentence already said.
@@ -1253,7 +1253,7 @@ async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
     assert_eq!(why, &guarding_other_case(5));
     assert_eq!(
         end.sentence(),
-        "replay stopped at step 2: the Auto Run browser is guarding case 5's draft, and the page tried to save"
+        "replay stopped at step 2: the Auto Test browser is guarding case 5's draft, and the page tried to save"
     );
     assert!(!clicked(&app, "#s3"), "{:?}", log(&app));
     assert_eq!(guarded, Some(5));
@@ -1342,7 +1342,7 @@ fn a_browser_gone_after_a_failure_keeps_the_failure() {
     let rows = vec![v2_lib::browser::actions::ActionOutcome::failed("button \"Save\" not found")];
     let end = ReplayEnd::BrowserGone { step: 2, why: Some("button \"Save\" not found".into()), outcomes: rows.clone() };
     let said = end.sentence();
-    assert!(said.starts_with("replay stopped at step 2: button \"Save\" not found; then the Auto Run browser closed"), "{said}");
+    assert!(said.starts_with("replay stopped at step 2: button \"Save\" not found; then the Auto Test browser closed"), "{said}");
     assert!(matches!(end, ReplayEnd::BrowserGone { outcomes, .. } if outcomes == rows));
 }
 

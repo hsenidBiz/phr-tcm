@@ -37,7 +37,7 @@ pub fn rule_at(
     now_ms: u64,
 ) -> Result<Vec<Divergence>, String> {
     let case = divergences::update(root, org, project, |list| divergences::rule_in(list, id, ruling, now_ms))?;
-    crate::applog::info(format!("Auto Run: divergence {id} on case {case} ruled {ruling:?} in the app"));
+    crate::applog::info(format!("Auto Test: divergence {id} on case {case} ruled {ruling:?} in the app"));
     load_at(root, org, project, now_ms)
 }
 
@@ -86,7 +86,7 @@ pub fn rule_by_assistant_at(
     };
     clear_checked(root, &cases);
     crate::applog::info(format!(
-        "Auto Run: {} divergence(s) on case(s) {cases:?} ruled {ruling:?} by the assistant",
+        "Auto Test: {} divergence(s) on case(s) {cases:?} ruled {ruling:?} by the assistant",
         picks.len()
     ));
     Ok(answer)
@@ -97,7 +97,7 @@ pub fn rule_by_assistant_at(
 fn clear_checked(root: &Path, cases: &[i32]) {
     for case in cases {
         if crate::autorun::store::set_checked(root, *case, false).is_err() {
-            crate::applog::warn(format!("Auto Run: could not clear whether case {case}'s script counts as checked"));
+            crate::applog::warn(format!("Auto Test: could not clear whether case {case}'s script counts as checked"));
         }
     }
 }
@@ -107,7 +107,7 @@ fn clear_checked(root: &Path, cases: &[i32]) {
 pub fn undo_at(root: &Path, org: &str, project: &str, id: &str, now_ms: u64) -> Result<Vec<Divergence>, String> {
     let case = divergences::update(root, org, project, |list| divergences::undo_in(list, id))?;
     clear_checked(root, &[case]);
-    crate::applog::info(format!("Auto Run: the ruling on divergence {id} (case {case}) was undone in the app"));
+    crate::applog::info(format!("Auto Test: the ruling on divergence {id} (case {case}) was undone in the app"));
     load_at(root, org, project, now_ms)
 }
 
@@ -146,7 +146,7 @@ pub async fn refresh_rewritten(
     let cases = match client.get_test_cases_by_ids(org, &ids, None, None).await {
         Ok(cases) => cases,
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: the cases waiting for a rewrite could not be read: {}", e.user_text()));
+            crate::applog::warn(format!("Auto Test: the cases waiting for a rewrite could not be read: {}", e.user_text()));
             return vec![];
         }
     };
@@ -163,13 +163,13 @@ pub async fn refresh_rewritten(
         Ok(closed) => {
             for (case, step) in &closed {
                 crate::applog::info(format!(
-                    "Auto Run: case {case} was rewritten in Azure DevOps; its divergence at step {step} is closed"
+                    "Auto Test: case {case} was rewritten in Azure DevOps; its divergence at step {step} is closed"
                 ));
             }
             closed
         }
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: the divergences could not be updated after reading the cases: {e}"));
+            crate::applog::warn(format!("Auto Test: the divergences could not be updated after reading the cases: {e}"));
             vec![]
         }
     }

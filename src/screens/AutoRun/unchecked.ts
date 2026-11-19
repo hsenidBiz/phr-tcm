@@ -31,7 +31,7 @@ function collapsed(s: string): string {
 
 /** `autorun::unchecked::expectations`: case steps (not `cleanup`) in run
  * order, whitespace collapsed; a sentence is one expectation, a list one per
- * entry, and a blank sentence or entry is left out. A step Auto Run performs
+ * entry, and a blank sentence or entry is left out. A step Auto Test performs
  * itself (`doneByAutoRun`) has none. */
 export function uncheckedExpectations(script: CaseScript): UncheckedExpectation[] {
   const out: UncheckedExpectation[] = [];

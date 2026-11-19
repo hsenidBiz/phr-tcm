@@ -1,7 +1,7 @@
 // What a screen says when there is no project to work in. Shown together
 // there is no Project picker to point at, so the sentence names the ways out:
 // a PBI in the bar, or a Home project in Settings. Switched off it is the
-// picker's sentence, as it always was. (Auto Run's Setup rows are pinned in
+// picker's sentence, as it always was. (Auto Test's Setup rows are pinned in
 // AutoRun/index.test.tsx.)
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";

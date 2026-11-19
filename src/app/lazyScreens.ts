@@ -47,9 +47,9 @@ export const AiBridge = lazy(() => import("../screens/AiBridge"));
 // extras are unlocked (lib/extras); lazy, so nobody who never opens it
 // loads it.
 export const AutoRun = lazy(() => import("../screens/AutoRun"));
-// Offered exactly where Auto Run is, and lazy for the same reason.
+// Offered exactly where Auto Test is, and lazy for the same reason.
 export const ApiTemplates = lazy(() => import("../screens/ApiTemplates"));
-// The team's Playwright repo, offered exactly where Auto Run is.
+// The team's Playwright repo, offered exactly where Auto Test is.
 export const Playwright = lazy(() => import("../screens/Playwright"));
 // The report an assistant is working on, previewed; Rust refuses its commands while the module is off.
 export const CrystalReports = lazy(() => import("../screens/CrystalReports"));

@@ -119,7 +119,7 @@ async fn per_project_pbi_hits_carry_the_argument_project() {
     assert_eq!(hits[0].project, "p");
 }
 
-// ------------------------------------------------ home project from Auto Run files
+// ------------------------------------------------ home project from Auto Test files
 
 fn touch(root: &std::path::Path, name: &str) {
     let dir = root.join("projects");

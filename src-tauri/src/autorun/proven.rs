@@ -56,6 +56,6 @@ pub fn note_outcome(root: &Path, case_id: i32, outcome: Outcome) {
         },
     };
     if result.is_err() {
-        crate::applog::warn(format!("Auto Run: could not update whether case {case_id}'s script counts as checked"));
+        crate::applog::warn(format!("Auto Test: could not update whether case {case_id}'s script counts as checked"));
     }
 }

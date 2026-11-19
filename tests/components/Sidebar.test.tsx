@@ -43,29 +43,29 @@ test("a badge count lands on its item and reaches the accessible name", () => {
   expect(screen.queryByText("3")).not.toBeInTheDocument();
 });
 
-/// Auto Run is no longer marked as in development: no row carries a
+/// Auto Test is no longer marked as in development: no row carries a
 /// status pill.
 test("no sidebar row carries an In Dev pill", () => {
   setModulesForTest(ALL_MODULES);
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: "Auto Run" })).not.toHaveTextContent("In Dev");
+  expect(screen.getByRole("button", { name: "Auto Test" })).not.toHaveTextContent("In Dev");
   expect(screen.queryByText("In Dev")).not.toBeInTheDocument();
 });
 
 /// Each module's rows appear when it is switched on and go again when it is
 /// switched off - live, without a reload, because the rail subscribes to the
 /// modules. A fresh install (none on) shows neither.
-test("Auto Run, API Templates and Playwright follow their own modules, live", async () => {
+test("Auto Test, API Templates and Playwright follow their own modules, live", async () => {
   mockIPC((cmd) => (cmd === "modules_set" ? { on: [], recommended: null } : null));
   render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
   expect(shortcutOrder()).not.toContain("autorun");
 
   act(() => setModulesForTest(["db_access", "auto_run"]));
-  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Auto Test/ })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
   expect(shortcutOrder()).toContain("autorun");
@@ -84,7 +84,7 @@ test("Auto Run, API Templates and Playwright follow their own modules, live", as
   expect(sectionShortcut("ai")).toBe("mod+8");
 
   await act(() => setModule("db_access", false));
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
   expect(sectionShortcut("autorun")).toBeUndefined();
   expect(shouldLeaveHidden("playwright", false, true)).toBe(true);
 });
@@ -107,12 +107,12 @@ test("the Crystal Reports row follows its own module and takes no Ctrl number", 
 });
 
 /// Capture mode (the screenshot script) reports every module on: the help
-/// site documents Auto Run, API Templates and Playwright. Off, the rail
+/// site documents Auto Test, API Templates and Playwright. Off, the rail
 /// follows the modules.
 test("capture mode shows every module's rows; off, the rail follows the modules", () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Auto Test/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
   expect(shortcutOrder()).toContain("autorun");
@@ -120,15 +120,15 @@ test("capture mode shows every module's rows; off, the rail follows the modules"
 
   localStorage.removeItem("tcm-v2-dev-capture");
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
 });
 
 const ON = new Set<Module>(ALL_MODULES);
 const NONE = new Set<Module>();
 
-/// The Ctrl+N order closes up around a hidden Auto Run row, whichever way
+/// The Ctrl+N order closes up around a hidden Auto Test row, whichever way
 /// the answer comes.
-test("the shortcut order with and without Auto Run", () => {
+test("the shortcut order with and without Auto Test", () => {
   expect(shortcutOrder(ON)).toEqual([
     "manual",
     "import",
@@ -144,9 +144,9 @@ test("the shortcut order with and without Auto Run", () => {
   expect(shortcutOrder(NONE)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
 });
 
-/// Playwright sits right under Auto Run in the rail, but has no Ctrl number.
+/// Playwright sits right under Auto Test in the rail, but has no Ctrl number.
 /// The everyday screens above the Tools group keep the low numbers.
-test("Playwright sits under Auto Run and takes no Ctrl number", () => {
+test("Playwright sits under Auto Test and takes no Ctrl number", () => {
   const rows = visibleCaseItems(ON).map((i) => i.id);
   expect(rows.indexOf("playwright")).toBe(rows.indexOf("autorun") + 1);
   expect(sectionShortcut("playwright", ON)).toBeUndefined();
@@ -180,10 +180,10 @@ test("the rail's rows sit under two headings, the advanced tools last", () => {
     screen.getByText("Test Case Management").compareDocumentPosition(screen.getByRole("button", { name: "Manual Entry" })) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  // The heading comes right before Auto Run, after AI Bridge.
+  // The heading comes right before Auto Test, after AI Bridge.
   const heading = screen.getByText("Tools");
   const ai = screen.getByRole("button", { name: "AI Bridge" });
-  const autorun = screen.getByRole("button", { name: "Auto Run" });
+  const autorun = screen.getByRole("button", { name: "Auto Test" });
   expect(ai.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(heading.compareDocumentPosition(autorun) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   unmount();
@@ -194,7 +194,7 @@ test("the rail's rows sit under two headings, the advanced tools last", () => {
   expect(screen.getByText("Test Case Management")).toBeInTheDocument();
 });
 
-/// API Templates and Playwright are separate modules under Auto Run: either
+/// API Templates and Playwright are separate modules under Auto Test: either
 /// can be on without the other.
 test("API Templates and Playwright are separate rows", () => {
   const base: Module[] = ["db_access", "auto_run"];
@@ -278,7 +278,7 @@ function markAutoRun() {
 test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
   markAutoRun();
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  const row = screen.getByRole("button", { name: "Auto Run (new)" });
+  const row = screen.getByRole("button", { name: "Auto Test (new)" });
   expect(row).toHaveClass("nav-new");
   const sparkles = row.querySelectorAll("[data-sparkle]");
   expect(sparkles.length).toBeGreaterThan(0);
@@ -287,14 +287,14 @@ test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
     expect(s).toHaveClass("nav-sparkle");
   }
   // The label is still there to read, and no other row is marked.
-  expect(row).toHaveTextContent("Auto Run");
+  expect(row).toHaveTextContent("Auto Test");
   expect(screen.getByRole("button", { name: "AI Bridge" })).not.toHaveClass("nav-new");
 });
 
 test("a marked row that also has a count does not say new twice", () => {
   markAutoRun();
   render(<Sidebar<Section> section="manual" onSelect={() => {}} badges={{ autorun: 93 }} />);
-  const row = screen.getByRole("button", { name: "Auto Run (93 new)" });
+  const row = screen.getByRole("button", { name: "Auto Test (93 new)" });
   expect(row).toHaveClass("nav-new");
 });
 
@@ -302,17 +302,17 @@ test("the mark shows on the collapsed icon rail too", () => {
   localStorage.setItem("tcm-v2-sidebar", "collapsed");
   markAutoRun();
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: "Auto Run (new)" })).toHaveClass("nav-new");
+  expect(screen.getByRole("button", { name: "Auto Test (new)" })).toHaveClass("nav-new");
 });
 
 test("clicking the marked row clears the mark and still navigates", () => {
   markAutoRun();
   const onSelect = vi.fn();
   render(<Sidebar section="manual" onSelect={onSelect} />);
-  fireEvent.click(screen.getByRole("button", { name: "Auto Run (new)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Auto Test (new)" }));
   expect(onSelect).toHaveBeenCalledWith("autorun");
   expect(isNewNav("autorun")).toBe(false);
-  const row = screen.getByRole("button", { name: "Auto Run" });
+  const row = screen.getByRole("button", { name: "Auto Test" });
   expect(row).not.toHaveClass("nav-new");
   expect(row.querySelector("[data-sparkle]")).toBeNull();
 });
@@ -328,7 +328,7 @@ test("under reduced motion the ring stays and no sparkle is drawn", () => {
   try {
     markAutoRun();
     render(<Sidebar section="manual" onSelect={() => {}} />);
-    const row = screen.getByRole("button", { name: "Auto Run (new)" });
+    const row = screen.getByRole("button", { name: "Auto Test (new)" });
     expect(row).toHaveClass("nav-new");
     expect(row.querySelector("[data-sparkle]")).toBeNull();
   } finally {
@@ -344,7 +344,7 @@ test("Simple mode leaves out the six rows and keeps the rest, live", () => {
   for (const name of HIDDEN_ROWS) expect(screen.getByRole("button", { name })).toBeInTheDocument();
   act(() => setAppSimpleModeForTest(true));
   for (const name of HIDDEN_ROWS) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-  for (const name of ["Manual Entry", "View Test Cases", "Run Tests", "AI Bridge", "Auto Run"]) {
+  for (const name of ["Manual Entry", "View Test Cases", "Run Tests", "AI Bridge", "Auto Test"]) {
     expect(screen.getByRole("button", { name })).toBeInTheDocument();
   }
   act(() => setAppSimpleModeForTest(false));
@@ -368,7 +368,7 @@ test("Simple mode drops the Tools heading only when it would sit over one row; o
   act(() => setAppSimpleModeForTest(true));
   expect(screen.queryByText("Tools")).not.toBeInTheDocument();
   expect(screen.getByText("Test Case Management")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Auto Run" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Auto Test" })).toBeInTheDocument();
   act(() => setAppSimpleModeForTest(false));
   expect(screen.getByText("Tools")).toBeInTheDocument();
 });
@@ -377,7 +377,7 @@ test("Simple mode keeps the Tools heading while the group shows two or more rows
   setModulesForTest(ALL_MODULES);
   act(() => setAppSimpleModeForTest(true));
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: "Auto Run" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Auto Test" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Crystal Reports" })).toBeInTheDocument();
   expect(screen.getByText("Tools")).toBeInTheDocument();
 });

@@ -1,5 +1,5 @@
 //! What assistants SAVED, PROPOSED, TRIED or CHANGED, one line per write call
-//! the bridge answered: the data behind Auto Run's assistant timeline.
+//! the bridge answered: the data behind Auto Test's assistant timeline.
 //!
 //! A record holds the time, the assistant's label, the group, a fixed
 //! sentence from the table below, whether the call was accepted, the case id

@@ -701,7 +701,7 @@ fn a_real_edit_adding_line_breaks_is_saved() {
     assert!(!steps_unchanged(LINED, &[parse_steps_xml(LINED)[0].clone(), shared(812)]));
 }
 
-/// What a comparison of words reads (the Auto Run seen check): the text
+/// What a comparison of words reads (the Auto Test seen check): the text
 /// without its Markdown, on one line.
 #[test]
 fn plain_texts_drop_the_markdown() {

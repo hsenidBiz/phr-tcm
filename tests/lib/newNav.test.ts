@@ -50,7 +50,7 @@ test("switching a module off takes its mark away, and the cascade takes the rest
   noteModuleSwitch(set("db_access"), set("db_access", "auto_run"));
   noteModuleSwitch(set("db_access", "auto_run"), set("db_access", "auto_run", "api_templates"));
   expect(isNewNav("apitemplates")).toBe(true);
-  // Rust answers Auto Run off with API Templates gone too.
+  // Rust answers Auto Test off with API Templates gone too.
   noteModuleSwitch(set("db_access", "auto_run", "api_templates"), set("db_access"));
   expect(isNewNav("autorun")).toBe(false);
   expect(isNewNav("apitemplates")).toBe(false);

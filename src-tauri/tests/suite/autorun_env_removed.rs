@@ -1,4 +1,4 @@
-//! The removed area: removing an environment moves its Auto Run folder to
+//! The removed area: removing an environment moves its Auto Test folder to
 //! `removed-envs/<id>-<ms>` for 30 days, lists and purges those folders by
 //! age, never resolves a key that is not listed, and never lets a normal
 //! store write into one.

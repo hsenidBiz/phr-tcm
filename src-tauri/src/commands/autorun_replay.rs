@@ -359,7 +359,7 @@ pub async fn auto_run_replay(
         let _ = n.clone().emit(&app);
     };
     // The database server, found once for the whole run: only while the
-    // Auto Run module is on (the network pause is its), and only when the active environment's database has a
+    // Auto Test module is on (the network pause is its), and only when the active environment's database has a
     // knowable host and port. Otherwise nothing is ever checked.
     let network_target = if crate::modules::on(crate::modules::Module::AutoRun) {
         use tauri::Manager;
@@ -453,7 +453,7 @@ pub fn auto_run_answer_reset(run_id: String, continue_run: bool) -> Result<(), S
 
 /// The reset point the unattended run is waiting at, if any, as the Reset
 /// needed panel shows it. A screen opened after the pause began (the person
-/// left Auto Run and came back) asks this to show the panel again.
+/// left Auto Test and came back) asks this to show the panel again.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_waiting_reset() -> Option<crate::events::AutorunResetNeeded> {

@@ -44,8 +44,8 @@
         "step_number": 3,
         "actions": [
           { "kind": "wait_for", "selector": "#dco-objective-title-field-input", "timeout_ms": 10000 },
-          { "kind": "fill", "selector": "#dco-objective-title-field-input", "value": "Auto Run smoke objective" },
-          { "kind": "check_text", "value": "Auto Run smoke objective" }
+          { "kind": "fill", "selector": "#dco-objective-title-field-input", "value": "Auto Test smoke objective" },
+          { "kind": "check_text", "value": "Auto Test smoke objective" }
         ]
       }
     ]

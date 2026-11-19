@@ -199,7 +199,7 @@ pub fn record_built(
                 built.push(BuiltCreate { entry: recorded.n, kind: create.kind.clone(), id, name, verified });
             }
             Err(why) => {
-                crate::applog::warn(format!("Auto Run setup {}: a built record could not be put on the change list: {why}", setup.name));
+                crate::applog::warn(format!("Auto Test setup {}: a built record could not be put on the change list: {why}", setup.name));
                 unconfirmed.push(create.request.clone());
             }
         }
@@ -293,7 +293,7 @@ async fn trip<B: DiscoveryBrowser>(
         }
         None => {
             let Some(browser) = slot.as_mut() else {
-                return Err("no Auto Run browser is open".to_string());
+                return Err("no Auto Test browser is open".to_string());
             };
             let parts = browser.parts();
             if went_home(&mut *parts.driver, root, org, project, timing).await {
@@ -337,7 +337,7 @@ async fn find_in_browser<B: DiscoveryBrowser>(
     }
     let target = actions.get(last).and_then(check_target).ok_or("the browser find rule does not end in a check")?;
     let Some(browser) = slot.as_mut() else {
-        return Err("no Auto Run browser is open".to_string());
+        return Err("no Auto Test browser is open".to_string());
     };
     let parts = browser.parts();
     let Some(text) = matched_text(&mut *parts.driver, target).await else {
@@ -395,7 +395,7 @@ impl<B: DiscoveryBrowser> Drop for Running<'_, B> {
 
 fn stamp(root: &Path, org: &str, project: &str, setup: &SavedSetup, now: u64) {
     if let Err(why) = stamp_used(root, org, project, &setup.name, now) {
-        crate::applog::warn(format!("Auto Run setup {}: its use could not be noted: {why}", setup.name));
+        crate::applog::warn(format!("Auto Test setup {}: its use could not be noted: {why}", setup.name));
     }
 }
 
@@ -481,7 +481,7 @@ async fn run_found_or_built<B: DiscoveryBrowser, S: RowSource>(
     };
     if let Some(record) = found {
         stamp(root, org, project, setup, now);
-        crate::applog::info(format!("Auto Run setup {}: found an existing record", setup.name));
+        crate::applog::info(format!("Auto Test setup {}: found an existing record", setup.name));
         return (200, json!({ "said": FOUND, "found": true, "record": record, "setup": setup.name }).to_string());
     }
 
@@ -517,7 +517,7 @@ async fn run_found_or_built<B: DiscoveryBrowser, S: RowSource>(
         let answer = discover_action_in(slot, root, org, project, action, None, None).await;
         if let Some(why) = failure_of(&answer) {
             let (recorded, _, _) = record_over(slot, root, session, setup, values, floor);
-            crate::applog::info(format!("Auto Run setup {}: stopped at action {n}", setup.name));
+            crate::applog::info(format!("Auto Test setup {}: stopped at action {n}", setup.name));
             return (
                 200,
                 json!({
@@ -532,7 +532,7 @@ async fn run_found_or_built<B: DiscoveryBrowser, S: RowSource>(
     }
     let (recorded, unconfirmed, ids) = record_over(slot, root, session, setup, values, floor);
     stamp(root, org, project, setup, now);
-    crate::applog::info(format!("Auto Run setup {}: built a new record", setup.name));
+    crate::applog::info(format!("Auto Test setup {}: built a new record", setup.name));
     let named = setup.inputs.iter().find(|i| i.names_the_record).and_then(|i| values.get(&i.name).cloned());
     let returned = setup.creates.get(setup.returns);
     let record = json!({

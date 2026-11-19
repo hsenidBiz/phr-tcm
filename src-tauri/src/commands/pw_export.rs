@@ -1,6 +1,6 @@
 //! Playwright export: what can be exported, where each area goes, and the
 //! write into the clone. The clone folder comes from the app settings; the
-//! area and account choices are kept beside the Auto Run files.
+//! area and account choices are kept beside the Auto Test files.
 
 use crate::pw_export::export::{self, ExportResult, Preview};
 use crate::pw_export::mapping::{self, ExportMap};
@@ -113,7 +113,7 @@ pub fn pw_export_save_map(
     mapping::save(&root, &organization, &project, &map)
 }
 
-/// The folder of the Sync records (`pw_repo::sync`): beside Auto Run's
+/// The folder of the Sync records (`pw_repo::sync`): beside Auto Test's
 /// files in the app's data folder.
 pub(crate) fn sync_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
@@ -179,7 +179,7 @@ pub(crate) fn nothing_written() -> ExportResult {
 /// preview showed. `replace` is the cases the repo already has that the
 /// person ticked to replace on purpose: any other case the repo has refuses
 /// the whole write. `pbi_id` is the PBI the cases are shown under: its saved
-/// Auto Run order goes into each test-case file's order notes.
+/// Auto Test order goes into each test-case file's order notes.
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_export_write(

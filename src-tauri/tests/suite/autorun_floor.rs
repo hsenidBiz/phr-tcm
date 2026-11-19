@@ -1,4 +1,4 @@
-//! The expected-result floor: every way an Auto Run script falls short of
+//! The expected-result floor: every way an Auto Test script falls short of
 //! its test case's expected results. Pure functions over `CaseScript` and
 //! `steps_xml::Step` - no browser, no filesystem.
 

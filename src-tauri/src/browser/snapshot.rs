@@ -781,7 +781,7 @@ pub const NO_FRAME_NODE: &str = "Chrome gave no node for it";
 
 /// Said under an iframe the page cannot reach into.
 pub const CROSS_ORIGIN_FRAME: &str =
-    "the frame holds a page from another site (or has not loaded), which Auto Run cannot reach";
+    "the frame holds a page from another site (or has not loaded), which Auto Test cannot reach";
 
 /// Why a frame's tree could not be read, and whether that is because the
 /// page cannot reach into it (`FrameTree::cross_origin`).

@@ -1,6 +1,6 @@
 // What the assistants are doing, on every screen: a thin strip in the layout
 // flow above the page (never over it), one line per working assistant, with
-// Stop where it can be stopped and one Open that goes to Auto Run. It draws
+// Stop where it can be stopped and one Open that goes to Auto Test. It draws
 // nothing, and takes no height, while nothing is working.
 
 import { useState } from "react";
@@ -76,7 +76,7 @@ export default function ActivityStrip({ onOpen }: { onOpen: () => void }) {
           {more > 0 && <li>{`and ${more} more`}</li>}
           {trial && <li>{`Trying a sign-in · ${trial.environment}`}</li>}
         </ul>
-        <Button size="sm" variant="outline" aria-label="Open Auto Run" className="shrink-0" onClick={onOpen}>
+        <Button size="sm" variant="outline" aria-label="Open Auto Test" className="shrink-0" onClick={onOpen}>
           <IconGoTo aria-hidden />
           Open
         </Button>

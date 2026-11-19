@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// What a discovery works with in the Auto Run browser: its driver, its
+/// What a discovery works with in the Auto Test browser: its driver, its
 /// account lease, the account KEY it is signed in as, and the discovery
 /// under way in it (`None` in a browser the person opened).
 pub struct DiscoveryParts<'a, D> {
@@ -20,7 +20,7 @@ pub struct DiscoveryParts<'a, D> {
     pub overrides: Option<&'a mut crate::autorun::overrides::Overrides>,
 }
 
-/// The Auto Run browser as a discovery sees it: the app's session
+/// The Auto Test browser as a discovery sees it: the app's session
 /// (`commands::autorun::Session`), or a test's fake.
 pub trait DiscoveryBrowser {
     type D: crate::browser::cdp::Driver;
@@ -56,7 +56,7 @@ pub trait DiscoveryBrowser {
 
 /// Said in place of an answer from a held browser that had gone: the app
 /// has closed it the normal way and let it go, and none is open now.
-pub const BROWSER_GONE: &str = "the Auto Run browser had closed, so the app let it go: no Auto Run browser is open now - start a discovery with start_autorun_discovery, or the person opens one with Open browser on the Auto Run tab";
+pub const BROWSER_GONE: &str = "the Auto Test browser had closed, so the app let it go: no Auto Test browser is open now - start a discovery with start_autorun_discovery, or the person opens one with Open browser on the Auto Test tab";
 
 /// Let go of the browser `slot` holds when it has gone (`alive` says no):
 /// a mapping run's summary is kept (`finish_mapping`), the browser is
@@ -81,7 +81,7 @@ pub async fn forget_gone_browser<B: DiscoveryBrowser>(slot: &mut Option<B>) -> b
         crate::browser::tree::blocking(|| b.close());
     }
     let what = if discovering { "discovery browser" } else { "browser" };
-    crate::applog::info(format!("Auto Run: the held {what} had closed or stopped answering; it is let go"));
+    crate::applog::info(format!("Auto Test: the held {what} had closed or stopped answering; it is let go"));
     true
 }
 
@@ -165,7 +165,7 @@ pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
     };
     if other_browser {
         close_browser_in(slot);
-        crate::applog::info("Auto Run: a discovery asked for another browser than the one the assistant's replay left open, so it closed that one");
+        crate::applog::info("Auto Test: a discovery asked for another browser than the one the assistant's replay left open, so it closed that one");
         return Ok(MadeWay::Closed);
     }
     if let Some(b) = slot.as_mut() {
@@ -185,7 +185,7 @@ pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
         }
         b.taken_over();
     }
-    crate::applog::info("Auto Run: a discovery took over the browser the assistant's replay left open");
+    crate::applog::info("Auto Test: a discovery took over the browser the assistant's replay left open");
     Ok(MadeWay::TookOver)
 }
 
@@ -206,7 +206,7 @@ pub(crate) async fn lift_a_calls_guard<D: crate::browser::cdp::Driver>(
         return;
     }
     if !crate::commands::autorun::lift_guard_of(d, guarded_case, owner).await {
-        crate::applog::warn("Auto Run discovery: the replay's guard would not lift yet; it stays on until a later replay lifts it");
+        crate::applog::warn("Auto Test discovery: the replay's guard would not lift yet; it stays on until a later replay lifts it");
     }
 }
 
@@ -227,7 +227,7 @@ pub(crate) async fn went_home<D: crate::browser::cdp::Driver>(
     };
     let out = crate::autorun::nav::load_home(d, &crate::autorun::nav::Home::of(&recipe), timing).await;
     if !out.ok {
-        crate::applog::info(format!("Auto Run discovery: going home in the kept browser failed ({}); it signs in", out.detail));
+        crate::applog::info(format!("Auto Test discovery: going home in the kept browser failed ({}); it signs in", out.detail));
     }
     out.ok
 }

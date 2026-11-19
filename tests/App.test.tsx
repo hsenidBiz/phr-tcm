@@ -117,7 +117,7 @@ test("signed out: sign-in view only, no sidebar tabs", async () => {
 
 // Rust owns this machine's optional extras switch; App has to ask for it on
 // mount, or a restarted release build that is unlocked in Rust shows no
-// Auto Run until someone happens to open Settings (the only other caller).
+// Auto Test until someone happens to open Settings (the only other caller).
 // A signed-out mount is cheap - it waits on none of the lazily loaded
 // screens that make this file's other tests slow - so this pins the
 // startup call without touching the flaky paths.
@@ -135,7 +135,7 @@ test("the app asks for this machine's optional extras switch at startup", async 
 });
 
 // The same for the modules: App asks Rust once at startup, and a fresh
-// install (none on) shows no Auto Run, API Templates or Playwright row.
+// install (none on) shows no Auto Test, API Templates or Playwright row.
 test("the app asks which modules are on at startup, and shows only those", async () => {
   const calls: string[] = [];
   mockIPC((cmd) => {
@@ -149,7 +149,7 @@ test("the app asks which modules are on at startup, and shows only those", async
   expect(calls.filter((c) => c === "modules_get")).toHaveLength(1);
 });
 
-test("with no module on, the rail has neither Auto Run, API Templates nor Playwright", async () => {
+test("with no module on, the rail has neither Auto Test, API Templates nor Playwright", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   mockIPC((cmd) => {
     if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
@@ -162,7 +162,7 @@ test("with no module on, the rail has neither Auto Run, API Templates nor Playwr
   renderApp();
   await screen.findByText("a@b.com");
   expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "API Templates" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
   // Ctrl+6 is Search Suites then: the order closes up around the hidden rows.
@@ -171,9 +171,9 @@ test("with no module on, the rail has neither Auto Run, API Templates nor Playwr
 });
 
 // A saved last tab of an off module is redirected only once the modules have
-// loaded: a machine with Auto Run on keeps it across a restart, and one with
+// loaded: a machine with Auto Test on keeps it across a restart, and one with
 // it off lands on Manual Entry rather than a heading over a blank body.
-test("a saved Auto Run tab is kept when its module is on, and left once it is off", async () => {
+test("a saved Auto Test tab is kept when its module is on, and left once it is off", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   localStorage.setItem(
     "tcm-v2-prefs",
@@ -189,7 +189,7 @@ test("a saved Auto Run tab is kept when its module is on, and left once it is of
     if (cmd === "modules_get") return on ? EVERY_MODULE : [];
   });
   const first = renderApp();
-  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Auto Test" })).toBeInTheDocument();
   first.unmount();
   resetModulesStore();
 
@@ -200,12 +200,12 @@ test("a saved Auto Run tab is kept when its module is on, and left once it is of
   );
   renderApp();
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Test/ })).not.toBeInTheDocument();
 });
 
 // Simple mode adds the five hidden screens to the redirect: a remembered one
-// opens Auto Run once both the modules and the setting have loaded.
-test("a remembered hidden screen opens Auto Run in Simple mode, and stays put when it is off", async () => {
+// opens Auto Test once both the modules and the setting have loaded.
+test("a remembered hidden screen opens Auto Test in Simple mode, and stays put when it is off", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   const prefs = JSON.stringify({ org: "acme", project: "proj", section: "import", pbi: null, workMode: false });
   localStorage.setItem("tcm-v2-prefs", prefs);
@@ -213,7 +213,7 @@ test("a remembered hidden screen opens Auto Run in Simple mode, and stays put wh
     if (cmd === "get_app_settings") return { app_simple_mode: true };
   });
   const first = renderApp();
-  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Auto Test" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Import Test Cases" })).not.toBeInTheDocument();
   first.unmount();
   resetModulesStore();
@@ -471,7 +471,7 @@ test("Ctrl+2 jumps to Import Test Cases; Ctrl+Shift+M toggles Work Manager", asy
 // run, suites, manage, ai, then the Tools group's autorun (9 rows) - the
 // Ctrl+N shortcut order must match it row for row, or a number opens the
 // wrong screen and the last row loses its shortcut entirely.
-test("Ctrl+6 jumps to Search Suites, Ctrl+7 to Suite Management, Ctrl+8 to AI Bridge and Ctrl+9 to Auto Run", async () => {
+test("Ctrl+6 jumps to Search Suites, Ctrl+7 to Suite Management, Ctrl+8 to AI Bridge and Ctrl+9 to Auto Test", async () => {
   // A returning user: the first-run tour opens after sign-in and locks the
   // rail, and these tests wait for each lazily loaded screen, which gives
   // it time to arrive before the next tab click.
@@ -494,7 +494,7 @@ test("Ctrl+6 jumps to Search Suites, Ctrl+7 to Suite Management, Ctrl+8 to AI Br
   expect(await screen.findByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "9", ctrlKey: true });
-  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Auto Test" })).toBeInTheDocument();
   // No In Development pill beside the heading.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 });
@@ -520,7 +520,7 @@ test("the API Templates tab opens from the rail with no In Development pill", as
 // and resetting modules in THIS file would hand every screen lazily loaded
 // afterwards a second copy of the stores (the tour's among them).
 
-test("the bridge push carries the Auto Run mode the settings hold", async () => {
+test("the bridge push carries the Auto Test mode the settings hold", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   localStorage.setItem("tcm-v2-prefs", JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }));
   localStorage.setItem("tcm-v2-tour-done", "yes");
@@ -761,7 +761,7 @@ test("a fresh install takes its home project from the first PBI", async () => {
   expect(storedPrefs().pbi?.id).toBe(9);
 });
 
-// The home project decides where Auto Run, API Templates and Playwright keep
+// The home project decides where Auto Test, API Templates and Playwright keep
 // their files, so the pick that silently sets it says so.
 test("the first PBI that becomes the home project says so", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
@@ -811,7 +811,7 @@ test("a home project that was already set is not announced when a PBI is picked"
   }
 });
 
-test("a fresh install with Auto Run files in one project takes that project as home", async () => {
+test("a fresh install with Auto Test files in one project takes that project as home", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   const probes: Array<Record<string, unknown>> = [];
   signedInMocks((cmd, args) => {
@@ -832,7 +832,7 @@ test("a fresh install with Auto Run files in one project takes that project as h
   expect(probes[0]).toEqual({ organization: "acme", projects: ["Web", "HRM"] });
 });
 
-test("an install that already has a home project is not asked about Auto Run files", async () => {
+test("an install that already has a home project is not asked about Auto Test files", async () => {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
   const asked: string[] = [];
@@ -1081,7 +1081,7 @@ test("the switch is refused while the tour runs", async () => {
 
 // Settings' General card holds the switch and the Home project picker. The
 // switch is the store's own setter (so the tour refuses it); the picker moves
-// the home project that Auto Run and the other per-project files use.
+// the home project that Auto Test and the other per-project files use.
 test("the Settings switch turns the projects off and the bar gets its Project selector", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   savedPrefs();
@@ -1416,9 +1416,9 @@ test("a suite managed from another project's plan is opened in its own project",
   expect(storedPrefs().project).toBe("Web");
 });
 
-// The probe for Auto Run files is a local check that can answer after the
+// The probe for Auto Test files is a local check that can answer after the
 // person has moved to another organization: its answer belongs to the old one.
-test("a late Auto Run files answer for an old organization is ignored", async () => {
+test("a late Auto Test files answer for an old organization is ignored", async () => {
   savedPrefs({ project: "" });
   localStorage.setItem("tcm-v2-tour-done", "yes");
   let answerFirst: (v: string[]) => void = () => {};
@@ -2932,7 +2932,7 @@ test("the Modules page gets the full height with no shell scrollbar, and Back gi
 // ---- Opening a notification from another project, projects together ----
 //
 // The bell names the project of what it opens. While the projects show
-// together there is no project to switch and the home project (where Auto Run
+// together there is no project to switch and the home project (where Auto Test
 // keeps its files) is left alone: the notification's target carries its
 // project, and the board and the Pull Requests panel, which both read every
 // project, open the item or pull request in it. The Pull Requests screen
@@ -3115,7 +3115,7 @@ test("in combined mode a PBI notice opens the PBI under the project the search n
   expect(storedPrefs().pbi).toMatchObject({ id: 77, project: "Payroll" });
 });
 
-test("a PBI notice opens Auto Run on that PBI in Simple mode", async () => {
+test("a PBI notice opens Auto Test on that PBI in Simple mode", async () => {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
   seedPbiNotification("Web");
@@ -3131,7 +3131,7 @@ test("a PBI notice opens Auto Run on that PBI in Simple mode", async () => {
   await screen.findByText("a@b.com");
   fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
   fireEvent.click(screen.getByRole("button", { name: "An upload to PBI 77 was interrupted" }));
-  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Auto Test" })).toBeInTheDocument();
   expect(await screen.findByText("Real PBI")).toBeInTheDocument();
 });
 
@@ -3485,10 +3485,10 @@ test("combined, the first Pull Requests visit seeds the tracked repositories fro
   expect(localStorage.getItem("tcm-v2-pr-repos:acme/Payroll")).toBe(JSON.stringify(["repo-pay"]));
 });
 
-// Auto Run and API Templates keep their files per project, belonging to the
+// Auto Test and API Templates keep their files per project, belonging to the
 // application under test rather than to a PBI: together they stay with the
 // home project even when the PBI is in another one.
-test("Auto Run and API Templates use the home project while the PBI is in another", async () => {
+test("Auto Test and API Templates use the home project while the PBI is in another", async () => {
   savedPrefs({ section: "autorun", pbi: PAYROLL_PBI });
   localStorage.setItem("tcm-v2-tour-done", "yes");
   const asked: Array<{ cmd: string; project: unknown }> = [];

@@ -125,7 +125,7 @@ export default function BugDialog({
   /** The name of the video kept of the failure, when there is one: offered
    * as an attachment, ticked unless it is too large to attach. */
   video?: string | null;
-  /** A caller that already knows the failure (an Auto Run review) hands in
+  /** A caller that already knows the failure (an Auto Test review) hands in
    * its own title and repro; the manual runner passes neither and gets the
    * case's own steps. */
   initialTitle?: string;

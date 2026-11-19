@@ -1,6 +1,6 @@
 //! Where an area's exported specs go in the clone, and which repo account
-//! stands in for each Auto Run account. One file per project beside the
-//! Auto Run files: `<autorun root>/projects/<slug>.pwexport.json`. Kept on
+//! stands in for each Auto Test account. One file per project beside the
+//! Auto Test files: `<autorun root>/projects/<slug>.pwexport.json`. Kept on
 //! this machine only.
 
 use crate::autorun::recipe::project_slug;

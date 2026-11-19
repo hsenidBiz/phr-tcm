@@ -8,23 +8,23 @@ use crate::autorun::recommended::{self, Recommended};
 use crate::modules::{self, Module};
 
 /// The answer to a switch: every module now on, and - only when this call
-/// turned Auto Run from off to on - what that turned on besides.
+/// turned Auto Test from off to on - what that turned on besides.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ModulesAnswer {
     pub on: Vec<Module>,
     pub recommended: Option<Recommended>,
 }
 
-pub const AUTO_RUN_BUSY: &str = "Auto Run can't be switched off while a run is going - stop the run first.";
+pub const AUTO_RUN_BUSY: &str = "Auto Test can't be switched off while a run is going - stop the run first.";
 pub const PLAYWRIGHT_BUSY: &str = "Playwright can't be switched off while a repo command is running - stop it first.";
 
-pub const AUTO_RUN_BROWSER_OPEN: &str = "Auto Run can't be switched off while its browser is open - close it first.";
+pub const AUTO_RUN_BROWSER_OPEN: &str = "Auto Test can't be switched off while its browser is open - close it first.";
 /// What a failed save of `modules.json` says; the raw reason goes to the log.
 pub const SAVE_FAILED: &str = "Could not save this setting. The app log in Settings has the details.";
 
-/// Whether any Auto Run browser is open: an assistant discovery, a
-/// supervised browser (any of the assistants' too), an Auto Run setup
-/// browser, or a held API template browser. Switching Auto Run off would
+/// Whether any Auto Test browser is open: an assistant discovery, a
+/// supervised browser (any of the assistants' too), an Auto Test setup
+/// browser, or a held API template browser. Switching Auto Test off would
 /// strand it.
 pub fn auto_run_browser_open() -> bool {
     crate::commands::autorun::any_discovery_active()
@@ -46,7 +46,7 @@ fn in_order(on: &BTreeSet<Module>) -> Vec<Module> {
 
 /// Switch `module` on or off; the answer is every module now on. Refused
 /// while switching it off would stop a run or a repo command that is going
-/// (its cascade counts: Database Access off takes Auto Run with it).
+/// (its cascade counts: Database Access off takes Auto Test with it).
 ///
 /// The slash commands and "always allow" entries that follow the switch are
 /// files (and a PATH search), so they are written on a blocking thread.
@@ -108,9 +108,9 @@ pub fn modules_set_now(module: Module, on: bool, by_person: bool) -> Result<Modu
 }
 
 /// The settings half of a switch, shared by `modules_set` and
-/// `modules_set_with`: what an off-to-on Auto Run switch recommends (`Some`
+/// `modules_set_with`: what an off-to-on Auto Test switch recommends (`Some`
 /// only then) applied to `s`, the mark that a person switched API Templates
-/// themselves, and "Auto Run has been on". The caller switches API Templates
+/// themselves, and "Auto Test has been on". The caller switches API Templates
 /// when the answer says so, and saves `s` when it changed.
 fn settle_switch(before: &BTreeSet<Module>, module: Module, on: bool, by_person: bool, s: &mut AppSettings) -> Option<Recommended> {
     let rec = (module == Module::AutoRun && on && !before.contains(&Module::AutoRun))
@@ -144,7 +144,7 @@ pub fn resync_commands(app: &tauri::AppHandle) {
     resync_commands_with(&handle, |shared, disabled, working_dir| {
         crate::commands::ai_tools::sync_commands(disabled, working_dir);
         // The same switch decides the "always allow" the app writes for the
-        // Auto Run and API template tools: a module off takes its rules out.
+        // Auto Test and API template tools: a module off takes its rules out.
         if let Some(root) = &root {
             crate::commands::ai_tools::log_allow_outcomes(&crate::commands::ai_tools::sync_allow_files(
                 root,
@@ -264,7 +264,7 @@ fn save_failed(raw: String) -> String {
 
 /// The busy refusals: switching `module` off (and everything under it that is
 /// on) must not stop a run or a repo command that is going, nor strand an open
-/// Auto Run browser.
+/// Auto Test browser.
 pub fn refuse_if_busy(
     state: &BTreeSet<Module>,
     module: Module,

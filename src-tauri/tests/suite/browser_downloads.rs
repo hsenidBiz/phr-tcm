@@ -1,4 +1,4 @@
-//! Downloads an Auto Run browser keeps: the names they land under, and the
+//! Downloads an Auto Test browser keeps: the names they land under, and the
 //! driver's following of them. The names are pure; the following is fed
 //! canned DevTools frames, so none of this starts a browser
 //! (`browser_live.rs` does that).

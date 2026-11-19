@@ -860,7 +860,7 @@ pub fn project_slug(org: &str, project: &str) -> String {
     format!("{}__{}-{hash:08x}", slug_part(org), slug_part(project))
 }
 
-/// The projects (in the order given) that have any Auto Run file under
+/// The projects (in the order given) that have any Auto Test file under
 /// `<root>/projects/`. Every per-project file is named `{slug}.json`,
 /// `{slug}.nav.json`, `{slug}.pwexport.json` or `{slug}-<kind>.json`, so a
 /// project has files when some entry starts with `{slug}.` or `{slug}-`.
@@ -948,7 +948,7 @@ pub const BUILTIN_RECIPE_JSON: &str = include_str!("builtin_recipe.json");
 /// Said when a project has no saved recipe and the active environment has
 /// no site address: the built-in recipe has nowhere to sign in. Names the
 /// Setup row whose Edit sets the address.
-pub const NO_SITE_ADDRESS: &str = "set the site address first - Auto Run, Setup, Site address - or copy this environment's Auto Run data from another one in Edit environments on the AI Bridge tab";
+pub const NO_SITE_ADDRESS: &str = "set the site address first - Auto Test, Setup, Site address - or copy this environment's Auto Test data from another one in Edit environments on the AI Bridge tab";
 
 /// `BUILTIN_RECIPE_JSON` as a recipe, with an empty `start_url` - it does
 /// not validate until an address is filled in (`effective_recipe`).

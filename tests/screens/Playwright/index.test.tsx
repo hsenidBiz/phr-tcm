@@ -1,5 +1,5 @@
 // The Playwright tab: the clone folder, the health line, what the clone
-// holds, and the Export dialog Auto Run's menu item opens here.
+// holds, and the Export dialog Auto Test's menu item opens here.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -359,7 +359,7 @@ test("with no folder chosen nothing is read, and Choose sets one", async () => {
   expect(screen.getByRole("button", { name: "Change…" })).toBeInTheDocument();
 });
 
-test("Auto Run's Export request opens the Export dialog here, and closing it clears the request", async () => {
+test("Auto Test's Export request opens the Export dialog here, and closing it clears the request", async () => {
   mount("C:/repo");
   await screen.findByText("All good");
   expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument();

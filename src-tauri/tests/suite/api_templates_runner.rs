@@ -1,7 +1,7 @@
 //! Running an API template from inside a signed-in page - design doc "API
 //! templates" §5 (the runner) and §9 (errors).
 //!
-//! The page is `common::stateful_app` (the same sign-in fake the Auto Run
+//! The page is `common::stateful_app` (the same sign-in fake the Auto Test
 //! tests use) wrapped in `App`, which answers the three things only this
 //! runner asks a page: where it is (`location.href`), what its anti-forgery
 //! token is (`TOKEN_FN`) and what a request came back with (`FETCH_FN`).
@@ -620,7 +620,7 @@ async fn the_browser_is_closed_on_every_path() {
     let detail = &report.steps.last().unwrap().detail;
     assert!(detail.starts_with("could not sign in as \"admin\": "), "{detail}");
     assert!(
-        detail.ends_with(" - sign that account in once from Auto Run, then try again"),
+        detail.ends_with(" - sign that account in once from Auto Test, then try again"),
         "{detail}"
     );
     assert!(r.fetched().is_empty());
@@ -657,7 +657,7 @@ async fn a_failed_sign_in_names_no_host_and_no_raw_browser_error() {
     let _log = crate::serial::log_tail();
     let _act = crate::serial::activity_log();
 
-    // The sign-in page never loads: Auto Run's detail is "the sign-in page
+    // The sign-in page never loads: Auto Test's detail is "the sign-in page
     // did not open: https://hr.example.internal/ did not finish loading ...".
     let mut r = rig(vec![], None);
     r.script.lock().unwrap().never_loads = true;
@@ -670,7 +670,7 @@ async fn a_failed_sign_in_names_no_host_and_no_raw_browser_error() {
         assert!(!text.contains("example.internal") && !text.contains("://"), "a host reached: {text}");
     }
     assert!(detail.starts_with("could not sign in as \"admin\": the sign-in page did not open: / did not finish loading"), "{detail}");
-    assert!(detail.ends_with(" - sign that account in once from Auto Run, then try again"), "{detail}");
+    assert!(detail.ends_with(" - sign that account in once from Auto Test, then try again"), "{detail}");
     let log = v2_lib::applog::recent(400);
     assert!(
         log.iter().any(|l| l.message.contains("https://hr.example.internal/ did not finish loading")),
@@ -2561,7 +2561,7 @@ mod test_files {
         let problems = preflight(root.path(), &request(t.clone(), prove()), None).unwrap_err();
         assert_eq!(
             problems,
-            vec!["add \"appraisal.pdf\" to Test files (Auto Run or API Templates) - the step \"Cycle setup\" uploads it"
+            vec!["add \"appraisal.pdf\" to Test files (Auto Test or API Templates) - the step \"Cycle setup\" uploads it"
                 .to_string()]
         );
 
@@ -2646,7 +2646,7 @@ async fn a_template_run_on_an_account_held_too_long_is_refused_and_opens_no_brow
     assert!(lease::is_held(&env, "admin"), "the refusal took the case's lease");
 }
 
-/// The Auto Run browser holds its account until a person closes it: a
+/// The Auto Test browser holds its account until a person closes it: a
 /// template run is refused at once rather than waiting for nothing.
 #[tokio::test]
 async fn a_template_run_never_waits_on_the_auto_run_browser() {
@@ -2658,11 +2658,11 @@ async fn a_template_run_never_waits_on_the_auto_run_browser() {
     let _browser = lease::try_acquire(&env, "admin", Holder::Browser { slot: 0 }).unwrap();
     let began = Instant::now();
     let report = run_waiting(&mut r, 5_000).await;
-    assert!(began.elapsed() < Duration::from_millis(500), "it waited on the Auto Run browser: {:?}", began.elapsed());
+    assert!(began.elapsed() < Duration::from_millis(500), "it waited on the Auto Test browser: {:?}", began.elapsed());
     assert!(!report.ok);
     assert_eq!(
         report.steps.last().unwrap().detail,
-        "the account admin was in use by the Auto Run browser - try again when it is free"
+        "the account admin was in use by the Auto Test browser - try again when it is free"
     );
     assert_eq!(r.browsers.opened, 0);
     assert!(lease::is_held(&env, "admin"));

@@ -23,6 +23,7 @@ import {
   ViewCases,
 } from "./lazyScreens";
 import { TITLES, TITLE_NOTES } from "./titles";
+import AutoRunModeSwitch from "../screens/AutoRun/ModeSwitch";
 import type { CaseSelection } from "./types";
 
 type ManageFocus = { planId: number; suiteId: number; project: string };
@@ -91,6 +92,8 @@ export default function CaseScreens({
         <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
         {section === "ai" && <BridgeStatusBadge />}
         {section === "playwright" && <SpecsStatusPill />}
+        {/* Auto Test's Simple/Advanced switch rides in the title row, at the right. */}
+        {section === "autorun" && modules.has("auto_run") && <div className="ml-auto"><AutoRunModeSwitch /></div>}
         {TITLE_NOTES[section] && (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
             <span className="label-trim">{TITLE_NOTES[section]}</span>
@@ -163,7 +166,7 @@ export default function CaseScreens({
       {modules.has("auto_run") && section === "autorun" && (
         <AutoRun
           org={org}
-          // Auto Run's files belong to the application under test
+          // Auto Test's files belong to the application under test
           // (the home project); only the results sent to Azure
           // DevOps follow the PBI.
           project={allProjects ? homeProject : project}

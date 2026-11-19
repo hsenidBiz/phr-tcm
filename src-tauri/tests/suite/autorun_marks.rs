@@ -1,6 +1,6 @@
-//! Auto Run marks: the shared state a script says it changes (`changes`)
+//! Auto Test marks: the shared state a script says it changes (`changes`)
 //! or needs unchanged (`needs_unchanged`), compared by `normalise` and
-//! validated on every save. See the design "Auto Run reset phases" §1.
+//! validated on every save. See the design "Auto Test reset phases" §1.
 
 use serde_json::{json, Value};
 use v2_lib::autorun::marks::{check_marks, normalise};

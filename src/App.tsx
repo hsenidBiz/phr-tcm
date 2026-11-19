@@ -85,10 +85,10 @@ export default function App() {
   const tourSimple = useAppSimpleMode().on;
   const tourSteps = useMemo(() => tourStepsFor(modules, tourSimple), [modules, tourSimple]);
   const [org, setOrgRaw] = useState(initial.org);
-  // The home project: where Auto Run, API templates and Playwright keep their
+  // The home project: where Auto Test, API templates and Playwright keep their
   // files, and what a screen with no PBI falls back to. It is the project the
   // person picked (switched off) or the one the first PBI / the only project /
-  // the Auto Run files chose (projects shown together).
+  // the Auto Test files chose (projects shown together).
   const [homeProject, setHomeProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
   const allProjects = useAllProjects();
@@ -222,7 +222,7 @@ export default function App() {
     if (effectiveProject(allProjects, p, homeProject) !== project) setCaseSelection(null);
     if (allProjects && !homeProject && p?.project) {
       setHomeProjectRaw(p.project);
-      // Auto Run, API Templates and Playwright keep their files there, so
+      // Auto Test, API Templates and Playwright keep their files there, so
       // say so rather than let it happen unseen. An organization with one
       // project had it chosen already: nothing to announce.
       if (projects.data?.length !== 1) {
@@ -253,22 +253,22 @@ export default function App() {
     setProject,
     setPbi,
   });
-  // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
+  // Auto Test's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
   useOpenOnExportRequest(() => {
     if (section !== "playwright" || workMode) goToSection("playwright");
   });
-  // A script saved, repaired or deleted anywhere shows on Auto Run at once.
+  // A script saved, repaired or deleted anywhere shows on Auto Test at once.
   useAutoRunScriptsSync();
   // What the assistant adds beside the scripts (areas, components, the map,
-  // quirks, test files, accounts, fixtures) shows on Auto Run at once too.
+  // quirks, test files, accounts, fixtures) shows on Auto Test at once too.
   useAutoRunDataSync();
   // A switch, copy or import of environments reads everything of the old
   // environment's again.
   useEnvironmentChangeSync();
-  // The unattended run outlives the Auto Run screen (lib/backgroundRun):
+  // The unattended run outlives the Auto Test screen (lib/backgroundRun):
   // its end is caught here, and Review on its pill or toast brings the
-  // person to the run's PBI in Auto Run, whose screen opens the review.
+  // person to the run's PBI in Auto Test, whose screen opens the review.
   // Not over the walkthrough, whose sample scope is not the person's.
   useBackgroundRunHost((r) => {
     if (tourOpen) {
@@ -319,8 +319,8 @@ export default function App() {
   // Uploads that died before they finished get one bell notice each.
   useInterruptedUploadCheck(signedIn, org, tourOpen, status.data?.account ?? "");
 
-  // What the assistants left for a person to decide, for the Auto Run rail's
-  // count and the bell. Auto Run's files belong to the home project, so that
+  // What the assistants left for a person to decide, for the Auto Test rail's
+  // count and the bell. Auto Test's files belong to the home project, so that
   // is the project asked about while the projects show together.
   const autoRunProject = allProjects ? homeProject : project;
   const waiting = useWaitingNotices(
@@ -410,7 +410,7 @@ export default function App() {
           (DEV_TOOLS && !isCaptureMode() ? " — DEV" : "")
         }
         beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
-        // Environments are an Auto Run setting: named only where it shows.
+        // Environments are an Auto Test setting: named only where it shows.
         environment={modules.has("auto_run") ? environmentName : null}
         // An unattended run going, paused, or ended: a click opens its
         // window from anywhere, or its review once it has finished.
@@ -507,7 +507,7 @@ export default function App() {
                   return;
                 }
                 if (target.kind === "auto-run") {
-                  // Auto Run switched off: there is no screen to open.
+                  // Auto Test switched off: there is no screen to open.
                   if (!modules.has("auto_run")) return;
                   const f = target.focus;
                   goToSection("autorun");
@@ -551,7 +551,9 @@ export default function App() {
 
           {/* What the assistants are doing, on every screen: in the layout
               flow, so it pushes the page down rather than covering it. */}
-          {signedIn && modules.has("auto_run") && <ActivityStrip onOpen={() => goToSection("autorun")} />}
+          {/* Not in the help site's shots: the sample assistants are always working, and the strip would
+              push every screen down and repeat the Assistants card's Stop (isCaptureMode). */}
+          {signedIn && modules.has("auto_run") && !isCaptureMode() && <ActivityStrip onOpen={() => goToSection("autorun")} />}
 
           {/* Work Manager scrolls inside its own columns - the outer main
               must not add a second scrollbar around the board. */}
@@ -644,7 +646,7 @@ export default function App() {
         </Suspense>
       )}
 
-      {/* The unattended run's window: mounted here, not in Auto Run, so the
+      {/* The unattended run's window: mounted here, not in Auto Test, so the
           run's progress and its pauses can be opened from any section (the
           title-bar pill), and Run in background closes it without touching
           the run. It shows only while the run's store says it is open. */}

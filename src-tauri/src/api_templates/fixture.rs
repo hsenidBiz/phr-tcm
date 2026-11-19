@@ -44,7 +44,7 @@ pub struct Creates {
 pub struct Fixture {
     pub id: String,
     pub name: String,
-    /// An Auto Run account key, as a template run takes.
+    /// An Auto Test account key, as a template run takes.
     pub account: String,
     pub steps: Vec<FixtureStep>,
     #[serde(default)]

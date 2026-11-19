@@ -1,7 +1,7 @@
 // Playwright: the team's Playwright repo, read from a clone on this
 // computer. The clone folder and its health badges, then four tabs: what the
 // clone holds (Overview), the Runner, the repo's test accounts and Sync; and
-// the Export to Playwright window, which opens here from Auto Run's More menu.
+// the Export to Playwright window, which opens here from Auto Test's More menu.
 //
 // Words come from screens/Playwright/index.tsx, HealthLine.tsx, Runner.tsx,
 // RunnerTree.tsx, FeatureTree.tsx, Accounts.tsx, Sync.tsx, PlaywrightExportDialog.tsx and
@@ -18,14 +18,14 @@ export const playwright: Screen = {
   title: "Playwright",
   group: "Running tests",
   summary:
-    "Work with your clone of the team's Playwright repo without leaving the app: run its tests, manage its test accounts, and keep the repo's copies of your Auto Run scripts up to date. " +
+    "Work with your clone of the team's Playwright repo without leaving the app: run its tests, manage its test accounts, and keep the repo's copies of your Auto Test scripts up to date. " +
     "The app runs only the repo's own commands, in the clone, and never commits, pulls or pushes. " +
-    "Playwright is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears in the sidebar under Auto Run." +
+    "Playwright is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Test), and it appears in the sidebar under Auto Test." +
     " Hidden while Simple mode is on (Settings).",
   shots: [],
   controls: [],
   tips: [
-    "With **Treat all projects as one** on, Playwright works in your home project (Settings, under General): the Auto Run scripts it exports and keeps in sync are that project's.",
+    "With **Treat all projects as one** on, Playwright works in your home project (Settings, under General): the Auto Test scripts it exports and keeps in sync are that project's.",
     "The top of the tab shows the clone folder in use. Press **Choose…** (or **Change…** once one is set) and pick your clone of the PHR-PLAYWRIGHT-AUTOMATION repo. It is the same folder Export to Playwright uses, so changing it in one place changes it in both. **Refresh** reads the clone again.",
     "Under the folder, a badge reads **All good** when nothing is wrong. Otherwise each badge names what stops the tab working, and pointing at it says what to do: the folder is not a clone of the repo; the clone has no node_modules, so run npm install in it; or Node was not found, so install Node.js and restart the app. Until those are fixed the Runner and Accounts tabs say why instead of showing their lists.",
     "A missing qa-options.json is only a warning: runs use the repo's default options. The app reads that file and never writes it.",
@@ -70,7 +70,7 @@ export const playwright: Screen = {
     {
       title: "Keep the repo's copies of your scripts current",
       steps: [
-        "On the **Sync** tab, every case of the project with an Auto Run script is listed with its state. **Current**: the script has not changed since it was exported. **Out of date**: the script changed after the export, and the line under it says what changed. **Not in the repo**: the clone no longer has its section or raw spec. **Never exported**: it has not been exported yet. **In the repo (not from this app)**: the repo already has it, but this app did not export it, for example because someone wrote it by hand. **Excluded in the repo**: the team left it out of the repo on purpose, so nothing here ever writes it.",
+        "On the **Sync** tab, every case of the project with an Auto Test script is listed with its state. **Current**: the script has not changed since it was exported. **Out of date**: the script changed after the export, and the line under it says what changed. **Not in the repo**: the clone no longer has its section or raw spec. **Never exported**: it has not been exported yet. **In the repo (not from this app)**: the repo already has it, but this app did not export it, for example because someone wrote it by hand. **Excluded in the repo**: the team left it out of the repo on purpose, so nothing here ever writes it.",
         "Press **Update out of date** to export every out-of-date case again, or tick cases and press **Update ticked**. **Refresh** reads the states again.",
         "Press **Add new** to export every case with a script that the repo does not have yet. A case counts as in the repo when a test-case file has its heading, the generated index lists it, or a spec has its ADO marker. A new case that cannot be exported yet is left out, and the summary lists it with why.",
         "Update out of date and Add new never touch a case that is in the repo but not from this app. To replace one on purpose, tick it and press **Update ticked**.",
@@ -81,9 +81,9 @@ export const playwright: Screen = {
     {
       title: "Export scripts to the repo",
       steps: [
-        "Export to Playwright now lives in this tab. On **Auto Run**, pick the Product Backlog Item, press **More** and choose **Export to Playwright**: the Playwright tab opens with the export window over it.",
+        "Export to Playwright now lives in this tab. On **Auto Test**, pick the Product Backlog Item, press **More** and choose **Export to Playwright**: the Playwright tab opens with the export window over it.",
         "Check the clone folder, then, under **Mappings**, where each area's specs go (one **Folder for** field per area: the feature's folder path under suites, which lists the repo's own feature paths as you type, and takes a path that is not listed too) and which repo user each of your accounts signs in as. Press **Save mappings** when you change them.",
-        "Under **Cases**, the cases are grouped by module, and each says **New** or **In the repo**, with where the repo has it. Cases already in the repo are skipped. Tick one to replace it. A case the repo marks as excluded cannot be ticked. A case with no Auto Run script is not listed: the window only says how many there are.",
+        "Under **Cases**, the cases are grouped by module, and each says **New** or **In the repo**, with where the repo has it. Cases already in the repo are skipped. Tick one to replace it. A case the repo marks as excluded cannot be ticked. A case with no Auto Test script is not listed: the window only says how many there are.",
         "Each case shows the folder it goes to, which is its area's. To send one case somewhere else, press **Own folder** beside it and type or pick its folder; **Area's folder** sends it back with the rest of its area. Own folders are kept when you press **Save mappings**. When a case's title names one of the clone's folders beside its area's folder (or inside it), its folder line reads **Suggested:** with that folder's name, and **Use** sends the case there. **Use** and the **Use N suggested folders** button above the cases (shown when two or more cases have one) only change what you are editing: press **Save mappings** to keep them. A case that already has its own folder is not offered one. A folder name can be anything the repo can hold, except one starting with _ or . or with a character Windows does not allow in a name.",
         "Untick any new case you do not want. A case that cannot go says why, with a command to copy when the repo is missing its user.",
         "Read the warnings under each case before you export. A warning is a line with a triangle icon, and it never stops Export: it says what to check first. They are: a step that appears to delete a row it did not name, or every matching row (a repeat that deletes rows with no protected rows listed); a step that appears to publish, which cannot be undone; state the case needs that another listed case changes (the line names the case); the number of TCM quirks that travel with the case; and a case that has not passed twice in a row in TCM yet. TCM works out what a step does from the names of the controls it clicks, so these say \"appears to\". A case that cannot be exported still shows its warnings.",

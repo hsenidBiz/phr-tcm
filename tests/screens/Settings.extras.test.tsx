@@ -231,12 +231,12 @@ test("Play the brick game opens the bundled game, and Close shuts it", async () 
 });
 
 // The Extras switch gates no feature any more (the modules do): the card
-// shows the games and Reset, and says nothing about Auto Run.
-test("the Extras card no longer shows or mentions Auto Run", async () => {
+// shows the games and Reset, and says nothing about Auto Test.
+test("the Extras card no longer shows or mentions Auto Test", async () => {
   ipc(true);
   renderSettings();
   const heading = await screen.findByRole("heading", { name: "Extras" });
-  expect(heading.closest("section")!.textContent).not.toMatch(/Auto Run/);
+  expect(heading.closest("section")!.textContent).not.toMatch(/Auto Test/);
 });
 
 test("the Enable Advanced Features row is gone, locked or unlocked", async () => {

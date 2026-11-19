@@ -1,4 +1,4 @@
-//! Copying a whole environment's Auto Run data: what comes across, what
+//! Copying a whole environment's Auto Test data: what comes across, what
 //! never does, what a replace keeps aside, and the sources offered.
 
 use std::path::Path;

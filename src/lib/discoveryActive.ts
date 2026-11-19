@@ -1,5 +1,5 @@
-// Whether the assistant's discovery holds the Auto Run browser. While it
-// does, Auto Run treats it as a run going: its Run buttons, Replay to step
+// Whether the assistant's discovery holds the Auto Test browser. While it
+// does, Auto Test treats it as a run going: its Run buttons, Replay to step
 // and Open browser wait, since each would take that browser away.
 //
 // Asked once (`auto_run_discovery_active`), then kept current by Rust's
@@ -16,7 +16,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { commands, events } from "../bindings";
 
 /** Said by every control that waits for a discovery. */
-export const DISCOVERY_BUSY = "Discovery is using the Auto Run browser";
+export const DISCOVERY_BUSY = "Discovery is using the Auto Test browser";
 
 const discoveryActiveKey = ["autorun-discovery-active"];
 

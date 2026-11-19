@@ -78,7 +78,7 @@ before pushing anyway.
   `SecretStore`) and only their public view reaches the webview.
   `tests/bindings.rs` fails the build if a token-shaped field ever appears
   in the generated TypeScript. Rust owns every other secret. The one
-  deliberate exception is Auto Run test-account passwords: stored on disk
+  deliberate exception is Auto Test test-account passwords: stored on disk
   in a plain JSON file beside the scripts, and sent to the webview by one
   IPC call (`autoRunListAccounts`) for the Accounts dialog, because
   `Account` in `autorun/accounts.rs` derives `specta::Type`. Proposed

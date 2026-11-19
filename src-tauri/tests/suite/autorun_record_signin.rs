@@ -1166,7 +1166,7 @@ async fn a_saves_check_holds_the_account_until_its_browser_closes() {
     let env = v2_lib::environments::active_id(dir.path()).unwrap();
     let fields = [choice(FieldRole::Username, ""), choice(FieldRole::Password, "")];
 
-    // Held by the Auto Run browser: refused before any browser opens.
+    // Held by the Auto Test browser: refused before any browser opens.
     keep_draft(stateful_draft());
     let browser = lease::try_acquire(&env, "admin", Holder::Browser { slot: 0 }).unwrap();
     let opened = AtomicBool::new(false);
@@ -1176,7 +1176,7 @@ async fn a_saves_check_holds_the_account_until_its_browser_closes() {
     })
     .await
     .unwrap_err();
-    assert_eq!(err, "the account admin was in use by the Auto Run browser - try again when it is free");
+    assert_eq!(err, "the account admin was in use by the Auto Test browser - try again when it is free");
     assert!(!opened.load(Ordering::SeqCst), "a browser was opened for a refused check");
     assert!(!recording_is_going(), "the refused check kept the recorder");
     assert_eq!(current_draft(), Some(stateful_draft()), "the refused check lost the draft");

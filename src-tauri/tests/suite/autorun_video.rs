@@ -1,4 +1,4 @@
-//! The video kept of a failed Auto Run case: the browser's own recorder
+//! The video kept of a failed Auto Test case: the browser's own recorder
 //! (`browser::recording`) started before step 1 and stopped with the steps,
 //! its file kept beside the pictures only for a case proposed Failed or
 //! Blocked. The browser is a fake that answers the recorder's calls; the

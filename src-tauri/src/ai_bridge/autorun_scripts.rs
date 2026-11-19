@@ -1,4 +1,4 @@
-//! Saving and retiring Auto Run components, and reading and deleting a case's script.
+//! Saving and retiring Auto Test components, and reading and deleting a case's script.
 
 use super::*;
 
@@ -72,7 +72,7 @@ pub(crate) async fn autorun_component_save(
                     // The error itself can carry the request's address; the
                     // line names only what could not be read.
                     crate::applog::warn(format!(
-                        "Auto Run component {}: the test cases of the scripts that use it could not be read",
+                        "Auto Test component {}: the test cases of the scripts that use it could not be read",
                         draft.name.trim()
                     ));
                     None
@@ -213,7 +213,7 @@ pub(crate) fn component_answer(saved: Result<crate::autorun::components::Saved, 
     use crate::autorun::components::{SIGN_IN_TO_CHECK_USERS, TRY_IT_FIRST};
     match saved {
         Ok(saved) => {
-            crate::applog::info(format!("Auto Run component {} saved as version {}", saved.saved, saved.version));
+            crate::applog::info(format!("Auto Test component {} saved as version {}", saved.saved, saved.version));
             (200, serde_json::to_string(&saved).unwrap_or_default())
         }
         Err(why) if why == TRY_IT_FIRST => (409, why),
@@ -256,7 +256,7 @@ pub fn autorun_script_read_at(root: &std::path::Path, target: &str) -> (u16, Str
         Ok(Some(script)) => (200, serde_json::to_string_pretty(&script).unwrap_or_default()),
         Ok(None) => (404, crate::autorun::store::no_script(case_id)),
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: the script of case {case_id} could not be read: {e}"));
+            crate::applog::warn(format!("Auto Test: the script of case {case_id} could not be read: {e}"));
             (500, format!("the script of case {case_id} could not be read - see Settings, Logs"))
         }
     }
@@ -283,7 +283,7 @@ pub fn autorun_script_delete_at(root: &std::path::Path, body: &str, now: u64) ->
     crate::autorun::store::purge_deleted_scripts(root, now);
     match crate::autorun::store::delete_script(root, case_id, now) {
         Ok(_) => {
-            crate::applog::info(format!("Auto Run: the script of case {case_id} was deleted by the assistant (kept aside for 30 days)"));
+            crate::applog::info(format!("Auto Test: the script of case {case_id} was deleted by the assistant (kept aside for 30 days)"));
             (
                 200,
                 serde_json::json!({
@@ -296,7 +296,7 @@ pub fn autorun_script_delete_at(root: &std::path::Path, body: &str, now: u64) ->
         Err(why) if why == crate::autorun::store::no_script(case_id) => (404, why),
         Err(why) if why == crate::autorun::store::replaying_refusal(case_id) => (409, why),
         Err(why) => {
-            crate::applog::warn(format!("Auto Run: the script of case {case_id} could not be deleted: {why}"));
+            crate::applog::warn(format!("Auto Test: the script of case {case_id} could not be deleted: {why}"));
             (500, format!("the script of case {case_id} could not be deleted - see Settings, Logs"))
         }
     }
@@ -317,7 +317,7 @@ pub(crate) fn autorun_component_retire(ctx: &BridgeContext, body: &str) -> (u16,
     };
     match crate::autorun::components::remove_unused(&root, &ctx.org, &ctx.project, &name) {
         Ok(removed) => {
-            crate::applog::info(format!("Auto Run component {removed} removed"));
+            crate::applog::info(format!("Auto Test component {removed} removed"));
             (200, serde_json::json!({ "removed": removed }).to_string())
         }
         Err(why) if why == crate::autorun::components::not_saved(&name) => (404, why),

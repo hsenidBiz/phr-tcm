@@ -1,4 +1,4 @@
-// Export to Playwright: copies this PBI's passing Auto Run scripts into a
+// Export to Playwright: copies this PBI's passing Auto Test scripts into a
 // local clone of the team's PHR-PLAYWRIGHT-AUTOMATION repo, as raw specs plus
 // a section in the area's test-case file. TCM only writes files; running,
 // refactoring and committing them is the person's (or Claude Code's) job in
@@ -8,7 +8,7 @@
 // The clone folder at the top; then a summary strip, the cases grouped by
 // Module and, beside them, the mappings: where each area's specs live and
 // which repo user each of TCM's accounts signs in as. Cancel and Export stay
-// in a footer while the body scrolls. A case with no Auto Run script is not
+// in a footer while the body scrolls. A case with no Auto Test script is not
 // listed at all: there is nothing of it to export. The
 // preview (what each case needs, and why one cannot go) is read again after
 // a mapping is saved or the clone changes, so the reasons stay current.
@@ -81,7 +81,7 @@ export default function PlaywrightExportDialog({
   project: string;
   pbiId: number;
   caseIds: number[];
-  /** Each case's Module: Auto Run picks the area of a script that names none by it. */
+  /** Each case's Module: Auto Test picks the area of a script that names none by it. */
   modules: [number, string][];
   onClose: () => void;
 }) {
@@ -278,7 +278,7 @@ export default function PlaywrightExportDialog({
   const setPlace = (name: string, patch: Partial<Placement>) =>
     setAreas((cur) => ({ ...(cur ?? {}), [name]: { ...place(name), ...patch } }));
 
-  // A case with no Auto Run script has nothing to export: it is not listed.
+  // A case with no Auto Test script has nothing to export: it is not listed.
   const listed = cases.filter((c) => c.has_script);
   const noScript = cases.length - listed.length;
   const inRepoCount = listed.filter((c) => c.in_repo && !c.excluded).length;
@@ -594,7 +594,7 @@ export default function PlaywrightExportDialog({
                     <Hint className="text-faint">{`${noScript} ${noScript === 1 ? "case without a script is" : "cases without a script are"} not shown.`}</Hint>
                   )}
                 </div>
-                {listed.length === 0 && <Hint className="px-3 py-4">None of these cases has an Auto Run script yet.</Hint>}
+                {listed.length === 0 && <Hint className="px-3 py-4">None of these cases has an Auto Test script yet.</Hint>}
                 {groups.map(([name, rows]) => (
                   <div key={name} role="group" aria-label={name}>
                     <div className="border-b border-border bg-surface-2 px-3 py-1 text-xs font-medium text-muted">
@@ -684,7 +684,7 @@ export default function PlaywrightExportDialog({
                 {usedComponents.length > 0 && (
                   <section className="space-y-2 border-t border-border pt-3">
                     <h4 className="text-xs font-medium text-text">Components</h4>
-                    <Hint>The clone's common component each of your Auto Run components stands for. A mapped one is written as a Uses line in the case's section.</Hint>
+                    <Hint>The clone's common component each of your Auto Test components stands for. A mapped one is written as a Uses line in the case's section.</Hint>
                     {commonComponents.length === 0 && Object.keys(draftComps).length === 0 && (
                       <Hint>This clone has no common components yet.</Hint>
                     )}

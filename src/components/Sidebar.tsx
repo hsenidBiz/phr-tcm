@@ -103,8 +103,8 @@ export const CASE_ITEMS: Item<Section>[] = [
   // the everyday screens above keep the low Ctrl+numbers.
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", group: "advanced" },
-  // Beside Auto Run, whose scripts it exports, but left out of the Ctrl+N
+  { id: "autorun", label: "Auto Test", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", group: "advanced" },
+  // Beside Auto Test, whose scripts it exports, but left out of the Ctrl+N
   // order (NO_SHORTCUT). The theatre masks are Playwright's own picture.
   { id: "playwright", label: "Playwright", icon: GlyphPlaywright, tone: "nav-ico nav-ico-playwright", group: "advanced" },
   // Braces, for the JSON a template is. Past the ninth row, so it has no
@@ -119,7 +119,7 @@ export const CASE_ITEMS: Item<Section>[] = [
  * after them keep their numbers. */
 const NO_SHORTCUT: ReadonlySet<Section> = new Set<Section>(["playwright", "crystal-reports"]);
 
-/** The rows the rail shows: CASE_ITEMS, with Auto Run, API Templates, Playwright and Crystal
+/** The rows the rail shows: CASE_ITEMS, with Auto Test, API Templates, Playwright and Crystal
  * Reports only while their module is on (lib/modules, `sectionModule`). A function,
  * not a constant: the answer can change while the app runs. Ctrl+1..N and the palette's "mod+N" hints are both
  * read off this list, so a number can never open one screen and be
@@ -233,7 +233,7 @@ export default function Sidebar<T extends string = Section>({
     >
       {list.map(({ id, label, icon: Icon, tone, note, group }, index) => {
         // The first row of a group carries the group's heading above it.
-        // Simple mode can leave Tools holding Auto Run alone; a heading over
+        // Simple mode can leave Tools holding Auto Test alone; a heading over
         // one row says nothing, so it goes then. Two or more rows keep it.
         const alone = simple && group === "advanced" && list.filter((r) => r.group === group).length === 1;
         const heading = group && !alone && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;

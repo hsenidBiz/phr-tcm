@@ -1,8 +1,8 @@
 //! Modules: six optional areas arranged as a tech tree, chosen per machine.
 //!
 //! Core (test cases, suites, runs and the board) is always on and is not a
-//! module. Database Access and Writing Style hang off Core; Auto Run hangs
-//! off Database Access; API Templates and Playwright hang off Auto Run;
+//! module. Database Access and Writing Style hang off Core; Auto Test hangs
+//! off Database Access; API Templates and Playwright hang off Auto Test;
 //! Crystal Reports hangs off Core on its own. A module can be on only if its parent is on, and switching one off switches
 //! everything under it off. Off hides, never deletes.
 //!
@@ -52,7 +52,7 @@ impl Module {
         match self {
             Module::DbAccess => "Database Access",
             Module::WritingStyle => "Writing Style",
-            Module::AutoRun => "Auto Run",
+            Module::AutoRun => "Auto Test",
             Module::ApiTemplates => "API Templates",
             Module::Playwright => "Playwright",
             Module::CrystalReports => "Crystal Reports",
@@ -110,7 +110,7 @@ impl Module {
 
 /// What a first-time choice holds. A development build gets everything; an
 /// existing install keeps what it used (Database Access and Writing Style,
-/// plus the Auto Run family if Advanced Features or the extras were on); a
+/// plus the Auto Test family if Advanced Features or the extras were on); a
 /// fresh install starts with nothing. Crystal Reports is new, so no old flag
 /// switches it on: only a development build starts with it.
 pub fn initial(existing_install: bool, advanced: bool, unlocked: bool, dev: bool) -> BTreeSet<Module> {

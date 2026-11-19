@@ -156,7 +156,7 @@ pub struct StoredText {
 }
 
 /// A test case's own words and the project it is in: each step's action
-/// then its expected result, in order (what the Auto Run seen check reads).
+/// then its expected result, in order (what the Auto Test seen check reads).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaseText {
     pub id: i32,

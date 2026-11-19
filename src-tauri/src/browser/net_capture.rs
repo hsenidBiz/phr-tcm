@@ -325,13 +325,13 @@ impl NetCapture {
         let configured = self.app_site.as_ref() == Some(&site);
         if !configured && self.login_sites.is_empty() {
             self.log_refusal(
-                "Auto Run: the signed-in marker showed on a page that is not on the configured address, before any sign-in typed a login in this browser - its site is not taken for the application's, and nothing is captured until the marker shows on the configured address",
+                "Auto Test: the signed-in marker showed on a page that is not on the configured address, before any sign-in typed a login in this browser - its site is not taken for the application's, and nothing is captured until the marker shows on the configured address",
             );
             return;
         }
         if !configured && self.login_sites.contains(&site) {
             self.log_refusal(
-                "Auto Run: the signed-in marker showed on the page the sign-in was typed on, which is not the application's address - its site is not taken for the application's, and nothing is captured until the marker shows on the application's own page",
+                "Auto Test: the signed-in marker showed on the page the sign-in was typed on, which is not the application's address - its site is not taken for the application's, and nothing is captured until the marker shows on the application's own page",
             );
             return;
         }

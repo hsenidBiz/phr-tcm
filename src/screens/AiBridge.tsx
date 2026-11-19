@@ -94,7 +94,7 @@ function copy(text: string, label: string) {
 export default function AiBridge() {
   const qc = useQueryClient();
   // Each card follows its module (lib/modules). Environments exist for Auto
-  // Run - its site, accounts and sign-ins - so that card needs Auto Run; the
+  // Run - its site, accounts and sign-ins - so that card needs Auto Test; the
   // API templates switch needs API Templates. Subscribing here also makes
   // the cards and the breakdown below follow a module switched while this
   // screen is open. A module's tools have no row or switch of their own in
@@ -276,10 +276,10 @@ export default function AiBridge() {
   // Whether the assistant may prove and run API templates - a separate
   // decision from whether the four tools are reachable at all (the "API
   // templates" row above), the same shape as the database's own
-  // create/update/delete switch. Offered only where Auto Run is.
+  // create/update/delete switch. Offered only where Auto Test is.
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
   const setApiWrites = (on: boolean) => saveApiWrites(on);
-  // Whether an assistant gets the network tools at all - the Auto Run
+  // Whether an assistant gets the network tools at all - the Auto Test
   // browser's captured requests, HAR files, test headers and cookies. Off
   // until switched on, per environment, like the API templates switch.
   const networkTools = useSyncExternalStore(subscribeNetworkTools, networkToolsSnapshot);
@@ -996,13 +996,13 @@ export default function AiBridge() {
               </ul>
             )}
           </div>
-          {/* Not tied to the switch above: the Auto Run and API template
+          {/* Not tied to the switch above: the Auto Test and API template
               tools' "always allow" follows the modules, and the tools
               switched off in the list below. Hidden from the help site's
-              shots, like the other Auto Run content (isCaptureMode). */}
+              shots, like the other Auto Test content (isCaptureMode). */}
           {autoRunOn && !isCaptureMode() && (
             <p className="text-[11px] text-faint">
-              With Auto Run on, Claude Code and Cursor are told to allow the Auto Run tools (and, with
+              With Auto Test on, Claude Code and Cursor are told to allow the Auto Test tools (and, with
               API Templates on, the template tools) without asking.
             </p>
           )}
@@ -1045,7 +1045,7 @@ export default function AiBridge() {
               />
             </div>
             <p className="text-[11px] text-faint">
-              Off by default. Templates run as your Auto Run accounts, against the
+              Off by default. Templates run as your Auto Test accounts, against the
               environment&apos;s site address.
             </p>
           </div>
@@ -1054,8 +1054,8 @@ export default function AiBridge() {
 
       {/* Whether an assistant gets the network tools at all: until this is
           on, Rust neither lists them nor answers their routes. They are
-          Auto Run's tools, so Auto Run off takes them too. Shown while Auto Run is on, but not in capture mode, which hides
-          the Auto Run tools from the help site's shots (toolShown). */}
+          Auto Test's tools, so Auto Test off takes them too. Shown while Auto Test is on, but not in capture mode, which hides
+          the Auto Test tools from the help site's shots (toolShown). */}
       {autoRunOn && !isCaptureMode() && (
         <section className="space-y-3 rounded-md border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">Network tools</h2>
@@ -1066,7 +1066,7 @@ export default function AiBridge() {
               <Switch ariaLabel="Network tools" checked={networkTools} onCheckedChange={saveNetworkTools} />
             </div>
             <p className="text-[11px] text-faint">
-              Off by default. Lets an assistant read the requests the Auto Run browser&apos;s
+              Off by default. Lets an assistant read the requests the Auto Test browser&apos;s
               page made, with secrets hidden, save and load them as HAR files, and set test
               headers and cookies in a browser it opened.
             </p>
@@ -1117,7 +1117,7 @@ export default function AiBridge() {
           )}
           {toolShown("save_autorun_script") && (
             <li>
-              <span className="font-medium text-text">Auto Run scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. Off: you run Auto Run by hand.
+              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. Off: you run Auto Test by hand.
             </li>
           )}
           {toolShown("list_api_templates") && (

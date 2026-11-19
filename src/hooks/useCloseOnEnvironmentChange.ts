@@ -1,4 +1,4 @@
-// An editor over one environment's Auto Run files closes, without saving,
+// An editor over one environment's Auto Test files closes, without saving,
 // when the active environment changes: what it holds is the other
 // environment's, and saving it would put it into this one.
 

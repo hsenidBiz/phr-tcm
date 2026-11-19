@@ -1,5 +1,5 @@
 //! The declared-edit gate: what an assistant must say before it may change
-//! an existing Auto Run script.
+//! an existing Auto Test script.
 //!
 //! Pure functions over `CaseScript` - no browser, no filesystem. Nothing
 //! here judges whether an edit is a GOOD idea, only whether it was

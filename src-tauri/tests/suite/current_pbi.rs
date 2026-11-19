@@ -167,7 +167,7 @@ async fn get_current_pbi_carries_the_autorun_mode_only_when_it_is_known() {
     assert_eq!(v["id"], 4321);
     let ctx = BridgeContext { autorun_mode: Some(AutorunMode::Advanced), ..BridgeContext::default() };
     let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
-    assert_eq!(body, "No PBI is selected in TCM. Auto Run mode: advanced.");
+    assert_eq!(body, "No PBI is selected in TCM. Auto Test mode: advanced.");
     // Unknown: exactly what it always answered.
     let ctx = BridgeContext { current_pbi: Some(pbi()), ..BridgeContext::default() };
     let (_, body) = route(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;

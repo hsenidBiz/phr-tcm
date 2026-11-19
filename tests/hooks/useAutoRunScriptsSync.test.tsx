@@ -1,5 +1,5 @@
 // A script changed outside the screen (the assistant's save, a run clearing
-// a mark, a delete) is read again when Rust says so: the Auto Run row
+// a mark, a delete) is read again when Rust says so: the Auto Test row
 // updates with no reload.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -15,7 +15,7 @@ afterEach(() => {
   clearMocks();
 });
 
-/** One case's script, read the way the Auto Run rows read it. */
+/** One case's script, read the way the Auto Test rows read it. */
 function Row({ caseId }: { caseId: number }) {
   const q = useQuery({
     queryKey: scriptQueryKey(caseId),

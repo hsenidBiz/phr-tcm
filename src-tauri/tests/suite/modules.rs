@@ -25,7 +25,7 @@ fn the_tree_has_the_designed_parents() {
 #[test]
 fn a_locked_module_cannot_be_switched_on() {
     let err = apply(&set(&[]), Module::AutoRun, true).unwrap_err();
-    assert_eq!(err, "\"Auto Run\" needs \"Database Access\" switched on first.");
+    assert_eq!(err, "\"Auto Test\" needs \"Database Access\" switched on first.");
     assert!(apply(&set(&[Module::DbAccess]), Module::AutoRun, true).unwrap().contains(&Module::AutoRun));
 }
 
@@ -190,7 +190,7 @@ fn a_set_that_saves_changes_the_state_and_the_file() {
     assert_eq!(load_or_create(d.path(), false), next);
     // Locked: refused, nothing changed.
     let err = v2_lib::modules::set_in(&mut state, d.path(), Module::Playwright, true).unwrap_err();
-    assert_eq!(err, "\"Playwright\" needs \"Auto Run\" switched on first.");
+    assert_eq!(err, "\"Playwright\" needs \"Auto Test\" switched on first.");
     assert_eq!(state, next);
 }
 
@@ -222,7 +222,7 @@ fn the_refusal_names_the_module() {
     for (m, said) in [
         (Module::DbAccess, "Database Access is switched off in Modules"),
         (Module::WritingStyle, "Writing Style is switched off in Modules"),
-        (Module::AutoRun, "Auto Run is switched off in Modules"),
+        (Module::AutoRun, "Auto Test is switched off in Modules"),
         (Module::ApiTemplates, "API Templates is switched off in Modules"),
         (Module::Playwright, "Playwright is switched off in Modules"),
     ] {
@@ -376,7 +376,7 @@ mod commands {
         let d = dir();
         let mut st = set(&[]);
         let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::AutoRun, true, false, false, false).unwrap_err();
-        assert_eq!(err, "\"Auto Run\" needs \"Database Access\" switched on first.");
+        assert_eq!(err, "\"Auto Test\" needs \"Database Access\" switched on first.");
     }
 
     #[test]
@@ -394,13 +394,13 @@ mod commands {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun]);
         let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::AutoRun, false, false, true, false).unwrap_err();
-        assert_eq!(err, "Auto Run can't be switched off while its browser is open - close it first.");
+        assert_eq!(err, "Auto Test can't be switched off while its browser is open - close it first.");
         assert_eq!(err, AUTO_RUN_BROWSER_OPEN);
         // by cascade too, and switching on is never blocked by it
         let err = modules_set_with(&mut st, &mut AppSettings::default(), d.path(), Module::DbAccess, false, false, true, false).unwrap_err();
         assert_eq!(err, AUTO_RUN_BROWSER_OPEN);
         assert_eq!(st, set(&[Module::DbAccess, Module::AutoRun]));
-        // Auto Run already off: nothing for the browser to block
+        // Auto Test already off: nothing for the browser to block
         let mut off = set(&[Module::DbAccess]);
         assert!(modules_set_with(&mut off, &mut AppSettings::default(), d.path(), Module::DbAccess, false, false, true, false).is_ok());
     }

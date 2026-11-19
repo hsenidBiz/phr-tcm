@@ -44,7 +44,7 @@ const FORBIDDEN = [
   /get_api_flow_progress/i,
   /crystal[ _]?reports?/i,
   /\brpt\b/i,
-  // Auto Run and API Templates are finished features, never "in development".
+  // Auto Test and API Templates are finished features, never "in development".
   /in dev(elopment)?\b/i,
 ];
 

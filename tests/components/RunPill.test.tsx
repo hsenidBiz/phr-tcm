@@ -54,12 +54,12 @@ const RESET = { run_id: "run-9", before_case_id: 4, batch: 2, set: [], names: ["
 
 test("running: how far it has got; paused: amber Paused before Batch N; finished: Review", () => {
   expect(runPillView(runIn({ position: { index: 2, total: 8 } }))).toEqual({
-    text: "Auto Run 3 of 8",
+    text: "Auto Test 3 of 8",
     action: "Open the run window",
     tone: "accent",
   });
   // Before the first case reports, it is on the first.
-  expect(runPillView(runIn({}))?.text).toBe("Auto Run 1 of 8");
+  expect(runPillView(runIn({}))?.text).toBe("Auto Test 1 of 8");
   expect(runPillView(runIn({ position: { index: 2, total: 8 }, resetNeeded: RESET }))).toEqual({
     text: "Paused before Batch 2",
     action: "Open the run window to continue or stop the run",
@@ -67,7 +67,7 @@ test("running: how far it has got; paused: amber Paused before Batch N; finished
   });
   expect(runPillView(runIn({ phase: "finished", resultId: "run-9" }))).toEqual({
     text: "Run finished, Review",
-    action: "Open the finished run's review in Auto Run",
+    action: "Open the finished run's review in Auto Test",
     tone: "success",
   });
   expect(runPillView(runIn({ phase: "failed", error: "no browser" }))?.text).toBe("Run stopped with an error");
@@ -112,9 +112,9 @@ test("a running run's pill names its click, and the click opens the run window",
   });
   act(() => sendRunToBackground());
   render(<RunPill />);
-  const pill = screen.getByRole("button", { name: "Auto Run 1 of 8. Open the run window" });
+  const pill = screen.getByRole("button", { name: "Auto Test 1 of 8. Open the run window" });
   expect(pill).toHaveAttribute("title", "Open the run window");
-  expect(screen.getByText("Auto Run 1 of 8")).toHaveClass("label-trim");
+  expect(screen.getByText("Auto Test 1 of 8")).toHaveClass("label-trim");
   expect(backgroundRunSnapshot().run?.open).toBe(false);
   fireEvent.click(pill);
   expect(backgroundRunSnapshot().run).toEqual(expect.objectContaining({ phase: "running", open: true }));
@@ -122,7 +122,7 @@ test("a running run's pill names its click, and the click opens the run window",
 });
 
 test("discovery with no run reads Discovering, in accent, as text that says what ends it", () => {
-  const note = "Discovery is using the Auto Run browser. End it from End discovery on the Discovery row in Auto Run's Setup panel.";
+  const note = "Discovery is using the Auto Test browser. End it from End discovery on the Discovery row in Auto Test's Setup panel.";
   expect(runPillView(null, true)).toEqual({ text: "Discovering", action: note, tone: "accent" });
   expect(runPillView(runIn({ phase: "setup", open: true }), true)?.text).toBe("Discovering");
   // A run the store holds still shows as itself.
@@ -136,7 +136,7 @@ test("discovery with no run reads Discovering, in accent, as text that says what
   expect(pill.className).toMatch(/\bbg-accent\/15\b/);
   expect(pill.className).toMatch(/\btext-accent-fill\b/);
   expect(screen.getByText("Discovering")).toHaveClass("label-trim");
-  // Nothing to click: End discovery on Auto Run is what ends it.
+  // Nothing to click: End discovery on Auto Test is what ends it.
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 
   act(() => setDiscoveryActive(false));

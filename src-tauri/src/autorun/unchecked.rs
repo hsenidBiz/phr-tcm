@@ -28,7 +28,7 @@ fn collapsed(s: &str) -> String {
 /// Every expectation the script leaves unchecked, case steps in run order,
 /// never the clean-up: a sentence is one (item `WHOLE_STEP_ITEM`), a list is
 /// one per entry. Item and why with their whitespace collapsed; a blank
-/// sentence or entry is left out. A step Auto Run performs itself
+/// sentence or entry is left out. A step Auto Test performs itself
 /// (`done_by_auto_run`) has none: every reader of this list agrees.
 pub fn expectations(script: &CaseScript) -> Vec<UncheckedExpectation> {
     let mut out = Vec::new();

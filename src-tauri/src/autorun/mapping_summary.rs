@@ -49,7 +49,7 @@ pub struct MappingSummary {
     pub blocked_writes: u32,
 }
 
-/// `projects/<slug>-mapping.json` under the Auto Run folder.
+/// `projects/<slug>-mapping.json` under the Auto Test folder.
 pub fn summary_path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}-mapping.json", project_slug(org, project)))
 }
@@ -174,7 +174,7 @@ pub fn log_line(summary: &MappingSummary) -> String {
     let updated: Vec<String> = summary.updated.iter().map(|u| u.name.clone()).collect();
     let unreached: Vec<String> = summary.unreached.iter().map(|u| u.name.clone()).collect();
     format!(
-        "Auto Run mapping run ended: {} added ({}), {} updated ({}), {} unchanged ({}), {} not reached ({}), {} saves blocked",
+        "Auto Test mapping run ended: {} added ({}), {} updated ({}), {} unchanged ({}), {} not reached ({}), {} saves blocked",
         summary.added.len(),
         names(&summary.added),
         summary.updated.len(),

@@ -24,7 +24,7 @@ pub(crate) fn said_true(v: &serde_json::Value) -> bool {
 /// Said when the browser a discovery opened was replaced (the person
 /// pressed Open browser) before its sign-in.
 pub(crate) const DISCOVERY_TAKEN_OVER: &str =
-    "the Auto Run browser was taken over before the discovery signed in - start the discovery again";
+    "the Auto Test browser was taken over before the discovery signed in - start the discovery again";
 
 /// The words of the page's live messages: alerts, statuses and live
 /// regions. Read before and after a discovery action, so the ones the
@@ -108,7 +108,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                 .is_ok();
         lift_a_calls_guard(p.driver, p.guarded_case, p.guard_owner).await;
         let signed = if kept {
-            crate::applog::info(format!("Auto Run discovery as {key}: signed in already, the sign-in is kept"));
+            crate::applog::info(format!("Auto Test discovery as {key}: signed in already, the sign-in is kept"));
             Ok(discovery_signed_in_already(key))
         } else {
             match crate::autorun::signin::sign_in_leased(
@@ -163,7 +163,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                             (Some(run), None)
                         }
                         Err(why) => {
-                            crate::applog::warn(format!("Auto Run explore session could not start: {why}"));
+                            crate::applog::warn(format!("Auto Test explore session could not start: {why}"));
                             (None, Some(EXPLORE_NOT_STARTED.to_string()))
                         }
                     },
@@ -266,7 +266,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     } else {
                         "discovery"
                     };
-                    crate::applog::info(format!("Auto Run {what} started as {key}"));
+                    crate::applog::info(format!("Auto Test {what} started as {key}"));
                     return (200, answer.to_string());
                 }
             }
@@ -275,7 +275,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     if let Some(browser) = slot.take() {
         browser.close();
     }
-    crate::applog::info(format!("Auto Run discovery as {key} did not start; its browser is closed"));
+    crate::applog::info(format!("Auto Test discovery as {key} did not start; its browser is closed"));
     (409, failed)
 }
 
@@ -343,14 +343,14 @@ pub(crate) async fn land_at_area<D: crate::browser::cdp::Driver>(
                 &route,
                 crate::autorun::nav::TripFrom::SignIn,
                 timing,
-                "Auto Run discovery",
+                "Auto Test discovery",
                 Some(account),
             )
             .await;
             landing.at_area = Some(out.ok);
             landing.notes = notes;
             if !out.ok {
-                crate::applog::info(format!("Auto Run discovery: the walk to its area did not arrive ({})", out.detail));
+                crate::applog::info(format!("Auto Test discovery: the walk to its area did not arrive ({})", out.detail));
                 landing.walk = Some(out.detail);
             }
         }
@@ -470,7 +470,7 @@ pub(crate) fn count_blocked_writes<D: crate::browser::cdp::Driver>(
     let stopped = crate::browser::cdp::Driver::take_saves_stopped(d);
     for (method, path) in &stopped {
         let path = ran.iter().fold(crate::autorun::discovery_map::path_only(path), |p, a| without_typed(&p, a));
-        crate::applog::warn(format!("Auto Run mapping run blocked a write: {method} {path}"));
+        crate::applog::warn(format!("Auto Test mapping run blocked a write: {method} {path}"));
     }
     run.blocked_writes = run.blocked_writes.saturating_add(u32::try_from(stopped.len()).unwrap_or(u32::MAX));
     Some(stopped.len())
@@ -727,7 +727,7 @@ pub(crate) async fn retake_print_after_call<B: DiscoveryBrowser>(
     // The page cannot say who is signed in, so a call that could have swapped
     // the login is never taken as the same sign-in.
     if let Some(why) = crate::autorun::replay_to::touches_sign_in(actions, &recipe) {
-        crate::applog::info(format!("Auto Run: a discovery call {why}, so the sign-in's cookies were not printed again"));
+        crate::applog::info(format!("Auto Test: a discovery call {why}, so the sign-in's cookies were not printed again"));
         return;
     }
     let timing = crate::browser::timing::Timing::supervised();
@@ -994,7 +994,7 @@ pub(crate) async fn discover_action_heard<B: DiscoveryBrowser>(
             })
             .collect();
         if let Err(why) = crate::autorun::explore::note_writes(root, session, &sent) {
-            crate::applog::warn(format!("Auto Run explore session: its saves could not be noted: {why}"));
+            crate::applog::warn(format!("Auto Test explore session: its saves could not be noted: {why}"));
         }
     }
     (200, answer.to_string())
@@ -2056,7 +2056,7 @@ pub(crate) async fn discover_one<D: crate::browser::cdp::Driver>(
     Ok(Discovered { outcome: tried.outcome, dialogs, writes, blocked, after })
 }
 
-/// `/autorun-discover-start`: open the Auto Run browser for the assistant
+/// `/autorun-discover-start`: open the Auto Test browser for the assistant
 /// and sign in as `account` (`discover_start_in`). Refused, before
 /// anything opens, while anything else holds the browser, and for an
 /// account or recipe that is not there. `holder` is the assistant whose call
@@ -2077,7 +2077,7 @@ pub(crate) async fn autorun_discover_start(
     let Some(account) = named(v.get("account").and_then(|a| a.as_str())) else {
         return (
             400,
-            format!("this call needs an \"account\": the key of an account saved under Auto Run, Accounts. Expected {SHAPE}."),
+            format!("this call needs an \"account\": the key of an account saved under Auto Test, Accounts. Expected {SHAPE}."),
         );
     };
     let area = named(v.get("area").and_then(|a| a.as_str()));
@@ -2127,7 +2127,7 @@ pub(crate) async fn autorun_discover_start(
     // claimed before anything opens, refused at once naming whose browser it
     // is going in, and given back when this start returns (failed or not).
     let _mapping_start = match mapping.is_some().then(|| crate::commands::autorun::claim_mapping_start(n)) {
-        Some(Err(going)) => return (409, mapping_refusal(n, going).unwrap_or_else(|| mapping_going("an Auto Run browser"))),
+        Some(Err(going)) => return (409, mapping_refusal(n, going).unwrap_or_else(|| mapping_going("an Auto Test browser"))),
         Some(Ok(start)) => Some(start),
         None => None,
     };

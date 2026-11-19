@@ -1,6 +1,6 @@
-//! What the Auto Run screen needs to know about the Playwright repo's rules.
+//! What the Auto Test screen needs to know about the Playwright repo's rules.
 
-/// Whether the Playwright tab has a clone set, for the Auto Run screen.
+/// Whether the Playwright tab has a clone set, for the Auto Test screen.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct PwRulesStatus {
     pub clone_set: bool,
@@ -16,7 +16,7 @@ pub fn pw_rules_status_for(clone: &str) -> PwRulesStatus {
     PwRulesStatus { clone_set: is_folder, clone_gone: !clone.is_empty() && !is_folder }
 }
 
-/// Called when the Auto Run screen opens: the generated agent files catch up
+/// Called when the Auto Test screen opens: the generated agent files catch up
 /// with the repo's rules, then the status. Never an error. The files are read
 /// and written off the main thread.
 #[tauri::command]

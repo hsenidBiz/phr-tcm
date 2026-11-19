@@ -53,9 +53,9 @@ export function useModuleGuards(
   // switched off while it is open), move off it rather than leave its
   // heading over a blank body. Gated on hydration: the set starts empty the
   // same way a fresh install reads, so without the gate a restart with a
-  // saved Auto Run tab bounces straight to Manual Entry before
+  // saved Auto Test tab bounces straight to Manual Entry before
   // hydrateModules' answer comes back.
-  // Simple mode adds the screens it hides: a remembered one opens Auto Run.
+  // Simple mode adds the screens it hides: a remembered one opens Auto Test.
   // Neither answer is acted on before both Rust answers have arrived.
   useEffect(() => {
     const to = leaveTarget(

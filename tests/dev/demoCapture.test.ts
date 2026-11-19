@@ -276,11 +276,11 @@ test("demo and capture modes never add, rename or remove a real database", async
   }
 });
 
-/// Auto Run and API Templates read local files on a real machine. Sample
+/// Auto Test and API Templates read local files on a real machine. Sample
 /// data answers them from memory instead - realistic enough to document
 /// every tab, and never this machine's own scripts, accounts or templates:
 /// every address is under example.test and no account holds a password.
-test("Auto Run and API Templates answer from the sample data, with no password and no real host", async () => {
+test("Auto Test and API Templates answer from the sample data, with no password and no real host", async () => {
   const { commands } = await boot({ demo: true, capture: true });
   const ok = async <T,>(p: Promise<unknown>) => {
     const r = (await p) as { status: string; data: T };

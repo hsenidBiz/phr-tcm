@@ -108,7 +108,7 @@ export default function RunReview(props: {
   org: string;
   project: string;
   pbiTitle: string;
-  /** The PBI currently selected on the Auto Run screen. `run.pbi_id` is
+  /** The PBI currently selected on the Auto Test screen. `run.pbi_id` is
    * always what actually gets sent (see `doSend` below); this is only
    * used to catch a run reviewed under a DIFFERENT PBI than the one now
    * selected - sending it would use this PBI's title and step ids, which
@@ -130,7 +130,7 @@ export default function RunReview(props: {
    * pane it opens saves under the PBI now selected. */
   onReplay?: (caseId: number, title: string, step: number) => void;
   /** Why Replay to step waits, when it does: an unattended run is going,
-   * or a discovery holds the Auto Run browser. */
+   * or a discovery holds the Auto Test browser. */
   replayBlocked?: string;
 }) {
   const { runId, onClose, onReplay, replayBlocked } = props;
@@ -394,7 +394,7 @@ export default function RunReview(props: {
           props.project,
           run.pbi_id,
           run.id,
-          `${props.pbiTitle} - Auto Run`,
+          `${props.pbiTitle} - Auto Test`,
           confirmedCases.map((c) => ({
             case_id: c.case_id,
             step_ids: props.stepIds[c.case_id] ?? [],

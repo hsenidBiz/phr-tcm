@@ -368,7 +368,7 @@ async fn look_reading<D: Driver>(
     let found = resolve_explained(d, target).await?;
     // Nothing found because the chain could not enter a frame is not an
     // answer to ANY check - expect_hidden or a count of 0 would otherwise
-    // pass on a page Auto Run never saw.
+    // pass on a page Auto Test never saw.
     if let (true, Some(why)) = (found.handles.is_empty(), found.unreachable_frame) {
         return Ok(Err(why));
     }

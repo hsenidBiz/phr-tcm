@@ -1,4 +1,4 @@
-// Export to Playwright lives in the Playwright tab. Auto Run's "Export to
+// Export to Playwright lives in the Playwright tab. Auto Test's "Export to
 // Playwright" menu item is a shortcut to it: it leaves the PBI's cases here,
 // the App shell opens the Playwright tab, and the tab opens the Export
 // dialog with them. Closing the dialog clears the request.
@@ -7,7 +7,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 export type PlaywrightExportRequest = {
   pbiId: number;
   caseIds: number[];
-  /** Each case's Module, as Auto Run has it. */
+  /** Each case's Module, as Auto Test has it. */
   modules: [number, string][];
 };
 

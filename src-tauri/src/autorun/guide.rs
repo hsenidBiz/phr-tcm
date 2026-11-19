@@ -78,7 +78,7 @@ pub const ACTION_KINDS: &[&str] = &[
 /// It opens with the Quick rules (`quick_rules`), the same text
 /// `get_guide` (topic autorun) with `quick: true` answers on its own.
 pub fn autorun_guide() -> String {
-    let mut out = String::from("# Writing an Auto Run action script\n\n");
+    let mut out = String::from("# Writing an Auto Test action script\n\n");
     out.push_str(QUICK_RULES);
     out.push('\n');
     out.push_str(&crate::browser::viewport::size_in_force(GUIDE_BODY));
@@ -343,7 +343,7 @@ folder of documents for tests, on their machine - by its NAME, never a
 path. Use only a name listed under "Test files" at the end of this guide
 (no such section means the project has none yet); if the case needs a
 file that is not there, ask the person to add it to
-Test files (Auto Run or API Templates) - never invent a name. If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. Point the
+Test files (Auto Test or API Templates) - never invent a name. If the app is in Simple mode, do that part yourself or ask the person to turn Simple mode off in Settings. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. Point the
 selector at the page's file input, or at the button or link that opens
 the file chooser: the input gets the file directly, and a button is
 clicked with the chooser answered for you (a button that opens no chooser
@@ -373,7 +373,7 @@ A step whose checks leave out part of its expected result lists each part in `un
 A check that only stands in for the item stays in the step, and the item names its kind: `"stand_in": "expect_hidden"`.
 Each item shows on the case card and in the run report ("1 expectation unchecked" on a pass), and Export to Playwright writes each as a `// TODO unchecked` line.
 
-A step whose whole expected result is what Auto Run does itself before step 1 (launching the app, signing in, reaching the area) is written `{ "step_number": 1, "actions": [], "by_auto_run": true }`: no actions, no `unchecked`, no check. Only the opening steps can be, one after another from step 1; a marked step after an unmarked one, or with actions, is refused at save. Such a step is not counted as unchecked on the card, the run report or the Playwright export.
+A step whose whole expected result is what Auto Test does itself before step 1 (launching the app, signing in, reaching the area) is written `{ "step_number": 1, "actions": [], "by_auto_run": true }`: no actions, no `unchecked`, no check. Only the opening steps can be, one after another from step 1; a marked step after an unmarked one, or with actions, is refused at save. Such a step is not counted as unchecked on the card, the run report or the Playwright export.
 
 A script may end with one clean-up step that removes what the case made:
 `{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
@@ -469,7 +469,7 @@ A script that changes a setting in another area must put the value back
 in its last step. It should carry a shared-state mark, such as
 `"changes": ["configurator setting changed"]`, and the cases that need
 that setting as it was should carry the same name in `needs_unchanged`.
-Auto Run then runs those cases first and pauses for a reset point before
+Auto Test then runs those cases first and pauses for a reset point before
 any of them that would run after it. Such a script cannot
 be "must not save" (`"no_save": true`), because the guard would stop the
 configurator's own Save.
@@ -487,7 +487,7 @@ end. `expire_session` cannot appear in a sign-in recipe or inside a
 its account does in the case: sign in again (`sign_in`) before acting as
 it once more.
 
-**Password prompts.** The Auto Run browser starts with the browser's own
+**Password prompts.** The Auto Test browser starts with the browser's own
 password saving and breach warnings off, so no "Save password?" or "Change
 your password" bubble covers the page after a sign-in.
 
@@ -541,7 +541,7 @@ accessible description), never a guess:
 A page that saves on drop is still stopped under "must not save", as it is
 for any other action.
 
-**What a screen reader is told.** Auto Run reads the same accessibility
+**What a screen reader is told.** Auto Test reads the same accessibility
 tree a screen reader does, so a case about what is "announced" is checked
 against that tree, never against speech: a state given in words (a
 locator's `name`, or `expect_attribute` on `aria-pressed`,
@@ -1128,8 +1128,8 @@ the PBI id it was given.
 
 ## Simple mode
 
-`get_current_pbi` also says, once the app has told it, whether the person has Auto Run's Simple or
-Advanced screen (`autorun_mode`, or "Auto Run mode: simple." when no PBI is selected). You can read
+`get_current_pbi` also says, once the app has told it, whether the person has Auto Test's Simple or
+Advanced screen (`autorun_mode`, or "Auto Test mode: simple." when no PBI is selected). You can read
 it; you cannot change it. The person may be in Simple mode: do not send them
 to Discovery, Components, Fixtures or the sign-in recipe; offer to do it, or ask them to switch to
 Advanced. Simple also hides Replay to step, Import scripts and Clear scripts, and shows a script
@@ -1168,7 +1168,7 @@ failed. An account whose password is expired (the environment's expiry
 query) or that someone else is signed in as is not signed in at all, and
 neither is one when the environment's active-session query cannot be asked
 (fix the query or turn on database read access). It is refused while a
-run, a replay or a discovery has the Auto Run browser, and while it goes a
+run, a replay or a discovery has the Auto Test browser, and while it goes a
 run, a replay or a discovery that starts is refused: reset_autorun_browser
 or the person's Cancel ends it. The result stays on the account for that
 area; `propose_accounts` with the same `area` lists the logins that
@@ -1190,7 +1190,7 @@ database tools read. This guide names the one that is active
 now (the section called "The active environment"). Accounts belong to an
 environment, so a key that exists in one may not exist in another.
 
-Each environment has its own Auto Run scripts, areas, components, quirks, discovery map, saved setups and API templates, fixtures and flows, because each can run a different version of the app. Everything you read and save belongs to the active environment only: a script you save now is the active environment's, and no other environment sees it. If the environment is switched while you are working, a save you started is refused; read again and carry on in the environment now active. When the active environment lacks a script, an area or a component that another environment has, do not rewrite it from memory: ask the person to copy it in the app (Edit environments, Copy Auto Run data…, for everything; Copy to environment… or Copy from environment… on the case's script, for one case; Import scripts… on the Auto Run Setup panel, for a folder of scripts), then read it here and change only what differs. You cannot copy between environments yourself.
+Each environment has its own Auto Test scripts, areas, components, quirks, discovery map, saved setups and API templates, fixtures and flows, because each can run a different version of the app. Everything you read and save belongs to the active environment only: a script you save now is the active environment's, and no other environment sees it. If the environment is switched while you are working, a save you started is refused; read again and carry on in the environment now active. When the active environment lacks a script, an area or a component that another environment has, do not rewrite it from memory: ask the person to copy it in the app (Edit environments, Copy Auto Test data…, for everything; Copy to environment… or Copy from environment… on the case's script, for one case; Import scripts… on the Auto Test Setup panel, for a folder of scripts), then read it here and change only what differs. You cannot copy between environments yourself.
 
 - `get_accounts` lists the active environment's accounts: key, label,
   username and whether a password is set. It never shows a password: Auto
@@ -1228,7 +1228,7 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   detection cannot choose, the password column, and propose again. It
   changes the active environment's setting directly, on a test environment
   only.
-- A proposal is only a suggestion. The person sees it in Auto Run, under
+- A proposal is only a suggestion. The person sees it in Auto Test, under
   Accounts, ticks the ones they want and adds them, and can type another
   password over a proposed one. Each call replaces your previous proposal
   for the environment.
@@ -1262,7 +1262,7 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
     them, and the person sees the marks beside the proposal; a mark never
     carries a password. `start_autorun_discovery` is refused for an account
     someone else is signed in as. A session this app made itself does not
-    count: an open Auto Run browser holds it, or the app signed in as that
+    count: an open Auto Test browser holds it, or the app signed in as that
     account within the saved-session window (8 hours) and still keeps that
     session. The refusal names the account, the date and time, and the way
     out: sign that session out on the site, wait for it to end, or clear the
@@ -1310,7 +1310,7 @@ is still showing is a wrong password or a locked account: that is not this
 rule, see the hard stops below.
 
 1. Call `end_autorun_discovery`, so the browser is free (the new tools are
-   refused while the Auto Run browser is busy, as `check_autorun_sign_in` is).
+   refused while the Auto Test browser is busy, as `check_autorun_sign_in` is).
 2. Call `inspect_sign_in_page`. With no `account` it opens the sign-in
    address in a browser of its own and lists each visible field, button and
    link with a `locator` a recipe step can use as it is; it never shows what
@@ -1326,7 +1326,7 @@ rule, see the hard stops below.
    on the saved recipe's sites. With neither (no address on the environment
    and no recorded sign-in) the proposal is refused: ask the person to set
    the environment's address or to record a sign-in, then stop.
-5. Tell the person in chat to approve the proposal in TCM (Auto Run, Setup,
+5. Tell the person in chat to approve the proposal in TCM (Auto Test, Setup,
    under the Sign-in row, "Proposed by the assistant": Approve or Reject),
    and wait for their reply. Nothing is saved before then.
 6. When they have approved it, call `check_autorun_sign_in` for the account,
@@ -1351,7 +1351,7 @@ showed a change-password page this sign-in does not describe". Then:
    password, its confirmation and a submit button. A page needing more (a
    username, two steps, a confirmation to dismiss) is reported to the person
    and you stop.
-3. Ask the person to approve it in TCM (Auto Run, Setup, Sign-in row). On a
+3. Ask the person to approve it in TCM (Auto Test, Setup, Sign-in row). On a
    test environment the approval has a tick box, "Also turn on Reset expired
    passwords"; ask them to tick it, because the reset runs only on a test
    environment with that switch on. A trial never sends the change-password
@@ -1391,7 +1391,7 @@ approve, publish, assign - or holds add, create or insert as a word of
 its own (AddEmployee, add-leave, /create, CreateCycle, insertRow; never
 address, createdBy or recreate), or contains one of the project's own
 save words, which a person adds on the
-Auto Run Setup tab. Every other request goes through
+Auto Test Setup tab. Every other request goes through
 unchanged. The sign-in is not checked: it is the app's own.
 
 A click on a control named like a save (Save, Save & Continue, Continue, Finish, Next, OK, Yes, Confirm, Remove, Submit,
@@ -1582,7 +1582,7 @@ reverted. A script can say so with two optional lists of names:
 - `needs_unchanged`: this case needs that thing not yet changed (or
   reverted).
 
-Auto Run uses them to order the cases and to stop a run where a person
+Auto Test uses them to order the cases and to stop a run where a person
 must reset the environment.
 
 Mark a case only when it really leaves shared state that another case
@@ -1624,9 +1624,9 @@ it needs no "edits" and is not counted as a repair. When you save a
 script that has marks, send its marks back as they are, or the person's
 marks are lost.
 
-`set_autorun_order` sets the order Auto Run runs a PBI's cases in, with
+`set_autorun_order` sets the order Auto Test runs a PBI's cases in, with
 each case that needs a name unchanged before the cases that change it, and
-does not change Run Tests' order. Without a saved order, Auto Run already
+does not change Run Tests' order. Without a saved order, Auto Test already
 works out a suggested order from the marks. A saved order replaces the
 suggestion for every later run until the person picks Use suggested order,
 so set one only when a particular order is wanted.
@@ -1659,7 +1659,7 @@ with `needs_state`: each setting the case needs, with the value it needs.
     { "case_id": 702, "title": "...", "needs_state": { "Approval workflow": "OFF", "Rating scale": "5 point" }, "steps": [ ... ] }
     { "case_id": 703, "title": "...", "steps": [ ... ] }
 
-Auto Run groups the cases into batches whose cases agree on every
+Auto Test groups the cases into batches whose cases agree on every
 setting they name, trying to keep the pauses few, and the run pauses
 before each batch for a person to set what changes, for example "Before
 Batch 2: Set Approval workflow to OFF". Case 703 names no setting, so it
@@ -1910,8 +1910,8 @@ Every browser the app drives shows a 1280 x 720 page at scale 1, the same as
 Playwright's default, so a layout you see while writing a script is the layout a
 run sees.
 
-Three tools let you look before you write, against the Auto Run browser:
-the one the person has open on the Auto Run tab, or your own discovery
+Three tools let you look before you write, against the Auto Test browser:
+the one the person has open on the Auto Test tab, or your own discovery
 browser (see "Discovering the app"):
 
 - `get_autorun_page` shows what the accessibility tree calls things, one
@@ -1987,7 +1987,7 @@ signs in.
 
 ## Network, cookies and elements
 
-Look under the page, and test an edge case, in the Auto Run browser. The
+Look under the page, and test an edge case, in the Auto Test browser. The
 network tools (`search_autorun_requests`, `get_autorun_request`,
 `autorun_capture`, `autorun_har`, `set_autorun_headers`, `autorun_cookies`)
 are there only while the person has switched Network tools on, on the AI
@@ -2043,7 +2043,7 @@ A save refuses any locator the app has not seen.
 
 You open and drive a browser of your own to find what a script needs:
 
-- `start_autorun_discovery` opens the Auto Run browser and signs in as a
+- `start_autorun_discovery` opens the Auto Test browser and signs in as a
   saved account, named by its key. The app replays the recorded sign-in
   and types the password; you never see it. It answers the landing page.
   Pass `area` with a saved area's name and the start walks to it the way a
@@ -2054,7 +2054,7 @@ You open and drive a browser of your own to find what a script needs:
   not saved starts at home and files what you see under that name.
   If the sign-in fails, follow "When the sign-in page does not fit" below; never try again in a loop. It
   is refused while a run, a replay or the person's own browser holds the
-  Auto Run browser. Pass `case_id` with the case you explore for: when
+  Auto Test browser. Pass `case_id` with the case you explore for: when
   its script is marked `no_save` (or you pass `no_save: true`), every
   save the page tries is blocked, not only reported, until the discovery
   ends. An action whose save was blocked fails with the guard's sentence,
@@ -2105,7 +2105,7 @@ You open and drive a browser of your own to find what a script needs:
   area: its name, its test case Module, and the clicks from the home page.
   The app replays the clicks from the home page and saves the area only
   if they arrive where you are. If you cannot reach a screen through the
-  menus, ask the person to record the area in Auto Run.
+  menus, ask the person to record the area in Auto Test.
 - When a run cannot reach an area ("Could not reach module ..."), repair
   its path yourself instead of asking the person: find the screen through
   the menus, then call `save_autorun_area` with the area's name, its
@@ -2153,15 +2153,15 @@ You open and drive a browser of your own to find what a script needs:
 - `reset_autorun_browser` with `release: true` is only for a broken browser
   (frozen, wrong account, session gone), never between replays: a browser that is signed in and
   answering is kept, and your next replay or discovery uses it. It lets go of an
-  Auto Run browser the app still holds after it closed, ends your own discovery
+  Auto Test browser the app still holds after it closed, ends your own discovery
   the way `end_autorun_discovery` does, and closes a browser your replay left
   open (never the person's). Call it when a discovery or a replay is
   refused with "close the supervised browser first", or a page read
-  answers "the browser did not answer", while no Auto Run browser is
-  really open, and when a template run is refused because the Auto Run
+  answers "the browser did not answer", while no Auto Test browser is
+  really open, and when a template run is refused because the Auto Test
   browser holds its account. It never closes the person's own browser
   while it is open: then it says so, and you ask the person to close it
-  or to press Release Auto Run browser. It never stops a replay. Never ask
+  or to press Release Auto Test browser. It never stops a replay. Never ask
   the person to restart the app for any of this.
 - `start_autorun_discovery` takes over a browser your replay left open (its
   other tabs closed), goes home, and does not sign in again when that browser
@@ -2376,7 +2376,7 @@ only guessed: only from a request discovery saw.
 
 ## Working beside other assistants
 
-Up to three Auto Run browsers can be open at once. One assistant working
+Up to three Auto Test browsers can be open at once. One assistant working
 alone always uses the main one, as before.
 
 - Each assistant needs an account of its own: signing an account in anywhere
@@ -2401,7 +2401,7 @@ alone always uses the main one, as before.
   is replaying or working. `reset_autorun_browser` ends its answer
   with who holds which browser, account and cases now.
 - Subagents: give each subagent you start a name of its own (for example
-  writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and
+  writer-1, writer-2) and tell it to pass it as `agent` on every Auto Test and
   API template call; each name gets its own browser. A subagent without a name
   shares your browser. Tell each subagent to write its report to a file of its
   own (<name>-report.md, beside its output) before it hands back. If a
@@ -2427,7 +2427,7 @@ sends the id it edits), not in anything the session saw or sent earlier, and not
 change on the list. A create the app did not confirm can be removed only in the browser, by hand.
 `get_explore_changes` lists the saved sessions of this project, newest first, and with a session
 id gives that session's whole list and its `verified_creates`: each with its kind, id, name and the
-request that proved it. The list is one file in the Auto Run data folder, so it outlives the chat:
+request that proved it. The list is one file in the Auto Test data folder, so it outlives the chat:
 a new chat picks up from it.
 
 When you call `end_autorun_discovery`, it names the saves the session's browser sent that are
@@ -2639,13 +2639,13 @@ person and never changes the script; add `proposal` (optional) with what you sug
   unclear or out of date.
 - A `data` or `wording` divergence marks the case as needing a ruling: its runs are Blocked with
   `needs a ruling: step N: the case says "..." but the app shows "..." (data) - a person rules on it in
-  Auto Run`, and never count as passed, until the person rules.
+  Auto Test`, and never count as passed, until the person rules.
 - An `app` divergence does not block. The check stays as the case says, so the run fails at that step:
   a real bug must surface as a failure. After that run, mark it with `mark_autorun_suspected_defect`.
   Before you report it as a new defect, call `get_bugs` with the case's id as `case_id`: it may be already filed.
 - Either way, save the script as the case says and name every divergence in your report.
 
-The person rules on the case in Auto Run:
+The person rules on the case in Auto Test:
 
 - The app is wrong: the script keeps the case's value and the case runs again, and the run fails at that
   step until the app is fixed. A failure there is the data's or the application's; reporting the same
@@ -2842,7 +2842,7 @@ A case id must be a real, positive Azure DevOps work item id, cannot
 repeat within the same call, and its `steps` cannot be empty - a script
 with nothing to run does not earn a "Script ready" badge.
 
-The Auto Run screen shows what you save at once: every save, repair,
+The Auto Test screen shows what you save at once: every save, repair,
 mark and delete is read again there without a reload.
 
 `get_autorun_script` with a case id answers that case's saved script,
@@ -2875,7 +2875,7 @@ the answer says so; start a new one to explore again.
   replays at once too, its saves stopped throughout.
 - Never replay past the failing step to "see what happens". The steps after
   it are not the failure, and they can change the application's data.
-- The replay leaves the Auto Run browser open on that step, and its answer
+- The replay leaves the Auto Test browser open on that step, and its answer
   says so. It stays signed in: your next replay of a case with the same account
   goes straight to its area ("Signed in already: went to <area>."), and
   `start_autorun_discovery` takes it over (its other tabs closed, then home).

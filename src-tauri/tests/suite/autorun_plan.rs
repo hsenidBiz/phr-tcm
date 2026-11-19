@@ -1,5 +1,5 @@
-//! The Auto Run planner: a selection of cases and their scripts' marks in,
-//! an order and its reset points out. See the design "Auto Run reset
+//! The Auto Test planner: a selection of cases and their scripts' marks in,
+//! an order and its reset points out. See the design "Auto Test reset
 //! phases" §2 and §5. Pure: no browser, no Azure DevOps, no store - except
 //! the command's own half at the end, which reads marks and the saved
 //! order from a store on disk.
@@ -281,7 +281,7 @@ fn marks_the_order_already_satisfies_give_the_plan_of_no_marks() {
     assert_eq!(plan_for(&marked, Some(&[1, 2, 3])).1, None);
 }
 
-// ------------------------------------------------------------ Auto Run's own order
+// ------------------------------------------------------------ Auto Test's own order
 
 /// A saved order is used as it is, even where the suggestion differs, when
 /// it needs no more resets.

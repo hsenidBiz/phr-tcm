@@ -1,4 +1,4 @@
-//! The per-project discovery map: what Auto Run has seen on the live
+//! The per-project discovery map: what Auto Test has seen on the live
 //! application, area by area, so a script is written against elements that
 //! exist rather than guessed ones.
 //!
@@ -10,7 +10,7 @@
 //! `explored_at` is old, or which has failed since, is stale and wants
 //! exploring again. `""` is the bucket for sightings that belong to no area.
 //!
-//! An area's `refusals` are the application's validation rules as Auto Run
+//! An area's `refusals` are the application's validation rules as Auto Test
 //! met them: a request the application refused, or a message the page
 //! showed that a failure then followed. Each is kept once per page, wizard
 //! step and message (`remember_refusal`), with the action that caused it,
@@ -547,7 +547,7 @@ fn write_lock() -> &'static Mutex<()> {
     &L
 }
 
-/// The map's file as the person can find it under the Auto Run folder:
+/// The map's file as the person can find it under the Auto Test folder:
 /// `projects/<slug>-map.json`. A refusal names this, never a full path,
 /// which would carry the person's user folder.
 pub fn map_file_name(org: &str, project: &str) -> String {
@@ -577,7 +577,7 @@ pub fn load_map(root: &Path, org: &str, project: &str) -> Result<DiscoveryMap, S
         let file = map_file_name(org, project);
         match e {
             MapError::Damaged(why) => format!(
-                "The discovery map {file} is damaged and could not be read ({why}). Reset map in Auto Run, Setup, Discovery moves it aside and starts an empty one."
+                "The discovery map {file} is damaged and could not be read ({why}). Reset map in Auto Test, Setup, Discovery moves it aside and starts an empty one."
             ),
             MapError::Unreadable(why) => format!("The discovery map {file} could not be read: {why}"),
         }
@@ -1251,7 +1251,7 @@ pub fn forget_area(root: &Path, org: &str, project: &str, area: &str) -> Result<
 /// The most rules one area keeps: past it, the least recently seen goes.
 pub const MAX_RULES_PER_AREA: usize = 30;
 
-/// One of the application's rules, as Auto Run met it in an area (see the
+/// One of the application's rules, as Auto Test met it in an area (see the
 /// module's notes).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct RefusalRule {

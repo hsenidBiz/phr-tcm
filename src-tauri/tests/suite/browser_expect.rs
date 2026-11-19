@@ -1192,7 +1192,7 @@ async fn each_child_behind_an_unreachable_frame_says_so() {
     let child = json!([{ "css": "iframe" }, { "css": "h3" }]);
     let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "child": child, "not_empty": true })), &quick()).await;
     assert!(!out.ok);
-    assert!(out.detail.contains("holds a page from another site (or has not loaded), which Auto Run cannot reach"), "{}", out.detail);
+    assert!(out.detail.contains("holds a page from another site (or has not loaded), which Auto Test cannot reach"), "{}", out.detail);
     assert!(!out.detail.ends_with("is not on the page"), "{}", out.detail);
     assert_eq!(v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")), v2_lib::autorun::patterns::ErrorClass::FrameUnreachable);
 }

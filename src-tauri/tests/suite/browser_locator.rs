@@ -373,7 +373,7 @@ async fn nothing_matching_is_an_empty_list_not_an_error() {
 fn an_unreachable_frame_is_explained_in_a_sentence() {
     assert_eq!(
         frame_unreachable("iframe#locked"),
-        "the frame iframe#locked holds a page from another site (or has not loaded), which Auto Run cannot reach"
+        "the frame iframe#locked holds a page from another site (or has not loaded), which Auto Test cannot reach"
     );
 }
 

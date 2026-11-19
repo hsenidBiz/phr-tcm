@@ -147,7 +147,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "merge_case_files",
 ];
 
-/// The Auto Run tools: the Auto Run module's. Where it is on they are
+/// The Auto Test tools: the Auto Test module's. Where it is on they are
 /// listed, switchable and callable like any other tool; where it is off
 /// they are not present at all - not listed, no switch, no skill file, and
 /// a direct call is refused (`module_of_tool`).
@@ -195,8 +195,8 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "run_setup",
 ];
 
-/// The network tools: the Auto Run browser's captured requests, HAR files,
-/// test headers and cookies. Auto Run's (they are in `AUTORUN_TOOLS`, and
+/// The network tools: the Auto Test browser's captured requests, HAR files,
+/// test headers and cookies. Auto Test's (they are in `AUTORUN_TOOLS`, and
 /// ride in its row), and besides that behind the person's own Network
 /// tools switch on the AI Bridge tab, which each environment keeps and
 /// which is off until they turn it on (`BridgeContext::network_tools`):
@@ -212,7 +212,7 @@ pub const NETWORK_TOOLS: &[&str] = &[
 ];
 
 /// The API template tools: the API Templates module's. A template runs in
-/// the same signed-in browser Auto Run drives, so the module hangs off Auto
+/// the same signed-in browser Auto Test drives, so the module hangs off Auto
 /// Run. Proving and running one also need the person's own switch
 /// (`BridgeContext::api_writes`), which the bridge checks.
 pub const API_TEMPLATE_TOOLS: &[&str] = &[
@@ -390,7 +390,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         stem: "setup",
-        // An Auto Run tool, so the skill is written only while Auto Run is.
+        // An Auto Test tool, so the skill is written only while Auto Test is.
         tool: "start_autorun_discovery",
         desc: "Set the app up for testing: environment, accounts, module, areas, test files and preconditions",
         hint: "[PBI id or suite, optional]",
@@ -405,9 +405,9 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   environment, site address and database the app is set to, and ask them to",
             "   confirm. If anything is wrong, they change it on the AI Bridge tab first",
             "   (Environment, or Edit environments).",
-            "2. If there is no site address, ask them to set it in Auto Run, Setup, Site",
+            "2. If there is no site address, ask them to set it in Auto Test, Setup, Site",
             "   address, Edit. If the project has no sign-in recipe, the person can record one",
-            "   (Auto Run, Setup, Sign-in, Record sign-in), or you can inspect the sign-in page",
+            "   (Auto Test, Setup, Sign-in, Record sign-in), or you can inspect the sign-in page",
             "   with `inspect_sign_in_page` and propose a tested recipe with",
             "   `propose_sign_in_recipe` for them to approve there, as the guide's \"When the sign-in page does not fit\"",
             "   says. A trial needs the environment's site address or a recorded sign-in.",
@@ -423,7 +423,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   and call `set_account_lookup`, then propose again. If the call says",
             "   passwords need a test environment, tell the person to switch Test",
             "   environment on for it in Edit environments on the AI Bridge tab. Then tell",
-            "   them to open Auto Run, Setup, Accounts, Edit, tick the logins under",
+            "   them to open Auto Test, Setup, Accounts, Edit, tick the logins under",
             "   Proposed by the assistant, and press Add selected. When the environment has",
             "   a password expiry query or an active session query (see the guide's",
             "   Environments section), the answer marks each proposed login",
@@ -441,7 +441,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   instead, with /tcm:discover.",
             "6. Test files. Read the cases' steps for the files they upload, then read",
             "   the test_files `get_accounts` lists. Name every file that is missing, and",
-            "   tell the person to add it in Auto Run, Setup, Test files, Manage, Add files.",
+            "   tell the person to add it in Auto Test, Setup, Test files, Manage, Add files.",
             "7. Preconditions. Read the cases' preconditions and setup steps: the data",
             "   that must exist before a case runs. Call `list_api_templates` and match",
             "   each one to a proven API template or flow that sets it up.",
@@ -467,10 +467,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         stem: "discover",
         tool: "start_autorun_discovery",
-        desc: "Write an Auto Run script from what the live app shows, exploring it first",
+        desc: "Write an Auto Test script from what the live app shows, exploring it first",
         hint: "[case id, and the account to sign in as]",
         body: &[
-            "Write an Auto Run script from the live app for: $ARGUMENTS",
+            "Write an Auto Test script from the live app for: $ARGUMENTS",
             "",
             "A case id named in the arguments settles it: the case decides its PBI, so ask nothing and go on.",
             "Only when neither a case nor a PBI is named, call `get_current_pbi` for the PBI selected in TCM:",
@@ -500,7 +500,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   `discover_autorun_actions`. If the area is not listed, find the screen through",
             "   the menus and call `save_autorun_area` as soon as you are on it: that names",
             "   the area, and what you see after it is filed under it. If you cannot find it,",
-            "   ask the person to record the area in Auto Run, Setup, Areas, Edit, Record an",
+            "   ask the person to record the area in Auto Test, Setup, Areas, Edit, Record an",
             "   area, and stop. When you move to another area, pass `area` on",
             "   `discover_autorun_actions`.",
             "4. Explore what the case's steps need: the elements, the forms and their",
@@ -598,10 +598,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         stem: "heal",
         tool: "get_autorun_failures",
-        desc: "Diagnose and repair failing Auto Run cases, one at a time",
+        desc: "Diagnose and repair failing Auto Test cases, one at a time",
         hint: "[case ids, or blank for every failed case in the newest run]",
         body: &[
-            "Diagnose and repair failing Auto Run cases: $ARGUMENTS",
+            "Diagnose and repair failing Auto Test cases: $ARGUMENTS",
             "",
             "Call `get_guide` with topic autorun and `quick` true first and follow it. Call it again",
             "with `section` (or `full` true for the full guide) when something the quick rules do not cover",
@@ -622,7 +622,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   `save_autorun_area` with the area's name, its module, the new clicks and",
             "   `repair` with a one-line `reason` (the guide's areas section). The script",
             "   stays as it is; tell the person the area was repaired and that they can",
-            "   put the old path back in Auto Run, Areas. For the sign-in lines (\"the",
+            "   put the old path back in Auto Test, Areas. For the sign-in lines (\"the",
             "   sign-in failed\" and the change-password one), leave the script alone and",
             "   follow the guide's \"When the sign-in page does not fit\". The other",
             "   module-screen line",
@@ -632,14 +632,14 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   is and leave the script alone.",
             "3. Take one case at a time. If the area's map is stale, run discovery on it",
             "   before repairing. The guide's \"Areas to explore\" section lists the stale",
-            "   ones. Discovery needs a browser of its own: if the person's Auto Run",
+            "   ones. Discovery needs a browser of its own: if the person's Auto Test",
             "   browser is open and no other assistant is using it, ask them to close it",
             "   first. Call `start_autorun_discovery`, passing `area` with the case's area: a",
             "   saved area is walked to for you (the answer says `at_area`). Only when",
             "   `at_area` is false, or to reach another area, carry out its menu path from",
             "   the guide's areas section with `discover_autorun_actions`. Explore it, passing `area` on",
             "   `discover_autorun_actions` if you move to another area. Then call",
-            "   `end_autorun_discovery` with `keep_browser: true`. Then bring the Auto Run browser to the failing",
+            "   `end_autorun_discovery` with `keep_browser: true`. Then bring the Auto Test browser to the failing",
             "   step with",
             "   `replay_autorun_to_step`, never past it, then look with `get_autorun_page`",
             "   and `probe_autorun_locator`. Base the diagnosis on what the page shows, not on",
@@ -790,7 +790,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   role or record a case needs, make it first (the same limits as step 6) rather than leaving",
             "   the case out. List every case held back only when it cannot be made, and why.",
             "d. Start one writer per account, each named (`writer-1`, `writer-2`, and so on), told its",
-            "   account, its cases and its report file. Every Auto Run call passes its name as `agent`.",
+            "   account, its cases and its report file. Every Auto Test call passes its name as `agent`.",
             "   Tell each subagent to write its report to a file of its own (<name>-report.md, beside its",
             "   output) before it hands back. If a hand-back fails, read that file instead.",
             "e. When all are done, read every report file (also when a hand-back failed) and summarise.",
@@ -1076,7 +1076,7 @@ pub fn agent_markdown(role: crate::autorun::roles::Role, text: &str) -> String {
 }
 
 /// Every role file for `dir`: none when `start_autorun_discovery` is
-/// disabled (Auto Run off takes every Auto Run tool, as `command_files_in`
+/// disabled (Auto Test off takes every Auto Test tool, as `command_files_in`
 /// drops the discover command), else the roles in `Role::ALL` order, each
 /// with its rules read now from `clone` (`Role::text_in`).
 pub fn agent_files_in(dir: &std::path::Path, disabled: &[String], clone: &str) -> Vec<(PathBuf, String)> {
@@ -1508,8 +1508,8 @@ pub const CLAUDE_DB_RULES: &[&str] = &[CLAUDE_DB_QUERY_RULE, "mcp__tcm__preview_
 /// `CLAUDE_DB_RULES` as Cursor's allowlist entries.
 pub const CURSOR_DB_ENTRIES: &[&str] = &[CURSOR_DB_QUERY_ENTRY, "tcm:preview_report_live"];
 
-/// The Auto Run tools Claude Code is told to allow without asking while the
-/// Auto Run module is on: the ones that drive and save from the browser an
+/// The Auto Test tools Claude Code is told to allow without asking while the
+/// Auto Test module is on: the ones that drive and save from the browser an
 /// assistant is exploring with (open the discovery, try and run actions,
 /// read the page, release the browser, save a script or component). Without
 /// them Claude Code stops at "Allow this tool?" in the middle of that work.

@@ -118,7 +118,7 @@ with every problem listed together:
   person's, kept on their machine; the names there now are listed under
   "Test files" at the end of this guide (no such section means there are
   none yet). Use only those names - if the test needs a file that
-  is not there, ask the person to add it to Test files (Auto Run or API
+  is not there, ask the person to add it to Test files (Auto Test or API
   Templates), never invent a name. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. A run that names a missing file is
   refused before anything is sent. The file is sent with a content type
   from its extension; reports name it and its size, never its contents.
@@ -399,7 +399,7 @@ each call that would run one is refused until it is on.
 ## What you learn about the application
 
 This project keeps one list of quirks - short notes on how the
-application behaves - shared with whoever writes its Auto Run scripts.
+application behaves - shared with whoever writes its Auto Test scripts.
 When this project has any, this guide ends with them, under
 `## Known quirks of this application`. Record something you learned
 building a template (a handler that needs a header the screen sends, an
@@ -417,7 +417,7 @@ The app has one active environment at a time, which the person switches in
 the app. A prove or a run uses that environment's address, its accounts
 and its database, and a proof records the environment's name. Account keys
 belong to an environment: `get_accounts` lists the active one's. When it
-has none for what you need, the Auto Run guide (`get_guide`, topic `autorun`) says
+has none for what you need, the Auto Test guide (`get_guide`, topic `autorun`) says
 how to find test users with the read-only database tools and offer them
 with `propose_accounts`. Never invent a password, and never read or send one: on a
 test environment the app looks each login's password up itself. The user accounts
@@ -536,7 +536,7 @@ deleted that draft, and the record marks it deleted.
 
 ## One-off requests in an explore session
 
-In an explore session (`start_autorun_discovery` with `explore` true, see the Auto Run guide)
+In an explore session (`start_autorun_discovery` with `explore` true, see the Auto Test guide)
 `send_api_request` runs one GET or POST in your explore session's own page: no new browser, no
 sign-in, as the account the session signed in as. The anti-forgery token is read on the page you
 are on; when that page has none, pass `antiforgery_page`, a page of the app with a form on it,
@@ -625,7 +625,7 @@ pub fn text(accounts: &[String], origin: Option<&str>) -> String {
     out.push_str("\n## This project\n\n");
     if accounts.is_empty() {
         out.push_str(
-            "No Auto Run accounts are saved yet - the person adds them on the Auto Run tab. \
+            "No Auto Test accounts are saved yet - the person adds them on the Auto Test tab. \
              Nothing can be proven or run until one exists.\n",
         );
     } else {
@@ -640,7 +640,7 @@ pub fn text(accounts: &[String], origin: Option<&str>) -> String {
             "Templates run against {o}. Steps hold paths only - never put this host in a template.\n"
         )),
         None => out.push_str(
-            "This project has no site address yet - the person sets it in Auto Run, Setup, Site address \
+            "This project has no site address yet - the person sets it in Auto Test, Setup, Site address \
              (or Edit environments on the AI Bridge tab). Nothing can be proven or run until it has one.\n",
         ),
     }

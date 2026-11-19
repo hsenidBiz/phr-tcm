@@ -38,7 +38,7 @@ export const apiTemplates: Screen = {
     "An API template is a saved way of creating or changing test data through the site's own requests, the ones its pages send: create a user, lock an account, add an address. " +
     "An assistant builds each one from the application's code and proves it on your site before it appears here; after that, a script's precondition or the assistant itself can run it for the data a test needs. " +
     "This screen shows them, and lets you read and remove them. " +
-    "API Templates is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears in the group at the bottom of the sidebar." +
+    "API Templates is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Test), and it appears in the group at the bottom of the sidebar." +
     " Hidden while Simple mode is on (Settings).",
   shots: [
     { id: LIST, route: [NAV, READY], alt: "API Templates: the templates grouped by module, each with what it does and when it last ran" },
@@ -94,7 +94,7 @@ export const apiTemplates: Screen = {
       group: "templates",
       locate: { text: "portal.example.test" },
       name: "Runs against",
-      does: "The site templates run on: the site address of the active environment, set in the Setup panel on the Auto Run tab.",
+      does: "The site templates run on: the site address of the active environment, set in the Setup panel on the Auto Test tab.",
     },
     {
       id: "writes-switch",
@@ -104,7 +104,7 @@ export const apiTemplates: Screen = {
       name: "API templates on / off",
       does:
         "Whether an assistant may prove and run templates, which writes test data to your site. It is switched on and off on the AI Bridge tab, where this button takes you, and is off until you turn it on. " +
-        "Templates run as your Auto Run accounts.",
+        "Templates run as your Auto Test accounts.",
     },
     {
       id: "test-files",
@@ -112,7 +112,7 @@ export const apiTemplates: Screen = {
       group: "templates",
       locate: { role: "button", name: "Test files" },
       name: "Test files",
-      does: "The documents and pictures templates and scripts upload, kept on this computer. The same list as on the Auto Run tab.",
+      does: "The documents and pictures templates and scripts upload, kept on this computer. The same list as on the Auto Test tab.",
     },
     {
       id: "export",
@@ -454,8 +454,8 @@ export const apiTemplates: Screen = {
     {
       title: "Get your first templates",
       steps: [
-        "Switch on **API Templates** in Settings, under General, on the **Modules** page. It needs Auto Run, which needs Database Access.",
-        "Set up the site address and your accounts in the Setup panel on the Auto Run tab.",
+        "Switch on **API Templates** in Settings, under General, on the **Modules** page. It needs Auto Test, which needs Database Access.",
+        "Set up the site address and your accounts in the Setup panel on the Auto Test tab.",
         "On the AI Bridge tab, connect your assistant, then switch **API templates (create, edit and delete)** on so it may prove and run templates. Its other template tools need no switch: they are on while the module is.",
         "Ask the assistant to build a template for the data you need. It proves the template on your site, and it appears here once it worked.",
       ],

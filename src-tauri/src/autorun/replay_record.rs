@@ -5,7 +5,7 @@
 //! A replay to a step is not a run: nothing about it is reviewed or sent.
 //! But when it stops on a failure, that failure is the newest word on the
 //! case, and an assistant healing the step reads and marks it straight
-//! after. One file per case, `replays/<case_id>.json` under the Auto Run
+//! after. One file per case, `replays/<case_id>.json` under the Auto Test
 //! folder, written by every replay that stopped at a step (the person's
 //! or the assistant's) and removed by one of that case that reached its
 //! step, whose failure it no longer is. Read back as a run of its own
@@ -60,7 +60,7 @@ impl ReplayRecord {
     }
 }
 
-/// Where the kept replays are: `replays/` under the Auto Run folder.
+/// Where the kept replays are: `replays/` under the Auto Test folder.
 pub fn dir(root: &Path) -> PathBuf {
     root.join("replays")
 }
@@ -72,7 +72,7 @@ pub fn forget(root: &Path, case_id: i32) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => crate::applog::warn(format!(
-            "Auto Run: the replay kept for case {case_id} could not be removed: {}",
+            "Auto Test: the replay kept for case {case_id} could not be removed: {}",
             e.kind()
         )),
     }
@@ -125,7 +125,7 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
         .and_then(|()| serde_json::to_string_pretty(&record).map_err(|e| e.to_string()))
         .and_then(|json| crate::autorun::roots::write_file(root, &path, &json));
     if written.is_err() {
-        crate::applog::warn(format!("Auto Run: the replay failure of case {case_id} could not be kept"));
+        crate::applog::warn(format!("Auto Test: the replay failure of case {case_id} could not be kept"));
     }
 }
 

@@ -1,4 +1,4 @@
-//! The steps Auto Run performs itself: launching the app, signing in,
+//! The steps Auto Test performs itself: launching the app, signing in,
 //! reaching the area - what runs before step 1, so a step whose whole
 //! expected result is that has nothing for the script to do or check.
 //! Pure. The TypeScript mirror is `src/screens/AutoRun/byAutoRun.ts`, held
@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use super::{CaseScript, Unchecked};
 
-/// The step numbers Auto Run performs itself.
+/// The step numbers Auto Test performs itself.
 ///
 /// A step counts when it has `by_auto_run: true` and sits in the leading
 /// run: every case step before it has the mark too. When no step of the
@@ -47,7 +47,7 @@ pub fn mark_problems(script: &CaseScript) -> Vec<(i32, String)> {
         let n = step.step_number;
         if step.cleanup {
             if step.by_auto_run {
-                out.push((n, format!("step {n} is marked as done by Auto Run but is not one of the opening steps")));
+                out.push((n, format!("step {n} is marked as done by Auto Test but is not one of the opening steps")));
             }
             continue;
         }
@@ -56,9 +56,9 @@ pub fn mark_problems(script: &CaseScript) -> Vec<(i32, String)> {
             continue;
         }
         if !leading {
-            out.push((n, format!("step {n} is marked as done by Auto Run but is not one of the opening steps")));
+            out.push((n, format!("step {n} is marked as done by Auto Test but is not one of the opening steps")));
         } else if !step.actions.is_empty() {
-            out.push((n, format!("step {n} is marked as done by Auto Run but has actions - drop one or the other")));
+            out.push((n, format!("step {n} is marked as done by Auto Test but has actions - drop one or the other")));
         }
     }
     out

@@ -41,9 +41,9 @@ export const commands = {
 	 */
 	searchPbisAll: (organization: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis_all", { organization, query })),
 	/**
-	 *  Which of `projects` already have Auto Run files: how the app picks a
+	 *  Which of `projects` already have Auto Test files: how the app picks a
 	 *  home project for someone whose files predate the "all projects" switch.
-	 *  A read-only listing of the Auto Run folder; nothing is created or moved.
+	 *  A read-only listing of the Auto Test folder; nothing is created or moved.
 	 */
 	projectsWithAutorunFiles: (organization: string, projects: string[]) => typedError<string[], string>(__TAURI_INVOKE("projects_with_autorun_files", { organization, projects })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
@@ -107,7 +107,7 @@ export const commands = {
 	 *  and best-effort exactly as in the batch flow; a failure there never
 	 *  loses the recorded outcome, and the returned list names what did not
 	 *  attach. See `record_point_outcome` for the body - this command is just
-	 *  the token + client wiring around it, shared with Auto Run's publish
+	 *  the token + client wiring around it, shared with Auto Test's publish
 	 *  step (`autorun::publish`), which is the only other caller.
 	 */
 	recordResult: (organization: string, project: string, runId: number, resultId: number, outcome: PointOutcome) => typedError<string[], AdoError>(__TAURI_INVOKE("record_result", { organization, project, runId, resultId, outcome })),
@@ -210,7 +210,7 @@ export const commands = {
 	 * 
 	 *  Velopack's `apply_updates_and_restart` ends in `std::process::exit`,
 	 *  which skips the tao event loop entirely - `close_autorun_on_exit`
-	 *  (lib.rs) never runs. Auto Run's browsers are closed here instead,
+	 *  (lib.rs) never runs. Auto Test's browsers are closed here instead,
 	 *  before the restart, under the same bound as the exit hook.
 	 */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
@@ -249,7 +249,7 @@ export const commands = {
 	importAppBackup: (path: string) => typedError<BackupImportResult, string>(__TAURI_INVOKE("import_app_backup", { path })),
 	/**
 	 *  What importing a backup file would do, for the confirmation: whether it
-	 *  is from before each environment had its own Auto Run data, and which
+	 *  is from before each environment had its own Auto Test data, and which
 	 *  environments' data it would then replace. Writes nothing.
 	 */
 	previewAppBackup: (path: string) => typedError<BackupPreview, string>(__TAURI_INVOKE("preview_app_backup", { path })),
@@ -449,7 +449,7 @@ export const commands = {
 	/**  Where the environment can copy from. */
 	envCopyChoices: (targetId: string) => typedError<CopyChoices, string>(__TAURI_INVOKE("env_copy_choices", { targetId })),
 	/**
-	 *  Copy a source's Auto Run data into the environment. A target that already
+	 *  Copy a source's Auto Test data into the environment. A target that already
 	 *  holds data needs `replace`; what it held is kept for 30 days.
 	 */
 	envCopyAutorun: (targetId: string, sourceKey: string, replace: boolean) => typedError<CopyDone, string>(__TAURI_INVOKE("env_copy_autorun", { targetId, sourceKey, replace })),
@@ -518,8 +518,8 @@ export const commands = {
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
-	 *  Whether the assistant is exploring the app in the Auto Run browser:
-	 *  Auto Run's runs and Open browser wait while it is.
+	 *  Whether the assistant is exploring the app in the Auto Test browser:
+	 *  Auto Test's runs and Open browser wait while it is.
 	 */
 	autoRunDiscoveryActive: () => __TAURI_INVOKE<boolean>("auto_run_discovery_active"),
 	/**
@@ -573,15 +573,15 @@ export const commands = {
 	 */
 	autoRunResetComponents: (organization: string, project: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_reset_components", { organization, project })),
 	/**
-	 *  End Discovery on Auto Run's Setup card: the person closes the
-	 *  assistant's discovery browser so Auto Run can run again
+	 *  End Discovery on Auto Test's Setup card: the person closes the
+	 *  assistant's discovery browser so Auto Test can run again
 	 *  (`ai_bridge::EndedBy::Person`), and the window is told. With no
 	 *  discovery going this does nothing. Nothing is lost: the map keeps what
 	 *  was seen, and a mapping run's summary is kept.
 	 */
 	autoRunEndDiscovery: () => typedError<null, string>(__TAURI_INVOKE("auto_run_end_discovery")),
 	/**
-	 *  Release Auto Run browser on Auto Run's Setup card
+	 *  Release Auto Test browser on Auto Test's Setup card
 	 *  (`release_autorun_browsers`). Asks no confirm, as Close browser and End
 	 *  discovery ask none: it closes only browsers the app opened, and the map
 	 *  keeps what a discovery saw.
@@ -657,7 +657,7 @@ export const commands = {
 	 */
 	autoRunSetupView: (organization: string, project: string, caseId: number) => typedError<{
 	fixture_name: string,
-	/**  The Auto Run account the fixture runs as (a key, never a login). */
+	/**  The Auto Test account the fixture runs as (a key, never a login). */
 	account: string,
 	/**  Each step as `<template name>: <params>`. */
 	steps: string[],
@@ -831,14 +831,14 @@ export const commands = {
 	 */
 	cleared_defect?: ClearedDefect_Serialize | null,
 	/**
-	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Test's
 	 *  summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
 	 *  on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
 	 */
 	flaky?: FlakyMark | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	/**
-	 *  Every listed case's script in one call - what the Auto Run screen asks
+	 *  Every listed case's script in one call - what the Auto Test screen asks
 	 *  for when it opens. Off the main thread, as every read here is: the
 	 *  window stays responsive while hundreds of files are read.
 	 */
@@ -881,7 +881,7 @@ export const commands = {
 	autoRunUndoDivergenceRuling: (organization: string, project: string, id: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_undo_divergence_ruling", { organization, project, id })),
 	autoRunNeedsRuling: (organization: string, project: string, caseId: number) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_needs_ruling", { organization, project, caseId })),
 	/**
-	 *  The plan for the cases selected on the Auto Run tab, in list order.
+	 *  The plan for the cases selected on the Auto Test tab, in list order.
 	 *  Each case's marks come from its saved script; a case with no script
 	 *  has none. Scripts and orders are kept by work item id, so the
 	 *  organization and project name the selection's source and nothing more.
@@ -891,7 +891,7 @@ export const commands = {
 	 */
 	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[], previewOrder: number[] | null) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds, previewOrder })),
 	/**
-	 *  Save Auto Run's own execution order for a PBI on this machine. Only
+	 *  Save Auto Test's own execution order for a PBI on this machine. Only
 	 *  the cases given move: the rest of an order already saved keeps its
 	 *  places (`store::merge_order`). Run Tests' order is separate and is not
 	 *  changed.
@@ -904,7 +904,7 @@ export const commands = {
 	autoRunClearOrder: (pbiId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_order", { pbiId })),
 	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
-	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
+	 *  writes for a whole PBI, and the shape the Auto Test screen's Import
 	 *  button reads back.
 	 * 
 	 *  Takes a PATH, not the file's contents: the frontend used to read the
@@ -1162,7 +1162,7 @@ export const commands = {
 	autoRunForgetSession: (accountKey: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_forget_session", { accountKey })),
 	/**
 	 *  Remove the named cases' scripts from this machine, for the "Clear
-	 *  scripts" button on the (development-only) Auto Run toolbar. Nothing in
+	 *  scripts" button on the (development-only) Auto Test toolbar. Nothing in
 	 *  Azure DevOps is touched - scripts never lived there.
 	 * 
 	 *  Returns `u32`, not the `usize` `store::clear_scripts` itself returns -
@@ -1173,7 +1173,7 @@ export const commands = {
 	autoRunClearScripts: (caseIds: number[]) => typedError<number, string>(__TAURI_INVOKE("auto_run_clear_scripts", { caseIds })),
 	/**
 	 *  Remove every saved run and screenshot from this machine, for the
-	 *  "Clear results" button on the (development-only) Auto Run toolbar.
+	 *  "Clear results" button on the (development-only) Auto Test toolbar.
 	 *  Runs already sent to Azure DevOps are removed too - the record there
 	 *  is the durable one, and the confirm the screen shows says so.
 	 * 
@@ -1203,7 +1203,7 @@ export const commands = {
 	/**
 	 *  The reset point the unattended run is waiting at, if any, as the Reset
 	 *  needed panel shows it. A screen opened after the pause began (the person
-	 *  left Auto Run and came back) asks this to show the panel again.
+	 *  left Auto Test and came back) asks this to show the panel again.
 	 */
 	autoRunWaitingReset: () => __TAURI_INVOKE<{
 	run_id: string,
@@ -1255,7 +1255,7 @@ export const commands = {
 	/**
 	 *  Whether the recorder is held: by a recording, or by a Start, a check or
 	 *  a Try still going. The Areas dialog asks when it opens - one it
-	 *  replaced may have left any of these behind (the Auto Run section was
+	 *  replaced may have left any of these behind (the Auto Test section was
 	 *  left mid-recording), and Cancel ends each of them. A recording whose
 	 *  browser was closed has already let go, and Start tidies it away.
 	 */
@@ -1687,7 +1687,7 @@ export const commands = {
 	/**
 	 *  Switch `module` on or off; the answer is every module now on. Refused
 	 *  while switching it off would stop a run or a repo command that is going
-	 *  (its cascade counts: Database Access off takes Auto Run with it).
+	 *  (its cascade counts: Database Access off takes Auto Test with it).
 	 * 
 	 *  The slash commands and "always allow" entries that follow the switch are
 	 *  files (and a PATH search), so they are written on a blocking thread.
@@ -1709,7 +1709,7 @@ export const commands = {
 	/**  The folder of the Playwright automation clone scripts export into. */
 	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
 	/**
-	 *  Called when the Auto Run screen opens: the generated agent files catch up
+	 *  Called when the Auto Test screen opens: the generated agent files catch up
 	 *  with the repo's rules, then the status. Never an error. The files are read
 	 *  and written off the main thread.
 	 */
@@ -1732,7 +1732,7 @@ export const commands = {
 	 *  preview showed. `replace` is the cases the repo already has that the
 	 *  person ticked to replace on purpose: any other case the repo has refuses
 	 *  the whole write. `pbi_id` is the PBI the cases are shown under: its saved
-	 *  Auto Run order goes into each test-case file's order notes.
+	 *  Auto Test order goes into each test-case file's order notes.
 	 */
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null, pbiId: number | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef, pbiId })),
 	/**  Which environment Export and Sync run in. */
@@ -1884,17 +1884,17 @@ export const commands = {
 	 */
 	setStaySignedIn: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_stay_signed_in", { on })),
 	/**
-	 *  Whether Auto Run outlines and pauses before each action, in a watched run
+	 *  Whether Auto Test outlines and pauses before each action, in a watched run
 	 *  and in the supervised browser. Read when a run or a supervised step starts.
 	 */
 	setAutorunHighlight: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_highlight", { on })),
 	/**
-	 *  Whether an unattended Auto Run run keeps a video of each case that fails
+	 *  Whether an unattended Auto Test run keeps a video of each case that fails
 	 *  or is blocked. Read when a run starts.
 	 */
 	setAutorunFailedVideo: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_failed_video", { on })),
 	/**
-	 *  Pick Simple or Advanced Auto Run. Advanced is refused while the app's
+	 *  Pick Simple or Advanced Auto Test. Advanced is refused while the app's
 	 *  Simple mode is on.
 	 */
 	setAutorunMode: (mode: AutorunMode) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_mode", { mode })),
@@ -3068,12 +3068,12 @@ export type AppSettings = {
 	 */
 	stay_signed_in?: boolean,
 	/**
-	 *  Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
+	 *  Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Test scripts export
 	 *  into. Empty until the person picks one.
 	 */
 	playwright_clone?: string,
 	/**
-	 *  Auto Run pauses briefly on each element before it clicks, fills or
+	 *  Auto Test pauses briefly on each element before it clicks, fills or
 	 *  drags (the outline is drawn either way), in a watched run and in the supervised
 	 *  browser, which covers the recording sign-in replays and the AI
 	 *  bridge's discovery and try-an-action paths too
@@ -3082,7 +3082,7 @@ export type AppSettings = {
 	 */
 	autorun_highlight?: boolean,
 	/**
-	 *  Keep a video of an unattended Auto Run case that failed or was
+	 *  Keep a video of an unattended Auto Test case that failed or was
 	 *  blocked (`browser::recording`). Off by default: a recording is only
 	 *  made while it is on, and a case that passes keeps none. A machine-wide
 	 *  choice like the highlight, read once when a run starts.
@@ -3090,7 +3090,7 @@ export type AppSettings = {
 	autorun_failed_video?: boolean,
 	/**
 	 *  The failed-case video switch was set by a person (not left at its
-	 *  default), so switching Auto Run on never overrides it.
+	 *  default), so switching Auto Test on never overrides it.
 	 */
 	autorun_failed_video_set?: boolean,
 	/**
@@ -3099,11 +3099,11 @@ export type AppSettings = {
 	 */
 	api_templates_set?: boolean,
 	/**
-	 *  Auto Run has been on at some point (or left files behind). Once
+	 *  Auto Test has been on at some point (or left files behind). Once
 	 *  true it never goes back; it decides whether a switch-on is the first.
 	 */
 	auto_run_ever_on?: boolean,
-	/**  Simple or Advanced Auto Run; `None` until one is picked or settled. */
+	/**  Simple or Advanced Auto Test; `None` until one is picked or settled. */
 	autorun_mode?: AutorunMode | null,
 	/**  App-wide Simple mode; `None` until it is settled at start-up. */
 	app_simple_mode?: boolean | null,
@@ -3254,7 +3254,7 @@ export type AutorunCleanupProgress = {
 
 /**
  *  Emitted after a successful write to that data, whoever made it, so the
- *  Auto Run screen reads it again without a reload.
+ *  Auto Test screen reads it again without a reload.
  */
 export type AutorunDataChanged = {
 	kinds: AutorunDataKind[],
@@ -3262,7 +3262,7 @@ export type AutorunDataChanged = {
 
 /**
  *  Which of the data an assistant adds through the AI bridge changed. The
- *  Auto Run screen reads each kind from its own queries.
+ *  Auto Test screen reads each kind from its own queries.
  */
 export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals" | "signInProposal" | "divergences" | 
 /**
@@ -3272,8 +3272,8 @@ export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" 
 "environments";
 
 /**
- *  Emitted when a discovery starts or ends in the Auto Run browser: while
- *  `active`, the assistant is exploring the app there and Auto Run's own
+ *  Emitted when a discovery starts or ends in the Auto Test browser: while
+ *  `active`, the assistant is exploring the app there and Auto Test's own
  *  runs and Open browser wait for it.
  */
 export type AutorunDiscoveryChanged = {
@@ -3281,9 +3281,9 @@ export type AutorunDiscoveryChanged = {
 };
 
 /**
- *  Emitted once a switch of environment has landed, after Rust's Auto Run
+ *  Emitted once a switch of environment has landed, after Rust's Auto Test
  *  folder, the environments file and the bridge all name the new one. Every
- *  screen that shows per-environment Auto Run data reads it again, and an
+ *  screen that shows per-environment Auto Test data reads it again, and an
  *  editor open on the old environment's data closes.
  */
 export type AutorunEnvironmentChanged = {
@@ -3291,7 +3291,7 @@ export type AutorunEnvironmentChanged = {
 };
 
 /**
- *  How much of Auto Run a person sees: Simple keeps to the everyday path,
+ *  How much of Auto Test a person sees: Simple keeps to the everyday path,
  *  Advanced shows everything.
  */
 export type AutorunMode = "simple" | "advanced";
@@ -3341,9 +3341,9 @@ export type AutorunResetNeeded = {
 };
 
 /**
- *  Emitted whenever Auto Run scripts on disk change: saved, edited,
+ *  Emitted whenever Auto Test scripts on disk change: saved, edited,
  *  repaired, marked, cleared or deleted, by the person, the assistant or a
- *  replay. `case_ids` are the cases whose script changed; the Auto Run
+ *  replay. `case_ids` are the cases whose script changed; the Auto Test
  *  screen reads those again, so a change shows without a reload.
  */
 export type AutorunScriptsChanged = {
@@ -3372,12 +3372,12 @@ export type BackupImportResult = {
 export type BackupPreview = {
 	exported_at: string,
 	app_version: string,
-	/**  The backup is from before each environment had its own Auto Run data. */
+	/**  The backup is from before each environment had its own Auto Test data. */
 	pre_update: boolean,
 	/**  The backup brings a folder per environment. */
 	post_update: boolean,
 	/**
-	 *  The environments whose Auto Run data the import replaces, by name:
+	 *  The environments whose Auto Test data the import replaces, by name:
 	 *  exactly the ones the import will replace. Each replaced folder keeps
 	 *  its run history, screenshots and Playwright records, and the rest
 	 *  waits 30 days. Empty when nothing is replaced (a backup of history
@@ -3502,7 +3502,7 @@ export type BridgeSwitches = {
 	 */
 	allProjects?: boolean,
 	/**
-	 *  Auto Run's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
+	 *  Auto Test's Simple or Advanced mode (see `BridgeContext::autorun_mode`).
 	 *  Not a switch: the assistants only read it.
 	 */
 	autorunMode?: AutorunMode | null,
@@ -4047,7 +4047,7 @@ export type CaseScript_Deserialize = {
 	 */
 	cleared_defect?: ClearedDefect_Deserialize | null,
 	/**
-	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Test's
 	 *  summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
 	 *  on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
 	 */
@@ -4225,7 +4225,7 @@ export type CaseScript_Serialize = {
 	 */
 	cleared_defect?: ClearedDefect_Serialize | null,
 	/**
-	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+	 *  The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Test's
 	 *  summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
 	 *  on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
 	 */
@@ -4478,7 +4478,7 @@ export type CopiedIn = {
 
 /**  What the copy dialog needs to know about a target. */
 export type CopyChoices = {
-	/**  The target has no Auto Run data a copy would replace. */
+	/**  The target has no Auto Test data a copy would replace. */
 	target_empty: boolean,
 	/**  Every other environment, then the removed folders still kept. */
 	sources: CopySource[],
@@ -5228,7 +5228,7 @@ export type FindHit = {
 export type Fixture = {
 	id: string,
 	name: string,
-	/**  An Auto Run account key, as a template run takes. */
+	/**  An Auto Test account key, as a template run takes. */
 	account: string,
 	steps: FixtureStep[],
 	outputs?: { [key in string]: string },
@@ -5988,7 +5988,7 @@ export type ModuleView = {
 
 /**
  *  The answer to a switch: every module now on, and - only when this call
- *  turned Auto Run from off to on - what that turned on besides.
+ *  turned Auto Test from off to on - what that turned on besides.
  */
 export type ModulesAnswer = {
 	on: Module[],
@@ -6357,7 +6357,7 @@ export type PlanCreated = {
  *  split into batches (`phases`) at each pause, and the pauses: one before
  *  each batch after the first (settings to set, state to put back), and one
  *  before Batch 1 when it needs settings. `counts` is `(this order's
- *  pauses, the suggested order's pauses)`, only when Auto Run's own order
+ *  pauses, the suggested order's pauses)`, only when Auto Test's own order
  *  for the PBI needs more pauses than the suggestion. `saved` says whether
  *  the PBI has an order of its own on this machine. Titles are the
  *  screen's: it has the case list.
@@ -6705,7 +6705,7 @@ export type PreviewCase = {
 	 */
 	excluded: boolean,
 	/**
-	 *  Auto Run has a script for it. The dialog lists only cases that do:
+	 *  Auto Test has a script for it. The dialog lists only cases that do:
 	 *  one without a script has nothing to export.
 	 */
 	has_script: boolean,
@@ -6956,7 +6956,7 @@ export type PwReport = {
 	stats: ReportStats | null,
 };
 
-/**  Whether the Playwright tab has a clone set, for the Auto Run screen. */
+/**  Whether the Playwright tab has a clone set, for the Auto Test screen. */
 export type PwRulesStatus = {
 	clone_set: boolean,
 	/**  A path is set but is no longer a folder (so `clone_set` is false too). */
@@ -7417,7 +7417,7 @@ export type ReplayEnd_Deserialize =
 { kind: "blocked"; detail: string } | 
 /**
  *  The stop control (Stop, Close browser, Open browser replacing it,
- *  Release Auto Run browser or the app exiting) ended the replay before
+ *  Release Auto Test browser or the app exiting) ended the replay before
  *  step `step` finished.
  */
 { kind: "stopped"; detail: {
@@ -7477,7 +7477,7 @@ export type ReplayEnd_Serialize =
 { kind: "blocked"; detail: string } | 
 /**
  *  The stop control (Stop, Close browser, Open browser replacing it,
- *  Release Auto Run browser or the app exiting) ended the replay before
+ *  Release Auto Test browser or the app exiting) ended the replay before
  *  step `step` finished.
  */
 { kind: "stopped"; detail: {
@@ -7996,7 +7996,7 @@ export type Setup = {
 /**  A case's setup as the script editor shows it. */
 export type SetupView = {
 	fixture_name: string,
-	/**  The Auto Run account the fixture runs as (a key, never a login). */
+	/**  The Auto Test account the fixture runs as (a key, never a login). */
 	account: string,
 	/**  Each step as `<template name>: <params>`. */
 	steps: string[],
@@ -8547,7 +8547,7 @@ export type StepScript_Deserialize = {
 	 */
 	because?: Because_Deserialize[],
 	/**
-	 *  The step's whole expected result is what Auto Run does itself before
+	 *  The step's whole expected result is what Auto Test does itself before
 	 *  step 1: launching the app, signing in, reaching the area. Only the
 	 *  opening steps can be (`by_auto_run::done_by_auto_run`); such a step
 	 *  has no actions and needs no `unchecked`. Written only when true.
@@ -8583,7 +8583,7 @@ export type StepScript_Serialize = {
 	 */
 	because?: Because_Serialize[],
 	/**
-	 *  The step's whole expected result is what Auto Run does itself before
+	 *  The step's whole expected result is what Auto Test does itself before
 	 *  step 1: launching the app, signing in, reaching the area. Only the
 	 *  opening steps can be (`by_auto_run::done_by_auto_run`); such a step
 	 *  has no actions and needs no `unchecked`. Written only when true.
@@ -8775,7 +8775,7 @@ export type SyncRow = {
 	state: SyncState,
 	/**  When it was last exported, UTC. */
 	exported_at: string | null,
-	/**  Whether Auto Run still has its script, so Update can export it. */
+	/**  Whether Auto Test still has its script, so Update can export it. */
 	has_script: boolean,
 	/**  The repo has it in at least one place (`pw_repo::presence`). */
 	in_repo: boolean,

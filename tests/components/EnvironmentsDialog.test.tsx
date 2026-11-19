@@ -389,13 +389,13 @@ test("the database select offers your own databases after the shipped ones", asy
   expect(options).toEqual(["Dev - read only", "QA - read only", "Your own database", "Staging"]);
 });
 
-test("says the Auto Run data of a removed environment is kept for 30 days", async () => {
+test("says the Auto Test data of a removed environment is kept for 30 days", async () => {
   mount();
   await screen.findByText("QA");
   fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
   expect(
     await screen.findByText(
-      "Remove QA? Its accounts and saved sign-ins go now. Its Auto Run scripts, areas and templates are kept for 30 days and can be copied into another environment from Copy Auto Run data…",
+      "Remove QA? Its accounts and saved sign-ins go now. Its Auto Test scripts, areas and templates are kept for 30 days and can be copied into another environment from Copy Auto Test data…",
     ),
   ).toBeInTheDocument();
 });
@@ -413,7 +413,7 @@ test("removing the Playwright export environment shows the refusal and keeps it 
   expect(screen.getByText("QA")).toBeInTheDocument();
 });
 
-test("each environment has a Copy Auto Run data button that opens the copy dialog for it", async () => {
+test("each environment has a Copy Auto Test data button that opens the copy dialog for it", async () => {
   const { calls } = mount({
     env_copy_choices: () => ({
       target_empty: true,
@@ -421,8 +421,8 @@ test("each environment has a Copy Auto Run data button that opens the copy dialo
     }),
   });
   await screen.findByText("QA");
-  expect(screen.getByRole("button", { name: "Copy Auto Run data into Default" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Copy Auto Run data into QA" }));
+  expect(screen.getByRole("button", { name: "Copy Auto Test data into Default" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Copy Auto Test data into QA" }));
   expect(await screen.findByRole("combobox", { name: "Copy from" })).toBeInTheDocument();
   expect(calls.find((c) => c.cmd === "env_copy_choices")!.args).toEqual({ targetId: QA.id });
 });

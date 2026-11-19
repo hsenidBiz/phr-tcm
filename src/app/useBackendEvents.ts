@@ -98,8 +98,8 @@ export function useInterruptedUploadCheck(
 }
 
 /**
- * What the assistants left for a person to decide, for the Auto Run rail's
- * count and the bell. Auto Run's files belong to the home project, so that
+ * What the assistants left for a person to decide, for the Auto Test rail's
+ * count and the bell. Auto Test's files belong to the home project, so that
  * is the project asked about while the projects show together.
  */
 export function useWaitingNotices(org: string, autoRunProject: string, enabled: boolean, tourOpen: boolean) {

@@ -51,7 +51,7 @@ export type FlakyIds = ReadonlySet<number>;
 
 /**
  * A Failed case whose script is marked Flaky. It is still a failure (it is sent to Azure DevOps as
- * failed, and shown as such), but Auto Run counts it apart so a run does not read as failed because of it.
+ * failed, and shown as such), but Auto Test counts it apart so a run does not read as failed because of it.
  */
 export function isFlakyFailure(
   c: { case_id: number; verdict: string; proposed?: string | null },

@@ -453,7 +453,7 @@ fn every_note_says_never_edit_the_clone() {
 /// the app gives it a browser of its own: every role says so in one line.
 #[test]
 fn every_role_tells_a_named_subagent_to_pass_its_name() {
-    let line = "When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.";
+    let line = "When your caller gave you a name, pass it as `agent` on every Auto Test and API template call.";
     for r in Role::ALL {
         let rules = r.tcm_rules();
         assert_eq!(rules.matches(line).count(), 1, "the {} text: {rules}", r.name());

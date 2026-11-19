@@ -1,4 +1,4 @@
-//! The one Auto Run command that reaches Azure DevOps, and only because a
+//! The one Auto Test command that reaches Azure DevOps, and only because a
 //! person pressed Send on a run they had reviewed. GET, POST and PATCH.
 
 #[tauri::command]

@@ -4,7 +4,7 @@
 // publishes the app-settings query into it (`usePublishAppSimpleMode`).
 //
 // While the settings are still loading the store reads as off (show
-// everything), the same rule the Auto Run mode follows. In the documentation
+// everything), the same rule the Auto Test mode follows. In the documentation
 // screenshots the sample app answers the setting in memory (dev/demo.ts), off
 // until the one shot that documents the switch clicks it, so the guide keeps
 // showing every screen.

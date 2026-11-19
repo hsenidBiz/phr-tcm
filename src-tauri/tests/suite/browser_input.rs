@@ -636,7 +636,7 @@ async fn waits_poll_at_the_new_interval() {
     assert_eq!(clock.load(Ordering::SeqCst), 40, "one look, one 40 ms pause, one look");
 }
 
-/// `clickable_now` is how an Auto Run trip decides to leave a click out,
+/// `clickable_now` is how an Auto Test trip decides to leave a click out,
 /// so a guess is never "yes": two matches are refused even for a legacy
 /// css string, whose click still takes its first match.
 #[tokio::test]

@@ -76,7 +76,7 @@ export default function ActionDock({
   // One ref callback for the row's whole life. A new one on every render
   // made React detach and re-attach it after each draw, and the null-then-
   // node it hands useOnScreen queued one more draw every time - on a screen
-  // redrawn hundreds of times in a row (Auto Run's scripts answering), that
+  // redrawn hundreds of times in a row (Auto Test's scripts answering), that
   // chain is what React stops as an endless loop (error #185).
   const latestRowRef = useRef(rowRef);
   latestRowRef.current = rowRef;

@@ -1,6 +1,6 @@
 //! Where the shared API library lives and how its items are told apart.
 //!
-//! Definitions (templates, fixtures, flows) are shared by every Auto Run
+//! Definitions (templates, fixtures, flows) are shared by every Auto Test
 //! environment and live under `<shared>/api-library/<kind>/<slug>/`. What
 //! stays in an environment root is only its run histories
 //! (`<env>/templates|fixtures/<slug>/`) and its confirmation state

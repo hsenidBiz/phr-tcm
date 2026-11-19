@@ -1,7 +1,7 @@
-// Auto Run's scripts change outside the screen: the assistant saves or
+// Auto Test's scripts change outside the screen: the assistant saves or
 // repairs one through the AI bridge, a run clears a mark, a delete moves one
 // aside. Rust says so after every write (`autorun_scripts_changed`), and the
-// changed cases' script queries are read again, so the Auto Run screen and
+// changed cases' script queries are read again, so the Auto Test screen and
 // any editor open on one show it without a reload. Used once, by App, where
 // something is always mounted.
 
@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { events } from "../bindings";
 
-/** The script query of a case, as every Auto Run view keys it. */
+/** The script query of a case, as every Auto Test view keys it. */
 export const scriptQueryKey = (caseId: number) => ["autorun-script", caseId] as const;
 
 /** The first part of a case's setup view key (`setupViewKey`): the setup

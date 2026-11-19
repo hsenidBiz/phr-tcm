@@ -4,7 +4,7 @@
 // been changed so far, and the scripts that use it.
 // Remove is held while a script uses one and asks first otherwise. A file
 // that cannot be read offers Reset components, which moves the damaged
-// file aside (never deleting it). Opened from Auto Run's Setup card; the
+// file aside (never deleting it). Opened from Auto Test's Setup card; the
 // components themselves are Rust's (`autorun/components.rs`).
 
 import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";

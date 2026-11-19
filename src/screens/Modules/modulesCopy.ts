@@ -17,7 +17,7 @@ export const MODULE_INFO: readonly ModuleInfo[] = [
     name: "Database Access",
     parent: null,
     description:
-      "Connect TCM to your test environments' databases. Your assistant can look data up, and Auto Run uses it to check preconditions and to notice when the VPN drops.",
+      "Connect TCM to your test environments' databases. Your assistant can look data up, and Auto Test uses it to check preconditions and to notice when the VPN drops.",
   },
   {
     module: "writing_style",
@@ -28,7 +28,7 @@ export const MODULE_INFO: readonly ModuleInfo[] = [
   },
   {
     module: "auto_run",
-    name: "Auto Run",
+    name: "Auto Test",
     parent: "db_access",
     description:
       "Script a test case once, then run it in a browser, watched or unattended, and review the results before they go to Azure DevOps. Includes environments, accounts, areas and test files.",
@@ -45,7 +45,7 @@ export const MODULE_INFO: readonly ModuleInfo[] = [
     name: "Playwright",
     parent: "auto_run",
     description:
-      "Export passing Auto Run scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync.",
+      "Export passing Auto Test scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync.",
   },
   {
     module: "crystal_reports",
@@ -79,7 +79,7 @@ export function switchOffWarning(name: string, below: readonly string[]): string
   return `Switching off ${name} also switches off ${joinNames(below)}.`;
 }
 
-/** The note under the Auto Run row after its first switch-on: only what was
+/** The note under the Auto Test row after its first switch-on: only what was
  * actually turned on, in this order, or null when nothing was. */
 export function recommendedNote(on: { api_templates: boolean; network_tools: boolean; video: boolean }): string | null {
   const items: string[] = [];

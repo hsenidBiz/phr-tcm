@@ -1,5 +1,5 @@
 /**
- * Plain definitions of the words the Auto Run and API Templates screens use
+ * Plain definitions of the words the Auto Test and API Templates screens use
  * without explaining. Written for a tester, in the wording the How To Use
  * guide uses (`docs-site/src/content`), and shown by `Term`
  * (`src/components/Term.tsx`) where each word first appears on a screen.

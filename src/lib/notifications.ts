@@ -360,7 +360,7 @@ export function noteWaiting(org: string, project: string, w: WaitingItems): AppN
           id: groupedAccountsNoticeId(w.env_id, row.proposed_ms),
           kind: "assistant-waiting" as const,
           title: accountsWaitingTitle(row.count),
-          body: `Open Auto Run to accept or decline ${row.count === 1 ? "it" : "them"}.`,
+          body: `Open Auto Test to accept or decline ${row.count === 1 ? "it" : "them"}.`,
           target: target(first),
         };
       }
@@ -369,7 +369,7 @@ export function noteWaiting(org: string, project: string, w: WaitingItems): AppN
         id: waitingNoticeId(w.env_id, item),
         kind: "assistant-waiting" as const,
         title: "The assistant proposed a sign-in",
-        body: "Open Auto Run to decide.",
+        body: "Open Auto Test to decide.",
         target: target(item),
       };
     }),

@@ -1,4 +1,4 @@
-//! Saving Auto Run scripts: parsing a save request, checking it and writing it.
+//! Saving Auto Test scripts: parsing a save request, checking it and writing it.
 
 use super::*;
 
@@ -374,10 +374,10 @@ pub const DRY_RUN_IN_A_SCRIPT: &str = "\"dry_run\" goes beside \"scripts\", not 
 /// How a script save's dry run answer begins.
 pub const DRY_RUN_NOTHING_SAVED: &str = "Dry run: nothing was saved.";
 
-/// Save one or many Auto Run action scripts, as an assistant writes them.
+/// Save one or many Auto Test action scripts, as an assistant writes them.
 ///
 /// A BUNDLE by design: the body is an array, so a whole PBI's worth of
-/// cases lands in one call - and the same shape is what the Auto Run
+/// cases lands in one call - and the same shape is what the Auto Test
 /// screen's Import button reads from a file. One case is a bundle of one.
 ///
 /// ALL OR NOTHING, for real. Every gate below runs for every script
@@ -1310,7 +1310,7 @@ pub(crate) fn seen_check_inputs(
         crate::autorun::components::ComponentFile::default()
     };
     let files = crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project)).unwrap_or_else(|e| {
-        crate::applog::warn(format!("Auto Run save: the Test files could not be listed: {e}"));
+        crate::applog::warn(format!("Auto Test save: the Test files could not be listed: {e}"));
         Vec::new()
     });
     Ok((map, components, files))

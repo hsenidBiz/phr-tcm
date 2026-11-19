@@ -27,7 +27,7 @@ const AT: Record<Module, { x: number; y: number }> = {
   auto_run: { x: 230, y: 375 },
   api_templates: { x: 150, y: 565 },
   playwright: { x: 450, y: 565 },
-  // The right column under Writing Style, a little below Auto Run's row so its
+  // The right column under Writing Style, a little below Auto Test's row so its
   // path has room to sweep across (see `pathFor`); clear of Playwright below.
   crystal_reports: { x: 590, y: 395 },
 };

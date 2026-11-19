@@ -53,7 +53,7 @@ export function useHomeProject({
   // A home project nobody has to pick. An organization with exactly one
   // project: that project, in both modes (the selector hides). Projects shown
   // together with several and no home yet: the one project that already has
-  // Auto Run files (asked once per organization, and only when exactly one
+  // Auto Test files (asked once per organization, and only when exactly one
   // does); otherwise the first PBI picked decides (setPbi).
   const askedAutorunHome = useRef<string | null>(null);
   useEffect(() => {
@@ -111,7 +111,7 @@ export function useHomeProject({
     if (takeAllProjectsNotice(hadProjectRef.current) && projects.data.length > 1) {
       toast.info("Projects now show together", {
         description:
-          "PBIs from every project now show in one search, and each PBI brings its own project, so the Project picker is gone. Auto Run, API Templates and Playwright stay on your home project, which you can change in Settings. To work in one project at a time, turn off Treat all projects as one in Settings, under General.",
+          "PBIs from every project now show in one search, and each PBI brings its own project, so the Project picker is gone. Auto Test, API Templates and Playwright stay on your home project, which you can change in Settings. To work in one project at a time, turn off Treat all projects as one in Settings, under General.",
         duration: 12_000,
       });
     }

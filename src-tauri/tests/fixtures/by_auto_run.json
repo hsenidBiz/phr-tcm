@@ -32,8 +32,8 @@
       "case_id": 3,
       "title": "t",
       "steps": [
-        { "step_number": 1, "actions": [], "unchecked": "Auto Run opens the app" },
-        { "step_number": 2, "actions": [], "unchecked": "Auto Run signs in" },
+        { "step_number": 1, "actions": [], "unchecked": "Auto Test opens the app" },
+        { "step_number": 2, "actions": [], "unchecked": "Auto Test signs in" },
         { "step_number": 3, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "the PDF cannot be read" }
       ]
     },

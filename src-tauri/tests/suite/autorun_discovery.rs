@@ -1,4 +1,4 @@
-//! Discovery sessions: the assistant opens the Auto Run browser itself,
+//! Discovery sessions: the assistant opens the Auto Test browser itself,
 //! signs in as a saved account (the app types the password), and explores
 //! the live application one action at a time. What it sees, the writes the
 //! page sends and what each action led to are kept in the discovery map.
@@ -83,7 +83,7 @@ pub(crate) fn root_with_recipe_and_account() -> TempDir {
     dir
 }
 
-/// The Auto Run browser as the `_in` functions see it: a driver, its lease,
+/// The Auto Test browser as the `_in` functions see it: a driver, its lease,
 /// its signed-in account and the discovery under way. `closed` says
 /// whether the slot closed it; `gone` makes it a browser that has gone.
 pub(crate) struct FakeBrowser {
@@ -1712,7 +1712,7 @@ async fn an_existing_area_name_is_refused() {
     assert_eq!(status, 409, "{out}");
     assert_eq!(
         out,
-        "An area named 'leave apply' already exists; pick another name or ask the person to replace it in Auto Run"
+        "An area named 'leave apply' already exists; pick another name or ask the person to replace it in Auto Test"
     );
     assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
     let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
@@ -3720,7 +3720,7 @@ async fn ending_a_mapping_run_saves_and_returns_its_summary() {
     let ended = lines.iter().rev().find(|l| l.contains("mapping run ended")).expect("no line for the run");
     assert_eq!(
         ended,
-        "Auto Run mapping run ended: 1 added (Leave Apply), 0 updated (none), 0 unchanged (none), 1 not reached (Payroll), 1 saves blocked",
+        "Auto Test mapping run ended: 1 added (Leave Apply), 0 updated (none), 0 unchanged (none), 1 not reached (Payroll), 1 saves blocked",
         "a reason or path was logged"
     );
 
@@ -4124,7 +4124,7 @@ async fn a_refused_locator_is_counted_in_the_log_never_written_out() {
     let link: Target =
         serde_json::from_value(json!({ "css": "a[href=\"https://hr.example.internal/hr/cycles?secret=7\"]" })).unwrap();
     let ours = |lines: &[String]| -> Vec<String> {
-        lines.iter().filter(|l| l.starts_with("Auto Run save:")).cloned().collect()
+        lines.iter().filter(|l| l.starts_with("Auto Test save:")).cloned().collect()
     };
     let dir = TempDir::new();
     let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));

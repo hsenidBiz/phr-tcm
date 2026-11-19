@@ -91,8 +91,8 @@ function loadView(): View {
 /**
  * API Templates: the operations an assistant has built from the
  * application's code and proven on this machine, for the owner to read and
- * remove (spec §8). Offered exactly where Auto Run is - App mounts it only
- * while Auto Run is shown.
+ * remove (spec §8). Offered exactly where Auto Test is - App mounts it only
+ * while Auto Test is shown.
  *
  * The data is local files read through Rust, so it is a plain query with
  * no persistent cache: reading it again costs nothing, and a copy on disk

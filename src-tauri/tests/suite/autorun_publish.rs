@@ -70,13 +70,13 @@ fn the_persons_note_leads_the_comment_and_is_never_the_part_that_is_cut() {
     let run = reviewed_run(dir.path());
     let c = comment_for(&run.cases[0]);
     assert!(c.starts_with("Save is missing on the new form"), "{c}");
-    assert!(c.contains("Auto Run as hr.admin: step 2: button \"Save\" not found"), "{c}");
+    assert!(c.contains("Auto Test as hr.admin: step 2: button \"Save\" not found"), "{c}");
     let mut long = run.cases[0].clone();
     long.reason = "x".repeat(5000);
     let cut = comment_for(&long);
     assert!(cut.chars().count() <= 1000);
     assert!(cut.starts_with("Save is missing on the new form"));
-    assert_eq!(comment_for(&run.cases[1]), "Auto Run: every action of 1 steps passed");
+    assert_eq!(comment_for(&run.cases[1]), "Auto Test: every action of 1 steps passed");
 }
 
 #[test]
@@ -249,7 +249,7 @@ async fn a_reviewed_run_becomes_one_azure_devops_run() {
     let client = AdoClient::with_base_url("t".into(), server.uri());
     let cases = publish_cases();
 
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &cases)
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &cases)
         .await
         .unwrap();
     let PublishResult::Sent(report) = result else { panic!("expected Sent") };
@@ -337,7 +337,7 @@ async fn nothing_is_sent_without_a_confirmed_verdict() {
     let server = MockServer::start().await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
 
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &publish_cases())
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &publish_cases())
         .await
         .unwrap();
     match result {
@@ -356,13 +356,13 @@ async fn a_run_is_never_sent_twice() {
     let client = AdoClient::with_base_url("t".into(), server.uri());
     let cases = publish_cases();
 
-    let first = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &cases)
+    let first = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &cases)
         .await
         .unwrap();
     assert!(matches!(first, PublishResult::Sent(_)));
     let count_after_first = server.received_requests().await.unwrap().len();
 
-    let second = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &cases)
+    let second = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &cases)
         .await
         .unwrap();
     match second {
@@ -379,7 +379,7 @@ async fn a_missing_run_file_is_refused() {
     let server = MockServer::start().await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
 
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", "run-nope", &publish_cases())
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", "run-nope", &publish_cases())
         .await
         .unwrap();
     assert!(matches!(result, PublishResult::Refused { .. }));
@@ -400,7 +400,7 @@ async fn a_run_whose_file_disagrees_with_its_own_id_is_refused() {
 
     let server = MockServer::start().await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", "run-6", &publish_cases())
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", "run-6", &publish_cases())
         .await
         .unwrap();
     match result {
@@ -458,7 +458,7 @@ async fn a_case_outside_the_suite_is_skipped_and_none_inside_is_a_refusal() {
         .await;
 
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &cases)
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &cases)
         .await
         .unwrap();
     let PublishResult::Sent(report) = result else { panic!("expected Sent") };
@@ -479,7 +479,7 @@ async fn a_case_outside_the_suite_is_skipped_and_none_inside_is_a_refusal() {
         .mount(&server2)
         .await;
     let client2 = AdoClient::with_base_url("t".into(), server2.uri());
-    let result2 = publish_run(&client2, dir2.path(), "org", "proj", &suite(), "Auto Run", &run2.id, &cases)
+    let result2 = publish_run(&client2, dir2.path(), "org", "proj", &suite(), "Auto Test", &run2.id, &cases)
         .await
         .unwrap();
     match result2 {
@@ -545,7 +545,7 @@ async fn what_goes_wrong_after_the_run_exists_is_reported_not_thrown() {
         .await;
 
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &cases)
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &cases)
         .await
         .unwrap();
     let PublishResult::Sent(report) = result else { panic!("expected Sent") };
@@ -577,7 +577,7 @@ async fn a_picture_that_is_gone_is_a_problem_not_a_failure() {
     let client = AdoClient::with_base_url("t".into(), server.uri());
     let cases = publish_cases();
 
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &cases)
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &cases)
         .await
         .unwrap();
     let PublishResult::Sent(report) = result else { panic!("expected Sent") };
@@ -622,7 +622,7 @@ async fn a_failed_trip_to_the_module_is_named_for_the_module() {
     mount_full_run_mocks(&server).await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
 
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &publish_cases())
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &publish_cases())
         .await
         .unwrap();
     let PublishResult::Sent(report) = result else { panic!("expected Sent") };
@@ -666,7 +666,7 @@ async fn a_cases_downloads_are_never_sent_only_its_pictures() {
     let server = MockServer::start().await;
     mount_full_run_mocks(&server).await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &publish_cases())
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Test", &run.id, &publish_cases())
         .await
         .unwrap();
     let PublishResult::Sent(report) = result else { panic!("expected Sent") };

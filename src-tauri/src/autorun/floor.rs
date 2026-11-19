@@ -1,4 +1,4 @@
-//! The expected-result floor: every way an Auto Run script falls short of
+//! The expected-result floor: every way an Auto Test script falls short of
 //! its test case's expected results. Pure - no browser, no filesystem.
 
 use super::{CaseScript, Unchecked};
@@ -111,7 +111,7 @@ pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
         }
     }
 
-    // Rule 7: a step done by Auto Run has no actions and is one of the opening steps.
+    // Rule 7: a step done by Auto Test has no actions and is one of the opening steps.
     out.extend(super::by_auto_run::mark_problems(script));
 
     if let Some(step) = script.cleanup_step() {

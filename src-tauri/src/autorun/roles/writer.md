@@ -14,6 +14,6 @@ These hold all session, whatever tools you have: a rule about one tool holds for
 - No fixed wait, no page script and no retry: refused.
 - A step needing the person stays with you; a sub-agent cannot ask anyone.
 - Sign-in failed: follow the guide's "When the sign-in page does not fit".
-- When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
+- When your caller gave you a name, pass it as `agent` on every Auto Test and API template call.
 - A case is done only when a replay of the whole case passes and no divergence awaits a ruling.
 - Report the scope, what you scripted, what you held back and why, the data you made, every divergence, every assumed and invented value a save listed with its because.

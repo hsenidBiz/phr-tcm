@@ -1,4 +1,4 @@
-// The "Playwright is needed" dialog: Auto Run says once per app start that
+// The "Playwright is needed" dialog: Auto Test says once per app start that
 // the assistant is on the shipped rules because no Playwright repo is set,
 // and offers the way to set one - the Playwright tab, or Modules when that
 // module is off. The Modal portals to document.body, so the a11y audit
@@ -115,7 +115,7 @@ test("shows once per app start", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   first.view.unmount();
-  // Auto Run opened again in the same app start: asked again, but silent.
+  // Auto Test opened again in the same app start: asked again, but silent.
   mount();
   await waitFor(() => expect(screen.getByText("nothing to say")).toBeInTheDocument());
   await act(async () => {
@@ -124,7 +124,7 @@ test("shows once per app start", async () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-test("asks again each time Auto Run opens", async () => {
+test("asks again each time Auto Test opens", async () => {
   setModulesForTest(["playwright"]);
   let asked = 0;
   mockIPC((cmd) => {

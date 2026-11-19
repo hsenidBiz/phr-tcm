@@ -122,12 +122,12 @@ test("Go-to items follow the modules", async () => {
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   await screen.findByPlaceholderText(/Type a command/);
   expect(screen.getByText("Suite Management")).toBeInTheDocument();
-  expect(screen.queryByText("Auto Run")).not.toBeInTheDocument();
+  expect(screen.queryByText("Auto Test")).not.toBeInTheDocument();
   expect(screen.queryByText("API Templates")).not.toBeInTheDocument();
   expect(screen.queryByText("Playwright")).not.toBeInTheDocument();
 
   act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
-  expect(await screen.findByText("Auto Run")).toBeInTheDocument();
+  expect(await screen.findByText("Auto Test")).toBeInTheDocument();
   expect(screen.getByText("Playwright")).toBeInTheDocument();
   expect(screen.queryByText("API Templates")).not.toBeInTheDocument();
 });
@@ -208,5 +208,5 @@ test("Simple mode leaves the six hidden screens out of the command list; off lis
   for (const name of ["Import Test Cases", "Update Test Cases", "Search Suites", "Suite Management", "API Templates", "Playwright"]) {
     expect(screen.queryByText(name)).not.toBeInTheDocument();
   }
-  expect(screen.getByText("Auto Run")).toBeInTheDocument();
+  expect(screen.getByText("Auto Test")).toBeInTheDocument();
 });

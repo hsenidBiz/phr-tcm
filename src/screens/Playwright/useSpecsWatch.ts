@@ -78,7 +78,7 @@ export function useSpecsWatch({
         patch(forClone, { walk: { count: got.count, fingerprint: got.fingerprint, pipeline: got.pipeline } });
         // A pipeline rule file changed since the last look: the assistants'
         // agent files are written from those rules, so they catch up now
-        // rather than the next time Auto Run opens. Never on the first look.
+        // rather than the next time Auto Test opens. Never on the first look.
         const rules = got.pipeline.fingerprint;
         if (rulesSeen.current?.clone === forClone && rulesSeen.current.fingerprint !== rules) {
           void commands.pwRulesStatus().catch(() => {});

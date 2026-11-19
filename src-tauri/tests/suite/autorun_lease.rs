@@ -77,13 +77,13 @@ async fn a_wait_that_runs_out_says_who_had_the_account() {
     assert!(!lease::is_held(env, KEY));
 }
 
-/// The supervised browser and Auto Run setup hold an account until a person
+/// The supervised browser and Auto Test setup hold an account until a person
 /// closes them: a waiter is refused at once, with no polling.
 #[tokio::test]
 async fn nothing_waits_on_an_account_a_person_holds() {
     let _l = crate::serial::account_leases();
     let env = "env-aa00000a";
-    for (holder, said) in [(Holder::Browser { slot: 0 }, "the Auto Run browser"), (Holder::Setup, "Auto Run setup")] {
+    for (holder, said) in [(Holder::Browser { slot: 0 }, "the Auto Test browser"), (Holder::Setup, "Auto Test setup")] {
         let held = lease::try_acquire(env, KEY, holder).unwrap();
         for asking in [case_of("run-1"), Holder::Template, Holder::Browser { slot: 0 }, Holder::Setup] {
             let began = Instant::now();
@@ -366,10 +366,10 @@ async fn an_unattended_case_on_a_held_account_is_blocked_and_the_run_goes_on() {
     run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1), to_run(2)], None, false, &patient, &cancel, &mut |_| {})
         .await
         .unwrap();
-    assert!(began.elapsed() < Duration::from_secs(2), "the case waited on the Auto Run browser: {:?}", began.elapsed());
+    assert!(began.elapsed() < Duration::from_secs(2), "the case waited on the Auto Test browser: {:?}", began.elapsed());
 
     let blocked = &run.cases[0];
-    let sentence = "the account admin was in use by the Auto Run browser - try again when it is free";
+    let sentence = "the account admin was in use by the Auto Test browser - try again when it is free";
     assert_eq!(blocked.proposed, "Blocked");
     assert_eq!(blocked.reason, sentence);
     assert!(blocked.steps.iter().all(|s| s.step_number != 0), "a sign-in was recorded: {:?}", blocked.steps);
@@ -549,7 +549,7 @@ async fn a_case_that_panics_lets_its_account_go() {
     assert!(!lease::is_held(&env, KEY), "a case that panicked kept its account");
 }
 
-// ---- Auto Run setup ---------------------------------------------------
+// ---- Auto Test setup ---------------------------------------------------
 
 fn leave_path() -> v2_lib::autorun::nav::ModulePath {
     serde_json::from_value(serde_json::json!({
@@ -604,7 +604,7 @@ async fn every_setup_sign_in_is_refused_at_once_on_a_held_account() {
 
 /// A setup sign-in holds its account until its own lease is dropped, which
 /// its command does once its browser is closed; anything else asking for
-/// the account meanwhile is refused at once with `Auto Run setup`.
+/// the account meanwhile is refused at once with `Auto Test setup`.
 #[tokio::test]
 async fn a_setup_sign_in_holds_its_account_until_it_ends() {
     use v2_lib::autorun::nav::check_path;
@@ -621,8 +621,8 @@ async fn a_setup_sign_in_holds_its_account_until_it_ends() {
     assert!(lease::is_held(&env, KEY));
     let began = Instant::now();
     let refused = lease::acquire(&env, KEY, Holder::Template, Duration::from_secs(5)).await.unwrap_err();
-    assert!(began.elapsed() < Duration::from_millis(100), "a template run waited on Auto Run setup");
-    assert_eq!(refused, "the account admin was in use by Auto Run setup - try again when it is free");
+    assert!(began.elapsed() < Duration::from_millis(100), "a template run waited on Auto Test setup");
+    assert_eq!(refused, "the account admin was in use by Auto Test setup - try again when it is free");
     drop(setup);
     assert!(!lease::is_held(&env, KEY));
 
@@ -640,7 +640,7 @@ async fn a_setup_sign_in_holds_its_account_until_it_ends() {
 
 #[test]
 fn a_lease_refusal_is_told_by_its_exact_sentence() {
-    for holder in ["the Auto Run browser", "an API template run", "another case in this run", "an unattended run", "Auto Run setup"] {
+    for holder in ["the Auto Test browser", "an API template run", "another case in this run", "an unattended run", "Auto Test setup"] {
         assert!(lease::is_in_use(&format!("the account manager was in use by {holder} - try again when it is free")), "{holder}");
     }
     assert!(!lease::is_in_use("the account manager was in use by somebody - try again when it is free"));
@@ -831,7 +831,7 @@ mod across_browsers {
 
         let held = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 1 }).unwrap();
         let sentence = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 0 }).unwrap_err();
-        assert_eq!(sentence, "the account hr_admin was in use by the Auto Run browser - try again when it is free");
+        assert_eq!(sentence, "the account hr_admin was in use by the Auto Test browser - try again when it is free");
 
         let named = with_holder_named((409, sentence.clone()), SlotNo::MAIN, env);
         assert_eq!(named, (409, format!("{sentence}{}", named_by("Assistant 2"))));
@@ -897,7 +897,7 @@ mod across_browsers {
             }
             drop(held);
         }
-        assert!(lease::is_in_use("the account admin was in use by the Auto Run browser - try again when it is free"));
+        assert!(lease::is_in_use("the account admin was in use by the Auto Test browser - try again when it is free"));
         assert!(!lease::is_in_use("the account admin was in use by Assistant 2 - try again when it is free"));
     }
 
@@ -940,13 +940,13 @@ mod across_browsers {
     fn a_refusal_is_found_inside_an_answer() {
         let sentence = |key: &str, by: &str| format!("the account {key} was in use by {by} - try again when it is free");
         assert_eq!(
-            lease::find_in_use(&sentence("hr_admin", "the Auto Run browser")),
-            Some(("hr_admin".to_string(), "the Auto Run browser".to_string()))
+            lease::find_in_use(&sentence("hr_admin", "the Auto Test browser")),
+            Some(("hr_admin".to_string(), "the Auto Test browser".to_string()))
         );
         let inside = format!("Step 1 failed: {}. Nothing else ran.", sentence("manager", "an unattended run"));
         assert_eq!(lease::find_in_use(&inside), Some(("manager".to_string(), "an unattended run".to_string())));
         // The first one, not the last.
-        let two = format!("{} / {}", sentence("a", "Auto Run setup"), sentence("b", "an API template run"));
+        let two = format!("{} / {}", sentence("a", "Auto Test setup"), sentence("b", "an API template run"));
         assert_eq!(lease::find_in_use(&two).unwrap().0, "a");
         // Not a refusal: another holder, a key with a space, no ending.
         assert_eq!(lease::find_in_use(&sentence("a", "somebody")), None);
@@ -954,7 +954,7 @@ mod across_browsers {
         assert_eq!(lease::find_in_use("the account a was in use by an unattended run"), None);
         assert_eq!(lease::find_in_use("nothing here"), None);
         // A text that has a bad start before a good one finds the good one.
-        let late = format!("the account was fine, the account x y z. {}", sentence("c", "the Auto Run browser"));
+        let late = format!("the account was fine, the account x y z. {}", sentence("c", "the Auto Test browser"));
         assert_eq!(lease::find_in_use(&late).unwrap().0, "c");
     }
 
@@ -1009,14 +1009,14 @@ mod across_browsers {
         // Main, bound to nobody: the person's when they opened it.
         slots::unbind(SlotNo::MAIN);
         assert_eq!(in_use_by_words(&browser(0), Some(SlotNo(1)), true), "the person's browser");
-        assert_eq!(in_use_by_words(&browser(0), Some(SlotNo(1)), false), "the main Auto Run browser");
+        assert_eq!(in_use_by_words(&browser(0), Some(SlotNo(1)), false), "the main Auto Test browser");
         // A gone assistant is not named.
         agents::note_bye(ID_B, 3_000);
-        assert_eq!(in_use_by_words(&browser(1), Some(SlotNo::MAIN), true), "another Auto Run browser");
+        assert_eq!(in_use_by_words(&browser(1), Some(SlotNo::MAIN), true), "another Auto Test browser");
         // The other holders.
         assert_eq!(in_use_by_words(&case_of("run-1"), Some(SlotNo::MAIN), false), "an unattended run");
         assert_eq!(in_use_by_words(&Holder::Template, None, false), "an API template run");
-        assert_eq!(in_use_by_words(&Holder::Setup, None, false), "Auto Run setup");
+        assert_eq!(in_use_by_words(&Holder::Setup, None, false), "Auto Test setup");
         fresh();
     }
 

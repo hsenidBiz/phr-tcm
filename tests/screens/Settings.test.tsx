@@ -834,22 +834,22 @@ test("on a roomy window Show more slides AI tools and Extras with the moving car
   }
 });
 
-/// Owner (2026-10-23): the Auto Run card fills the right-hand layout when
+/// Owner (2026-10-23): the Auto Test card fills the right-hand layout when
 /// there is room, under AI tools, instead of sitting alone on the left.
-test("on a roomy window the Auto Run card stacks under AI tools beside Updates", async () => {
+test("on a roomy window the Auto Test card stacks under AI tools beside Updates", async () => {
   wideWindow();
   const grid = gridWidth(ROOMY_PX);
   try {
     await renderUnlocked();
     act(() => setModulesForTest(["db_access", "auto_run"]));
-    await screen.findByRole("heading", { name: "Auto Run" });
+    await screen.findByRole("heading", { name: "Auto Test" });
     const spare = holder("AI tools");
-    expect(holder("Auto Run")).toBe(spare);
+    expect(holder("Auto Test")).toBe(spare);
     expect(holder("Updates").parentElement).toBe(spare.parentElement);
-    expect(headings(spare)).toEqual(["AI tools", "Auto Run", "Extras"]);
+    expect(headings(spare)).toEqual(["AI tools", "Auto Test", "Extras"]);
     expect(headings(columns().left)).toEqual(["Appearance", "General"]);
     // The same width as the cards it sits with.
-    const card = screen.getByRole("heading", { name: "Auto Run" }).closest("section")!;
+    const card = screen.getByRole("heading", { name: "Auto Test" }).closest("section")!;
     expect(card.className).toBe(screen.getByRole("heading", { name: "AI tools" }).closest("section")!.className);
   } finally {
     act(() => setModulesForTest([]));
@@ -858,16 +858,16 @@ test("on a roomy window the Auto Run card stacks under AI tools beside Updates",
 });
 
 /// ...and it slides with the others: Show more times it as a moving card.
-test("on a roomy window Show more slides the Auto Run card with the moving cards", async () => {
+test("on a roomy window Show more slides the Auto Test card with the moving cards", async () => {
   wideWindow();
   const grid = gridWidth(ROOMY_PX);
   const motion = stubMotion({ foldHeight: 300 });
   try {
     await renderUnlocked();
     act(() => setModulesForTest(["db_access", "auto_run"]));
-    await screen.findByRole("heading", { name: "Auto Run" });
+    await screen.findByRole("heading", { name: "Auto Test" });
     fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
-    expect(headings(columns().left)).toEqual([...ALL_CARDS.slice(0, 3), "Auto Run", ...MOVERS, "Extras"]);
+    expect(headings(columns().left)).toEqual([...ALL_CARDS.slice(0, 3), "Auto Test", ...MOVERS, "Extras"]);
 
     const slides = motion.cards();
     const ids = slides.map((s) => s.el.getAttribute("data-settings-card"));
@@ -882,14 +882,14 @@ test("on a roomy window Show more slides the Auto Run card with the moving cards
 });
 
 /// Without room for two across it keeps its old place in the left column.
-test("without room for two cards the Auto Run card stays in the left column", async () => {
+test("without room for two cards the Auto Test card stays in the left column", async () => {
   wideWindow();
   const grid = gridWidth(SNUG_PX);
   try {
     await renderUnlocked();
     act(() => setModulesForTest(["db_access", "auto_run"]));
-    await screen.findByRole("heading", { name: "Auto Run" });
-    expect(headings(columns().left)).toEqual([...LOOKS, "Auto Run", "Extras"]);
+    await screen.findByRole("heading", { name: "Auto Test" });
+    expect(headings(columns().left)).toEqual([...LOOKS, "Auto Test", "Extras"]);
   } finally {
     act(() => setModulesForTest([]));
     grid.restore();
@@ -1012,12 +1012,12 @@ test("switching panels plays an entrance animation, replayed on each switch", as
 
 /// The backup file used to carry every hidden dev tool by name; that has no
 /// place in copy a user reads.
-test("the backup description does not name Auto Run", async () => {
+test("the backup description does not name Auto Test", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
   const heading = await screen.findByRole("heading", { name: "Backup & transfer" });
-  expect(heading.closest("section")!.textContent).not.toMatch(/Auto Run/);
+  expect(heading.closest("section")!.textContent).not.toMatch(/Auto Test/);
 });
 
 /// Database logins live in Windows Credential Manager, which the backup
@@ -1275,11 +1275,11 @@ test("a backup that replaces no environment says so instead of naming any", asyn
   });
   fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
   const dialog = await screen.findByRole("dialog");
-  expect(await within(dialog).findByText(/replaces no environment's Auto Run data/)).toBeInTheDocument();
+  expect(await within(dialog).findByText(/replaces no environment's Auto Test data/)).toBeInTheDocument();
   restore();
 });
 
-test("a successful import closes the Auto Run browsers and brings the AI tools' settings in line before reloading", async () => {
+test("a successful import closes the Auto Test browsers and brings the AI tools' settings in line before reloading", async () => {
   const { calls, reload, restore } = mountImport({
     preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: ["Default"] },
   });
@@ -1306,17 +1306,17 @@ test("an import still running from before asks for a restart instead of toasting
   restore();
 });
 
-test("an import that stopped part-way says to restart now and not to save Auto Run changes", async () => {
+test("an import that stopped part-way says to restart now and not to save Auto Test changes", async () => {
   const { restore } = mountImport({
     preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: [] },
     importThrows:
-      "the import did not finish - restart the app now and it will be completed; until then do not save changes in Auto Run (see Settings > Logs)",
+      "the import did not finish - restart the app now and it will be completed; until then do not save changes in Auto Test (see Settings > Logs)",
   });
   fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
   await confirmImport();
   const dialog = await screen.findByRole("dialog", { name: "Restart the app" });
   expect(within(dialog).getByText(/import did not finish - restart the app now and it will be completed/)).toBeInTheDocument();
-  expect(within(dialog).getByText(/do not save changes in Auto Run/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/do not save changes in Auto Test/)).toBeInTheDocument();
   expect(toast.error).not.toHaveBeenCalled();
   restore();
 });
@@ -1430,7 +1430,7 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   expect(onRender.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the dino game" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the brick game" })).not.toBeInTheDocument();
-  // The Extras reset is gone. The Auto Run card's page-size reset has its own
+  // The Extras reset is gone. The Auto Test card's page-size reset has its own
   // name, so this one is unambiguous even though capture mode shows that card.
   expect(onRender.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
   onRender.unmount();
@@ -1812,18 +1812,18 @@ test("startOnModules opens on Modules", async () => {
   expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
 });
 
-/// The page size is Auto Run's, so its card is there only with Auto Run on.
-test("the Auto Run card with the browser page size shows only while Auto Run is on", async () => {
+/// The page size is Auto Test's, so its card is there only with Auto Test on.
+test("the Auto Test card with the browser page size shows only while Auto Test is on", async () => {
   mockIPC(() => undefined);
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByRole("heading", { name: "Changelog" });
-  expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Auto Test" })).not.toBeInTheDocument();
   act(() => setModulesForTest(["db_access", "auto_run"]));
-  const card = (await screen.findByRole("heading", { name: "Auto Run" })).closest("section")!;
+  const card = (await screen.findByRole("heading", { name: "Auto Test" })).closest("section")!;
   expect(within(card).getByText("Browser page size")).toBeInTheDocument();
   expect(within(card).getByRole("spinbutton", { name: "Width" })).toBeInTheDocument();
   act(() => setModulesForTest([]));
-  await waitFor(() => expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Auto Test" })).not.toBeInTheDocument());
 });
 
 /// "Treat all projects as one": the switch is the first row of the General
@@ -1872,7 +1872,7 @@ describe("the all-projects switch and the home project", () => {
     expect(picker).toHaveTextContent("Web");
     expect(
       within(general()).getByText(
-        "Auto Run, API templates, Playwright and new work items without a PBI use this project.",
+        "Auto Test, API templates, Playwright and new work items without a PBI use this project.",
       ),
     ).toBeInTheDocument();
   });
@@ -1936,12 +1936,12 @@ describe("the all-projects switch and the home project", () => {
   });
 });
 
-test("with no preview to read, the import confirmation says it replaces Auto Run data in every environment", async () => {
+test("with no preview to read, the import confirmation says it replaces Auto Test data in every environment", async () => {
   const { restore } = mountImport({ preview: undefined });
   fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
   const dialog = await screen.findByRole("dialog");
   expect(
-    await within(dialog).findByText(/Importing replaces this computer's Auto Run data in every environment with the backup's\./),
+    await within(dialog).findByText(/Importing replaces this computer's Auto Test data in every environment with the backup's\./),
   ).toBeInTheDocument();
   restore();
 });
@@ -2028,7 +2028,7 @@ test("the Simple mode switch turns it on through Rust and takes the returned set
 test("when some modules could not be switched on, the Simple mode row names them", async () => {
   mockIPC((cmd) => {
     if (cmd === "get_app_settings") return simpleSettings(false);
-    if (cmd === "set_app_simple_mode") return { settings: simpleSettings(true), not_switched_on: ["Auto Run", "Playwright"] };
+    if (cmd === "set_app_simple_mode") return { settings: simpleSettings(true), not_switched_on: ["Auto Test", "Playwright"] };
     return undefined;
   });
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -2036,7 +2036,7 @@ test("when some modules could not be switched on, the Simple mode row names them
   await waitFor(() => expect(sw).toBeEnabled());
   fireEvent.click(sw);
   expect(
-    await screen.findByText("Could not switch on: Auto Run, Playwright. Turn Simple mode off and on to try again."),
+    await screen.findByText("Could not switch on: Auto Test, Playwright. Turn Simple mode off and on to try again."),
   ).toBeInTheDocument();
 });
 
@@ -2082,7 +2082,7 @@ test("the Simple mode switch waits while an unattended run is going", async () =
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const sw = await screen.findByRole("switch", { name: "Simple mode" });
   expect(sw).toBeDisabled();
-  expect(sw).toHaveAttribute("title", "Wait for the Auto Run run to finish.");
+  expect(sw).toHaveAttribute("title", "Wait for the Auto Test run to finish.");
 });
 
 test("with no run going the Simple mode switch has no wait title", async () => {
@@ -2115,7 +2115,7 @@ test("a switch the webview could not turn on is named in the same line as the mo
     if (cmd === "get_app_settings") return simpleSettings(false);
     if (cmd === "set_app_simple_mode") {
       setTimeout(() => publishSimpleSwitchFailures(["Network tools"]), 0);
-      return { settings: simpleSettings(true), not_switched_on: ["Auto Run"] };
+      return { settings: simpleSettings(true), not_switched_on: ["Auto Test"] };
     }
     return undefined;
   });
@@ -2126,6 +2126,6 @@ test("a switch the webview could not turn on is named in the same line as the mo
   await waitFor(() => expect(screen.getByRole("switch", { name: "Simple mode" })).toBeEnabled());
   act(() => setAppSimpleModeForTest(true));
   expect(
-    await screen.findByText("Could not switch on: Auto Run, Network tools. Turn Simple mode off and on to try again."),
+    await screen.findByText("Could not switch on: Auto Test, Network tools. Turn Simple mode off and on to try again."),
   ).toBeInTheDocument();
 });

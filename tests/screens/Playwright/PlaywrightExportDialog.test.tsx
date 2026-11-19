@@ -41,7 +41,7 @@ const PREVIEW = {
       case_id: 15,
       title: "",
       exportable: false,
-      reason: "no script - record or write one in Auto Run",
+      reason: "no script - record or write one in Auto Test",
       seg: null,
       user_key: null,
       add_user_command: null,

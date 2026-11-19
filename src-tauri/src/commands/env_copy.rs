@@ -1,4 +1,4 @@
-//! The two commands behind "Copy Auto Run data from..." on an environment.
+//! The two commands behind "Copy Auto Test data from..." on an environment.
 //! The file work is `autorun::env_copy`; this module holds the same guards a
 //! switch holds, so a copy never lands in the middle of a run, a recording
 //! or an open browser.
@@ -73,7 +73,7 @@ pub fn env_copy_choices(_app: tauri::AppHandle, target_id: String) -> Result<Cop
     choices_with(&shared()?, &target_id)
 }
 
-/// Copy a source's Auto Run data into the environment. A target that already
+/// Copy a source's Auto Test data into the environment. A target that already
 /// holds data needs `replace`; what it held is kept for 30 days.
 #[tauri::command]
 #[specta::specta]

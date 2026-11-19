@@ -6,7 +6,7 @@ export const TITLES: Record<Section, string> = {
   edit: "Update Test Cases",
   view: "View Test Cases",
   run: "Run Tests",
-  autorun: "Auto Run",
+  autorun: "Auto Test",
   suites: "Search Suites",
   manage: "Suite Management",
   ai: "AI Bridge",

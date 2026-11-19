@@ -1,4 +1,4 @@
-/** The row a group's header sits in on every grouped list (Auto Run, View,
+/** The row a group's header sits in on every grouped list (Auto Test, View,
  * Update, Run Tests, API templates, the queue). The gap above a header
  * equals the gap below it: the groups sit in a column with an 8px gap
  * (`GROUP_COLUMN`) and each group's header and cards in a 4px one

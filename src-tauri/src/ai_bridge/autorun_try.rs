@@ -1,4 +1,4 @@
-//! Trying one action in the Auto Run browser, and describing what a try did.
+//! Trying one action in the Auto Test browser, and describing what a try did.
 
 use super::*;
 
@@ -356,7 +356,7 @@ pub async fn try_in_session<D: crate::browser::cdp::Driver>(
             .map(|s| (s.method.clone(), s.path_query.clone()))
             .collect();
         if let Err(why) = crate::autorun::explore::note_writes(root, session, &saves) {
-            crate::applog::warn(format!("Auto Run explore session: its saves could not be noted: {why}"));
+            crate::applog::warn(format!("Auto Test explore session: its saves could not be noted: {why}"));
         }
         if !saves.is_empty() {
             let lines: Vec<String> =
@@ -541,7 +541,7 @@ pub(crate) async fn take_picture<D: crate::browser::cdp::Driver>(
     let bytes = match crate::browser::page::screenshot_of(d, full_page).await {
         Ok(bytes) => bytes,
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: a screenshot could not be taken: {e}"));
+            crate::applog::warn(format!("Auto Test: a screenshot could not be taken: {e}"));
             return ActionOutcome::failed(NO_PICTURE.to_string());
         }
     };
@@ -552,7 +552,7 @@ pub(crate) async fn take_picture<D: crate::browser::cdp::Driver>(
             outcome
         }
         Err(why) => {
-            crate::applog::warn(format!("Auto Run: a screenshot could not be saved: {why}"));
+            crate::applog::warn(format!("Auto Test: a screenshot could not be saved: {why}"));
             ActionOutcome::failed(NO_PICTURE.to_string())
         }
     }
@@ -840,9 +840,9 @@ pub(crate) async fn try_action<D: crate::browser::cdp::Driver>(
         match text {
             Some(text) => match counted(d, target, &text).await {
                 Some((n, all)) => matched.push((target, n, all)),
-                None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe before it saw nothing visible"),
+                None => crate::applog::info("Auto Test try: a tried locator was not filed, as the probe before it saw nothing visible"),
             },
-            None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe before it got no answer"),
+            None => crate::applog::info("Auto Test try: a tried locator was not filed, as the probe before it got no answer"),
         }
     }
     // A `wait_for` passes on one match or several and does not say which,

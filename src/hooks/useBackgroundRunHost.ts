@@ -1,4 +1,4 @@
-// What the app does around an unattended run that outlives the Auto Run
+// What the app does around an unattended run that outlives the Auto Test
 // screen (lib/backgroundRun). Used once, by App, where something is always
 // mounted; a hook of its own so a test can drive it without the whole app.
 
@@ -20,7 +20,7 @@ import { toast } from "../lib/toast";
  *   that ended while its window was closed says so in a toast rather than
  *   opening anything over the person's work; the title-bar pill says the
  *   same until it is seen.
- * - A finished run's review is opened by the Auto Run screen, for the run's
+ * - A finished run's review is opened by the Auto Test screen, for the run's
  *   own PBI: `goToReview` takes the person there (from any section, or
  *   another PBI), and the screen opens it once it has the PBI. It is
  *   called once per request, so the person's later moves never bounce

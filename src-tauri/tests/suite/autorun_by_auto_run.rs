@@ -1,4 +1,4 @@
-//! The steps Auto Run performs itself: which steps count, held to the shared
+//! The steps Auto Test performs itself: which steps count, held to the shared
 //! fixture (the TypeScript mirror reads it too), the field's JSON, and the
 //! save check's sentences for a bad mark.
 
@@ -64,7 +64,7 @@ fn a_marked_step_with_actions_is_refused() {
     ]));
     assert_eq!(
         check_floor(&sc, &case(&["The app opens"])),
-        vec!["step 1 is marked as done by Auto Run but has actions - drop one or the other".to_string()]
+        vec!["step 1 is marked as done by Auto Test but has actions - drop one or the other".to_string()]
     );
 }
 
@@ -78,8 +78,8 @@ fn a_marked_step_after_an_unmarked_one_or_in_the_clean_up_is_refused() {
     assert_eq!(
         check_floor(&sc, &case(&["Saved shows", "The app opens"])),
         vec![
-            "step 2 is marked as done by Auto Run but is not one of the opening steps".to_string(),
-            "step 3 is marked as done by Auto Run but is not one of the opening steps".to_string(),
+            "step 2 is marked as done by Auto Test but is not one of the opening steps".to_string(),
+            "step 3 is marked as done by Auto Test but is not one of the opening steps".to_string(),
         ]
     );
 }

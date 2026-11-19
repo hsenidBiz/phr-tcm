@@ -3,7 +3,7 @@
 
 use v2_lib::html_escape::{esc, esc_attr};
 
-/// The single-pass escaper `esc_attr` replaced (the Auto Run report's own
+/// The single-pass escaper `esc_attr` replaced (the Auto Test report's own
 /// copy): every character mapped once, `'` included.
 fn single_pass(text: &str) -> String {
     let mut out = String::with_capacity(text.len());

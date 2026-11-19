@@ -50,9 +50,9 @@ pub async fn search_pbis_all(
         .await
 }
 
-/// Which of `projects` already have Auto Run files: how the app picks a
+/// Which of `projects` already have Auto Test files: how the app picks a
 /// home project for someone whose files predate the "all projects" switch.
-/// A read-only listing of the Auto Run folder; nothing is created or moved.
+/// A read-only listing of the Auto Test folder; nothing is created or moved.
 #[tauri::command]
 #[specta::specta]
 pub async fn projects_with_autorun_files(

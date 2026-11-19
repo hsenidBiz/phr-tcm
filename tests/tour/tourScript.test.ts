@@ -68,9 +68,9 @@ test("the route covers both areas and every tab a user gets", () => {
   ]) {
     expect(keys, `missing ${expected}`).toContain(expected);
   }
-  // Auto Run never ships to users.
+  // Auto Test never ships to users.
   expect(keys).not.toContain("autorun");
-  // Nor does API Templates, which is offered exactly where Auto Run is.
+  // Nor does API Templates, which is offered exactly where Auto Test is.
   expect(keys).not.toContain("apitemplates");
 });
 
@@ -233,9 +233,9 @@ test("crossing into Work Manager can take two clicks when the user's last sectio
 // script copy.
 //
 // Scoped to sections a stop's `where` can actually name - the same reason
-// "the route covers both areas..." above excludes Auto Run: `tourControl`
+// "the route covers both areas..." above excludes Auto Test: `tourControl`
 // can only ever be asked for a destination that appears as a `where`, so a
-// label that is never one (Auto Run, New Work Item) can never reach this
+// label that is never one (Auto Test, New Work Item) can never reach this
 // card. Derived from TOUR_STEPS, not a hand-kept exclude list, so a future
 // stop that starts targeting one of them pulls it into this test
 // automatically - which is how Settings arrived here: it is not a rail row

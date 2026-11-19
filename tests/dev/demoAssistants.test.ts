@@ -1,5 +1,5 @@
 // The sample Assistants card shows what several assistants at once look
-// like: one in the main Auto Run browser and one in a browser of its own,
+// like: one in the main Auto Test browser and one in a browser of its own,
 // each signed in as a different account.
 
 import { afterEach, beforeEach, expect, test, vi } from "vitest";

@@ -1,4 +1,4 @@
-// The result buckets the Auto Run screen filters and counts by. The run
+// The result buckets the Auto Test screen filters and counts by. The run
 // report counts the same way in Rust; both read the same table, so a
 // change to one side that the other does not share fails a suite.
 

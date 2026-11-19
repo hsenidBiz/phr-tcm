@@ -59,7 +59,7 @@ pub enum ScanKind {
 }
 
 /// Which of the data an assistant adds through the AI bridge changed. The
-/// Auto Run screen reads each kind from its own queries.
+/// Auto Test screen reads each kind from its own queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum AutorunDataKind {
@@ -78,15 +78,15 @@ pub enum AutorunDataKind {
 }
 
 /// Emitted after a successful write to that data, whoever made it, so the
-/// Auto Run screen reads it again without a reload.
+/// Auto Test screen reads it again without a reload.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunDataChanged {
     pub kinds: Vec<AutorunDataKind>,
 }
 
-/// Emitted once a switch of environment has landed, after Rust's Auto Run
+/// Emitted once a switch of environment has landed, after Rust's Auto Test
 /// folder, the environments file and the bridge all name the new one. Every
-/// screen that shows per-environment Auto Run data reads it again, and an
+/// screen that shows per-environment Auto Test data reads it again, and an
 /// editor open on the old environment's data closes.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunEnvironmentChanged {
@@ -267,8 +267,8 @@ pub struct AutorunSessionChanged {
     pub account: Option<String>,
 }
 
-/// Emitted when a discovery starts or ends in the Auto Run browser: while
-/// `active`, the assistant is exploring the app there and Auto Run's own
+/// Emitted when a discovery starts or ends in the Auto Test browser: while
+/// `active`, the assistant is exploring the app there and Auto Test's own
 /// runs and Open browser wait for it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunDiscoveryChanged {
@@ -369,9 +369,9 @@ pub struct CrystalReportChanged {
     pub path: Option<String>,
 }
 
-/// Emitted whenever Auto Run scripts on disk change: saved, edited,
+/// Emitted whenever Auto Test scripts on disk change: saved, edited,
 /// repaired, marked, cleared or deleted, by the person, the assistant or a
-/// replay. `case_ids` are the cases whose script changed; the Auto Run
+/// replay. `case_ids` are the cases whose script changed; the Auto Test
 /// screen reads those again, so a change shows without a reload.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunScriptsChanged {

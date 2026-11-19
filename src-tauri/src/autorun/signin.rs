@@ -71,7 +71,7 @@ pub fn redact(text: &str, account: &Account) -> String {
 pub fn prepare(root: &Path, org: &str, project: &str, account_key: &str) -> Result<(SignInRecipe, Account), String> {
     let recipe = load_effective_recipe(root, org, project)?;
     let account = find_account(root, account_key)?.ok_or_else(|| {
-        format!("there is no account \"{account_key}\" on this machine - add it in Auto Run, Accounts")
+        format!("there is no account \"{account_key}\" on this machine - add it in Auto Test, Accounts")
     })?;
     Ok((recipe, account))
 }
@@ -151,7 +151,7 @@ impl SessionRefusal {
 
 /// What the application log calls a browser when the caller did not say
 /// which one it is (`sign_in_in`).
-pub const UNNAMED_BROWSER: &str = "an Auto Run browser";
+pub const UNNAMED_BROWSER: &str = "an Auto Test browser";
 
 /// The application log's line for a session the application refused, in
 /// `browser`: the account (by key, never a login), the refusal in words and
@@ -762,13 +762,13 @@ async fn expired_at_reset_page<D: Driver>(
     let page = match fill_reset_form(d, recipe, account, new, timing, policy).await {
         Ok(page) => page,
         Err(why) => {
-            crate::applog::info(format!("Auto Run: the expired password of {} was not reset: {why}", account.key));
+            crate::applog::info(format!("Auto Test: the expired password of {} was not reset: {why}", account.key));
             return run.done(false, format!("{PASSWORD_RESET_FAILED}{why}"), false, false);
         }
     };
     // Held first, then sent: the submit is the point of no return.
     if let Err(e) = super::accounts::set_pending_password(root, &env_id, &account.key, new) {
-        crate::applog::warn(format!("Auto Run: the new password of {} could not be held, so the reset was not sent: {e}", account.key));
+        crate::applog::warn(format!("Auto Test: the new password of {} could not be held, so the reset was not sent: {e}", account.key));
         let said = format!("{PASSWORD_RESET_FAILED}the new password could not be held first, so nothing was sent");
         return run.done(false, said, false, false);
     }
@@ -776,12 +776,12 @@ async fn expired_at_reset_page<D: Driver>(
         Ok(true) => {}
         Ok(false) => {
             remember_refused(root, &account.key);
-            crate::applog::info(format!("Auto Run: the reset of the expired password of {} is unconfirmed", account.key));
+            crate::applog::info(format!("Auto Test: the reset of the expired password of {} is unconfirmed", account.key));
             let said = maybe_reset("the page did not move on after the form was sent; ");
             return run.done(false, said, false, false);
         }
         Err(why) => {
-            crate::applog::info(format!("Auto Run: the reset of the expired password of {} may have been sent: {why}", account.key));
+            crate::applog::info(format!("Auto Test: the reset of the expired password of {} may have been sent: {why}", account.key));
             let said = maybe_reset("the form may have been sent; ");
             return run.done(false, said, false, true);
         }
@@ -805,10 +805,10 @@ fn confirm_pending(root: &Path, env_id: &str, account: &Account, new: &str, mut 
         match super::accounts::commit_pending_password(root, env_id, &account.key, new) {
             Ok(()) => {
                 forget_refused(root, &account.key);
-                crate::applog::info(format!("Auto Run: the expired password of {} was reset", account.key));
+                crate::applog::info(format!("Auto Test: the expired password of {} was reset", account.key));
             }
             Err(e) => {
-                crate::applog::warn(format!("Auto Run: the reset password of {} worked but could not be saved: {e}", account.key));
+                crate::applog::warn(format!("Auto Test: the reset password of {} worked but could not be saved: {e}", account.key));
                 out.ok = false;
                 out.detail = maybe_reset("the new password works but could not be saved on the account; ");
             }
@@ -818,7 +818,7 @@ fn confirm_pending(root: &Path, env_id: &str, account: &Account, new: &str, mut 
         remember_refused(root, &account.key);
         out.detail = format!("{PASSWORD_RESET_FAILED}the site did not take the new password, so the stored password is unchanged");
     } else if !out.harness {
-        crate::applog::info(format!("Auto Run: the reset of the expired password of {} is unconfirmed", account.key));
+        crate::applog::info(format!("Auto Test: the reset of the expired password of {} is unconfirmed", account.key));
         out.detail = maybe_reset(&format!("the sign-in with the new password did not finish ({}); ", short_reason(&out.detail, &[])));
     }
     out
@@ -1092,7 +1092,7 @@ async fn open_start<D: Driver>(
         match slow_start_wait(tries, elapsed, &arrived.detail, answers, timing.nav_ms) {
             Some(wait) => {
                 crate::applog::info(format!(
-                    "Auto Run: {FIRST_PAGE_RETRY} (try {} after {} s)",
+                    "Auto Test: {FIRST_PAGE_RETRY} (try {} after {} s)",
                     tries + 1,
                     wait / 1000
                 ));
@@ -1188,7 +1188,7 @@ async fn sign_in_core<D: Driver>(
                 if let Some(refusal) = refused {
                     let age = now_ms().saturating_sub(saved.saved_at_ms) / 60_000;
                     crate::applog::info(format!(
-                        "Auto Run: {}; it is dropped and the account signed in fresh",
+                        "Auto Test: {}; it is dropped and the account signed in fresh",
                         session_refused_line(browser, &account.key, refusal, Some(age))
                     ));
                 }
@@ -1303,7 +1303,7 @@ async fn sign_in_core<D: Driver>(
             // reload, which posts a form again) and the marker waited for.
             // Never for a refused session or a browser that stopped
             // answering (both excluded above).
-            crate::applog::info(format!("Auto Run: {COLD_SITE_RETRY}"));
+            crate::applog::info(format!("Auto Test: {COLD_SITE_RETRY}"));
             retried = true;
             let again = execute_in(d, &go, timing, &policy.as_runner()).await;
             let why = again.detail.clone();
@@ -1385,7 +1385,7 @@ async fn sign_in_core<D: Driver>(
                 let _ = save_session(root, &account.key, &captured);
             } else {
                 crate::applog::info(format!(
-                    "Auto Run: the session for {} was not saved - its sign-in cookies were not complete yet",
+                    "Auto Test: the session for {} was not saved - its sign-in cookies were not complete yet",
                     account.key
                 ));
             }

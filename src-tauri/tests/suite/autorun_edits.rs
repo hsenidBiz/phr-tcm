@@ -1,4 +1,4 @@
-//! The declared-edit gate: an assistant's edit to an Auto Run script must
+//! The declared-edit gate: an assistant's edit to an Auto Test script must
 //! name every step it touches and leave every other step as it was. A
 //! declared step may change in any way, a check removed included.
 //! Pure functions over `CaseScript` - no browser, no filesystem.

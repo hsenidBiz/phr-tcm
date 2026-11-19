@@ -243,7 +243,7 @@ pub fn sweep_leftover_profiles(temp: &Path) -> Vec<String> {
     removed
 }
 
-/// A browser left running from an earlier run: Auto Run's own profile
+/// A browser left running from an earlier run: Auto Test's own profile
 /// (`tcm-autorun-<digits>` under the temp folder), the browser process
 /// that owns it and the DevTools port it was started with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,7 +320,7 @@ pub fn may_end(o: &Orphan, this_pid: u32, start_of: &dyn Fn(u32) -> Option<u64>)
     }
 }
 
-/// If this command line is the main process of an Auto Run browser (no
+/// If this command line is the main process of an Auto Test browser (no
 /// `--type=` switch, so not a renderer, gpu or crashpad child) whose
 /// `--user-data-dir` is a `tcm-autorun-<digits>` folder directly inside
 /// `temp`: that folder's name and the `--remote-debugging-port`. Anything
@@ -352,7 +352,7 @@ fn unix_now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-/// Every Auto Run browser running now that no live tree of this app holds.
+/// Every Auto Test browser running now that no live tree of this app holds.
 /// Windows only; empty elsewhere. Reads command lines through the same
 /// query-only access `Tree` uses and ends nothing.
 pub fn find_orphans(temp: &Path) -> Vec<Orphan> {
@@ -787,7 +787,7 @@ pub(crate) mod job {
     }
 
     /// The process ids of every Chrome and Edge running now, whoever's they
-    /// are: the caller tells Auto Run's own apart by command line.
+    /// are: the caller tells Auto Test's own apart by command line.
     pub fn browser_pids() -> Vec<u32> {
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
             Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,

@@ -1,4 +1,4 @@
-// Bring the Auto Run scripts in a folder into the environment on screen.
+// Bring the Auto Test scripts in a folder into the environment on screen.
 // The plan comes first - how many are new, how many are already the same,
 // how many cases already have a different script here - and nothing is
 // written until Import. A case's existing script is only replaced when the

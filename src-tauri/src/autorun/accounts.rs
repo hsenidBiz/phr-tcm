@@ -157,7 +157,7 @@ pub fn account_for_run(root: &Path, key: Option<&str>) -> Result<Option<String>,
     }
     match find_account(root, key)? {
         Some(_) => Ok(Some(key.to_string())),
-        None => Err(format!("there is no account \"{key}\" on this machine - add it in Auto Run, Accounts")),
+        None => Err(format!("there is no account \"{key}\" on this machine - add it in Auto Test, Accounts")),
     }
 }
 

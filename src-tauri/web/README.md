@@ -21,7 +21,7 @@ runtime, but the Rust files are left holding only logic.
 | `cases-page.js` | `src/import_parser/html.rs` | Its collapsing, filtering, Options menu and bookmark |
 | `cases-notes.js` | `src/import_parser/html.rs` | Autosaving comment boxes → the loopback listener |
 | `report-page.css` | `src/report.rs` | The execution report |
-| `autorun-report.css` | `src/autorun/report.rs` | The Auto Run run report |
+| `autorun-report.css` | `src/autorun/report.rs` | The Auto Test run report |
 | `autorun-report.js` | `src/autorun/report.rs` | Its tabs, filter, keys, copy buttons and gallery |
 
 ## Editing these

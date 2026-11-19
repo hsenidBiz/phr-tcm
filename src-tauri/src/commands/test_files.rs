@@ -1,9 +1,9 @@
 //! IPC surface for a project's Test files (`crate::test_files`): list,
-//! add, remove and open the folder. Test files are the Auto Run module's
+//! add, remove and open the folder. Test files are the Auto Test module's
 //! (API Templates, which also uploads them, hangs off it): every command
-//! refuses with Auto Run's off sentence while it is off.
+//! refuses with Auto Test's off sentence while it is off.
 //!
-//! Each command has a pure `*_at` half that takes "is Auto Run on" and
+//! Each command has a pure `*_at` half that takes "is Auto Test on" and
 //! the data root, so a test reaches it without an `AppHandle`. Removing a
 //! file deletes this machine's copy and nothing else: there is no network
 //! call anywhere in this module.

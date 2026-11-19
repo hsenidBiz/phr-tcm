@@ -418,7 +418,7 @@ pub const NO_REPLAY_RUNNING: &str = "no replay is running - there is nothing to 
 
 /// Said by the replay tool's `stop` while the replay going is the person's own.
 pub const PERSONS_REPLAY_GOING: &str =
-    "the replay going is the person's own - only they can stop it, with Stop in the Auto Run pane";
+    "the replay going is the person's own - only they can stop it, with Stop in the Auto Test pane";
 
 /// Said by the replay tool's `stop` when the assistant's last replay has
 /// already ended, its answer not yet collected.
@@ -483,7 +483,7 @@ pub async fn autorun_replay_stop_with(slot: SlotNo, wait: std::time::Duration) -
             let asked = replay.assistants_replay_running();
             if asked {
                 replay.stop_on_request();
-                crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: the assistant asked it to stop"));
+                crate::applog::info(format!("Auto Test replay of case {case_id} to step {step}: the assistant asked it to stop"));
             }
             match wait_for_replay(slot, answer, id, case_id, step, wait).await {
                 (202, _) if asked => (202, replay_stopping_answer(slot, case_id, step).to_string()),

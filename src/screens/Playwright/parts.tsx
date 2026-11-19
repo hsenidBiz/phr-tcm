@@ -1,6 +1,6 @@
 // Small pieces the Playwright tab's areas share: a status badge in one of
 // the theme's tones, a card with a header bar, a number tile, and the
-// screen's own tab list (the Auto Run tab pattern: only the chosen tab is in
+// screen's own tab list (the Auto Test tab pattern: only the chosen tab is in
 // the Tab order, and the arrow keys move along).
 
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";

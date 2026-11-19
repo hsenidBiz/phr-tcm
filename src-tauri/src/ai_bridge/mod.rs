@@ -1,7 +1,7 @@
 //! The AI bridge: a 127.0.0.1-only service that lets the tcm-mcp stdio
 //! binary (and therefore AI tools) use the app: read a live writing guide,
 //! fetch real example cases, reorganise a draft into a run sheet, search
-//! PBIs, and work Auto Run, API templates, the database tools and the
+//! PBIs, and work Auto Test, API templates, the database tools and the
 //! report tools. Modeled on note_server.rs; the TCP loop is thin
 //! (`server`), all logic lives in `route` so tests need no sockets.
 //!
@@ -14,18 +14,18 @@
 //! - Case files: a draft the app follows, or one under the working
 //!   repository's `.test-cases` folder, and only by canonical path
 //!   (`bridge_may_write`, `workspace::is_inside`).
-//! - The app's own Auto Run and Test file stores (scripts, components,
+//! - The app's own Auto Test and Test file stores (scripts, components,
 //!   areas, quirks, validation rules, defects, run order, setups, kept
 //!   actions, proposed accounts (with their passwords, on test
 //!   environments), Test files, API templates, fixtures and flows): each
 //!   route validates what it is handed, and a route that belongs to a module
 //!   is answered only while that module is on (`module_guard`).
 //! - The application under test, two ways. Through its UI: discovery tries
-//!   and batches and replays drive the Auto Run browser and can submit
+//!   and batches and replays drive the Auto Test browser and can submit
 //!   forms, held back only where a case or discovery says must-not-save.
 //!   Through HTTP: proving or running an API template, or an explore
 //!   session's own sends, only with the API templates switch on
-//!   (`API_WRITES_OFF`). The Auto Run browser's captured requests, test
+//!   (`API_WRITES_OFF`). The Auto Test browser's captured requests, test
 //!   headers and cookies (the network tools) are answered only with their
 //!   switch on (`NETWORK_TOOLS_OFF`).
 //! - The database: `db_query` writes only with the create, update and
@@ -144,12 +144,12 @@ pub struct BridgeContext {
     /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
     pub api_writes: bool,
     /// Whether the person has switched the network tools on (the captured
-    /// requests, HAR files, test headers and cookies of the Auto Run
+    /// requests, HAR files, test headers and cookies of the Auto Test
     /// browser): until they do, those tools are not listed and their routes
     /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
     /// default.
     pub network_tools: bool,
-    /// Whether the person is in Auto Run's Simple or Advanced mode, as the
+    /// Whether the person is in Auto Test's Simple or Advanced mode, as the
     /// webview last pushed it. An assistant reads it to know which controls
     /// the person can see; no tool sets it. None until the webview has
     /// pushed one, and then the status answer carries no such key.
@@ -515,7 +515,7 @@ pub fn call_time_line(method: &str, target: &str, status: u16, ms: u128) -> Stri
 /// What `get_current_pbi` answers: the PBI as JSON, or a plain sentence when
 /// the person has none selected in TCM.
 ///
-/// Both also say which Auto Run mode the person is in once the webview has
+/// Both also say which Auto Test mode the person is in once the webview has
 /// pushed it (`autorun_mode` in the JSON, a closing sentence otherwise), so an
 /// assistant, which reads only this tool, can tell what the person can see.
 fn current_pbi_answer(ctx: &BridgeContext) -> String {
@@ -534,7 +534,7 @@ fn current_pbi_answer(ctx: &BridgeContext) -> String {
         None => {
             let mut out = "No PBI is selected in TCM.".to_string();
             if let Some(m) = mode.as_ref().and_then(|m| m.as_str()) {
-                out.push_str(&format!(" Auto Run mode: {m}."));
+                out.push_str(&format!(" Auto Test mode: {m}."));
             }
             if let Some(s) = ctx.app_simple_mode {
                 out.push_str(&format!(" App Simple mode: {}.", if s { "on" } else { "off" }));
@@ -613,7 +613,7 @@ pub async fn route_as(
             .to_string(),
         ),
         // A proxy saying goodbye as it exits. It belongs to no module, so
-        // the guard above lets it through even with Auto Run off. Only an
+        // the guard above lets it through even with Auto Test off. Only an
         // agent's goodbye ends anything; the default caller is answered and
         // nothing more.
         ("POST", "/agent-bye") => {
@@ -653,7 +653,7 @@ pub async fn route_as(
             None => (503, "sign in to Test Case Manager first".into()),
         },
         ("GET", "/tags") => tags(caller, ctx, client, target).await,
-        // The Auto Run routes. Only ONE of them reaches Azure DevOps, and
+        // The Auto Test routes. Only ONE of them reaches Azure DevOps, and
         // only to read: the save route looks the test cases up so the
         // floor has something to check the script against. The rest
         // document a format, drive the browser the person opened, or read
@@ -742,7 +742,7 @@ pub async fn route_as(
             let answer = Box::pin(autorun_try(ctx, body, &mut seen, slot)).await;
             with_overrides_seen(answer, seen, slot)
         }
-        // Discovery: the assistant opens the Auto Run browser itself, signs
+        // Discovery: the assistant opens the Auto Test browser itself, signs
         // in as a saved account (the app types the password) and explores
         // the live application, one action at a time. A case another
         // assistant works on was refused at the top, before a browser was
@@ -882,7 +882,7 @@ pub async fn route_as(
             Ok(root) => explore_changes(&root, &ctx.org, &ctx.project, body),
             Err(refused) => refused,
         },
-        // Release: every Auto Run browser record the app holds is cleared
+        // Release: every Auto Test browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => {
@@ -941,7 +941,7 @@ pub async fn route_as(
         // live, and retired only while no saved script uses them.
         ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body, slot).await,
         ("POST", "/autorun-component-retire") => autorun_component_retire(ctx, body),
-        // Auto Run's own order for a PBI. Reads the PBI's cases from Azure
+        // Auto Test's own order for a PBI. Reads the PBI's cases from Azure
         // DevOps (a read) to refuse an id the PBI is not tested by.
         ("POST", "/autorun-order") => autorun_order(ctx, client, body).await,
         // The active environment's accounts: the assistant proposes logins
@@ -952,7 +952,7 @@ pub async fn route_as(
         // environment: the assistant may change the table and columns.
         ("POST", "/accounts-lookup-set") => accounts_lookup_set(ctx, body).await,
         // Check sign-in: each account signed in once, in a browser of its own,
-        // and walked as far as an area. Uses no slot: the person's Auto Run
+        // and walked as far as an area. Uses no slot: the person's Auto Test
         // browser and the assistant's own are left alone.
         ("POST", "/autorun-check-sign-in") => autorun_check_sign_in(ctx, body).await,
         // Look at a sign-in page, and propose a recipe that signed in on a
@@ -964,14 +964,14 @@ pub async fn route_as(
         ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
         // A file the assistant made, saved into those Test files.
         ("POST", "/test-file-save") => test_file_save(ctx, body),
-        // The API template routes: gated with the Auto Run ones by the
+        // The API template routes: gated with the Auto Test ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
         // guide and the list are reads and answer either way.
         ("GET", "/api-template-guide") => (200, api_template_guide(ctx)),
         ("GET", "/api-templates") => api_template_list(ctx, target),
         ("POST", "/api-template-prove") => {
-            // A proof refused its account because the Auto Run browser holds
+            // A proof refused its account because the Auto Test browser holds
             // it asks the caller's own browser, as a run does; a caller with
             // no browser has none to ask.
             api_template_prove_for(
@@ -1077,7 +1077,7 @@ pub async fn route_as(
         //
         // `autorun` is TRANSITIONAL, for one release: a proxy from before
         // modules, still running in an editor, reads it to decide whether
-        // the Auto Run tools are offered. Remove it in the release after.
+        // the Auto Test tools are offered. Remove it in the release after.
         ("GET", "/tools") => {
             let mut answer = serde_json::json!({
                 "disabled": ctx.disabled_tools,
@@ -1158,8 +1158,8 @@ pub fn smells_like_a_write(method: &str, target: &str) -> bool {
 }
 
 /// The module a bridge route belongs to, by the shape of its PATH: every
-/// `/autorun-` route and `/accounts` / every `/accounts-` one (the Auto Run
-/// accounts) is Auto Run's; every `/api-template` one is API Templates';
+/// `/autorun-` route and `/accounts` / every `/accounts-` one (the Auto Test
+/// accounts) is Auto Test's; every `/api-template` one is API Templates';
 /// `/db-lookup` and `/db-query` are Database Access's; every `/crystal-`
 /// one is Crystal Reports'. Anything else is Core. By path rather than by
 /// arm, so a route added later is covered by its name rather than by
@@ -1192,7 +1192,7 @@ pub fn module_guard_for(path: &str, on: &std::collections::BTreeSet<crate::modul
 }
 
 /// `module_guard_for`, plus the one route shared by two modules: the quirk
-/// routes are Auto Run's, but a quirk sent `from: "api"` (`record_quirk`
+/// routes are Auto Test's, but a quirk sent `from: "api"` (`record_quirk`
 /// from an assistant building API templates) is API Templates' too, so it
 /// is refused with that module's sentence while API Templates is off.
 pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crate::modules::Module>) -> Option<(u16, String)> {
@@ -1211,7 +1211,7 @@ pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crat
     None
 }
 
-/// The network tools' routes: the Auto Run browser's captured requests,
+/// The network tools' routes: the Auto Test browser's captured requests,
 /// HAR files, test headers and cookies. Answered only while the person's
 /// Network tools switch is on (`network_guard`).
 pub const NETWORK_ROUTES: [&str; 12] = [

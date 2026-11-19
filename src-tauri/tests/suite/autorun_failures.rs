@@ -1052,7 +1052,7 @@ fn a_needs_a_ruling_case_is_a_stop() {
     use v2_lib::autorun::failures::NEEDS_RULING_STOP;
     let case = CaseRecord { video: None,
         proposed: "Blocked".to_string(),
-        reason: "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run".to_string(),
+        reason: "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Test".to_string(),
         ..empty_case()
     };
     assert_eq!(stop_reason(&case), Some(NEEDS_RULING_STOP.to_string()));

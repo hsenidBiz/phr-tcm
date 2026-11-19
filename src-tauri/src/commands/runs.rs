@@ -130,7 +130,7 @@ pub async fn start_test_run(
 /// and best-effort exactly as in the batch flow; a failure there never
 /// loses the recorded outcome, and the returned list names what did not
 /// attach. See `record_point_outcome` for the body - this command is just
-/// the token + client wiring around it, shared with Auto Run's publish
+/// the token + client wiring around it, shared with Auto Test's publish
 /// step (`autorun::publish`), which is the only other caller.
 #[tauri::command]
 #[specta::specta]
@@ -147,7 +147,7 @@ pub async fn record_result(
     record_point_outcome(&client, &organization, &project, run_id, result_id, &outcome).await
 }
 
-/// The write behind `record_result`, and behind every result Auto Run's
+/// The write behind `record_result`, and behind every result Auto Test's
 /// publish step records: an already-built client, one result row, one
 /// outcome. Per-step marks and attachments are additive and best-effort -
 /// a failure there never loses the recorded outcome, and the returned list

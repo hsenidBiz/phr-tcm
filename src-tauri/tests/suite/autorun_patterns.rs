@@ -134,7 +134,7 @@ fn a_frame_auto_run_cannot_reach_is_its_own_class() {
         assert_eq!(classify(&detail, None), ErrorClass::FrameUnreachable, "without the target: {detail}");
     }
     assert_eq!(ErrorClass::FrameUnreachable.key(), "frame");
-    assert_eq!(ErrorClass::FrameUnreachable.label(), "a frame Auto Run cannot reach");
+    assert_eq!(ErrorClass::FrameUnreachable.label(), "a frame Auto Test cannot reach");
 }
 
 /// It is about the application, so get_autorun_failures groups it in
@@ -148,7 +148,7 @@ fn two_cases_failing_on_the_same_unreachable_frame_are_one_pattern() {
     ]);
     let scripts = vec![script(11, 2, click("Pay")), script(12, 4, click("Pay"))];
     let text = describe_failures(&r, &scripts);
-    assert!(text.contains("- click on button \"Pay\" - a frame Auto Run cannot reach (in 2 cases)"), "{text}");
+    assert!(text.contains("- click on button \"Pay\" - a frame Auto Test cannot reach (in 2 cases)"), "{text}");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Playwright export: one Auto Run script as a raw spec.
+//! Playwright export: one Auto Test script as a raw spec.
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -603,7 +603,7 @@ fn enabled_disabled_and_an_absent_attribute_translate() {
 }
 
 /// `expect_checked` becomes Playwright's `toBeChecked`, negated for a box
-/// that must be clear; both read the live state, as Auto Run does.
+/// that must be clear; both read the live state, as Auto Test does.
 #[test]
 fn checked_translates_to_to_be_checked() {
     let got = one_step(json!([
@@ -1229,7 +1229,7 @@ fn a_style_check_translates_to_to_have_css() {
     assert!(got.contains("await expect(cur.locator('#s').first()).toHaveCSS('content', '\"Hi\"', { timeout: 10000 });"), "{got}");
 }
 
-/// Auto Run makes runs of spaces one and writes a comma as `, `: the
+/// Auto Test makes runs of spaces one and writes a comma as `, `: the
 /// exported pattern takes any run of spaces, and any spaces around a comma.
 #[test]
 fn a_style_pattern_tolerates_runs_of_spaces() {
@@ -1591,7 +1591,7 @@ fn list_order_and_position_checks_are_no_longer_refused() {
 
 #[test]
 fn a_case_that_needs_a_ruling_exports_as_fixme_with_its_reason() {
-    let reason = "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run";
+    let reason = "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Test";
     let fx = one_step(json!([{ "kind": "click", "selector": "#save" }]));
     let with = raw_spec(&RawSpecInput {
         script: &fx.script,
@@ -1838,7 +1838,7 @@ fn a_repeat_loop_waits_for_its_row_as_long_as_settle_ms() {
     assert!(loop_with(json!({})).contains("toHaveCount(0, { timeout: 5000 })"));
 }
 
-/// An exported delete loop with `except` runs Auto Run's rows guard before its
+/// An exported delete loop with `except` runs Auto Test's rows guard before its
 /// first pass (nothing is deleted before the throw); one without `except`
 /// carries none.
 #[test]
@@ -1865,7 +1865,7 @@ fn an_except_loop_checks_its_rows_before_the_first_pass() {
 }
 
 /// The rows may sit in a frame while the protected text is on the top page:
-/// the guard asks the page `cur` too, as Auto Run asks the top document.
+/// the guard asks the page `cur` too, as Auto Test asks the top document.
 #[test]
 fn an_except_loop_in_a_frame_also_asks_the_top_document() {
     let got = one_step(json!([{
@@ -2023,12 +2023,12 @@ fn a_select_option_is_a_locator_select_option() {
 #[test]
 fn a_step_done_by_auto_run_has_no_unchecked_comment() {
     let mut fx = Fx::new(script(json!([
-        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Run opens the app" },
+        { "step_number": 1, "actions": [], "by_auto_run": true, "unchecked": "Auto Test opens the app" },
         { "step_number": 2, "actions": [], "unchecked": "the PDF cannot be read" }
     ])));
     fx.texts.insert(1, "open".into());
     fx.texts.insert(2, "export".into());
     let got = fx.run().unwrap();
-    assert!(!got.contains("Auto Run opens the app"), "{got}");
+    assert!(!got.contains("Auto Test opens the app"), "{got}");
     assert!(got.contains("// TODO unchecked: the step's expected result - the PDF cannot be read"), "{got}");
 }

@@ -18,7 +18,7 @@ const APP_SETTINGS_KEY = ["app-settings"] as const;
 
 /** Simple mode's own record that an environment existed before it did. Read
  * only by Simple mode: the switches' person-set markers stay a person's, so
- * nothing else that reads them (the Modules page's first Auto Run switch-on)
+ * nothing else that reads them (the Modules page's first Auto Test switch-on)
  * changes for an upgrade. */
 const BASELINE_BASE = "tcm-v2-simple-baseline";
 

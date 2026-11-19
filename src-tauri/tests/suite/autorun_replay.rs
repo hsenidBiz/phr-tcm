@@ -880,7 +880,7 @@ async fn a_script_naming_an_unrecorded_area_is_blocked_and_no_browser_opens() {
         .unwrap();
     assert_eq!(browsers.opened, 0);
     assert_eq!(run.cases[0].proposed, "Blocked");
-    assert_eq!(run.cases[0].reason, "the area \"Leave balance\" is not recorded - record it in Auto Run, Areas");
+    assert_eq!(run.cases[0].reason, "the area \"Leave balance\" is not recorded - record it in Auto Test, Areas");
 }
 
 #[tokio::test]

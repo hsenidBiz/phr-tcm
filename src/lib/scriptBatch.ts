@@ -13,7 +13,7 @@ let scheduled = false;
 /**
  * One case's saved script, or `null` when it has none - the same answer as
  * `autoRunLoadScript`, but every case asked for in the same moment is read
- * in one call. The Auto Run screen asks for each listed case's script at
+ * in one call. The Auto Test screen asks for each listed case's script at
  * once (and again after any script changes); one call per case was
  * hundreds of round trips, each opening a file. Nothing is kept: each
  * call is fresh, so the query cache stays the only cache.

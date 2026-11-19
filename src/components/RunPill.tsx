@@ -3,7 +3,7 @@ import { cn } from "../lib/cn";
 import { DISCOVERY_BUSY, useDiscoveryActiveNow } from "../lib/discoveryActive";
 
 /** What the Discovering pill says about itself. */
-export const DISCOVERING_NOTE = `${DISCOVERY_BUSY}. End it from End discovery on the Discovery row in Auto Run's Setup panel.`;
+export const DISCOVERING_NOTE = `${DISCOVERY_BUSY}. End it from End discovery on the Discovery row in Auto Test's Setup panel.`;
 
 /** What the pill says, what a click on it does, and its colour, for a run
  * in each state. Null while there is no run to show (none, or one still on
@@ -18,7 +18,7 @@ export function runPillView(
     return discovering ? { text: "Discovering", action: DISCOVERING_NOTE, tone: "accent" } : null;
   }
   if (run.phase === "finished") {
-    return { text: "Run finished, Review", action: "Open the finished run's review in Auto Run", tone: "success" };
+    return { text: "Run finished, Review", action: "Open the finished run's review in Auto Test", tone: "success" };
   }
   if (run.phase === "failed") {
     return { text: "Run stopped with an error", action: "Open the run window to see the error", tone: "danger" };
@@ -36,7 +36,7 @@ export function runPillView(
   }
   const at = run.position ? run.position.index + 1 : 1;
   const of = run.position ? run.position.total : run.cases.length;
-  return { text: `Auto Run ${at} of ${of}`, action: "Open the run window", tone: "accent" };
+  return { text: `Auto Test ${at} of ${of}`, action: "Open the run window", tone: "accent" };
 }
 
 const TONES = {
@@ -50,7 +50,7 @@ const TONES = {
  * it has got, that it is paused before a batch, or that it has ended.
  * A click opens its window (as an app-level dialog, wherever the person
  * is) or, once it has finished, its review. Its accessible name says what
- * the click does. With no run to show, a discovery holding the Auto Run
+ * the click does. With no run to show, a discovery holding the Auto Test
  * browser reads Discovering, as text: nothing here ends it. */
 export default function RunPill() {
   const { run } = useBackgroundRun();
@@ -59,7 +59,7 @@ export default function RunPill() {
   if (!view) return null;
   if (!run || run.phase === "setup") {
     // Discovering: text with nothing to click. What ends it is the End
-    // discovery button on Auto Run, which the title and the name say.
+    // discovery button on Auto Test, which the title and the name say.
     return (
       <span
         role="status"

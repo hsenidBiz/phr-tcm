@@ -1,4 +1,4 @@
-//! Where Auto Run keeps its files, now that each environment has its own.
+//! Where Auto Test keeps its files, now that each environment has its own.
 //!
 //! `<appdata>/autorun/` is the SHARED root and
 //! `<appdata>/autorun/envs/<env-id>/` is an ENVIRONMENT root. The stores
@@ -223,7 +223,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// What the person is told, once, after the copy. Names no path.
 pub fn migration_notice(r: &MigrationReport) -> String {
     let mut text = format!(
-        "Auto Run moved {} to {}; other environments start empty. ",
+        "Auto Test moved {} to {}; other environments start empty. ",
         plural(r.scripts, "script", "scripts"),
         r.active_name
     );
@@ -241,17 +241,17 @@ pub fn migration_notice(r: &MigrationReport) -> String {
         let joined = if parts.is_empty() { last } else { format!("{} and {last}", parts.join(", ")) };
         text.push_str(&format!("{joined}, as each run names. "));
     }
-    text.push_str("The old Auto Run folders are kept as a backup and are no longer read.");
+    text.push_str("The old Auto Test folders are kept as a backup and are no longer read.");
     text
 }
 
 /// The one line start-up logs after the copy. Names no path.
 pub fn migration_log_line(r: &MigrationReport) -> String {
-    format!("Auto Run: {}", migration_notice(r))
+    format!("Auto Test: {}", migration_notice(r))
 }
 
 /// The small file in the shared root that holds the notice until the
-/// Auto Run screen has shown it.
+/// Auto Test screen has shown it.
 pub const MIGRATION_NOTE_FILE: &str = "migration-note.txt";
 
 /// Keeps `text` for the screen to say once. Logs a failure (no path) and
@@ -259,7 +259,7 @@ pub const MIGRATION_NOTE_FILE: &str = "migration-note.txt";
 pub fn write_migration_note(shared: &Path, text: &str) {
     let _ = std::fs::create_dir_all(shared);
     if let Err(e) = std::fs::write(shared.join(MIGRATION_NOTE_FILE), text) {
-        crate::applog::debug(format!("Auto Run: the update notice could not be kept: {e}"));
+        crate::applog::debug(format!("Auto Test: the update notice could not be kept: {e}"));
     }
 }
 
@@ -272,9 +272,9 @@ pub fn take_migration_note(shared: &Path) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Said when an Auto Run item is a link or shortcut: the update will not
+/// Said when an Auto Test item is a link or shortcut: the update will not
 /// follow it, and will not pretend it copied it.
-pub const ITEM_IS_A_LINK: &str = "an Auto Run folder or file is a link or shortcut, which the update does not follow";
+pub const ITEM_IS_A_LINK: &str = "an Auto Test folder or file is a link or shortcut, which the update does not follow";
 
 /// Only these hold files that are written once and never changed in place
 /// (a screenshot has a time-stamped name; a download is finished before it
@@ -301,7 +301,7 @@ fn record_failed_start(shared: &Path) -> u32 {
     let n = failed_starts(shared) + 1;
     let _ = std::fs::create_dir_all(shared);
     if let Err(e) = std::fs::write(shared.join(FAILED_STARTS_FILE), n.to_string()) {
-        crate::applog::debug(format!("Auto Run: the failed-start count could not be saved: {e}"));
+        crate::applog::debug(format!("Auto Test: the failed-start count could not be saved: {e}"));
     }
     n
 }
@@ -314,7 +314,7 @@ fn clear_failed_starts(shared: &Path) {
 /// failed start in a row it says so and what usually causes it. Names no
 /// path (`why` is empty when the reason would have).
 pub fn failure_warning(why: &str, starts_in_a_row: u32) -> String {
-    let mut line = String::from("Auto Run: the per-environment copy did not finish and will be tried again at the next start");
+    let mut line = String::from("Auto Test: the per-environment copy did not finish and will be tried again at the next start");
     if !why.is_empty() {
         line.push_str(&format!(" ({why})"));
     }
@@ -438,7 +438,7 @@ const REMOVED_RECORD: &str = "removed.json";
 /// Said when the environment to be removed is the active one.
 pub const REMOVE_ACTIVE: &str = "the active environment cannot be removed - switch to another one first";
 /// Said when something is writing into the environment's folder right now.
-pub const REMOVE_BUSY: &str = "that environment's Auto Run data is being used right now - try again in a moment";
+pub const REMOVE_BUSY: &str = "that environment's Auto Test data is being used right now - try again in a moment";
 /// Said when the environment is the Playwright export environment.
 pub const REMOVE_EXPORT_ENVIRONMENT: &str = crate::environments::REMOVE_EXPORT_ENV;
 
@@ -605,7 +605,7 @@ pub fn retire_unlisted(shared: &Path, now_ms: u64) -> usize {
         match retire(shared, &id, &name, "removed", now_ms) {
             Ok(Some(_)) => retired += 1,
             Ok(None) => {}
-            Err(e) => crate::applog::warn(format!("Auto Run: a removed environment's folder stayed in place: {e}")),
+            Err(e) => crate::applog::warn(format!("Auto Test: a removed environment's folder stayed in place: {e}")),
         }
     }
     retired
@@ -660,7 +660,7 @@ pub fn purge_removed(shared: &Path, now_ms: u64) -> usize {
             match std::fs::remove_dir_all(&path) {
                 Ok(()) => purged += 1,
                 Err(err) => {
-                    crate::applog::warn(format!("Auto Run: a removed environment's folder stayed behind: {err}"))
+                    crate::applog::warn(format!("Auto Test: a removed environment's folder stayed behind: {err}"))
                 }
             }
         }
@@ -759,7 +759,7 @@ pub(crate) fn exists(path: &Path) -> Result<bool, String> {
 /// Copies `from` (a file or a folder) to `to`. `link` hard-links each file
 /// and falls back to a copy when the file system will not link. A link, a
 /// junction or any entry that cannot be read fails the copy. `skip` is
-/// asked about each file with its path relative to the whole Auto Run root
+/// asked about each file with its path relative to the whole Auto Test root
 /// (`rel`), so it can tell the export record from other project files.
 pub(crate) fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(from).map_err(|e| e.to_string())?;
@@ -833,7 +833,7 @@ pub fn place_runs(flat: &Path, envs: &[(String, String)], active: &str) -> Resul
         let run = match run {
             Ok(r) => r,
             Err(_) => {
-                crate::applog::warn("Auto Run: a saved run could not be read for the update and goes to the active environment");
+                crate::applog::warn("Auto Test: a saved run could not be read for the update and goes to the active environment");
                 placed.runs.insert(stem, active.to_string());
                 continue;
             }
@@ -990,7 +990,7 @@ pub fn fan_out(
                             Ok(text) if !order_has_a_script(flat, &text) => continue,
                             Ok(_) => {}
                             // Unreadable is not empty: keep it where it can be tried again.
-                            Err(_) => crate::applog::warn("Auto Run: a saved run order could not be read for the update and goes to the active environment"),
+                            Err(_) => crate::applog::warn("Auto Test: a saved run order could not be read for the update and goes to the active environment"),
                         }
                     }
                     active.clone()
@@ -1038,7 +1038,7 @@ pub struct MigrationOps<'a> {
     pub sleep: &'a mut dyn FnMut(std::time::Duration),
 }
 
-/// Gives each environment its own copy of the flat Auto Run data, once.
+/// Gives each environment its own copy of the flat Auto Test data, once.
 /// `Ok(None)` when `envs/` already exists. The copy is built in a staging
 /// folder and renamed into place, so `envs/` never exists half-built; on
 /// any error the staging folder goes and the caller keeps the flat layout
@@ -1068,7 +1068,7 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
         // is stale, so it is made again.
         let made = std::fs::metadata(complete_marker(staging)).and_then(|m| m.modified()).ok();
         if made.is_none_or(|made| newest_flat_change(shared).is_some_and(|n| n > made)) {
-            crate::applog::info("Auto Run: a kept per-environment copy is rebuilt because the app was used before it could be put in place");
+            crate::applog::info("Auto Test: a kept per-environment copy is rebuilt because the app was used before it could be put in place");
             let _ = std::fs::remove_dir_all(staging);
             let _ = std::fs::remove_file(complete_marker(staging));
             finished = None;
@@ -1108,7 +1108,7 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
     if let Err(e) =
         std::fs::write(complete_marker(&staging), format!("{} {} {LAYOUT_VERSION}", report.environments, report.items))
     {
-        crate::applog::debug(format!("Auto Run: the finished-copy mark could not be written: {e}"));
+        crate::applog::debug(format!("Auto Test: the finished-copy mark could not be written: {e}"));
     }
     match crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS) {
         Ok(_) => {
@@ -1117,7 +1117,7 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
         }
         Err(e) => {
             // Kept for the next start, which only renames it.
-            crate::applog::warn("Auto Run: the finished per-environment copy is kept and will be put in place at the next start");
+            crate::applog::warn("Auto Test: the finished per-environment copy is kept and will be put in place at the next start");
             Err(e)
         }
     }
@@ -1211,7 +1211,7 @@ fn sweep_stagings(shared: &Path) -> Option<(PathBuf, MigrationReport)> {
     for path in doomed {
         let gone = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
         if let Err(e) = gone {
-            crate::applog::warn(format!("Auto Run: a leftover half-built copy could not be removed: {e}"));
+            crate::applog::warn(format!("Auto Test: a leftover half-built copy could not be removed: {e}"));
         }
         let _ = std::fs::remove_file(complete_marker(&path));
     }
@@ -1298,7 +1298,7 @@ pub(crate) fn fold_api_library_logged(held: Option<&std::sync::RwLockWriteGuard<
         Ok(Some(report)) => crate::applog::info(lm::move_log_line(&report)),
         Ok(None) => {}
         Err(e) => crate::applog::warn(format!(
-            "Auto Run: the API templates, flows and fixtures could not be moved into the shared library yet ({}); the next start tries again",
+            "Auto Test: the API templates, flows and fixtures could not be moved into the shared library yet ({}); the next start tries again",
             if path_free(&e) { e.as_str() } else { "a file could not be moved" }
         )),
     }
@@ -1357,7 +1357,7 @@ pub fn retry_seed(shared: &Path) -> SeedHandover {
     let Some(first) = ids.first() else { return done };
     let target = env_root(shared, first);
     if let Err(e) = std::fs::create_dir_all(&target) {
-        crate::applog::warn(format!("Auto Run: the data the update copied could not be handed over yet: {e}"));
+        crate::applog::warn(format!("Auto Test: the data the update copied could not be handed over yet: {e}"));
         return done;
     }
     let Ok(entries) = std::fs::read_dir(&seed) else { return done };
@@ -1378,18 +1378,18 @@ pub fn retry_seed(shared: &Path) -> SeedHandover {
             Ok(()) => done.moved += 1,
             Err(e) => {
                 done.kept += 1;
-                crate::applog::warn(format!("Auto Run: an item the update copied could not be handed over yet: {e}"));
+                crate::applog::warn(format!("Auto Test: an item the update copied could not be handed over yet: {e}"));
             }
         }
     }
     // Only an empty seed goes.
     let _ = std::fs::remove_dir(&seed);
     if done.moved > 0 {
-        crate::applog::info(format!("Auto Run: {} item(s) the update copied were handed to the first environment", done.moved));
+        crate::applog::info(format!("Auto Test: {} item(s) the update copied were handed to the first environment", done.moved));
     }
     if done.kept > 0 {
         crate::applog::warn(format!(
-            "Auto Run: {} item(s) the update copied were kept aside because the first environment already had its own",
+            "Auto Test: {} item(s) the update copied were kept aside because the first environment already had its own",
             done.kept
         ));
     }

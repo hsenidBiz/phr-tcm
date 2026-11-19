@@ -79,12 +79,12 @@ export const gettingStarted: Screen = {
       name: "Sidebar",
       does:
         "Lists the test case screens under **Test Case Management**: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
-        "With the matching modules switched on in Settings, a second group at the bottom, below them, lists Auto Run, Playwright and API Templates. " +
+        "With the matching modules switched on in Settings, a second group at the bottom, below them, lists Auto Test, Playwright and API Templates. " +
         "Click one to open it. The highlighted row is the screen you are on. " +
-        "With **Simple mode** on in Settings, the sidebar lists only Manual Entry, View Test Cases, Run Tests, AI Bridge and Auto Run, with no separate group heading above Auto Run; the screens it hides, Playwright among them, come back when you turn Simple mode off.",
+        "With **Simple mode** on in Settings, the sidebar lists only Manual Entry, View Test Cases, Run Tests, AI Bridge and Auto Test, with no separate group heading above Auto Test; the screens it hides, Playwright among them, come back when you turn Simple mode off.",
       tips: [
-        "The Ctrl+number shortcuts follow the sidebar: [[Ctrl+1]] opens the first row, [[Ctrl+2]] the second, and so on, up to [[Ctrl+9]]. Playwright and API Templates have no shortcut. In the full sidebar that is [[Ctrl+1]] to [[Ctrl+8]] for the test case screens and [[Ctrl+9]] for Auto Run when it is switched on.",
-        "With Simple mode on the numbers close up: [[Ctrl+1]] is Manual Entry, [[Ctrl+2]] is View Test Cases, [[Ctrl+3]] is Run Tests, [[Ctrl+4]] is AI Bridge and [[Ctrl+5]] is Auto Run.",
+        "The Ctrl+number shortcuts follow the sidebar: [[Ctrl+1]] opens the first row, [[Ctrl+2]] the second, and so on, up to [[Ctrl+9]]. Playwright and API Templates have no shortcut. In the full sidebar that is [[Ctrl+1]] to [[Ctrl+8]] for the test case screens and [[Ctrl+9]] for Auto Test when it is switched on.",
+        "With Simple mode on the numbers close up: [[Ctrl+1]] is Manual Entry, [[Ctrl+2]] is View Test Cases, [[Ctrl+3]] is Run Tests, [[Ctrl+4]] is AI Bridge and [[Ctrl+5]] is Auto Test.",
       ],
     },
     {
@@ -242,7 +242,7 @@ export const gettingStarted: Screen = {
       locate: { role: "option", nameRe: "^Run Tests" },
       name: "Go to",
       does:
-        "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge, or [[Ctrl+9]] with Auto Run switched on; the numbers follow the sidebar, so Simple mode changes them), and Settings at the end.",
+        "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge, or [[Ctrl+9]] with Auto Test switched on; the numbers follow the sidebar, so Simple mode changes them), and Settings at the end.",
     },
     {
       id: "toggle-work",
@@ -305,10 +305,10 @@ export const gettingStarted: Screen = {
   ],
   tips: [
     "The button at the bottom of the sidebar folds it to a strip of icons for more room; hover an icon to see its name, and the same button opens it again.",
-    "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens ([[Ctrl+9]] with Auto Run switched on; the numbers follow the sidebar, so they change with Simple mode), and [[Ctrl+Shift+M]] switches to Work Manager and back.",
+    "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens ([[Ctrl+9]] with Auto Test switched on; the numbers follow the sidebar, so they change with Simple mode), and [[Ctrl+Shift+M]] switches to Work Manager and back.",
     "The Product Backlog Item and the screen you were on are remembered, so the app opens where you left it.",
     "With **Treat all projects as one** switched off, the palette also lists your projects under **Switch project**; pick one to move to it. With it on there is no project to switch to.",
-    "On a fresh install with **Treat all projects as one** on, the app sets your home project for you, from the only project, the one that already has Auto Run files, or the first Product Backlog Item you pick (a message says so when the organisation has several projects). You can change it in Settings.",
+    "On a fresh install with **Treat all projects as one** on, the app sets your home project for you, from the only project, the one that already has Auto Test files, or the first Product Backlog Item you pick (a message says so when the organisation has several projects). You can change it in Settings.",
     "If your session runs out, a window asks you to sign in again. What is already on screen stays readable in the meantime.",
     "Until a Product Backlog Item is chosen, the test case screens show a short prompt and your recent Product Backlog Items instead of their usual content.",
     "Every search box takes commas to look for several things at once: **1234, 5678** finds both test cases, and **login error, timeout** finds what has both login and error, plus what has timeout. A comma inside \"quotes\" is just a comma.",

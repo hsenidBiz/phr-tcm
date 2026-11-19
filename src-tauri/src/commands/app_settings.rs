@@ -90,7 +90,7 @@ pub fn set_start_minimized(on: bool) -> Result<AppSettings, String> {
     })
 }
 
-/// Whether Auto Run outlines and pauses before each action, in a watched run
+/// Whether Auto Test outlines and pauses before each action, in a watched run
 /// and in the supervised browser. Read when a run or a supervised step starts.
 #[tauri::command]
 #[specta::specta]
@@ -101,7 +101,7 @@ pub fn set_autorun_highlight(on: bool) -> Result<AppSettings, String> {
     })
 }
 
-/// Whether an unattended Auto Run run keeps a video of each case that fails
+/// Whether an unattended Auto Test run keeps a video of each case that fails
 /// or is blocked. Read when a run starts.
 #[tauri::command]
 #[specta::specta]
@@ -115,7 +115,7 @@ pub fn set_autorun_failed_video(on: bool) -> Result<AppSettings, String> {
     })
 }
 
-/// Pick Simple or Advanced Auto Run. Advanced is refused while the app's
+/// Pick Simple or Advanced Auto Test. Advanced is refused while the app's
 /// Simple mode is on.
 #[tauri::command]
 #[specta::specta]
@@ -124,7 +124,7 @@ pub fn set_autorun_mode(mode: app_settings::AutorunMode) -> Result<AppSettings, 
         return Err(why.to_string());
     }
     app_settings::update(|s| s.autorun_mode = Some(mode)).map_err(|e| {
-        crate::applog::warn(format!("saving the Auto Run mode failed: {e}"));
+        crate::applog::warn(format!("saving the Auto Test mode failed: {e}"));
         "The setting could not be saved. Settings → Logs has the details.".to_string()
     })
 }

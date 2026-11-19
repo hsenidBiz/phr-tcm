@@ -198,26 +198,26 @@ test("a recipe that could not be read blocks a run: Simple shows the Sign-in too
   expect(within(panel()).getByText(NOTE)).toBeInTheDocument();
 });
 
-test("Simple offers Release Auto Run browser with no discovery running; Advanced is unchanged", async () => {
+test("Simple offers Release Auto Test browser with no discovery running; Advanced is unchanged", async () => {
   mount({ mode: "simple" });
   await expand();
   expect(row("Discovery")).not.toBeInTheDocument();
-  expect(await within(panel()).findByRole("button", { name: "Release Auto Run browser" })).toBeInTheDocument();
+  expect(await within(panel()).findByRole("button", { name: "Release Auto Test browser" })).toBeInTheDocument();
 });
 
-test("Advanced offers Release Auto Run browser once, in the Discovery row", async () => {
+test("Advanced offers Release Auto Test browser once, in the Discovery row", async () => {
   mount({ mode: "advanced" });
   await expand();
   const discovery = await within(panel()).findByRole("group", { name: "Discovery" });
-  expect(within(discovery).getByRole("button", { name: "Release Auto Run browser" })).toBeInTheDocument();
-  expect(within(panel()).getAllByRole("button", { name: "Release Auto Run browser" })).toHaveLength(1);
+  expect(within(discovery).getByRole("button", { name: "Release Auto Test browser" })).toBeInTheDocument();
+  expect(within(panel()).getAllByRole("button", { name: "Release Auto Test browser" })).toHaveLength(1);
 });
 
-test("Simple during a discovery shows Release Auto Run browser once, in the Discovery row", async () => {
+test("Simple during a discovery shows Release Auto Test browser once, in the Discovery row", async () => {
   mount({ mode: "simple", discovering: () => true });
   await expand();
   await within(panel()).findByRole("group", { name: "Discovery" });
-  expect(within(panel()).getAllByRole("button", { name: "Release Auto Run browser" })).toHaveLength(1);
+  expect(within(panel()).getAllByRole("button", { name: "Release Auto Test browser" })).toHaveLength(1);
 });
 
 test("the panel renders as Advanced while the mode is still loading", async () => {

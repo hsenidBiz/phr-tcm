@@ -80,7 +80,7 @@ pub fn check_saved(root: &Path, org: &str, project: &str, scripts: &[CaseScript]
         return Ok(());
     }
     let flows = flow_store::list(root, org, project).map_err(|e| {
-        crate::applog::warn(format!("Auto Run preconditions: the flows could not be read: {e}"));
+        crate::applog::warn(format!("Auto Test preconditions: the flows could not be read: {e}"));
         "the flows could not be read to check the preconditions - see Settings, Logs".to_string()
     })?;
     let refused: Vec<String> = scripts
@@ -288,7 +288,7 @@ pub async fn check_all_within<D: StageDb>(
         let (mut state, error) = gate::stage_answer(db, flow, stage, &p.value, &why).await;
         if state == StageState::CouldNotRun && error.as_deref().is_some_and(gate::unreachable) {
             crate::applog::info(format!(
-                "Auto Run preconditions: the database did not answer the check for {} - trying once more in {} s",
+                "Auto Test preconditions: the database did not answer the check for {} - trying once more in {} s",
                 stage.title,
                 retry_after.as_secs_f32()
             ));
@@ -370,7 +370,7 @@ pub async fn check_case<D: StageDb>(
     let flows = match flow_store::list(root, org, project) {
         Ok(flows) => flows,
         Err(e) => {
-            crate::applog::warn(format!("Auto Run preconditions: the flows could not be read: {e}"));
+            crate::applog::warn(format!("Auto Test preconditions: the flows could not be read: {e}"));
             return PreconditionCheck {
                 blocked: Some(format!("{COULD_NOT}: the flows could not be read - see Settings, Logs")),
                 notice: None,
@@ -409,7 +409,7 @@ pub fn environment_db(
     store: Option<&dyn crate::db::SecretStore>,
 ) -> Result<SqlcmdStageDb<crate::db::RealRunner>, String> {
     let env = crate::environments::active(root).map_err(|e| {
-        crate::applog::warn(format!("Auto Run preconditions: the active environment could not be read: {e}"));
+        crate::applog::warn(format!("Auto Test preconditions: the active environment could not be read: {e}"));
         format!("{COULD_NOT}: the environments could not be read - see Settings, Logs")
     })?;
     let (conn, exe) = crate::db::query::ready(store, Some(&env.db_id)).map_err(|why| {

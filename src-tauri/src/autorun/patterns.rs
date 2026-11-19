@@ -68,7 +68,7 @@ pub enum ErrorClass {
     LostFocus,
     NoOption,
     NoFileChooser,
-    /// A chain had to pass through a frame Auto Run cannot enter: one from
+    /// A chain had to pass through a frame Auto Test cannot enter: one from
     /// another site, a sandboxed one, or one with no page yet
     /// (`locator::frame_unreachable`). About the application, so it can
     /// carry quirks.
@@ -156,7 +156,7 @@ impl ErrorClass {
             ErrorClass::LostFocus => "lost the focus before typing".to_string(),
             ErrorClass::NoOption => "the list had no such option".to_string(),
             ErrorClass::NoFileChooser => "no file chooser opened".to_string(),
-            ErrorClass::FrameUnreachable => "a frame Auto Run cannot reach".to_string(),
+            ErrorClass::FrameUnreachable => "a frame Auto Test cannot reach".to_string(),
             ErrorClass::Api => "the server was asked or answered differently".to_string(),
             ErrorClass::SaveBlocked => "the page tried to save, and the script must not".to_string(),
             ErrorClass::CannotRun => "the action could not run".to_string(),

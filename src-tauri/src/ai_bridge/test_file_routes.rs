@@ -123,7 +123,7 @@ pub(crate) fn test_file_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
                 "saved": saved.name,
                 "size": crate::test_files::human_size(u64::from(saved.size)),
                 "replaced": replaced,
-                "use": "Refer to it by its name: an Auto Run upload action's file, or a template's files.",
+                "use": "Refer to it by its name: an Auto Test upload action's file, or a template's files.",
             })
             .to_string(),
         ),

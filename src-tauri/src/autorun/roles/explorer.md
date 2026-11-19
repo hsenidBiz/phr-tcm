@@ -28,7 +28,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
   only then send person_said_yes. Say plainly what you cannot undo: no before value, no delete
   template, or a record changed again since.
 - When the sign-in fails, follow the guide's "When the sign-in page does not fit": inspect the page, propose a tested recipe, and wait for the person to approve it in TCM. Never retry in a loop.
-- When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
+- When your caller gave you a name, pass it as `agent` on every Auto Test and API template call.
 - Write the summary the command asks for: the task, the account and environment, what you did,
   each check and its result, the findings, the change list, the templates saved or reused, and
   how to undo.

@@ -1,4 +1,4 @@
-// Auto Run: the app drives a real browser through a test case's steps from
+// Auto Test: the app drives a real browser through a test case's steps from
 // a script, with a person watching (one case or a selection) or unattended,
 // and keeps the results on this computer until they are reviewed and sent.
 // Two tabs, Test cases and Past runs, with the Setup panel beside the
@@ -36,7 +36,7 @@ const ACCOUNTS_PROPOSED = "auto-run-accounts-proposed";
 const ASSISTANTS = "auto-run-assistants";
 const MODE = "auto-run-mode";
 
-const NAV: Step = { nav: "Auto Run" };
+const NAV: Step = { nav: "Auto Test" };
 
 /** Said under both ways of running: a setup that cannot start blocks the case. */
 const BLOCKED_BY_SETUP =
@@ -70,22 +70,22 @@ const TO_SETUP: Step[] = [
 
 export const autoRun: Screen = {
   id: "auto-run",
-  title: "Auto Run",
+  title: "Auto Test",
   group: "Running tests",
   summary:
     "Let the app run a test case for you. A script tells it what to do at each step, and the app does it in a real browser: with you watching and deciding the result, or unattended while you work on something else. " +
     "Results stay on this computer until you review a run and send it to Azure DevOps. " +
-    "Auto Run is a module: switch it on in Settings, under General, on the **Modules** page (it needs Database Access), and it appears in the group at the bottom of the sidebar.",
+    "Auto Test is a module: switch it on in Settings, under General, on the **Modules** page (it needs Database Access), and it appears in the group at the bottom of the sidebar.",
   shots: [
     {
       id: CASES,
       route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
-      alt: "Auto Run on its Test cases tab: the result filters, the search and its toolbar, the cases with their last results, two of them open, and the Setup panel beside them",
+      alt: "Auto Test on its Test cases tab: the result filters, the search and its toolbar, the cases with their last results, two of them open, and the Setup panel beside them",
     },
     {
       id: MODE,
-      route: [NAV, READY, { click: { role: "button", name: "Simple" } }, { waitFor: { css: '[aria-label="Auto Run mode"] [aria-pressed="true"]' } }, { waitFor: { role: "list", name: "Setup summary" } }],
-      alt: "The top of Auto Run in Simple mode, with the Simple and Advanced switch at the right, above the Assistants and the cases",
+      route: [NAV, READY, { click: { role: "button", name: "Simple" } }, { waitFor: { css: '[aria-label="Auto Test mode"] [aria-pressed="true"]' } }, { waitFor: { role: "list", name: "Setup summary" } }],
+      alt: "The top of Auto Test in Simple mode, with the Simple and Advanced switch at the right, above the Assistants and the cases",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], size: TALL, alt: "Two scripted cases selected, with the buttons that run them" },
     {
@@ -165,11 +165,11 @@ export const autoRun: Screen = {
     {
       id: ASSISTANTS,
       route: [NAV, READY, { waitFor: { role: "heading", name: "Assistants" } }],
-      alt: "The Assistants card at the top of Auto Run: the office, with one assistant replaying a case in the Test lab and one discovering the Profile area in the Map room, and below it their rows, each signed in as a different account",
+      alt: "The Assistants card at the top of Auto Test: the office, with one assistant replaying a case in the Test lab and one discovering the Profile area in the Map room, and below it their rows, each signed in as a different account",
     },
   ],
   groups: [
-    { id: "mode", title: "Simple and Advanced", summary: "Which Auto Run screen you see: the everyday path, or every tool." },
+    { id: "mode", title: "Simple and Advanced", summary: "Which Auto Test screen you see: the everyday path, or every tool." },
     { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
     { id: "scripts", title: "Write a script", summary: "What the app does at each step of a case, and the rules the case runs under." },
     { id: "watch", title: "Run while you watch", summary: "The app does the steps; you see them happen and decide the result." },
@@ -184,16 +184,16 @@ export const autoRun: Screen = {
       id: "mode-switch",
       shot: MODE,
       group: "mode",
-      locate: { role: "group", name: "Auto Run mode" },
+      locate: { role: "group", name: "Auto Test mode" },
       name: "Simple and Advanced",
       does:
-        "Chooses how much of Auto Run you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
+        "Chooses how much of Auto Test you see. **Simple** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
         "It hides the Discovery, Components and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
-        "A script card shows one header line, with the steps Auto Run does itself marked **Done by Auto Run** and the assistant's notes folded away under **Assistant notes**. " +
+        "A script card shows one header line, with the steps Auto Test does itself marked **Done by Auto Test** and the assistant's notes folded away under **Assistant notes**. " +
         "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
         "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Simple mode** is on in Settings, only **Simple** is offered; turn Simple mode off to pick **Advanced**.",
       tips: [
-        "If the Discovery row or the sign-in recipe tools are what stops a run, Auto Run shows them anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
+        "If the Discovery row or the sign-in recipe tools are what stops a run, Auto Test shows them anyway, with the note **Shown because a run needs it. Ask the assistant to sort it out, or switch to Advanced.**",
         "An assistant can see which mode you are in but cannot change it. In Simple it offers to do the hidden work for you, or asks you to switch to Advanced.",
       ],
     },
@@ -205,7 +205,7 @@ export const autoRun: Screen = {
       locate: { role: "tab", nameRe: "^Test cases" },
       name: "Test cases",
       does:
-        "The Product Backlog Item's test cases, with how many there are, and the Setup panel beside them. While the filters or the search hide some, the tab says how many show, such as **5 of 60**. Auto Run always opens here.",
+        "The Product Backlog Item's test cases, with how many there are, and the Setup panel beside them. While the filters or the search hide some, the tab says how many show, such as **5 of 60**. Auto Test always opens here.",
     },
     {
       id: "tab-runs",
@@ -324,7 +324,7 @@ export const autoRun: Screen = {
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
         "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
         "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, lists each under **Unchecked** with why. " +
-        "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Run.",
+        "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Test.",
     },
     {
       id: "card-steps",
@@ -619,7 +619,7 @@ export const autoRun: Screen = {
       group: "unattended",
       locate: { role: "checkbox", name: "Watch the browser" },
       name: "Watch the browser",
-      does: "Off: the browser runs out of sight and you can keep working. On: a window opens for every case. Each click, fill or drag is outlined in purple as it happens. **Pause before each action**, beside it, also waits a moment before each one so you can follow along; turn it off to keep the outline without the wait, here and in the Auto Run browser you drive yourself.",
+      does: "Off: the browser runs out of sight and you can keep working. On: a window opens for every case. Each click, fill or drag is outlined in purple as it happens. **Pause before each action**, beside it, also waits a moment before each one so you can follow along; turn it off to keep the outline without the wait, here and in the Auto Test browser you drive yourself.",
     },
     {
       id: "retry-transient",
@@ -638,11 +638,11 @@ export const autoRun: Screen = {
       name: "Start",
       does:
         "Starts the run. The window follows it case by case, and each case can be opened to see its steps as they go, with the lines of a component grouped under its name; **Stop** ends the run after the step it is on. " +
-        "**Run in background** (or Escape) closes the window and the run carries on: a pill in the window's title bar shows how far it has got, such as **Auto Run 3 of 8**, and clicking it opens the window again from any part of the app. " +
+        "**Run in background** (or Escape) closes the window and the run carries on: a pill in the window's title bar shows how far it has got, such as **Auto Test 3 of 8**, and clicking it opens the window again from any part of the app. " +
         "When the run pauses before a batch the pill turns amber and reads, for example, **Paused before Batch 2**; click it to Continue or Stop. " +
         "When the run finishes with its window open, its review opens. Finished in the background, a message and the pill say **Run finished, Review**: click either to open the review on **Past runs**. " +
         "While a run is going, the other Run buttons wait for it. " +
-        "While your assistant's discovery is using the Auto Run browser and no run is going, the pill reads **Discovering**, and no run can start until **End discovery** (or the assistant) ends it.",
+        "While your assistant's discovery is using the Auto Test browser and no run is going, the pill reads **Discovering**, and no run can start until **End discovery** (or the assistant) ends it.",
     },
 
     // --- Past runs -----------------------------------------------------------------
@@ -823,15 +823,15 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "View discovery" },
       name: "View (discovery)",
       does:
-        "What your assistant has found out about the live site, area by area. Before it writes a script, the assistant opens the Auto Run browser, signs in and looks through the site itself, so a script is built from what is really on the page. " +
+        "What your assistant has found out about the live site, area by area. Before it writes a script, the assistant opens the Auto Test browser, signs in and looks through the site itself, so a script is built from what is really on the page. " +
         "The **Discovery** window lists each area with when it was explored and as which account, how many pages and elements were seen, and a **Stale** mark when the map is out of date. " +
         "An area goes stale 30 days after it was explored, or when a script failed there. Expand **save requests** to see the requests the site made when it saved. " +
         "**Forget map** (it asks first) clears one area's map; scripts keep running, and new saves there need the area explored again. " +
         "A script save is refused when it points at something the assistant never saw on the live page. The exceptions are a name that contains, as whole words, something the script typed in an earlier step (typing **AutoTest Leave 7** covers a row **AutoTest Leave 7 Pending**, but not a **Leave** button), a check whose text is a whole word or phrase from the case, and a repair, which is held only to the steps it names. " +
         "As it explores, your assistant also keeps the messages the site gave when it refused something, such as a required field or a total that must reach 100, area by area, and reads them before it writes a script there, so a case that provokes a refusal on purpose can check for it, and a refusal the case never expected is reported to you as a sign the case or its preconditions look wrong. " +
-        "While discovery runs, **Open browser** and the Run buttons are greyed out, and hovering one shows **Discovery is using the Auto Run browser**. They come back when your assistant ends discovery. " +
+        "While discovery runs, **Open browser** and the Run buttons are greyed out, and hovering one shows **Discovery is using the Auto Test browser**. They come back when your assistant ends discovery. " +
         "If your assistant stopped without ending it, **End discovery** appears beside **View** while discovery runs: it closes the assistant's browser, and what was mapped is kept. " +
-        "If Auto Run still says a browser is open after it has closed (a discovery or replay is refused with **close the supervised browser first**), press **Release Auto Run browser** in the same row: it lets go of that browser and closes only the browsers Test Case Manager opened, so you never need to restart the app. Closing the first tab of the Auto Run browser counts as closing it: the whole browser is let go, other tabs included. " +
+        "If Auto Test still says a browser is open after it has closed (a discovery or replay is refused with **close the supervised browser first**), press **Release Auto Test browser** in the same row: it lets go of that browser and closes only the browsers Test Case Manager opened, so you never need to restart the app. Closing the first tab of the Auto Test browser counts as closing it: the whole browser is let go, other tabs included. " +
         "If the map cannot be read, the window offers **Reset map**, which moves the damaged file aside (it is kept, never deleted) and starts an empty map. " +
         "Your assistant can also map the menus of the modules you name in one go: it opens every screen, saves each as an area, and never fills in or saves anything; areas you recorded are left as they are, and **Last menu mapping** shows what the latest mapping added, updated, left unchanged or could not reach.",
       tips: ["In your assistant, **/tcm:discover** starts this for a case, and **/tcm:map-menus** maps the menus. The row reads **Not explored yet** until an area has been explored."],
@@ -938,16 +938,16 @@ export const autoRun: Screen = {
       locate: { role: "heading", name: "Assistants" },
       name: "Assistants",
       does:
-        "Shows at the top of the Auto Run screen while an assistant is working (discovering, mapping menus, exploring or replaying a case), even before you pick a Product Backlog Item, and goes away when every assistant is idle. Above the rows is a small office with three corners: assistants replaying a case sit at the bench in the Test lab, assistants discovering, mapping menus or exploring pace in the Map room, and idle ones doze in the Lounge. An assistant walks to its new corner when what it is doing changes. Each assistant also has a row, marked with its own colour: its name, which browser it uses, the account it is signed in as and what it is doing.",
+        "Shows at the top of the Auto Test screen while an assistant is working (discovering, mapping menus, exploring or replaying a case), even before you pick a Product Backlog Item, and goes away when every assistant is idle. Above the rows is a small office with three corners: assistants replaying a case sit at the bench in the Test lab, assistants discovering, mapping menus or exploring pace in the Map room, and idle ones doze in the Lounge. An assistant walks to its new corner when what it is doing changes. Each assistant also has a row, marked with its own colour: its name, which browser it uses, the account it is signed in as and what it is doing.",
     },
     {
       id: "assistants-main-browser",
       shot: ASSISTANTS,
       group: "assistants",
-      locate: { text: "Main Auto Run browser, Edge, signed in as hr_admin" },
-      name: "Main Auto Run browser",
+      locate: { text: "Main Auto Test browser, Edge, signed in as hr_admin" },
+      name: "Main Auto Test browser",
       does:
-        "The browser Auto Run opens when you press **Open browser** and the one an assistant uses first. A row reads **Main Auto Run browser** while its assistant works in it.",
+        "The browser Auto Test opens when you press **Open browser** and the one an assistant uses first. A row reads **Main Auto Test browser** while its assistant works in it.",
     },
     {
       id: "assistants-stop",
@@ -974,7 +974,7 @@ export const autoRun: Screen = {
       does:
         "Up to three assistants can work at once, each in its own browser and signed in as an account of its own. A second assistant opens a browser of its own when the main one is in use, and its row says **Its own browser**.",
       tips: [
-        "An unattended run does not start while any assistant's browser is open: wait for them to finish, or press **Release Auto Run browser** on the Setup card, which closes them all.",
+        "An unattended run does not start while any assistant's browser is open: wait for them to finish, or press **Release Auto Test browser** on the Setup card, which closes them all.",
       ],
     },
     {
@@ -995,15 +995,15 @@ export const autoRun: Screen = {
     },
   ],
   tips: [
-    "**Waiting for you**, at the top of Auto Run, lists what an assistant left for you to decide: the accounts it proposed (one line saying how many are waiting, however many there are) and a sign-in it proposed. It shows only while something waits. **Open** on a row takes you to where the decision is made: the Proposed tab of the Accounts window, or the sign-in proposal. A divergence is not listed here; you rule on it in its own case's card. The **Auto Run** tab in the sidebar shows a red dot while something is waiting, and the bell tells you when something new arrives.",
-    "While an assistant works, a thin line above whichever screen you are on says what it is doing, which browser it uses and the account it is signed in as, with **Stop** where it can be stopped. While a sign-in is being tried it says **Trying a sign-in**, and when more than three assistants work it says how many more there are. **Open** on the line goes to Auto Run. The line takes up no room while no assistant is working.",
+    "**Waiting for you**, at the top of Auto Test, lists what an assistant left for you to decide: the accounts it proposed (one line saying how many are waiting, however many there are) and a sign-in it proposed. It shows only while something waits. **Open** on a row takes you to where the decision is made: the Proposed tab of the Accounts window, or the sign-in proposal. A divergence is not listed here; you rule on it in its own case's card. The **Auto Test** tab in the sidebar shows a red dot while something is waiting, and the bell tells you when something new arrives.",
+    "While an assistant works, a thin line above whichever screen you are on says what it is doing, which browser it uses and the account it is signed in as, with **Stop** where it can be stopped. While a sign-in is being tried it says **Trying a sign-in**, and when more than three assistants work it says how many more there are. **Open** on the line goes to Auto Test. The line takes up no room while no assistant is working.",
     "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
-    "Each environment keeps its own scripts, areas, components, quirks, saved setups and run history, because each can run a different version of the app. API templates, flows and fixtures are shared by every environment. What you see in Auto Run is the active environment's, and it changes when you switch environment. To bring another environment's in, use **Copy Auto Run data…** in Edit environments on the AI Bridge tab, or copy one case from its script.",
+    "Each environment keeps its own scripts, areas, components, quirks, saved setups and run history, because each can run a different version of the app. API templates, flows and fixtures are shared by every environment. What you see in Auto Test is the active environment's, and it changes when you switch environment. To bring another environment's in, use **Copy Auto Test data…** in Edit environments on the AI Bridge tab, or copy one case from its script.",
     "**Check sign-in**, in the Accounts window, tries the accounts you tick (**Select all** ticks every one), one after another, each in its own hidden browser. Leave **Walk to** on **Sign-in only** to see whether each login gets in, or pick an area to see whether it reaches that area or where it stopped. Each line says what happened, an account that is expired or already signed in elsewhere is named as such, and **Cancel** stops the check. It cannot run while a run, a replay or a discovery is going. What it learns is kept for a week and moves the accounts that reached the area to the top of the assistant's proposals.",
     "When the environment has a **Password expiry query**, the run window warns, before you start, about any account the run would use whose password has expired or is due within a week. A sign-in that is sent to the site's password reset page fails as \"password expired\" rather than as a missing page.",
-    "Auto Run works in your home project (Settings, under General), because its scripts, areas, runs and test files belong to one project. That holds with **Treat all projects as one** on or off; with it off the home project is the project you pick in the bar. When you send a reviewed run, the results go to the project of the Product Backlog Item the cases belong to.",
+    "Auto Test works in your home project (Settings, under General), because its scripts, areas, runs and test files belong to one project. That holds with **Treat all projects as one** on or off; with it off the home project is the project you pick in the bar. When you send a reviewed run, the results go to the project of the Product Backlog Item the cases belong to.",
     "An assistant connected on the AI Bridge tab can write scripts for a whole Product Backlog Item, repair one that broke, and walk you through the setup.",
     "When a step fails and the reason is not on the page, your assistant can inspect one element and, once you switch **Network tools** on, on the AI Bridge tab, look at the requests the page made and try a header or cookie of its own; passwords, tokens and session cookies are always hidden from it. Each environment keeps its own Network tools switch, off until you turn it on.",
   ],
@@ -1011,23 +1011,23 @@ export const autoRun: Screen = {
     {
       title: "Switch between Simple and Advanced",
       steps: [
-        "At the top of Auto Run, press **Simple** or **Advanced**.",
+        "At the top of Auto Test, press **Simple** or **Advanced**.",
         "In Simple, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
         "If a run is stopped by Discovery or the sign-in recipe, Simple shows it with the note to ask the assistant or switch to Advanced. A failed fixture is not shown in Simple.",
       ],
     },
     {
-      title: "Turn Auto Run on",
+      title: "Turn Auto Test on",
       steps: [
         "Open Settings with the gear at the top right.",
-        "Under **General**, press **Modules**. Switch on **Database Access** if it is off, then **Auto Run**.",
-        "**Auto Run** appears in the group at the bottom of the sidebar. The first time you switch it on, it also turns on **API Templates**, the Network tools and videos of failed cases; each can be switched off again. Switch on **Playwright** on the same page when you need it: it joins them in that group.",
+        "Under **General**, press **Modules**. Switch on **Database Access** if it is off, then **Auto Test**.",
+        "**Auto Test** appears in the group at the bottom of the sidebar. The first time you switch it on, it also turns on **API Templates**, the Network tools and videos of failed cases; each can be switched off again. Switch on **Playwright** on the same page when you need it: it joins them in that group.",
       ],
     },
     {
       title: "Set up for the first run",
       steps: [
-        "Pick the Product Backlog Item and open **Auto Run**. The Setup panel is beside the cases, and opens by itself when something a run needs is missing; otherwise press **Show setup details**.",
+        "Pick the Product Backlog Item and open **Auto Test**. The Setup panel is beside the cases, and opens by itself when something a run needs is missing; otherwise press **Show setup details**.",
         "Press **Edit** beside **Site address**, type the address of the site you test, and save.",
         "Press **Edit** beside **Accounts** and add your test accounts with the keys your team's scripts use, or add the ones the assistant proposed.",
         "Press **Edit** beside **Areas** and record the areas of the site your cases start in.",
@@ -1068,7 +1068,7 @@ export const autoRun: Screen = {
       steps: [
         "In the case's script, under **Needs these settings**, type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
         "Under **Changes** and **Needs unchanged**, name shared data a case changes, such as a published cycle, and the cases that need it as it was.",
-        "Run the selection. Auto Run puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
+        "Run the selection. Auto Test puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
         "The run window says which batch is running, such as **Batch 2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
       ],
@@ -1086,7 +1086,7 @@ export const autoRun: Screen = {
       steps: [
         "Open **Past runs** and filter by result if you want.",
         "Press **Review** on an unattended run to confirm its results and send them, or **Report** to read the run in your browser.",
-        "When a case has both passed and failed in its recent runs on an environment, **Flaky cases** lists it with how it went run by run and its last failure. Press **Mark flaky** to have Auto Run count its failures as flaky rather than failed; it is still sent to Azure DevOps as failed.",
+        "When a case has both passed and failed in its recent runs on an environment, **Flaky cases** lists it with how it went run by run and its last failure. Press **Mark flaky** to have Auto Test count its failures as flaky rather than failed; it is still sent to Azure DevOps as failed.",
       ],
     },
   ],

@@ -225,7 +225,7 @@ pub struct StepScript {
     /// when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub because: Vec<Because>,
-    /// The step's whole expected result is what Auto Run does itself before
+    /// The step's whole expected result is what Auto Test does itself before
     /// step 1: launching the app, signing in, reaching the area. Only the
     /// opening steps can be (`by_auto_run::done_by_auto_run`); such a step
     /// has no actions and needs no `unchecked`. Written only when true.
@@ -414,7 +414,7 @@ pub struct CaseScript {
     /// gone when a mark is set again. Every save keeps the one on disk, like the mark.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleared_defect: Option<ClearedDefect>,
-    /// The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Run's
+    /// The person's "Flaky" mark: the case passes and fails on its own from run to run, so Auto Test's
     /// summaries count its failures apart (`flaky`). Set only by `store::set_flaky`; every save keeps the one
     /// on disk, like the defect mark. Changes nothing that is published to Azure DevOps.
     #[serde(default, skip_serializing_if = "Option::is_none")]

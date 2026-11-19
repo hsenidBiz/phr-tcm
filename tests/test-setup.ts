@@ -109,7 +109,7 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
   };
 }
 
-// The Auto Run screen reads its scripts in one batched call
+// The Auto Test screen reads its scripts in one batched call
 // (`auto_run_load_scripts`, lib/scriptBatch). Tests describe scripts one
 // case at a time (`auto_run_load_script`), which is what each case's answer
 // is; a handler that does not answer the batch itself gets it assembled

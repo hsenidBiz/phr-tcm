@@ -3238,7 +3238,7 @@ pub async fn shows_up_to_click<D: Driver>(
 /// point in the window (`Check::Present`)? An element that is there but
 /// hidden or off-window still counts as there, so the guard only acts when
 /// the page held nothing of the kind for the whole wait. A frame the chain
-/// could not enter is not "absent": Auto Run could not look, so that fails
+/// could not enter is not "absent": Auto Test could not look, so that fails
 /// the step (`Err`) rather than acting or skipping.
 pub async fn is_on_page_within<D: Driver>(
     d: &mut D,

@@ -1,4 +1,4 @@
-// One Auto Run case card on its own: a single line while collapsed, and
+// One Auto Test case card on its own: a single line while collapsed, and
 // the script's summary, steps and files once open. Which buttons show on a
 // collapsed card, and which sections an open one leaves out, are what is
 // pinned here; how the card looks is not something jsdom can see.
@@ -511,14 +511,14 @@ test("assistant notes are a closed details with a count, and their items inside"
   expect(screen.getByText("Must not save").closest("details")).toBeNull();
 });
 
-/** The owner's example: steps 1-3 are Auto Run's own, step 6 leaves one check out. */
+/** The owner's example: steps 1-3 are Auto Test's own, step 6 leaves one check out. */
 const AUTO_RUN_OPENING = {
   case_id: 7,
   title: "Apply for leave",
   steps: [
-    { step_number: 1, actions: [], unchecked: "Auto Run launches the app" },
-    { step_number: 2, actions: [], unchecked: "Auto Run signs in" },
-    { step_number: 3, actions: [], unchecked: "Auto Run reaches the area" },
+    { step_number: 1, actions: [], unchecked: "Auto Test launches the app" },
+    { step_number: 2, actions: [], unchecked: "Auto Test signs in" },
+    { step_number: 3, actions: [], unchecked: "Auto Test reaches the area" },
     { step_number: 4, actions: [{ kind: "navigate", url: "https://app.example/x" }] },
     { step_number: 5, actions: [{ kind: "navigate", url: "https://app.example/y" }] },
     {
@@ -534,11 +534,11 @@ const SIX = {
   steps: [1, 2, 3, 4, 5, 6].map((n) => ({ action: `Step ${n}`, expected: "" })),
 };
 
-test("steps Auto Run does show Done by Auto Run, not 0 actions", () => {
+test("steps Auto Test does show Done by Auto Test, not 0 actions", () => {
   renderCard({ open: true, c: SIX, script: AUTO_RUN_OPENING });
   const lines = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
   for (const i of [0, 1, 2]) {
-    expect(lines[i]).toHaveTextContent("Done by Auto Run");
+    expect(lines[i]).toHaveTextContent("Done by Auto Test");
     expect(lines[i]).not.toHaveTextContent("0 actions");
   }
   expect(lines[3]).toHaveTextContent("1 action");

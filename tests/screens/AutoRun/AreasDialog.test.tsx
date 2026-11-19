@@ -435,7 +435,7 @@ test("a Try cancelled from elsewhere reads as stopped, not as the path failing",
   expect(screen.queryByText("the check was cancelled - the saved path was not changed")).not.toBeInTheDocument();
 });
 
-/// Review M5: leaving the Auto Run section mid-recording unmounts the
+/// Review M5: leaving the Auto Test section mid-recording unmounts the
 /// dialog but not the recording. A dialog opened afresh offers to end it.
 test("a recording left open from before can be cancelled from a freshly opened dialog", async () => {
   let open = true;

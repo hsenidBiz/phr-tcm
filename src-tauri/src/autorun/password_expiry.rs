@@ -268,12 +268,12 @@ pub async fn check_users<S: RowSource>(
     let answer = match rows.select(&asked).await {
         Ok(a) => a,
         Err(said) => {
-            crate::applog::warn(format!("Auto Run: the password expiry query did not run: {said}"));
+            crate::applog::warn(format!("Auto Test: the password expiry query did not run: {said}"));
             return Err(run_failed(&said));
         }
     };
     let found = parse_rows(&answer).map_err(|why| {
-        crate::applog::warn(format!("Auto Run: the password expiry query's answer was not read: {why}"));
+        crate::applog::warn(format!("Auto Test: the password expiry query's answer was not read: {why}"));
         CheckFailed::QueryFailed(why)
     })?;
     Ok(users

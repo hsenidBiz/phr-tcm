@@ -50,7 +50,7 @@ type Form = {
   also: string;
   db_id: string;
   test_environment: boolean;
-  /** What every draft an Auto Run fixture or script makes here starts with. */
+  /** What every draft an Auto Test fixture or script makes here starts with. */
   test_prefix: string;
   /** One read-only SELECT that says when logins' passwords fall due. */
   password_expiry_query: string;
@@ -362,11 +362,11 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 <Button
                   size="sm"
                   variant="outline"
-                  aria-label={`Copy Auto Run data into ${env.name}`}
+                  aria-label={`Copy Auto Test data into ${env.name}`}
                   onClick={() => setCopyInto(env)}
                 >
                   <IconCopyFromEnvironment aria-hidden />
-                  Copy Auto Run data…
+                  Copy Auto Test data…
                 </Button>
                 <Button
                   size="sm"
@@ -383,8 +383,8 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
               {removing === env.id && (
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
                   <span className="min-w-0 flex-1 text-xs text-text">
-                    Remove {env.name}? Its accounts and saved sign-ins go now. Its Auto Run scripts, areas and
-                    templates are kept for 30 days and can be copied into another environment from Copy Auto Run
+                    Remove {env.name}? Its accounts and saved sign-ins go now. Its Auto Test scripts, areas and
+                    templates are kept for 30 days and can be copied into another environment from Copy Auto Test
                     data…
                   </span>
                   <Button size="sm" variant="ghost" onClick={() => setRemoving(null)}>

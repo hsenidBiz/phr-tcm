@@ -482,12 +482,12 @@ test("a run with no reset points shows no reset line", async () => {
 });
 
 test("while discovery holds the browser, Replay to step is off and says why", async () => {
-  const { onReplay } = renderPastRuns([FAILED_AT_2], 42, undefined, "Discovery is using the Auto Run browser");
+  const { onReplay } = renderPastRuns([FAILED_AT_2], 42, undefined, "Discovery is using the Auto Test browser");
 
   const failed = await screen.findByRole("listitem", { name: "Run of Valid login" });
   const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
   expect(replay).toBeDisabled();
-  expect(replay).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  expect(replay).toHaveAttribute("title", "Discovery is using the Auto Test browser");
   fireEvent.click(replay);
   expect(onReplay).not.toHaveBeenCalled();
 });

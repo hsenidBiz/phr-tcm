@@ -1,4 +1,4 @@
-//! The Auto Run browser's captured requests, HAR files, test headers and cookies.
+//! The Auto Test browser's captured requests, HAR files, test headers and cookies.
 
 use super::*;
 
@@ -29,7 +29,7 @@ pub const CAPTURE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_sec
 
 /// Said when the browser's lock does not come free for a capture call.
 pub const CAPTURE_BUSY: &str =
-    "The Auto Run browser is busy (a replay, a step or a discovery action is using it): ask again when it has finished.";
+    "The Auto Test browser is busy (a replay, a step or a discovery action is using it): ask again when it has finished.";
 
 /// A capture tool's call. Nothing is redacted, matched or written while a
 /// lock is held: the call takes what it needs out of its set (cloned) and
@@ -86,7 +86,7 @@ pub(crate) async fn autorun_capture(tool: CaptureTool, body: &str, n: SlotNo) ->
 }
 
 /// `answer` ending with what the assistant changed for testing in the
-/// Auto Run browser (`overrides::with_note`): as `seen` under the session
+/// Auto Test browser (`overrides::with_note`): as `seen` under the session
 /// lock the moment the call finished, or - for an answer given before the
 /// browser was taken (a refusal) - as last published
 /// (`commands::autorun::overrides_now_in`, slot `n`'s).
@@ -115,19 +115,19 @@ pub enum OverrideTool {
 /// Said when the browser's lock does not come free for a header or cookie
 /// call.
 pub const OVERRIDES_BUSY: &str =
-    "The Auto Run browser is busy (a step or a discovery action is using it): ask again when it has finished.";
+    "The Auto Test browser is busy (a step or a discovery action is using it): ask again when it has finished.";
 
 /// Said when a test header or cookie is asked for in the person's browser:
 /// only one the assistant opened is changed (spec decision 4).
 pub fn persons_browser_not_changed() -> String {
     format!(
-        "Test headers and cookies are changed only in an Auto Run browser you opened (a discovery or your replay): {}",
+        "Test headers and cookies are changed only in an Auto Test browser you opened (a discovery or your replay): {}",
         crate::commands::autorun::PERSONS_BROWSER_OPEN
     )
 }
 
 /// Said by a browser that keeps no record of test changes (a test's fake).
-pub const KEEPS_NO_OVERRIDES: &str = "this Auto Run browser keeps no record of test changes, so none is made in it";
+pub const KEEPS_NO_OVERRIDES: &str = "this Auto Test browser keeps no record of test changes, so none is made in it";
 
 /// `/autorun-headers`, `/autorun-cookies` and `/autorun-cookie`: the call
 /// over the supervised browser (`override_tool_in`). Refused at once while
@@ -150,7 +150,7 @@ pub(crate) async fn autorun_override(tool: OverrideTool, body: &str, n: SlotNo) 
     if tool != OverrideTool::Cookies {
         // Names only - never a value.
         let now = slot.as_ref().and_then(|s| s.overrides.names()).unwrap_or_else(|| "nothing".to_string());
-        crate::applog::info(format!("Auto Run: the assistant's {tool:?} answered {}; changed for testing now: {now}", answer.0));
+        crate::applog::info(format!("Auto Test: the assistant's {tool:?} answered {}; changed for testing now: {now}", answer.0));
     }
     answer
 }
@@ -411,7 +411,7 @@ impl CapturePhase {
 /// its siblings answer. A read naming `from` reads that imported set, with
 /// no browser needed; every other read, the filter and the export need the
 /// browser (404 "No browser is open." without one). An import needs only
-/// the Auto Run folder (`root`). `capture_tool_begin`, then its `finish`.
+/// the Auto Test folder (`root`). `capture_tool_begin`, then its `finish`.
 pub fn capture_tool_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     imported: &mut crate::autorun::capture_tools::ImportedSets,

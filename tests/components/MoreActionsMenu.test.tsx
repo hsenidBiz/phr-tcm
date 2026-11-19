@@ -117,7 +117,7 @@ test("closing plays a short shrink: hidden and unclickable at once, gone after i
 });
 
 /// An action can explain itself in a line under its label, be unavailable, or
-/// be destructive - Auto Run's More menu uses all three. The description is
+/// be destructive - Auto Test's More menu uses all three. The description is
 /// read as the item's description, not folded into its name.
 test("an action can carry a description, be disabled, and read as dangerous", () => {
   const picked: string[] = [];

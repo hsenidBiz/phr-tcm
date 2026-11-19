@@ -1,6 +1,6 @@
 //! The record of test-made drafts: one entry per thing a fixture (or, later,
 //! a script's setup) made in the application under test, kept in
-//! `test-made.json` in the Auto Run store. It is what Clean up test-made
+//! `test-made.json` in the Auto Test store. It is what Clean up test-made
 //! drafts works from, so it is the one list of things the tests may delete.
 //! See the design doc, "The record of test-made drafts" (section 3).
 //!

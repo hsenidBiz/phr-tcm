@@ -279,7 +279,7 @@ fn try_finds_an_area_by_name_and_names_one_that_is_not_recorded() {
     assert_eq!(area_to_try(&nav, "Cycle Setup").unwrap().arrived, "/pms/cycle/setup");
     assert_eq!(
         area_to_try(&nav, "Assessments").unwrap_err(),
-        "the area \"Assessments\" is not recorded - record it in Auto Run, Areas"
+        "the area \"Assessments\" is not recorded - record it in Auto Test, Areas"
     );
     // Removing one leaves the other.
     let nav = remove_path(dir.path(), "acme", "Web", "MANAGE CYCLE").unwrap();

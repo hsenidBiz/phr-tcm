@@ -1,7 +1,7 @@
 //! Where a test case and the live application disagree: a count, a text,
 //! an order or a state. An assistant reports it (`report_case_divergence`)
 //! instead of writing the check to fit the page; a person rules on it in
-//! Auto Run.
+//! Auto Test.
 //!
 //! One JSON array per project, beside the quirks file. A `data` or
 //! `wording` divergence blocks its case's runs until it is ruled on; an
@@ -178,7 +178,7 @@ pub fn load(root: &Path, org: &str, project: &str) -> Result<Vec<Divergence>, St
 
 /// Read, change, prune and write the list under one lock. A file that
 /// cannot be read refuses the write and is left as it is; so does `f`'s
-/// error. The Auto Run screen is told which cases changed.
+/// error. The Auto Test screen is told which cases changed.
 pub fn update<T>(
     root: &Path,
     org: &str,
@@ -494,7 +494,7 @@ pub fn ruling_answer(list: &[Divergence], picks: &[(i32, String)], ruling: Rulin
             ),
         });
     }
-    lines.push("The person can undo each of these on the case card in Auto Run.".to_string());
+    lines.push("The person can undo each of these on the case card in Auto Test.".to_string());
     lines.join("\n")
 }
 
@@ -522,7 +522,7 @@ pub fn run_sentence(d: &Divergence) -> String {
             d.step
         ),
         _ => format!(
-            "{NEEDS_RULING_PREFIX}step {}: the case says \"{}\" but the app shows \"{}\" ({}) - a person rules on it in Auto Run{}",
+            "{NEEDS_RULING_PREFIX}step {}: the case says \"{}\" but the app shows \"{}\" ({}) - a person rules on it in Auto Test{}",
             d.step,
             d.case_says,
             d.app_shows,
@@ -538,7 +538,7 @@ pub fn needs_ruling(root: &Path, org: &str, project: &str, case_id: i32) -> Opti
     match load(root, org, project) {
         Ok(list) => blocking(&list, case_id).map(run_sentence),
         Err(_) => {
-            crate::applog::warn("Auto Run: the divergences file could not be read; no case is blocked by it");
+            crate::applog::warn("Auto Test: the divergences file could not be read; no case is blocked by it");
             None
         }
     }
@@ -669,7 +669,7 @@ pub fn failures_lines(list: &[Divergence], case_ids: &[i32], now_ms: u64) -> Vec
         for d in mine {
             match (d.status, d.ruling) {
                 (DivergenceStatus::Open, _) => out.push(format!(
-                    "- case {case_id} step {} ({}, {}): needs a ruling - the case says \"{}\", the app shows \"{}\". Leave the script as the case says; the person rules in Auto Run.{}",
+                    "- case {case_id} step {} ({}, {}): needs a ruling - the case says \"{}\", the app shows \"{}\". Leave the script as the case says; the person rules in Auto Test.{}",
                     d.step,
                     d.kind.word(),
                     d.id,
@@ -725,7 +725,7 @@ pub fn tool_answer(case_id: i32, d: &Divergence, updated: bool) -> String {
             d.id, d.step
         ),
         _ => format!(
-            "{verb} as {}. Case {case_id} needs a ruling: its runs are Blocked with \"{}\" until a person rules in Auto Run. Keep the check as the case says, save the script, and name this divergence in your report.",
+            "{verb} as {}. Case {case_id} needs a ruling: its runs are Blocked with \"{}\" until a person rules in Auto Test. Keep the check as the case says, save the script, and name this divergence in your report.",
             d.id,
             run_sentence(d)
         ),

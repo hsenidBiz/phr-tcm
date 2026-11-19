@@ -160,7 +160,7 @@ export default function RecordSignInDialog({
   }, []);
 
   // A recording, a Start or a check left behind by a dialog that was
-  // closed with the Auto Run section still holds the recorder: offer to
+  // closed with the Auto Test section still holds the recorder: offer to
   // end it, while this dialog has started nothing of its own.
   useEffect(() => {
     let live = true;

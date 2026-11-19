@@ -42,7 +42,7 @@ export function useAppNavigation({
   // the person there; any other navigation clears it.
   const [startOnModules, setStartOnModules] = useState(false);
   const goToSection = (target: Section) => {
-    // Simple mode: every way into a hidden screen opens Auto Run instead.
+    // Simple mode: every way into a hidden screen opens Auto Test instead.
     const s: Section = appSimpleModeSnapshot() && SIMPLE_HIDDEN_SECTIONS.has(target) ? "autorun" : target;
     logUi(`nav: ${s}`);
     setSection(s);

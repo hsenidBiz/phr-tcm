@@ -555,7 +555,7 @@ pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test
 
 /// `GET /accounts`: the active environment's accounts - key, label,
 /// username and whether a password is set (`has_password`). Never the
-/// password itself, in any environment: Auto Run signs in by itself, so a
+/// password itself, in any environment: Auto Test signs in by itself, so a
 /// script names an account by its key. The log line says only how many were
 /// read. Beside them, the
 /// project's Test files (`test_files_answer`), or `test_files_note` saying
@@ -649,10 +649,10 @@ pub(crate) fn label_of_slot(slot: SlotNo) -> Option<String> {
 /// - the asker's own browser: "your browser";
 /// - an assistant's: "{label}'s browser";
 /// - main's, bound to nobody: "the person's browser" when the person opened
-///   it (`main_is_persons`), else "the main Auto Run browser";
+///   it (`main_is_persons`), else "the main Auto Test browser";
 /// - an extra browser nobody is bound to now (its assistant is gone and the
-///   browser not yet released): "another Auto Run browser";
-/// - an unattended run, an API template run, Auto Run setup: as the
+///   browser not yet released): "another Auto Test browser";
+/// - an unattended run, an API template run, Auto Test setup: as the
 ///   refusals word them.
 ///
 /// Labels only: never a login, an id or a host.
@@ -661,21 +661,21 @@ pub fn in_use_by_words(holder: &crate::autorun::lease::Holder, caller_slot: Opti
     match holder {
         Holder::Browser { slot } => {
             let Some(slot) = SlotNo::from_number(*slot) else {
-                return "another Auto Run browser".to_string();
+                return "another Auto Test browser".to_string();
             };
             if caller_slot == Some(slot) {
                 "your browser".to_string()
             } else if let Some(label) = label_of_slot(slot) {
                 format!("{label}'s browser")
             } else if slot.is_main() {
-                (if main_is_persons { "the person's browser" } else { "the main Auto Run browser" }).to_string()
+                (if main_is_persons { "the person's browser" } else { "the main Auto Test browser" }).to_string()
             } else {
-                "another Auto Run browser".to_string()
+                "another Auto Test browser".to_string()
             }
         }
         Holder::Case { .. } => "an unattended run".to_string(),
         Holder::Template => "an API template run".to_string(),
-        Holder::Setup => "Auto Run setup".to_string(),
+        Holder::Setup => "Auto Test setup".to_string(),
     }
 }
 

@@ -1,4 +1,4 @@
-// Whether the Auto Run screen has what a run needs, worked out from answers
+// Whether the Auto Test screen has what a run needs, worked out from answers
 // the screen already reads - no command of its own.
 //
 // Every input separates "not known yet" from "none": `undefined` (the site)

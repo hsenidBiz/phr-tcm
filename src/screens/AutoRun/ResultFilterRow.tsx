@@ -2,11 +2,11 @@
 // (Past runs): All, Passed, Failed, Blocked, Not run - one pressed at a
 // time, All by default, each with how many it would show. One component,
 // so the two lists filter the same way. `ResultToggleRow` is its multi-select
-// sibling for the Auto Run case list: no All, any number pressed, none
+// sibling for the Auto Test case list: no All, any number pressed, none
 // pressed meaning no filter. `SuspectedDefectToggle` is one more pill of the
 // same kind for that list: only the cases an assistant marked as a
 // suspected application defect. `HasScriptToggle` is another: only the
-// cases that already have an Auto Run script.
+// cases that already have an Auto Test script.
 //
 // Every button is a pill at body text size, outlined in its result's colour
 // with its count in a badge, and filled with that colour while pressed. The
@@ -179,7 +179,7 @@ export function SuspectedDefectToggle({
   );
 }
 
-/** Only the cases that already have an Auto Run script. Works with the
+/** Only the cases that already have an Auto Test script. Works with the
  * other pills: a case shows when it passes all of them. */
 export function HasScriptToggle({
   on,
@@ -196,7 +196,7 @@ export function HasScriptToggle({
       filter="Has a script"
       on={on}
       count={count}
-      title="Only the cases that already have an Auto Run script"
+      title="Only the cases that already have an Auto Test script"
       onClick={onToggle}
     />
   );

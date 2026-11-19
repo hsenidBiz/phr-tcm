@@ -335,7 +335,7 @@ pub(crate) async fn save_area_variant<B: DiscoveryBrowser>(
         return (409, why);
     }
     stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
-    crate::applog::info(format!("Auto Run discovery added menu path {n} to an area"));
+    crate::applog::info(format!("Auto Test discovery added menu path {n} to an area"));
     let message = format!("saved as menu path {n} of \"{kept}\"");
     let mut answer = serde_json::json!({ "saved": true, "arrived": at, "message": message });
     if !pinned.is_empty() {
@@ -431,7 +431,7 @@ pub(crate) async fn save_discovered_area<B: DiscoveryBrowser>(
             return (
                 409,
                 format!(
-                    "An area named '{name}' already exists; pick another name or ask the person to replace it in Auto Run"
+                    "An area named '{name}' already exists; pick another name or ask the person to replace it in Auto Test"
                 ),
             )
         }
@@ -480,7 +480,7 @@ pub(crate) async fn save_discovered_area<B: DiscoveryBrowser>(
             return (409, format!("the area's saved path could not be tried: {}", went.detail));
         }
         let route = nav::Route::new(&recipe, old.clone());
-        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair", account.as_deref()).await;
+        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Test area repair", account.as_deref()).await;
         if tried.ok {
             return (409, area_repair::NOTHING_TO_REPAIR.to_string());
         }
@@ -639,12 +639,12 @@ pub(crate) async fn save_discovered_area<B: DiscoveryBrowser>(
                 (true, false) => "mode",
                 _ => "menu preferences",
             };
-            crate::applog::info(format!("Auto Run area {kept}: recorded its {what}"));
+            crate::applog::info(format!("Auto Test area {kept}: recorded its {what}"));
             let message = format!("unchanged path; recorded its {what}");
             return (200, serde_json::json!({ "saved": true, "arrived": at, "message": message }).to_string());
         }
         stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
-        crate::applog::info("Auto Run mapping run found an area unchanged");
+        crate::applog::info("Auto Test mapping run found an area unchanged");
         return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at }).to_string());
     }
     let saved = path.clicks.len();
@@ -700,7 +700,7 @@ pub(crate) async fn save_discovered_area<B: DiscoveryBrowser>(
         }
         return (200, answer.to_string());
     }
-    crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
+    crate::applog::info(format!("Auto Test discovery saved an area ({saved} clicks)"));
     let mut answer = serde_json::json!({ "saved": true, "arrived": at });
     if !pinned.is_empty() {
         answer["pinned"] = serde_json::json!(pinned);

@@ -163,7 +163,7 @@ test("reset_shows_when_the_file_cannot_be_read", async () => {
   mockIPC((cmd) => {
     calls.push(cmd);
     if (cmd === "auto_run_load_components") {
-      if (damaged) throw "the components file projects/acme-components.json could not be read; Reset it in Auto Run";
+      if (damaged) throw "the components file projects/acme-components.json could not be read; Reset it in Auto Test";
       return { components: [] };
     }
     if (cmd === "auto_run_reset_components") {

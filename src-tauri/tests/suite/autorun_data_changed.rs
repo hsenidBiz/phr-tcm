@@ -2,7 +2,7 @@
 //! (areas, components, the discovery map and its summary, quirks, test files,
 //! proposed accounts) tells the data listeners which kind changed, whoever
 //! made it: the app registers one at startup that says so to the window
-//! (`AutorunDataChanged`), so the Auto Run screen reads that data again
+//! (`AutorunDataChanged`), so the Auto Test screen reads that data again
 //! without a reload. A refused or no-op write says nothing.
 //!
 //! The listeners are process-wide, so each test keeps only what was said

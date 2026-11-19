@@ -810,7 +810,7 @@ fn headers_and_addresses_alone_over_the_budget_drop_the_oldest_requests() {
     assert_eq!(all.last().unwrap().url_path_query, format!("/api/h/{}", 400 - total), "the oldest went first");
 }
 
-/// A supervised browser as `open_into` opens it, in an Auto Run folder
+/// A supervised browser as `open_into` opens it, in an Auto Test folder
 /// whose active environment has this address.
 async fn opened_with_address(address: &str) -> (Cdp<FakeBrowser>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();

@@ -24,7 +24,7 @@ let marks: Marks = EMPTY;
 let loaded = false;
 const listeners = new Set<() => void>();
 
-/** The row each module reveals. Auto Run, API Templates and Playwright own
+/** The row each module reveals. Auto Test, API Templates and Playwright own
  * a tab each; Database Access and Writing Style add cards to AI Bridge. */
 export function moduleNavItem(m: Module): Section {
   switch (m) {

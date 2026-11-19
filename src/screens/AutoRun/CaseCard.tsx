@@ -1,4 +1,4 @@
-// One case on the Auto Run Test cases list, as a card that opens.
+// One case on the Auto Test Test cases list, as a card that opens.
 //
 // Collapsed it is a single line: the checkbox, the id, the title and the
 // case's last result. Nothing on it is a button but the chevron and the
@@ -159,7 +159,7 @@ function CaseCard({
   onEdit: (id: number) => void;
   onRun: (id: number) => void;
   /** Why Run waits, when it does: an unattended run is going, or a
-   * discovery holds the Auto Run browser. */
+   * discovery holds the Auto Test browser. */
   runBlocked?: string;
   /** Simple mode: no step-by-step run of one case, so no Run button. */
   hideRun?: boolean;
@@ -349,7 +349,7 @@ function CaseCard({
                           <span className="min-w-0 flex-1 truncate text-text" title={own ? caseTextLine(own.action) : undefined}>
                             {own?.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own && caseTextLine(own.action)}
                           </span>
-                          <span className="shrink-0 text-faint">{autoSteps.has(s.step_number) ? "Done by Auto Run" : plural(s.actions.length, "action")}</span>
+                          <span className="shrink-0 text-faint">{autoSteps.has(s.step_number) ? "Done by Auto Test" : plural(s.actions.length, "action")}</span>
                         </li>
                       );
                     })}

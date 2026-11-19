@@ -1,4 +1,4 @@
-//! The test headers and cookies the assistant sets in its own Auto Run
+//! The test headers and cookies the assistant sets in its own Auto Test
 //! browser (`set_autorun_headers`, `autorun_cookies`' set), so it can test an
 //! edge case - a changed header, a feature cookie - and what TCM recorded of
 //! them (`Overrides`, kept on the session), so every try, discovery and
@@ -21,7 +21,7 @@ use crate::browser::session::cookie_belongs;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// What the assistant changed for testing in its Auto Run browser, as TCM
+/// What the assistant changed for testing in its Auto Test browser, as TCM
 /// set it. Gone with the browser; a reset takes it away
 /// (`undo`), and so does a clear of the cookies (`autorun_cookies`' clear).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -371,7 +371,7 @@ pub fn url_host(url: &str) -> Option<String> {
 /// closed browser is told by them, `ai_bridge::let_go_if_silent`).
 pub fn browser_failed(e: CdpError) -> (u16, String) {
     let status = if matches!(e, CdpError::Protocol { .. }) { 502 } else { 503 };
-    (status, format!("the Auto Run browser did not answer: {e}"))
+    (status, format!("the Auto Test browser did not answer: {e}"))
 }
 
 /// Every cookie the browser holds for `host` (its own and its parent
@@ -433,7 +433,7 @@ pub async fn undo<D: Driver>(d: &mut D, o: &mut Overrides) -> Vec<String> {
         match d.set_extra_headers(&BTreeMap::new()).await {
             Ok(()) => o.headers.clear(),
             Err(e) => {
-                crate::applog::warn(format!("Auto Run: the test headers could not be removed: {e}"));
+                crate::applog::warn(format!("Auto Test: the test headers could not be removed: {e}"));
                 left.push(format!("header {}", o.headers.keys().cloned().collect::<Vec<_>>().join(", ")));
             }
         }
@@ -444,7 +444,7 @@ pub async fn undo<D: Driver>(d: &mut D, o: &mut Overrides) -> Vec<String> {
     let jar = match d.call("Network.getAllCookies", json!({})).await {
         Ok(reply) => reply["cookies"].as_array().cloned().unwrap_or_default(),
         Err(e) => {
-            crate::applog::warn(format!("Auto Run: the test cookies could not be read to remove them: {e}"));
+            crate::applog::warn(format!("Auto Test: the test cookies could not be read to remove them: {e}"));
             left.extend(o.cookies.keys().map(|n| format!("cookie {n}")));
             return left;
         }
@@ -462,7 +462,7 @@ pub async fn undo<D: Driver>(d: &mut D, o: &mut Overrides) -> Vec<String> {
                 o.cookies.remove(&name);
             }
             Err(e) => {
-                crate::applog::warn(format!("Auto Run: the test cookie {name} could not be removed: {e}"));
+                crate::applog::warn(format!("Auto Test: the test cookie {name} could not be removed: {e}"));
                 left.push(format!("cookie {name}"));
             }
         }
@@ -487,7 +487,7 @@ pub async fn take_for_person<D: Driver>(d: &mut D, o: &mut Overrides) -> Result<
         Ok(())
     } else {
         crate::applog::warn(format!(
-            "Auto Run: the person took the browser, but these test changes could not be removed: {}",
+            "Auto Test: the person took the browser, but these test changes could not be removed: {}",
             left.join("; ")
         ));
         Err(TEST_CHANGES_STUCK.to_string())

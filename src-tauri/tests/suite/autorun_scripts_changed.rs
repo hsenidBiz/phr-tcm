@@ -1,6 +1,6 @@
-//! Every write or removal of an Auto Run script tells the store's listeners
+//! Every write or removal of an Auto Test script tells the store's listeners
 //! which cases changed, whoever made it: the app registers one at startup
-//! that says so to the window (`AutorunScriptsChanged`), so the Auto Run
+//! that says so to the window (`AutorunScriptsChanged`), so the Auto Test
 //! screen reads those scripts again without a reload.
 //!
 //! The listeners are process-wide, so each test keeps only what was said

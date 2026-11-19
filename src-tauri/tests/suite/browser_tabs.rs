@@ -443,7 +443,7 @@ async fn a_closing_tabs_refusal_leaves_later_tabs_on_the_typed_patterns() {
     assert!(!lines.iter().any(|l| l.starts_with(refused) && l.contains("Session with given id")), "{lines:?}");
     let about: Vec<&String> = lines
         .iter()
-        .filter(|l| l.starts_with("Auto Run could not guard a tab the page opened") && l.contains("Session with given id"))
+        .filter(|l| l.starts_with("Auto Test could not guard a tab the page opened") && l.contains("Session with given id"))
         .collect();
     assert!(!about.is_empty(), "{lines:?}");
     assert!(about.iter().all(|l| l.ends_with(": /pop") && !l.contains("hr.example") && !l.contains("hunter2")), "{about:?}");

@@ -12,7 +12,7 @@ import { resetModulesStore, setModulesForTest } from "../../../src/lib/modules";
 import { toast } from "../../../src/lib/toast";
 import RunPane from "../../../src/screens/AutoRun/RunPane";
 
-// Auto Run sits under Database Access, which these tests expect on.
+// Auto Test sits under Database Access, which these tests expect on.
 beforeEach(() => setModulesForTest(["db_access", "auto_run"]));
 
 afterEach(() => {
@@ -790,7 +790,7 @@ test.each([
   [
     {
       end: { kind: "browser_gone", detail: { step: 1, why: null, outcomes: [] } },
-      sentence: "replay stopped at step 1: the Auto Run browser closed before the step finished",
+      sentence: "replay stopped at step 1: the Auto Test browser closed before the step finished",
     },
     "text-warning",
   ],
@@ -819,7 +819,7 @@ test("a replay whose browser closed under it says why and leaves the pane with n
   renderReplay(3);
   await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
   const sentence =
-    "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
+    "replay stopped at step 1: the Auto Test browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
   await r.finish({ end: { kind: "browser_gone", detail: { step: 1, why: null, outcomes: [] } }, sentence });
   expect(await screen.findByText(sentence)).toBeInTheDocument();
   // The app let that browser go: the pane offers to open one, and never
@@ -1118,9 +1118,9 @@ test("a replay whose browser closed after a failed step says both, and leaves th
   const why = 'button "Save" not found';
   await r.finish({
     end: { kind: "browser_gone", detail: { step: 2, why, outcomes: [{ ok: false, detail: why }] } },
-    sentence: `replay stopped at step 2: ${why}; then the Auto Run browser closed`,
+    sentence: `replay stopped at step 2: ${why}; then the Auto Test browser closed`,
   });
-  expect(await screen.findByText(`replay stopped at step 2: ${why}; then the Auto Run browser closed`)).toBeInTheDocument();
+  expect(await screen.findByText(`replay stopped at step 2: ${why}; then the Auto Test browser closed`)).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
 });
 
@@ -1154,7 +1154,7 @@ test("a replay that signs the browser in as another account is said, and this ca
   });
   expect(
     await screen.findByText(
-      "the Auto Run browser was signed in as clerk by a replay - sign in again before the next step",
+      "the Auto Test browser was signed in as clerk by a replay - sign in again before the next step",
     ),
   ).toBeInTheDocument();
 
@@ -1199,7 +1199,7 @@ test("a sign-in forgotten under the pane is said, and this case signs in again b
     await emit("autorun-session-changed", { opened: true, account: null });
   });
   expect(
-    await screen.findByText("the Auto Run browser is no longer signed in - sign in again before the next step"),
+    await screen.findByText("the Auto Test browser is no longer signed in - sign in again before the next step"),
   ).toBeInTheDocument();
 
   fireEvent.click(run);
@@ -1339,13 +1339,13 @@ test("while discovery holds the browser, Open browser is off and says why", asyn
         pbiId={42}
         cases={[{ id: 1, title: "Valid login" }]}
         onClose={vi.fn()}
-        browserBlocked="Discovery is using the Auto Run browser"
+        browserBlocked="Discovery is using the Auto Test browser"
       />
     </QueryClientProvider>,
   );
   const open = await screen.findByRole("button", { name: "Open browser" });
   expect(open).toBeDisabled();
-  expect(open).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  expect(open).toHaveAttribute("title", "Discovery is using the Auto Test browser");
   fireEvent.click(open);
   expect(s.launched).toEqual([]);
 });
@@ -1476,7 +1476,7 @@ test("a clean-up step is run as the Clean-up and saved apart from the case's ste
 
 test("a case that needs a ruling is blocked before it signs in", async () => {
   const sentence =
-    'needs a ruling: step 2: the case says "exactly 4 levels" but the app shows "6 levels" (data) - a person rules on it in Auto Run';
+    'needs a ruling: step 2: the case says "exactly 4 levels" but the app shows "6 levels" (data) - a person rules on it in Auto Test';
   const seen: string[] = [];
   mockIPC((cmd) => {
     seen.push(cmd);

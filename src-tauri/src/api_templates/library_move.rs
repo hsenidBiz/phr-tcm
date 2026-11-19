@@ -51,7 +51,7 @@ pub struct MoveReport {
 pub fn move_log_line(r: &MoveReport) -> String {
     let aside = if r.kept_aside > 0 { format!(", {} kept aside for 30 days", r.kept_aside) } else { String::new() };
     format!(
-        "Auto Run: API templates, flows and fixtures are now shared by every environment ({} moved{aside})",
+        "Auto Test: API templates, flows and fixtures are now shared by every environment ({} moved{aside})",
         r.moved
     )
 }
@@ -413,7 +413,7 @@ fn pick_winner<'a>(members: &[&'a Candidate]) -> Option<&'a Candidate> {
 fn set_aside(plan: &mut Plan, c: &Candidate) {
     if c.def.is_none() {
         crate::applog::warn(format!(
-            "Auto Run: the {} definition '{}' could not be read and was kept aside",
+            "Auto Test: the {} definition '{}' could not be read and was kept aside",
             c.kind.folder().trim_end_matches('s'),
             c.id
         ));
@@ -471,7 +471,7 @@ fn confirm(
 
 /// This environment's history of the item without the lines any other
 /// holder (a live environment or a removed folder) also carries verbatim.
-/// Copy Auto Run data used to copy histories along with the definitions,
+/// Copy Auto Test data used to copy histories along with the definitions,
 /// and stamps are second-resolution with mode, account and outputs in each
 /// line, so an equal line is a copy and not a second run.
 fn earned_runs(found: &Candidates, env_id: &str, root: &Path, kind: ApiKind, slug: &str, id: &str) -> Vec<Value> {

@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../../src/lib/appSimpleMode";
 import AutoRun from "../../../src/screens/AutoRun";
+import AutoRunModeSwitch from "../../../src/screens/AutoRun/ModeSwitch";
 
 // An unattended run going is the one input the switch waits on; the real
 // store is replaced only for that answer.
@@ -30,6 +31,8 @@ function renderScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
+      {/* The switch rides in the title row (CaseScreens), beside the screen. */}
+      <AutoRunModeSwitch />
       <AutoRun org="acme" project="Web" pbi={PBI} />
     </QueryClientProvider>,
   );

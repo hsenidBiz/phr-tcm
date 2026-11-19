@@ -1,5 +1,5 @@
 //! Playwright export: the clone-path setting and the per-project area and
-//! account mappings kept beside the Auto Run files.
+//! account mappings kept beside the Auto Test files.
 
 use std::collections::BTreeMap;
 use v2_lib::app_settings::AppSettings;

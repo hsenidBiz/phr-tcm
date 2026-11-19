@@ -1,4 +1,4 @@
-// The steps Auto Run performs itself (launching the app, signing in, reaching
+// The steps Auto Test performs itself (launching the app, signing in, reaching
 // the area): the TypeScript mirror of `autorun::by_auto_run::done_by_auto_run`,
 // held to the same fixture (`src-tauri/tests/fixtures/by_auto_run.json`).
 

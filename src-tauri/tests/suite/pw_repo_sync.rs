@@ -1,5 +1,5 @@
 //! Sync: the export record, each case's state, and Update, which is the
-//! export again for the cases asked for only. The fake clone and Auto Run
+//! export again for the cases asked for only. The fake clone and Auto Test
 //! store are Export to Playwright's own fixture (`pw_export_write`).
 
 use crate::pw_export_write::{component, doc, docs, file_quirk, map_component, uses_components, write, Fx, MD_REL, ORG, PROJECT};

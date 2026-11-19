@@ -1,4 +1,4 @@
-//! A Chrome DevTools Protocol client for the browser Auto Run drives.
+//! A Chrome DevTools Protocol client for the browser Auto Test drives.
 //!
 //! One connection to the browser itself (`connect`), with a flattened
 //! session per tab: every page-level command carries its tab's session,
@@ -970,7 +970,7 @@ impl<T: Transport> Cdp<T> {
             if matches!(e, CdpError::Closed) {
                 return Err(e);
             }
-            crate::applog::warn(format!("Auto Run could not set the page size on the first page: {e}"));
+            crate::applog::warn(format!("Auto Test could not set the page size on the first page: {e}"));
         }
         self.call_on(
             None,
@@ -1675,7 +1675,7 @@ impl<T: Transport> Cdp<T> {
     fn queue_answer(&mut self, session: &str, request_id: &str, method: &str, url: &str, stop: bool) {
         let (what, params) = if stop {
             let (method, path) = (method.trim().to_ascii_uppercase(), super::save_guard::path_of(url));
-            crate::applog::warn(format!("Auto Run stopped a save the page tried to send: {method} {path}"));
+            crate::applog::warn(format!("Auto Test stopped a save the page tried to send: {method} {path}"));
             if self.saves_stopped.len() < MAX_STOPPED_SAVES {
                 self.saves_stopped.push((method, path));
             }
@@ -1913,7 +1913,7 @@ impl<T: Transport> Cdp<T> {
             };
             // The page's path only: never its host or query.
             crate::applog::warn(format!(
-                "Auto Run could not {what} a tab the page opened, {method} was refused ({message}): {}",
+                "Auto Test could not {what} a tab the page opened, {method} was refused ({message}): {}",
                 super::save_guard::path_of(&tab.url_without_query)
             ));
         }
@@ -2025,7 +2025,7 @@ impl<T: Transport> Cdp<T> {
                 // Only the front of the screen is lost: the steps still act
                 // in this tab.
                 Err(CdpError::Protocol { message, .. }) => {
-                    crate::applog::warn(format!("Auto Run could not bring the \"{name}\" tab to the front: {message}"));
+                    crate::applog::warn(format!("Auto Test could not bring the \"{name}\" tab to the front: {message}"));
                 }
                 Err(e) => return Err(e),
             }
@@ -2170,7 +2170,7 @@ impl<T: Transport> Cdp<T> {
                         self.call_on(None, "Target.closeTarget", serde_json::json!({ "targetId": target }), limit).await;
                     self.forget_tab(&session);
                     if let Err(e) = closed {
-                        crate::applog::warn(format!("Auto Run could not close a tab it could not guard: {e}"));
+                        crate::applog::warn(format!("Auto Test could not close a tab it could not guard: {e}"));
                     }
                     return Err(CdpError::Tab(TAB_HELD_UNGUARDED.to_string()));
                 }
@@ -2210,7 +2210,7 @@ impl<T: Transport> Cdp<T> {
                 // Asked: gone, whatever the answer was, or whether it came.
                 Ok(_) | Err(CdpError::Protocol { .. }) | Err(CdpError::Timeout { .. }) | Err(CdpError::Tab(_)) => {
                     if let Err(e) = &answer {
-                        crate::applog::warn(format!("Auto Run asked to close a tab at the end of the case: {e}"));
+                        crate::applog::warn(format!("Auto Test asked to close a tab at the end of the case: {e}"));
                     }
                     self.forget_tab(&session);
                 }
@@ -2221,7 +2221,7 @@ impl<T: Transport> Cdp<T> {
                 }
                 // Never sent: kept, and nothing more is asked.
                 Err(e @ CdpError::Transport(_)) => {
-                    crate::applog::warn(format!("Auto Run could not close a tab at the end of the case: {e}"));
+                    crate::applog::warn(format!("Auto Test could not close a tab at the end of the case: {e}"));
                     break;
                 }
             }
@@ -2899,7 +2899,7 @@ fn name_finished(dir: &Path, entry: &mut DownloadEntry) {
         let to = dir.join(unique_name(dir, &entry.name));
         match rename_patiently(&saved, &to, |a, b| std::fs::rename(a, b), std::thread::sleep) {
             Ok(()) => entry.path = to,
-            Err(e) => crate::applog::warn(format!("Auto Run could not name a finished download: {e}")),
+            Err(e) => crate::applog::warn(format!("Auto Test could not name a finished download: {e}")),
         }
     } else if dir.join(&entry.name).is_file() {
         entry.path = dir.join(&entry.name);

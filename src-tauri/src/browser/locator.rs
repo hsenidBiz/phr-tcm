@@ -530,7 +530,7 @@ pub fn frame_unreachable(frame: &str) -> String {
 
 /// The words `frame_unreachable` ends with, which `autorun::patterns`
 /// reads a failure's class from.
-pub const FRAME_UNREACHABLE: &str = "holds a page from another site (or has not loaded), which Auto Run cannot reach";
+pub const FRAME_UNREACHABLE: &str = "holds a page from another site (or has not loaded), which Auto Test cannot reach";
 
 /// Every element the target matches right now. Empty is an answer, not an
 /// error: callers decide whether "nothing yet" means wait or fail.

@@ -1,10 +1,10 @@
 // The AI Bridge tab's Network tools card: whether an assistant gets the
-// tools that look under the Auto Run browser's page - its captured
+// tools that look under the Auto Test browser's page - its captured
 // requests, HAR files, test headers and cookies.
 //
 // Rust lists them only on this switch's yes and refuses their routes
 // without it (`ai_tools::NETWORK_TOOLS`, `ai_bridge::network_guard`); they
-// are also Auto Run's tools, offered only while that module is on. The
+// are also Auto Test's tools, offered only while that module is on. The
 // store mirrors apiTemplates.ts's write switch.
 
 import { BRIDGE_SWITCH_KEYS, envKeyFor, envScopedKey, subscribeActiveEnv } from "./activeEnv";

@@ -1,4 +1,4 @@
-//! Which Auto Run browser a bridge call uses.
+//! Which Auto Test browser a bridge call uses.
 //!
 //! `slot_for` is asked once, at the top of the bridge's router
 //! (`ai_bridge::route_as`), and the slot it answers is the one every handler
@@ -76,17 +76,17 @@ pub fn need_of(method: &str, path: &str) -> Option<Need> {
 
 /// Said to an assistant that opens a browser when every browser there can be
 /// is open already.
-pub const ALL_BROWSERS_OPEN: &str = "3 Auto Run browsers are open already, the most at once - wait for another assistant to finish, or ask the person to release one on the Auto Run screen";
+pub const ALL_BROWSERS_OPEN: &str = "3 Auto Test browsers are open already, the most at once - wait for another assistant to finish, or ask the person to release one on the Auto Test screen";
 
 /// Said to an assistant that acts on or reads a browser when it has none and
 /// main is another assistant's.
-pub const NO_BROWSER_OF_YOURS: &str = "you have no Auto Run browser - start_autorun_discovery or replay_autorun_to_step opens one (another assistant is using the main one)";
+pub const NO_BROWSER_OF_YOURS: &str = "you have no Auto Test browser - start_autorun_discovery or replay_autorun_to_step opens one (another assistant is using the main one)";
 
 /// Said, once, to an assistant whose own browser was released because it made
 /// no call for `IDLE_RELEASE_MS`: its next call that acts on or reads a
 /// browser, in place of the usual refusal.
 pub const IDLE_RELEASED: &str =
-    "your Auto Run browser was released after it sat with no call from you (10 minutes for a named subagent, 30 for any other) - start a discovery or replay again";
+    "your Auto Test browser was released after it sat with no call from you (10 minutes for a named subagent, 30 for any other) - start a discovery or replay again";
 
 /// Does this call read a capture set that was imported (`from` names one)?
 /// Such a read answers from the imported sets and uses no browser, so it needs
@@ -216,7 +216,7 @@ pub fn opening() -> &'static tokio::sync::RwLock<()> {
 /// Said to an open that meets the environment being switched or every Auto
 /// Run browser being released.
 pub const OPEN_WHILE_SWITCHING: &str =
-    "the Auto Run browsers are being released or the environment is being switched - try again in a moment";
+    "the Auto Test browsers are being released or the environment is being switched - try again in a moment";
 
 /// No browser is open in extra slot `n`, and nothing is working in it.
 fn slot_is_empty(n: SlotNo) -> bool {
@@ -576,7 +576,7 @@ pub async fn release_idle_slot(j: &IdleSlot) -> Result<String, String> {
     if unbind_noting_if(n, Some(&j.key), &quiet) {
         crate::autorun::claims::release_before(&j.key, j.last_ms);
     }
-    crate::applog::info(format!("Auto Run: released {who} (no call for {} minutes or more)", idle_after(&j.key) / 60_000));
+    crate::applog::info(format!("Auto Test: released {who} (no call for {} minutes or more)", idle_after(&j.key) / 60_000));
     Ok(answer)
 }
 
@@ -834,11 +834,11 @@ pub fn spawn_agents_watch(app: tauri::AppHandle) {
 // ---------------------------------------------------------------------------
 
 /// Said for a slot number from `SLOT_COUNT` up.
-pub const NO_SUCH_BROWSER: &str = "that Auto Run browser is not open any more";
+pub const NO_SUCH_BROWSER: &str = "that Auto Test browser is not open any more";
 
 /// Said by Release when the browser it let go is one the person opened.
 pub const PERSONS_BROWSER_KEPT: &str =
-    "the main Auto Run browser was opened by you, so it stays open - the assistant no longer uses it";
+    "the main Auto Test browser was opened by you, so it stays open - the assistant no longer uses it";
 
 fn slot_numbered(n: u8) -> Result<SlotNo, String> {
     SlotNo::from_number(n).ok_or_else(|| NO_SUCH_BROWSER.to_string())
@@ -873,7 +873,7 @@ pub async fn auto_run_stop_agent(slot: u8) -> Result<(), String> {
         replay.stop();
     }
     crate::ai_bridge::stop_batch_in(n);
-    crate::applog::info(format!("Auto Run: stopped {} (the person stopped it)", whose(n)));
+    crate::applog::info(format!("Auto Test: stopped {} (the person stopped it)", whose(n)));
     Ok(())
 }
 
@@ -899,8 +899,8 @@ pub async fn auto_run_release_agent(slot: u8) -> Result<String, String> {
 pub(crate) fn whose(n: SlotNo) -> String {
     match bound(n).and_then(|key| agents::info(&key)) {
         Some(info) => format!("{}'s browser", info.label),
-        None if n.is_main() => "the main Auto Run browser".to_string(),
-        None => "an Auto Run browser".to_string(),
+        None if n.is_main() => "the main Auto Test browser".to_string(),
+        None => "an Auto Test browser".to_string(),
     }
 }
 
@@ -981,7 +981,7 @@ pub async fn release_slot_within(n: SlotNo, why: ReleaseWhy, wait: std::time::Du
         ReleaseWhy::SessionEnded => "its session ended",
         ReleaseWhy::Idle => "no call for a while",
     };
-    crate::applog::info(format!("Auto Run: released {who} ({by})"));
+    crate::applog::info(format!("Auto Test: released {who} ({by})"));
     Ok(answer)
 }
 
@@ -998,10 +998,10 @@ pub async fn release_answer_in<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mut
             sentence[..1].make_ascii_uppercase();
             sentence
         }
-        ReleaseOutcome::NothingHeld => "No Auto Run browser was held, so there was nothing to release.".to_string(),
+        ReleaseOutcome::NothingHeld => "No Auto Test browser was held, so there was nothing to release.".to_string(),
         ReleaseOutcome::EndedDiscovery(_, said) => {
             let kept: String = said.chars().take(400).collect();
-            crate::applog::info(format!("Auto Run: the discovery ended by the release said: {kept}"));
+            crate::applog::info(format!("Auto Test: the discovery ended by the release said: {kept}"));
             format!("Ended the discovery in {who}, kept what it found, and closed the browser.")
         }
         ReleaseOutcome::ClosedAssistants => format!("Released {who} and closed it."),

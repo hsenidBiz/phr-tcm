@@ -18,7 +18,7 @@ pub fn safe_run_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// How the app's Auto Run files are laid out on disk.
+/// How the app's Auto Test files are laid out on disk.
 enum Layout {
     /// `set_root` has not run.
     Unset,
@@ -65,7 +65,7 @@ pub fn shared_root() -> Option<PathBuf> {
 /// Said when the list of environments cannot be read, so no environment's
 /// folder can be chosen. Restarting changes nothing; the log says why.
 pub const ENVIRONMENTS_UNREADABLE: &str =
-    "the environments could not be read, so Auto Run has no folder to use - see Settings, Logs for why";
+    "the environments could not be read, so Auto Test has no folder to use - see Settings, Logs for why";
 
 /// Said when no environment exists yet: the first list of environments
 /// makes Default (with the Company database the person chose), and only
@@ -195,7 +195,7 @@ fn scripts_dir(root: &Path) -> PathBuf {
 type ChangeListener = std::sync::Arc<dyn Fn(&Path, &[i32]) + Send + Sync>;
 
 /// Everyone told of a change to the scripts (`on_scripts_changed`). The app
-/// adds one at startup that says so to the window, so the Auto Run screen
+/// adds one at startup that says so to the window, so the Auto Test screen
 /// reads a script again whoever changed it: the person, the assistant, or
 /// a replay.
 static LISTENERS: Mutex<Vec<ChangeListener>> = Mutex::new(Vec::new());
@@ -207,7 +207,7 @@ pub fn on_scripts_changed(f: impl Fn(&Path, &[i32]) + Send + Sync + 'static) {
 }
 
 /// `scripts_changed` for a module beside the store whose own files change
-/// what the Auto Run screen shows for a case (the divergences file).
+/// what the Auto Test screen shows for a case (the divergences file).
 pub fn notify_scripts_changed(root: &Path, case_ids: &[i32]) {
     scripts_changed(root, case_ids)
 }
@@ -794,7 +794,7 @@ fn write_scripts_held(
             let still_there = sc.steps.iter().any(|s| s.step_number == m.step_number);
             if !still_there {
                 crate::applog::info(format!(
-                    "Auto Run: the suspected defect at step {} of case {} was dropped because a save removed that step",
+                    "Auto Test: the suspected defect at step {} of case {} was dropped because a save removed that step",
                     m.step_number, sc.case_id
                 ));
             }
@@ -997,7 +997,7 @@ pub fn list_scripts(root: &Path) -> Vec<CaseScript> {
             // Read on every save's check: each damaged file is said once
             // per run of the app, not once per read.
             if script.is_none() && first_warning_for(&name) {
-                crate::applog::warn(format!("Auto Run: the script {name} could not be read, so it was skipped"));
+                crate::applog::warn(format!("Auto Test: the script {name} could not be read, so it was skipped"));
             }
             script
         })
@@ -1164,7 +1164,7 @@ pub fn shot_path(root: &Path, name: &str) -> PathBuf {
     shots_dir(root).join(name)
 }
 
-/// Where every Auto Run browser's downloads go, one folder per run.
+/// Where every Auto Test browser's downloads go, one folder per run.
 fn all_downloads_dir(root: &Path) -> PathBuf {
     root.join("downloads")
 }
@@ -1798,7 +1798,7 @@ pub fn purge_deleted_scripts(root: &Path, now_ms: u64) -> usize {
         if now_ms.saturating_sub(at) > kept_for {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => purged += 1,
-                Err(e) => crate::applog::warn(format!("Auto Run: the deleted script {name} could not be purged: {e}")),
+                Err(e) => crate::applog::warn(format!("Auto Test: the deleted script {name} could not be purged: {e}")),
             }
         }
     }
@@ -1912,10 +1912,10 @@ fn sweep_files(dir: &Path, only_ext: Option<&str>, problems: &mut Vec<String>) -
     removed
 }
 
-/// The file that remembers the browser last chosen for Auto Run.
+/// The file that remembers the browser last chosen for Auto Test.
 const LAST_BROWSER: &str = "last-browser.txt";
 
-/// The browser last chosen for Auto Run - in the supervised pane's Open
+/// The browser last chosen for Auto Test - in the supervised pane's Open
 /// browser or the unattended run's dialog - by name (`edge` or `chrome`).
 /// `edge` when none was chosen yet, or the file cannot be read. A replay
 /// to a step that finds no browser open opens this one.
@@ -1930,7 +1930,7 @@ pub fn remember_browser(root: &Path, name: &str) {
     let shared = crate::autorun::roots::shared_of(root);
     let written = std::fs::create_dir_all(&shared)
         .map_err(|e| e.to_string())
-        .and_then(|()| crate::ai_tools::atomic_write(&shared.join(LAST_BROWSER), &browser_name(name))); // outside the Auto Run root
+        .and_then(|()| crate::ai_tools::atomic_write(&shared.join(LAST_BROWSER), &browser_name(name))); // outside the Auto Test root
     if let Err(e) = written {
         crate::applog::warn(format!("auto-run: the browser chosen could not be remembered: {e}"));
     }
@@ -1945,18 +1945,18 @@ fn browser_name(name: &str) -> String {
     .to_string()
 }
 
-/// Where Auto Run's own order for each PBI lives: `orders/<pbi id>.json`.
+/// Where Auto Test's own order for each PBI lives: `orders/<pbi id>.json`.
 fn order_path(root: &Path, pbi_id: i32) -> PathBuf {
     root.join("orders").join(format!("{pbi_id}.json"))
 }
 
-/// Auto Run's own order for a PBI, as stored.
+/// Auto Test's own order for a PBI, as stored.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SavedOrder {
     case_ids: Vec<i32>,
 }
 
-/// Auto Run's own execution order for a PBI on this machine, or `None`
+/// Auto Test's own execution order for a PBI on this machine, or `None`
 /// when there is none. It is separate from Run Tests' order. A file that
 /// cannot be read, or holds no cases, is no order: it is logged, and the
 /// suggested order is used.
@@ -1980,7 +1980,7 @@ pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
     }
 }
 
-/// Save Auto Run's own order for a PBI, each case once where it first
+/// Save Auto Test's own order for a PBI, each case once where it first
 /// appears. Written by a temporary file and a rename, so a reader never
 /// sees half of it. An empty order is refused: clearing is `clear_order`.
 pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
@@ -2090,7 +2090,7 @@ pub fn with_order_locked<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// Remove Auto Run's own order for a PBI, so the suggested order is used
+/// Remove Auto Test's own order for a PBI, so the suggested order is used
 /// again. Only that one file goes; a PBI with no order is left as it is.
 pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
     let path = order_path(root, pbi_id);
