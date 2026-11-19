@@ -24,8 +24,8 @@ use super::fixture::{sent_ref, validate, Fixture, FixtureRun};
 use super::fixture_store;
 use super::here::{self, HereFailure, TrySource};
 use super::runner::{
-    account_lease, claim, open_session, preflight, run_in_session, stopped_before_sign_in, Mode, RunReport, RunRequest,
-    API_TEMPLATE_BUSY, RETRY_PAUSES, RUN_LIMIT,
+    account_lease, claim, open_session, open_session_signed_in, preflight, run_in_session, stopped_before_sign_in, Mode,
+    RunReport, RunRequest, Session, API_TEMPLATE_BUSY, RETRY_PAUSES, RUN_LIMIT,
 };
 use super::{store as template_store, ApiTemplate, ParamType};
 use crate::applog;
@@ -359,6 +359,39 @@ struct Ran {
     refused: bool,
 }
 
+/// What `run_steps` and `run_steps_in` share before a browser is involved:
+/// the run's start state, the templates and the first request. `Err` is the
+/// finished `Ran` of a run that is refused or already stopped.
+#[allow(clippy::too_many_arguments)]
+fn begin(
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    prefix: &str,
+    clock: &Clock,
+    fixed: Option<&[Option<ApiTemplate>]>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(Vec<ApiTemplate>, RunRequest, Ran), Ran> {
+    let mut ran = Ran { steps: vec![], failed: None, vars: BTreeMap::new(), templates: vec![], refused: false };
+    ran.vars.insert("prefix".to_string(), Value::String(prefix.to_string()));
+    let Start { templates, first } = match start(root, org, project, f, prefix, clock, fixed) {
+        Ok(s) => s,
+        Err(refusal) => {
+            ran.failed = Some((refusal.step, refusal.why));
+            ran.refused = !refusal.counts;
+            ran.templates = refusal.templates;
+            return Err(ran);
+        }
+    };
+    ran.templates = templates.clone();
+    if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+        ran.failed = Some((Some(1), RUN_STOPPED.to_string()));
+        return Err(ran);
+    }
+    Ok((templates, first, ran))
+}
+
 /// Every step of `f`, in one browser signed in once. `prefix` stands for
 /// `{{prefix}}`.
 #[allow(clippy::too_many_arguments)]
@@ -376,24 +409,10 @@ async fn run_steps<B: Browsers>(
     fixed: Option<&[Option<ApiTemplate>]>,
     cancel: Option<&AtomicBool>,
 ) -> Ran {
-    let mut ran = Ran { steps: vec![], failed: None, vars: BTreeMap::new(), templates: vec![], refused: false };
-    ran.vars.insert("prefix".to_string(), Value::String(prefix.to_string()));
-    let stopped = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
-
-    let Start { templates, first } = match start(root, org, project, f, prefix, clock, fixed) {
-        Ok(s) => s,
-        Err(refusal) => {
-            ran.failed = Some((refusal.step, refusal.why));
-            ran.refused = !refusal.counts;
-            ran.templates = refusal.templates;
-            return ran;
-        }
+    let (templates, first, mut ran) = match begin(root, org, project, f, prefix, clock, fixed, cancel) {
+        Ok(x) => x,
+        Err(ran) => return ran,
     };
-    ran.templates = templates.clone();
-    if stopped() {
-        ran.failed = Some((Some(1), RUN_STOPPED.to_string()));
-        return ran;
-    }
 
     // One lease for the whole run, held until the browser is closed.
     let _lease = match account_lease(root, &f.account, timing).await {
@@ -419,16 +438,73 @@ async fn run_steps<B: Browsers>(
         }
     };
 
+    let session = open_session(&mut d, root, &first, timing, limit).await;
+    run_template_steps(&mut d, root, org, project, f, timing, limit, retry_pauses, clock, cancel, &templates, &first, session, &mut ran)
+        .await;
+    d.set_deadline(None);
+    browsers.close(d).await;
+    ran
+}
+
+/// `run_steps` in a browser the caller already signed in as the fixture's
+/// account and holds the account's lease for (an Auto Test run's kept
+/// browser): no lease, no browser opened or closed, no sign-in.
+#[allow(clippy::too_many_arguments)]
+async fn run_steps_in<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    prefix: &str,
+    timing: &Timing,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    clock: &Clock,
+    fixed: Option<&[Option<ApiTemplate>]>,
+    cancel: Option<&AtomicBool>,
+) -> Ran {
+    let (templates, first, mut ran) = match begin(root, org, project, f, prefix, clock, fixed, cancel) {
+        Ok(x) => x,
+        Err(ran) => return ran,
+    };
+    let session = open_session_signed_in(d, root, &first, timing).await;
+    run_template_steps(d, root, org, project, f, timing, limit, retry_pauses, clock, cancel, &templates, &first, session, &mut ran)
+        .await;
+    d.set_deadline(None);
+    ran
+}
+
+/// The steps of `f`, one after the other, in the browser `d` that `session`
+/// came from (`Err`: it never signed in, and that is the run's first step).
+#[allow(clippy::too_many_arguments)]
+async fn run_template_steps<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    timing: &Timing,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    clock: &Clock,
+    cancel: Option<&AtomicBool>,
+    templates: &[ApiTemplate],
+    first: &RunRequest,
+    session: Result<Session, RunReport>,
+    ran: &mut Ran,
+) {
+    let stopped = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
     // The 3-minute run limit (`limit`) applies to each template step on its
     // own - and to the sign-in before them - never to the whole fixture: a
     // fixture of several templates may well take longer than one run may.
-    match open_session(&mut d, root, &first, timing, limit).await {
+    match session {
         Err(report) => {
             ran.failed = Some((Some(1), format!("step 1: {}", report.message())));
             ran.steps.push(report);
         }
         Ok(session) => {
-            for (i, (step, t)) in f.steps.iter().zip(&templates).enumerate() {
+            for (i, (step, t)) in f.steps.iter().zip(templates).enumerate() {
                 let n = i + 1;
                 // A stop is heard between template steps: a step already
                 // sent runs to its own end.
@@ -461,7 +537,7 @@ async fn run_steps<B: Browsers>(
                 for (name, v) in &req.values {
                     ran.vars.insert(format!("steps.{n}.params.{name}"), Value::String(plain(v)));
                 }
-                let report = run_in_session(&mut d, root, &req, timing, &session, limit, retry_pauses).await;
+                let report = run_in_session(d, root, &req, timing, &session, limit, retry_pauses).await;
                 if report.ok {
                     for (name, v) in &report.outputs {
                         ran.vars.insert(format!("steps.{n}.{name}"), v.clone());
@@ -483,9 +559,6 @@ async fn run_steps<B: Browsers>(
             }
         }
     }
-    d.set_deadline(None);
-    browsers.close(d).await;
-    ran
 }
 
 /// Runs `f` and records what it made and the run itself. See the module
@@ -545,10 +618,7 @@ pub async fn run_fixture_for<B: Browsers>(
     cancel: Option<&AtomicBool>,
     source: TrySource,
 ) -> FixtureReport {
-    let at = applog::stamp();
-    let created_at = applog::iso_stamp();
-    let run_id = crate::autorun::store::new_run_id();
-
+    let began = Began::now();
     let ran = match crate::environments::active(root) {
         Ok(env) => {
             let ran =
@@ -561,6 +631,72 @@ pub async fn run_fixture_for<B: Browsers>(
             None
         }
     };
+    record_run(root, org, project, f, case_id, source, began, ran)
+}
+
+/// `run_fixture_for` in a browser the caller already signed in as the
+/// fixture's account (`run_steps_in`): it takes no account lease and opens,
+/// signs in and closes no browser. The caller holds the one-at-a-time
+/// template slot, as for `run_fixture_for`.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_fixture_in<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    timing: &Timing,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    clock: Clock,
+    case_id: Option<i32>,
+    fixed: Option<&[Option<ApiTemplate>]>,
+    cancel: Option<&AtomicBool>,
+    source: TrySource,
+) -> FixtureReport {
+    let began = Began::now();
+    let ran = match crate::environments::active(root) {
+        Ok(env) => {
+            let ran = run_steps_in(d, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock, fixed, cancel)
+                .await;
+            Some((env, ran))
+        }
+        Err(e) => {
+            applog::warn(format!("fixture {}: the active environment could not be read: {e}", f.id));
+            None
+        }
+    };
+    record_run(root, org, project, f, case_id, source, began, ran)
+}
+
+/// When a fixture run began, and its id.
+struct Began {
+    at: String,
+    created_at: String,
+    run_id: String,
+}
+
+impl Began {
+    fn now() -> Self {
+        Began { at: applog::stamp(), created_at: applog::iso_stamp(), run_id: crate::autorun::store::new_run_id() }
+    }
+}
+
+/// What a fixture run's steps did, recorded: its outputs, what it made as
+/// test-made, its history row and its state here. `ran` is `None` when the
+/// active environment could not be read.
+#[allow(clippy::too_many_arguments)]
+fn record_run(
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    case_id: Option<i32>,
+    source: TrySource,
+    began: Began,
+    ran: Option<(crate::environments::Environment, Ran)>,
+) -> FixtureReport {
+    let Began { at, created_at, run_id } = began;
     let (env, ran) = match ran {
         Some(x) => x,
         None => {

@@ -1062,6 +1062,7 @@ fn drop_video(root: &Path, record: &CaseRecord) {
 }
 
 /// What one go at a case needs.
+#[derive(Clone, Copy)]
 struct Go<'a> {
     video: &'a VideoPlan,
     root: &'a Path,
@@ -1104,6 +1105,7 @@ pub async fn settle_downloads<D: Driver>(d: &mut D, cancel: &AtomicBool) {
 async fn one_go<B: Browsers>(
     browsers: &mut B,
     go: &Go<'_>,
+    saved: &CaseScript,
     at: &Place<'_>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
     kept: &mut Option<KeptBrowser<B::D>>,
@@ -1115,8 +1117,23 @@ async fn one_go<B: Browsers>(
         return Ok(first);
     }
     crate::applog::info(format!("{}: the case did not pass in the browser the case before kept, so it goes again in a fresh one", who(at.case_id)));
-    // Task 3: a case with a setup must run its setup again before this go
-    // (the first go may have changed the draft), as the transient retry does.
+    // A case with a setup runs it again first, in a browser of its own: the
+    // first go may have changed the draft it made. A setup that cannot run
+    // leaves the first record as it is, as the transient retry does.
+    let rerun;
+    let go = if saved.setup.is_some() {
+        close_kept(browsers, kept).await;
+        match setup::prepare_case(browsers, go.root, go.organization, go.project, saved, go.timing, go.cancel).await {
+            Ok(prepared) => {
+                rerun = prepared.script;
+                Go { script: &rerun, ..*go }
+            }
+            Err(not) => return Ok(transient::retry_not_started(first, &not)),
+        }
+    } else {
+        *go
+    };
+    let go = &go;
     match Box::pin(go_once(browsers, go, at, progress, kept, false)).await {
         Ok((second, _)) => {
             // The first go's video is of a try that is no longer the record.
@@ -1510,12 +1527,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                 // in a browser of its own that is closed, and its
                                 // lease let go, before the case's browser opens.
                                 None => {
-                                    // A setup runs in a browser of its own,
-                                    // and never meets a kept account's lease.
-                                    if script.setup.is_some() {
-                                        close_kept(browsers, &mut kept).await;
-                                    }
-                                    setup::prepare_case(browsers, root, organization, project, &script, timing, cancel)
+                                    // A setup of the kept browser's account
+                                    // runs in that browser; any other closes
+                                    // it first (`prepare_case_kept`).
+                                    setup::prepare_case_kept(browsers, &mut kept, root, organization, project, &script, timing, cancel)
                                         .await
                                         .map(|prepared| (path, prepared.script))
                                 }
@@ -1540,7 +1555,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                 Ok(()) => crate::applog::info(format!("{}: uses the browser the case before kept", who(case_id))),
                                 Err(why) => crate::applog::info(format!("{}: opens a fresh browser ({why:?})", who(case_id))),
                             }
-                            let first = one_go(browsers, &go, &at, progress, &mut kept, decision.is_ok())
+                            let first = one_go(browsers, &go, &script, &at, progress, &mut kept, decision.is_ok())
                                 .await
                                 .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
                             // One more go, from sign-in in a fresh browser, for a
@@ -1561,7 +1576,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                         Err(not) => transient::retry_not_started(first, &not),
                                         Ok(again) => {
                                             let go = Go { script: &again.script, ..go };
-                                            match one_go(browsers, &go, &at, progress, &mut kept, false).await {
+                                            match one_go(browsers, &go, &script, &at, progress, &mut kept, false).await {
                                                 Ok(second) => {
                                                     // The first go's video is of a try that is no longer the record.
                                                     if let Some(v) = first.video.as_deref() {

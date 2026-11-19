@@ -4,10 +4,14 @@
 //! `check_text` for "yes"; every fake writes to one shared log.
 
 use crate::common::{self, account, menu_recipe, ScriptedDriver};
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use v2_lib::api_templates::fixture::{Creates, Fixture, FixtureStep};
+use v2_lib::api_templates::runner::{FETCH_FN, TOKEN_FN};
+use v2_lib::api_templates::{fixture_store, store as template_store, ApiTemplate, Proven};
 use v2_lib::autorun::accounts::{save_accounts, Account};
 use v2_lib::autorun::lease;
 use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
@@ -49,7 +53,7 @@ enum Quirk {
 
 /// An application that signs in (`#go`), shows `#marker` once signed in,
 /// holds one HttpOnly cookie, and has a menu with Leave in it.
-fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
+fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk, fetches: Arc<Mutex<VecDeque<Value>>>) -> ScriptedDriver {
     let mut path = "/".to_string();
     let (mut signed_in, mut checks, mut hidden) = (false, 0usize, false);
     let (mut sid, mut identity) = ("abc", "who");
@@ -99,6 +103,13 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
             }
             "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
                 json!({ "result": { "value": true } })
+            }
+            // A template run's token and requests.
+            "Runtime.callFunctionOn" if f == TOKEN_FN => json!({ "result": { "value": "tok-123" } }),
+            "Runtime.callFunctionOn" if f == FETCH_FN => {
+                log.lock().unwrap().push("fetch".into());
+                let reply = fetches.lock().unwrap().pop_front().unwrap_or_else(|| reply(500, json!({ "error": "no" })));
+                json!({ "result": { "value": reply } })
             }
             "Runtime.callFunctionOn" if f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
@@ -152,6 +163,8 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
 struct Fake {
     log: Arc<Mutex<Vec<String>>>,
     quirks: Vec<Quirk>,
+    /// What the page answers each template request with, in turn.
+    fetches: Arc<Mutex<VecDeque<Value>>>,
     opened: usize,
     closed: usize,
     /// Browsers open now, and the most there ever were together.
@@ -166,7 +179,10 @@ struct Fake {
 
 impl Fake {
     fn new(quirks: &[Quirk]) -> Fake {
-        Fake { log: Arc::new(Mutex::new(vec![])), quirks: quirks.to_vec(), opened: 0, closed: 0, alive: 0, most_alive: 0, video: false, shots: None, videos_at_open: vec![] }
+        Fake { log: Arc::new(Mutex::new(vec![])), quirks: quirks.to_vec(), fetches: Arc::default(), opened: 0, closed: 0, alive: 0, most_alive: 0, video: false, shots: None, videos_at_open: vec![] }
+    }
+    fn count(&self, what: &str) -> usize {
+        self.log.lock().unwrap().iter().filter(|l| *l == what).count()
     }
     fn sign_ins(&self) -> usize {
         self.log.lock().unwrap().iter().filter(|l| *l == "sign-in").count()
@@ -187,11 +203,13 @@ impl Browsers for Fake {
             self.videos_at_open.push(n);
         }
         self.most_alive = self.most_alive.max(self.alive);
-        Ok(app(self.log.clone(), quirk))
+        self.log.lock().unwrap().push("open".into());
+        Ok(app(self.log.clone(), quirk, self.fetches.clone()))
     }
     async fn close(&mut self, _d: ScriptedDriver) {
         self.closed += 1;
         self.alive -= 1;
+        self.log.lock().unwrap().push("close".into());
     }
 }
 
@@ -547,4 +565,223 @@ async fn a_sign_in_without_an_identity_cookie_is_still_kept() {
     assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
     assert_eq!((fake.opened, fake.closed), (1, 1));
     assert_eq!(fake.sign_ins(), 1);
+}
+
+// ---- a case's setup in the kept browser ---------------------------------------
+
+fn reply(status: u16, body: Value) -> Value {
+    json!({
+        "status": status,
+        "contentType": "application/json; charset=utf-8",
+        "finalUrl": "https://hr.example.internal/hr/pmsv10/performancecycle?handler=x",
+        "redirected": false,
+        "text": body.to_string(),
+    })
+}
+
+fn the_cycle() -> Value {
+    reply(200, json!({ "cycleId": 274, "cycleName": "AUTOTEST cycle" }))
+}
+
+/// The template `make-cycle` and the setup fixture `own`, run as `who`.
+fn setup_fixture(root: &Path, who: &str) {
+    let mut t: ApiTemplate = serde_json::from_value(json!({
+        "id": "make-cycle", "title": "Make a cycle", "module": "PMS", "effect": "create",
+        "description": "d", "sources": ["x:1"], "antiforgery": { "page": "/hr/pmsv10/performancecycle?mode=create" },
+        "params": [ { "name": "cycleName", "type": "string", "required": true } ],
+        "steps": [ { "name": "Cycle setup", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+                     "query": { "handler": "SaveProgress" }, "form": { "CycleName": "{{cycleName}}" },
+                     "capture": { "cycleId": "$.cycleId", "cycleName": "$.cycleName" } } ],
+        "outputs": ["cycleId", "cycleName"]
+    }))
+    .unwrap();
+    t.proven = Some(Proven {
+        at: "2026-10-01 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "admin".into(),
+        outputs: BTreeMap::new(),
+        environment: None,
+        via: None,
+    });
+    template_store::save(root, ORG, PROJECT, &t).unwrap();
+    let f = Fixture {
+        id: "own".into(),
+        name: "Fixture own".into(),
+        account: who.into(),
+        steps: vec![FixtureStep {
+            template: "make-cycle".into(),
+            params: [("cycleName".to_string(), "{{prefix}} cycle".to_string())].into(),
+        }],
+        outputs: [("cycle_id".to_string(), "{{steps.1.cycleId}}".to_string())].into(),
+        creates: vec![Creates { kind: "cycle".into(), id: "{{steps.1.cycleId}}".into(), name: "{{steps.1.cycleName}}".into() }],
+        skip_stages: vec![],
+    };
+    fixture_store::save(root, ORG, PROJECT, &f).unwrap();
+}
+
+fn with_setup(mut s: CaseScript) -> CaseScript {
+    s.setup = Some(v2_lib::autorun::Setup { fixture: "own".into() });
+    s
+}
+
+/// The `open` and `close` (and with `with_fetch`, `fetch`) entries of the
+/// fake's log, in order.
+fn browser_order(fake: &Fake, with_fetch: bool) -> Vec<String> {
+    fake.log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|l| *l == "open" || *l == "close" || (with_fetch && *l == "fetch"))
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn setup_same_account_runs_in_kept_browser() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[]);
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (1, 1));
+    assert_eq!(fake.sign_ins(), 1);
+    assert_eq!(fake.count("fetch"), 1, "the setup's request ran in the kept browser");
+    // The case after the setup still used the same browser.
+    let step0 = run.cases[1].steps.iter().find(|s| s.step_number == SIGN_IN_STEP).unwrap();
+    assert!(step0.outcomes[0].detail.starts_with(REUSED), "{:?}", step0.outcomes);
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+}
+
+#[tokio::test]
+async fn setup_other_account_closes_kept_first() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "b");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[]);
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    // Case 1's browser closes before the setup's opens (`run` also asserts
+    // never two at once), then the case's own browser.
+    assert_eq!(browser_order(&fake, false), ["open", "close", "open", "close", "open", "close"]);
+    assert_eq!(fake.count("fetch"), 1);
+    assert_eq!(fake.sign_ins(), 3);
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+    assert_eq!(lease::holder_of(&env_of(root), "b"), None);
+}
+
+#[tokio::test]
+async fn setup_does_not_wait_on_own_lease() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[]);
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let started = std::time::Instant::now();
+    let run = run(&mut fake, root, &[1, 2]).await;
+    // The account's lease is the kept browser's own: the setup never queues
+    // behind it for the lease wait (300 ms here) and is never Blocked by it.
+    assert!(started.elapsed() < std::time::Duration::from_millis(quick().lease_wait_ms), "{:?}", started.elapsed());
+    assert_eq!(run.cases[1].proposed, "Passed", "{:?}", proposals(&run));
+    assert!(!run.cases[1].reason.contains("setup failed"), "{}", run.cases[1].reason);
+}
+
+#[tokio::test]
+async fn a_setup_that_fails_in_the_kept_browser_closes_it() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    store::save_script(root, &case(3, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[]);
+    fake.fetches.lock().unwrap().push_back(reply(500, json!({ "error": "no" })));
+    let run = run(&mut fake, root, &[1, 2, 3]).await;
+    assert_eq!(run.cases[1].proposed, "Blocked", "{:?}", proposals(&run));
+    assert!(run.cases[1].reason.starts_with("setup failed: "), "{}", run.cases[1].reason);
+    assert_eq!(run.cases[2].proposed, "Passed", "{:?}", proposals(&run));
+    // Case 1's browser was closed by the failed setup; case 3 signed in anew.
+    assert_eq!((fake.opened, fake.closed), (2, 2));
+    assert_eq!(fake.sign_ins(), 2);
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
+}
+
+#[tokio::test]
+async fn a_kept_browser_no_longer_signed_in_leaves_the_setup_its_own() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[Quirk::HideMarker]);
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!(browser_order(&fake, false), ["open", "close", "open", "close", "open", "close"]);
+    assert_eq!(fake.count("fetch"), 1);
+}
+
+#[tokio::test]
+async fn a_fresh_rerun_runs_the_setup_again_first() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    // The first browser fails every check after case 1's: case 2 fails in it.
+    let mut fake = Fake::new(&[Quirk::FailChecks]);
+    fake.fetches.lock().unwrap().extend([the_cycle(), the_cycle()]);
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert_eq!(run.cases[1].proposed, "Passed", "{:?}", proposals(&run));
+    // One setup in the kept browser, one more before the fresh go, in a
+    // browser of its own, closed before the fresh go's browser opened.
+    assert_eq!(fake.count("fetch"), 2);
+    assert_eq!((fake.opened, fake.closed), (3, 3));
+    assert_eq!(browser_order(&fake, true), ["open", "fetch", "close", "open", "fetch", "close", "open", "close"]);
+}
+
+#[tokio::test]
+async fn a_fresh_rerun_whose_setup_cannot_run_keeps_the_first_record() {
+    let _l = crate::serial::account_leases();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    setup_fixture(root, "a");
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &with_setup(case(2, "a", "yes"))).unwrap();
+    let mut fake = Fake::new(&[Quirk::FailChecks]);
+    // Only the first setup is answered; the second gets a 500.
+    fake.fetches.lock().unwrap().push_back(the_cycle());
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert_eq!(run.cases[1].proposed, "Failed", "{:?}", proposals(&run));
+    assert!(run.cases[1].reason.contains(v2_lib::autorun::transient::RETRY_NOT_STARTED), "{}", run.cases[1].reason);
+    assert_eq!(run.cases[1].steps.iter().filter(|s| s.step_number == SIGN_IN_STEP).count(), 1);
+    assert_eq!(lease::holder_of(&env_of(root), "a"), None);
 }

@@ -1060,6 +1060,34 @@ pub(crate) async fn open_session<D: Driver>(
     }
 }
 
+/// `open_session` for a browser that is already signed in as `req`'s
+/// account (the Auto Test run's kept browser): the same `Session`, built
+/// from the same recipe and account, without signing in. On failure, the
+/// report of `req`'s template stopped at `Sign in`.
+pub(crate) async fn open_session_signed_in<D: Driver>(
+    _d: &mut D,
+    root: &Path,
+    req: &RunRequest,
+    _timing: &Timing,
+) -> Result<Session, RunReport> {
+    let mut progress = Progress::new();
+    progress.at(SIGN_IN, None);
+    let prepared = prepare(root, &req.org, &req.project, &req.account).and_then(|(recipe, account)| {
+        let origin = recipe.origins().into_iter().next().ok_or_else(|| {
+            "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Test, Sign-in recipe"
+                .to_string()
+        })?;
+        Ok(Session::new(recipe, account, origin, vec![]))
+    });
+    match prepared {
+        Ok(session) => Ok(session),
+        Err(e) => {
+            progress.fail(None, e);
+            Err(finish(req, progress))
+        }
+    }
+}
+
 /// Runs `req.template` in a browser `open_session` signed in: its
 /// anti-forgery page, its token, then its steps. `limit` bounds this one
 /// template, not whatever runs around it.
