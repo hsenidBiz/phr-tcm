@@ -60,7 +60,7 @@ function mount(opts: {
 }
 
 const listed = () =>
-  within(screen.getByRole("list", { name: "Test files" }))
+  within(screen.getByRole("group", { name: "Test files" }))
     .getAllByRole("listitem")
     .map((li) => li.textContent);
 
@@ -76,7 +76,7 @@ test("lists each file with its size, and says where they live", async () => {
 test("an empty folder says so", async () => {
   mount({ files: [] });
   expect(await screen.findByText(/No test files yet/)).toBeInTheDocument();
-  expect(screen.queryByRole("list", { name: "Test files" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Test files" })).not.toBeInTheDocument();
 });
 
 test("Add files copies each picked file in, by its path", async () => {
@@ -207,4 +207,53 @@ test("sizes read the way the run reports say them", () => {
   expect(fileSize(512)).toBe("512 bytes");
   expect(fileSize(1536)).toBe("1.5 KB");
   expect(fileSize(25 * 1024 * 1024)).toBe("25.0 MB");
+});
+
+const names = (items: HTMLElement[]) => items.map((li) => li.querySelector("span")?.textContent);
+
+test("groups files by kind in a fixed order, with a count, and shows no empty group", async () => {
+  mount({
+    files: [
+      { name: "z.zip", size: 1, modified: "1" },
+      { name: "a.json", size: 1, modified: "1" },
+      { name: "b.PNG", size: 1, modified: "1" },
+      { name: "c.pdf", size: 1, modified: "1" },
+      { name: "d.xlsx", size: 1, modified: "1" },
+      { name: "e.csv", size: 1, modified: "1" },
+    ],
+  });
+  await screen.findByText("c.pdf");
+  const wrapper = screen.getByRole("group", { name: "Test files" });
+  const kinds = within(wrapper)
+    .getAllByRole("group")
+    .map((g) => g.getAttribute("aria-label"));
+  expect(kinds).toEqual(["Spreadsheets", "Documents", "Images", "Data", "Archives"]);
+  expect(screen.queryByRole("group", { name: "Other" })).not.toBeInTheDocument();
+  expect(screen.getByText("Spreadsheets · 2")).toBeInTheDocument();
+  expect(screen.getByText("Documents · 1")).toBeInTheDocument();
+  // The extension decides, in any case.
+  expect(names(within(screen.getByRole("group", { name: "Images" })).getAllByRole("listitem"))).toEqual(["b.PNG"]);
+});
+
+test("an unknown or missing extension is Other, and files sort by name without regard to case", async () => {
+  mount({
+    files: [
+      { name: "notes", size: 1, modified: "1" },
+      { name: "Beta.txt", size: 1, modified: "1" },
+      { name: "alpha.TXT", size: 1, modified: "1" },
+      { name: "weird.xyz", size: 1, modified: "1" },
+      { name: ".hidden", size: 1, modified: "1" },
+      { name: "carol.md", size: 1, modified: "1" },
+    ],
+  });
+  await screen.findByText("notes");
+  const docs = within(screen.getByRole("group", { name: "Documents" })).getAllByRole("listitem");
+  expect(names(docs)).toEqual(["alpha.TXT", "Beta.txt", "carol.md"]);
+  const other = within(screen.getByRole("group", { name: "Other" })).getAllByRole("listitem");
+  expect(names(other)).toEqual([".hidden", "notes", "weird.xyz"]);
+  expect(screen.getByText("Other · 3")).toBeInTheDocument();
+  const kinds = within(screen.getByRole("group", { name: "Test files" }))
+    .getAllByRole("group")
+    .map((g) => g.getAttribute("aria-label"));
+  expect(kinds).toEqual(["Documents", "Other"]);
 });

@@ -128,8 +128,15 @@ export function visibleCaseItems(
   on: ReadonlySet<Module> = modulesSnapshot(),
   simple: boolean = appSimpleModeSnapshot(),
 ): Item<Section>[] {
-  return CASE_ITEMS.filter((i) => sectionShown(i.id, on, simple));
+  const shown = CASE_ITEMS.filter((i) => sectionShown(i.id, on, simple));
+  if (!simple) return shown;
+  // Basic mode: four rows in its own order, no group headings (see `heading`).
+  return BASIC_ORDER.flatMap((id) => shown.filter((i) => i.id === id));
 }
+
+/** The rows Basic mode offers, in the order it shows them. Auto Test leads:
+ * it is what Basic mode is for. A module that is off still drops its row. */
+const BASIC_ORDER: readonly Section[] = ["autorun", "run", "view", "ai"];
 
 /** Section ids in Ctrl+N order: 1-based index = the shortcut digit. Rows in
  * NO_SHORTCUT are skipped, so they have no number and move no one else's. */
@@ -189,7 +196,7 @@ export default function Sidebar<T extends string = Section>({
   // Subscribed, so switching a module on or off adds or
   // removes its rail rows at once.
   const on = useModules();
-  // Simple mode closes the rail up around the screens it hides.
+  // Basic mode closes the rail up around the screens it hides.
   const simple = useAppSimpleMode().on;
   // Rows a person has just revealed from the Modules page (lib/newNav).
   // Never in a documentation screenshot.
@@ -233,10 +240,8 @@ export default function Sidebar<T extends string = Section>({
     >
       {list.map(({ id, label, icon: Icon, tone, note, group }, index) => {
         // The first row of a group carries the group's heading above it.
-        // Simple mode can leave Tools holding Auto Test alone; a heading over
-        // one row says nothing, so it goes then. Two or more rows keep it.
-        const alone = simple && group === "advanced" && list.filter((r) => r.group === group).length === 1;
-        const heading = group && !alone && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
+        // Basic mode shows one flat list of four rows, so no headings at all.
+        const heading = group && !simple && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;
         // A row with a badge already says it is new; the bare "new" is for rows without one.

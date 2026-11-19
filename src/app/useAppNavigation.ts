@@ -42,7 +42,7 @@ export function useAppNavigation({
   // the person there; any other navigation clears it.
   const [startOnModules, setStartOnModules] = useState(false);
   const goToSection = (target: Section) => {
-    // Simple mode: every way into a hidden screen opens Auto Test instead.
+    // Basic mode: every way into a hidden screen opens Auto Test instead.
     const s: Section = appSimpleModeSnapshot() && SIMPLE_HIDDEN_SECTIONS.has(target) ? "autorun" : target;
     logUi(`nav: ${s}`);
     setSection(s);
@@ -104,7 +104,7 @@ export function useAppNavigation({
     if (section === "settings" && !workMode) {
       const back = beforeSettings.current;
       beforeSettings.current = null;
-      setSection(back?.section ?? "manual");
+      setSection(back?.section ?? (appSimpleModeSnapshot() ? "autorun" : "manual"));
       setWorkMode(back?.workMode ?? false);
       setCaseSelection(null);
       return;

@@ -63,7 +63,7 @@ test("the heading explains what an area is", async () => {
 });
 
 async function startRecording() {
-  const record = await screen.findByRole("button", { name: "Record an area…" });
+  const record = await screen.findByRole("button", { name: "Record an area" });
   await waitFor(() => expect(record).toBeEnabled());
   fireEvent.click(record);
   fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
@@ -83,7 +83,7 @@ async function send(payload: { kind: string; index: number; readable: string; de
  * `auto_run_record_start` to settle - for the "starting" phase tests
  * below, where that call is held open on purpose. */
 async function chooseAndStart() {
-  const record = await screen.findByRole("button", { name: "Record an area…" });
+  const record = await screen.findByRole("button", { name: "Record an area" });
   await waitFor(() => expect(record).toBeEnabled());
   fireEvent.click(record);
   fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
@@ -170,7 +170,7 @@ test("a recording lists each click as it arrives and saves on Stop", async () =>
   expect(await screen.findByText('1. link "Leave"')).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Area Leave saved."));
-  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area" })).toBeInTheDocument();
 });
 
 test("a path that does not replay says which click failed and offers to record again", async () => {
@@ -243,7 +243,7 @@ test("a close that arrives as the recording screen appears still frees the recor
       return null;
     }
   });
-  const record = await screen.findByRole("button", { name: "Record an area…" });
+  const record = await screen.findByRole("button", { name: "Record an area" });
   await waitFor(() => expect(record).toBeEnabled());
   fireEvent.click(record);
   fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
@@ -299,7 +299,7 @@ test("Cancel while starting cancels the pending sign-in and returns to the list"
     rejectStart?.("the recording was cancelled - nothing was saved");
   });
 
-  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area" })).toBeInTheDocument();
   await waitFor(() =>
     expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved."),
   );
@@ -324,7 +324,7 @@ test("after Cancel, Start's refusal reads as a cancel whatever its words", async
   await act(async () => {
     rejectStart?.("some other words entirely");
   });
-  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area" })).toBeInTheDocument();
   expect(screen.queryByText("some other words entirely")).not.toBeInTheDocument();
   expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved.");
 });
@@ -352,7 +352,7 @@ test("a Start that succeeds after Cancel was pressed is cancelled, not shown as 
   await act(async () => {
     resolveStart?.(null);
   });
-  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area" })).toBeInTheDocument();
   await waitFor(() => expect(cancels).toBe(2));
   expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved.");
@@ -384,7 +384,7 @@ test("the check after Stop can be cancelled", async () => {
   await act(async () => {
     resolveStop?.({ saved: false, module: "Leave", area: "Leave", failure: "the recording was cancelled - nothing was saved" });
   });
-  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area" })).toBeInTheDocument();
   expect(screen.queryByText("the recording was cancelled - nothing was saved")).not.toBeInTheDocument();
   expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved.");
 });
@@ -510,7 +510,7 @@ test("nothing is offered to cancel when nothing was left open", async () => {
     }
   });
   await waitFor(() => expect(asked).toBe(1));
-  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Cancel recording" })).not.toBeInTheDocument();
 });
 
@@ -551,7 +551,7 @@ test("the list groups areas under their module, each with its own buttons", asyn
 });
 
 async function openRecordForm() {
-  const record = await screen.findByRole("button", { name: "Record an area…" });
+  const record = await screen.findByRole("button", { name: "Record an area" });
   await waitFor(() => expect(record).toBeEnabled());
   fireEvent.click(record);
 }
@@ -699,7 +699,7 @@ test("Re-record, Try and Remove act on that area, not on its module", async () =
 test("Record an area stays disabled until the areas have loaded, and when they could not be read", async () => {
   // Loading: the nav answer never arrives.
   mount((cmd) => (cmd === "auto_run_load_nav" ? new Promise(() => {}) : undefined));
-  const record = await screen.findByRole("button", { name: "Record an area…" });
+  const record = await screen.findByRole("button", { name: "Record an area" });
   await screen.findByRole("combobox", { name: "Record and try as" });
   expect(record).toBeDisabled();
   cleanup();
@@ -708,7 +708,7 @@ test("Record an area stays disabled until the areas have loaded, and when they c
     if (cmd === "auto_run_load_nav") throw new Error("the areas file is not readable: x");
   });
   expect(await screen.findByText(/the areas file is not readable/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Record an area…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Record an area" })).toBeDisabled();
 });
 
 test("an area an assistant repaired says why, and Put old path back restores it", async () => {
