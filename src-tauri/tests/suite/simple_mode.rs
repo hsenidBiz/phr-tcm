@@ -226,7 +226,7 @@ fn every_guide_that_names_a_hidden_screen_says_what_to_do_in_simple_mode() {
 #[test]
 fn no_tool_or_route_sets_the_app_simple_mode() {
     let root = src_dir();
-    let mut files = vec![root.join("mcp.rs"), root.join("ai_tools.rs")];
+    let mut files = vec![root.join("mcp.rs"), root.join("ai_tools.rs"), root.join("simple_view.rs")];
     files_under(&root.join("ai_bridge"), &["rs"], &mut files);
     assert!(files.len() > 20, "the scan found only {} files", files.len());
     for f in &files {

@@ -1133,12 +1133,12 @@ export default function AiBridge() {
           )}
           {toolShown("save_autorun_script") && (
             <li>
-              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. Off: you run Auto Test by hand.
+              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. {!simple && <>Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. </>}Off: you run Auto Test by hand.
             </li>
           )}
           {toolShown("list_api_templates") && (
             <li>
-              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
+              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. {!simple && <>Testing and running also need the API templates switch above, which is off by default. </>}Off: you do template work by hand.
             </li>
           )}
           {toolShown("open_report") && (

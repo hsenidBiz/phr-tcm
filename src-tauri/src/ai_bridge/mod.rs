@@ -517,6 +517,7 @@ pub async fn route_timed_simple(
         None => route_as(caller, &under, client, method, target, body, version).await,
     };
     let answer = crate::simple_view::name_hidden_in_tools_answer(simple, method, path, answer);
+    let answer = crate::simple_view::reword_api_switch_refusal(simple, &under, answer);
     // One line per call: the route and how long it took, so a slow call can
     // be told from a slow site. The query and the body are never logged.
     crate::applog::debug(call_time_line(method, target, answer.0, started.elapsed().as_millis()));

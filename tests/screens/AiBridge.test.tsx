@@ -2066,6 +2066,9 @@ test("Simple mode hides the API templates and Network tools cards, the writing r
   for (const label of ["Test Suites", "Run results", "Auto Test scripts", "API templates", "Database Read Access"]) {
     expect(within(card).getByText(label), label).toBeInTheDocument();
   }
+  // The sentences that point at the hidden switches are gone too.
+  expect(card.textContent).not.toMatch(/Network tools switch/);
+  expect(card.textContent).not.toMatch(/API templates switch/);
   // A view, not a save: the switch the person made is still as they left it.
   expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
 });
@@ -2081,4 +2084,14 @@ test("out of Simple mode the cards, rows and writing intro are all there", async
   const card = screen.getByText("AI Tools Breakdown").closest("section")!;
   expect(card.textContent).toMatch(/The best way to write test cases/);
   expect(within(card).getByText("Crystal Reports")).toBeInTheDocument();
+  expect(card.textContent).toMatch(/Network tools switch, which is off by default/);
+  expect(card.textContent).toMatch(/API templates switch above, which is off by default/);
+});
+
+test("Turn all on under Simple mode keeps the hidden tools' saved switches", async () => {
+  // One visible row off (Run results) and one hidden row off (Find a PBI).
+  saveDisabledTools(["get_run_results", "search_pbis"]);
+  renderSimpleBridge(true);
+  fireEvent.click(await screen.findByRole("button", { name: "Turn all on" }));
+  expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
 });

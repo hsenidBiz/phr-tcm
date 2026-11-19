@@ -482,14 +482,11 @@ fn simple_hidden_from(answer: &Option<serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Whether `/tools`'s answer says Simple mode hides `name`.
-pub fn hidden_by_simple_mode(reply: &Result<(u16, String), String>, name: &str) -> bool {
+/// The tools `/tools`'s answer says Simple mode hides: the body parsed once.
+pub fn simple_hidden_in(reply: &Result<(u16, String), String>) -> Vec<String> {
     match reply {
-        Ok((200, body)) => {
-            let answer = serde_json::from_str::<serde_json::Value>(body).ok();
-            simple_hidden_from(&answer).iter().any(|t| t == name)
-        }
-        _ => false,
+        Ok((200, body)) => simple_hidden_from(&serde_json::from_str::<serde_json::Value>(body).ok()),
+        _ => Vec::new(),
     }
 }
 
@@ -550,11 +547,7 @@ pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes 
 fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool, Vec<String>) {
     let reply = call("GET", "/tools", "");
     let unlocked = unlocked_from(&reply);
-    let hidden = crate::simple_view::SIMPLE_HIDDEN_TOOLS
-        .iter()
-        .filter(|t| hidden_by_simple_mode(&reply, t))
-        .map(|t| t.to_string())
-        .collect();
+    let hidden = simple_hidden_in(&reply);
     let (off, on) = tool_policy_from(reply);
     (off, on, unlocked, hidden)
 }
@@ -3128,11 +3121,26 @@ pub fn tools_reply_or_saved(
     reply: Result<(u16, String), String>,
     saved: Option<(BTreeSet<Module>, bool)>,
 ) -> Result<(u16, String), String> {
+    tools_reply_or_saved_simple(reply, saved, false)
+}
+
+/// `tools_reply_or_saved` that also knows whether the saved app settings have
+/// Simple mode on: then the saved answer names the hidden tools too, so a
+/// closed app does not list them.
+pub fn tools_reply_or_saved_simple(
+    reply: Result<(u16, String), String>,
+    saved: Option<(BTreeSet<Module>, bool)>,
+    simple: bool,
+) -> Result<(u16, String), String> {
     match (&reply, saved) {
         (Ok((200, _)), _) | (_, None) => reply,
         (_, Some((on, unlocked))) => {
             let names: Vec<&str> = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect();
-            Ok((200, serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked }).to_string()))
+            let mut answer = serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked });
+            if simple {
+                answer["simple_hidden"] = serde_json::json!(crate::simple_view::SIMPLE_HIDDEN_TOOLS);
+            }
+            Ok((200, answer.to_string()))
         }
     }
 }
@@ -3140,7 +3148,7 @@ pub fn tools_reply_or_saved(
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let reply = bridge_request(method, path, body);
     if method == "GET" && path == "/tools" {
-        return tools_reply_or_saved(reply, crate::modules::saved_on_this_machine());
+        return tools_reply_or_saved_simple(reply, crate::modules::saved_on_this_machine(), crate::simple_view::saved_on_this_machine());
     }
     reply
 }

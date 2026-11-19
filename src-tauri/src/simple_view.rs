@@ -56,7 +56,7 @@ pub const CRYSTAL_ROUTE_PREFIX: &str = "/crystal-";
 
 /// Whether the saved app setting has Simple mode on, in this process.
 pub fn is_on() -> bool {
-    crate::app_settings::current().app_simple_mode == Some(true)
+    matches!(crate::app_settings::current().app_simple_mode, Some(true))
 }
 
 /// Whether a bridge route belongs to a tool Simple mode hides.
@@ -99,15 +99,57 @@ pub fn context_under(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> cra
     let mut out = ctx.clone();
     if simple {
         out.disabled_tools = disabled_under(true, &ctx.disabled_tools);
-        out.network_tools = true;
+        // Like the write switch below, the network tools come on only for a
+        // context that names an environment (consistent with
+        // `push_context_with`, which never turns one on for another).
+        out.network_tools = ctx.gate.env_id.is_some();
         if ctx.gate.env_id.is_some() && ctx.gate.holds == 0 {
             out.api_writes = true;
         }
-        out.app_simple_mode = Some(true);
     }
     out
 }
 
+
+/// Whether the SAVED settings in this machine's app data folder have Simple
+/// mode on: what the `--mcp` proxy reads when the app is closed, from the
+/// same folder as `modules::saved_on_this_machine`.
+pub fn saved_on_this_machine() -> bool {
+    crate::modules::data_dir_in(std::env::var_os("APPDATA"))
+        .filter(|d| d.join("app-settings.json").exists())
+        .is_some_and(|d| matches!(crate::app_settings::load(&d).app_simple_mode, Some(true)))
+}
+
+/// What an API template call answers while its switch is not on (see
+/// `API_WRITES_OFF`). Under Simple mode the API templates card is hidden, so
+/// the plain sentence would point at a control nobody can see: say why
+/// instead. `ctx` is the context a handler was given (Simple's view of it).
+pub fn api_writes_off_text(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> String {
+    if !simple {
+        return crate::ai_bridge::API_WRITES_OFF.to_string();
+    }
+    if ctx.gate.holds > 0 {
+        SIMPLE_API_SWITCHING.to_string()
+    } else {
+        SIMPLE_API_NO_ENVIRONMENT.to_string()
+    }
+}
+
+/// Simple mode, API templates, a switch of environment still in progress.
+pub const SIMPLE_API_SWITCHING: &str = "The environment is being switched. Wait for it to finish, then try again.";
+/// Simple mode, API templates, no environment chosen yet.
+pub const SIMPLE_API_NO_ENVIRONMENT: &str =
+    "API templates need an environment. Choose one in the Environment card on the AI Bridge tab, then try again.";
+
+/// Under `simple`, an answer that is the plain API switch sentence (from any
+/// of the routes that return it) becomes Simple mode's own, by `ctx`.
+pub fn reword_api_switch_refusal(simple: bool, ctx: &crate::ai_bridge::BridgeContext, answer: (u16, String)) -> (u16, String) {
+    if simple && answer.1 == crate::ai_bridge::API_WRITES_OFF {
+        (answer.0, api_writes_off_text(true, ctx))
+    } else {
+        answer
+    }
+}
 
 /// Under Simple mode the proxy is told which tools are hidden, by name,
 /// because it drops a core tool from `disabled` (a core tool has no switch).

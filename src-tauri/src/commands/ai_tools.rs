@@ -1359,6 +1359,13 @@ pub fn remove_agents_in(dir: &std::path::Path) -> Result<(), String> {
 /// there. One failure does not abandon the rest, but the first reason is
 /// reported.
 pub fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), String> {
+    write_commands_with(dir, &crate::ai_tools::effective_disabled(disabled))
+}
+
+/// `write_commands_in` for a disabled set already made effective
+/// (`ai_tools::effective_disabled_under`), so a caller - a test - can say
+/// whether app Simple mode is on without touching the process-wide setting.
+pub fn write_commands_with(dir: &std::path::Path, effective: &[String]) -> Result<(), String> {
     // An earlier version wrote one top-level GLOBAL file. Leaving it would
     // put `/tcm-testcases` in the picker beside the namespaced set. Only
     // ours, and only when writing the global set.
@@ -1369,7 +1376,7 @@ pub fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
 
     // A tool switched off loses its command; switched back on, it returns.
-    let wanted = command_files_in(dir, &crate::ai_tools::effective_disabled(disabled));
+    let wanted = command_files_in(dir, effective);
 
     // Sweep the directory itself, not just the paths `COMMANDS` names
     // today: a command that was renamed or dropped from that const (this
