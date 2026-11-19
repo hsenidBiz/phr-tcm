@@ -88,7 +88,7 @@ export default function CaseScreens({
         ? "t-screen-in flex min-h-0 flex-1 flex-col"
         : "t-screen-in"
     }>
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-2 flex items-center gap-2">
         <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
         {section === "ai" && <BridgeStatusBadge />}
         {section === "playwright" && <SpecsStatusPill />}
