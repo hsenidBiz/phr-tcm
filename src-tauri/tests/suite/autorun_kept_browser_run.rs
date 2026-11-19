@@ -43,6 +43,8 @@ enum Quirk {
     RotateSid,
     /// The identity cookie changes as the steps run.
     RotateIdentity,
+    /// The sign-in leaves no identity cookie at all.
+    NoIdentity,
 }
 
 /// An application that signs in (`#go`), shows `#marker` once signed in,
@@ -63,7 +65,7 @@ fn app(log: Arc<Mutex<Vec<String>>>, quirk: Quirk) -> ScriptedDriver {
             }
             "Network.getAllCookies" => json!({ "cookies": [
                 { "name": "sid", "value": sid, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true },
-                { "name": "ehrm85", "value": identity, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
+                { "name": if quirk == Quirk::NoIdentity { "other" } else { "ehrm85" }, "value": identity, "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
             ] }),
             // The recorder, for a run that wants a video of failed cases.
             "Browser.getVersion" => json!({ "product": "Edg/157.0.3456.78" }),
@@ -156,11 +158,15 @@ struct Fake {
     alive: usize,
     most_alive: usize,
     video: bool,
+    /// Where to count the videos on disk as each browser opens, and what
+    /// each count was.
+    shots: Option<std::path::PathBuf>,
+    videos_at_open: Vec<usize>,
 }
 
 impl Fake {
     fn new(quirks: &[Quirk]) -> Fake {
-        Fake { log: Arc::new(Mutex::new(vec![])), quirks: quirks.to_vec(), opened: 0, closed: 0, alive: 0, most_alive: 0, video: false }
+        Fake { log: Arc::new(Mutex::new(vec![])), quirks: quirks.to_vec(), opened: 0, closed: 0, alive: 0, most_alive: 0, video: false, shots: None, videos_at_open: vec![] }
     }
     fn sign_ins(&self) -> usize {
         self.log.lock().unwrap().iter().filter(|l| *l == "sign-in").count()
@@ -176,6 +182,10 @@ impl Browsers for Fake {
         let quirk = self.quirks.get(self.opened).copied().unwrap_or(Quirk::Plain);
         self.opened += 1;
         self.alive += 1;
+        if let Some(dir) = &self.shots {
+            let n = std::fs::read_dir(dir).map(|r| r.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".mp4")).count()).unwrap_or(0);
+            self.videos_at_open.push(n);
+        }
         self.most_alive = self.most_alive.max(self.alive);
         Ok(app(self.log.clone(), quirk))
     }
@@ -511,11 +521,30 @@ async fn the_first_gos_video_is_discarded_when_a_reused_go_is_run_again_fresh() 
     store::save_script(root, &case(2, "a", "yes")).unwrap();
     let mut fake = Fake::new(&[Quirk::FailChecks]);
     fake.video = true;
+    fake.shots = Some(root.join("shots"));
     let run = run(&mut fake, root, &[1, 2]).await;
     assert_eq!(run.cases[1].proposed, "Passed", "{:?}", proposals(&run));
     assert_eq!(run.cases[1].video, None);
+    // The first go's video was on disk when the fresh go opened - so there
+    // was something to discard - and is gone at the end.
+    assert_eq!(fake.videos_at_open, vec![0, 1], "a video was kept after the reused go failed");
     let videos: Vec<_> = std::fs::read_dir(root.join("shots"))
         .map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".mp4")).collect())
         .unwrap_or_default();
     assert!(videos.is_empty(), "{videos:?}");
+}
+
+#[tokio::test]
+async fn a_sign_in_without_an_identity_cookie_is_still_kept() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root, true);
+    store::save_script(root, &case(1, "a", "yes")).unwrap();
+    store::save_script(root, &case(2, "a", "yes")).unwrap();
+    let mut fake = Fake::new(&[Quirk::NoIdentity]);
+    let run = run(&mut fake, root, &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", proposals(&run));
+    assert_eq!((fake.opened, fake.closed), (1, 1));
+    assert_eq!(fake.sign_ins(), 1);
 }

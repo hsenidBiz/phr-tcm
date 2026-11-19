@@ -1214,9 +1214,14 @@ async fn go_once<B: Browsers>(
         // The case's own pages may have re-issued the sign-in's session
         // cookie (backlog 44b): the print is taken again when the sign-in is
         // provably the same one, and a browser whose print could not be
-        // taken again is not kept - the next case would find it changed.
+        // taken again may keep a print that has gone stale: the next case's
+        // check then finds it changed and opens fresh.
         let who_key = go.account.map(str::to_string);
-        keep = super::replay_to::retake_after_steps(&mut d, go.root, go.organization, go.project, go.script, i32::MAX, &who_key, &mut lease, go.timing).await;
+        // Whether it retook is not asked: a sign-in that left no identity
+        // cookie is kept too. What the lease holds decides, and the next
+        // case's check compares the cookies and the page again.
+        let _ = super::replay_to::retake_after_steps(&mut d, go.root, go.organization, go.project, go.script, i32::MAX, &who_key, &mut lease, go.timing).await;
+        keep = lease.sign_in_print().is_some();
     }
     // `run_case_reusing` has already waited for a download still
     // arriving, once, so the browser closes now.
