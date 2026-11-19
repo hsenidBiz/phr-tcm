@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.21",
+    date: "2026-11-19",
+    items: [
+      "Simple mode is now called Basic mode, and the Auto Test switch reads Basic and Advanced.",
+      "Basic mode now also hides Manual Entry and the Writing style and Working repositories cards, leaves Auto Test first in the sidebar, and connects your AI tools for the whole computer.",
+      "Test files are grouped by kind (spreadsheets, documents, images and more), with their sizes lined up.",
+    ],
+  },
+  {
     version: "2.4.7-beta.20",
     date: "2026-11-19",
     items: [
