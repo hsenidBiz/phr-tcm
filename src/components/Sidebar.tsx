@@ -134,10 +134,10 @@ export function visibleCaseItems(
   return BASIC_ORDER.flatMap((id) => shown.filter((i) => i.id === id));
 }
 
-/** The rows Basic mode offers, in the order it shows them. Auto Test leads:
- * it is what Basic mode is for, and Crystal Reports (shown as before, while
+/** The rows Basic mode offers, in the order it shows them. Auto Test sits
+ * below AI Bridge, as it does with Basic mode off, and Crystal Reports (shown as before, while
  * its module is on) comes last. A module that is off still drops its row. */
-const BASIC_ORDER: readonly Section[] = ["autorun", "run", "view", "ai", "crystal-reports"];
+const BASIC_ORDER: readonly Section[] = ["run", "view", "ai", "autorun", "crystal-reports"];
 
 /** Section ids in Ctrl+N order: 1-based index = the shortcut digit. Rows in
  * NO_SHORTCUT are skipped, so they have no number and move no one else's. */
