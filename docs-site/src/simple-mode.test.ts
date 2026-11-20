@@ -39,6 +39,6 @@ describe("Basic mode in the guide", () => {
     const text = JSON.stringify(screen("getting-started"));
     expect(text).toContain("Basic mode");
     expect(text).toContain("follow the sidebar");
-    expect(text).toContain("[[Ctrl+4]] is AI Bridge");
+    expect(text).toContain("[[Ctrl+4]] is Auto Test");
   });
 });
