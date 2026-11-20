@@ -354,7 +354,7 @@ test("Basic mode shows four rows in its own order and puts everything back when 
   expect(screen.getByText("Test Case Management")).toBeInTheDocument();
   act(() => setAppSimpleModeForTest(true));
   for (const name of HIDDEN_ROWS) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-  const rows = ["Auto Test", "Run Tests", "View Test Cases", "AI Bridge", "Crystal Reports"];
+  const rows = ["Run Tests", "View Test Cases", "AI Bridge", "Auto Test", "Crystal Reports"];
   for (const name of rows) expect(screen.getByRole("button", { name })).toBeInTheDocument();
   const order = names().filter((n) => rows.some((r) => n?.includes(r)));
   expect(order.map((n) => rows.find((r) => n?.includes(r)))).toEqual(rows);
@@ -371,7 +371,7 @@ test("Basic mode: a module that is off drops its row and leaves the others", () 
   setAppSimpleModeForTest(true);
   expect(visibleCaseItems().map((i) => i.id)).toEqual(["run", "view", "ai", "crystal-reports"]);
   setModulesForTest(ALL_MODULES.filter((m) => m !== "crystal_reports"));
-  expect(visibleCaseItems().map((i) => i.id)).toEqual(["autorun", "run", "view", "ai"]);
+  expect(visibleCaseItems().map((i) => i.id)).toEqual(["run", "view", "ai", "autorun"]);
 });
 
 test("number shortcuts follow the visible rows in Basic mode, and off is unchanged", () => {
@@ -379,12 +379,12 @@ test("number shortcuts follow the visible rows in Basic mode, and off is unchang
   const off = shortcutOrder();
   expect(off.slice(0, 3)).toEqual(["manual", "import", "edit"]);
   setAppSimpleModeForTest(true);
-  expect(shortcutOrder()).toEqual(["autorun", "run", "view", "ai"]);
+  expect(shortcutOrder()).toEqual(["run", "view", "ai", "autorun"]);
   expect(sectionShortcut("crystal-reports")).toBeUndefined();
-  expect(sectionShortcut("autorun")).toBe("mod+1");
-  expect(sectionShortcut("run")).toBe("mod+2");
+  expect(sectionShortcut("run")).toBe("mod+1");
+  expect(sectionShortcut("autorun")).toBe("mod+4");
   expect(sectionShortcut("import")).toBeUndefined();
-  expect(visibleCaseItems().map((i) => i.id)).toEqual(["autorun", "run", "view", "ai", "crystal-reports"]);
+  expect(visibleCaseItems().map((i) => i.id)).toEqual(["run", "view", "ai", "autorun", "crystal-reports"]);
   setAppSimpleModeForTest(false);
   expect(shortcutOrder()).toEqual(off);
 });
