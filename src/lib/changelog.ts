@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.23",
+    date: "2026-11-20",
+    items: [
+      "In Basic mode, Auto Test sits below AI Bridge in the sidebar again.",
+    ],
+  },
+  {
     version: "2.4.7-beta.22",
     date: "2026-11-19",
     items: [
