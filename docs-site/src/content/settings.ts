@@ -131,7 +131,7 @@ export const settings: Screen = {
       locate: { role: "switch", name: "Basic mode" },
       name: "Basic mode",
       does:
-        "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge, where your AI tools then register machine-wide. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on. " +
+        "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge, and the Copy Auto Test data button in Edit environments, where your AI tools then register machine-wide. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on. " +
         "Switching it on also switches the modules on, so Auto Test and the rest are ready, and holds Auto Test in its Basic mode (the Basic and Advanced switch at the top of Auto Test is hidden; turning Basic mode off leaves Auto Test in Basic, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
         "A new installation starts with Basic mode on; an installation from before it existed keeps everything and starts with it off. " +
         "Anything that opens a hidden screen, a link or a shortcut, opens Auto Test instead. The switch waits while an unattended Auto Test run is going. If a module could not be switched on, a line under the switch names it; turn Basic mode off and on to try again.",

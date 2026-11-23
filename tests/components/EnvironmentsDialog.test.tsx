@@ -395,7 +395,19 @@ test("says the Auto Test data of a removed environment is kept for 30 days", asy
   fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
   expect(
     await screen.findByText(
-      "Remove QA? Its accounts and saved sign-ins go now. Its Auto Test scripts, areas and templates are kept for 30 days and can be copied into another environment from Copy Auto Test data…",
+      "Remove QA? Its accounts and saved sign-ins go now. Its Auto Test scripts, areas and templates are kept for 30 days and can be copied into another environment from Copy Auto Test data.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("the removal sentence stops naming Copy Auto Test data while Basic mode hides it", async () => {
+  setAppSimpleModeForTest(true);
+  mount();
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
+  expect(
+    await screen.findByText(
+      "Remove QA? Its accounts and saved sign-ins go now. Its Auto Test scripts, areas and templates are kept for 30 days.",
     ),
   ).toBeInTheDocument();
 });
@@ -425,6 +437,20 @@ test("each environment has a Copy Auto Test data button that opens the copy dial
   fireEvent.click(screen.getByRole("button", { name: "Copy Auto Test data into QA" }));
   expect(await screen.findByRole("combobox", { name: "Copy from" })).toBeInTheDocument();
   expect(calls.find((c) => c.cmd === "env_copy_choices")!.args).toEqual({ targetId: QA.id });
+});
+
+test("the Copy Auto Test data button is absent in Basic mode and present with it off", async () => {
+  setAppSimpleModeForTest(true);
+  mount();
+  await screen.findByText("QA");
+  expect(screen.queryByRole("button", { name: /^Copy Auto Test data into/ })).not.toBeInTheDocument();
+  cleanup();
+  setAppSimpleModeForTest(false);
+  mount();
+  await screen.findByText("QA");
+  const button = screen.getByRole("button", { name: "Copy Auto Test data into QA" });
+  // The advanced view's label has no ellipsis.
+  expect(button).toHaveTextContent(/^Copy Auto Test data$/);
 });
 
 test("the reset switch shows only for a saved test environment, is off by default and moves by its own command", async () => {

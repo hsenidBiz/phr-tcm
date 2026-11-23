@@ -148,7 +148,7 @@ function sentence(message: string): string {
 }
 
 /** What an import would do to the Auto Test data, from Rust's preview. */
-function previewSentence(p: BackupPreview): string {
+function previewSentence(p: BackupPreview, simple: boolean): string {
   const names = p.replaces.join(", ");
   const origin = p.pre_update
     ? "This backup is from before each environment had its own Auto Test data, so its scripts, areas and templates go into every environment. "
@@ -156,7 +156,7 @@ function previewSentence(p: BackupPreview): string {
   if (p.replaces.length === 0) {
     return `${origin}This backup replaces no environment's Auto Test data.`;
   }
-  return `${origin}Replaces the Auto Test data of ${names}. What they hold now is kept in the removed area for 30 days and can be copied back from Copy Auto Test data….`;
+  return `${origin}Replaces the Auto Test data of ${names}. What they hold now is kept in the removed area for 30 days${simple ? "." : " and can be copied back from Copy Auto Test data."}`;
 }
 
 /** After an import: every Auto Test browser is closed (what it held is the
@@ -602,7 +602,7 @@ export default function Settings({
                 {sentence(preview.error.message)}
               </p>
             )}
-            {preview.data && <p className="text-sm text-muted">{previewSentence(preview.data)}</p>}
+            {preview.data && <p className="text-sm text-muted">{previewSentence(preview.data, simple)}</p>}
             <p className="break-all text-xs text-faint">{importPath}</p>
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
@@ -996,7 +996,7 @@ export default function Settings({
         <SettingRow
           asLabel
           name="Basic mode"
-          description="Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on."
+          description="Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge, and the Copy Auto Test data button in Edit environments. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on."
           control={
             <Switch
               checked={appSettings.data?.app_simple_mode ?? false}
