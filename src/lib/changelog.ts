@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.24",
+    date: "2026-11-23",
+    items: [
+      "Basic mode also hides AI Bridge's tool list and AI Tools Breakdown, and Auto Test's Basic and Advanced switch.",
+      "In Basic mode, the tools your assistant is shown, such as Test Suites and Run Results, are always on. Turning Basic mode off brings back your own choices.",
+    ],
+  },
+  {
     version: "2.4.7-beta.23",
     date: "2026-11-20",
     items: [
