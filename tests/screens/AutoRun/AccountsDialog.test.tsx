@@ -1430,3 +1430,75 @@ test("Cancel after Remove all closes without saving, and a reopen shows the rows
   expect(onClose).toHaveBeenCalled();
   expect(saved).toEqual([]);
 });
+
+// ---- Select all shown in the picker --------------------------------------
+
+type Login = { login: string; saved: boolean };
+
+/** Opens the picker over a list of logins the search answers with. */
+async function openPicker(logins: (term: string) => Login[]) {
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
+    fill: () => SAME_COUNTS,
+    picker: (_cmd, args) => ({
+      logins: logins((args as { search?: string }).search ?? ""),
+      cut_short: false,
+    }),
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  return screen.findByRole("dialog", { name: "Add accounts from the database" });
+}
+
+const SOME_SAVED = (term: string): Login[] =>
+  [{ login: "kim", saved: true }, { login: "lee.two", saved: false }, { login: "mo.three", saved: false }].filter((l) =>
+    l.login.includes(term),
+  );
+
+test("Select all shown ticks only the unsaved shown rows, and unticking clears them", async () => {
+  const picker = await openPicker(SOME_SAVED);
+  await within(picker).findByText("lee.two");
+  const all = within(picker).getByRole("checkbox", { name: "Select all shown" });
+  fireEvent.click(all);
+  expect(within(picker).getByRole("checkbox", { name: "Add lee.two" })).toHaveAttribute("aria-checked", "true");
+  expect(within(picker).getByRole("checkbox", { name: "Add mo.three" })).toHaveAttribute("aria-checked", "true");
+  expect(within(picker).getByRole("button", { name: "Add selected (2)" })).toBeInTheDocument();
+  expect(all).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(all);
+  expect(within(picker).getByRole("checkbox", { name: "Add lee.two" })).toHaveAttribute("aria-checked", "false");
+  expect(within(picker).getByRole("button", { name: "Add selected (0)" })).toBeInTheDocument();
+});
+
+test("Select all shown is mixed after one row is unticked", async () => {
+  const picker = await openPicker(SOME_SAVED);
+  await within(picker).findByText("lee.two");
+  const all = within(picker).getByRole("checkbox", { name: "Select all shown" });
+  expect(all).toHaveAttribute("aria-checked", "false");
+  fireEvent.click(all);
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add lee.two" }));
+  expect(all).toHaveAttribute("aria-checked", "mixed");
+  expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
+});
+
+test("Select all shown is disabled when every shown row is saved", async () => {
+  const picker = await openPicker((term) => SOME_SAVED(term).filter((l) => l.saved));
+  await within(picker).findByText("kim");
+  expect(within(picker).getByRole("checkbox", { name: "Select all shown" })).toHaveAttribute("aria-disabled", "true");
+});
+
+test("a new search answer clears the selection and Select all shown follows", async () => {
+  const picker = await openPicker(SOME_SAVED);
+  await within(picker).findByText("lee.two");
+  const all = within(picker).getByRole("checkbox", { name: "Select all shown" });
+  fireEvent.click(all);
+  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "mo" } });
+  // The answer lists only mo.three: the tick on the hidden lee.two is gone,
+  // the one still shown stays.
+  await waitFor(() => expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument());
+  expect(within(picker).queryByText("lee.two")).not.toBeInTheDocument();
+  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "lee" } });
+  await within(picker).findByText("lee.two");
+  expect(within(picker).getByRole("button", { name: "Add selected (0)" })).toBeInTheDocument();
+  expect(within(picker).getByRole("checkbox", { name: "Select all shown" })).toHaveAttribute("aria-checked", "false");
+});
