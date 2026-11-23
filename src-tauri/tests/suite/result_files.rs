@@ -221,10 +221,10 @@ async fn an_expired_session_is_unauthorized_not_saved() {
 
 #[tokio::test]
 async fn a_download_error_names_no_url() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    let client = AdoClient::with_base_url("tok".into(), format!("http://{addr}"));
+    // Port 1 on loopback, never a freed ephemeral port: a port this test
+    // released could be taken by another test's mock server in the same
+    // binary before the request, which then answers 404 instead of refusing.
+    let client = AdoClient::with_base_url("tok".into(), "http://127.0.0.1:1".to_string());
     let dir = tempfile::tempdir().unwrap();
     let err = client
         .download_result_attachment("o", "p", 7, 9, 5, 10, &dir.path().join("x"))
