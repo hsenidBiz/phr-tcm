@@ -2328,3 +2328,57 @@ test("Simple keeps the Assistants card", async () => {
   await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
 });
+
+// ---- Run offers only the selected cases that still have a script ------------------------
+
+/** Selects every scripted case with Select all shown. */
+async function selectAllShown() {
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select all shown" }));
+}
+
+test("erasing every selected case's script leaves nothing to run", async () => {
+  const scripted = [1, 2];
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], scripted, [], (cmd) => {
+    if (cmd === "auto_run_clear_scripts") {
+      scripted.splice(0);
+      return 2;
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  await selectAllShown();
+  expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
+
+  fireEvent.click(moreItem("Clear scripts"));
+  fireEvent.click(await screen.findByRole("button", { name: "Clear 2 scripts" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("2 scripts removed."));
+
+  // The scripts are gone, so the selection is: no Run button, in either form.
+  await waitFor(() => expect(screen.queryByRole("button", { name: /^Run \d+ selected$/ })).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^Run \d+ unattended$/ })).not.toBeInTheDocument();
+});
+
+test("a mixed selection runs only the cases that still have a script", async () => {
+  const scripted = [1, 2, 3];
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check"), caseRow(3, "Gamma check")], scripted, [], (cmd) => {
+    if (cmd === "auto_run_clear_scripts") {
+      // Only the script of case 2 goes (as if erased on its own).
+      scripted.splice(scripted.indexOf(2), 1);
+      return 1;
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  await selectAllShown();
+  expect(await screen.findByRole("button", { name: "Run 3 selected" })).toBeInTheDocument();
+
+  fireEvent.click(moreItem("Clear scripts"));
+  fireEvent.click(await screen.findByRole("button", { name: "Clear 3 scripts" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 script removed."));
+
+  expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Run 2 unattended" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Run 3 selected" })).not.toBeInTheDocument();
+});

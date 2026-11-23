@@ -667,6 +667,14 @@ export default function AutoRun({
       return next;
     });
 
+  /** Whether a ticked case may stay ticked: it is shown, and - once every
+   * script has been read - it still has a script. A case whose script was
+   * erased (one by one, or Clear scripts) cannot run, so it is unticked as a
+   * case with no script never can be ticked; until the scripts are read, a
+   * missing one may only not be read yet. */
+  const scriptedIds = new Set(rows.filter((_, i) => hasScript(i)).map((c) => c.id));
+  const stays = (id: number) => shownIds.has(id) && (!scriptsRead || scriptedIds.has(id));
+
   /** A case the filters or the search hide leaves the selection, so a run
    * only ever holds what the person can see. Checked after every render
    * rather than in the filter's click, because the runs refreshing (one just finished) can hide
@@ -679,9 +687,9 @@ export default function AutoRun({
    * endless loop (error #185) and the screen crashed. */
   useEffect(() => {
     if (rows.length === 0) return;
-    if ([...selected].every((id) => shownIds.has(id))) return;
+    if ([...selected].every(stays)) return;
     setSelected((prev) => {
-      const kept = [...prev].filter((id) => shownIds.has(id));
+      const kept = [...prev].filter(stays);
       return kept.length === prev.size ? prev : new Set(kept);
     });
   });
@@ -692,7 +700,8 @@ export default function AutoRun({
 
   /** List order, not click order - the run reads top to bottom the way
    * the screen does. */
-  const selectedInOrder = rows.filter((c) => selected.has(c.id)).map((c) => c.id);
+  const selectedRows = rows.filter((c) => selected.has(c.id) && (!scriptsRead || scriptedIds.has(c.id)));
+  const selectedInOrder = selectedRows.map((c) => c.id);
 
   /** Both run buttons start from the plan, not from list order: the saved
    * order for this PBI, else the suggested one. A plan that cannot be had
@@ -1176,7 +1185,7 @@ export default function AutoRun({
           project={project}
           pbiId={pbi.id}
           cases={(selectedInOrder.length > 0
-            ? rows.filter((c) => selected.has(c.id))
+            ? selectedRows
             : rows.filter((_, i) => hasScript(i))
           ).map((c) => ({ id: c.id, title: c.title }))}
           onClose={() => setOrderingOpen(false)}
