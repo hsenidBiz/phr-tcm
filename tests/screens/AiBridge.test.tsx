@@ -475,17 +475,46 @@ const DATABASES = [
   },
 ];
 
+/// What the server said about each login (`db_write_verdicts`): the dev login
+/// can create, update and delete, the others can only read. A name proves
+/// nothing - these answers are what the switch follows.
+const CHECKED_AT = Date.parse("2026-11-23T09:00:00Z");
+const verdict = (can_write: boolean) => ({
+  can_write,
+  checked_at: CHECKED_AT,
+  reason: can_write ? "This login can create, update and delete." : "This login can only read this database.",
+});
+const VERDICTS: { id: string; check: ReturnType<typeof verdict> }[] = [
+  { id: "dev-login", check: verdict(true) },
+  { id: "dev-read", check: verdict(false) },
+  { id: "qa-read", check: verdict(false) },
+];
+
+/// `db_write_verdicts` and `db_check_write` answered from `VERDICTS`.
+function verdictAnswer(cmd: string, args: unknown): unknown {
+  if (cmd === "db_write_verdicts") return VERDICTS;
+  if (cmd === "db_check_write") return VERDICTS.find((v) => v.id === (args as { id: string }).id)?.check;
+  return undefined;
+}
+
 function dbMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
     if (cmd === "db_databases") return DATABASES;
+    if (cmd.startsWith("db_") && verdictAnswer(cmd, args) !== undefined) return verdictAnswer(cmd, args);
     return extra(cmd, args);
   });
 }
 
 function dbCard(): HTMLElement {
   return screen.getByRole("heading", { name: "Database Read Access" }).closest("section")!;
+}
+
+/// Opens Manage databases from the card and answers its dialog.
+async function openManage(): Promise<HTMLElement> {
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: /^Manage databases/ }));
+  return screen.findByRole("dialog", { name: "Manage databases" });
 }
 
 /// The database tools have no row in the tool list, so the card must not send
@@ -499,9 +528,10 @@ test("the database card says its tools are on with the module, not with a row in
   expect(text).not.toMatch(/tool list/);
 });
 
-/// The card is which database, its login, and whether it may write. The
-/// login itself lives in Rust: nothing on the card can show or take one.
-test("the database card is a picker, a login line, the list of databases and the write switch", async () => {
+/// The card is which database, its login, whether it may write, and the way
+/// into the list. The login itself lives in Rust: nothing on the card can
+/// show or take one.
+test("the database card is a picker, a login line, the write switch and a Manage databases button", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -510,12 +540,14 @@ test("the database card is a picker, a login line, the list of databases and the
   await waitFor(() => expect(picker).toHaveTextContent("Dev - read only"));
   const card = dbCard();
   expect(within(card).getByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
-  // One place to manage logins: every database's own Edit, and no
-  // separate button for the chosen one.
-  expect(within(card).queryByRole("button", { name: "Manage credentials" })).not.toBeInTheDocument();
+  // The button counts the saved databases.
+  expect(within(card).getByRole("button", { name: `Manage databases (${DATABASES.length})` })).toBeInTheDocument();
+  // The list itself is not on the card: no row, no Edit, no Add.
   for (const d of DATABASES) {
-    expect(within(card).getByRole("button", { name: `Edit ${d.label}` })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: `Edit ${d.label}` })).not.toBeInTheDocument();
   }
+  expect(within(card).queryByRole("button", { name: "Add database" })).not.toBeInTheDocument();
+  expect(within(card).queryByRole("button", { name: "Manage credentials" })).not.toBeInTheDocument();
   expect(within(card).getByRole("switch", { name: "Create, update and delete" })).toBeInTheDocument();
 
   expect(within(card).queryByText("Edit as one string")).not.toBeInTheDocument();
@@ -531,6 +563,51 @@ test("the database card is a picker, a login line, the list of databases and the
     expect(screen.queryByLabelText(gone)).not.toBeInTheDocument();
   }
   expect(card.querySelector('input[type="password"]')).toBeNull();
+});
+
+/// One compact row per database: the name, then database and server, then
+/// what the server said the login may do, with the time on hover.
+test("Manage databases lists every database with its status and Recheck", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  const calls = ownDbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const dialog = await openManage();
+  expect(await within(dialog).findByText("Staging")).toBeInTheDocument();
+  expect(within(dialog).getByText("HR · sql.staging")).toBeInTheDocument();
+  expect(within(dialog).getByText("hrmmain · sgdev01db02.cloud")).toBeInTheDocument();
+  expect(within(dialog).getByText("Not set up yet")).toBeInTheDocument();
+
+  // Statuses: the dev login can write, the others only read, and one never
+  // asked says so. The checked time is on hover.
+  const row = (name: string) => within(dialog).getByText(name).closest("li")!;
+  await waitFor(() => expect(within(row("Dev - dev login")).getByText("Can write")).toBeInTheDocument());
+  expect(within(row("Dev - read only")).getByText("Read only")).toBeInTheDocument();
+  expect(within(row("Staging")).getByText("Not checked")).toBeInTheDocument();
+  expect(within(row("Dev - dev login")).getByText("Can write")).toHaveAttribute(
+    "title",
+    `Checked ${new Date(CHECKED_AT).toLocaleString()}`,
+  );
+
+  // Recheck asks the server about that database only.
+  fireEvent.click(within(dialog).getByRole("button", { name: "Recheck Dev - read only" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "db_check_write")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "db_check_write")!.args).toEqual({ id: "dev-read" });
+});
+
+test("Manage databases filters by name or server", async () => {
+  ownDbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const dialog = await openManage();
+  await within(dialog).findByText("Staging");
+  const filter = within(dialog).getByRole("textbox", { name: "Filter databases" });
+  fireEvent.change(filter, { target: { value: "sql.stag" } });
+  expect(within(dialog).getByText("Staging")).toBeInTheDocument();
+  expect(within(dialog).queryByText("Dev - read only")).not.toBeInTheDocument();
+  fireEvent.change(filter, { target: { value: "QA" } });
+  expect(within(dialog).getByText("QA - read only")).toBeInTheDocument();
+  expect(within(dialog).queryByText("Staging")).not.toBeInTheDocument();
+  fireEvent.change(filter, { target: { value: "zzz" } });
+  expect(within(dialog).getByText("No database matches that filter.")).toBeInTheDocument();
 });
 
 test("a database with no login saved says so", async () => {
@@ -563,7 +640,8 @@ test("a shipped database's Edit opens its login, with no name to change", async 
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Edit Dev - dev login" }));
+  const manage = await openManage();
+  fireEvent.click(await within(manage).findByRole("button", { name: "Edit Dev - dev login" }));
   const dialog = await screen.findByRole("dialog", { name: "Credentials for Dev - dev login" });
   expect(within(dialog).queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
   // Editing a database does not choose it.
@@ -573,7 +651,7 @@ test("a shipped database's Edit opens its login, with no name to change", async 
 test("with no database chosen every login can still be edited", async () => {
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const edit = await within(dbCard()).findByRole("button", { name: "Edit QA - read only" });
+  const edit = await within(await openManage()).findByRole("button", { name: "Edit QA - read only" });
   expect(edit).not.toBeDisabled();
   fireEvent.click(edit);
   expect(await screen.findByRole("dialog", { name: "Credentials for QA - read only" })).toBeInTheDocument();
@@ -594,6 +672,7 @@ function ownDbMocks(extra: (cmd: string, args: unknown) => unknown = () => undef
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
     if (cmd === "db_databases") return list;
+    if (cmd.startsWith("db_") && verdictAnswer(cmd, args) !== undefined) return verdictAnswer(cmd, args);
     const answer = extra(cmd, args);
     if (cmd === "db_remove_custom") list = list.filter((d) => d.id !== (args as { id: string }).id);
     return answer;
@@ -601,25 +680,38 @@ function ownDbMocks(extra: (cmd: string, args: unknown) => unknown = () => undef
   return calls;
 }
 
-/// Each of your own databases is listed with Edit and Remove, so neither
+/// Each of your own databases is listed with Edit and Delete, so neither
 /// needs it chosen above - choosing one moves the active environment to it.
-test("your own databases are listed under the picker with Edit and Remove", async () => {
+test("your own databases are listed in the dialog with Edit and Delete", async () => {
   ownDbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const card = dbCard();
+  const card = await openManage();
   expect(await within(card).findByText("Staging")).toBeInTheDocument();
-  expect(within(card).getByText("HR on sql.staging")).toBeInTheDocument();
-  expect(within(card).getByText("Not set up yet")).toBeInTheDocument();
   expect(within(card).getByRole("button", { name: "Edit Staging" })).toBeInTheDocument();
-  expect(within(card).getByRole("button", { name: "Remove Staging" })).toBeInTheDocument();
-  // A shipped one is listed with Edit, but can never be removed.
+  expect(within(card).getByRole("button", { name: "Delete Staging" })).toBeInTheDocument();
+  // A shipped one is listed with Edit, but can never be deleted.
   expect(within(card).getByRole("button", { name: "Edit Dev - read only" })).toBeInTheDocument();
-  expect(within(card).queryByRole("button", { name: "Remove Dev - read only" })).not.toBeInTheDocument();
-  expect(within(card).getByText("hrmmain on sgdev01db02.cloud")).toBeInTheDocument();
+  expect(within(card).queryByRole("button", { name: "Delete Dev - read only" })).not.toBeInTheDocument();
 
   fireEvent.click(within(card).getByRole("button", { name: "Edit Staging" }));
   const dialog = await screen.findByRole("dialog", { name: "Credentials for Staging" });
   expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue("Staging");
+});
+
+/// A saved login may be allowed to do something the old one was not, so the
+/// server is asked again about that database as soon as the save lands.
+test("saving a login in Manage databases asks the server about it again", async () => {
+  const calls = ownDbMocks((cmd) => {
+    if (cmd === "save_db_credentials") return STAGING;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const manage = await openManage();
+  fireEvent.click(await within(manage).findByRole("button", { name: "Edit Staging" }));
+  const dialog = await screen.findByRole("dialog", { name: "Credentials for Staging" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "db_check_write")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "db_check_write")!.args).toEqual({ id: STAGING.id });
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Credentials for Staging" })).not.toBeInTheDocument());
 });
 
 test("Add database opens an empty form whose name the command requires, said inline", async () => {
@@ -627,7 +719,7 @@ test("Add database opens an empty form whose name the command requires, said inl
     if (cmd === "db_add_custom") throw "Enter a name for the database.";
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Add database" }));
+  fireEvent.click(await within(await openManage()).findByRole("button", { name: "Add database" }));
   const dialog = await screen.findByRole("dialog", { name: "Add a database" });
   expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue("");
   fireEvent.change(within(dialog).getByRole("textbox", { name: "Server" }), { target: { value: "h" } });
@@ -649,7 +741,7 @@ test("an added database joins the list without being chosen", async () => {
   });
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Add database" }));
+  fireEvent.click(await within(await openManage()).findByRole("button", { name: "Add database" }));
   const dialog = await screen.findByRole("dialog", { name: "Add a database" });
   fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "QA box" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
@@ -660,14 +752,14 @@ test("an added database joins the list without being chosen", async () => {
   expect(localStorage.getItem("tcm-v2-db-selected")).toBe("dev-read");
 });
 
-test("Remove asks first, and a database an environment uses shows the refusal inline", async () => {
+test("Delete asks first, and a database an environment uses shows the refusal inline", async () => {
   const refusal = '"Staging" is used by the environment "QA" - pick another database for it first';
   const calls = ownDbMocks((cmd) => {
     if (cmd === "db_remove_custom") throw refusal;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const card = dbCard();
-  fireEvent.click(await within(card).findByRole("button", { name: "Remove Staging" }));
+  const card = await openManage();
+  fireEvent.click(await within(card).findByRole("button", { name: "Delete Staging" }));
   expect(await within(card).findByText(/Its saved login is deleted from this machine/)).toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "db_remove_custom")).toBe(false);
 
@@ -678,11 +770,11 @@ test("Remove asks first, and a database an environment uses shows the refusal in
   expect(within(card).getByText("Staging")).toBeInTheDocument();
 });
 
-test("Keep backs out of removing a database without sending anything", async () => {
+test("Keep backs out of deleting a database without sending anything", async () => {
   const calls = ownDbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const card = dbCard();
-  fireEvent.click(await within(card).findByRole("button", { name: "Remove Staging" }));
+  const card = await openManage();
+  fireEvent.click(await within(card).findByRole("button", { name: "Delete Staging" }));
   fireEvent.click(await within(card).findByRole("button", { name: "Keep" }));
   expect(within(card).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "db_remove_custom")).toBe(false);
@@ -699,12 +791,13 @@ test("removing the chosen database clears the card's choice", async () => {
   const picker = await screen.findByRole("combobox", { name: "Database" });
   await waitFor(() => expect(picker).toHaveTextContent("Staging"));
 
-  fireEvent.click(within(dbCard()).getByRole("button", { name: "Remove Staging" }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove" }));
+  const manage = await openManage();
+  fireEvent.click(within(manage).getByRole("button", { name: "Delete Staging" }));
+  fireEvent.click(await within(manage).findByRole("button", { name: "Remove" }));
   await waitFor(() => expect(selectedDbSnapshot()).toBe(""));
   expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
   expect(told).toHaveBeenCalled();
-  await waitFor(() => expect(within(dbCard()).queryByText("HR on sql.staging")).not.toBeInTheDocument());
+  await waitFor(() => expect(within(manage).queryByText("HR · sql.staging")).not.toBeInTheDocument());
   expect(within(dbCard()).queryByText(/^Signs in as /)).not.toBeInTheDocument();
   stop();
 });
@@ -713,9 +806,10 @@ test("removing another database leaves the card's choice alone", async () => {
   ownDbMocks((cmd) => (cmd === "db_remove_custom" ? null : undefined));
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove Staging" }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove" }));
-  await waitFor(() => expect(within(dbCard()).queryByText("HR on sql.staging")).not.toBeInTheDocument());
+  const manage = await openManage();
+  fireEvent.click(await within(manage).findByRole("button", { name: "Delete Staging" }));
+  fireEvent.click(await within(manage).findByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(within(manage).queryByText("HR · sql.staging")).not.toBeInTheDocument());
   expect(selectedDbSnapshot()).toBe("dev-read");
 });
 
@@ -1140,6 +1234,7 @@ function legacyMocks(tools: unknown[], removal: (args: Removal) => unknown = () 
       return tools;
     }
     if (cmd === "db_databases") return DATABASES;
+    if (cmd === "db_write_verdicts") return VERDICTS;
     if (cmd === "log_ui") {
       logged.push((args as { message: string }).message);
       return null;
@@ -1257,7 +1352,7 @@ test("nothing is removed from a tool that is not installed", async () => {
 
 /// Off by default, and unmovable on a database the backend would refuse
 /// the write on anyway.
-test("creating, updating and deleting is off, and disabled on a read-only database", async () => {
+test("creating, updating and deleting is off, and disabled for a login the server says can only read", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -1267,29 +1362,87 @@ test("creating, updating and deleting is off, and disabled on a read-only databa
   expect(writes).toHaveAttribute("aria-checked", "false");
   expect(writes).toBeDisabled();
   // And the reason it cannot be moved is on screen, not implied.
-  expect(screen.getByText(/Only on a dev login database/)).toBeInTheDocument();
+  expect(await screen.findByText("This login can only read this database.")).toBeInTheDocument();
 
   fireEvent.click(writes);
   expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
 });
 
-/// On the dev login it moves, and the stored flag is what App pushes to
-/// the bridge beside the database id.
-test("on the dev login the write switch turns on and is stored", async () => {
+/// For a login the server says can write it moves, and the stored flag is
+/// what App pushes to the bridge beside the database id.
+test("for a login the server says can write, the switch turns on and is stored", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-login");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
   await screen.findByText("Signs in as sgdev01db01_devlogin");
   const writes = screen.getByRole("switch", { name: "Create, update and delete" });
-  expect(writes).not.toBeDisabled();
   expect(writes).toHaveAttribute("aria-checked", "false");
+  // Enabled once the verdict has arrived.
+  await waitFor(() => expect(writes).not.toBeDisabled());
 
   fireEvent.click(writes);
   expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
   expect(
     await screen.findByRole("switch", { name: "Create, update and delete" }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+/// A mock where verdicts start empty and `db_check_write` answers `answer`
+/// (a verdict, or a thrown sentence), recording each ask.
+function uncheckedMocks(answer: () => unknown) {
+  const calls: { cmd: string; args: unknown }[] = [];
+  let have: typeof VERDICTS = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_databases") return DATABASES;
+    if (cmd === "db_write_verdicts") return have;
+    if (cmd === "db_check_write") {
+      const got = answer() as ReturnType<typeof verdict>;
+      have = [{ id: (args as { id: string }).id, check: got }];
+      return got;
+    }
+  });
+  return calls;
+}
+
+/// Chosen with no answer yet, the login is asked about once, and the switch
+/// follows what the server says - a `_devlogin` name proves nothing.
+test("a database chosen with no verdict is checked, and the switch follows the answer", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  const calls = uncheckedMocks(() => verdict(false));
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Signs in as sgdev01db01_devlogin");
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "db_check_write")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "db_check_write")!.args).toEqual({ id: "dev-login" });
+  // A devlogin-named user the server says can only read: off, with the reason.
+  expect(await screen.findByText("This login can only read this database.")).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Create, update and delete" })).toBeDisabled();
+  // Asked once, not on every render.
+  expect(calls.filter((c) => c.cmd === "db_check_write")).toHaveLength(1);
+});
+
+test("a check that is answered 'can write' turns the switch on for the chosen login", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  uncheckedMocks(() => verdict(true));
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const writes = await screen.findByRole("switch", { name: "Create, update and delete" });
+  await waitFor(() => expect(writes).not.toBeDisabled());
+  expect(screen.getByText("This login can create, update and delete.")).toBeInTheDocument();
+});
+
+test("a check that fails says so, names no server, and leaves the switch off", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  uncheckedMocks(() => {
+    throw "Could not check this login's permissions. Try Recheck, or see Settings → Logs.";
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(
+    await screen.findByText("Could not check this login's permissions. Try Recheck, or see Settings → Logs."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Create, update and delete" })).toBeDisabled();
 });
 
 /// The API templates switch is a separate decision from whether the four
@@ -1353,6 +1506,7 @@ test("running changes without asking needs writes on, and says what each tool ne
   expect(noAsk).toBeDisabled();
   expect(noAsk).toHaveAttribute("aria-checked", "false");
 
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Create, update and delete" })).not.toBeDisabled());
   fireEvent.click(screen.getByRole("switch", { name: "Create, update and delete" }));
   await waitFor(() =>
     expect(screen.getByRole("switch", { name: "Run database changes without asking" })).not.toBeDisabled(),
@@ -1917,6 +2071,7 @@ test("a switch names an AI tool whose settings could not be updated", async () =
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
     if (cmd === "db_databases") return DATABASES;
+    if (cmd === "db_write_verdicts") return VERDICTS;
     if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
     if (cmd === "env_set_active")
       return {

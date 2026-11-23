@@ -146,30 +146,6 @@ export function forgetDbWritesEverywhere(): void {
   notify();
 }
 
-/** Whether a user name is the dev login - the only user the app lets an
- * assistant write as.
- *
- * A mirror of `db::guard::access_for` in Rust, which is the door that
- * actually enforces it. This copy decides only whether the write SWITCH
- * can be moved: a screen that offered it on a read-only login would be
- * promising something the backend refuses. */
-export function isDevLoginUser(user: string): boolean {
-  return user.trim().toLowerCase().endsWith("_devlogin");
-}
-
-/** The same rule, read out of a connection string's user key. */
-export function isDevLoginConnection(connectionString: string): boolean {
-  for (const part of connectionString.split(";")) {
-    const at = part.indexOf("=");
-    if (at < 0) continue;
-    const key = part.slice(0, at).replace(/\s+/g, "").toLowerCase();
-    if (key === "userid" || key === "uid" || key === "user") {
-      return isDevLoginUser(part.slice(at + 1));
-    }
-  }
-  return false;
-}
-
 let migrating: Promise<void> | null = null;
 
 /** Moves a connection string an older version kept in the webview into
