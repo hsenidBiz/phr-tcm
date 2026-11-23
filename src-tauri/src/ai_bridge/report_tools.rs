@@ -261,6 +261,9 @@ pub(crate) fn chosen_database_name(ctx: &BridgeContext) -> String {
         .unwrap_or_else(|| "the chosen database".to_string())
 }
 
+/// Said when a login that is not the dev login asks for a live preview.
+pub const LIVE_NEEDS_DEV_LOGIN: &str = "A live preview needs the dev login.";
+
 /// Draw the open report with fresh rows from its stored procedure. Every
 /// door is checked before anything connects: Database Access and writes
 /// (`live_preview_gate`), a chosen connection, and the dev login on it, which the server lets write;
@@ -290,8 +293,12 @@ pub async fn crystal_preview_live(
         Ok(conn) => conn,
         Err(why) => return (409, why),
     };
-    if crate::db::access_for_connection(&conn) == crate::db::Access::ReadOnly {
-        return (400, crate::db::READ_ONLY_SENTENCE.to_string());
+    // The dev login the server lets write: a login that can only change rows
+    // is refused with its own sentence, one with no verdict is read only.
+    match crate::db::query::access_of(&conn) {
+        crate::db::Access::ReadOnly => return (400, crate::db::READ_ONLY_SENTENCE.to_string()),
+        crate::db::Access::RowWrites => return (400, LIVE_NEEDS_DEV_LOGIN.to_string()),
+        crate::db::Access::DevWrites | crate::db::Access::DevObjects => {}
     }
     let name = chosen_database_name(ctx);
     let done = crystal_blocking(move || crate::crystal::preview_live_with(&conn, &name, params, fetch)).await;

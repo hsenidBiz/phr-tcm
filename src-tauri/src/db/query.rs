@@ -170,8 +170,9 @@ pub fn rows_affected(stdout: &str) -> Option<i64> {
 /// the person switched create/update/delete on in the app, AND the chosen
 /// connection is one whose user may write. Either one shut is a 400 that
 /// names which. A procedure, view or function has the same two doors, and
-/// the connection's door is narrower: a login that may write with the Crystal
-/// Reports module on (`access_with`).
+/// the connection's door is narrower: the dev login, which the server lets
+/// write, with the Crystal Reports module on (`access_with`). Row changes
+/// need only a login the server lets write.
 pub async fn run_query<R: Runner>(
     r: &R,
     exe: &Path,
