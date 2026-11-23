@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.26",
+    date: "2026-11-23",
+    items: [
+      "Database changes now follow what the database itself allows: the app checks whether the login can create, update and delete, instead of going by its name. Changing procedures, views and functions still needs the dev login.",
+      "Saved databases are managed in a new Manage databases dialog, with a filter, each database's status and a Recheck button, so the AI Bridge card stays short.",
+    ],
+  },
+  {
     version: "2.4.7-beta.25",
     date: "2026-11-23",
     items: [
