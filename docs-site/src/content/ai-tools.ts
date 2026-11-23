@@ -76,7 +76,7 @@ export const aiBridge: Screen = {
       summary:
         "The site and database Auto Test and API Templates work against. Shown while the Auto Test module is on, in Settings, under General, on the **Modules** page. " +
         "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Test browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened. " +
-        "With **Basic mode** on in Settings, the Network tools and API templates cards are hidden and both are on for assistants once an environment is chosen; assistants can read test cases and write Auto Test scripts, and the test-case writing tools, Find a PBI and the wiki are hidden from them and from **Tools an assistant may use**.",
+        "With **Basic mode** on in Settings, the Network tools and API templates cards are hidden and both are on for assistants once an environment is chosen; assistants can read test cases and write Auto Test scripts, and the test-case writing tools, Find a PBI and the wiki are hidden from them. The **Tools an assistant may use** and **AI Tools Breakdown** cards are not shown either, and every tool Basic mode leaves them is on there, whatever those switches said (turn Basic mode off and each switch is as you left it).",
     },
     {
       id: "api-templates",

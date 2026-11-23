@@ -69,7 +69,7 @@ export const settings: Screen = {
       id: "simple-mode",
       title: "Basic mode",
       summary:
-        "A shorter app. It hides Manual Entry, Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, trims the AI Bridge tab (no Writing style or Working repositories cards), and switches the modules on. Nothing is removed: turn it off and everything is back.",
+        "A shorter app. It hides Manual Entry, Import Test Cases, Update Test Cases, Search Suites, Suite Management, API Templates and Modules, trims the AI Bridge tab (no Writing style, Working repositories, tool list or AI Tools Breakdown cards, and the tools it shows are on), and switches the modules on. Nothing is removed: turn it off and everything is back.",
     },
     { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Test. Each module can be switched on once the one above it is. Hidden while Basic mode is on (Settings)." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
@@ -131,8 +131,8 @@ export const settings: Screen = {
       locate: { role: "switch", name: "Basic mode" },
       name: "Basic mode",
       does:
-        "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style and Working repositories cards in AI Bridge, where your AI tools then register machine-wide. Everything keeps working, and your assistant can still use API Templates. " +
-        "Switching it on also switches the modules on, so Auto Test and the rest are ready, and holds Auto Test in its Basic mode (only **Basic** is offered at the top of Auto Test; turning Basic mode off leaves Auto Test in Basic, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
+        "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge, where your AI tools then register machine-wide. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on. " +
+        "Switching it on also switches the modules on, so Auto Test and the rest are ready, and holds Auto Test in its Basic mode (the Basic and Advanced switch at the top of Auto Test is hidden; turning Basic mode off leaves Auto Test in Basic, and you can then pick **Advanced** again); switching it off leaves them on and brings the hidden screens back. " +
         "A new installation starts with Basic mode on; an installation from before it existed keeps everything and starts with it off. " +
         "Anything that opens a hidden screen, a link or a shortcut, opens Auto Test instead. The switch waits while an unattended Auto Test run is going. If a module could not be switched on, a line under the switch names it; turn Basic mode off and on to try again.",
       tips: ["Your assistant cannot change this setting. If it needs a screen that Basic mode hides, it does that part itself or asks you to turn Basic mode off."],

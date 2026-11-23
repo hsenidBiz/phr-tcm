@@ -1998,7 +1998,7 @@ test("a Modules request left over in Basic mode gives the plain page, and turnin
 });
 
 const SIMPLE_LINE =
-  "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style and Working repositories cards in AI Bridge. Everything keeps working, and your assistant can still use API Templates.";
+  "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on.";
 
 function simpleSettings(on: boolean) {
   return { close_to_tray: true, close_notice_shown: true, beta_updates: false, app_simple_mode: on };

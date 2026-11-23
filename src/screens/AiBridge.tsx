@@ -703,6 +703,10 @@ export default function AiBridge() {
         </details>
       </section>
 
+      {/* Basic mode hides this card; the tools it shows are on there (Rust
+          ignores the saved switches), and each switch is as left when Basic
+          mode goes off. */}
+      {!simple && (
       <section data-tour="ai-toolset" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
@@ -765,10 +769,7 @@ export default function AiBridge() {
             size="sm"
             variant="outline"
             onClick={() => {
-              // Under Basic mode only the rows on screen are turned on; the
-              // hidden ones keep their saved switch.
-              const shown = new Set(visible.flatMap((r) => r.names));
-              saveDisabledTools(simple ? disabled.filter((n) => !shown.has(n)) : []);
+              saveDisabledTools([]);
             }}
           >
             <IconConfirm aria-hidden />
@@ -776,6 +777,7 @@ export default function AiBridge() {
           </Button>
         )}
       </section>
+      )}
 
       {/* Which rules the writing guide carries: the standard ones, or the
           person's own writing style. Needs the Writing Style module. */}
@@ -789,6 +791,7 @@ export default function AiBridge() {
           column, B over C; at 2xl it dissolves (display:contents) and B
           and C become columns 2 and 3. `gap`, not space-y: space-y's
           child margins would leak through contents into the outer grid. */}
+      {(!simple || autoRunOn || dbOn || apiTemplatesOn) && (
       <div className="flex flex-col gap-6 2xl:contents">
       {/* B holds only module cards. With none of them on it is left out, so
           the breakdown (C) moves up to the second column instead of leaving
@@ -1087,6 +1090,8 @@ export default function AiBridge() {
       </div>
       )}
 
+      {/* Basic mode hides the breakdown too (nothing else is in this column). */}
+      {!simple && (
       <div className="flex min-w-0 flex-col gap-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
@@ -1151,7 +1156,9 @@ export default function AiBridge() {
         </ul>
       </section>
       </div>
+      )}
       </div>
+      )}
     </div>
   );
 }
