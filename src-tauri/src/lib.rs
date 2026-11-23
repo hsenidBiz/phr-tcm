@@ -248,6 +248,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             environments::env_add_proposals,
             environments::env_fill_proposal_passwords,
             environments::env_fill_account_passwords,
+            environments::env_list_db_logins,
+            environments::env_add_db_logins,
             environments::env_fill_db_change,
             autorun::auto_run_open_browser,
             autorun::auto_run_close_browser,

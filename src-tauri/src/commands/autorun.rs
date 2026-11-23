@@ -4016,25 +4016,61 @@ pub fn auto_run_accounts_version(app: tauri::AppHandle) -> Result<String, String
     Ok(crate::autorun::accounts::accounts_version(&root, &env_id))
 }
 
-/// Replace the accounts list. Returns the keys whose saved session was
-/// dropped, so the screen can say so. With `loaded_version` (from
-/// `auto_run_accounts_version`) a list that changed since is refused.
+/// The key made for one row that was saved with a blank key: its position in
+/// the saved rows and the key. No password.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct MadeKey {
+    pub index: u32,
+    pub key: String,
+}
+
+/// What saving the accounts answers: the keys whose saved session was dropped,
+/// and the keys made for blank-key rows. It carries no password: the screen
+/// reads the list again through `auto_run_list_accounts`.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct SavedAccounts {
+    pub dropped: Vec<String>,
+    pub made: Vec<MadeKey>,
+}
+
+/// Replace the accounts list. A row with a blank key and a username gets a key
+/// made from the username. Answers the keys whose saved session was dropped,
+/// so the screen can say so, and the keys made. With `loaded_version`
+/// (from `auto_run_accounts_version`) a list that changed since is refused.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_accounts(
     app: tauri::AppHandle,
     accounts: Vec<crate::autorun::accounts::Account>,
     loaded_version: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<SavedAccounts, String> {
     let root = root(&app)?;
     let env_id = crate::environments::active_id(&root)?;
+    save_accounts_in(&root, &env_id, accounts, loaded_version.as_deref())
+}
+
+/// `auto_run_save_accounts` for one environment of one root.
+pub fn save_accounts_in(
+    root: &std::path::Path,
+    env_id: &str,
+    accounts: Vec<crate::autorun::accounts::Account>,
+    loaded_version: Option<&str>,
+) -> Result<SavedAccounts, String> {
+    let asked = accounts;
+    let accounts = crate::autorun::accounts::fill_blank_keys(&asked);
+    let made: Vec<MadeKey> = asked
+        .iter()
+        .zip(&accounts)
+        .enumerate()
+        .filter(|(_, (before, after))| before.key.trim().is_empty() && before.key != after.key)
+        .map(|(i, (_, after))| MadeKey { index: i as u32, key: after.key.clone() })
+        .collect();
     // Where a password came from is the app's to say, not the screen's.
-    let before = crate::autorun::accounts::load_accounts_for(&root, &env_id).unwrap_or_default();
+    let before = crate::autorun::accounts::load_accounts_for(root, env_id).unwrap_or_default();
     let accounts = crate::autorun::accounts::with_known_sources(&before, &accounts);
-    let dropped =
-        crate::autorun::accounts::save_accounts_checked(&root, &env_id, &accounts, loaded_version.as_deref())?;
+    let dropped = crate::autorun::accounts::save_accounts_checked(root, env_id, &accounts, loaded_version)?;
     crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));
-    Ok(dropped)
+    Ok(SavedAccounts { dropped, made })
 }
 
 #[tauri::command(async)]

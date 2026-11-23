@@ -893,7 +893,7 @@ export const autoRun: Screen = {
       group: "setup",
       locate: { role: "textbox", name: "Key for account 1" },
       name: "Key",
-      does: "The name a script uses for the account. Keep the keys your team's scripts use, and fill in your own login beside them.",
+      does: "The name a script uses for the account. Keep the keys your team's scripts use, and fill in your own login beside them. Leave it empty and the app makes one from the login when you save.",
     },
     {
       id: "account-password",
@@ -911,7 +911,7 @@ export const autoRun: Screen = {
       locate: { role: "heading", nameRe: "^Proposed by the assistant" },
       name: "Proposed by the assistant",
       does:
-        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the app read from the environment's database, or type one. On a test environment the app looks each password up itself, so a password never passes through the assistant, and **Fill passwords from database** reads them again, for example after a reset. The **Accounts** tab has the same button for the accounts you have saved: it changes only the passwords that differ. **Dismiss** drops the list.",
+        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the app read from the environment's database, or type one. On a test environment the app looks each password up itself, so a password never passes through the assistant, and **Sync Database** reads them again, for example after a reset. The **Accounts** tab has the same button for the accounts you have saved: it changes only the passwords that differ, then opens **Add accounts from the database**, where you search the environment's logins, tick the ones you want and press **Add selected** to make an account of each. **Dismiss** drops the list.",
     },
     {
       id: "add-account",

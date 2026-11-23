@@ -672,7 +672,7 @@ pub fn add_proposals_with(
     Ok(confirm)
 }
 
-/// What a "Fill passwords from database" did, in counts and nothing else:
+/// What a "Sync Database" did, in counts and nothing else:
 /// no password and no login is in it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct FillCounts {
@@ -904,7 +904,7 @@ fn fill_db(
     crate::autorun::preconditions::environment_db(root, Some(store))
 }
 
-/// "Fill passwords from database" on the Proposed tab.
+/// "Sync Database" on the Proposed tab.
 #[tauri::command]
 #[specta::specta]
 pub async fn env_fill_proposal_passwords(
@@ -919,7 +919,7 @@ pub async fn env_fill_proposal_passwords(
     }
 }
 
-/// "Fill passwords from database" on the Accounts tab: the named accounts, or
+/// "Sync Database" on the Accounts tab: the named accounts, or
 /// every saved one when `keys` is empty.
 #[tauri::command]
 #[specta::specta]
@@ -933,6 +933,183 @@ pub async fn env_fill_account_passwords(
     match fill_db(&root, &*secrets.0, db_read) {
         Ok(db) => fill_accounts_in(&root, Ok(&crate::autorun::active_login::StageRows(&db)), &keys).await,
         Err(why) => fill_accounts_in::<crate::autorun::account_lookup::NoRows>(&root, Err(why), &keys).await,
+    }
+}
+
+/// One login in the environment's account table, for the picker. No password.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct DbLogin {
+    pub login: String,
+    /// A saved account in the active environment already has this username.
+    pub saved: bool,
+}
+
+/// The logins the picker lists, and whether the list was cut at the limit.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct DbLoginList {
+    pub logins: Vec<DbLogin>,
+    pub cut_short: bool,
+}
+
+/// A login that was asked for and not added, and why (a fixed sentence).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct NotAdded {
+    pub login: String,
+    pub reason: String,
+}
+
+/// What adding logins from the database did: counts and logins, never a password.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct AddedCounts {
+    pub added: u32,
+    pub already_saved: u32,
+    pub not_added: Vec<NotAdded>,
+}
+
+/// The longest search the picker sends, in characters.
+pub const SEARCH_LIMIT: usize = 128;
+pub const SEARCH_TOO_LONG: &str = "the search is too long - use fewer characters";
+pub const TOO_MANY_LOGINS: &str = "too many logins at once - tick fewer and add them again";
+
+fn lookup_failed(env: &Environment, why: String) -> String {
+    use crate::autorun::account_lookup::{failure_sentence, FIX_IN_APP};
+    crate::applog::info(format!("Environments: the account lookup for {} did not run", env.name));
+    failure_sentence(&why, FIX_IN_APP)
+}
+
+/// Lists the logins in the active test environment's account table that hold
+/// `search`, each marked when an account with that username is saved.
+pub async fn list_logins_in<S: crate::autorun::setup_find::RowSource>(
+    root: &Path,
+    rows: Result<&S, String>,
+    search: &str,
+) -> Result<DbLoginList, String> {
+    if search.chars().count() > SEARCH_LIMIT {
+        return Err(SEARCH_TOO_LONG.to_string());
+    }
+    let env = environments::active(root)?;
+    require_test(&env)?;
+    let listed = match rows {
+        Ok(rows) => crate::autorun::account_lookup::list_logins(rows, &env.account_lookup, search).await,
+        Err(why) => Err(why),
+    };
+    let (logins, cut_short) = listed.map_err(|why| lookup_failed(&env, why))?;
+    let saved = crate::autorun::accounts::load_accounts_for(root, &env.id)?;
+    let logins: Vec<DbLogin> = logins
+        .into_iter()
+        .map(|login| {
+            let is_saved = { let l = login.trim().to_lowercase(); saved.iter().any(|a| a.username.trim().to_lowercase() == l) };
+            DbLogin { login, saved: is_saved }
+        })
+        .collect();
+    crate::applog::info(format!("Environments: listed {} login(s) from the account table", logins.len()));
+    Ok(DbLoginList { logins, cut_short })
+}
+
+/// Adds the named logins as accounts of the active test environment, reading
+/// each password from the account table here. A login already saved is
+/// skipped; one with only a hash, no password, the database login's own
+/// password or no row is not added, and says why.
+pub async fn add_logins_in<S: crate::autorun::setup_find::RowSource>(
+    root: &Path,
+    rows: Result<&S, String>,
+    logins: &[String],
+) -> Result<AddedCounts, String> {
+    use crate::autorun::account_lookup::{
+        key_for_login, no_row_reason, Found, EMPTY_PASSWORD, HASH_ONLY, SAME_AS_DB_LOGIN,
+    };
+    if logins.len() > crate::autorun::account_lookup::LIST_LIMIT as usize {
+        return Err(TOO_MANY_LOGINS.to_string());
+    }
+    let env = environments::active(root)?;
+    require_test(&env)?;
+    let saved = crate::autorun::accounts::load_accounts_for(root, &env.id)?;
+    let mut counts = AddedCounts::default();
+    let mut asked: Vec<String> = vec![];
+    for l in logins.iter().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+        let folded = l.to_lowercase();
+        if asked.iter().any(|a| a.to_lowercase() == folded) {
+            continue;
+        }
+        if saved.iter().any(|a| a.username.trim().to_lowercase() == folded) {
+            counts.already_saved += 1;
+        } else {
+            asked.push(l.to_string());
+        }
+    }
+    if asked.is_empty() {
+        return Ok(counts);
+    }
+    let looked = match rows {
+        Ok(rows) => crate::autorun::account_lookup::look_up(rows, &env.account_lookup, &asked).await,
+        Err(why) => Err(why),
+    };
+    let found = looked.map_err(|why| lookup_failed(&env, why))?;
+    let mut taken: std::collections::HashSet<String> = saved.iter().map(|a| a.key.clone()).collect();
+    let mut ready = vec![];
+    for login in asked {
+        let why = match found.of(&login) {
+            Some(Found::Password(p)) => {
+                let key = key_for_login(&login, &taken);
+                taken.insert(key.clone());
+                ready.push(crate::autorun::accounts::Account {
+                    key,
+                    label: login.clone(),
+                    username: login,
+                    password: p.clone(),
+                    password_source: Some(env.db_id.clone()),
+                });
+                continue;
+            }
+            Some(Found::Hash) => HASH_ONLY.to_string(),
+            Some(Found::Empty) => EMPTY_PASSWORD.to_string(),
+            Some(Found::Masked) => SAME_AS_DB_LOGIN.to_string(),
+            None => no_row_reason(&found.table),
+        };
+        counts.not_added.push(NotAdded { login, reason: why });
+    }
+    let appended = crate::autorun::accounts::append_new_accounts_for(root, &env.id, ready.clone())?;
+    counts.added = appended.len() as u32;
+    // A login saved by someone else meanwhile is not an add.
+    counts.already_saved += (ready.len() - appended.len()) as u32;
+    crate::applog::info(format!(
+        "Environments: added {} account(s) from the account table ({} not added)",
+        counts.added,
+        counts.not_added.len()
+    ));
+    Ok(counts)
+}
+
+/// "Add accounts from the database": the logins in the account table.
+#[tauri::command]
+#[specta::specta]
+pub async fn env_list_db_logins(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    search: String,
+    db_read: bool,
+) -> Result<DbLoginList, String> {
+    let root = super::autorun::root(&app)?;
+    match fill_db(&root, &*secrets.0, db_read) {
+        Ok(db) => list_logins_in(&root, Ok(&crate::autorun::active_login::StageRows(&db)), &search).await,
+        Err(why) => list_logins_in::<crate::autorun::account_lookup::NoRows>(&root, Err(why), &search).await,
+    }
+}
+
+/// Adds the ticked logins as accounts; each password is read here and never
+/// leaves Rust.
+#[tauri::command]
+#[specta::specta]
+pub async fn env_add_db_logins(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    logins: Vec<String>,
+    db_read: bool,
+) -> Result<AddedCounts, String> {
+    let root = super::autorun::root(&app)?;
+    match fill_db(&root, &*secrets.0, db_read) {
+        Ok(db) => add_logins_in(&root, Ok(&crate::autorun::active_login::StageRows(&db)), &logins).await,
+        Err(why) => add_logins_in::<crate::autorun::account_lookup::NoRows>(&root, Err(why), &logins).await,
     }
 }
 

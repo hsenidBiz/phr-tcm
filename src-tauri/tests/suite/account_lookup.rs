@@ -1217,3 +1217,194 @@ async fn proposing_reports_a_changed_database_and_counts_saved_passwords_from_an
     assert_eq!(v2_lib::environments::last_fill_db(root, &env_id).as_deref(), Some("dev-read"));
     assert_eq!(stored(root)[0].password_source.as_deref(), Some("qa-read"));
 }
+
+// ---- Sync Database: add accounts from the database -------------------------
+
+use std::collections::HashSet;
+use v2_lib::autorun::account_lookup::{
+    key_for_login, EMPTY_PASSWORD, HASH_ONLY, LIST_LIMIT, NOT_TEST,
+};
+use v2_lib::commands::autorun::save_accounts_in;
+use v2_lib::commands::environments::{add_logins_in, list_logins_in, AddedCounts};
+
+fn logins_answer(names: &[&str]) -> String {
+    let body: Vec<String> = names.iter().map(|u| u.to_string()).collect();
+    format!("USRACC_USER_ID\n--------------\n{}\n\n({} rows affected)\n", body.join("\n"), names.len())
+}
+
+fn list_fake(names: &[&str]) -> Fake {
+    Fake { columns: Ok(String::new()), rows: Ok(logins_answer(names)), asked: Mutex::new(vec![]) }
+}
+
+#[test]
+fn the_list_select_is_app_built_and_a_read() {
+    let l = AccountLookup::default();
+    assert_eq!(
+        l.list_sql("", 200).unwrap(),
+        "SELECT TOP (200) [USRACC_USER_ID] FROM [PeoplesHR].[HS_SM_USER_ACCOUNT] WHERE [USRACC_USER_ID] IS NOT NULL ORDER BY [USRACC_USER_ID]"
+    );
+    assert_eq!(
+        l.list_sql("hr", 200).unwrap(),
+        "SELECT TOP (200) [USRACC_USER_ID] FROM [PeoplesHR].[HS_SM_USER_ACCOUNT] WHERE [USRACC_USER_ID] IS NOT NULL AND [USRACC_USER_ID] LIKE N'%hr%' ESCAPE N'!' ORDER BY [USRACC_USER_ID]"
+    );
+    let odd = l.list_sql("a%b_c[d'e!", 200).unwrap();
+    assert!(odd.contains("LIKE N'%a!%b!_c![d''e!!%' ESCAPE N'!'"), "{odd}");
+}
+
+#[test]
+fn keys_are_made_from_logins() {
+    let none = HashSet::new();
+    assert_eq!(key_for_login("HR.Admin@x", &none), "hr.admin-x");
+    let taken: HashSet<String> = ["hr.admin-x".to_string(), "hr.admin-x-2".to_string()].into();
+    assert_eq!(key_for_login("HR.Admin@x", &taken), "hr.admin-x-3");
+    assert_eq!(key_for_login("con", &none), "user-con");
+    assert_eq!(key_for_login("", &none), "user-1");
+    assert_eq!(key_for_login("@@@", &none), "user-1");
+    let one: HashSet<String> = ["user-1".to_string()].into();
+    assert_eq!(key_for_login("@@@", &one), "user-2");
+    let two: HashSet<String> = ["user-1".to_string(), "user-2".to_string()].into();
+    assert_eq!(key_for_login("", &two), "user-3");
+    assert!(v2_lib::autorun::accounts::valid_key(&key_for_login("@@@", &none)));
+    assert_eq!(key_for_login("a  b", &none), "a-b");
+    let long = "a".repeat(100);
+    assert_eq!(key_for_login(&long, &none).len(), 64);
+    let clash: HashSet<String> = ["a".repeat(64)].into();
+    let k = key_for_login(&long, &clash);
+    assert_eq!(k.len(), 64);
+    assert!(k.ends_with("-2"));
+}
+
+#[tokio::test]
+async fn listing_marks_saved_logins_case_insensitively_and_carries_no_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("hr.a", "A.One", "Secret-Pw-1")]).unwrap();
+    let fake = list_fake(&["a.one", "b.two"]);
+    let list = list_logins_in(root, Ok(&fake), "").await.unwrap();
+    assert_eq!(list.logins.len(), 2);
+    assert!(list.logins[0].saved);
+    assert!(!list.logins[1].saved);
+    assert!(!list.cut_short);
+    let json = format!("{list:?}");
+    assert!(!json.contains("Secret-Pw-1"));
+    assert!(fake.asked().iter().all(|q| !q.contains("USRACC_PASSWORD")), "{:?}", fake.asked());
+}
+
+#[tokio::test]
+async fn a_full_list_is_cut_short_and_the_gates_say_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    let names: Vec<String> = (0..LIST_LIMIT).map(|i| format!("u{i:03}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let fake = list_fake(&refs);
+    // Not a test environment yet.
+    let err = list_logins_in(root, Ok(&fake), "").await.unwrap_err();
+    assert!(err.contains(NOT_TEST), "{err}");
+    mark_test_environment(root);
+    assert!(list_logins_in(root, Ok(&fake), "").await.unwrap().cut_short);
+    let off = list_logins_in::<NoRows>(root, Err(v2_lib::autorun::account_lookup::DB_OFF.to_string()), "").await.unwrap_err();
+    assert!(off.contains("reading the database is off"), "{off}");
+}
+
+#[tokio::test]
+async fn adding_logins_reads_passwords_in_rust_and_says_why_some_were_not_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("hr.old", "old1", "Old-Pw")]).unwrap();
+    let fake = Fake::standard(&[
+        ("HR.New@x", "New-Pw"),
+        ("old1", "Other"),
+        ("hashy", "5f4dcc3b5aa765d61d8327deb882cf99"),
+        ("empty1", ""),
+        ("mask1", "(hidden)"),
+    ]);
+    let asked = users(&["HR.New@x", "OLD1", "hashy", "empty1", "mask1", "ghost"]);
+    let counts = add_logins_in(root, Ok(&fake), &asked).await.unwrap();
+    assert_eq!(counts.added, 1);
+    assert_eq!(counts.already_saved, 1);
+    let why = |l: &str| counts.not_added.iter().find(|n| n.login == l).map(|n| n.reason.clone());
+    assert_eq!(why("hashy").as_deref(), Some(HASH_ONLY));
+    assert_eq!(why("empty1").as_deref(), Some(EMPTY_PASSWORD));
+    assert_eq!(why("mask1").as_deref(), Some(SAME_AS_DB_LOGIN));
+    assert!(why("ghost").unwrap().starts_with("no row in"));
+    assert!(!format!("{counts:?}").contains("New-Pw"));
+
+    let now = load_accounts(root).unwrap();
+    assert_eq!(now.len(), 2);
+    assert_eq!(now[0].password, "Old-Pw", "existing accounts are untouched");
+    let made = &now[1];
+    assert_eq!(made.key, "hr.new-x");
+    assert_eq!(made.label, "HR.New@x");
+    assert_eq!(made.username, "HR.New@x");
+    assert_eq!(made.password, "New-Pw");
+    assert_eq!(made.password_source, Some(load_or_init(root, None).unwrap().environments[0].db_id.clone()));
+
+    let again: AddedCounts = add_logins_in(root, Ok(&fake), &users(&["hr.new@x"])).await.unwrap();
+    assert_eq!((again.added, again.already_saved), (0, 1));
+}
+
+#[test]
+fn saving_with_a_blank_key_makes_it_from_the_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    let env_id = active_id(root).unwrap();
+    let saved = save_accounts_in(
+        root,
+        &env_id,
+        vec![account("", "HR.Admin", "p1"), account("", "hr.admin", "p2"), account("typed.key", "x", "p3"), account("", "typed.key", "p4")],
+        None,
+    )
+    .unwrap();
+    let made: Vec<(u32, &str)> = saved.made.iter().map(|m| (m.index, m.key.as_str())).collect();
+    assert_eq!(made, [(0, "hr.admin"), (1, "hr.admin-2"), (3, "typed.key-2")]);
+    assert!(!format!("{saved:?}").contains("p1"), "the answer carries no password");
+    assert_eq!(load_accounts(root).unwrap().len(), 4);
+
+    // A blank key with a blank username keeps the old refusal.
+    let err = save_accounts_in(root, &env_id, vec![account("", " ", "p")], None).unwrap_err();
+    assert!(err.contains("not a usable account key"), "{err}");
+    // A typed key is still validated.
+    let err = save_accounts_in(root, &env_id, vec![account("Bad Key", "u", "p")], None).unwrap_err();
+    assert!(err.contains("not a usable account key"), "{err}");
+}
+
+#[tokio::test]
+async fn logins_compare_by_unicode_lowercase() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("elan", "Élan", "Pw-1")]).unwrap();
+    let fake = list_fake(&["élan", "other"]);
+    let list = list_logins_in(root, Ok(&fake), "").await.unwrap();
+    assert!(list.logins[0].saved, "Élan and élan are the same login");
+    assert!(!list.logins[1].saved);
+    let counts: AddedCounts = add_logins_in(root, Ok(&fake), &users(&["ÉLAN"])).await.unwrap();
+    assert_eq!((counts.added, counts.already_saved), (0, 1));
+}
+
+#[tokio::test]
+async fn long_searches_and_long_login_lists_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    let fake = list_fake(&["a"]);
+    let fine = "a".repeat(128);
+    assert!(list_logins_in(root, Ok(&fake), &fine).await.is_ok());
+    let err = list_logins_in(root, Ok(&fake), &"a".repeat(129)).await.unwrap_err();
+    assert_eq!(err, "the search is too long - use fewer characters");
+
+    let many: Vec<String> = (0..=LIST_LIMIT).map(|i| format!("u{i}")).collect();
+    let err = add_logins_in(root, Ok(&fake), &many).await.unwrap_err();
+    assert_eq!(err, "too many logins at once - tick fewer and add them again");
+    let ok: Vec<String> = (0..LIST_LIMIT).map(|i| format!("u{i}")).collect();
+    let at_limit = add_logins_in(root, Ok(&fake), &ok).await;
+    assert!(at_limit.err().is_none_or(|e| !e.contains("too many")), "the limit itself is allowed");
+}

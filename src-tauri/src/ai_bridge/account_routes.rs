@@ -156,7 +156,7 @@ pub async fn accounts_propose_in<S: crate::autorun::setup_find::RowSource>(
                             .unwrap_or_else(|| "a database no longer in the list".to_string())
                     };
                     said.push_str(&format!(
-                        ". This environment now uses {} instead of {}, the database its last Fill passwords from database read",
+                        ". This environment now uses {} instead of {}, the database its last Sync Database read",
                         label(&env.db_id),
                         label(&was)
                     ));
@@ -267,7 +267,7 @@ pub(crate) async fn accounts_lookup_set(ctx: &BridgeContext, body: &str) -> (u16
 /// Why the lookup has no database, in the right words. `stage_db` refuses with
 /// one sentence both when the Database Access module is off and when the
 /// assistant's `db_query` tool is switched off, so which it was is told here.
-/// (The app's own Fill passwords from database does not go through the
+/// (The app's own Sync Database does not go through the
 /// assistant's tool switch.)
 fn lookup_refusal(refused: (u16, String)) -> String {
     use crate::autorun::account_lookup::{db_refusal, DB_TOOL_OFF};

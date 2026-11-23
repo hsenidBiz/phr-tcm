@@ -72,6 +72,27 @@ fn is_windows_device_name(key: &str) -> bool {
     )
 }
 
+/// Gives each account with a blank key (and a username) the key made from its
+/// username (`account_lookup::key_for_login`), kept apart from every other key
+/// in the list, typed ones and ones made in this same pass. A typed key is left
+/// as it is, and a blank key with a blank username stays blank for
+/// `validate_accounts` to refuse.
+pub fn fill_blank_keys(accounts: &[Account]) -> Vec<Account> {
+    let mut taken: std::collections::HashSet<String> =
+        accounts.iter().filter(|a| !a.key.trim().is_empty()).map(|a| a.key.clone()).collect();
+    accounts
+        .iter()
+        .map(|a| {
+            let mut a = a.clone();
+            if a.key.trim().is_empty() && !a.username.trim().is_empty() {
+                a.key = super::account_lookup::key_for_login(&a.username, &taken);
+                taken.insert(a.key.clone());
+            }
+            a
+        })
+        .collect()
+}
+
 pub fn validate_accounts(accounts: &[Account]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for a in accounts {
@@ -444,6 +465,33 @@ fn write_pending(root: &Path, env_id: &str, all: &std::collections::BTreeMap<Str
     std::fs::create_dir_all(path.parent().expect("accounts folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(all).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path, &json)
+}
+
+/// Appends `ready` to the environment's accounts under the accounts lock, read
+/// as it is NOW: an account whose username (any case) is already saved is
+/// skipped, and a key taken meanwhile is made again from the username, so
+/// nothing saved is replaced. Answers the keys appended.
+pub fn append_new_accounts_for(root: &Path, env_id: &str, ready: Vec<Account>) -> Result<Vec<String>, String> {
+    let _held = files();
+    let mut all = load_accounts_for(root, env_id)?;
+    let mut taken: std::collections::HashSet<String> = all.iter().map(|a| a.key.clone()).collect();
+    let mut added = vec![];
+    for mut a in ready {
+        let folded = a.username.trim().to_lowercase();
+        if all.iter().any(|e| e.username.trim().to_lowercase() == folded) {
+            continue;
+        }
+        if taken.contains(&a.key) || !valid_key(&a.key) {
+            a.key = super::account_lookup::key_for_login(&a.username, &taken);
+        }
+        taken.insert(a.key.clone());
+        added.push(a.key.clone());
+        all.push(a);
+    }
+    if !added.is_empty() {
+        save_unlocked(root, env_id, &all, None, true)?;
+    }
+    Ok(added)
 }
 
 /// Add or replace `ready` (by key) in one environment's list, reading the
