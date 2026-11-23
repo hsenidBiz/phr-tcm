@@ -1603,11 +1603,11 @@ const DB_VIEWS = [
 ];
 
 /// The write switch is only half the permission - the Rust side also
-/// requires the database's own user to be the dev login, and refuses a
-/// write when either is missing. What reaches the assistant has to say so
-/// too: pushing the raw switch would claim writes are allowed on a
+/// requires the server to have said the database's login may write, and
+/// refuses a write when either is missing. What reaches the assistant has to
+/// say so too: pushing the raw switch would claim writes are allowed on a
 /// read-only database, which is not true.
-test("db_writes pushed to the bridge is the switch AND the dev login, not the raw switch", async () => {
+test("db_writes pushed to the bridge is the switch AND the server's verdict, not the raw switch", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   localStorage.setItem(
     "tcm-v2-prefs",
@@ -1618,10 +1618,20 @@ test("db_writes pushed to the bridge is the switch AND the dev login, not the ra
   // test's later assertions with an unrelated effect.
   localStorage.setItem("tcm-v2-tour-done", "yes");
   saveSelectedDb("dev-read");
-  saveDbWrites(true); // the switch is ON, but the database is NOT the dev login
+  saveDbWrites(true); // the switch is ON, but the server says this database's login cannot write
   signedInMocks((cmd, args) => {
     if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
     if (cmd === "db_databases") return DB_VIEWS;
+    // What the server said: only the dev login's account may write (a name
+    // proves nothing - the verdict is what counts).
+    if (cmd === "db_write_verdicts") {
+      const check = (can_write: boolean) => ({ can_write, checked_at: 1795000000000, reason: "" });
+      return [
+        { id: "dev-read", check: check(false) },
+        { id: "dev-login", check: check(true) },
+      ];
+    }
+    
     if (cmd === "set_bridge_context") {
       pushes.push(args as Record<string, unknown>);
       return null;
@@ -1636,7 +1646,7 @@ test("db_writes pushed to the bridge is the switch AND the dev login, not the ra
     switches: expect.objectContaining({ dbWrites: false }),
   });
 
-  // The switch never moved - only the database did, to the dev login.
+  // The switch never moved - only the database did, to one the server lets write.
   // The same switch state must now push true.
   act(() => saveSelectedDb("dev-login"));
   await vi.waitFor(() =>

@@ -3624,7 +3624,7 @@ fn db_querys_description_names_the_held_back_module_only_when_unlocked() {
     assert_eq!(locked, locked_all);
 
     let open = desc(r#"{"disabled":[],"modules":["db_access","crystal_reports"],"unlocked":true}"#);
-    assert!(open.contains("except on the Dev - dev login with Crystal Reports and Database Access on and writes switched on"), "{open}");
+    assert!(open.contains("except on a login the server lets write, with Crystal Reports and Database Access on and writes switched on"), "{open}");
 }
 
 /// The four saved-setup tools reach their routes, carry the agent property,

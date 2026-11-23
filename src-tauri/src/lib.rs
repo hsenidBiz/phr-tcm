@@ -218,6 +218,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::fetch_shared_queue,
             queue::materialize_shared_draft,
             ai_tools::db_databases,
+            ai_tools::db_write_verdicts,
+            ai_tools::db_check_write,
             ai_tools::db_add_custom,
             ai_tools::db_rename_custom,
             ai_tools::db_remove_custom,

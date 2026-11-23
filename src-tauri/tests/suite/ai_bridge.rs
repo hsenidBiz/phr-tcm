@@ -2069,8 +2069,12 @@ mod db_tests {
         preset("dev-read")
     }
 
+    /// The dev login preset with a can-write verdict stored for it: writes
+    /// follow the server's answer now, not the `_devlogin` name.
     fn dev_login() -> Connection {
-        preset("dev-login")
+        let c = preset("dev-login");
+        v2_lib::db::permissions::store(&c, true);
+        c
     }
 
     fn exe() -> PathBuf {
@@ -5192,6 +5196,14 @@ mod crystal_routes {
             trust_cert: false,
         };
         let id = add_custom(&store, "Reports dev", &form).unwrap().id;
+        // Writes are decided by the server's verdict now, not by the user's
+        // name: in these tests `x_devlogin` is the login the server said can
+        // write, and `reader` is one with no verdict at all (read only).
+        if user == "x_devlogin" {
+            let login = v2_lib::db::parse_connection(&v2_lib::db::credentials::resolve(&store, &id).unwrap().unwrap())
+                .unwrap();
+            v2_lib::db::permissions::store(&login, true);
+        }
         super::BridgeContext {
             db_id: Some(id),
             db_secrets: Some(std::sync::Arc::new(store)),

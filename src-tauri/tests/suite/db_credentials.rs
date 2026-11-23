@@ -389,17 +389,24 @@ fn forget_all_clears_every_own_login_and_the_list() {
     assert!(c.id != a.id && c.id != b.id);
 }
 
-/// The write rule is the connection's user - nothing about a database
-/// being one of the person's own, or what it is called, changes that.
+/// The write rule is the server's verdict for the connection's login -
+/// nothing about a database being one of the person's own, or what its user
+/// is called, changes that. (Was the user-name rule: `app_DevLogin` wrote.)
 #[test]
-fn the_write_rule_is_still_the_user_of_an_own_database() {
-    use v2_lib::db::{access_for, Access};
+fn the_write_rule_is_the_verdict_of_an_own_databases_login() {
+    use v2_lib::db::{access_for, permissions, Access};
     let dir = tempfile::tempdir().unwrap();
     let s = listed(&dir);
     let dev = add_custom(&s, "Dev writes", &login("app_DevLogin")).unwrap();
-    let reader = add_custom(&s, "Staging devlogin", &login("reader")).unwrap();
-    assert_eq!(access_for(&resolve(&s, &dev.id).unwrap().unwrap()), Access::DevWrites);
-    assert_eq!(access_for(&resolve(&s, &reader.id).unwrap().unwrap()), Access::ReadOnly);
+    let reader = add_custom(&s, "Staging devlogin", &login("reader-verdict")).unwrap();
+    let dev_cs = resolve(&s, &dev.id).unwrap().unwrap();
+    let reader_cs = resolve(&s, &reader.id).unwrap().unwrap();
+    // No verdict yet: neither may write, a devlogin name included.
+    assert_eq!(access_for(&dev_cs), Access::ReadOnly);
+    assert_eq!(access_for(&reader_cs), Access::ReadOnly);
+    permissions::store(&v2_lib::db::parse_connection(&reader_cs).unwrap(), true);
+    assert_eq!(access_for(&dev_cs), Access::ReadOnly);
+    assert_eq!(access_for(&reader_cs), Access::DevWrites);
 }
 
 #[test]

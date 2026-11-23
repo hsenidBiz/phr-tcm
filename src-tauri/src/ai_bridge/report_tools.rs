@@ -290,7 +290,7 @@ pub async fn crystal_preview_live(
         Ok(conn) => conn,
         Err(why) => return (409, why),
     };
-    if crate::db::access_for_user(&conn.user) == crate::db::Access::ReadOnly {
+    if crate::db::access_for_connection(&conn) == crate::db::Access::ReadOnly {
         return (400, crate::db::READ_ONLY_SENTENCE.to_string());
     }
     let name = chosen_database_name(ctx);

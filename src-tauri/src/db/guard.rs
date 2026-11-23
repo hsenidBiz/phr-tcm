@@ -1,8 +1,8 @@
 //! What a statement is allowed to do, decided before anything runs it.
 //!
 //! The rule the whole feature rests on: a statement is classified first and
-//! run second. Reads go everywhere; the four write verbs go only to the dev
-//! login; everything that changes a schema or hands out permissions is
+//! run second. Reads go everywhere; the four write verbs go only to a login the
+//! server says may write (`permissions`); everything that changes a schema or hands out permissions is
 //! refused outright, on every connection, with a sentence that names what
 //! was found.
 //!
@@ -11,7 +11,7 @@
 //! neighbours - see `LOOKUP_PROCEDURES`) is a Read, on every connection,
 //! because it only ever reads schema information. A call to any OTHER named
 //! procedure can change data, so it is a Write, gated exactly like
-//! INSERT/UPDATE/DELETE - dev login only, writes switch on. Dynamic SQL
+//! INSERT/UPDATE/DELETE - a login the server lets write only, writes switch on. Dynamic SQL
 //! (`EXEC('...')`, `EXEC(@sql)`, `EXEC @variable`, `sp_executesql`), any
 //! other `sp_`/`xp_` procedure, and a database- or linked-server-qualified
 //! name are refused outright, on every connection - see `classify_exec`.
@@ -64,16 +64,19 @@ pub fn objects_need_module(unlocked: bool) -> String {
 /// The one sentence a write on a read-only connection comes back with. It
 /// names the connection to switch to and where to switch it, because that
 /// is the only thing the person can act on.
-pub const READ_ONLY_SENTENCE: &str = "this connection is read only: INSERT/UPDATE/DELETE need the Dev - dev login connection, chosen in the AI Bridge tab";
+pub const READ_ONLY_SENTENCE: &str = "this connection is read only: INSERT/UPDATE/DELETE need a login the server lets create, update and delete - pick one, or press Recheck, under Database Read Access on the AI Bridge tab";
 
 /// What a statement is allowed to do on this connection.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Access {
     ReadOnly,
+    /// A login the server lets create, update and delete (the name is from
+    /// when only the dev login could): its stored write verdict is "can
+    /// write" - see `permissions`.
     DevWrites,
     /// The dev login with the Crystal Reports and Database Access modules
     /// on: everything `DevWrites` may do, and creating or altering a
-    /// procedure, view or function besides. `access_for`/`access_for_user`
+    /// procedure, view or function besides. `access_for`/`access_for_connection`
     /// never answer it - `db::query::access_with` does, where the modules
     /// are read.
     DevObjects,
@@ -147,19 +150,21 @@ const REFUSED_WORDS: &[&str] = &[
 /// statement, because a CTE can put one behind a leading `WITH`.
 const WRITE_WORDS: &[&str] = &["INSERT", "UPDATE", "DELETE", "MERGE"];
 
-/// The dev-login preset is the only connection that may write: recognised
-/// by its User Id, compared case-insensitively, never by the password.
+/// Whether the connection string's login may write, by the server's own
+/// answer (`permissions`). A string that cannot be read is read only.
 pub fn access_for(connection_string: &str) -> Access {
-    match user_id_of(connection_string) {
-        Some(user) => access_for_user(&user),
-        None => Access::ReadOnly,
+    match super::sqlcmd::parse_connection(connection_string) {
+        Ok(c) => access_for_connection(&c),
+        Err(_) => Access::ReadOnly,
     }
 }
 
-/// The same decision from a user id on its own - what `sqlcmd::run_sql`
-/// asks, so a `Connection` is enough to know what it may do.
-pub fn access_for_user(user_id: &str) -> Access {
-    if user_id.trim().to_ascii_lowercase().ends_with("_devlogin") {
+/// The same decision from a `Connection` - what `sqlcmd::run_sql` asks. A
+/// login may write only when the server said so (a stored verdict for this
+/// user, server and database); no verdict, a read-only one or a failed
+/// check is `ReadOnly`. The name of the login decides nothing.
+pub fn access_for_connection(c: &super::sqlcmd::Connection) -> Access {
+    if super::permissions::can_write(c) {
         Access::DevWrites
     } else {
         Access::ReadOnly
@@ -168,29 +173,15 @@ pub fn access_for_user(user_id: &str) -> Access {
 
 /// The connection-string keys that name the signing-in user.
 ///
-/// This list is shared with `sqlcmd::parse_connection` on purpose. When the
-/// two disagreed, a hand-typed `User=x_devlogin` was `ReadOnly` to the
-/// guard and the dev login to sqlcmd - the door that decides and the door
-/// that enforces have to be reading the same field.
+/// This list is shared with `sqlcmd::parse_connection` on purpose: the guard
+/// reads the login through that parser, so a hand-typed `User=x` is the same
+/// user to the verdict lookup and to sqlcmd.
 pub(crate) const USER_ID_KEYS: &[&str] = &["userid", "uid", "user"];
 
 /// A connection-string key, folded the way a SQL Server driver folds one:
 /// spaces removed, lower-cased. `User Id`, `UserId` and `USER ID` are one key.
 pub(crate) fn normalised_key(raw: &str) -> String {
     raw.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase()
-}
-
-/// The user id out of a connection string.
-fn user_id_of(connection_string: &str) -> Option<String> {
-    for part in connection_string.split(';') {
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
-        };
-        if USER_ID_KEYS.contains(&normalised_key(key).as_str()) {
-            return Some(value.trim().to_string());
-        }
-    }
-    None
 }
 
 /// Classifies ONE statement. Comments and the contents of string literals
@@ -304,7 +295,7 @@ pub fn classify(sql: &str) -> Verdict {
     for word in REFUSED_WORDS {
         if has_word(&upper, word) {
             return refused(format!(
-                "{word} is not allowed here: these tools run SELECT statements, and INSERT/UPDATE/DELETE only on the dev login"
+                "{word} is not allowed here: these tools run SELECT statements, and INSERT/UPDATE/DELETE only on a login the server lets write"
             ));
         }
     }
@@ -363,7 +354,7 @@ pub fn classify(sql: &str) -> Verdict {
             "this does not start with a SQL verb: send one SELECT statement".to_string(),
         ),
         other => refused(format!(
-            "{other} cannot run here: these tools run SELECT statements, and INSERT/UPDATE/DELETE only on the dev login"
+            "{other} cannot run here: these tools run SELECT statements, and INSERT/UPDATE/DELETE only on a login the server lets write"
         )),
     }
 }
