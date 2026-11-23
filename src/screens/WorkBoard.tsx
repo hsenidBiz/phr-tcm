@@ -52,11 +52,14 @@ const COLUMNS = ["To Do", "In Progress", "Done"] as const;
 const statesFor = (d: BoardData, i: Pick<BoardItem, "project" | "work_item_type">) =>
   d.states_by_project?.[i.project]?.[i.work_item_type] ?? d.states_by_type?.[i.work_item_type] ?? [];
 
-/** The colour of a lane's header rule: the status colour its cards' dots use. */
-const laneRuleColor = (items: BoardItem[]) => {
-  const c = items.find((i) => i.state_color)?.state_color;
-  return c ? `#${c}` : "#9ca3af";
+/** A lane header's rule: one fixed colour per column, never taken from the
+ * cards. A name outside the three falls back to the strong border. */
+const LANE_RULE: Record<string, string> = {
+  "To Do": "border-faint",
+  "In Progress": "border-info",
+  Done: "border-success",
 };
+const laneRule = (col: string) => LANE_RULE[col] ?? "border-border-strong";
 
 const typeColor: Record<string, string> = {
   Bug: "#e15b64",
@@ -783,10 +786,7 @@ export default function WorkBoard({
             >
             <h3
               data-testid={`col-rule-${col}`}
-              className="flex items-center whitespace-nowrap border-b-2 px-1 pb-1 text-xs font-semibold text-muted"
-              // The rule takes the colour the column's cards' status dots
-              // use (the first card's state; grey while the lane is empty).
-              style={{ borderBottomColor: laneRuleColor(items), marginBottom: 8 }}
+              className={cn("mb-2 flex items-center whitespace-nowrap border-b-2 px-1 pb-1 text-xs font-semibold text-muted", laneRule(col))}
             >
               {col} <span className="ml-1 text-faint">{items.length}</span>
               <button

@@ -1426,10 +1426,13 @@ test("an open column is an open lane: no border box, a status rule under its hea
   const col = await screen.findByTestId("col-To Do");
   expect(col.className).not.toMatch(/\bborder\b/);
   expect(col.className).not.toMatch(/\bbg-bg\b/);
-  // The rule is the colour of the column's own status dots (b2b2b2 here).
+  // One fixed colour per column, whatever cards it holds (Done and In
+  // Progress may be empty here).
   const rule = screen.getByTestId("col-rule-To Do");
   expect(rule.className).toMatch(/\bborder-b-2\b/);
-  expect(rule.style.borderBottomColor).toBe("rgb(178, 178, 178)");
+  expect(rule.className).toMatch(/\bborder-faint\b/);
+  expect(screen.getByTestId("col-rule-In Progress").className).toMatch(/\bborder-info\b/);
+  expect(screen.getByTestId("col-rule-Done").className).toMatch(/\bborder-success\b/);
 });
 
 test("Hide is an icon-only button named by its label, disabled for the last visible column", async () => {
