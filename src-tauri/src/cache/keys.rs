@@ -284,3 +284,12 @@ pub const IMPORTED_CAPTURES_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 pub fn imported_captures() -> String {
     "imported-captures".to_string()
 }
+
+/// Whether a database login may create, update and delete, as the server
+/// itself answered when the app last asked (`db::permissions`). `tag` is a
+/// non-reversible tag of the user, server and database it was asked for -
+/// never the password - so a login that is edited is a different key and
+/// inherits nothing. Kept until the next check or an account change.
+pub fn db_write_verdict(tag: &str) -> String {
+    format!("db-write:{tag}")
+}

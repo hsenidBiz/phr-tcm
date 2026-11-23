@@ -2069,8 +2069,12 @@ mod db_tests {
         preset("dev-read")
     }
 
+    /// The dev login preset with a can-write verdict stored for it: writes
+    /// follow the server's answer now, not the `_devlogin` name.
     fn dev_login() -> Connection {
-        preset("dev-login")
+        let c = preset("dev-login");
+        v2_lib::db::permissions::store(&c, true);
+        c
     }
 
     fn exe() -> PathBuf {
@@ -5192,6 +5196,14 @@ mod crystal_routes {
             trust_cert: false,
         };
         let id = add_custom(&store, "Reports dev", &form).unwrap().id;
+        // Writes are decided by the server's verdict now, not by the user's
+        // name: in these tests `x_devlogin` is the login the server said can
+        // write, and `reader` is one with no verdict at all (read only).
+        if user == "x_devlogin" || user == "writer" {
+            let login = v2_lib::db::parse_connection(&v2_lib::db::credentials::resolve(&store, &id).unwrap().unwrap())
+                .unwrap();
+            v2_lib::db::permissions::store(&login, true);
+        }
         super::BridgeContext {
             db_id: Some(id),
             db_secrets: Some(std::sync::Arc::new(store)),
@@ -5230,6 +5242,13 @@ mod crystal_routes {
         assert_eq!((status, said.as_str()), (400, READ_ONLY_SENTENCE));
         let (status, said) = live(&super::BridgeContext { db_writes: true, ..ctx() }, json!({})).await;
         assert_eq!((status, said.as_str()), (409, NO_CONNECTION));
+        // A login the server lets write that is not the dev login: refused,
+        // and told why.
+        let (status, said) = live(&live_ctx(dir.path(), "writer", true), json!({})).await;
+        assert_eq!((status, said.as_str()), (400, "A live preview needs the dev login."));
+        // A dev login with no verdict is read only.
+        let (status, said) = live(&live_ctx(dir.path(), "y_devlogin", true), json!({})).await;
+        assert_eq!((status, said.as_str()), (400, READ_ONLY_SENTENCE));
 
         // Allowed so far, but a parameter that does not fit its kind stops
         // it before a connection is made.

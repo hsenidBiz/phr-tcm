@@ -77,7 +77,7 @@ describe("wording", () => {
 
   test("the body says why, by where the data came from", () => {
     expect(missingFieldsBody(null)).toBe(
-      "This report holds no saved rows. Ask your AI assistant for a live preview on the Dev login to fill them.",
+      "This report holds no saved rows. Ask your AI assistant for a live preview on the dev login to fill them.",
     );
     expect(missingFieldsBody("Reports dev")).toBe("Your live preview's results did not include these fields.");
   });

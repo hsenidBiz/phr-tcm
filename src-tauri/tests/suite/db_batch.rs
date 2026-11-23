@@ -54,9 +54,13 @@ fn read_only() -> Connection {
     parse_connection(DB_PRESETS[0].connection_string).unwrap()
 }
 
+/// The dev login preset with a can-write verdict stored for it: writes follow
+/// the server's answer now, not the `_devlogin` name.
 fn dev_login() -> Connection {
     let p = DB_PRESETS.iter().find(|p| p.id == "dev-login").expect("the dev login preset");
-    parse_connection(p.connection_string).unwrap()
+    let c = parse_connection(p.connection_string).unwrap();
+    v2_lib::db::permissions::store(&c, true);
+    c
 }
 
 fn exe() -> PathBuf {

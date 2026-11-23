@@ -2,8 +2,8 @@
 //! statement is classified first and run second - there is no other door.
 
 use v2_lib::db::{
-    access_for, access_for_user, allowed, classify, parse_connection, Access, Verdict,
-    MAX_SQL_CHARS, READ_ONLY_SENTENCE,
+    access_for, access_for_connection, allowed, classify, parse_connection, permissions, Access, Connection,
+    Verdict, MAX_SQL_CHARS, READ_ONLY_SENTENCE,
 };
 use v2_lib::db_defaults::DB_PRESETS;
 
@@ -15,50 +15,77 @@ fn refusal(sql: &str) -> String {
     }
 }
 
+/// A connection of its own: the verdict store is process-wide, so every test
+/// that stores or expects a verdict uses a server name no other test shares.
+fn conn(server: &str, user: &str) -> Connection {
+    parse_connection(&format!("Server={server};Database=d;User Id={user};Password=p;")).unwrap()
+}
+
+// Was `only_the_dev_login_preset_may_write`: the name of the login decided.
+// Now nothing is writable until the server has said so, whatever it is called.
 #[test]
-fn only_the_dev_login_preset_may_write() {
+fn no_shipped_preset_may_write_until_the_server_says_so() {
     // The shipped set, so the loop below cannot pass by being empty.
     assert_eq!(DB_PRESETS.len(), 3);
-    let writers: Vec<&str> = DB_PRESETS
-        .iter()
-        .filter(|p| access_for(p.connection_string) == Access::DevWrites)
-        .map(|p| p.id)
-        .collect();
-    assert_eq!(writers, vec!["dev-login"]);
     for p in DB_PRESETS {
-        let expected =
-            if p.id == "dev-login" { Access::DevWrites } else { Access::ReadOnly };
-        assert_eq!(access_for(p.connection_string), expected, "{}", p.label);
+        let c = parse_connection(p.connection_string).unwrap();
+        // The dev login preset's verdict is stored by other tests; this one
+        // only checks the presets that no test ever stores a verdict for.
+        if p.id != "dev-login" {
+            assert_eq!(access_for(p.connection_string), Access::ReadOnly, "{}", p.label);
+            assert_eq!(access_for_connection(&c), Access::ReadOnly, "{}", p.label);
+        }
     }
 }
 
+// Was `the_user_id_decides_and_the_password_is_never_looked_at`: a user id
+// ending `_devlogin` used to be enough. It is now read only without a verdict.
 #[test]
-fn the_user_id_decides_and_the_password_is_never_looked_at() {
-    // Case folds, and the key may be spelled any way a connection string does.
-    assert_eq!(access_for("Server=s;Database=d;User Id=SGDEV01DB01_DevLogin;Password=x;"), Access::DevWrites);
-    assert_eq!(access_for("server=s;database=d;userid=a_DEVLOGIN;password=x;"), Access::DevWrites);
-    assert_eq!(access_for("Server=s;Database=d;UID=a_devlogin;Password=x;"), Access::DevWrites);
-    // A password that happens to read like the dev login grants nothing.
-    assert_eq!(access_for("Server=s;Database=d;User Id=a_readonly;Password=b_devlogin;"), Access::ReadOnly);
-    // No user id at all is the safe answer.
+fn a_devlogin_name_with_no_verdict_is_read_only() {
+    assert_eq!(access_for("Server=nv1;Database=d;User Id=SGDEV01DB01_DevLogin;Password=x;"), Access::ReadOnly);
+    assert_eq!(access_for("server=nv1;database=d;userid=a_DEVLOGIN;password=x;"), Access::ReadOnly);
+    assert_eq!(access_for_connection(&conn("nv2", "sgdev01db01_devlogin")), Access::ReadOnly);
+    // No user id at all, or a string that cannot be read, is the safe answer.
     assert_eq!(access_for("Server=s;Database=d;Password=x;"), Access::ReadOnly);
-    assert_eq!(access_for_user("sgdev01db01_devlogin"), Access::DevWrites);
-    assert_eq!(access_for_user("sgdev01db02_readonly"), Access::ReadOnly);
+    assert_eq!(access_for("not a connection string"), Access::ReadOnly);
 }
 
 #[test]
-fn both_doors_read_the_user_id_from_the_same_keys() {
-    // A hand-typed connection string may spell the key any of these ways.
-    // The guard reads it to decide, `parse_connection` reads it to sign in,
-    // and if the two disagreed a `User=x_devlogin` could be refused a write
-    // by one door while the other handed the dev login to sqlcmd.
+fn the_stored_verdict_decides_whatever_the_login_is_called() {
+    let writer = conn("verdict-a", "plain_reader_name");
+    assert_eq!(access_for_connection(&writer), Access::ReadOnly);
+    permissions::store(&writer, true);
+    assert_eq!(access_for_connection(&writer), Access::DevWrites);
+    // A hand-typed string reaches the same verdict through the same parser,
+    // whichever way the key is spelled.
     for key in ["User Id", "UserId", "user id", "UID", "uid", "User", "USER"] {
-        let s = format!("Server=s;Database=d;{key}=x_devlogin;Password=p;");
+        let s = format!("Server=verdict-a;Database=d;{key}=plain_reader_name;Password=p;");
         assert_eq!(access_for(&s), Access::DevWrites, "{key}");
-        let c = parse_connection(&s).unwrap();
-        assert_eq!(c.user, "x_devlogin", "{key}");
-        assert_eq!(access_for_user(&c.user), Access::DevWrites, "{key}");
     }
+    // The same name with a verdict that says read only, and a devlogin name
+    // the server said can only read.
+    let reader = conn("verdict-b", "x_devlogin");
+    permissions::store(&reader, false);
+    assert_eq!(access_for_connection(&reader), Access::ReadOnly);
+}
+
+#[test]
+fn an_edited_login_does_not_inherit_the_old_verdict() {
+    let old = conn("verdict-c", "writer");
+    permissions::store(&old, true);
+    assert_eq!(access_for_connection(&old), Access::DevWrites);
+    // Another user, another server or another database is another login.
+    assert_eq!(access_for_connection(&conn("verdict-c", "someone_else")), Access::ReadOnly);
+    assert_eq!(access_for_connection(&conn("verdict-c2", "writer")), Access::ReadOnly);
+    let mut other_db = old.clone();
+    other_db.database = "other".into();
+    assert_eq!(access_for_connection(&other_db), Access::ReadOnly);
+    // The password is not part of the identity: changing only it keeps the verdict.
+    let mut new_pw = old.clone();
+    new_pw.password = "different".into();
+    assert_eq!(access_for_connection(&new_pw), Access::DevWrites);
+    assert_ne!(permissions::tag(&old), permissions::tag(&other_db));
+    assert!(!permissions::tag(&old).contains("writer"));
 }
 
 #[test]

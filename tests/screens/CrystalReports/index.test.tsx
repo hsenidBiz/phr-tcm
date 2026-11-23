@@ -523,7 +523,7 @@ test("missing_fields_read_as_one_friendly_card_without_the_raw_errors", async ()
   expect(within(notes).getByText("2 fields have no data in this preview.")).toBeInTheDocument();
   expect(
     within(notes).getByText(
-      "This report holds no saved rows. Ask your AI assistant for a live preview on the Dev login to fill them.",
+      "This report holds no saved rows. Ask your AI assistant for a live preview on the dev login to fill them.",
     ),
   ).toBeInTheDocument();
   expect(within(notes).getByText("2 symbols drawn with a fallback font (✓ ✗)")).toBeInTheDocument();

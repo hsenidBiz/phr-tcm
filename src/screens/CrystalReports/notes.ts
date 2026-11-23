@@ -74,7 +74,7 @@ export function missingFieldsHeadline(count: number): string {
 export function missingFieldsBody(live: string | null): string {
   return live
     ? "Your live preview's results did not include these fields."
-    : "This report holds no saved rows. Ask your AI assistant for a live preview on the Dev login to fill them.";
+    : "This report holds no saved rows. Ask your AI assistant for a live preview on the dev login to fill them.";
 }
 
 export function symbolsNote(glyphs: readonly string[]): string {

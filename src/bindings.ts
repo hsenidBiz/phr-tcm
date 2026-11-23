@@ -403,6 +403,19 @@ export const commands = {
 	 */
 	dbDatabases: () => __TAURI_INVOKE<DbDatabase[]>("db_databases"),
 	/**
+	 *  The verdicts already reached, one per database whose CURRENT login has
+	 *  one. A database with none (never checked, or its login was edited since)
+	 *  is simply absent. Asks no server.
+	 */
+	dbWriteVerdicts: () => __TAURI_INVOKE<DbWriteVerdict[]>("db_write_verdicts"),
+	/**
+	 *  Asks the server whether database `id`'s login may create, update and
+	 *  delete, and keeps the answer. The answer is a verdict and a sentence;
+	 *  a failed check answers a sentence only and leaves the database with no
+	 *  verdict, which is read only.
+	 */
+	dbCheckWrite: (id: string) => typedError<WriteCheck, string>(__TAURI_INVOKE("db_check_write", { id })),
+	/**
 	 *  Adds one of the person's own databases under `label`, its login saved
 	 *  from `form`. Answers its public view, new id included.
 	 */
@@ -4581,6 +4594,15 @@ export type DbDatabase = {
 	 *  something to undo.
 	 */
 	customised: boolean,
+};
+
+/**
+ *  One database's verdict, for the list the webview shows: which database,
+ *  and what the server said about its current login.
+ */
+export type DbWriteVerdict = {
+	id: string,
+	check: WriteCheck,
 };
 
 /**  One work item's fate after a delete attempt. */
@@ -9668,6 +9690,17 @@ export type WorkRevision = {
 	state_from: string,
 	state_to: string,
 	comment_added: boolean,
+};
+
+/**
+ *  What the webview is told: the verdict, when it was reached, and a short
+ *  sentence. Nothing else - never a password, never the server's own words.
+ */
+export type WriteCheck = {
+	can_write: boolean,
+	/**  Unix epoch milliseconds. */
+	checked_at: number | null,
+	reason: string,
 };
 
 export type WriteEntry = {

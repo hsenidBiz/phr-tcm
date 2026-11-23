@@ -461,13 +461,23 @@ pub fn forget_all(store: &dyn SecretStore) -> Result<(), String> {
             first_error.get_or_insert(e);
         }
     }
-    let ids = std::iter::once(OWN_ID.to_string())
+    let ids: Vec<String> = std::iter::once(OWN_ID.to_string())
         .chain(DB_PRESETS.iter().map(|p| p.id.to_string()))
-        .chain(own.iter().cloned());
-    for id in ids {
-        if let Err(e) = store.remove(&target(&id)) {
+        .chain(own.iter().cloned())
+        .collect();
+    // The server's answers about these logins go with the logins.
+    for id in &ids {
+        forget_verdict(store, id);
+    }
+    for id in &ids {
+        if let Err(e) = store.remove(&target(id)) {
             first_error.get_or_insert(e);
         }
+    }
+    // A shipped database now signs in as its shipped login: that login's
+    // answer goes too, so nothing is left from before.
+    for id in &ids {
+        forget_verdict(store, id);
     }
     if let (Ok(old), Some(file)) = (list, store.list_file()) {
         let mut fresh = Catalog::starting();
@@ -484,6 +494,16 @@ pub fn forget_all(store: &dyn SecretStore) -> Result<(), String> {
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+/// Drops the stored write verdict of database `id`'s current login, if it
+/// has a readable one. Nothing here can fail: no login, no verdict.
+fn forget_verdict(store: &dyn SecretStore, id: &str) {
+    if let Ok(Some(chosen)) = resolve(store, id) {
+        if let Ok(c) = parse_connection(&chosen) {
+            super::permissions::forget(&c);
+        }
+    }
 }
 
 /// Every database the app knows: the shipped ones in `DB_PRESETS` order,

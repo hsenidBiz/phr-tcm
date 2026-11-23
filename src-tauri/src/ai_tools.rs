@@ -237,7 +237,7 @@ pub const DB_TOOLS: &[&str] = &["db_lookup", "db_query"];
 /// over the file at once; where the module is off they are not present at
 /// all, like every module's tools. `preview_report_live` runs the report's
 /// stored procedure, so the bridge also wants Database Access on, writes
-/// switched on and the Dev login for it.
+/// switched on and the dev login, which the server lets write.
 pub const CRYSTAL_TOOLS: &[&str] = &[
     "open_report",
     "read_report",

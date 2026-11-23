@@ -4,9 +4,9 @@ import { Database, FolderOpen, Globe } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
-import { commands, type AutoApproveOutcome, type DbDatabase, type EnvListView } from "../bindings";
+import { commands, type AutoApproveOutcome, type EnvListView } from "../bindings";
 import { copyText } from "../lib/clipboard";
-import { DbCredentialsModal } from "../components/DbCredentialsModal";
+import { ManageDatabasesDialog } from "../components/ManageDatabasesDialog";
 import EnvironmentsDialog, { RECIPE_ADDRESS } from "../components/EnvironmentsDialog";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -16,13 +16,12 @@ import {
   dbWritesSnapshot,
   forgetDbConfig,
   forgetDbWritesEverywhere,
-  forgetRemovedDb,
-  isDevLoginUser,
   saveDbWrites,
   saveSelectedDb,
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "../lib/dbServer";
+import { reasonFor, useDbCheckProgress, useDbWriteVerdicts, verdictOf } from "../lib/dbWriteCheck";
 import { apiWritesSnapshot, saveApiWrites, subscribeApiWrites } from "../lib/apiTemplates";
 import { networkToolsSnapshot, saveNetworkTools, subscribeNetworkTools } from "../lib/networkTools";
 import { isCaptureMode } from "../dev/capture";
@@ -63,14 +62,11 @@ import {
 } from "../lib/aiScope";
 import {
   IconAbout,
-  IconAdd,
-  IconCancel,
   IconConfirm,
   IconCopy,
   IconEdit,
   IconRefresh,
   IconRegister,
-  IconRemove,
   IconUnregister,
 } from "../lib/actionIcons";
 
@@ -206,32 +202,7 @@ export default function AiBridge() {
   // chosen first: choosing one also makes it the active environment's, and
   // an environment that uses a database is exactly what refuses its removal.
   const allDbs = databases.data ?? [];
-  const [addingDb, setAddingDb] = useState(false);
-  const [editingDbId, setEditingDbId] = useState<string | null>(null);
-  const editingDb = allDbs.find((d) => d.id === editingDbId) ?? null;
-  const [removingDb, setRemovingDb] = useState<string | null>(null);
-  const [removeBusy, setRemoveBusy] = useState(false);
-  const [removeProblem, setRemoveProblem] = useState<{ id: string; text: string } | null>(null);
-  const removeDb = async (d: DbDatabase) => {
-    setRemoveBusy(true);
-    setRemoveProblem(null);
-    try {
-      const res = await commands.dbRemoveCustom(d.id);
-      setRemovingDb(null);
-      if (res.status === "error") {
-        // In use by an environment, most likely: the sentence names it.
-        setRemoveProblem({ id: d.id, text: res.error });
-        return;
-      }
-      forgetRemovedDb(d.id);
-      toast.success(`Removed ${d.label}.`);
-      await qc.invalidateQueries({ queryKey: ["db-databases"] });
-    } catch (e) {
-      setRemoveProblem({ id: d.id, text: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setRemoveBusy(false);
-    }
-  };
+  const [managingDbs, setManagingDbs] = useState(false);
   // The environments: which one is active, its address, and the database
   // it uses - the card above Database Read Access mirrors the active one.
   const envs = useEnvironments();
@@ -275,11 +246,23 @@ export default function AiBridge() {
   // Read through the stores, so a switch re-renders them at once.
   //
   // Whether the assistant may create, update and delete. Half the
-  // permission: the Rust side also requires the database's own user to be
-  // the dev login, and refuses the write when either is missing.
+  // permission: the Rust side also requires the server to have said the
+  // database's login may create, update and delete, and refuses the write
+  // when either is missing.
   const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
   const setDbWrites = (on: boolean) => saveDbWrites(on);
-  const devLogin = selectedDb ? isDevLoginUser(selectedDb.user) : false;
+  // What the server said about the chosen database's login, asked after it
+  // is saved, and on Recheck. A database chosen with no answer yet is asked
+  // about app-wide (`useAutoDbCheck`), not only while this tab is open.
+  const verdicts = useDbWriteVerdicts(dbOn);
+  const verdict = selectedDb ? verdictOf(verdicts.data, selectedDb.id) : null;
+  const checkProgress = useDbCheckProgress();
+  const canWrite = verdict?.can_write ?? false;
+  const writeReason = selectedDb
+    ? checkProgress.checking.has(selectedDb.id)
+      ? "Checking this login's permissions…"
+      : (reasonFor(verdict, checkProgress.failed.has(selectedDb.id), checkProgress.reasons.get(selectedDb.id)) ?? "This login has not been checked yet.")
+    : "Pick a database to see what its login may do.";
   // Whether the assistant may prove and run API templates - a separate
   // decision from whether the four tools are reachable at all (the "API
   // templates" row above), the same shape as the database's own
@@ -296,7 +279,7 @@ export default function AiBridge() {
   // registered later). It means something only while writes can happen at
   // all, and only once there is an environment to keep it on.
   const noAsk = Boolean(activeEnv?.db_auto_approve);
-  const writesLive = dbWrites && devLogin;
+  const writesLive = dbWrites && canWrite;
   const [noAskNotes, setNoAskNotes] = useState<AutoApproveOutcome[]>([]);
   const setNoAsk = async (on: boolean) => {
     if (!activeEnv) return;
@@ -882,101 +865,25 @@ export default function AiBridge() {
             {selectedDb && (selectedDb.user ? `Signs in as ${selectedDb.user}` : "No login saved")}
           </p>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted">Databases</span>
-              <Button size="sm" variant="outline" onClick={() => setAddingDb(true)}>
-                <IconAdd aria-hidden />
-                Add database
-              </Button>
-            </div>
-            {allDbs.length > 0 && (
-              <ul className="space-y-1">
-                {allDbs.map((d) => (
-                  <li key={d.id} className="space-y-1 rounded-md border border-border/60 p-2">
-                    <div className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-text">{d.label}</p>
-                        <p className="truncate text-[11px] text-faint">
-                          {d.server ? `${d.database} on ${d.server}` : "Not set up yet"}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label={`Edit ${d.label}`}
-                        onClick={() => setEditingDbId(d.id)}
-                      >
-                        <IconEdit aria-hidden />
-                        Edit
-                      </Button>
-                      {/* A shipped database is the app's, so only its login
-                          is the person's to change - it cannot be removed. */}
-                      {!d.shipped && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Remove ${d.label}`}
-                          onClick={() => {
-                            setRemoveProblem(null);
-                            setRemovingDb(d.id);
-                          }}
-                        >
-                          <IconRemove aria-hidden />
-                        </Button>
-                      )}
-                    </div>
-                    {removingDb === d.id && (
-                      <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
-                        <span className="min-w-0 flex-1 text-xs text-text">
-                          Remove {d.label}? Its saved login is deleted from this machine.
-                        </span>
-                        <Button size="sm" variant="ghost" onClick={() => setRemovingDb(null)}>
-                          <IconCancel aria-hidden />
-                          Keep
-                        </Button>
-                        <Button size="sm" variant="outline" disabled={removeBusy} onClick={() => void removeDb(d)}>
-                          <IconRemove aria-hidden />
-                          Remove
-                        </Button>
-                      </div>
-                    )}
-                    {removeProblem?.id === d.id && (
-                      <p role="status" className="break-words text-xs text-danger">
-                        {removeProblem.text}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div className="flex">
+            <Button size="sm" variant="outline" onClick={() => setManagingDbs(true)}>
+              <IconEdit aria-hidden />
+              Manage databases ({allDbs.length})
+            </Button>
           </div>
-          {addingDb && (
-            <DbCredentialsModal
-              database={null}
-              onClose={() => setAddingDb(false)}
-              onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
-            />
-          )}
-          {editingDb && (
-            <DbCredentialsModal
-              database={editingDb}
-              onClose={() => setEditingDbId(null)}
-              onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
-            />
-          )}
+          {managingDbs && <ManageDatabasesDialog databases={allDbs} onClose={() => setManagingDbs(false)} />}
 
           {/* The only switch. Reading is the Database Access module being
               on; writing is its own decision and lives
               here, beside the database it applies to, because that is
               what decides whether it may be made at all.
 
-              Shown OFF on a database that cannot write, whatever is
+              Shown OFF on a database whose login cannot write, whatever is
               stored: the app refuses such a write anyway (both doors -
-              this switch AND the database's user), and a switch reading
+              this switch AND the server's verdict), and a switch reading
               "on" while every write comes back refused is a lie. The
-              stored choice is kept, so going back to the dev login
-              restores it. */}
+              stored choice is kept, so going back to a login that can
+              write restores it. */}
           <div className="space-y-1 rounded-md border border-border/60 p-2">
             {envScope}
             <div className="flex items-center justify-between gap-2">
@@ -985,13 +892,16 @@ export default function AiBridge() {
               </span>
               <Switch
                 ariaLabel="Create, update and delete"
-                checked={dbWrites && devLogin}
-                disabled={!devLogin}
+                checked={dbWrites && canWrite}
+                disabled={!canWrite}
                 onCheckedChange={setDbWrites}
               />
             </div>
+            <p role="status" className="text-[11px] text-faint">
+              {writeReason}
+            </p>
             <p className="text-[11px] text-faint">
-              Only on a dev login database (a user ending in _devlogin), and every
+              Needs a login the server lets create, update and delete, and every
               statement is written to the log.
             </p>
             {/* The third: whether the assistant asks first. The app sets

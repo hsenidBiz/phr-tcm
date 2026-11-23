@@ -2,7 +2,7 @@
 //! stored procedure, on the connection chosen in the AI Bridge tab.
 //!
 //! The bridge decides who may ask (Database Access on, writes switched on,
-//! the Dev login); this file decides what runs. Only a stored procedure
+//! the dev login, which the server lets write); this file decides what runs. Only a stored procedure
 //! runs, and only one of the connection's own database - checked on the
 //! report before anything connects (`live_target`). The login becomes the
 //! bundle's ADO connection string here, right before the call, and never

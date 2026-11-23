@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { useEnvironments } from "../lib/environments";
@@ -7,11 +7,11 @@ import { disabledToolsSnapshot, subscribeDisabledTools } from "../lib/mcpTools";
 import { dropRetiredAiSwitches } from "../lib/aiScope";
 import {
   dbWritesSnapshot,
-  isDevLoginUser,
   migrateLegacyDbConnection,
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "../lib/dbServer";
+import { useDbWriteVerdicts, verdictOf } from "../lib/dbWriteCheck";
 import { apiWritesSnapshot, subscribeApiWrites } from "../lib/apiTemplates";
 import { networkToolsSnapshot, subscribeNetworkTools } from "../lib/networkTools";
 import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "../lib/writingStyle";
@@ -19,6 +19,7 @@ import { subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useAutoRunMode } from "../screens/AutoRun/useAutoRunMode";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
+import { useAutoDbCheck } from "./useAutoDbCheck";
 
 type Args = {
   signedIn: boolean;
@@ -89,20 +90,16 @@ export function useBridgeContextSync({
   useEnvironments(signedIn);
   const envId = useSyncExternalStore(subscribeActiveEnv, activeEnvIdSnapshot);
   const lastPushedEnv = useRef<string | null>(null);
-  // Who each database signs in as - the same list, under the same key, the
-  // AI Bridge card reads and refreshes when a login is saved.
-  const databases = useQuery({
-    queryKey: ["db-databases"],
-    queryFn: async () => (await commands.dbDatabases()) ?? [],
-    enabled: signedIn,
-  });
   // The write switch alone is only half the permission - the Rust side
-  // also requires the database's own user to be the dev login, and
-  // refuses a write when either is missing. Pushing the raw switch here
-  // would tell the assistant it may write on a read-only database, which
-  // is not true. `isDevLoginUser` is the same rule AiBridge uses to decide
-  // whether the switch may even be moved.
-  const devLogin = isDevLoginUser(databases.data?.find((d) => d.id === dbId)?.user ?? "");
+  // also requires the server to have said the database's login may create,
+  // update and delete (`db_check_write`), and refuses a write when either
+  // is missing. Pushing the raw switch here would tell the assistant it may
+  // write on a read-only database, which is not true.
+  const verdicts = useDbWriteVerdicts(signedIn);
+  const canWrite = verdictOf(verdicts.data, dbId)?.can_write ?? false;
+  // A chosen database with no verdict yet is asked about here, app-wide, so
+  // writes do not wait for a visit to the AI Bridge tab.
+  useAutoDbCheck(signedIn);
   // A connection string an older version kept in the webview moves into
   // Rust first, so the very first push already names the database it
   // became - and nothing is pushed until that has been tried.
@@ -158,7 +155,7 @@ export function useBridgeContextSync({
             workingDir || null,
             dbId || null,
             {
-              dbWrites: dbWrites && devLogin,
+              dbWrites: dbWrites && canWrite,
               apiWrites,
               networkTools,
               envId,
@@ -193,7 +190,7 @@ export function useBridgeContextSync({
     workingDir,
     dbId,
     dbWrites,
-    devLogin,
+    canWrite,
     apiWrites,
     networkTools,
     autorunMode,

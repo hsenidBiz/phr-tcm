@@ -19,6 +19,7 @@ import {
   type BoardData,
   type CaseHistory,
   type DbDatabase,
+  type WriteCheck,
   type DetectedTool,
   type EnsuredSuite,
   type EnvInput,
@@ -2021,6 +2022,11 @@ function applyPatches() {
   const captureOnly = {
     detectAiTools: () => Promise.resolve(CAPTURE_AI_TOOLS),
     dbDatabases: () => Promise.resolve(CAPTURE_DATABASES),
+    // The server's answer about each login: the dev login can write, the
+    // others can only read. A recheck answers the same.
+    dbWriteVerdicts: () =>
+      Promise.resolve(CAPTURE_DATABASES.map((d) => ({ id: d.id, check: captureWriteCheck(d.id) }))),
+    dbCheckWrite: (id: string) => ok(captureWriteCheck(id)),
     // The open thread's reply carries a pasted screenshot.
     prThreads: () =>
       patches.prThreads().then((r) => ({
@@ -2226,6 +2232,16 @@ export const CAPTURE_DATABASES: DbDatabase[] = [
     customised: true,
   },
 ];
+
+/** What the sample server says about a sample database's login (capture mode). */
+function captureWriteCheck(id: string): WriteCheck {
+  const can_write = id === "dev";
+  return {
+    can_write,
+    checked_at: Date.parse("2026-11-23T09:00:00Z"),
+    reason: can_write ? "This login can create, update and delete." : "This login can only read this database.",
+  };
+}
 
 /** A screenshot pasted into a pull request comment (capture mode). */
 export const CAPTURE_SHOT_URL =

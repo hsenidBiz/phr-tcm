@@ -44,14 +44,21 @@ pub const NO_LOGIN_SAVED: &str =
 pub const WRITES_OFF: &str =
     "create, update and delete are switched off - turn them on under Database Read Access on the AI Bridge tab";
 
-/// What a connection signed in as `user` may do while the modules in `on`
-/// are switched on. The dev login makes procedures, views and functions
-/// (`Access::DevObjects`) only with Crystal Reports AND Database Access on;
-/// otherwise it is what `guard::access_for_user` says. The one place the
+/// Whether `c`'s user id ends in `_devlogin` (trimmed, any case): the only
+/// logins that may change procedures, views and functions.
+pub fn is_dev_login(c: &Connection) -> bool {
+    c.user.trim().to_lowercase().ends_with("_devlogin")
+}
+
+/// What connection `c` may do while the modules in `on` are switched on.
+/// Rows follow the server's verdict alone (`permissions`). Procedures, views
+/// and functions (`Access::DevObjects`) also need a `_devlogin` user, with
+/// Crystal Reports AND Database Access on; otherwise it is what `guard::access_for_connection` says. The one place the
 /// modules decide anything about the database - `access_of` asks it, and
 /// so does `sqlcmd::run_sql` through it.
-pub fn access_with(user: &str, on: &BTreeSet<Module>) -> Access {
-    match guard::access_for_user(user) {
+pub fn access_with(c: &Connection, on: &BTreeSet<Module>) -> Access {
+    match guard::access_for_connection(c) {
+        Access::DevWrites if !is_dev_login(c) => Access::RowWrites,
         Access::DevWrites if on.contains(&Module::CrystalReports) && on.contains(&Module::DbAccess) => {
             Access::DevObjects
         }
@@ -61,7 +68,7 @@ pub fn access_with(user: &str, on: &BTreeSet<Module>) -> Access {
 
 /// `access_with` for `c`'s user and the modules on in this process now.
 pub fn access_of(c: &Connection) -> Access {
-    access_with(&c.user, &crate::modules::current())
+    access_with(c, &crate::modules::current())
 }
 
 /// The connection the database `id` stands for, resolved from `store` now
@@ -163,8 +170,9 @@ pub fn rows_affected(stdout: &str) -> Option<i64> {
 /// the person switched create/update/delete on in the app, AND the chosen
 /// connection is one whose user may write. Either one shut is a 400 that
 /// names which. A procedure, view or function has the same two doors, and
-/// the connection's door is narrower: the dev login with the Crystal
-/// Reports module on (`access_with`).
+/// the connection's door is narrower: the dev login, which the server lets
+/// write, with the Crystal Reports module on (`access_with`). Row changes
+/// need only a login the server lets write.
 pub async fn run_query<R: Runner>(
     r: &R,
     exe: &Path,
@@ -181,6 +189,7 @@ pub async fn run_query<R: Runner>(
         Verdict::ObjectChange => match access {
             Access::DevObjects => None,
             Access::DevWrites => Some(guard::objects_need_module(crate::extras::unlocked())),
+            Access::RowWrites => Some(guard::OBJECTS_NEED_DEV_LOGIN.to_string()),
             Access::ReadOnly => Some(guard::READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::Write | Verdict::Read => None,

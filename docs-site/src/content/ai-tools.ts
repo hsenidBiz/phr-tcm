@@ -47,8 +47,13 @@ export const aiBridge: Screen = {
     },
     {
       id: CREDENTIALS,
-      route: [NAV, { click: { role: "button", name: "Edit Dev - dev login" } }, { waitFor: { role: "button", name: "Test connection" } }],
-      alt: "The credentials window of the chosen database",
+      route: [
+        NAV,
+        { click: { role: "button", nameRe: "^Manage databases" } },
+        { click: { role: "button", name: "Edit Dev - dev login" } },
+        { waitFor: { role: "button", name: "Test connection" } },
+      ],
+      alt: "The credentials window of a database, opened from Manage databases",
     },
     {
       id: API,
@@ -265,13 +270,14 @@ export const aiBridge: Screen = {
       does: "The user the chosen database signs in as, or **No login saved**. The password is never shown.",
     },
     {
-      id: "edit-database",
+      id: "manage-databases",
       shot: TAB,
       group: "company-database",
-      locate: { role: "button", name: "Edit Dev - dev login" },
-      name: "Edit (database)",
+      locate: { role: "button", nameRe: "^Manage databases" },
+      name: "Manage databases",
       does:
-        "Every database is listed under the picker. **Edit** opens that database's login. **Add database** above the list adds one of your own, which can be removed again; the ones that come with the app cannot.",
+        "Opens the list of every saved database, with the number saved in brackets. Filter it by name or server. **Edit** opens that database's login, and **Recheck** asks the server again what the login may do (the row says **Can write**, **Read only** or **Not checked**, and the time of the last check shows when you point at it). " +
+        "**Add database** adds one of your own, which can be deleted again; the ones that come with the app cannot be deleted.",
     },
     {
       id: "writes",
@@ -280,7 +286,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Create, update and delete" },
       name: "Create, update and delete",
       does:
-        "Lets an assistant change data in the chosen database, not only read it. It is off until you turn it on, it can only be turned on for a dev login database (a user ending in _devlogin), and every statement is written to the app's log. " +
+        "Lets an assistant change data in the chosen database, not only read it. Writes need a login the server lets create, update and delete, and the switch on: the app asks the server once after a login is saved, when a database is chosen that has not been checked, and when you press Recheck, and the switch can only be turned on when the answer is yes (otherwise it says why under the switch). It is off until you turn it on, and every statement is written to the app's log. " +
         "The switch is the active environment's own, named above it; in a new environment it starts off.",
     },
     {

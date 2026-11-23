@@ -888,6 +888,49 @@ pub async fn test_db_connection(
     credentials::test_connection_with(&crate::db::RealRunner, &exe, &conn).await
 }
 
+/// One database's verdict, for the list the webview shows: which database,
+/// and what the server said about its current login.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct DbWriteVerdict {
+    pub id: String,
+    pub check: crate::db::permissions::WriteCheck,
+}
+
+/// The verdicts already reached, one per database whose CURRENT login has
+/// one. A database with none (never checked, or its login was edited since)
+/// is simply absent. Asks no server.
+#[tauri::command]
+#[specta::specta]
+pub fn db_write_verdicts(secrets: State<'_, DbSecrets>) -> Vec<DbWriteVerdict> {
+    verdicts_with(&*secrets.0)
+}
+
+/// `db_write_verdicts` beneath the Tauri layer.
+pub fn verdicts_with(store: &dyn credentials::SecretStore) -> Vec<DbWriteVerdict> {
+    credentials::databases(store)
+        .into_iter()
+        .filter_map(|d| {
+            let c = crate::db::query::connection(Some(store), Some(&d.id)).ok()?;
+            let stored = crate::db::permissions::stored(&c)?;
+            Some(DbWriteVerdict { id: d.id, check: crate::db::permissions::WriteCheck::from_stored(&stored) })
+        })
+        .collect()
+}
+
+/// Asks the server whether database `id`'s login may create, update and
+/// delete, and keeps the answer. The answer is a verdict and a sentence;
+/// a failed check answers a sentence only and leaves the database with no
+/// verdict, which is read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn db_check_write(
+    secrets: State<'_, DbSecrets>,
+    id: String,
+) -> Result<crate::db::permissions::WriteCheck, String> {
+    let (conn, exe) = crate::db::query::ready(Some(&*secrets.0), Some(&id))?;
+    crate::db::permissions::check(&crate::db::RealRunner, &exe, &conn).await
+}
+
 /// A shipped database back to its shipped login.
 #[tauri::command]
 #[specta::specta]
