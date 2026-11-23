@@ -5,7 +5,7 @@
 use v2_lib::ai_bridge::{route_timed_simple, BridgeContext, SwitchGate, API_WRITES_OFF};
 use v2_lib::autorun::agents::Caller;
 use v2_lib::simple_view::{
-    SIMPLE_API_NO_ENVIRONMENT, context_under, disabled_under, route_refusal, SIMPLE_HIDDEN_ROUTES, SIMPLE_HIDDEN_TOOLS, SIMPLE_HIDES_TOOL,
+    SIMPLE_API_NO_ENVIRONMENT, context_under, disabled_under, disabled_under_ctx, route_refusal, SIMPLE_HIDDEN_ROUTES, SIMPLE_HIDDEN_TOOLS, SIMPLE_HIDES_TOOL,
 };
 
 fn saved() -> BridgeContext {
@@ -73,15 +73,45 @@ fn every_hidden_tool_is_a_tool_the_server_offers() {
 }
 
 #[test]
-fn simple_mode_adds_to_a_list_it_never_edits() {
+fn simple_mode_ignores_the_saved_list_it_never_edits() {
+    // Basic mode also turns the shown tools on: a saved switch-off of a shown
+    // tool (get_bugs here) no longer counts, only the hidden tools are off.
     let list = vec!["get_bugs".to_string(), "search_pbis".to_string()];
     assert_eq!(disabled_under(false, &list), list);
     let under = disabled_under(true, &list);
-    assert!(under.contains(&"get_bugs".to_string()));
+    assert!(!under.contains(&"get_bugs".to_string()));
+    assert_eq!(under.len(), SIMPLE_HIDDEN_TOOLS.len());
     for t in SIMPLE_HIDDEN_TOOLS {
         assert_eq!(under.iter().filter(|u| *u == t).count(), 1, "{t}");
     }
     assert_eq!(list.len(), 2, "the saved list is untouched");
+}
+
+#[test]
+fn under_basic_mode_a_saved_switch_off_of_a_shown_tool_is_ignored_and_modules_still_gate() {
+    use std::collections::BTreeSet;
+    use v2_lib::ai_tools::effective_disabled_under;
+    use v2_lib::modules::Module;
+    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let saved: Vec<String> =
+        ["search_test_suites", "get_suite_test_cases", "get_run_results", "search_pbis"].map(String::from).to_vec();
+    let under = effective_disabled_under(true, &saved, &all);
+    for t in ["search_test_suites", "get_suite_test_cases", "get_run_results"] {
+        assert!(!under.iter().any(|u| u == t), "{t} is on under Basic mode");
+    }
+    assert!(SIMPLE_HIDDEN_TOOLS.iter().all(|t| under.iter().any(|u| u == t)));
+    // A module that is off still takes its tools, saved list or not.
+    let mut no_autorun = all.clone();
+    no_autorun.remove(&Module::AutoRun);
+    let off = effective_disabled_under(true, &saved, &no_autorun);
+    let gated: Vec<&str> = v2_lib::ai_tools::module_tools().filter(|t| v2_lib::ai_tools::module_of_tool(t) == Some(Module::AutoRun)).collect();
+    assert!(!gated.is_empty());
+    assert!(gated.iter().all(|t| off.iter().any(|o| o == t)));
+    // Basic off: the saved list comes back as it was.
+    let plain = effective_disabled_under(false, &saved, &all);
+    for t in &saved {
+        assert!(plain.contains(t), "{t}");
+    }
 }
 
 #[test]
@@ -91,7 +121,9 @@ fn the_context_under_simple_mode_forces_the_two_switches_and_off_restores_them()
     assert!(under.network_tools && under.api_writes);
     assert_eq!(under.app_simple_mode, ctx.app_simple_mode, "the webview's push is what carries it");
     assert!(SIMPLE_HIDDEN_TOOLS.iter().all(|t| under.disabled_tools.iter().any(|d| d == t)));
-    assert!(under.disabled_tools.iter().any(|d| d == "get_bugs"));
+    // Basic mode also turns the shown tools on: the saved switch-off of get_bugs is ignored.
+    assert!(!under.disabled_tools.iter().any(|d| d == "get_bugs"));
+    assert_eq!(under.disabled_tools.len(), SIMPLE_HIDDEN_TOOLS.len());
     // The stored context is what was saved, and Basic mode off shows it as it was.
     assert!(!ctx.network_tools && !ctx.api_writes);
     assert_eq!(ctx.disabled_tools, vec!["get_bugs".to_string()]);
@@ -123,7 +155,8 @@ async fn the_tools_answer_names_the_hidden_tools_under_simple_mode_and_is_as_bef
         assert!(disabled.contains(t), "{t}");
         assert!(v["simple_hidden"].as_array().unwrap().iter().any(|h| h == t), "{t}");
     }
-    assert!(disabled.contains(&"get_bugs"));
+    // Basic mode turns the shown tools on: the saved switch-off of get_bugs no longer counts.
+    assert!(!disabled.contains(&"get_bugs"));
     assert_eq!(v["network_tools"], true);
 
     let (_, body) = ask(false, &ctx, "GET", "/tools", "").await;
@@ -412,4 +445,24 @@ fn the_first_push_after_a_switch_made_with_no_bridge_catches_the_files_up() {
     let mut no_playwright = all.clone();
     no_playwright.remove(&Module::Playwright);
     assert!(sync_needed(&mut last, key(false, &no_playwright)));
+}
+
+#[test]
+fn a_switch_in_progress_keeps_the_placeholder_list_under_basic_mode() {
+    // The placeholder a switch leaves: a shown tool off until the push.
+    let mut held = saved();
+    held.gate.holds = 1;
+    held.disabled_tools = vec!["get_bugs".into(), "get_test_cases".into()];
+    let under = disabled_under_ctx(true, &held);
+    assert!(under.iter().any(|d| d == "get_bugs"), "kept while switching, as with Basic mode off");
+    assert!(under.iter().any(|d| d == "get_test_cases"));
+    assert!(SIMPLE_HIDDEN_TOOLS.iter().all(|t| under.iter().any(|d| d == t)), "the hidden tools are added");
+    assert_eq!(context_under(true, &held).disabled_tools, under);
+    assert_eq!(disabled_under_ctx(false, &held), held.disabled_tools, "Basic mode off: unchanged");
+    // Outside a switch the saved list is ignored.
+    let mut idle = held.clone();
+    idle.gate.holds = 0;
+    let under = disabled_under_ctx(true, &idle);
+    assert!(!under.iter().any(|d| d == "get_bugs"));
+    assert_eq!(under.len(), SIMPLE_HIDDEN_TOOLS.len());
 }

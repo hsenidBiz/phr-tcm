@@ -220,7 +220,7 @@ pub fn match_allow_files_in(
 /// before that and would read as "nothing is switched off".
 pub fn told_disabled(bridge: Option<&std::sync::Mutex<crate::ai_bridge::BridgeContext>>) -> Option<Vec<String>> {
     let ctx = bridge?.lock().unwrap_or_else(|e| e.into_inner());
-    ctx.gate.env_id.is_some().then(|| crate::simple_view::disabled_now(&ctx.disabled_tools))
+    ctx.gate.env_id.is_some().then(|| crate::simple_view::disabled_now_ctx(&ctx))
 }
 
 /// Every tool's own "always allow" made to say what the app says now: the

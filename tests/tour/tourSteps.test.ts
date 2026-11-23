@@ -34,6 +34,11 @@ test("Basic mode skips the Working repositories stop; off keeps it", () => {
   expect(tourStepsFor(ALL, false).some((s) => s.anchor === "ai-repos")).toBe(true);
 });
 
+test("Basic mode skips the tool list stop (its card is hidden); off keeps it", () => {
+  expect(tourStepsFor(ALL, true).some((s) => s.anchor === "ai-toolset")).toBe(false);
+  expect(tourStepsFor(ALL, false).some((s) => s.anchor === "ai-toolset")).toBe(true);
+});
+
 test("Basic mode: every kept stop still resolves to a screen Basic mode offers", () => {
   const steps = tourStepsFor(ALL, true);
   const titles = steps.map((s) => s.title);

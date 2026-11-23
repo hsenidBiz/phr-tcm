@@ -996,7 +996,7 @@ export default function Settings({
         <SettingRow
           asLabel
           name="Basic mode"
-          description="Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style and Working repositories cards in AI Bridge. Everything keeps working, and your assistant can still use API Templates."
+          description="Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on."
           control={
             <Switch
               checked={appSettings.data?.app_simple_mode ?? false}

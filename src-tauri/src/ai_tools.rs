@@ -304,12 +304,15 @@ pub fn effective_disabled_for(disabled: &[String], on: &BTreeSet<crate::modules:
     out
 }
 
-/// `effective_disabled_for`, then - while `simple` (app Basic mode) - the
-/// tools it hides (`simple_view::SIMPLE_HIDDEN_TOOLS`), added AFTER the core
-/// filter so a core tool (begin_test_case_writing...) can be hidden too.
+/// `effective_disabled_for`, but while `simple` (app Basic mode) the saved
+/// list is ignored - the tools Basic mode shows are on - so only the modules
+/// that are off take tools away; then the tools Basic mode hides
+/// (`simple_view::SIMPLE_HIDDEN_TOOLS`) are added AFTER the core filter so a
+/// core tool (begin_test_case_writing...) can be hidden too.
 /// A view: the saved list is never changed.
 pub fn effective_disabled_under(simple: bool, disabled: &[String], on: &BTreeSet<crate::modules::Module>) -> Vec<String> {
-    crate::simple_view::disabled_under(simple, &effective_disabled_for(disabled, on))
+    let effective = effective_disabled_for(if simple { &[] } else { disabled }, on);
+    if simple { crate::simple_view::with_hidden(effective) } else { effective }
 }
 
 /// `effective_disabled_under` for this process: the modules on now and the

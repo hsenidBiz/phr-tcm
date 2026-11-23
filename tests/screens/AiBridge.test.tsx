@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "../../src/components/ui/toaster";
 import { TooltipLayer } from "../../src/components/ui/tooltip";
@@ -2043,34 +2043,23 @@ function renderSimpleBridge(simple: boolean) {
   return renderBridge(qc);
 }
 
-test("Basic mode hides the API templates and Network tools cards, the writing rows and the writing intro", async () => {
-  saveDisabledTools(["search_pbis"]);
+test("Basic mode hides the API templates, Network tools, tool list and breakdown cards and leaves the saved switches alone", async () => {
+  saveDisabledTools(["search_pbis", "get_run_results"]);
   renderSimpleBridge(true);
-  await screen.findByText("Tools an assistant may use");
+  await screen.findByText("Connect your AI tools");
   expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "API templates (create, edit and delete)" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Network tools" })).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "Network tools" })).not.toBeInTheDocument();
-  // The rows the assistants no longer have.
-  for (const label of ["Find a PBI", "Project wiki", "Project tags"]) {
+  // Changed by "Basic mode hides the tool list": its card and the breakdown are gone,
+  // so no row, and no sentence that points at a hidden switch, is on screen.
+  expect(screen.queryByText("Tools an assistant may use")).not.toBeInTheDocument();
+  expect(screen.queryByText("AI Tools Breakdown")).not.toBeInTheDocument();
+  for (const label of ["Find a PBI", "Project wiki", "Project tags", "Test Suites", "Run results"]) {
     expect(screen.queryByRole("switch", { name: label }), label).not.toBeInTheDocument();
   }
-  // The reads stay.
-  expect(screen.getByRole("switch", { name: "Test Suites" })).toBeInTheDocument();
-  expect(screen.getByRole("switch", { name: "Run results" })).toBeInTheDocument();
-  const card = screen.getByText("AI Tools Breakdown").closest("section")!;
-  expect(card.textContent).not.toMatch(/The best way to write test cases/);
-  for (const label of ["Project tags", "Find a PBI", "Project wiki", "Crystal Reports"]) {
-    expect(within(card).queryByText(label), label).not.toBeInTheDocument();
-  }
-  for (const label of ["Test Suites", "Run results", "Auto Test scripts", "API templates", "Database Read Access"]) {
-    expect(within(card).getByText(label), label).toBeInTheDocument();
-  }
-  // The sentences that point at the hidden switches are gone too.
-  expect(card.textContent).not.toMatch(/Network tools switch/);
-  expect(card.textContent).not.toMatch(/API templates switch/);
-  // A view, not a save: the switch the person made is still as they left it.
-  expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
+  // A view, not a save: the switches the person made are still as they left them.
+  expect(disabledToolsSnapshot()).toEqual(["search_pbis", "get_run_results"]);
 });
 
 test("out of Basic mode the cards, rows and writing intro are all there", async () => {
@@ -2088,12 +2077,12 @@ test("out of Basic mode the cards, rows and writing intro are all there", async 
   expect(card.textContent).toMatch(/API templates switch above, which is off by default/);
 });
 
-test("Turn all on under Basic mode keeps the hidden tools' saved switches", async () => {
-  // One visible row off (Run results) and one hidden row off (Find a PBI).
+test("Basic mode has no Turn all on button (the tool list is hidden) and saves nothing", async () => {
   saveDisabledTools(["get_run_results", "search_pbis"]);
   renderSimpleBridge(true);
-  fireEvent.click(await screen.findByRole("button", { name: "Turn all on" }));
-  expect(disabledToolsSnapshot()).toEqual(["search_pbis"]);
+  await screen.findByText("Connect your AI tools");
+  expect(screen.queryByRole("button", { name: "Turn all on" })).not.toBeInTheDocument();
+  expect(disabledToolsSnapshot()).toEqual(["get_run_results", "search_pbis"]);
 });
 
 // Basic mode has no Working repositories card and no Writing style card, and
@@ -2114,7 +2103,7 @@ function basicBridgeWithNoRepo() {
   return { calls, ...renderBridge(qc) };
 }
 
-test("Basic mode with no repository shows the tool list, not the repository gate, and no stray cards", async () => {
+test("Basic mode with no repository shows Connect your AI tools, not the repository gate or the repository and writing cards, and no empty wrapper", async () => {
   const { container } = basicBridgeWithNoRepo();
   expect(await screen.findByText("Connect your AI tools")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Working repositories" })).not.toBeInTheDocument();
@@ -2123,6 +2112,16 @@ test("Basic mode with no repository shows the tool list, not the repository gate
   // The left column opens with the tools card: no empty wrapper before it.
   const left = container.querySelector('[data-tour="ai-tools"]')!.parentElement!;
   expect(left.firstElementChild).toBe(container.querySelector('[data-tour="ai-tools"]'));
+});
+
+test("Basic mode shows neither the tool list card nor the AI Tools Breakdown card; off shows both", async () => {
+  const { container } = basicBridgeWithNoRepo();
+  expect(await screen.findByText("Connect your AI tools")).toBeInTheDocument();
+  expect(screen.queryByText("Tools an assistant may use")).not.toBeInTheDocument();
+  expect(screen.queryByText("AI Tools Breakdown")).not.toBeInTheDocument();
+  expect(container.querySelector('[data-tour="ai-toolset"]')).toBeNull();
+  // Nothing in the right stack is the breakdown; the stack itself only holds module cards.
+  expect(container.querySelector('[class*="2xl:contents"]')?.textContent ?? "").not.toContain("Each tool below has a switch above");
 });
 
 test("Basic mode detects and registers machine-wide without saving the scope choice", async () => {
@@ -2147,6 +2146,8 @@ test("Basic mode keeps the repository card away even with a repository saved; of
   renderBridge(qc);
   expect(await screen.findByRole("heading", { name: "Working repositories" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
+  expect(screen.getByText("Tools an assistant may use")).toBeInTheDocument();
+  expect(screen.getByText("AI Tools Breakdown")).toBeInTheDocument();
 });
 
 test("out of Basic mode with no repository, the tab is still only the repository card", async () => {
@@ -2155,4 +2156,26 @@ test("out of Basic mode with no repository, the tab is still only the repository
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByRole("heading", { name: "Working repositories" })).toBeInTheDocument();
   expect(screen.queryByText("Connect your AI tools")).not.toBeInTheDocument();
+});
+
+test("the grid keeps three columns at 2xl with Basic mode off, two with it on, and one with no module card", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "C:\repo");
+  renderSimpleBridge(false);
+  await screen.findByText("Connect your AI tools");
+  expect(screen.getByTestId("ai-bridge-grid").className).toBe(
+    "grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3",
+  );
+  cleanup();
+  renderSimpleBridge(true);
+  await screen.findByText("Connect your AI tools");
+  const basic = screen.getByTestId("ai-bridge-grid").className;
+  expect(basic).toContain("2xl:grid-cols-2");
+  expect(basic).not.toContain("2xl:grid-cols-3");
+  cleanup();
+  act(() => setModulesForTest([]));
+  renderSimpleBridge(true);
+  await screen.findByText("Connect your AI tools");
+  const none = screen.getByTestId("ai-bridge-grid").className;
+  expect(none).toContain("lg:grid-cols-1");
+  expect(none).not.toContain("lg:grid-cols-2");
 });
