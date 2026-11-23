@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.1",
+    date: "2026-11-23",
+    items: [
+      "When the chosen database's login can only read it, AI Bridge no longer shows the Create, update and delete and Run changes without asking switches, just a line saying so.",
+      "Basic mode hides Copy Auto Test data in the Environments dialog, and the button no longer ends in three dots.",
+    ],
+  },
+  {
     version: "2.4.7",
     date: "2026-11-23",
     items: [
