@@ -1408,3 +1408,25 @@ async fn long_searches_and_long_login_lists_are_refused() {
     let at_limit = add_logins_in(root, Ok(&fake), &ok).await;
     assert!(at_limit.err().is_none_or(|e| !e.contains("too many")), "the limit itself is allowed");
 }
+
+#[test]
+fn saving_an_empty_list_removes_every_account_and_drops_their_saved_sessions() {
+    // Remove all on the Accounts tab saves an empty list.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    let env_id = active_id(root).unwrap();
+    save_accounts(root, &[account("hr.a", "a1", "Pw-A"), account("hr.b", "b1", "Pw-B")]).unwrap();
+    for k in ["hr.a", "hr.b"] {
+        let p = session_path_for(root, &env_id, k);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{}").unwrap();
+    }
+    let saved = save_accounts_in(root, &env_id, vec![], None).unwrap();
+    assert!(saved.made.is_empty());
+    let mut dropped = saved.dropped.clone();
+    dropped.sort();
+    assert_eq!(dropped, ["hr.a", "hr.b"], "a removed account's saved session goes with it, as for one removed row");
+    assert!(load_accounts(root).unwrap().is_empty());
+    assert!(!session_path_for(root, &env_id, "hr.a").exists());
+}

@@ -1379,3 +1379,54 @@ test("a tick on a row a search hides is cleared, and Add selected counts and add
   fireEvent.click(within(picker).getByRole("button", { name: "Add selected (1)" }));
   await waitFor(() => expect(adds).toEqual([{ logins: ["lee.two"], dbRead: false }]));
 });
+
+// ---- Remove all ----------------------------------------------------------
+
+const TWO = [
+  { key: "admin", label: "A", username: "kim", password: "p" },
+  { key: "sup", label: "S", username: "lee", password: "q" },
+];
+
+test("Remove all is absent with no rows", async () => {
+  mount([]);
+  await screen.findByText("No accounts yet.");
+  expect(screen.queryByRole("button", { name: "Remove all" })).not.toBeInTheDocument();
+});
+
+test("Remove all asks with the count, and Keep changes nothing", async () => {
+  mount(TWO);
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+  expect(screen.getByText("Remove all 2 accounts? They are removed when you save.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+  expect(screen.queryByText(/They are removed when you save/)).not.toBeInTheDocument();
+  expect(screen.getByDisplayValue("kim")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("lee")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save accounts" })).toBeDisabled();
+});
+
+test("Remove all empties the rows, marks the dialog changed, and Save sends an empty list", async () => {
+  const saved: unknown[][] = [];
+  const onClose = mount(TWO, (a) => { saved.push(a); return ["admin"]; });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Remove all accounts" })).getByRole("button", { name: "Remove all" }));
+  expect(screen.queryByDisplayValue("kim")).not.toBeInTheDocument();
+  expect(screen.queryByDisplayValue("lee")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove all" })).not.toBeInTheDocument();
+  expect(saved).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Save accounts" }));
+  await waitFor(() => expect(saved).toEqual([[]]));
+  expect(onClose).toHaveBeenCalled();
+});
+
+test("Cancel after Remove all closes without saving, and a reopen shows the rows again", async () => {
+  const saved: unknown[][] = [];
+  const onClose = mount(TWO, (a) => { saved.push(a); return []; });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Remove all accounts" })).getByRole("button", { name: "Remove all" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onClose).toHaveBeenCalled();
+  expect(saved).toEqual([]);
+});
