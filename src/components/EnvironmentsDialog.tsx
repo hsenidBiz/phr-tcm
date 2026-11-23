@@ -360,15 +360,17 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                   <IconEdit aria-hidden />
                   Edit
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label={`Copy Auto Test data into ${env.name}`}
-                  onClick={() => setCopyInto(env)}
-                >
-                  <IconCopyFromEnvironment aria-hidden />
-                  Copy Auto Test data…
-                </Button>
+                {!appSimple && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Copy Auto Test data into ${env.name}`}
+                    onClick={() => setCopyInto(env)}
+                  >
+                    <IconCopyFromEnvironment aria-hidden />
+                    Copy Auto Test data
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -385,8 +387,8 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
                   <span className="min-w-0 flex-1 text-xs text-text">
                     Remove {env.name}? Its accounts and saved sign-ins go now. Its Auto Test scripts, areas and
-                    templates are kept for 30 days and can be copied into another environment from Copy Auto Test
-                    data…
+                    templates are kept for 30 days
+                    {appSimple ? "." : " and can be copied into another environment from Copy Auto Test data."}
                   </span>
                   <Button size="sm" variant="ghost" onClick={() => setRemoving(null)}>
                     <IconCancel aria-hidden />

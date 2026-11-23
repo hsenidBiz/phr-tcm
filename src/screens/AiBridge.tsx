@@ -21,7 +21,7 @@ import {
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "../lib/dbServer";
-import { reasonFor, useDbCheckProgress, useDbWriteVerdicts, verdictOf } from "../lib/dbWriteCheck";
+import { CHECK_FAILED, reasonFor, useDbCheckProgress, useDbWriteVerdicts, verdictOf } from "../lib/dbWriteCheck";
 import { apiWritesSnapshot, saveApiWrites, subscribeApiWrites } from "../lib/apiTemplates";
 import { networkToolsSnapshot, saveNetworkTools, subscribeNetworkTools } from "../lib/networkTools";
 import { isCaptureMode } from "../dev/capture";
@@ -258,11 +258,21 @@ export default function AiBridge() {
   const verdict = selectedDb ? verdictOf(verdicts.data, selectedDb.id) : null;
   const checkProgress = useDbCheckProgress();
   const canWrite = verdict?.can_write ?? false;
-  const writeReason = selectedDb
-    ? checkProgress.checking.has(selectedDb.id)
-      ? "Checking this login's permissions…"
-      : (reasonFor(verdict, checkProgress.failed.has(selectedDb.id), checkProgress.reasons.get(selectedDb.id)) ?? "This login has not been checked yet.")
-    : "Pick a database to see what its login may do.";
+  // What the card shows in place of the write switches until the server has
+  // said this login may write. The saved switch values are never touched by
+  // hiding them: they come back as saved once the verdict is can-write.
+  const dbFailed = selectedDb ? checkProgress.failed.has(selectedDb.id) : false;
+  const dbChecking = selectedDb ? checkProgress.checking.has(selectedDb.id) : false;
+  const showWriteSwitches = Boolean(selectedDb) && !dbFailed && canWrite;
+  const writeNote = !selectedDb
+    ? "Pick a database to see what its login may do."
+    : dbFailed
+      ? (reasonFor(verdict, true, checkProgress.reasons.get(selectedDb.id)) ?? CHECK_FAILED)
+      : verdict && !verdict.can_write
+        ? "This login can only read this database."
+        : dbChecking || !verdict
+          ? "Checking whether this login can write…"
+          : null;
   // Whether the assistant may prove and run API templates - a separate
   // decision from whether the four tools are reachable at all (the "API
   // templates" row above), the same shape as the database's own
@@ -878,12 +888,16 @@ export default function AiBridge() {
               here, beside the database it applies to, because that is
               what decides whether it may be made at all.
 
-              Shown OFF on a database whose login cannot write, whatever is
-              stored: the app refuses such a write anyway (both doors -
-              this switch AND the server's verdict), and a switch reading
-              "on" while every write comes back refused is a lie. The
-              stored choice is kept, so going back to a login that can
-              write restores it. */}
+              Shown only for a login the server lets write: the app refuses
+              such a write anyway (both doors - this switch AND the
+              server's verdict). The stored choice is kept while hidden, so
+              going back to a login that can write restores it. */}
+          {!showWriteSwitches && writeNote && (
+            <p role="status" className="text-[11px] text-faint">
+              {writeNote}
+            </p>
+          )}
+          {showWriteSwitches && (
           <div className="space-y-1 rounded-md border border-border/60 p-2">
             {envScope}
             <div className="flex items-center justify-between gap-2">
@@ -892,22 +906,17 @@ export default function AiBridge() {
               </span>
               <Switch
                 ariaLabel="Create, update and delete"
-                checked={dbWrites && canWrite}
-                disabled={!canWrite}
+                checked={dbWrites}
                 onCheckedChange={setDbWrites}
               />
             </div>
             <p role="status" className="text-[11px] text-faint">
-              {writeReason}
+              {verdict?.reason}
             </p>
             <p className="text-[11px] text-faint">
               Needs a login the server lets create, update and delete, and every
               statement is written to the log.
             </p>
-            {/* The third: whether the assistant asks first. The app sets
-                each registered tool's own "always allow" for db_query and
-                tells the assistant it need not ask; a tool that keeps that
-                setting only in its own window is named below. */}
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-xs font-medium text-muted">Run changes without asking</span>
               <Switch
@@ -921,14 +930,18 @@ export default function AiBridge() {
               Your AI tools run database changes without stopping to ask you first. They
               still try each batch as a dry run before saving it.
             </p>
-            {noAskNotes.length > 0 && (
-              <ul className="space-y-0.5 text-[11px] text-warning">
-                {noAskNotes.map((o) => (
-                  <li key={o.tool}>{o.note}</li>
-                ))}
-              </ul>
-            )}
           </div>
+          )}
+          {/* A tool the app could not update is named whatever the verdict
+              is: an assistant could otherwise still be allowed to run
+              changes unasked. */}
+          {noAskNotes.length > 0 && (
+            <ul className="space-y-0.5 text-[11px] text-warning">
+              {noAskNotes.map((o) => (
+                <li key={o.tool}>{o.note}</li>
+              ))}
+            </ul>
+          )}
           {/* Not tied to the switch above: the Auto Test and API template
               tools' "always allow" follows the modules, and the tools
               switched off in the list below. Hidden from the help site's

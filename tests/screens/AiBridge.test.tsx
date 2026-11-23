@@ -557,7 +557,8 @@ test("the database card is a picker, a login line, the write switch and a Manage
   }
   expect(within(card).queryByRole("button", { name: "Add database" })).not.toBeInTheDocument();
   expect(within(card).queryByRole("button", { name: "Manage credentials" })).not.toBeInTheDocument();
-  expect(within(card).getByRole("switch", { name: "Create, update and delete" })).toBeInTheDocument();
+  // dev-read can only read, so the write switch is not on the card at all.
+  expect(within(card).queryByRole("switch", { name: "Create, update and delete" })).not.toBeInTheDocument();
 
   expect(within(card).queryByText("Edit as one string")).not.toBeInTheDocument();
   expect(within(card).queryByText("CONNECTION_STRING")).not.toBeInTheDocument();
@@ -1359,22 +1360,24 @@ test("nothing is removed from a tool that is not installed", async () => {
   expect(removed).toEqual([]);
 });
 
-/// Off by default, and unmovable on a database the backend would refuse
-/// the write on anyway.
-test("creating, updating and deleting is off, and disabled for a login the server says can only read", async () => {
+/// A login the server says can only read gets no write switches at all, and
+/// the card says why. A saved "on" is kept, not cleared, while they are hidden.
+test("a login the server says can only read shows no write switches, only the read-only line", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  localStorage.setItem("tcm-v2-db-writes", "1");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
   await screen.findByText("Signs in as sgdev01db02_readonly");
-  const writes = screen.getByRole("switch", { name: "Create, update and delete" });
-  expect(writes).toHaveAttribute("aria-checked", "false");
-  expect(writes).toBeDisabled();
-  // And the reason it cannot be moved is on screen, not implied.
-  expect(await screen.findByText("This login can only read this database.")).toBeInTheDocument();
-
-  fireEvent.click(writes);
-  expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
+  expect(await within(dbCard()).findByText("This login can only read this database.")).toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Create, update and delete" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Run database changes without asking" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Create, update and delete")).not.toBeInTheDocument();
+  expect(screen.queryByText("Run changes without asking")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Needs a login the server lets create/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/run database changes without stopping to ask/)).not.toBeInTheDocument();
+  // Hiding changes nothing that was saved.
+  expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
 });
 
 /// For a login the server says can write it moves, and the stored flag is
@@ -1385,10 +1388,10 @@ test("for a login the server says can write, the switch turns on and is stored",
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
   await screen.findByText("Signs in as sgdev01db01_devlogin");
-  const writes = screen.getByRole("switch", { name: "Create, update and delete" });
+  // The switch appears once the verdict has arrived.
+  const writes = await screen.findByRole("switch", { name: "Create, update and delete" });
   expect(writes).toHaveAttribute("aria-checked", "false");
-  // Enabled once the verdict has arrived.
-  await waitFor(() => expect(writes).not.toBeDisabled());
+  expect(writes).not.toBeDisabled();
 
   fireEvent.click(writes);
   expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
@@ -1426,9 +1429,9 @@ test("a database chosen with no verdict is checked, and the switch follows the a
   await screen.findByText("Signs in as sgdev01db01_devlogin");
   await waitFor(() => expect(calls.filter((c) => c.cmd === "db_check_write")).toHaveLength(1));
   expect(calls.find((c) => c.cmd === "db_check_write")!.args).toEqual({ id: "dev-login" });
-  // A devlogin-named user the server says can only read: off, with the reason.
+  // A devlogin-named user the server says can only read: no switch, with the reason.
   expect(await screen.findByText("This login can only read this database.")).toBeInTheDocument();
-  expect(screen.getByRole("switch", { name: "Create, update and delete" })).toBeDisabled();
+  expect(screen.queryByRole("switch", { name: "Create, update and delete" })).not.toBeInTheDocument();
   // Asked once, not on every render.
   expect(calls.filter((c) => c.cmd === "db_check_write")).toHaveLength(1);
 });
@@ -1442,7 +1445,7 @@ test("a check that is answered 'can write' turns the switch on for the chosen lo
   expect(screen.getByText("This login can create, update and delete.")).toBeInTheDocument();
 });
 
-test("a check that fails says so, names no server, and leaves the switch off", async () => {
+test("a check that fails says so, names no server, and shows no write switches", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-login");
   uncheckedMocks(() => {
     throw "Could not check this login's permissions. Try Recheck, or see Settings → Logs.";
@@ -1451,7 +1454,54 @@ test("a check that fails says so, names no server, and leaves the switch off", a
   expect(
     await screen.findByText("Could not check this login's permissions. Try Recheck, or see Settings → Logs."),
   ).toBeInTheDocument();
-  expect(screen.getByRole("switch", { name: "Create, update and delete" })).toBeDisabled();
+  expect(screen.queryByRole("switch", { name: "Create, update and delete" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Run database changes without asking" })).not.toBeInTheDocument();
+});
+
+/// Before any verdict exists (and while one is being asked for) the card says
+/// it is checking and shows no switches.
+test("while the login is being checked the card says so and shows no write switches", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  let release: (v: unknown) => void = () => {};
+  const gate = new Promise((r) => (release = r));
+  mockIPC(async (cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_databases") return DATABASES;
+    if (cmd === "db_write_verdicts") return [];
+    if (cmd === "db_check_write") {
+      await gate;
+      return verdict(true);
+    }
+    void args;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Signs in as sgdev01db01_devlogin");
+  expect(await within(dbCard()).findByText("Checking whether this login can write…")).toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Create, update and delete" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Run database changes without asking" })).not.toBeInTheDocument();
+  release(undefined);
+});
+
+/// A saved "on" survives being hidden: the same stored value is what the
+/// switch shows once the verdict is can-write.
+test("a saved 'on' for writes is kept while hidden and shows again once the login can write", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  localStorage.setItem("tcm-v2-db-writes", "1");
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Signs in as sgdev01db02_readonly");
+  expect(screen.queryByRole("switch", { name: "Create, update and delete" })).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
+  cleanup();
+
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByRole("switch", { name: "Create, update and delete" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
 });
 
 /// The API templates switch is a separate decision from whether the four
@@ -1511,7 +1561,7 @@ test("running changes without asking needs writes on, and says what each tool ne
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByText("Signs in as sgdev01db01_devlogin");
 
-  const noAsk = screen.getByRole("switch", { name: "Run database changes without asking" });
+  const noAsk = await screen.findByRole("switch", { name: "Run database changes without asking" });
   expect(noAsk).toBeDisabled();
   expect(noAsk).toHaveAttribute("aria-checked", "false");
 
@@ -2026,7 +2076,9 @@ test("the switches shown are the active environment's, and a switch shows the ot
   // The write cards name the environment too.
   const apiCard = api().closest("section")!;
   expect(within(apiCard).getByText("QA")).toBeInTheDocument();
-  expect(within(dbCard()).getByText("QA")).toBeInTheDocument();
+  // dev-read can only read, so its card has no switches and so no per-environment
+  // heading; the environment's name is on the write cards that remain.
+  expect(within(dbCard()).queryByText("QA")).not.toBeInTheDocument();
 });
 
 test("Turn all on turns on the active environment's tools and leaves another's alone", async () => {

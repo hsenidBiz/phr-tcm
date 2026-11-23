@@ -1269,6 +1269,26 @@ test("the import confirmation names the environments it replaces and the removed
   restore();
 });
 
+test("the import confirmation names Copy Auto Test data with Basic mode off and not while it is on", async () => {
+  const preview = { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: ["Default"] };
+  setAppSimpleModeForTest(false);
+  let m = mountImport({ preview });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  let dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText(/can be copied back from Copy Auto Test data\.$/)).toBeInTheDocument();
+  m.restore();
+  cleanup();
+
+  // Basic mode hides that button, so the sentence must not name it.
+  setAppSimpleModeForTest(true);
+  m = mountImport({ preview });
+  fireEvent.click(await screen.findByRole("button", { name: "Import from file" }));
+  dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText(/kept in the removed area for 30 days\.$/)).toBeInTheDocument();
+  expect(within(dialog).queryByText(/Copy Auto Test data/)).not.toBeInTheDocument();
+  m.restore();
+});
+
 test("a backup that replaces no environment says so instead of naming any", async () => {
   const { restore } = mountImport({
     preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: [] },
@@ -1998,7 +2018,7 @@ test("a Modules request left over in Basic mode gives the plain page, and turnin
 });
 
 const SIMPLE_LINE =
-  "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on.";
+  "Hides Manual Entry, Import, Update, Search Suites, Suite Management, API Templates, Playwright and Modules, and the Writing style, Working repositories, tool list and AI Tools Breakdown cards in AI Bridge, and the Copy Auto Test data button in Edit environments. Everything keeps working, your assistant can still use API Templates, and the tools it is shown stay on.";
 
 function simpleSettings(on: boolean) {
   return { close_to_tray: true, close_notice_shown: true, beta_updates: false, app_simple_mode: on };

@@ -234,7 +234,7 @@ export const aiBridge: Screen = {
       name: "Edit environments",
       does:
         "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
-        "**Copy Auto Test data…** brings another environment's scripts, areas, components, quirks and sign-in recording into this one (never its accounts; API templates, flows and fixtures are shared already); a removed environment's stay available there for 30 days. " +
+        "**Copy Auto Test data** brings another environment's scripts, areas, components, quirks and sign-in recording into this one (never its accounts; API templates, flows and fixtures are shared already); a removed environment's stay available there for 30 days. Hidden while Basic mode is on (Settings). " +
         "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -. " +
         "**Password expiry query** and **Active session query** are two read-only SELECTs you write for your site's database, each with a placeholder for the logins asked about; leave one empty and that check is skipped. The first tells Auto Test when each account's password runs out, so the account list, the proposals and the run window can warn before a sign-in is stopped. The second tells it whether someone is already signed in as an account, and a discovery will not start as an account in use elsewhere. Both need database access on. Hidden while Basic mode is on (Settings). " +
         "The **Account table**, **Username column** and **Password column** say where the environment keeps its test logins (PeoplesHR's own table unless you change it); on a test environment the app reads each login's password from there itself. Leave the password column empty and the app finds it, or says which columns it could not tell apart. Hidden while Basic mode is on (Settings). " +
@@ -286,7 +286,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Create, update and delete" },
       name: "Create, update and delete",
       does:
-        "Lets an assistant change data in the chosen database, not only read it. Writes need a login the server lets create, update and delete, and the switch on: the app asks the server once after a login is saved, when a database is chosen that has not been checked, and when you press Recheck, and the switch can only be turned on when the answer is yes (otherwise it says why under the switch). It is off until you turn it on, and every statement is written to the app's log. " +
+        "Lets an assistant change data in the chosen database, not only read it. Writes need a login the server lets create, update and delete, and the switch on: the app asks the server once after a login is saved, when a database is chosen that has not been checked, and when you press Recheck, and this switch and **Run changes without asking** show only for a login the server lets write. For a login that can only read, while the check is running, or when it failed, the card shows one line saying which instead, and your saved choices come back when the login can write. It is off until you turn it on, and every statement is written to the app's log. " +
         "The switch is the active environment's own, named above it; in a new environment it starts off.",
     },
     {
