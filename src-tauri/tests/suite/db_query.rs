@@ -83,12 +83,15 @@ fn objects_need_the_dev_login_as_well_as_the_verdict() {
     // A non-dev login the server lets write: rows yes, objects no.
     let plain = parse_connection("Server=q-plain;Database=d;User Id=app_writer;Password=p;").unwrap();
     permissions::store(&plain, true);
-    assert_eq!(access_with(&plain, &both), Access::DevWrites);
-    assert!(v2_lib::db::guard::allowed_with("UPDATE dbo.t SET a = 1 WHERE id = 2", Access::DevWrites, true).is_ok());
-    assert_eq!(
-        v2_lib::db::guard::allowed_with(PROC, access_with(&plain, &both), true).unwrap_err(),
-        OBJECTS_NEED_MODULE
-    );
+    assert_eq!(access_with(&plain, &both), Access::RowWrites);
+    assert!(v2_lib::db::guard::allowed_with("UPDATE dbo.t SET a = 1 WHERE id = 2", Access::RowWrites, true).is_ok());
+    // Not the module sentence: no switch would help, the login is the thing.
+    let said = v2_lib::db::guard::allowed_with(PROC, access_with(&plain, &both), true).unwrap_err();
+    assert_eq!(said, v2_lib::db::guard::OBJECTS_NEED_DEV_LOGIN);
+    assert_ne!(said, OBJECTS_NEED_MODULE);
+    // The dev login with the modules off still hears the module sentence.
+    let dev_off = v2_lib::db::guard::allowed_with(PROC, Access::DevWrites, true).unwrap_err();
+    assert_eq!(dev_off, OBJECTS_NEED_MODULE);
     // A _devlogin with a verdict and the modules: objects, whatever the case or padding.
     let dev = parse_connection("Server=q-dev;Database=d;User Id= APP_DevLogin ;Password=p;").unwrap();
     permissions::store(&dev, true);

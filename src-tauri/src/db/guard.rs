@@ -66,6 +66,11 @@ pub fn objects_need_module(unlocked: bool) -> String {
 /// is the only thing the person can act on.
 pub const READ_ONLY_SENTENCE: &str = "this connection is read only: INSERT/UPDATE/DELETE need a login the server lets create, update and delete - pick one, or press Recheck, under Database Read Access on the AI Bridge tab";
 
+/// Said when a login the server lets write, but that is not the dev login,
+/// sends a procedure, view or function: no module switch will help.
+pub const OBJECTS_NEED_DEV_LOGIN: &str =
+    "Changing procedures, views or functions needs the dev login. This login can only change rows.";
+
 /// What a statement is allowed to do on this connection.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Access {
@@ -80,6 +85,9 @@ pub enum Access {
     /// never answer it - `db::query::access_with` does, where the modules
     /// are read.
     DevObjects,
+    /// A login the server lets write that is not the dev login: rows only.
+    /// `db::query::access_with` answers it in place of `DevWrites`.
+    RowWrites,
 }
 
 /// What one statement turned out to be.
@@ -448,12 +456,13 @@ pub fn allowed_with(sql: &str, access: Access, unlocked: bool) -> Result<Verdict
     match classify(sql) {
         Verdict::Read => Ok(Verdict::Read),
         Verdict::Write => match access {
-            Access::DevWrites | Access::DevObjects => Ok(Verdict::Write),
+            Access::DevWrites | Access::DevObjects | Access::RowWrites => Ok(Verdict::Write),
             Access::ReadOnly => Err(READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::ObjectChange => match access {
             Access::DevObjects => Ok(Verdict::ObjectChange),
             Access::DevWrites => Err(objects_need_module(unlocked)),
+            Access::RowWrites => Err(OBJECTS_NEED_DEV_LOGIN.to_string()),
             Access::ReadOnly => Err(READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::Refused(why) => Err(why),

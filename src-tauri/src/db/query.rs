@@ -58,9 +58,8 @@ pub fn is_dev_login(c: &Connection) -> bool {
 /// so does `sqlcmd::run_sql` through it.
 pub fn access_with(c: &Connection, on: &BTreeSet<Module>) -> Access {
     match guard::access_for_connection(c) {
-        Access::DevWrites
-            if is_dev_login(c) && on.contains(&Module::CrystalReports) && on.contains(&Module::DbAccess) =>
-        {
+        Access::DevWrites if !is_dev_login(c) => Access::RowWrites,
+        Access::DevWrites if on.contains(&Module::CrystalReports) && on.contains(&Module::DbAccess) => {
             Access::DevObjects
         }
         other => other,
@@ -189,6 +188,7 @@ pub async fn run_query<R: Runner>(
         Verdict::ObjectChange => match access {
             Access::DevObjects => None,
             Access::DevWrites => Some(guard::objects_need_module(crate::extras::unlocked())),
+            Access::RowWrites => Some(guard::OBJECTS_NEED_DEV_LOGIN.to_string()),
             Access::ReadOnly => Some(guard::READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::Write | Verdict::Read => None,
