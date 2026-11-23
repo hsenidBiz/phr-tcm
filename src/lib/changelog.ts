@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.27",
+    date: "2026-11-23",
+    items: [
+      "A hidden board column now matches the open ones: a slim strip in its colour, with an eye icon to show it again.",
+      "File a bug is wider, with its fields side by side, so there is less to scroll.",
+    ],
+  },
+  {
     version: "2.4.7-beta.26",
     date: "2026-11-23",
     items: [
