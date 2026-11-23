@@ -296,7 +296,7 @@ export default function BugDialog({
     : [];
 
   return (
-    <Modal onClose={onClose} labelledBy={titleId} className="w-full max-w-lg p-4">
+    <Modal onClose={onClose} labelledBy={titleId} className="w-full max-w-4xl p-4">
       <div className="space-y-3" onPaste={onPaste}>
       <h2 id={titleId} className="text-sm font-semibold text-text">File a bug</h2>
       <Input
@@ -311,11 +311,12 @@ export default function BugDialog({
         value={repro}
         onChange={(e) => setRepro(e.target.value)}
       />
+      <div data-testid="bug-fields" className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
       {fields.map((f) => {
         const ref = f.reference_name;
         const v = values[ref] ?? "";
         return (
-          <div key={ref} className="text-xs text-muted">
+          <div key={ref} className={cn("text-xs text-muted", f.kind === "html" && "sm:col-span-2")}>
             {f.label}
             {f.kind === "pick" ? (
               <Select
@@ -365,6 +366,7 @@ export default function BugDialog({
           </div>
         );
       })}
+      </div>
       {unshown.map(([ref, msg]) => (
         <div key={ref} className="text-xs text-danger">
           {ref}: {msg}

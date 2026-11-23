@@ -648,3 +648,18 @@ test("File bug waits for the video's details so the video is never silently left
   await vi.waitFor(() => expect(screen.getByLabelText("Bug title")).toBeInTheDocument());
   expect(screen.getByRole("button", { name: "File bug" })).toBeDisabled();
 });
+
+test("the dialog is wide and sets its required fields in two columns", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bug_fields") return { wi_type: "Bug", fields: [pickField, dateField, textField] };
+  });
+  renderIn("Web");
+  const build = await screen.findByLabelText("Build");
+  expect(screen.getByRole("dialog").className).toContain("max-w-4xl");
+  const grid = build.closest("[data-testid='bug-fields']")!;
+  expect(grid.className).toContain("grid");
+  expect(grid.className).toContain("sm:grid-cols-2");
+  expect(grid.className).toContain("grid-cols-1");
+  // The title stays outside the grid, full width.
+  expect(grid.contains(screen.getByLabelText("Bug title"))).toBe(false);
+});
