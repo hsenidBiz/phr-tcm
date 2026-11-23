@@ -193,6 +193,8 @@ export default function AccountsDialog({
   const cancelAsked = useRef(false);
   const [rows, setRows] = useState<Account[] | null>(null);
   const [show, setShow] = useState(false);
+  /** Remove all asked and waiting on Keep / Remove all. */
+  const [askRemoveAll, setAskRemoveAll] = useState(false);
   const [problem, setProblemText] = useState("");
   const problemRef = useRef("");
   const setProblem = (m: string) => {
@@ -1031,6 +1033,27 @@ export default function AccountsDialog({
             <IconAdd aria-hidden />
             Add account
           </Button>
+        )}
+        {view === "accounts" && (rows?.length ?? 0) > 0 && !askRemoveAll && (
+          <Button size="sm" variant="ghost" disabled={blocked}
+            onClick={() => setAskRemoveAll(true)}>
+            <IconRemove aria-hidden />
+            Remove all
+          </Button>
+        )}
+        {view === "accounts" && askRemoveAll && (
+          <div role="group" aria-label="Remove all accounts" className="flex items-center gap-2 text-xs">
+            <p className="text-text">{rows?.length === 1 ? "Remove the 1 account?" : `Remove all ${rows?.length ?? 0} accounts?`} They are removed when you save.</p>
+            <Button size="sm" variant="ghost" onClick={() => setAskRemoveAll(false)}>
+              <IconCancel aria-hidden />
+              Keep
+            </Button>
+            <Button size="sm" variant="outline"
+              onClick={() => { setRows([]); setAskRemoveAll(false); }}>
+              <IconRemove aria-hidden />
+              Remove all
+            </Button>
+          </div>
         )}
         {view === "accounts" && testEnvironment && (
           <Button

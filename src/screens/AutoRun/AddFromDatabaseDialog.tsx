@@ -68,6 +68,9 @@ export default function AddFromDatabaseDialog({
   // a search has hidden is not the person's pick any more.
   const shownPicks = logins.filter((l) => !l.saved && picked.has(l.login)).map((l) => l.login);
   const count = shownPicks.length;
+  // Select all shown acts on the rows that can be ticked: saved rows never.
+  const selectable = logins.filter((l) => !l.saved).map((l) => l.login);
+  const selectableTicked = selectable.filter((l) => picked.has(l)).length;
 
   // A new search's answer clears the ticks it does not list.
   useEffect(() => {
@@ -84,6 +87,16 @@ export default function AddFromDatabaseDialog({
       const next = new Set(cur);
       if (on) next.add(login);
       else next.delete(login);
+      return next;
+    });
+
+  const toggleAll = (on: boolean) =>
+    setPicked((cur) => {
+      const next = new Set(cur);
+      for (const l of selectable) {
+        if (on) next.add(l);
+        else next.delete(l);
+      }
       return next;
     });
 
@@ -128,6 +141,16 @@ export default function AddFromDatabaseDialog({
         value={text}
         onChange={setText}
       />
+      <label className="flex items-center gap-2 text-xs text-muted">
+        <Checkbox
+          checked={selectable.length > 0 && selectableTicked === selectable.length}
+          indeterminate={selectableTicked > 0}
+          disabled={selectable.length === 0 || busy}
+          ariaLabel="Select all shown"
+          onCheckedChange={toggleAll}
+        />
+        Select all shown
+      </label>
       <div className="max-h-72 min-h-24 overflow-auto rounded-md border border-border">
         {list.isLoading && <p className="p-3 text-xs text-muted">Loading logins...</p>}
         {list.isError && <p className="p-3 text-xs text-danger">{list.error.message}</p>}

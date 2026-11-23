@@ -1,5 +1,6 @@
 //! The video kept of a failed Auto Test case: the browser's own recorder
-//! (`browser::recording`) started before step 1 and stopped with the steps,
+//! (`browser::recording`) started where the case's own work starts - before
+//! its sign-in, so the video shows the whole flow - and stopped with the steps,
 //! its file kept beside the pictures only for a case proposed Failed or
 //! Blocked. The browser is a fake that answers the recorder's calls; the
 //! real one is `browser_live`'s `a_failed_case_keeps_a_video_in_a_real_browser`.
@@ -172,7 +173,9 @@ async fn a_failed_case_keeps_its_video_and_a_passed_one_keeps_none() {
     let name = case.video.as_deref().expect("a failed case keeps its video");
     assert!(store::safe_video_name(name), "{name}");
     assert_eq!(std::fs::read(dir.path().join("shots").join(name)).unwrap(), MP4);
-    // Started before the step ran, stopped after it, read once, let go.
+    // Started before the step ran (and, with an account, before its sign-in:
+    // `the_recording_starts_before_the_sign_in...` below), stopped after it,
+    // read once, let go.
     let d = &closed[0];
     let (start, step, stop, read, close) = (
         pos(d, "Page.startScreenRecording").expect("started"),
@@ -559,4 +562,121 @@ async fn a_transient_retry_discards_the_first_tries_video() {
     assert!(case.retried.is_some(), "the first go was not taken for transient: {case:?}");
     let name = case.video.clone().expect("the second go's video is kept");
     assert_eq!(videos_on_disk(dir.path()), vec![name], "the first try's video was left behind");
+}
+
+// ---- Where in the case the recording starts ---------------------------------------
+
+fn script_as(case_id: i32, account: &str) -> CaseScript {
+    serde_json::from_value(json!({
+        "case_id": case_id,
+        "title": "c",
+        "account": account,
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "x" }] }]
+    }))
+    .unwrap()
+}
+
+/// The owner decided (2026-11-23) the failed-case video shows the whole flow
+/// from the sign-in to the error; it used to start after the sign-in, so no
+/// typed account name was on it. The recording now starts before the first
+/// call the sign-in makes and stops after the last step.
+#[tokio::test]
+async fn the_recording_starts_before_the_sign_in_and_stops_after_the_last_step() {
+    let _leases = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    v2_lib::autorun::recipe::save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    v2_lib::autorun::accounts::save_accounts(root, &[common::account()]).unwrap();
+    store::save_script(root, &script_as(1, "admin")).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
+    let mut run = LocalRun { video_unavailable: false, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "c".to_string())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+
+    let case = &run.cases[0];
+    assert!(matches!(case.proposed.as_str(), "Failed" | "Blocked"), "{}", case.proposed);
+    assert!(case.video.is_some(), "a failed or blocked case keeps its video");
+    let d = &browsers.closed[0];
+    let m = d.methods();
+    let start = pos(d, "Page.startScreenRecording").expect("started");
+    let sign_in = pos(d, "Page.navigate").expect("the sign-in opened its page");
+    let stop = pos(d, "Page.stopScreenRecording").expect("stopped");
+    assert!(start < sign_in, "the recording starts before the sign-in, not after it: {m:?}");
+    assert!(m[..start].iter().all(|x| !x.starts_with("Input.") && x != "Page.navigate"), "{m:?}");
+    assert!(stop > start, "{m:?}");
+    // Started once.
+    assert_eq!(m.iter().filter(|x| *x == "Page.startScreenRecording").count(), 1);
+}
+
+/// A case stopped before it begins is never recorded: nothing of it ran, so
+/// nothing is asked of the recorder.
+#[tokio::test]
+async fn a_case_stopped_before_it_starts_is_not_recorded() {
+    let _leases = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    v2_lib::autorun::recipe::save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    v2_lib::autorun::accounts::save_accounts(root, &[common::account()]).unwrap();
+    store::save_script(root, &script_as(1, "admin")).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
+    let mut run = LocalRun { video_unavailable: false, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
+    let cancel = AtomicBool::new(true);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "c".to_string())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    for d in &browsers.closed {
+        assert!(pos(d, "Page.startScreenRecording").is_none(), "{:?}", d.methods());
+        assert!(pos(d, "Page.stopScreenRecording").is_none());
+    }
+    assert!(run.cases.iter().all(|c| c.video.is_none()));
+    assert!(videos_on_disk(root).is_empty());
+}
+
+/// A case blocked before it starts (it has a divergence waiting for a
+/// person's ruling) is never recorded either.
+#[tokio::test]
+async fn a_case_blocked_before_it_starts_is_not_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    v2_lib::autorun::divergences::update(root, "Acme", "Web", |list| {
+        v2_lib::autorun::divergences::report_in(
+            list,
+            1,
+            1,
+            "x",
+            "nothing",
+            v2_lib::autorun::divergences::DivergenceKind::Data,
+            1_786_000_000_000,
+        )
+    })
+    .unwrap();
+    let case = script(1);
+    store::save_script(root, &case).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
+    let mut run = LocalRun { video_unavailable: false, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "c".to_string())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    assert_eq!(run.cases[0].proposed, "Blocked", "{}", run.cases[0].reason);
+    assert!(run.cases[0].video.is_none());
+    for d in &browsers.closed {
+        assert!(pos(d, "Page.startScreenRecording").is_none(), "{:?}", d.methods());
+    }
+}
+
+/// A reused browser skips the sign-in: the recording starts at the reuse
+/// check (the first thing the case does), before anything else is asked of
+/// the page.
+#[tokio::test]
+async fn a_reused_case_starts_its_recording_before_the_reuse_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let case = script_as(1, "admin");
+    let mut d = driver(Recorder::working(), false);
+    let mut lease = v2_lib::autorun::lease::Held::new(v2_lib::autorun::lease::Holder::Case { run: String::new() }, std::time::Duration::from_millis(300));
+    let cancel = AtomicBool::new(false);
+    let record = v2_lib::autorun::replay::run_case_reusing(
+        &mut d, root, "Acme", "Web", &mut lease, &case, Some("admin"), None, &common::quick(), &cancel, true, Some(12), &mut |_| {},
+    )
+    .await;
+    assert_eq!(record.steps[0].step_number, v2_lib::autorun::replay::SIGN_IN_STEP);
+    assert_eq!(d.methods().first().map(String::as_str), Some("Page.startScreenRecording"), "{:?}", d.methods());
+    assert!(pos(&d, "Page.stopScreenRecording").is_some());
 }
