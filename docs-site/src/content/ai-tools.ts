@@ -286,7 +286,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Create, update and delete" },
       name: "Create, update and delete",
       does:
-        "Lets an assistant change data in the chosen database, not only read it. Writes need a login the server lets create, update and delete, and the switch on: the app asks the server once after a login is saved, when a database is chosen that has not been checked, and when you press Recheck, and the switch can only be turned on when the answer is yes (otherwise it says why under the switch). It is off until you turn it on, and every statement is written to the app's log. " +
+        "Lets an assistant change data in the chosen database, not only read it. Writes need a login the server lets create, update and delete, and the switch on: the app asks the server once after a login is saved, when a database is chosen that has not been checked, and when you press Recheck, and this switch and **Run changes without asking** show only for a login the server lets write. For a login that can only read, while the check is running, or when it failed, the card shows one line saying which instead, and your saved choices come back when the login can write. It is off until you turn it on, and every statement is written to the app's log. " +
         "The switch is the active environment's own, named above it; in a new environment it starts off.",
     },
     {
