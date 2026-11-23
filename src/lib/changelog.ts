@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7-beta.25",
+    date: "2026-11-23",
+    items: [
+      "The Work Manager board's columns are open lanes, each with a coloured line under its header and a smaller Hide button.",
+      "In Auto Test, Expand all no longer shows when no case matches the filter.",
+      "The date picker no longer has a line above Today and Clear.",
+    ],
+  },
+  {
     version: "2.4.7-beta.24",
     date: "2026-11-23",
     items: [
