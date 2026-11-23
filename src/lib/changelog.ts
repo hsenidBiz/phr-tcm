@@ -27,6 +27,23 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.7",
+    date: "2026-11-23",
+    items: [
+      "Auto Run is now called Auto Test. It has a Basic and Advanced view: Basic hides the setup and script editing your assistant looks after and still shows anything that stops a run.",
+      "Settings has a Basic mode switch for the whole app. It keeps the screens you need for Auto Test (Run Tests, View Test Cases, AI Bridge and Auto Test), keeps every feature working, and turning it off brings everything back as it was.",
+      "Auto Test runs sign in far less often: the next case on the same account carries on in the browser the case before signed in, and a case's setup runs there too. A case that fails in a carried-over browser runs once more in a fresh one, and that run is the result you see.",
+      "Auto Test can keep a video of failed and blocked cases, and the run report has a new look: failures grouped by cause, a timeline per failed case, trends, history and a comparison with the previous run.",
+      "Accounts: Sync Database refreshes your saved accounts' passwords from the environment's database and lets you search the database's logins and add them as accounts. A blank account key is made from the login when you save.",
+      "Database changes follow what the database itself allows: the app checks whether the login can create, update and delete. Changing procedures, views and functions still needs the dev login. Saved databases are managed in a Manage databases dialog.",
+      "Assistants see TCM's tools change within seconds of an update or a module being switched, without restarting the editor, and can look up bugs on a PBI, a test case or by id before filing a new one.",
+      "Assistants exploring the app read only what changed after each action and can fill a whole form in one step, so script writing finishes sooner.",
+      "The Work Manager board has open lanes with a coloured line under each column, and a hidden column is a slim strip you click to show again. File a bug is wider, with its fields side by side.",
+      "Pull Requests show descriptions and comments like work item text elsewhere, and Completed lists your 25 most recent completed pull requests across repositories.",
+      "Smaller changes: Undo for removed and bulk-edited cases in the upload queue, shared steps shown in the Test Runner, Test files grouped by kind, explained terms on hover, and smoother switches.",
+    ],
+  },
+  {
     version: "2.4.7-beta.27",
     date: "2026-11-23",
     items: [
