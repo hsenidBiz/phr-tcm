@@ -1043,7 +1043,7 @@ export default function AccountsDialog({
         )}
         {view === "accounts" && askRemoveAll && (
           <div role="group" aria-label="Remove all accounts" className="flex items-center gap-2 text-xs">
-            <p className="text-text">Remove all {rows?.length ?? 0} {rows?.length === 1 ? "account" : "accounts"}? They are removed when you save.</p>
+            <p className="text-text">{rows?.length === 1 ? "Remove the 1 account?" : `Remove all ${rows?.length ?? 0} accounts?`} They are removed when you save.</p>
             <Button size="sm" variant="ghost" onClick={() => setAskRemoveAll(false)}>
               <IconCancel aria-hidden />
               Keep
