@@ -511,13 +511,20 @@ export const commands = {
 	 *  need the person's confirmation (resend them in `replace`).
 	 */
 	envAddProposals: (picks: AccountInput[], replace: string[]) => typedError<string[], string>(__TAURI_INVOKE("env_add_proposals", { picks, replace })),
-	/**  "Fill passwords from database" on the Proposed tab. */
+	/**  "Sync Database" on the Proposed tab. */
 	envFillProposalPasswords: (dbRead: boolean) => typedError<FillCounts, string>(__TAURI_INVOKE("env_fill_proposal_passwords", { dbRead })),
 	/**
-	 *  "Fill passwords from database" on the Accounts tab: the named accounts, or
+	 *  "Sync Database" on the Accounts tab: the named accounts, or
 	 *  every saved one when `keys` is empty.
 	 */
 	envFillAccountPasswords: (keys: string[], dbRead: boolean) => typedError<FillCounts, string>(__TAURI_INVOKE("env_fill_account_passwords", { keys, dbRead })),
+	/**  "Add accounts from the database": the logins in the account table. */
+	envListDbLogins: (search: string, dbRead: boolean) => typedError<DbLoginList, string>(__TAURI_INVOKE("env_list_db_logins", { search, dbRead })),
+	/**
+	 *  Adds the ticked logins as accounts; each password is read here and never
+	 *  leaves Rust.
+	 */
+	envAddDbLogins: (logins: string[], dbRead: boolean) => typedError<AddedCounts, string>(__TAURI_INVOKE("env_add_db_logins", { logins, dbRead })),
 	/**
 	 *  Whether the Fill should first ask: the environment's database is not the
 	 *  one its last Fill read.
@@ -1041,11 +1048,12 @@ export const commands = {
 	 */
 	autoRunListAccounts: () => typedError<Account_Serialize[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
 	/**
-	 *  Replace the accounts list. Returns the keys whose saved session was
-	 *  dropped, so the screen can say so. With `loaded_version` (from
-	 *  `auto_run_accounts_version`) a list that changed since is refused.
+	 *  Replace the accounts list. A row with a blank key and a username gets a key
+	 *  made from the username. Answers the keys whose saved session was dropped,
+	 *  so the screen can say so, and the accounts as saved. With `loaded_version`
+	 *  (from `auto_run_accounts_version`) a list that changed since is refused.
 	 */
-	autoRunSaveAccounts: (accounts: Account_Deserialize[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
+	autoRunSaveAccounts: (accounts: Account_Deserialize[], loadedVersion: string | null) => typedError<SavedAccounts_Serialize, string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
 	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
@@ -2846,6 +2854,13 @@ pdf?: PdfSpec_Serialize | null }) & { absent?: never; account?: never; answer?: 
 
 export type ActivityGroup = "saved" | "proposed" | "tried" | "changed_data";
 
+/**  What adding logins from the database did: counts and logins, never a password. */
+export type AddedCounts = {
+	added: number,
+	already_saved: number,
+	not_added: NotAdded[],
+};
+
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
 } } | { kind: "Forbidden" } | { kind: "NotFound" } | 
@@ -4596,6 +4611,19 @@ export type DbDatabase = {
 	customised: boolean,
 };
 
+/**  One login in the environment's account table, for the picker. No password. */
+export type DbLogin = {
+	login: string,
+	/**  A saved account in the active environment already has this username. */
+	saved: boolean,
+};
+
+/**  The logins the picker lists, and whether the list was cut at the limit. */
+export type DbLoginList = {
+	logins: DbLogin[],
+	cut_short: boolean,
+};
+
 /**
  *  One database's verdict, for the list the webview shows: which database,
  *  and what the server said about its current login.
@@ -5199,7 +5227,7 @@ export type FiledBug = {
 };
 
 /**
- *  What a "Fill passwords from database" did, in counts and nothing else:
+ *  What a "Sync Database" did, in counts and nothing else:
  *  no password and no login is in it.
  */
 export type FillCounts = {
@@ -6073,6 +6101,12 @@ export type NewWorkItem = {
 	priority: number | null,
 	description: string | null,
 	parent_id: number | null,
+};
+
+/**  A login that was asked for and not added, and why (a fixed sentence). */
+export type NotAdded = {
+	login: string,
+	reason: string,
 };
 
 /**
@@ -7941,6 +7975,30 @@ export type RunStarted = {
 	 *  instead of discovering it at the end.
 	 */
 	unmatched: number[],
+};
+
+/**
+ *  What saving the accounts answers: the keys whose saved session was dropped,
+ *  and the accounts as saved (a blank key is made from its login).
+ */
+export type SavedAccounts = SavedAccounts_Serialize | SavedAccounts_Deserialize;
+
+/**
+ *  What saving the accounts answers: the keys whose saved session was dropped,
+ *  and the accounts as saved (a blank key is made from its login).
+ */
+export type SavedAccounts_Deserialize = {
+	dropped: string[],
+	accounts: Account_Deserialize[],
+};
+
+/**
+ *  What saving the accounts answers: the keys whose saved session was dropped,
+ *  and the accounts as saved (a blank key is made from its login).
+ */
+export type SavedAccounts_Serialize = {
+	dropped: string[],
+	accounts: Account_Serialize[],
 };
 
 /**  A fixture together with its run history, as the tab lists it. */

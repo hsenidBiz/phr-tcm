@@ -1810,12 +1810,37 @@ function applyPatches() {
     },
     envFillDbChange: () => ok(null),
     envFillProposalPasswords: () => err("Demo mode: sample data has no database to fill passwords from"),
-    envFillAccountPasswords: () => err("Demo mode: sample data has no database to fill passwords from"),
+    envFillAccountPasswords: () =>
+      ok({ updated: 0, unchanged: autoRunAccounts.length, no_row: 0, hash_only: 0, other_database: 0 }),
+    envListDbLogins: (search: string) => {
+      const sample = ["hr.admin", "hr.supervisor", "payroll.clerk", "leave.approver"];
+      const term = String(search ?? "").toLowerCase();
+      return ok({
+        logins: sample
+          .filter((l) => l.includes(term))
+          .map((login) => ({ login, saved: autoRunAccounts.some((a) => a.username.toLowerCase() === login) })),
+        cut_short: false,
+      });
+    },
+    envAddDbLogins: (logins: string[]) => {
+      if (!Array.isArray(logins)) return err("Demo mode: nothing to add");
+      const fresh = logins.filter((l) => !autoRunAccounts.some((a) => a.username.toLowerCase() === l.toLowerCase()));
+      // Kept without the password: sample data never holds one.
+      autoRunAccounts = [
+        ...autoRunAccounts,
+        ...fresh.map((l) => ({ key: l.toLowerCase(), label: l, username: l, password: "" })),
+      ];
+      return ok({ added: fresh.length, already_saved: logins.length - fresh.length, not_added: [] });
+    },
     autoRunListAccounts: () => ok(autoRunAccounts.map((a) => ({ ...a }))),
     autoRunSaveAccounts: (accounts: Account[]) => {
       if (!Array.isArray(accounts)) return err("Demo mode: no accounts to save");
-      autoRunAccounts = accounts.map((a) => ({ ...a, password: "" }));
-      return ok([] as string[]);
+      autoRunAccounts = accounts.map((a) => ({
+        ...a,
+        key: a.key.trim() || a.username.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-"),
+        password: "",
+      }));
+      return ok({ dropped: [] as string[], accounts: autoRunAccounts.map((a) => ({ ...a })) });
     },
     autoRunLoadScript: (caseId: number) => ok(scripts.get(caseId) ?? null),
     autoRunLoadScripts: (caseIds: number[]) =>

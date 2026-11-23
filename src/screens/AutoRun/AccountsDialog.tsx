@@ -28,6 +28,7 @@ import { matchesQuery } from "../../lib/search";
 import { Select } from "../../components/ui/select";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
+import AddFromDatabaseDialog from "./AddFromDatabaseDialog";
 import {
   IconAdd,
   IconCancel,
@@ -87,7 +88,7 @@ export function reseedRows(cur: Account[], baseline: Account[], fresh: Account[]
   return out;
 }
 
-/** What a Fill passwords from database did, in words: "3 passwords updated,
+/** What a Sync Database refresh did, in words: "3 passwords updated,
  * 1 unchanged, 1 with no row". Counts only - the app never sends a password
  * to this screen for it. */
 export function fillSentence(c: FillCounts): string {
@@ -102,6 +103,10 @@ export function fillSentence(c: FillCounts): string {
   if (c.hash_only > 0) parts.push(`${c.hash_only} hash only`);
   return parts.join(", ");
 }
+
+/** The sentence the refresh gives when no account is saved yet: nothing to
+ * refresh, but the picker can still add some. */
+const noAccountsToFill = (said: string) => said.includes("no saved accounts");
 
 /** A last check older than this is shown as stale and does not rank. */
 const STALE_MS = 7 * 24 * 3600 * 1000;
@@ -157,6 +162,8 @@ export default function AccountsDialog({
   // environment: the fill buttons are not there on any other.
   const testEnvironment = environment?.test_environment ?? false;
   const [filling, setFilling] = useState(false);
+  /** Add accounts from the database: open after a Sync Database on Accounts. */
+  const [picking, setPicking] = useState(false);
   /** The environment's database is not the one the last Fill read: the Fill
    * waits for a yes. `go` is the Fill itself. */
   const [fillAsk, setFillAsk] = useState<{ change: FillDbChange; go: () => Promise<void> } | null>(null);
@@ -185,7 +192,12 @@ export default function AccountsDialog({
   const cancelAsked = useRef(false);
   const [rows, setRows] = useState<Account[] | null>(null);
   const [show, setShow] = useState(false);
-  const [problem, setProblem] = useState("");
+  const [problem, setProblemText] = useState("");
+  const problemRef = useRef("");
+  const setProblem = (m: string) => {
+    problemRef.current = m;
+    setProblemText(m);
+  };
   // The list as last read, to tell what the person changed from what the
   // saved list did.
   const [baseline, setBaseline] = useState<Account[] | null>(null);
@@ -337,21 +349,27 @@ export default function AccountsDialog({
     }
   };
 
-  /** Fill passwords from database: runs the lookup in the app and says what
+  /** Sync Database: runs the lookup in the app and says what
    * it did. The failure sentence (which points at Edit environments) is shown
    * as it comes. The lists are read again by the screen's own queries, so no
    * password crosses here as part of it. */
-  const fill = async (run: () => Promise<FillCounts>, reload: () => Promise<unknown>, onProblem: (m: string) => void) => {
+  const fill = async (
+    run: () => Promise<FillCounts>,
+    reload: () => Promise<unknown>,
+    onProblem: (m: string) => void,
+  ): Promise<boolean> => {
     onProblem("");
     setFilling(true);
     try {
       const counts = await run();
       toast.success(fillSentence(counts));
       await reload();
+      return true;
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       onProblem(m);
       toast.error(m);
+      return false;
     } finally {
       setFilling(false);
     }
@@ -372,23 +390,29 @@ export default function AccountsDialog({
   };
 
   const fillProposals = () =>
-    askThenFill(() =>
-      fill(
+    askThenFill(async () => {
+      await fill(
         () => unwrapStr(commands.envFillProposalPasswords(dbReadAccessOn())),
         () => qc.invalidateQueries({ queryKey: PROPOSALS_KEY }),
         setProposalProblem,
-      ),
-    );
+      );
+    });
 
-  /** Every saved account: this tab has no selection, so none picked means all. */
-  const fillAccounts = () =>
-    askThenFill(() =>
-      fill(
+  /** Sync Database on Accounts: refreshes every saved account's password (this
+   * tab has no selection, so none picked means all), then opens the picker for
+   * adding accounts from the database. A refusal that says the database cannot
+   * be read at all (reading off, not a test environment) opens no picker. */
+  const syncAccounts = () =>
+    askThenFill(async () => {
+      const ran = await fill(
         () => unwrapStr(commands.envFillAccountPasswords([], dbReadAccessOn())),
         () => qc.invalidateQueries({ queryKey: ["autorun-accounts"] }),
         setProblem,
-      ),
-    );
+      );
+      // A refresh that stopped because there was nothing saved to refresh
+      // still leaves the list open to adding.
+      if (ran || noAccountsToFill(problemRef.current)) setPicking(true);
+    });
 
   const dismiss = async () => {
     setProposalProblem("");
@@ -457,14 +481,26 @@ export default function AccountsDialog({
   };
 
   const save = useMutation({
-    mutationFn: () => unwrapStr(commands.autoRunSaveAccounts(rows ?? [], loadedVersion.current)),
-    onSuccess: (dropped) => {
+    mutationFn: async () => {
+      const sent = rows ?? [];
+      const done = await unwrapStr(commands.autoRunSaveAccounts(sent, loadedVersion.current));
+      return { ...done, madeKeys: sent.some((a) => !a.key.trim()) };
+    },
+    onSuccess: async ({ dropped, accounts, madeKeys }) => {
+      const sessions = dropped.length > 0 ? ` Saved sessions dropped for: ${dropped.join(", ")}.` : "";
+      if (madeKeys) {
+        // A key was made from a login: stay, so the person sees it.
+        loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion()).catch(() => null);
+        baselineRef.current = accounts;
+        setBaseline(accounts);
+        setRows(accounts);
+        qc.setQueryData(["autorun-accounts"], accounts);
+        const made = accounts.filter((_, i) => !(rows ?? [])[i]?.key.trim()).map((a) => a.key);
+        toast.success(`Accounts saved. Keys made from the login: ${made.join(", ")}.${sessions}`);
+        return;
+      }
       qc.invalidateQueries({ queryKey: ["autorun-accounts"] });
-      toast.success(
-        dropped.length > 0
-          ? `Accounts saved. Saved sessions dropped for: ${dropped.join(", ")}.`
-          : "Accounts saved.",
-      );
+      toast.success(`Accounts saved.${sessions}`);
       onClose();
     },
     onError: (e) => setProblem(e instanceof Error ? e.message : String(e)),
@@ -517,6 +553,16 @@ export default function AccountsDialog({
 
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
+      {picking && (
+        <AddFromDatabaseDialog
+          onClose={() => setPicking(false)}
+          onAdded={async () => {
+            loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion());
+            const saved = await unwrapStr(commands.autoRunListAccounts());
+            qc.setQueryData(["autorun-accounts"], saved);
+          }}
+        />
+      )}
       {fillAsk && (
         <Modal onClose={() => setFillAsk(null)} label="Fill passwords from the new database?" className="w-full max-w-md space-y-4 p-5">
           <h2 className="text-sm font-semibold text-text">Fill passwords from the new database?</h2>
@@ -630,7 +676,7 @@ export default function AccountsDialog({
                   the accessible name, and it starts with the same word. */}
               <label className="space-y-1">
                 <span className={fieldLabel}>Key</span>
-                <Input aria-label={`Key for ${pos}`} placeholder="hr.admin" value={a.key}
+                <Input aria-label={`Key for ${pos}`} placeholder="From the login" value={a.key}
                   onChange={(e) => edit(i, { key: e.target.value })} />
               </label>
               <label className="space-y-1">
@@ -945,7 +991,7 @@ export default function AccountsDialog({
                   onClick={fillProposals}
                 >
                   <IconFillFromDatabase aria-hidden />
-                  {filling ? "Filling" : "Fill passwords from database"}
+                  {filling ? "Syncing" : "Sync Database"}
                 </Button>
               )}
               <Button size="sm" variant="ghost" disabled={busy} onClick={dismiss}>
@@ -972,12 +1018,12 @@ export default function AccountsDialog({
             title={
               changed
                 ? "Save your changes first - this fills the saved accounts"
-                : "Reads every saved account's password from the environment's database again"
+                : "Refreshes every saved account's password from the environment's database, then lets you add accounts from it"
             }
-            onClick={fillAccounts}
+            onClick={syncAccounts}
           >
             <IconFillFromDatabase aria-hidden />
-            {filling ? "Filling" : "Fill passwords from database"}
+            {filling ? "Syncing" : "Sync Database"}
           </Button>
         )}
         {/* Only where a password field is: Accounts, and the proposed logins. */}

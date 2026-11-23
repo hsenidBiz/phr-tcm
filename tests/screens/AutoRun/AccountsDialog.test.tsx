@@ -24,7 +24,12 @@ async function openTab(name: string) {
 function mount(existing: unknown[], onSave: (accounts: unknown[]) => unknown = () => []) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_list_accounts") return existing;
-    if (cmd === "auto_run_save_accounts") return onSave((args as { accounts: unknown[] }).accounts);
+    if (cmd === "auto_run_save_accounts") {
+      const accounts = (args as { accounts: unknown[] }).accounts;
+      const answered = onSave(accounts);
+      // A test that answers a bare list means the keys of dropped sessions.
+      return Array.isArray(answered) ? { dropped: answered, accounts } : answered;
+    }
     return null;
   });
   const onClose = vi.fn();
@@ -122,6 +127,8 @@ function mountWithProposals(opts: {
    * is not the one the last Fill read. Absent: it is the same one. */
   dbChange?: { from: string; to: string };
   addProposals?: (args: { picks: Saved[]; replace: string[] }) => unknown;
+  /** Answers env_list_db_logins and env_add_db_logins (the picker). */
+  picker?: (cmd: string, args: unknown) => unknown;
 }) {
   const state = { proposals: opts.proposals ?? PROPOSED, accounts: opts.accounts ?? [] };
   const adds: { picks: Saved[]; replace: string[] }[] = [];
@@ -150,6 +157,9 @@ function mountWithProposals(opts: {
     if (cmd === "env_fill_proposal_passwords" || cmd === "env_fill_account_passwords") {
       if (!opts.fill) throw new Error("no fill answer given");
       return opts.fill(cmd, args);
+    }
+    if (cmd === "env_list_db_logins" || cmd === "env_add_db_logins") {
+      return opts.picker ? opts.picker(cmd, args) : null;
     }
     if (cmd === "env_dismiss_proposals") {
       state.proposals = [];
@@ -824,7 +834,7 @@ test("Save is off until something is changed, and sends the version the list was
     if (cmd === "auto_run_list_accounts") return [{ key: "admin", label: "A", username: "kim", password: "p" }];
     if (cmd === "auto_run_save_accounts") {
       sent.push(args as Record<string, unknown>);
-      return [];
+      return { dropped: [], accounts: (args as { accounts: unknown[] }).accounts };
     }
     return null;
   });
@@ -975,7 +985,7 @@ test("dismissing the last proposal falls back to Accounts, focuses its tab, and 
   expect(screen.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
 });
 
-// ---- Fill passwords from database ------------------------------------------
+// ---- Sync Database ------------------------------------------
 
 test("the fill sentence is counts only, with hash only added when there is one", () => {
   expect(fillSentence({ updated: 3, unchanged: 1, no_row: 1, hash_only: 0, other_database: 0 })).toBe(
@@ -1010,7 +1020,7 @@ test("a Fill after the environment's database changed asks first, naming both da
     },
   });
   await screen.findByDisplayValue("kim");
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
   expect(ask).toHaveTextContent(
     "This environment now uses QA - read only instead of Dev - read only. Fill passwords from the new database?",
@@ -1031,7 +1041,7 @@ test("cancelling the question fills nothing and changes nothing", async () => {
     },
   });
   await screen.findByDisplayValue("kim");
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
   fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
   await waitFor(() =>
@@ -1053,7 +1063,7 @@ test("confirming the question runs the Fill, on the Proposed tab too", async () 
   });
   await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
   fireEvent.click(within(ask).getByRole("button", { name: "Fill passwords" }));
   await waitFor(() =>
@@ -1075,18 +1085,18 @@ test("with the same database as the last Fill there is no question", async () =>
     },
   });
   await screen.findByDisplayValue("kim");
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   await waitFor(() => expect(calls).toEqual(["env_fill_account_passwords"]));
   expect(screen.queryByRole("dialog", { name: "Fill passwords from the new database?" })).not.toBeInTheDocument();
 });
 
-test("Fill passwords from database is offered only on a test environment", async () => {
+test("Sync Database is offered only on a test environment", async () => {
   mountWithProposals({ testEnvironment: false, accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }] });
   await screen.findByDisplayValue("kim");
-  expect(screen.queryByRole("button", { name: "Fill passwords from database" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Sync Database" })).not.toBeInTheDocument();
   await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
-  expect(screen.queryByRole("button", { name: "Fill passwords from database" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Sync Database" })).not.toBeInTheDocument();
 });
 
 test("filling the proposed logins runs the lookup, says what it did and reads the proposals again", async () => {
@@ -1101,7 +1111,7 @@ test("filling the proposed logins runs the lookup, says what it did and reads th
   await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   const reads = log.filter((c) => c === "env_proposals").length;
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("3 passwords updated, 1 unchanged, 1 with no row"));
   expect(calls).toEqual([["env_fill_proposal_passwords", { dbRead: false }]]);
   await waitFor(() => expect(log.filter((c) => c === "env_proposals").length).toBeGreaterThan(reads));
@@ -1117,7 +1127,7 @@ test("a lookup that did not run is said as the app words it, pointing at Edit en
   });
   await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   expect(await screen.findByText(why)).toBeInTheDocument();
   expect(toast.error).toHaveBeenCalledWith(why);
   expect(toast.success).not.toHaveBeenCalled();
@@ -1135,7 +1145,7 @@ test("filling the saved accounts asks for every account and reads the list again
   });
   await screen.findByDisplayValue("kim");
   const reads = log.filter((c) => c === "auto_run_list_accounts").length;
-  fireEvent.click(screen.getByRole("button", { name: "Fill passwords from database" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 password updated, 0 unchanged, 0 with no row"));
   expect(calls).toEqual([["env_fill_account_passwords", { keys: [], dbRead: false }]]);
   await waitFor(() => expect(log.filter((c) => c === "auto_run_list_accounts").length).toBeGreaterThan(reads));
@@ -1148,8 +1158,112 @@ test("the saved accounts are not filled over edits that are not saved yet", asyn
     fill: () => ({ updated: 0, unchanged: 0, no_row: 0, hash_only: 0, other_database: 0 }),
   });
   await screen.findByDisplayValue("kim");
-  const button = screen.getByRole("button", { name: "Fill passwords from database" });
+  const button = screen.getByRole("button", { name: "Sync Database" });
   expect(button).toBeEnabled();
   fireEvent.change(screen.getByLabelText("Name for account 1"), { target: { value: "Changed" } });
   expect(button).toBeDisabled();
+});
+
+// ---- Add accounts from the database ------------------------------------------
+
+test("Sync Database refreshes the saved passwords, then opens the picker; the search lists, saved rows are off", async () => {
+  const calls: [string, unknown][] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "Kim", password: "p" }],
+    fill: (cmd, args) => {
+      calls.push([cmd, args]);
+      return SAME_COUNTS;
+    },
+    picker: (cmd, args) => {
+      calls.push([cmd, args]);
+      const term = (args as { search: string }).search;
+      return {
+        logins: [{ login: "kim", saved: true }, { login: "lee.two", saved: false }].filter((l) => l.login.includes(term)),
+        cut_short: true,
+      };
+    },
+  });
+  await screen.findByDisplayValue("Kim");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  const picker = await screen.findByRole("dialog", { name: "Add accounts from the database" });
+  expect(calls[0][0]).toBe("env_fill_account_passwords");
+  await within(picker).findByText("lee.two");
+  expect(within(picker).getByRole("checkbox", { name: "Add kim" })).toHaveAttribute("aria-disabled", "true");
+  expect(within(picker).getByText("Saved")).toBeInTheDocument();
+  expect(within(picker).getByText("Showing the first 200 - type to narrow the list")).toBeInTheDocument();
+  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "lee" } });
+  await waitFor(() => expect(calls.some(([c, a]) => c === "env_list_db_logins" && (a as { search: string }).search === "lee")).toBe(true));
+  await waitFor(() => expect(within(picker).queryByText("Saved")).not.toBeInTheDocument());
+});
+
+test("Add selected adds the ticked logins, says what happened and reads the accounts again", async () => {
+  const adds: unknown[] = [];
+  const { log, state } = mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
+    fill: () => SAME_COUNTS,
+    picker: (cmd, args) => {
+      if (cmd === "env_add_db_logins") {
+        adds.push(args);
+        state.accounts = [...state.accounts, { key: "lee.two", label: "lee.two", username: "lee.two", password: "x" }];
+        return { added: 1, already_saved: 0, not_added: [{ login: "a.b", reason: "the database holds only a hash" }] };
+      }
+      return { logins: [{ login: "lee.two", saved: false }, { login: "a.b", saved: false }], cut_short: false };
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  const picker = await screen.findByRole("dialog", { name: "Add accounts from the database" });
+  await within(picker).findByText("lee.two");
+  expect(within(picker).queryByText(/Showing the first 200/)).not.toBeInTheDocument();
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add lee.two" }));
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add a.b" }));
+  const reads = log.filter((c) => c === "auto_run_list_accounts").length;
+  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (2)" }));
+  expect(await within(picker).findByText("1 account added. Not added: a.b (the database holds only a hash)")).toBeInTheDocument();
+  expect(adds).toEqual([{ logins: ["lee.two", "a.b"], dbRead: false }]);
+  await waitFor(() => expect(log.filter((c) => c === "auto_run_list_accounts").length).toBeGreaterThan(reads));
+  fireEvent.click(within(picker).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add accounts from the database" })).not.toBeInTheDocument());
+});
+
+test("a refused Sync Database opens no picker", async () => {
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: ACCOUNTS_ONE,
+    fill: () => {
+      throw new Error("reading the database is off");
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  expect(await screen.findByText("reading the database is off")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Add accounts from the database" })).not.toBeInTheDocument();
+});
+
+test("the Proposed tab's Sync Database opens no picker", async () => {
+  mountWithProposals({ testEnvironment: true, fill: () => SAME_COUNTS });
+  await openTab("Proposed");
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  expect(screen.queryByRole("dialog", { name: "Add accounts from the database" })).not.toBeInTheDocument();
+});
+
+test("a blank key saves without a required-field error, and the key the app made is shown", async () => {
+  const onClose = mount([], (accounts) => ({
+    dropped: [],
+    accounts: (accounts as { username: string }[]).map((a) => ({ ...a, key: "kim-admin" })),
+  }));
+  await screen.findByText("No accounts yet.");
+  fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+  expect(screen.getByLabelText("Key for account 1")).toHaveAttribute("placeholder", "From the login");
+  fireEvent.change(screen.getByLabelText("Username for account 1"), { target: { value: "Kim.Admin" } });
+  fireEvent.change(screen.getByLabelText("Password for account 1"), { target: { value: "p1" } });
+  expect(screen.queryByText(/required/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Save accounts" }));
+  await waitFor(() => expect(screen.getByLabelText("Key for account 1")).toHaveValue("kim-admin"));
+  expect(toast.success).toHaveBeenCalledWith("Accounts saved. Keys made from the login: kim-admin.");
+  expect(onClose).not.toHaveBeenCalled();
 });

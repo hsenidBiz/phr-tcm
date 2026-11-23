@@ -209,6 +209,65 @@ impl AccountLookup {
         let list = users.iter().map(|u| quoted_literal(u)).collect::<Vec<_>>().join(", ");
         read_only(format!("SELECT {user}, {pwd} FROM {} WHERE {user} IN ({list})", self.quoted_table()?))
     }
+
+    /// The one SELECT that lists up to `limit` logins, optionally only those
+    /// holding `search`: `SELECT TOP (N) [user] FROM [schema].[table] WHERE
+    /// [user] IS NOT NULL [AND [user] LIKE N'%term%' ESCAPE N'!'] ORDER BY [user]`.
+    /// Reads no password. The term is matched literally: LIKE wildcards in it
+    /// are escaped.
+    pub fn list_sql(&self, search: &str, limit: u32) -> Result<String, String> {
+        let user = format!("[{}]", column_name(&self.username_column)?);
+        let term = search.trim();
+        let filter = if term.is_empty() {
+            String::new()
+        } else {
+            let mut escaped = String::new();
+            for c in term.chars() {
+                if matches!(c, '!' | '%' | '_' | '[') {
+                    escaped.push('!');
+                }
+                escaped.push(c);
+            }
+            format!(" AND {user} LIKE {} ESCAPE N'!'", quoted_literal(&format!("%{escaped}%")))
+        };
+        read_only(format!(
+            "SELECT TOP ({limit}) {user} FROM {} WHERE {user} IS NOT NULL{filter} ORDER BY {user}",
+            self.quoted_table()?
+        ))
+    }
+}
+
+/// The most logins the picker lists at once.
+pub const LIST_LIMIT: u32 = 200;
+
+/// The account key for `login`: lowercase, every character outside
+/// `a-z0-9._-` a hyphen, hyphen runs collapsed, leading characters trimmed to
+/// a letter or digit, cut to 64; `user-` in front when nothing usable is left
+/// or the name is reserved; `-2`, `-3`... until it is not in `taken`.
+pub fn key_for_login(login: &str, taken: &std::collections::HashSet<String>) -> String {
+    let mut key = String::new();
+    for c in login.trim().to_lowercase().chars() {
+        let c = if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-') { c } else { '-' };
+        if !(c == '-' && key.ends_with('-')) {
+            key.push(c);
+        }
+    }
+    let key = key.trim_start_matches(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit()));
+    let mut key: String = key.chars().take(64).collect();
+    if key.is_empty() || !super::accounts::valid_key(&key) {
+        key = format!("user-{key}");
+        key = key.chars().take(64).collect();
+        key = key.trim_end_matches('-').to_string();
+    }
+    let base = key.clone();
+    let mut n = 2;
+    while taken.contains(&key) {
+        let tail = format!("-{n}");
+        let keep: String = base.chars().take(64 - tail.len()).collect();
+        key = format!("{keep}{tail}");
+        n += 1;
+    }
+    key
 }
 
 /// The statement, if the database guard reads it as a plain read.
@@ -440,6 +499,34 @@ pub async fn look_up<S: RowSource>(rows: &S, lookup: &AccountLookup, users: &[St
         }
     }
     Ok(LookedUp { table: lookup.table.trim().to_string(), password_column: pwd, found })
+}
+
+/// The logins in the environment's account table that hold `search` (all of
+/// them when it is empty), up to `LIST_LIMIT`, and whether the list was cut at
+/// that limit. Reads no password. The `Err` is a fixed sentence.
+pub async fn list_logins<S: RowSource>(
+    rows: &S,
+    lookup: &AccountLookup,
+    search: &str,
+) -> Result<(Vec<String>, bool), String> {
+    lookup.check()?;
+    let sql = lookup.list_sql(search, LIST_LIMIT)?;
+    let user_name = column_name(&lookup.username_column)?.to_lowercase();
+    let text = rows.select(&sql).await.map_err(|said| failure_of(&said, &lookup.table))?;
+    let first = text.lines().next().map(str::trim).unwrap_or("");
+    let capped = first.starts_with("rows:") && first.ends_with("(capped)");
+    let (header, body) = parse_table(&text).map_err(|_| UNREADABLE.to_string())?;
+    let at = column(&header, &user_name).ok_or_else(|| UNREADABLE.to_string())?;
+    let mut logins: Vec<String> = vec![];
+    for row in &body {
+        if let Some(login) = cell(row, at) {
+            if !logins.iter().any(|l| l == &login) {
+                logins.push(login);
+            }
+        }
+    }
+    let cut = capped || body.len() >= LIST_LIMIT as usize;
+    Ok((logins, cut))
 }
 
 /// A source of rows that answers nothing: stands in where the database could
