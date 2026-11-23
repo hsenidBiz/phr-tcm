@@ -137,13 +137,13 @@ pub fn proposals_path_for(root: &Path, env_id: &str) -> PathBuf {
     crate::autorun::roots::shared_of(root).join("proposals").join(format!("{env_id}.json"))
 }
 
-/// Where the database the last Fill passwords from database read is
+/// Where the database the last Sync Database read is
 /// remembered, per environment.
 pub fn last_fill_path_for(root: &Path, env_id: &str) -> PathBuf {
     crate::autorun::roots::shared_of(root).join("last-fill").join(format!("{env_id}.json"))
 }
 
-/// The database id the last Fill passwords from database used for this
+/// The database id the last Sync Database used for this
 /// environment, if there has been one.
 pub fn last_fill_db(root: &Path, env_id: &str) -> Option<String> {
     if !valid_id(env_id) {
