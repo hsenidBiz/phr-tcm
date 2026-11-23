@@ -1416,3 +1416,42 @@ test("combined PR chips come from every project", async () => {
   expect(calls.some((c) => c.cmd === "board_pr_links")).toBe(false);
   expect(cacheStoredKeys()).toContain(cacheKeys.boardPrsAll("acme"));
 });
+
+test("an open column is an open lane: no border box, a status rule under its header", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  const col = await screen.findByTestId("col-To Do");
+  expect(col.className).not.toMatch(/\bborder\b/);
+  expect(col.className).not.toMatch(/\bbg-bg\b/);
+  // One fixed colour per column, whatever cards it holds (Done and In
+  // Progress may be empty here).
+  const rule = screen.getByTestId("col-rule-To Do");
+  expect(rule.className).toMatch(/\bborder-b-2\b/);
+  expect(rule.className).toMatch(/\bborder-faint\b/);
+  expect(screen.getByTestId("col-rule-In Progress").className).toMatch(/\bborder-info\b/);
+  expect(screen.getByTestId("col-rule-Done").className).toMatch(/\bborder-success\b/);
+});
+
+test("Hide is an icon-only button named by its label, disabled for the last visible column", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  await screen.findByTestId("col-To Do");
+  const hide = screen.getByRole("button", { name: "Hide To Do" });
+  expect(hide).toHaveTextContent("");
+  expect(hide.querySelector("svg")).not.toBeNull();
+  expect(hide).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Hide To Do" }));
+  fireEvent.click(screen.getByRole("button", { name: "Hide In Progress" }));
+  expect(screen.getByRole("button", { name: "Hide Done" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Hide Done" })).toHaveAttribute(
+    "title",
+    "At least one column must stay visible",
+  );
+  localStorage.removeItem("tcm-v2-hidden-cols");
+});

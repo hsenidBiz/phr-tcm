@@ -1149,7 +1149,7 @@ export default function AutoRun({
           button: Collapse all while any card is open, Expand all when none
           is. Portalled so it pins to the window, not the screen fade. */}
       {shown === "cases" &&
-        rows.length > 0 &&
+        shownIdx.length > 0 &&
         createPortal(
           <div
             className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"

@@ -1038,6 +1038,18 @@ test("a filter that shows nothing says so", async () => {
   expect(screen.queryByText("No cases match this filter.")).not.toBeInTheDocument();
 });
 
+test("Expand all is only there while a case is shown", async () => {
+  mockList([caseRow(1, "Login - alpha")], [1]);
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  expect(screen.getByRole("button", { name: "Expand all" })).toBeInTheDocument();
+  await press("Passed (0)");
+  expect(screen.getByText("No cases match this filter.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Expand all|Collapse all/ })).not.toBeInTheDocument();
+  await press("Passed (0)");
+  expect(screen.getByRole("button", { name: "Expand all" })).toBeInTheDocument();
+});
+
 test("each card names its last result, and a case never run says Not run", async () => {
   mockFilterList();
   renderScreen();

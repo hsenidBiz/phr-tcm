@@ -21,7 +21,7 @@ import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
 import { priorityText, matchesQuery, searchPlaceholder } from "../lib/search";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
-import { IconCollapseAll, IconExpandAll } from "../lib/actionIcons";
+import { IconCollapseAll, IconExpandAll, IconHideColumn } from "../lib/actionIcons";
 import { Collapse, useRegroupMotion, useSettled } from "../components/ui/collapse";
 import {
   NO_PARENT,
@@ -51,6 +51,15 @@ const COLUMNS = ["To Do", "In Progress", "Done"] as const;
  * `?.` because the mocks of older tests omit them. */
 const statesFor = (d: BoardData, i: Pick<BoardItem, "project" | "work_item_type">) =>
   d.states_by_project?.[i.project]?.[i.work_item_type] ?? d.states_by_type?.[i.work_item_type] ?? [];
+
+/** A lane header's rule: one fixed colour per column, never taken from the
+ * cards. A name outside the three falls back to the strong border. */
+const LANE_RULE: Record<string, string> = {
+  "To Do": "border-faint",
+  "In Progress": "border-info",
+  Done: "border-success",
+};
+const laneRule = (col: string) => LANE_RULE[col] ?? "border-border-strong";
 
 const typeColor: Record<string, string> = {
   Bug: "#e15b64",
@@ -656,7 +665,7 @@ export default function WorkBoard({
     // hidden columns.
     <div
       data-tour={laneId === null ? "board-columns" : undefined}
-      className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
+      className="grid gap-6 transition-[grid-template-columns] duration-300 ease-out"
       style={{
         // All-fr on purpose: Chromium can't interpolate fr<->px track
         // lists and leaves the transition STUCK at the start value.
@@ -755,7 +764,7 @@ export default function WorkBoard({
           <div
             key={col}
             data-testid={`col-${col}`}
-            className="min-w-0 overflow-hidden rounded-md border border-border bg-bg p-2"
+            className="min-w-0 overflow-hidden"
             onDragOver={(e) => {
               if (canDrop(laneId)) e.preventDefault();
             }}
@@ -775,7 +784,10 @@ export default function WorkBoard({
                 contentInvisible ? "opacity-0" : "opacity-100",
               )}
             >
-            <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold text-muted">
+            <h3
+              data-testid={`col-rule-${col}`}
+              className={cn("mb-2 flex items-center whitespace-nowrap border-b-2 px-1 pb-1 text-xs font-semibold text-muted", laneRule(col))}
+            >
               {col} <span className="ml-1 text-faint">{items.length}</span>
               <button
                 aria-label={`Hide ${col}`}
@@ -785,10 +797,10 @@ export default function WorkBoard({
                     : `Hide ${col}`
                 }
                 disabled={hiddenCols.size >= COLUMNS.length - 1}
-                className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
+                className="ml-auto rounded p-1 text-muted transition-colors hover:text-accent focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted"
                 onClick={() => toggleCol(col)}
               >
-                <span className="label-trim">Hide</span>
+                <IconHideColumn aria-hidden className="h-3.5 w-3.5" />
               </button>
             </h3>
             {items.map((item) => (
