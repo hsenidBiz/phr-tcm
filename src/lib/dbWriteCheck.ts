@@ -17,8 +17,27 @@ export const DB_VERDICTS_KEY = ["db-write-verdicts"] as const;
 /** Said when a check could not be made: the server's own words stay in the log. */
 export const CHECK_FAILED = "Could not check this login's permissions. Try Recheck, or see Settings → Logs.";
 
-type Progress = { checking: ReadonlySet<string>; failed: ReadonlySet<string> };
-let progress: Progress = { checking: new Set(), failed: new Set() };
+/** The start of each sentence Rust itself words for a check that could not be
+ * made at all (no sqlcmd, no login saved, no database chosen). Anything else
+ * - transport text included - is never shown; `CHECK_FAILED` stands in. */
+const RUST_SENTENCES = [
+  "sqlcmd is not installed on this machine",
+  "no login is saved for this database",
+  "no database connection is chosen",
+];
+
+/** `error` when it is one of Rust's own fixed sentences, else null. */
+export function ownSentence(error: unknown): string | null {
+  return typeof error === "string" && RUST_SENTENCES.some((s) => error.startsWith(s)) ? error : null;
+}
+
+type Progress = {
+  checking: ReadonlySet<string>;
+  failed: ReadonlySet<string>;
+  /** Why a failed check failed, where Rust said so in its own sentence. */
+  reasons: ReadonlyMap<string, string>;
+};
+let progress: Progress = { checking: new Set(), failed: new Set(), reasons: new Map() };
 const listeners = new Set<() => void>();
 const set = (next: Progress) => {
   progress = next;
@@ -55,12 +74,18 @@ export function useDbCheckProgress(): Progress {
  * flight for the same id is not repeated. */
 export async function recheckDb(qc: QueryClient, id: string): Promise<void> {
   if (!id || progress.checking.has(id)) return;
-  set({ checking: new Set(progress.checking).add(id), failed: without(progress.failed, id) });
+  set({
+    checking: new Set(progress.checking).add(id),
+    failed: without(progress.failed, id),
+    reasons: withoutKey(progress.reasons, id),
+  });
   let failed = false;
+  let reason: string | null = null;
   try {
     const res = await commands.dbCheckWrite(id);
     if (res.status === "error") {
       failed = true;
+      reason = ownSentence(res.error);
       logUi(`db write check failed: ${res.error}`);
     }
   } catch (e) {
@@ -70,6 +95,7 @@ export async function recheckDb(qc: QueryClient, id: string): Promise<void> {
   set({
     checking: without(progress.checking, id),
     failed: failed ? new Set(progress.failed).add(id) : progress.failed,
+    reasons: reason ? new Map(progress.reasons).set(id, reason) : progress.reasons,
   });
   await qc.invalidateQueries({ queryKey: DB_VERDICTS_KEY });
 }
@@ -80,10 +106,17 @@ function without(s: ReadonlySet<string>, id: string): ReadonlySet<string> {
   return next;
 }
 
-/** The sentence to show for a database: the check failing, the verdict, or
- * nothing before it has been checked. */
-export function reasonFor(check: WriteCheck | null, failed: boolean): string | null {
-  if (failed) return CHECK_FAILED;
+function withoutKey(m: ReadonlyMap<string, string>, id: string): ReadonlyMap<string, string> {
+  const next = new Map(m);
+  next.delete(id);
+  return next;
+}
+
+/** The sentence to show for a database: the check failing (Rust's own
+ * sentence when it gave one, else the generic one), the verdict, or nothing
+ * before it has been checked. */
+export function reasonFor(check: WriteCheck | null, failed: boolean, why?: string | null): string | null {
+  if (failed) return why ?? CHECK_FAILED;
   return check ? check.reason : null;
 }
 

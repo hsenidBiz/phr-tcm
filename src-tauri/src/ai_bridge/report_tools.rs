@@ -263,7 +263,7 @@ pub(crate) fn chosen_database_name(ctx: &BridgeContext) -> String {
 
 /// Draw the open report with fresh rows from its stored procedure. Every
 /// door is checked before anything connects: Database Access and writes
-/// (`live_preview_gate`), a chosen connection, and the Dev login on it;
+/// (`live_preview_gate`), a chosen connection, and the dev login on it, which the server lets write;
 /// then `crystal::preview_live` checks the procedure and the parameters.
 /// The bundle blocks on a runtime of its own, so the call runs on a
 /// blocking thread (`crystal_blocking`), never on this one.

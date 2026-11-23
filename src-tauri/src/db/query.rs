@@ -44,15 +44,23 @@ pub const NO_LOGIN_SAVED: &str =
 pub const WRITES_OFF: &str =
     "create, update and delete are switched off - turn them on under Database Read Access on the AI Bridge tab";
 
-/// What connection `c` may do while the modules in `on` are switched on. A
-/// login the server lets write (`permissions`) makes procedures, views and
-/// functions (`Access::DevObjects`) only with Crystal Reports AND Database
-/// Access on; otherwise it is what `guard::access_for_connection` says. The one place the
+/// Whether `c`'s user id ends in `_devlogin` (trimmed, any case): the only
+/// logins that may change procedures, views and functions.
+pub fn is_dev_login(c: &Connection) -> bool {
+    c.user.trim().to_lowercase().ends_with("_devlogin")
+}
+
+/// What connection `c` may do while the modules in `on` are switched on.
+/// Rows follow the server's verdict alone (`permissions`). Procedures, views
+/// and functions (`Access::DevObjects`) also need a `_devlogin` user, with
+/// Crystal Reports AND Database Access on; otherwise it is what `guard::access_for_connection` says. The one place the
 /// modules decide anything about the database - `access_of` asks it, and
 /// so does `sqlcmd::run_sql` through it.
 pub fn access_with(c: &Connection, on: &BTreeSet<Module>) -> Access {
     match guard::access_for_connection(c) {
-        Access::DevWrites if on.contains(&Module::CrystalReports) && on.contains(&Module::DbAccess) => {
+        Access::DevWrites
+            if is_dev_login(c) && on.contains(&Module::CrystalReports) && on.contains(&Module::DbAccess) =>
+        {
             Access::DevObjects
         }
         other => other,

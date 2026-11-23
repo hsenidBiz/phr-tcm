@@ -339,7 +339,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "preview_report_live",
     label: "Preview with live data",
     summary:
-      "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
+      "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the dev login, which the server must let create, update and delete.",
   },
   {
     name: "get_report_parameters",

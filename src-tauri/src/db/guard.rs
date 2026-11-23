@@ -29,7 +29,7 @@
 //! decision, 2026-10-16): `CREATE`, `ALTER` or `CREATE OR ALTER` of ONE
 //! `PROCEDURE`, `VIEW` or `FUNCTION`, named `name` or `schema.name` in the
 //! connection's own database, is a `Verdict::ObjectChange` - allowed only on
-//! `Access::DevObjects`, the dev login with that module on. Its body runs
+//! `Access::DevObjects`, the dev login (`_devlogin` user) when the server lets it write, with that module on. Its body runs
 //! later, so it is checked too, by its own rule (`classify_object`), because
 //! a body is many statements: ordinary T-SQL, temp tables, transactions and
 //! dynamic SQL pass; anything that reaches outside the database, changes a
@@ -47,7 +47,7 @@ pub const MAX_SQL_CHARS: usize = 20_000;
 /// own length limit does not bind it.
 pub const MAX_OBJECT_SQL_CHARS: usize = 200_000;
 
-/// What the dev login hears when it sends a procedure, view or function
+/// What a dev login the server lets write hears when it sends a procedure, view or function
 /// while the Crystal Reports module is off: the module is the one thing
 /// the person can act on.
 pub const OBJECTS_NEED_MODULE: &str =
@@ -74,7 +74,7 @@ pub enum Access {
     /// when only the dev login could): its stored write verdict is "can
     /// write" - see `permissions`.
     DevWrites,
-    /// The dev login with the Crystal Reports and Database Access modules
+    /// The dev login (the server lets it write) with the Crystal Reports and Database Access modules
     /// on: everything `DevWrites` may do, and creating or altering a
     /// procedure, view or function besides. `access_for`/`access_for_connection`
     /// never answer it - `db::query::access_with` does, where the modules
@@ -436,8 +436,8 @@ pub fn lexically_closed(sql: &str) -> bool {
     matches!(at, At::Code | At::LineComment)
 }
 
-/// The gate itself. `Read` always passes; `Write` passes only on the dev
-/// login; `ObjectChange` only on the dev login with the Crystal Reports
+/// The gate itself. `Read` always passes; `Write` passes only on a write-capable
+/// login; `ObjectChange` only on the dev login (when the server lets it write) with the Crystal Reports
 /// module on; a refusal is a refusal on every connection.
 pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
     allowed_with(sql, access, crate::extras::unlocked())

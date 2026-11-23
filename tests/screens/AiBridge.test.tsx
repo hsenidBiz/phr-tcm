@@ -6,6 +6,7 @@ import { Toaster } from "../../src/components/ui/toaster";
 import { TooltipLayer } from "../../src/components/ui/tooltip";
 import { disabledToolsSnapshot, MCP_TOOLS, saveDisabledTools } from "../../src/lib/mcpTools";
 import AiBridge from "../../src/screens/AiBridge";
+import { useAutoDbCheck } from "../../src/app/useAutoDbCheck";
 import { selectedDbSnapshot, subscribeDbSettings } from "../../src/lib/dbServer";
 import { ALL_MODULES, resetModulesStore, setModulesForTest } from "../../src/lib/modules";
 import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
@@ -38,9 +39,17 @@ beforeEach(() => {
   localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
 });
 
+/** App mounts the automatic database check beside the tab (through the
+ * bridge sync); the tab itself no longer asks. */
+function AppLevelCheck() {
+  useAutoDbCheck(true);
+  return null;
+}
+
 function renderBridge(qc: QueryClient) {
   return render(
     <QueryClientProvider client={qc}>
+      <AppLevelCheck />
       <AiBridge />
     </QueryClientProvider>,
   );

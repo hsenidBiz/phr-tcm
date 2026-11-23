@@ -75,6 +75,29 @@ fn a_writer_makes_objects_only_with_both_modules_on() {
     assert_eq!(access_with(&unchecked, &both), Access::ReadOnly);
 }
 
+/// Rows follow the server's verdict alone; object changes also need a
+/// `_devlogin` user (trimmed, any case).
+#[test]
+fn objects_need_the_dev_login_as_well_as_the_verdict() {
+    let both: BTreeSet<Module> = [Module::CrystalReports, Module::DbAccess].into_iter().collect();
+    // A non-dev login the server lets write: rows yes, objects no.
+    let plain = parse_connection("Server=q-plain;Database=d;User Id=app_writer;Password=p;").unwrap();
+    permissions::store(&plain, true);
+    assert_eq!(access_with(&plain, &both), Access::DevWrites);
+    assert!(v2_lib::db::guard::allowed_with("UPDATE dbo.t SET a = 1 WHERE id = 2", Access::DevWrites, true).is_ok());
+    assert_eq!(
+        v2_lib::db::guard::allowed_with(PROC, access_with(&plain, &both), true).unwrap_err(),
+        OBJECTS_NEED_MODULE
+    );
+    // A _devlogin with a verdict and the modules: objects, whatever the case or padding.
+    let dev = parse_connection("Server=q-dev;Database=d;User Id= APP_DevLogin ;Password=p;").unwrap();
+    permissions::store(&dev, true);
+    assert_eq!(access_with(&dev, &both), Access::DevObjects);
+    // A _devlogin with no verdict is read only.
+    let unchecked = parse_connection("Server=q-dev-none;Database=d;User Id=x_devlogin;Password=p;").unwrap();
+    assert_eq!(access_with(&unchecked, &both), Access::ReadOnly);
+}
+
 #[tokio::test]
 async fn an_object_change_needs_the_writes_switch_and_the_dev_login() {
     let _on = crate::serial::crystal_on();
@@ -164,7 +187,12 @@ impl Runner for Answering {
 
 /// sqlcmd's answer to the check: a header, its rule, one row, the footer.
 fn answer(i: &str, u: &str, d: &str, w: &str, o: &str) -> String {
-    format!("i\tu\td\tw\to\n-\t-\t-\t-\t-\n{i}\t{u}\t{d}\t{w}\t{o}\n\n(1 rows affected)\n")
+    answer6(i, u, d, w, o, "0")
+}
+
+/// The same, with the deny role's cell given.
+fn answer6(i: &str, u: &str, d: &str, w: &str, o: &str, n: &str) -> String {
+    format!("i\tu\td\tw\to\tn\n-\t-\t-\t-\t-\t-\n{i}\t{u}\t{d}\t{w}\t{o}\t{n}\n\n(1 rows affected)\n")
 }
 
 #[test]
@@ -184,6 +212,32 @@ fn the_verdict_parser_reads_permissions_and_roles() {
     assert_eq!(parse_verdict(""), None);
     assert_eq!(parse_verdict("Msg 229, Level 14, State 5\nThe SELECT permission was denied"), None);
     assert_eq!(parse_verdict(&answer("yes", "1", "1", "0", "0")), None);
+    // A five-cell answer (the old question) is no answer: fail closed.
+    assert_eq!(parse_verdict("i\tu\td\tw\to\n-\t-\t-\t-\t-\n1\t1\t1\t1\t1\n"), None);
+}
+
+#[test]
+fn a_member_of_the_deny_role_is_read_only_whatever_else_it_holds() {
+    assert_eq!(parse_verdict(&answer6("1", "1", "1", "1", "1", "1")), Some(false));
+    assert_eq!(parse_verdict(&answer6("0", "0", "0", "1", "0", "1")), Some(false));
+    assert_eq!(parse_verdict(&answer6("1", "1", "1", "0", "0", "0")), Some(true));
+    // An unknown deny role (NULL) is not a denial.
+    assert_eq!(parse_verdict(&answer6("0", "0", "0", "1", "0", "NULL")), Some(true));
+    assert!(permissions::CHECK_SQL.contains("IS_ROLEMEMBER('db_denydatawriter')"));
+}
+
+#[test]
+fn logins_whose_fields_join_to_the_same_text_have_different_tags() {
+    let conn = |user: &str, server: &str, database: &str| Connection {
+        server: server.into(),
+        database: database.into(),
+        user: user.into(),
+        password: String::new(),
+        trust_cert: true,
+    };
+    assert_ne!(permissions::tag(&conn("a|s", "x", "d")), permissions::tag(&conn("a", "s|x", "d")));
+    // Case and padding still fold.
+    assert_eq!(permissions::tag(&conn("A", "S", "D")), permissions::tag(&conn(" a ", "s", " d")));
 }
 
 #[tokio::test]

@@ -389,6 +389,29 @@ fn forget_all_clears_every_own_login_and_the_list() {
     assert!(c.id != a.id && c.id != b.id);
 }
 
+/// "Forget them" drops the server's answers about those logins too: a login
+/// saved again later is asked about again, not trusted from before.
+#[test]
+fn forget_all_also_forgets_the_stored_write_verdicts() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Forget-verdict box", &DbCredentialsForm {
+        server: "fv-server.local".into(),
+        port: None,
+        database: "Hr".into(),
+        user: "fv-user".into(),
+        password: Some("pw".into()),
+        trust_cert: true,
+    })
+    .unwrap();
+    let c = v2_lib::db::parse_connection(&resolve(&s, &a.id).unwrap().unwrap()).unwrap();
+    v2_lib::db::permissions::store(&c, true);
+    assert!(v2_lib::db::permissions::can_write(&c));
+    forget_all(&s).unwrap();
+    assert!(v2_lib::db::permissions::stored(&c).is_none(), "the verdict outlived its login");
+    assert!(!v2_lib::db::permissions::can_write(&c));
+}
+
 /// The write rule is the server's verdict for the connection's login -
 /// nothing about a database being one of the person's own, or what its user
 /// is called, changes that. (Was the user-name rule: `app_DevLogin` wrote.)

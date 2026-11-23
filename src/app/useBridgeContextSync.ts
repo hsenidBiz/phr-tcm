@@ -19,6 +19,7 @@ import { subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useAutoRunMode } from "../screens/AutoRun/useAutoRunMode";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
+import { useAutoDbCheck } from "./useAutoDbCheck";
 
 type Args = {
   signedIn: boolean;
@@ -96,6 +97,9 @@ export function useBridgeContextSync({
   // write on a read-only database, which is not true.
   const verdicts = useDbWriteVerdicts(signedIn);
   const canWrite = verdictOf(verdicts.data, dbId)?.can_write ?? false;
+  // A chosen database with no verdict yet is asked about here, app-wide, so
+  // writes do not wait for a visit to the AI Bridge tab.
+  useAutoDbCheck(signedIn);
   // A connection string an older version kept in the webview moves into
   // Rust first, so the very first push already names the database it
   // became - and nothing is pushed until that has been tried.

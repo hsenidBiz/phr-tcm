@@ -29,8 +29,8 @@ pub const CHECK_FAILED_REASON: &str =
     "Could not check this login's permissions. Try Recheck, or see Settings → Logs.";
 
 /// The one read-only question put to the server: the login's permissions on
-/// the database it signed in to, and its two write roles.
-pub const CHECK_SQL: &str = "SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'INSERT') AS i, HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'UPDATE') AS u, HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'DELETE') AS d, IS_ROLEMEMBER('db_datawriter') AS w, IS_ROLEMEMBER('db_owner') AS o";
+/// the database it signed in to, its two write roles, and the deny role.
+pub const CHECK_SQL: &str = "SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'INSERT') AS i, HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'UPDATE') AS u, HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'DELETE') AS d, IS_ROLEMEMBER('db_datawriter') AS w, IS_ROLEMEMBER('db_owner') AS o, IS_ROLEMEMBER('db_denydatawriter') AS n";
 
 /// What is stored for one login.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,7 +63,14 @@ impl WriteCheck {
 /// A non-reversible tag of the login a verdict belongs to: user, server and
 /// database, folded to lower case. The password is not in it.
 pub fn tag(c: &Connection) -> String {
-    let text = format!("{}|{}|{}", c.user.trim(), c.server.trim(), c.database.trim()).to_lowercase();
+    // A JSON array of the three fields, so no field's own text can shift a
+    // boundary: `a|s`,`x` and `a`,`s|x` are different arrays.
+    let text = serde_json::to_string(&[
+        c.user.trim().to_lowercase(),
+        c.server.trim().to_lowercase(),
+        c.database.trim().to_lowercase(),
+    ])
+    .unwrap_or_default();
     let digest = Sha256::digest(text.as_bytes());
     digest.iter().take(12).map(|b| format!("{b:02x}")).collect()
 }
@@ -96,9 +103,10 @@ pub fn forget(c: &Connection) {
     cache::forget(&keys::db_write_verdict(&tag(c)));
 }
 
-/// Reads the answer to `CHECK_SQL`. `Some(true)` only for all three
-/// permissions, or `db_datawriter`, or `db_owner`; anything else that parses
-/// is `Some(false)`; text with no answer row in it is `None`.
+/// Reads the answer to `CHECK_SQL` (six cells). `Some(true)` only for all
+/// three permissions, or `db_datawriter`, or `db_owner`, and never for a
+/// member of `db_denydatawriter`; anything else that parses is
+/// `Some(false)`; text with no answer row in it is `None`.
 pub fn parse_verdict(tsv: &str) -> Option<bool> {
     let cell = |s: &str| -> Option<bool> {
         match s.trim() {
@@ -113,12 +121,12 @@ pub fn parse_verdict(tsv: &str) -> Option<bool> {
             continue;
         }
         let cells: Vec<&str> = line.split('\t').collect();
-        if cells.len() != 5 {
+        if cells.len() != 6 {
             continue;
         }
         let parsed: Option<Vec<bool>> = cells.iter().map(|c| cell(c)).collect();
         if let Some(v) = parsed {
-            return Some((v[0] && v[1] && v[2]) || v[3] || v[4]);
+            return Some(((v[0] && v[1] && v[2]) || v[3] || v[4]) && !v[5]);
         }
     }
     None

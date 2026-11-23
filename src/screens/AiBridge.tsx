@@ -21,7 +21,7 @@ import {
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "../lib/dbServer";
-import { recheckDb, reasonFor, useDbCheckProgress, useDbWriteVerdicts, verdictOf } from "../lib/dbWriteCheck";
+import { reasonFor, useDbCheckProgress, useDbWriteVerdicts, verdictOf } from "../lib/dbWriteCheck";
 import { apiWritesSnapshot, saveApiWrites, subscribeApiWrites } from "../lib/apiTemplates";
 import { networkToolsSnapshot, saveNetworkTools, subscribeNetworkTools } from "../lib/networkTools";
 import { isCaptureMode } from "../dev/capture";
@@ -252,25 +252,16 @@ export default function AiBridge() {
   const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
   const setDbWrites = (on: boolean) => saveDbWrites(on);
   // What the server said about the chosen database's login, asked after it
-  // is saved, when it is chosen with no answer yet, and on Recheck.
+  // is saved, and on Recheck. A database chosen with no answer yet is asked
+  // about app-wide (`useAutoDbCheck`), not only while this tab is open.
   const verdicts = useDbWriteVerdicts(dbOn);
   const verdict = selectedDb ? verdictOf(verdicts.data, selectedDb.id) : null;
   const checkProgress = useDbCheckProgress();
   const canWrite = verdict?.can_write ?? false;
-  const asked = useRef(new Set<string>());
-  useEffect(() => {
-    if (!dbOn || !selectedDb || !verdicts.isSuccess || verdict) return;
-    if (!selectedDb.server || !selectedDb.user || !selectedDb.has_password) return;
-    // Once per login this session: a failed check waits for Recheck.
-    const login = `${selectedDb.id}|${selectedDb.server}|${selectedDb.database}|${selectedDb.user}`;
-    if (asked.current.has(login)) return;
-    asked.current.add(login);
-    void recheckDb(qc, selectedDb.id);
-  }, [dbOn, selectedDb, verdicts.isSuccess, verdict, qc]);
   const writeReason = selectedDb
     ? checkProgress.checking.has(selectedDb.id)
       ? "Checking this login's permissions…"
-      : (reasonFor(verdict, checkProgress.failed.has(selectedDb.id)) ?? "This login has not been checked yet.")
+      : (reasonFor(verdict, checkProgress.failed.has(selectedDb.id), checkProgress.reasons.get(selectedDb.id)) ?? "This login has not been checked yet.")
     : "Pick a database to see what its login may do.";
   // Whether the assistant may prove and run API templates - a separate
   // decision from whether the four tools are reachable at all (the "API

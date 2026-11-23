@@ -87,5 +87,5 @@ Say "that is not supported yet" for these instead of trying; the bundle refuses 
 
 ## The database
 
-`preview_report` renders from the data saved in the report, or only its static bands when it has none; it never touches a database. Changing stored procedures, views and functions, and a live-data preview, need the Dev login connection, Database Access and Crystal Reports switched on; see the preview_report_live tool.
+`preview_report` renders from the data saved in the report, or only its static bands when it has none; it never touches a database. Changing stored procedures, views and functions, and a live-data preview, need the Dev login connection (object changes are limited to the dev login, and it must be a login the server lets create, update and delete), with the write switch, Database Access and Crystal Reports switched on; see the preview_report_live tool.
 "#;

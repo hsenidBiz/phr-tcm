@@ -52,7 +52,7 @@ export const MODULE_INFO: readonly ModuleInfo[] = [
     name: "Crystal Reports",
     parent: null,
     description:
-      "Lets your AI assistant open, format and preview Crystal Reports files, and change the stored procedures behind them on the Dev login.",
+      "Lets your AI assistant open, format and preview Crystal Reports files, and change the stored procedures behind them, on the dev login (which the server must let create, update and delete).",
   },
 ];
 
