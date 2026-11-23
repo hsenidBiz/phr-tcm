@@ -21,7 +21,7 @@ import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
 import { priorityText, matchesQuery, searchPlaceholder } from "../lib/search";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
-import { IconCollapseAll, IconExpandAll, IconHideColumn } from "../lib/actionIcons";
+import { IconCollapseAll, IconExpandAll, IconHideColumn, IconShowColumn } from "../lib/actionIcons";
 import { Collapse, useRegroupMotion, useSettled } from "../components/ui/collapse";
 import {
   NO_PARENT,
@@ -687,75 +687,31 @@ export default function WorkBoard({
             <div
               key={col}
               data-testid={`col-${col}`}
-              // Fixed w-9 (no min-w-0): this is the 0fr track's floor.
-              className="rail-in flex w-9 flex-col items-center gap-2 rounded-md border border-border bg-bg py-2"
+              // Fixed w-9 (no min-w-0): this is the 0fr track's floor. A bare
+              // strip with the lane's colour rule on its left; the whole strip
+              // reopens the column, the eye button is the keyboard way in.
+              className={cn(
+                "rail-in flex w-9 cursor-pointer flex-col items-center gap-2 border-l-2 py-2",
+                laneRule(col),
+              )}
+              onClick={() => toggleCol(col)}
             >
-              {/* Reads top-to-bottom in the rail, same as the label
-                  below it - the collapsed column is a vertical strip,
-                  so the control is too. In the accent, because a
-                  muted control on a 36px rail is easy to miss
-                  entirely, and this is the only way back.
-                  `text-center` centres the label along the axis it
-                  runs down; the flex centres the box across the
-                  rail.
-
-                  The padding is spelled out PHYSICALLY on purpose.
-                  Tailwind mixes the two systems - px/py are logical
-                  (padding-inline/block) while pl/pr/pt/pb are
-                  physical - and under vertical-rl the logical pair
-                  swaps axes, so `py` silently becomes left/right.
-                  Naming the sides directly means what you read is
-                  where the space goes.
-
-                  pt/pb-2 is the room above and below the word.
-                  pl-0/pr-0.5 is the sliver across it, and the
-                  lopsided 0/2 is measured, not eyeballed: in caps
-                  the ink runs ascent 8 / descent 0 while the font
-                  box is 9 / 3, so the glyphs sit 1px off the em-box
-                  centre. With `leading-none` the whole control is
-                  14px across - it hugs the text, which is the only
-                  thing it has to fit.
-
-                  The exact splits here and on Hide were read off the
-                  RENDERED PIXELS, not derived: font metrics predict
-                  the direction but not the amount, and at this size
-                  half a pixel is visible. If the font or size
-                  changes, measure again rather than reasoning.
-
-                  Both stop about half a pixel short of perfect, and
-                  that is a floor rather than a missing tweak: glyph
-                  baselines snap to whole pixels, so fractional
-                  padding below 1px moves nothing. Closing the last
-                  half pixel would mean changing the box height, not
-                  the padding. */}
-              {/* The label is HORIZONTAL text rotated as a finished
-                  box - not writing-mode text. vertical-rl rasterizes
-                  each rotated glyph, and that path's baseline snap is
-                  state-dependent: the first repaint after mount (or
-                  WebView2's hover repaint) could re-snap the run ~1px
-                  along the reading axis, so OPEN sat centred until you
-                  hovered and then rode up. A transform rotates the
-                  already-rasterized horizontal run as one unit - the
-                  same pipeline as the Hide button, which never moved -
-                  so every repaint lands identically. The box is sized
-                  explicitly because a transform does not change
-                  layout: h-11 reads as the old padded strip, w-4
-                  spans the glyph cross-axis in the 36px rail. */}
               <button
                 aria-label={`Open ${col}`}
                 title={`Open ${col}`}
-                className="relative h-11 w-4 self-center rounded border border-accent/60 text-accent transition-colors hover:bg-accent-soft"
-                onClick={() => toggleCol(col)}
+                className="rounded p-1 text-muted transition-colors hover:text-accent focus-visible:outline-2"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleCol(col);
+                }}
               >
-                <span className="label-trim absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold leading-none">
-                  Open
-                </span>
+                <IconShowColumn aria-hidden className="h-3.5 w-3.5" />
               </button>
               <span
-                className="whitespace-nowrap text-[10px] font-semibold text-faint"
+                className="whitespace-nowrap text-[10px] font-semibold text-muted"
                 style={{ writingMode: "vertical-rl" }}
               >
-                {col} · {items.length}
+                {col} <span className="text-faint">· {items.length}</span>
               </span>
             </div>
           );

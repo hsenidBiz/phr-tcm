@@ -1455,3 +1455,45 @@ test("Hide is an icon-only button named by its label, disabled for the last visi
   );
   localStorage.removeItem("tcm-v2-hidden-cols");
 });
+
+// ---- hidden column strip ---------------------------------------------------
+
+function hideDoneAndRender() {
+  localStorage.setItem("tcm-v2-hidden-cols", JSON.stringify(["Done"]));
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+}
+
+test("a hidden column is a bare strip with a left rule in the lane's colour", async () => {
+  hideDoneAndRender();
+  const strip = await screen.findByTestId("col-Done");
+  expect(strip.className).not.toContain("border-border");
+  expect(strip.className).not.toContain("bg-bg");
+  expect(strip.className).toContain("border-l-2");
+  expect(strip.className).toContain("border-success");
+  localStorage.removeItem("tcm-v2-hidden-cols");
+});
+
+test("the Open button is an icon only, with no visible text", async () => {
+  hideDoneAndRender();
+  const open = within(await screen.findByTestId("col-Done")).getByRole("button", { name: "Open Done" });
+  expect(open.textContent).toBe("");
+  expect(open.querySelector("svg")).not.toBeNull();
+  localStorage.removeItem("tcm-v2-hidden-cols");
+});
+
+test("clicking the strip outside the button reopens the column once; the button does too", async () => {
+  hideDoneAndRender();
+  const strip = await screen.findByTestId("col-Done");
+  fireEvent.click(strip);
+  expect(localStorage.getItem("tcm-v2-hidden-cols")).toBe(JSON.stringify([]));
+  await screen.findByLabelText("Hide Done");
+  // Hide it again, then reopen through the button: still exactly one toggle.
+  fireEvent.click(screen.getByLabelText("Hide Done"));
+  fireEvent.click(await screen.findByLabelText("Open Done"));
+  expect(localStorage.getItem("tcm-v2-hidden-cols")).toBe(JSON.stringify([]));
+  localStorage.removeItem("tcm-v2-hidden-cols");
+});
