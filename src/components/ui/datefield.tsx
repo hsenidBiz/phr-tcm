@@ -158,7 +158,7 @@ export default function DateField({
         >
           <Calendar selected={date} onSelect={(d) => settle(d ? toIso(d) : "")} />
           {/* One row for both: the calendar's own Today row is hidden. */}
-          <div className="flex items-center justify-between border-t border-border px-3 py-1.5 text-xs">
+          <div className="flex items-center justify-between px-3 py-1.5 text-xs">
             <button
               type="button"
               className="font-semibold text-accent transition-colors hover:text-accent-hover"
