@@ -966,6 +966,11 @@ pub struct AddedCounts {
     pub not_added: Vec<NotAdded>,
 }
 
+/// The longest search the picker sends, in characters.
+pub const SEARCH_LIMIT: usize = 128;
+pub const SEARCH_TOO_LONG: &str = "the search is too long - use fewer characters";
+pub const TOO_MANY_LOGINS: &str = "too many logins at once - tick fewer and add them again";
+
 fn lookup_failed(env: &Environment, why: String) -> String {
     use crate::autorun::account_lookup::{failure_sentence, FIX_IN_APP};
     crate::applog::info(format!("Environments: the account lookup for {} did not run", env.name));
@@ -979,6 +984,9 @@ pub async fn list_logins_in<S: crate::autorun::setup_find::RowSource>(
     rows: Result<&S, String>,
     search: &str,
 ) -> Result<DbLoginList, String> {
+    if search.chars().count() > SEARCH_LIMIT {
+        return Err(SEARCH_TOO_LONG.to_string());
+    }
     let env = environments::active(root)?;
     require_test(&env)?;
     let listed = match rows {
@@ -990,7 +998,7 @@ pub async fn list_logins_in<S: crate::autorun::setup_find::RowSource>(
     let logins: Vec<DbLogin> = logins
         .into_iter()
         .map(|login| {
-            let is_saved = saved.iter().any(|a| a.username.trim().eq_ignore_ascii_case(login.trim()));
+            let is_saved = { let l = login.trim().to_lowercase(); saved.iter().any(|a| a.username.trim().to_lowercase() == l) };
             DbLogin { login, saved: is_saved }
         })
         .collect();
@@ -1010,16 +1018,20 @@ pub async fn add_logins_in<S: crate::autorun::setup_find::RowSource>(
     use crate::autorun::account_lookup::{
         key_for_login, no_row_reason, Found, EMPTY_PASSWORD, HASH_ONLY, SAME_AS_DB_LOGIN,
     };
+    if logins.len() > crate::autorun::account_lookup::LIST_LIMIT as usize {
+        return Err(TOO_MANY_LOGINS.to_string());
+    }
     let env = environments::active(root)?;
     require_test(&env)?;
     let saved = crate::autorun::accounts::load_accounts_for(root, &env.id)?;
     let mut counts = AddedCounts::default();
     let mut asked: Vec<String> = vec![];
     for l in logins.iter().map(|l| l.trim()).filter(|l| !l.is_empty()) {
-        if asked.iter().any(|a| a.eq_ignore_ascii_case(l)) {
+        let folded = l.to_lowercase();
+        if asked.iter().any(|a| a.to_lowercase() == folded) {
             continue;
         }
-        if saved.iter().any(|a| a.username.trim().eq_ignore_ascii_case(l)) {
+        if saved.iter().any(|a| a.username.trim().to_lowercase() == folded) {
             counts.already_saved += 1;
         } else {
             asked.push(l.to_string());

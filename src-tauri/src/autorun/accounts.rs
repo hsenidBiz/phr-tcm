@@ -477,7 +477,8 @@ pub fn append_new_accounts_for(root: &Path, env_id: &str, ready: Vec<Account>) -
     let mut taken: std::collections::HashSet<String> = all.iter().map(|a| a.key.clone()).collect();
     let mut added = vec![];
     for mut a in ready {
-        if all.iter().any(|e| e.username.trim().eq_ignore_ascii_case(a.username.trim())) {
+        let folded = a.username.trim().to_lowercase();
+        if all.iter().any(|e| e.username.trim().to_lowercase() == folded) {
             continue;
         }
         if taken.contains(&a.key) || !valid_key(&a.key) {

@@ -104,10 +104,6 @@ export function fillSentence(c: FillCounts): string {
   return parts.join(", ");
 }
 
-/** The sentence the refresh gives when no account is saved yet: nothing to
- * refresh, but the picker can still add some. */
-const noAccountsToFill = (said: string) => said.includes("no saved accounts");
-
 /** A last check older than this is shown as stale and does not rank. */
 const STALE_MS = 7 * 24 * 3600 * 1000;
 
@@ -138,12 +134,17 @@ export default function AccountsDialog({
   // with the save, which is refused when something else changed the file
   // since. Asked before the list, so a change in between is never missed.
   const loadedVersion = useRef<string | null>(null);
+  /** Reads the version, then the list, as one: the version is kept only
+   * when the list was read too, so it always matches what was read. */
+  const readAccounts = async () => {
+    const version = await unwrapStr(commands.autoRunAccountsVersion());
+    const saved = await unwrapStr(commands.autoRunListAccounts());
+    loadedVersion.current = version;
+    return saved;
+  };
   const existing = useQuery({
     queryKey: ["autorun-accounts"],
-    queryFn: async () => {
-      loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion());
-      return unwrapStr(commands.autoRunListAccounts());
-    },
+    queryFn: readAccounts,
     retry: false,
     refetchOnWindowFocus: true,
   });
@@ -276,8 +277,7 @@ export default function AccountsDialog({
 
   /** Reads what the app saved and puts `keys` into the rows. */
   const takeAdded = async (keys: string[]) => {
-    loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion());
-    const saved = await unwrapStr(commands.autoRunListAccounts());
+    const saved = await readAccounts();
     qc.setQueryData(["autorun-accounts"], saved);
     setRows((r) => mergeAdded(r ?? saved, saved, keys));
     await qc.invalidateQueries({ queryKey: PROPOSALS_KEY });
@@ -400,18 +400,32 @@ export default function AccountsDialog({
 
   /** Sync Database on Accounts: refreshes every saved account's password (this
    * tab has no selection, so none picked means all), then opens the picker for
-   * adding accounts from the database. A refusal that says the database cannot
-   * be read at all (reading off, not a test environment) opens no picker. */
+   * adding accounts from the database. A refusal opens no picker. With no
+   * saved account there is nothing to refresh, so the refresh is skipped. */
   const syncAccounts = () =>
     askThenFill(async () => {
+      if (savedAccounts.length === 0) {
+        // Nothing saved to refresh: no refresh, no error. The picker needs a
+        // test environment and reading on, so ask for its list first; a
+        // refusal is shown and opens no picker.
+        setProblem("");
+        setFilling(true);
+        try {
+          await unwrapStr(commands.envListDbLogins("", dbReadAccessOn()));
+          setPicking(true);
+        } catch (e) {
+          setProblem(e instanceof Error ? e.message : String(e));
+        } finally {
+          setFilling(false);
+        }
+        return;
+      }
       const ran = await fill(
         () => unwrapStr(commands.envFillAccountPasswords([], dbReadAccessOn())),
         () => qc.invalidateQueries({ queryKey: ["autorun-accounts"] }),
         setProblem,
       );
-      // A refresh that stopped because there was nothing saved to refresh
-      // still leaves the list open to adding.
-      if (ran || noAccountsToFill(problemRef.current)) setPicking(true);
+      if (ran) setPicking(true);
     });
 
   const dismiss = async () => {
@@ -484,19 +498,29 @@ export default function AccountsDialog({
     mutationFn: async () => {
       const sent = rows ?? [];
       const done = await unwrapStr(commands.autoRunSaveAccounts(sent, loadedVersion.current));
-      return { ...done, madeKeys: sent.some((a) => !a.key.trim()) };
+      return { ...done, sent };
     },
-    onSuccess: async ({ dropped, accounts, madeKeys }) => {
+    onSuccess: async ({ dropped, made, sent }) => {
       const sessions = dropped.length > 0 ? ` Saved sessions dropped for: ${dropped.join(", ")}.` : "";
-      if (madeKeys) {
-        // A key was made from a login: stay, so the person sees it.
-        loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion()).catch(() => null);
+      if (made.length > 0) {
+        // A key was made from a login: stay, so the person sees it. The list
+        // is read again for its passwords and version; if that fails the
+        // rows take the made keys and the version is unknown until a reload.
+        let accounts: Account[];
+        try {
+          accounts = await readAccounts();
+        } catch {
+          loadedVersion.current = null;
+          accounts = sent.map((a, i) => {
+            const key = made.find((m) => m.index === i)?.key;
+            return key === undefined ? a : { ...a, key };
+          });
+        }
         baselineRef.current = accounts;
         setBaseline(accounts);
         setRows(accounts);
         qc.setQueryData(["autorun-accounts"], accounts);
-        const made = accounts.filter((_, i) => !(rows ?? [])[i]?.key.trim()).map((a) => a.key);
-        toast.success(`Accounts saved. Keys made from the login: ${made.join(", ")}.${sessions}`);
+        toast.success(`Accounts saved. Keys made from the login: ${made.map((m) => m.key).join(", ")}.${sessions}`);
         return;
       }
       qc.invalidateQueries({ queryKey: ["autorun-accounts"] });
@@ -557,17 +581,15 @@ export default function AccountsDialog({
         <AddFromDatabaseDialog
           onClose={() => setPicking(false)}
           onAdded={async () => {
-            loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion());
-            const saved = await unwrapStr(commands.autoRunListAccounts());
-            qc.setQueryData(["autorun-accounts"], saved);
+            qc.setQueryData(["autorun-accounts"], await readAccounts());
           }}
         />
       )}
       {fillAsk && (
-        <Modal onClose={() => setFillAsk(null)} label="Fill passwords from the new database?" className="w-full max-w-md space-y-4 p-5">
-          <h2 className="text-sm font-semibold text-text">Fill passwords from the new database?</h2>
+        <Modal onClose={() => setFillAsk(null)} label="Sync from the new database?" className="w-full max-w-md space-y-4 p-5">
+          <h2 className="text-sm font-semibold text-text">Sync from the new database?</h2>
           <p className="text-xs text-muted">
-            This environment now uses {fillAsk.change.to} instead of {fillAsk.change.from}. Fill passwords from the new
+            This environment now uses {fillAsk.change.to} instead of {fillAsk.change.from}. Sync from the new
             database?
           </p>
           <div className="flex justify-end gap-2">
@@ -584,7 +606,7 @@ export default function AccountsDialog({
               }}
             >
               <IconConfirm aria-hidden />
-              Fill passwords
+              Sync
             </Button>
           </div>
         </Modal>

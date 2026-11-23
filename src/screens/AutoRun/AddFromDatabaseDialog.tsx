@@ -15,6 +15,9 @@ import { IconAdd, IconCancel } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 
+/** The longest search the app takes, in characters. */
+const SEARCH_MAX = 128;
+
 /** How long the search box waits after the last keystroke. */
 const SEARCH_DELAY_MS = 300;
 
@@ -45,6 +48,8 @@ export default function AddFromDatabaseDialog({
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState("");
   const [problem, setProblem] = useState("");
+  /** The add worked but the dialog behind could not read the list again. */
+  const [reopenNote, setReopenNote] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(text.trim()), SEARCH_DELAY_MS);
@@ -59,7 +64,20 @@ export default function AddFromDatabaseDialog({
     gcTime: 0,
   });
   const logins = list.data?.logins ?? [];
-  const count = [...picked].length;
+  // Only a ticked row that is shown now counts and is added: a tick on a row
+  // a search has hidden is not the person's pick any more.
+  const shownPicks = logins.filter((l) => !l.saved && picked.has(l.login)).map((l) => l.login);
+  const count = shownPicks.length;
+
+  // A new search's answer clears the ticks it does not list.
+  useEffect(() => {
+    if (!list.data) return;
+    const shown = new Set(list.data.logins.map((l) => l.login));
+    setPicked((cur) => {
+      const kept = [...cur].filter((l) => shown.has(l));
+      return kept.length === cur.size ? cur : new Set(kept);
+    });
+  }, [list.data]);
 
   const toggle = (login: string, on: boolean) =>
     setPicked((cur) => {
@@ -74,11 +92,18 @@ export default function AddFromDatabaseDialog({
     setBusy(true);
     setProblem("");
     setSaid("");
+    setReopenNote(false);
     try {
-      const done = await unwrapStr(commands.envAddDbLogins([...picked], dbReadAccessOn()));
+      const done = await unwrapStr(commands.envAddDbLogins(shownPicks, dbReadAccessOn()));
       setSaid(addedSentence(done));
       setPicked(new Set());
-      await onAdded();
+      // The add is done: a failure to read the accounts again is not a
+      // problem with it, only a note that the list behind is behind.
+      try {
+        await onAdded();
+      } catch {
+        setReopenNote(true);
+      }
       await qc.invalidateQueries({ queryKey: ["db-logins"] });
     } catch (e) {
       setProblem(e instanceof Error ? e.message : String(e));
@@ -96,7 +121,13 @@ export default function AddFromDatabaseDialog({
           from the table.
         </p>
       </div>
-      <SearchInput aria-label="Search logins" placeholder="Search logins" value={text} onChange={setText} />
+      <SearchInput
+        aria-label="Search logins"
+        placeholder="Search logins"
+        maxLength={SEARCH_MAX}
+        value={text}
+        onChange={setText}
+      />
       <div className="max-h-72 min-h-24 overflow-auto rounded-md border border-border">
         {list.isLoading && <p className="p-3 text-xs text-muted">Loading logins...</p>}
         {list.isError && <p className="p-3 text-xs text-danger">{list.error.message}</p>}
@@ -126,6 +157,7 @@ export default function AddFromDatabaseDialog({
           {said}
         </p>
       )}
+      {reopenNote && <p className="text-xs text-muted">Reopen Accounts to see the new accounts</p>}
       {problem && <p className="text-xs text-danger">{problem}</p>}
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="outline" disabled={busy || count === 0} onClick={add}>

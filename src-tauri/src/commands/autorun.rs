@@ -4016,17 +4016,26 @@ pub fn auto_run_accounts_version(app: tauri::AppHandle) -> Result<String, String
     Ok(crate::autorun::accounts::accounts_version(&root, &env_id))
 }
 
+/// The key made for one row that was saved with a blank key: its position in
+/// the saved rows and the key. No password.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct MadeKey {
+    pub index: u32,
+    pub key: String,
+}
+
 /// What saving the accounts answers: the keys whose saved session was dropped,
-/// and the accounts as saved (a blank key is made from its login).
+/// and the keys made for blank-key rows. It carries no password: the screen
+/// reads the list again through `auto_run_list_accounts`.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct SavedAccounts {
     pub dropped: Vec<String>,
-    pub accounts: Vec<crate::autorun::accounts::Account>,
+    pub made: Vec<MadeKey>,
 }
 
 /// Replace the accounts list. A row with a blank key and a username gets a key
 /// made from the username. Answers the keys whose saved session was dropped,
-/// so the screen can say so, and the accounts as saved. With `loaded_version`
+/// so the screen can say so, and the keys made. With `loaded_version`
 /// (from `auto_run_accounts_version`) a list that changed since is refused.
 #[tauri::command]
 #[specta::specta]
@@ -4047,13 +4056,21 @@ pub fn save_accounts_in(
     accounts: Vec<crate::autorun::accounts::Account>,
     loaded_version: Option<&str>,
 ) -> Result<SavedAccounts, String> {
-    let accounts = crate::autorun::accounts::fill_blank_keys(&accounts);
+    let asked = accounts;
+    let accounts = crate::autorun::accounts::fill_blank_keys(&asked);
+    let made: Vec<MadeKey> = asked
+        .iter()
+        .zip(&accounts)
+        .enumerate()
+        .filter(|(_, (before, after))| before.key.trim().is_empty() && before.key != after.key)
+        .map(|(i, (_, after))| MadeKey { index: i as u32, key: after.key.clone() })
+        .collect();
     // Where a password came from is the app's to say, not the screen's.
     let before = crate::autorun::accounts::load_accounts_for(root, env_id).unwrap_or_default();
     let accounts = crate::autorun::accounts::with_known_sources(&before, &accounts);
     let dropped = crate::autorun::accounts::save_accounts_checked(root, env_id, &accounts, loaded_version)?;
     crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));
-    Ok(SavedAccounts { dropped, accounts })
+    Ok(SavedAccounts { dropped, made })
 }
 
 #[tauri::command(async)]

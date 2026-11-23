@@ -1258,8 +1258,12 @@ fn keys_are_made_from_logins() {
     let taken: HashSet<String> = ["hr.admin-x".to_string(), "hr.admin-x-2".to_string()].into();
     assert_eq!(key_for_login("HR.Admin@x", &taken), "hr.admin-x-3");
     assert_eq!(key_for_login("con", &none), "user-con");
-    assert!(key_for_login("", &none).starts_with("user"));
-    assert!(key_for_login("@@@", &none).starts_with("user"));
+    assert_eq!(key_for_login("", &none), "user-1");
+    assert_eq!(key_for_login("@@@", &none), "user-1");
+    let one: HashSet<String> = ["user-1".to_string()].into();
+    assert_eq!(key_for_login("@@@", &one), "user-2");
+    let two: HashSet<String> = ["user-1".to_string(), "user-2".to_string()].into();
+    assert_eq!(key_for_login("", &two), "user-3");
     assert!(v2_lib::autorun::accounts::valid_key(&key_for_login("@@@", &none)));
     assert_eq!(key_for_login("a  b", &none), "a-b");
     let long = "a".repeat(100);
@@ -1357,8 +1361,9 @@ fn saving_with_a_blank_key_makes_it_from_the_login() {
         None,
     )
     .unwrap();
-    let keys: Vec<&str> = saved.accounts.iter().map(|a| a.key.as_str()).collect();
-    assert_eq!(keys, ["hr.admin", "hr.admin-2", "typed.key", "typed.key-2"]);
+    let made: Vec<(u32, &str)> = saved.made.iter().map(|m| (m.index, m.key.as_str())).collect();
+    assert_eq!(made, [(0, "hr.admin"), (1, "hr.admin-2"), (3, "typed.key-2")]);
+    assert!(!format!("{saved:?}").contains("p1"), "the answer carries no password");
     assert_eq!(load_accounts(root).unwrap().len(), 4);
 
     // A blank key with a blank username keeps the old refusal.
@@ -1367,4 +1372,39 @@ fn saving_with_a_blank_key_makes_it_from_the_login() {
     // A typed key is still validated.
     let err = save_accounts_in(root, &env_id, vec![account("Bad Key", "u", "p")], None).unwrap_err();
     assert!(err.contains("not a usable account key"), "{err}");
+}
+
+#[tokio::test]
+async fn logins_compare_by_unicode_lowercase() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    save_accounts(root, &[account("elan", "Élan", "Pw-1")]).unwrap();
+    let fake = list_fake(&["élan", "other"]);
+    let list = list_logins_in(root, Ok(&fake), "").await.unwrap();
+    assert!(list.logins[0].saved, "Élan and élan are the same login");
+    assert!(!list.logins[1].saved);
+    let counts: AddedCounts = add_logins_in(root, Ok(&fake), &users(&["ÉLAN"])).await.unwrap();
+    assert_eq!((counts.added, counts.already_saved), (0, 1));
+}
+
+#[tokio::test]
+async fn long_searches_and_long_login_lists_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, Some("dev-read")).unwrap();
+    mark_test_environment(root);
+    let fake = list_fake(&["a"]);
+    let fine = "a".repeat(128);
+    assert!(list_logins_in(root, Ok(&fake), &fine).await.is_ok());
+    let err = list_logins_in(root, Ok(&fake), &"a".repeat(129)).await.unwrap_err();
+    assert_eq!(err, "the search is too long - use fewer characters");
+
+    let many: Vec<String> = (0..=LIST_LIMIT).map(|i| format!("u{i}")).collect();
+    let err = add_logins_in(root, Ok(&fake), &many).await.unwrap_err();
+    assert_eq!(err, "too many logins at once - tick fewer and add them again");
+    let ok: Vec<String> = (0..LIST_LIMIT).map(|i| format!("u{i}")).collect();
+    let at_limit = add_logins_in(root, Ok(&fake), &ok).await;
+    assert!(at_limit.err().is_none_or(|e| !e.contains("too many")), "the limit itself is allowed");
 }

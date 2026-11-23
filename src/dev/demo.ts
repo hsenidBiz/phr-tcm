@@ -1835,12 +1835,13 @@ function applyPatches() {
     autoRunListAccounts: () => ok(autoRunAccounts.map((a) => ({ ...a }))),
     autoRunSaveAccounts: (accounts: Account[]) => {
       if (!Array.isArray(accounts)) return err("Demo mode: no accounts to save");
-      autoRunAccounts = accounts.map((a) => ({
-        ...a,
-        key: a.key.trim() || a.username.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-"),
-        password: "",
-      }));
-      return ok({ dropped: [] as string[], accounts: autoRunAccounts.map((a) => ({ ...a })) });
+      const made: { index: number; key: string }[] = [];
+      autoRunAccounts = accounts.map((a, index) => {
+        const key = a.key.trim() || a.username.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+        if (!a.key.trim()) made.push({ index, key });
+        return { ...a, key, password: "" };
+      });
+      return ok({ dropped: [] as string[], made });
     },
     autoRunLoadScript: (caseId: number) => ok(scripts.get(caseId) ?? null),
     autoRunLoadScripts: (caseIds: number[]) =>

@@ -108,3 +108,92 @@ fn cargo_version_matches_tauri_conf() {
         "Cargo.toml package.version must match tauri.conf.json - bump both together"
     );
 }
+
+/// Every identifier-shaped word in `text`.
+fn words(text: &str) -> Vec<&str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect()
+}
+
+/// Whether `body` declares a field named exactly `password` that is not a
+/// boolean (a flag that a field is a password field holds no password).
+fn declares_password_field(body: &str) -> bool {
+    body.match_indices("password").any(|(i, _)| {
+        let before = body[..i].chars().next_back();
+        let after = body[i + "password".len()..].trim_start_matches('?');
+        before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+            && after.starts_with(':')
+            && !after[1..].trim_start().starts_with("boolean")
+    })
+}
+
+/// One IPC call carries a password to the webview: `auto_run_list_accounts`
+/// (CLAUDE.md). No other command's RESULT may contain, however deeply, a
+/// field named `password` or the `Account` type. Inputs are not checked: a
+/// save sends the list the person typed.
+#[test]
+fn only_the_account_list_carries_a_password_to_the_webview() {
+    let path = std::env::temp_dir().join(format!("tcm-bindings-password-check-{}.ts", std::process::id()));
+    v2_lib::specta_builder()
+        .export(specta_typescript::Typescript::default(), &path)
+        .expect("export failed");
+    let ts = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+
+    // Type name -> its body, with comment lines left out.
+    let mut types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for chunk in ts.split("export type ").skip(1) {
+        let Some((name, rest)) = chunk.split_once(" =") else { continue };
+        let name = name.trim().to_string();
+        let end = rest.find("\nexport ").or_else(|| rest.find("\n// ")).unwrap_or(rest.len());
+        let body: String = rest[..end]
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                !(t.starts_with("/**") || t.starts_with('*') || t.starts_with("//"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        types.insert(name, body);
+    }
+    assert!(types.contains_key("Account_Serialize"), "the Account type was not found in the bindings");
+
+    let carries = |start: &str| -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut todo: Vec<String> = words(start).into_iter().map(String::from).collect();
+        while let Some(w) = todo.pop() {
+            if w == "Account" || w.starts_with("Account_") {
+                return true;
+            }
+            if !seen.insert(w.clone()) {
+                continue;
+            }
+            if let Some(body) = types.get(&w) {
+                if declares_password_field(body) {
+                    return true;
+                }
+                todo.extend(words(body).into_iter().map(String::from));
+            }
+        }
+        false
+    };
+
+    let mut offenders = vec![];
+    let mut checked = 0;
+    for line in ts.lines() {
+        let Some(at) = line.find("typedError<") else { continue };
+        let Some(end) = line.find("(__TAURI_INVOKE(\"") else { continue };
+        let name = line[end + "(__TAURI_INVOKE(\"".len()..].split('"').next().unwrap_or("");
+        let result = &line[at + "typedError<".len()..end];
+        let result = result.rsplit_once(',').map_or(result, |(ok, _)| ok);
+        checked += 1;
+        if carries(result) {
+            offenders.push(name.to_string());
+        }
+    }
+    assert!(checked > 100, "the command lines were not recognised ({checked})");
+    assert_eq!(
+        offenders,
+        ["auto_run_list_accounts"],
+        "only auto_run_list_accounts may return a password to the webview"
+    );
+}

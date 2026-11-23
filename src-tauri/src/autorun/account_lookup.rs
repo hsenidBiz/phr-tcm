@@ -254,7 +254,15 @@ pub fn key_for_login(login: &str, taken: &std::collections::HashSet<String>) -> 
     }
     let key = key.trim_start_matches(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit()));
     let mut key: String = key.chars().take(64).collect();
-    if key.is_empty() || !super::accounts::valid_key(&key) {
+    if key.is_empty() {
+        // Nothing usable in the login: `user-1`, then `user-2` on a clash.
+        let mut n = 1;
+        while taken.contains(&format!("user-{n}")) {
+            n += 1;
+        }
+        return format!("user-{n}");
+    }
+    if !super::accounts::valid_key(&key) {
         key = format!("user-{key}");
         key = key.chars().take(64).collect();
         key = key.trim_end_matches('-').to_string();
@@ -447,7 +455,7 @@ pub async fn look_up<S: RowSource>(rows: &S, lookup: &AccountLookup, users: &[St
     lookup.check()?;
     let mut asked: Vec<String> = vec![];
     for u in users.iter().map(|u| u.trim()).filter(|u| !u.is_empty()) {
-        if !asked.iter().any(|a| a.eq_ignore_ascii_case(u)) {
+        if !asked.iter().any(|a| a.to_lowercase() == u.to_lowercase()) {
             asked.push(u.to_string());
         }
     }

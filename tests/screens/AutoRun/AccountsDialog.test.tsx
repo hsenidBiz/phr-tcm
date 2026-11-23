@@ -22,13 +22,18 @@ async function openTab(name: string) {
 }
 
 function mount(existing: unknown[], onSave: (accounts: unknown[]) => unknown = () => []) {
+  let current = existing;
   mockIPC((cmd, args) => {
-    if (cmd === "auto_run_list_accounts") return existing;
+    if (cmd === "auto_run_list_accounts") return current;
     if (cmd === "auto_run_save_accounts") {
-      const accounts = (args as { accounts: unknown[] }).accounts;
+      const accounts = (args as { accounts: Record<string, unknown>[] }).accounts;
       const answered = onSave(accounts);
       // A test that answers a bare list means the keys of dropped sessions.
-      return Array.isArray(answered) ? { dropped: answered, accounts } : answered;
+      const done = Array.isArray(answered) ? { dropped: answered, made: [] } : answered;
+      // The dialog reads the list again, as the app saved it.
+      const made = (done as { made: { index: number; key: string }[] }).made;
+      current = accounts.map((a, i) => ({ ...a, key: made.find((m) => m.index === i)?.key ?? a.key }));
+      return done;
     }
     return null;
   });
@@ -127,6 +132,8 @@ function mountWithProposals(opts: {
    * is not the one the last Fill read. Absent: it is the same one. */
   dbChange?: { from: string; to: string };
   addProposals?: (args: { picks: Saved[]; replace: string[] }) => unknown;
+  /** When it answers true, the accounts version cannot be read. */
+  versionFails?: () => boolean;
   /** Answers env_list_db_logins and env_add_db_logins (the picker). */
   picker?: (cmd: string, args: unknown) => unknown;
 }) {
@@ -135,6 +142,7 @@ function mountWithProposals(opts: {
   const log: string[] = [];
   mockIPC((cmd, args) => {
     log.push(cmd);
+    if (cmd === "auto_run_accounts_version" && opts.versionFails?.()) throw new Error("cannot read the version");
     if (cmd === "auto_run_list_accounts") return state.accounts;
     if (cmd === "env_list") {
       return {
@@ -834,7 +842,7 @@ test("Save is off until something is changed, and sends the version the list was
     if (cmd === "auto_run_list_accounts") return [{ key: "admin", label: "A", username: "kim", password: "p" }];
     if (cmd === "auto_run_save_accounts") {
       sent.push(args as Record<string, unknown>);
-      return { dropped: [], accounts: (args as { accounts: unknown[] }).accounts };
+      return { dropped: [], made: [] };
     }
     return null;
   });
@@ -1021,9 +1029,9 @@ test("a Fill after the environment's database changed asks first, naming both da
   });
   await screen.findByDisplayValue("kim");
   fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
-  const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
+  const ask = await screen.findByRole("dialog", { name: "Sync from the new database?" });
   expect(ask).toHaveTextContent(
-    "This environment now uses QA - read only instead of Dev - read only. Fill passwords from the new database?",
+    "This environment now uses QA - read only instead of Dev - read only. Sync from the new database?",
   );
   // Nothing has been read yet.
   expect(calls).toEqual([]);
@@ -1042,10 +1050,10 @@ test("cancelling the question fills nothing and changes nothing", async () => {
   });
   await screen.findByDisplayValue("kim");
   fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
-  const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
+  const ask = await screen.findByRole("dialog", { name: "Sync from the new database?" });
   fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Fill passwords from the new database?" })).not.toBeInTheDocument(),
+    expect(screen.queryByRole("dialog", { name: "Sync from the new database?" })).not.toBeInTheDocument(),
   );
   expect(calls).toEqual([]);
   expect(toast.success).not.toHaveBeenCalled();
@@ -1064,8 +1072,8 @@ test("confirming the question runs the Fill, on the Proposed tab too", async () 
   await openTab("Proposed");
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
-  const ask = await screen.findByRole("dialog", { name: "Fill passwords from the new database?" });
-  fireEvent.click(within(ask).getByRole("button", { name: "Fill passwords" }));
+  const ask = await screen.findByRole("dialog", { name: "Sync from the new database?" });
+  fireEvent.click(within(ask).getByRole("button", { name: "Sync" }));
   await waitFor(() =>
     expect(toast.success).toHaveBeenCalledWith(
       "2 passwords updated - 2 of them came from a different database than before, 0 unchanged, 0 with no row",
@@ -1087,7 +1095,7 @@ test("with the same database as the last Fill there is no question", async () =>
   await screen.findByDisplayValue("kim");
   fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
   await waitFor(() => expect(calls).toEqual(["env_fill_account_passwords"]));
-  expect(screen.queryByRole("dialog", { name: "Fill passwords from the new database?" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Sync from the new database?" })).not.toBeInTheDocument();
 });
 
 test("Sync Database is offered only on a test environment", async () => {
@@ -1252,10 +1260,7 @@ test("the Proposed tab's Sync Database opens no picker", async () => {
 });
 
 test("a blank key saves without a required-field error, and the key the app made is shown", async () => {
-  const onClose = mount([], (accounts) => ({
-    dropped: [],
-    accounts: (accounts as { username: string }[]).map((a) => ({ ...a, key: "kim-admin" })),
-  }));
+  const onClose = mount([], () => ({ dropped: [], made: [{ index: 0, key: "kim-admin" }] }));
   await screen.findByText("No accounts yet.");
   fireEvent.click(screen.getByRole("button", { name: "Add account" }));
   expect(screen.getByLabelText("Key for account 1")).toHaveAttribute("placeholder", "From the login");
@@ -1266,4 +1271,111 @@ test("a blank key saves without a required-field error, and the key the app made
   await waitFor(() => expect(screen.getByLabelText("Key for account 1")).toHaveValue("kim-admin"));
   expect(toast.success).toHaveBeenCalledWith("Accounts saved. Keys made from the login: kim-admin.");
   expect(onClose).not.toHaveBeenCalled();
+});
+
+test("Sync Database with no saved accounts skips the refresh and opens the picker", async () => {
+  const calls: string[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [],
+    fill: (cmd) => {
+      calls.push(cmd);
+      return SAME_COUNTS;
+    },
+    picker: (cmd) => {
+      calls.push(cmd);
+      return { logins: [{ login: "lee.two", saved: false }], cut_short: false };
+    },
+  });
+  await screen.findByText("No accounts yet.");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  const picker = await screen.findByRole("dialog", { name: "Add accounts from the database" });
+  await within(picker).findByText("lee.two");
+  expect(calls).not.toContain("env_fill_account_passwords");
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+test("Sync Database with no saved accounts still opens no picker when the database cannot be read", async () => {
+  const calls: string[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [],
+    fill: (cmd) => {
+      calls.push(cmd);
+      return SAME_COUNTS;
+    },
+    picker: () => {
+      throw new Error("reading the database is off - turn it on in Settings");
+    },
+  });
+  await screen.findByText("No accounts yet.");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  expect(await screen.findByText("reading the database is off - turn it on in Settings")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Add accounts from the database" })).not.toBeInTheDocument();
+  expect(calls).toEqual([]);
+});
+
+test("an add that worked shows its sentence and a quiet note, not a problem, when the list cannot be read again", async () => {
+  let listFails = false;
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
+    fill: () => SAME_COUNTS,
+    versionFails: () => listFails,
+    picker: (cmd) => {
+      if (cmd === "env_add_db_logins") {
+        // From here on reading the version fails.
+        listFails = true;
+        return { added: 1, already_saved: 0, not_added: [] };
+      }
+      return { logins: [{ login: "lee.two", saved: false }], cut_short: false };
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  const picker = await screen.findByRole("dialog", { name: "Add accounts from the database" });
+  await within(picker).findByText("lee.two");
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add lee.two" }));
+  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (1)" }));
+  expect(await within(picker).findByText("1 account added.")).toBeInTheDocument();
+  expect(within(picker).getByText("Reopen Accounts to see the new accounts")).toBeInTheDocument();
+  expect(within(picker).queryByText("cannot read the version")).not.toBeInTheDocument();
+});
+
+test("a tick on a row a search hides is cleared, and Add selected counts and adds only shown ticks", async () => {
+  const adds: unknown[] = [];
+  mountWithProposals({
+    testEnvironment: true,
+    accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
+    fill: () => SAME_COUNTS,
+    picker: (cmd, args) => {
+      if (cmd === "env_add_db_logins") {
+        adds.push(args);
+        return { added: 1, already_saved: 0, not_added: [] };
+      }
+      const term = (args as { search: string }).search;
+      return {
+        logins: [{ login: "lee.two", saved: false }, { login: "zed.one", saved: false }].filter((l) => l.login.includes(term)),
+        cut_short: false,
+      };
+    },
+  });
+  await screen.findByDisplayValue("kim");
+  fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
+  const picker = await screen.findByRole("dialog", { name: "Add accounts from the database" });
+  await within(picker).findByText("zed.one");
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add lee.two" }));
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add zed.one" }));
+  expect(within(picker).getByRole("button", { name: "Add selected (2)" })).toBeInTheDocument();
+  expect(within(picker).getByLabelText("Search logins")).toHaveAttribute("maxlength", "128");
+  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "lee" } });
+  await waitFor(() => expect(within(picker).queryByText("zed.one")).not.toBeInTheDocument());
+  expect(await within(picker).findByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
+  // Back to everything: the hidden tick did not come back.
+  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "" } });
+  await within(picker).findByText("zed.one");
+  expect(within(picker).getByRole("checkbox", { name: "Add zed.one" })).toHaveAttribute("aria-checked", "false");
+  expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
+  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (1)" }));
+  await waitFor(() => expect(adds).toEqual([{ logins: ["lee.two"], dbRead: false }]));
 });

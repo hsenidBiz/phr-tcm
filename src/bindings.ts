@@ -1050,10 +1050,10 @@ export const commands = {
 	/**
 	 *  Replace the accounts list. A row with a blank key and a username gets a key
 	 *  made from the username. Answers the keys whose saved session was dropped,
-	 *  so the screen can say so, and the accounts as saved. With `loaded_version`
+	 *  so the screen can say so, and the keys made. With `loaded_version`
 	 *  (from `auto_run_accounts_version`) a list that changed since is refused.
 	 */
-	autoRunSaveAccounts: (accounts: Account_Deserialize[], loadedVersion: string | null) => typedError<SavedAccounts_Serialize, string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
+	autoRunSaveAccounts: (accounts: Account_Deserialize[], loadedVersion: string | null) => typedError<SavedAccounts, string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
 	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
@@ -5828,6 +5828,15 @@ export type LogLine = {
 	message: string,
 };
 
+/**
+ *  The key made for one row that was saved with a blank key: its position in
+ *  the saved rows and the key. No password.
+ */
+export type MadeKey = {
+	index: number,
+	key: string,
+};
+
 export type MapView = {
 	areas: AreaView[],
 };
@@ -7979,26 +7988,12 @@ export type RunStarted = {
 
 /**
  *  What saving the accounts answers: the keys whose saved session was dropped,
- *  and the accounts as saved (a blank key is made from its login).
+ *  and the keys made for blank-key rows. It carries no password: the screen
+ *  reads the list again through `auto_run_list_accounts`.
  */
-export type SavedAccounts = SavedAccounts_Serialize | SavedAccounts_Deserialize;
-
-/**
- *  What saving the accounts answers: the keys whose saved session was dropped,
- *  and the accounts as saved (a blank key is made from its login).
- */
-export type SavedAccounts_Deserialize = {
+export type SavedAccounts = {
 	dropped: string[],
-	accounts: Account_Deserialize[],
-};
-
-/**
- *  What saving the accounts answers: the keys whose saved session was dropped,
- *  and the accounts as saved (a blank key is made from its login).
- */
-export type SavedAccounts_Serialize = {
-	dropped: string[],
-	accounts: Account_Serialize[],
+	made: MadeKey[],
 };
 
 /**  A fixture together with its run history, as the tab lists it. */
