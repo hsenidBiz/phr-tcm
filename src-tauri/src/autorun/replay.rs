@@ -369,10 +369,13 @@ pub async fn run_case<D: Driver>(
 /// and never signs in. The caller owns `lease` and lets it go once the
 /// case's browser is closed (`one_go`).
 ///
-/// With `record_video` the page is recorded from just before step 1 (after
-/// the sign-in, so no typed account name is ever on it) and the video is
-/// kept, as `CaseRecord::video`, only when the case is proposed Failed or
-/// Blocked. A recording that cannot start, stop or be read only means no
+/// With `record_video` the page is recorded from the start of the case's
+/// own work - just before the sign-in (just before the check that a kept
+/// browser is still signed in), once the account is held - so the video shows
+/// the whole flow, a failed sign-in included, up to the last step. A typed
+/// account name can be on it; the password field is masked by the page. The
+/// video is kept, as `CaseRecord::video`, only when the case is proposed
+/// Failed or Blocked. A recording that cannot start, stop or be read only means no
 /// video: it never changes the case's result.
 ///
 /// However the case ends - passed, failed, stopped, or never started -
@@ -523,6 +526,16 @@ async fn run_case_in<D: Driver>(
             }
         }
     }
+    // The video of the case, when one is wanted and the case will begin: it
+    // starts here - the lease is held and nothing before this decided to skip
+    // the case - so it shows the whole flow, from the sign-in (or, in a
+    // reused browser, the check that it still is signed in) through the trip
+    // to the module to the last step. A case blocked or stopped before this
+    // point is never recorded.
+    let recording = match (record_video, skip) {
+        (true, None) => recording::start(d, &who(script.case_id)).await,
+        _ => None,
+    };
     if skip.is_none() {
         if let (Some(_), Some(check_ms)) = (account, reused) {
             // Signed in already, by the case before: no sign-in, and the
@@ -618,11 +631,6 @@ async fn run_case_in<D: Driver>(
     // step: a failure names what the page answered the step before.
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
-    // The video of the steps, when one is wanted and they will run.
-    let recording = match (record_video, skip) {
-        (true, None) => recording::start(d, &who(script.case_id)).await,
-        _ => None,
-    };
     let stepping = Instant::now();
     // Whether a step of the case itself began, and whether the browser
     // stopped answering in one: the clean-up runs only after the first and
