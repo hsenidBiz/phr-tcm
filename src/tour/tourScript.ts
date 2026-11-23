@@ -227,7 +227,8 @@ export function tourStepsFor(modules: ReadonlySet<Module>, simple: boolean = fal
   // each kept stop is given the destination it resolved to in the full
   // script. The two bar stops (organisation, PBI) move to View Test Cases,
   // the first screen Basic mode keeps that has both. The Working
-  // repositories and "Decide what it may do" stops go too: Basic mode has no such cards (the tools it shows are on).
+  // repositories and "Decide what it may do" stops go too: Basic mode has
+  // no such cards (the tools it shows are on).
   const out: TourStep[] = [];
   let cur: TourWhere | undefined;
   TOUR_STEPS.forEach((s, i) => {

@@ -4,8 +4,9 @@
 //! tools are hidden and refused), every other tool is on (the saved tool
 //! switches are ignored, a module that is off still takes its tools away),
 //! and API templates and the network tools are on whatever their switches
-//! say. Turning Basic mode off shows every saved switch exactly as it was. Nothing here writes the setting
-//! (`simple_mode` owns that), so it can be read from the bridge and the proxy.
+//! say. Turning Basic mode off shows every saved switch exactly as it was.
+//! Nothing here writes the setting (`simple_mode` owns that), so it can be
+//! read from the bridge and the proxy.
 
 /// What a call to a tool Basic mode hides answers.
 pub const SIMPLE_HIDES_TOOL: &str = "Basic mode hides this tool. Turn Basic mode off in Settings to use it.";
@@ -83,6 +84,19 @@ pub fn disabled_under(simple: bool, saved: &[String]) -> Vec<String> {
     }
 }
 
+/// `disabled_under` for a context: while an environment switch is in progress
+/// (`gate.holds > 0`) the context's list is the switch's placeholder (every
+/// tool with a switch off until the new environment's push arrives), and
+/// Basic mode keeps it, with the hidden tools added, as with Basic mode off.
+/// Only outside a switch are the saved switches ignored.
+pub fn disabled_under_ctx(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> Vec<String> {
+    if simple && ctx.gate.holds > 0 {
+        with_hidden(ctx.disabled_tools.clone())
+    } else {
+        disabled_under(simple, &ctx.disabled_tools)
+    }
+}
+
 /// `list` with the hidden tools added (those not already in it).
 pub fn with_hidden(mut list: Vec<String>) -> Vec<String> {
     for t in SIMPLE_HIDDEN_TOOLS {
@@ -98,6 +112,11 @@ pub fn disabled_now(saved: &[String]) -> Vec<String> {
     disabled_under(is_on(), saved)
 }
 
+/// `disabled_under_ctx` for the saved setting of this process.
+pub fn disabled_now_ctx(ctx: &crate::ai_bridge::BridgeContext) -> Vec<String> {
+    disabled_under_ctx(is_on(), ctx)
+}
+
 /// The bridge's context as the routes and the tool list see it while
 /// `simple`: only the hidden tools disabled (the saved switches ignored), the network tools on, and API
 /// templates on - but only where a write could be on at all (a context for
@@ -108,7 +127,7 @@ pub fn disabled_now(saved: &[String]) -> Vec<String> {
 pub fn context_under(simple: bool, ctx: &crate::ai_bridge::BridgeContext) -> crate::ai_bridge::BridgeContext {
     let mut out = ctx.clone();
     if simple {
-        out.disabled_tools = disabled_under(true, &ctx.disabled_tools);
+        out.disabled_tools = disabled_under_ctx(true, ctx);
         // Like the write switch below, the network tools come on only for a
         // context that names an environment (consistent with
         // `push_context_with`, which never turns one on for another).

@@ -463,7 +463,7 @@ fn sync_files_after_push(
     let (disabled_tools, working_dir) = match running {
         Some(shared) => {
             let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-            (crate::simple_view::disabled_now(&ctx.disabled_tools), ctx.working_dir.clone())
+            (crate::simple_view::disabled_now_ctx(&ctx), ctx.working_dir.clone())
         }
         None => (crate::simple_view::disabled_now(&pushed_disabled), pushed_working_dir),
     };

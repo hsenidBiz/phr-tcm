@@ -521,13 +521,23 @@ export default function AiBridge() {
     return <div className="max-w-lg">{repoCard}</div>;
   }
 
+  // Basic mode has no breakdown card, so the stack on the right holds only
+  // module cards: two columns at 2xl, not three, and with no module card
+  // showing there is no right column at all. Off: the classes of old.
+  const showRight = !simple || autoRunOn || dbOn || apiTemplatesOn;
+  const gridClass = !simple
+    ? "grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3"
+    : showRight
+      ? "grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-2"
+      : "grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-1 lg:items-start";
+
   return (
     // Two columns once there is room (the window floor is 900px, so
     // this only kicks in above it); a single column below, which is
     // also what the narrow runner-sized windows get. At 2xl the right
     // stack dissolves (display:contents) and How-it-works becomes its
     // own third column instead of leaving the window's right third empty.
-    <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3">
+    <div data-testid="ai-bridge-grid" className={gridClass}>
       <div className="flex min-w-0 flex-col gap-6">
       {!simple && repoCard}
       {/* Whether the bridge is up is the glowing badge beside the tab title
@@ -791,7 +801,7 @@ export default function AiBridge() {
           column, B over C; at 2xl it dissolves (display:contents) and B
           and C become columns 2 and 3. `gap`, not space-y: space-y's
           child margins would leak through contents into the outer grid. */}
-      {(!simple || autoRunOn || dbOn || apiTemplatesOn) && (
+      {showRight && (
       <div className="flex flex-col gap-6 2xl:contents">
       {/* B holds only module cards. With none of them on it is left out, so
           the breakdown (C) moves up to the second column instead of leaving
@@ -1095,7 +1105,6 @@ export default function AiBridge() {
       <div className="flex min-w-0 flex-col gap-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
-        {!simple && (
         <p className="text-sm text-muted">
           The best way to write test cases: ask the assistant to read the
           writing guide and a few example cases, then draft cases for your PBI
@@ -1103,7 +1112,6 @@ export default function AiBridge() {
           Test Cases tab. Keep the file watched, and any problems show up here
           as it saves.
         </p>
-        )}
         <p className="text-sm text-muted">
           {/* No count in the sentence: it went stale twice - the list
               below is the inventory. */}
@@ -1140,12 +1148,12 @@ export default function AiBridge() {
           )}
           {toolShown("save_autorun_script") && (
             <li>
-              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. {!simple && <>Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. </>}Off: you run Auto Test by hand.
+              <span className="font-medium text-text">Auto Test scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. Off: you run Auto Test by hand.
             </li>
           )}
           {toolShown("list_api_templates") && (
             <li>
-              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. {!simple && <>Testing and running also need the API templates switch above, which is off by default. </>}Off: you do template work by hand.
+              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
             </li>
           )}
           {toolShown("open_report") && (

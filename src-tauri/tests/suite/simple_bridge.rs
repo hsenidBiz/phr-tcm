@@ -5,7 +5,7 @@
 use v2_lib::ai_bridge::{route_timed_simple, BridgeContext, SwitchGate, API_WRITES_OFF};
 use v2_lib::autorun::agents::Caller;
 use v2_lib::simple_view::{
-    SIMPLE_API_NO_ENVIRONMENT, context_under, disabled_under, route_refusal, SIMPLE_HIDDEN_ROUTES, SIMPLE_HIDDEN_TOOLS, SIMPLE_HIDES_TOOL,
+    SIMPLE_API_NO_ENVIRONMENT, context_under, disabled_under, disabled_under_ctx, route_refusal, SIMPLE_HIDDEN_ROUTES, SIMPLE_HIDDEN_TOOLS, SIMPLE_HIDES_TOOL,
 };
 
 fn saved() -> BridgeContext {
@@ -445,4 +445,24 @@ fn the_first_push_after_a_switch_made_with_no_bridge_catches_the_files_up() {
     let mut no_playwright = all.clone();
     no_playwright.remove(&Module::Playwright);
     assert!(sync_needed(&mut last, key(false, &no_playwright)));
+}
+
+#[test]
+fn a_switch_in_progress_keeps_the_placeholder_list_under_basic_mode() {
+    // The placeholder a switch leaves: a shown tool off until the push.
+    let mut held = saved();
+    held.gate.holds = 1;
+    held.disabled_tools = vec!["get_bugs".into(), "get_test_cases".into()];
+    let under = disabled_under_ctx(true, &held);
+    assert!(under.iter().any(|d| d == "get_bugs"), "kept while switching, as with Basic mode off");
+    assert!(under.iter().any(|d| d == "get_test_cases"));
+    assert!(SIMPLE_HIDDEN_TOOLS.iter().all(|t| under.iter().any(|d| d == t)), "the hidden tools are added");
+    assert_eq!(context_under(true, &held).disabled_tools, under);
+    assert_eq!(disabled_under_ctx(false, &held), held.disabled_tools, "Basic mode off: unchanged");
+    // Outside a switch the saved list is ignored.
+    let mut idle = held.clone();
+    idle.gate.holds = 0;
+    let under = disabled_under_ctx(true, &idle);
+    assert!(!under.iter().any(|d| d == "get_bugs"));
+    assert_eq!(under.len(), SIMPLE_HIDDEN_TOOLS.len());
 }

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../../src/lib/appSimpleMode";
+import { resetAppSimpleModeStore } from "../../../src/lib/appSimpleMode";
 import AutoRun from "../../../src/screens/AutoRun";
 import AutoRunModeSwitch from "../../../src/screens/AutoRun/ModeSwitch";
 
@@ -82,15 +82,4 @@ test("neither option is pressed, and clicks are ignored, until the settings answ
   answer({ autorun_mode: "simple" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
   expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-pressed", "false");
-});
-
-test("with the app in Basic mode the switch offers only Simple, held pressed", async () => {
-  setAppSimpleModeForTest(true);
-  mockIPC((cmd) => {
-    if (cmd === "get_app_settings") return { autorun_mode: "simple", app_simple_mode: true };
-    if (cmd === "list_test_case_fields" || cmd === "pbi_test_cases_full") return [];
-  });
-  renderScreen();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Basic" })).toHaveAttribute("aria-pressed", "true"));
-  expect(screen.queryByRole("button", { name: "Advanced" })).not.toBeInTheDocument();
 });

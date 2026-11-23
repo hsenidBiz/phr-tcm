@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "../../src/components/ui/toaster";
 import { TooltipLayer } from "../../src/components/ui/tooltip";
@@ -2103,7 +2103,7 @@ function basicBridgeWithNoRepo() {
   return { calls, ...renderBridge(qc) };
 }
 
-test("Basic mode with no repository shows the tool list, not the repository gate, and no stray cards", async () => {
+test("Basic mode with no repository shows Connect your AI tools, not the repository gate or the repository and writing cards, and no empty wrapper", async () => {
   const { container } = basicBridgeWithNoRepo();
   expect(await screen.findByText("Connect your AI tools")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Working repositories" })).not.toBeInTheDocument();
@@ -2156,4 +2156,26 @@ test("out of Basic mode with no repository, the tab is still only the repository
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByRole("heading", { name: "Working repositories" })).toBeInTheDocument();
   expect(screen.queryByText("Connect your AI tools")).not.toBeInTheDocument();
+});
+
+test("the grid keeps three columns at 2xl with Basic mode off, two with it on, and one with no module card", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "C:\repo");
+  renderSimpleBridge(false);
+  await screen.findByText("Connect your AI tools");
+  expect(screen.getByTestId("ai-bridge-grid").className).toBe(
+    "grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3",
+  );
+  cleanup();
+  renderSimpleBridge(true);
+  await screen.findByText("Connect your AI tools");
+  const basic = screen.getByTestId("ai-bridge-grid").className;
+  expect(basic).toContain("2xl:grid-cols-2");
+  expect(basic).not.toContain("2xl:grid-cols-3");
+  cleanup();
+  act(() => setModulesForTest([]));
+  renderSimpleBridge(true);
+  await screen.findByText("Connect your AI tools");
+  const none = screen.getByTestId("ai-bridge-grid").className;
+  expect(none).toContain("lg:grid-cols-1");
+  expect(none).not.toContain("lg:grid-cols-2");
 });
