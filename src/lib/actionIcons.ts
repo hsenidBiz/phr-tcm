@@ -224,6 +224,8 @@ export {
   // Hiding a Work Manager board column down to its rail: an eye struck
   // through, icon-only in the column header.
   EyeOff as IconHideColumn,
+  // Showing a hidden column again: the open eye, on its collapsed strip.
+  Eye as IconShowColumn,
   // The Playwright Overview's folder tree: a folder under the clone's
   // suites, and a feature in it (a folder of specs and test cases) - a
   // folder with code on it, since that is what a feature holds.
