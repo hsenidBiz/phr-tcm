@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.2",
+    date: "2026-11-23",
+    items: [
+      "Accounts has Remove all, and Add accounts from the database has Select all shown.",
+      "The video of a failed case now shows the whole flow, from the sign-in to the error.",
+      "Run no longer offers to run selected cases whose scripts were cleared.",
+    ],
+  },
+  {
     version: "2.4.8-beta.1",
     date: "2026-11-23",
     items: [
