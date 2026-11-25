@@ -2219,6 +2219,7 @@ export const CAPTURE_AI_TOOLS: DetectedTool[] = [
     registered_servers: ["tcm"],
     scope: "project",
     global_registered_servers: [],
+    project_scope_servers: [],
   },
   {
     id: "vscode",
@@ -2227,6 +2228,7 @@ export const CAPTURE_AI_TOOLS: DetectedTool[] = [
     registered_servers: [],
     scope: "project",
     global_registered_servers: ["tcm"],
+    project_scope_servers: [],
   },
 ];
 

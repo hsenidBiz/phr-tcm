@@ -18,6 +18,9 @@ use crate::ai_tools::{
     CLAUDE_AUTORUN_RULES, CLAUDE_DB_RULES, CURSOR_API_TEMPLATE_ENTRIES, CURSOR_AUTORUN_ENTRIES, CURSOR_DB_ENTRIES,
     COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
 };
+use crate::ai_tools::{
+    clear_mcpjson_approvals, local_carries, merge_local_entry, remove_local_entry,
+};
 use crate::allow_record::{scope_key, AllowRecord};
 use crate::autorun::pw_rules::without_read_dates;
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
@@ -1081,7 +1084,10 @@ fn register_server(
             return Ok(());
         };
         register_claude_code_in(r, server)?;
-        retire_superseded_claude_now(&server.name, "project", Some(r));
+        retire_superseded_claude_now(&server.name, "local", Some(r));
+        // Best-effort: the registration worked. An entry earlier versions
+        // wrote to the repository's shared `.mcp.json` is moved, not kept.
+        migrate_project_scope(r, &claude_json_path(), &claude_names(&server.name));
         if server.name == TCM_SERVER {
             carry_over_rules(&CLAUDE_ALLOW, Some(r));
             // Best-effort, and deliberately after the server is in: a
@@ -1174,7 +1180,9 @@ pub fn unregister_ai_tool(
         let root = unregister_root(spec, working_dir.as_deref(), global);
         let (path, key, _) = config_for(spec, &home_dir(), &appdata_dir(), root);
         for old in superseded_by(TCM_SERVER) {
-            if config_carries(&path, key, old) {
+            let local = spec.id == "claude-code"
+                && root.is_some_and(|r| local_carries(&claude_json_path(), r, old));
+            if local || config_carries(&path, key, old) {
                 if let Err(e) = unregister_server(&id, old, working_dir.as_deref(), global) {
                     crate::applog::warn(format!("could not remove the old {old} registration: {e}"));
                 }
@@ -1512,18 +1520,82 @@ fn register_claude_code_global(server: &McpServer) -> Result<(), String> {
     }
 }
 
-/// Project scope: `claude mcp remove --scope project` run INSIDE the repo
-/// (the CLI keys project scope on its cwd), falling back to editing
-/// `<repo>/.mcp.json` - the file that command would have edited.
+/// Local scope: `claude mcp remove --scope local` run INSIDE the repo (the
+/// CLI keys local scope on its cwd), falling back to editing the repository's
+/// entry in `~/.claude.json` - what that command would have edited. An old
+/// project-scope copy in `<repo>/.mcp.json` goes too: it is ours as well.
 fn unregister_claude_code_in(root: &str, server_name: &str) -> Result<(), String> {
     let cwd = std::path::Path::new(root);
-    let via_file = || remove_from_file(&cwd.join(".mcp.json"), "mcpServers", server_name);
-    match claude_cli() {
-        Some(cli) => run_claude_mcp_remove(&cli, server_name, "project", Some(cwd)).or_else(|_| via_file()),
-        None => match run_claude_mcp_remove(&claude_on_path(), server_name, "project", Some(cwd)) {
+    let via_file = || remove_local_from_file(&claude_json_path(), root, server_name);
+    let local = match claude_cli() {
+        Some(cli) => run_claude_mcp_remove(&cli, server_name, "local", Some(cwd)).or_else(|_| via_file()),
+        None => match run_claude_mcp_remove(&claude_on_path(), server_name, "local", Some(cwd)) {
             Ok(()) => Ok(()),
             Err(_) => via_file(),
         },
+    };
+    let old = remove_from_file(&cwd.join(".mcp.json"), "mcpServers", server_name);
+    local.and(old)
+}
+
+/// `~/.claude.json`: user scope, the local scope of every repository, and
+/// the project approvals.
+fn claude_json_path() -> PathBuf {
+    PathBuf::from(home_dir()).join(".claude.json")
+}
+
+/// Every name a registration of `name` replaces, itself included.
+fn claude_names(name: &str) -> Vec<String> {
+    std::iter::once(name).chain(superseded_by(name).iter().copied()).map(str::to_string).collect()
+}
+
+/// Write `server` into `root`'s local scope in the Claude config at
+/// `claude_json` (created if absent), keeping everything else in it.
+pub fn merge_local_into_file(claude_json: &std::path::Path, root: &str, server: &McpServer) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(claude_json) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
+        Err(e) => return Err(format!("failed to read {}: {e}", claude_json.display())),
+    };
+    atomic_write(claude_json, &merge_local_entry(&existing, root, server)?)
+}
+
+/// Take `name` out of `root`'s local scope in the Claude config. A missing
+/// file or entry is a clean no-op.
+pub fn remove_local_from_file(claude_json: &std::path::Path, root: &str, name: &str) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(claude_json) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("failed to read {}: {e}", claude_json.display())),
+    };
+    match remove_local_entry(&existing, root, name)? {
+        Some(updated) => atomic_write(claude_json, &updated),
+        None => Ok(()),
+    }
+}
+
+/// Move a repository off project scope once it is registered in local
+/// scope: take `names` out of `<root>/.mcp.json` (the file stays, with
+/// `mcpServers` left empty if that was all it held; other servers are never
+/// touched) and out of the repository's approval lists in the Claude config.
+/// Best-effort and logged - the registration itself has worked.
+pub fn migrate_project_scope(root: &str, claude_json: &std::path::Path, names: &[String]) {
+    let mcp = std::path::Path::new(root).join(".mcp.json");
+    for name in names {
+        if let Err(e) = remove_from_file(&mcp, "mcpServers", name) {
+            crate::applog::warn(format!("could not remove the old project-scope {name} entry: {e}"));
+        }
+    }
+    let Ok(existing) = std::fs::read_to_string(claude_json) else { return };
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    match clear_mcpjson_approvals(&existing, root, &refs) {
+        Ok(Some(updated)) => {
+            if let Err(e) = atomic_write(claude_json, &updated) {
+                crate::applog::warn(format!("could not tidy the old project approvals: {e}"));
+            }
+        }
+        Ok(None) => {}
+        Err(e) => crate::applog::warn(format!("could not tidy the old project approvals: {e}")),
     }
 }
 
@@ -1573,15 +1645,26 @@ pub fn retire_superseded_claude(
     config: &std::path::Path,
 ) -> Result<(), String> {
     let mut first_error = None;
+    // Local scope lives under the repository's own key inside `config`
+    // (`~/.claude.json`), not at its top level.
+    let local_root = cwd.and_then(|c| c.to_str()).filter(|_| scope == "local");
     for old in superseded_by(server_name) {
-        if !config_carries(config, "mcpServers", old) {
+        let carried = match local_root {
+            Some(r) => local_carries(config, r, old),
+            None => config_carries(config, "mcpServers", old),
+        };
+        if !carried {
             continue;
         }
         let via_cli = match cli {
             Some(c) => run_claude_mcp_remove(c, old, scope, cwd),
             None => Err("no Claude Code CLI".to_string()),
         };
-        if let Err(e) = via_cli.or_else(|_| remove_from_file(config, "mcpServers", old)) {
+        let via_file = || match local_root {
+            Some(r) => remove_local_from_file(config, r, old),
+            None => remove_from_file(config, "mcpServers", old),
+        };
+        if let Err(e) = via_cli.or_else(|_| via_file()) {
             first_error.get_or_insert(e);
         }
     }
@@ -1592,8 +1675,8 @@ pub fn retire_superseded_claude(
 /// the registration itself has worked.
 fn retire_superseded_claude_now(server_name: &str, scope: &str, root: Option<&str>) {
     let (cwd, config) = match root {
-        Some(r) => (Some(std::path::Path::new(r)), std::path::Path::new(r).join(".mcp.json")),
-        None => (None, PathBuf::from(home_dir()).join(".claude.json")),
+        Some(r) => (Some(std::path::Path::new(r)), claude_json_path()),
+        None => (None, claude_json_path()),
     };
     let cli = claude_cli().unwrap_or_else(claude_on_path);
     if let Err(e) = retire_superseded_claude(Some(&cli), server_name, scope, cwd, &config) {
@@ -1601,18 +1684,23 @@ fn retire_superseded_claude_now(server_name: &str, scope: &str, root: Option<&st
     }
 }
 
-/// Project scope: `claude mcp add --scope project` run INSIDE the repo -
-/// the CLI writes `<cwd>/.mcp.json`. Prefer the CLI (it owns the schema),
-/// try PATH when it is not where the installers put it, and edit
-/// `<repo>/.mcp.json` ourselves as the last resort, with the same
-/// `merge_entry` every other tool registers through.
+/// Local scope: `claude mcp add --scope local` run INSIDE the repo - the CLI
+/// writes `~/.claude.json` under that repository's key. Private to this
+/// person and machine, and Claude Code starts it without asking, which the
+/// shared `.mcp.json` (project scope) does not: the VS Code extension never
+/// approved a project server, so the slash commands showed and the tools did
+/// not. The entry points at this machine's install, so it never belonged in
+/// a file that is committed. Prefer the CLI (it owns the schema), try PATH
+/// when it is not where the installers put it, and edit `~/.claude.json`
+/// ourselves as the last resort - an extension-only install has no CLI on
+/// PATH.
 fn register_claude_code_in(root: &str, server: &McpServer) -> Result<(), String> {
     let cwd = std::path::Path::new(root);
-    let via_file = || merge_into_file(&cwd.join(".mcp.json"), "mcpServers", server);
+    let via_file = || merge_local_into_file(&claude_json_path(), root, server);
     if let Some(cli) = claude_cli() {
-        return run_claude_mcp_add(&cli, server, "project", Some(cwd)).or_else(|_| via_file());
+        return run_claude_mcp_add(&cli, server, "local", Some(cwd)).or_else(|_| via_file());
     }
-    match run_claude_mcp_add(&claude_on_path(), server, "project", Some(cwd)) {
+    match run_claude_mcp_add(&claude_on_path(), server, "local", Some(cwd)) {
         Ok(()) => Ok(()),
         Err(_) => via_file(),
     }

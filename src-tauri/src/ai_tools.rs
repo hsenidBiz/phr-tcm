@@ -915,6 +915,12 @@ pub struct DetectedTool {
     /// worth surfacing - the UI offers to retire it. Always empty for a
     /// "global" row, where it would just repeat `registered_servers`.
     pub global_registered_servers: Vec<String>,
+    /// Claude Code only: our own servers found in the repository's shared
+    /// `.mcp.json` (project scope, where earlier versions registered). Claude
+    /// Code does not start a project-scope server until it is approved, and
+    /// the VS Code extension may never ask, so the next Register moves it to
+    /// the person's own local scope. Always empty for every other tool.
+    pub project_scope_servers: Vec<String>,
 }
 
 /// Shared installed-check used by both `detect` (for every tool) and
@@ -962,7 +968,22 @@ pub fn detect_in(
         .map(|spec| {
             let installed = is_installed(spec, home, appdata, on_path);
             let (config_path, key, scope) = config_for(spec, home, appdata, root);
-            let registered_servers = managed_servers_in(&config_path, key);
+            let mut registered_servers = managed_servers_in(&config_path, key);
+            // Claude Code keeps a repository's registration in the person's
+            // own `~/.claude.json` (local scope); the repository's `.mcp.json`
+            // is the old project scope, still recognised so a Register can
+            // move it.
+            let mut project_scope_servers = vec![];
+            if spec.id == "claude-code" && scope == "project" {
+                if let Some(r) = root {
+                    project_scope_servers = registered_servers.clone();
+                    for name in managed_local_servers_in(&(spec.config_path)(home, appdata), r) {
+                        if !registered_servers.contains(&name) {
+                            registered_servers.push(name);
+                        }
+                    }
+                }
+            }
             // Only for a repository row: on a global row this is the very
             // config already read above.
             let global_registered_servers = if scope == "project" {
@@ -978,6 +999,7 @@ pub fn detect_in(
                 registered_servers,
                 scope: scope.to_string(),
                 global_registered_servers,
+                project_scope_servers,
             }
         })
         .collect()
@@ -1261,7 +1283,7 @@ pub fn command_markdown(c: &CommandSpec) -> String {
 pub fn claude_cli_candidates(home: &str, appdata: &str) -> Vec<PathBuf> {
     let home = PathBuf::from(home);
     let appdata = PathBuf::from(appdata);
-    vec![
+    [
         // Native installer (what the VS Code crowd tends to have).
         home.join(".local").join("bin").join("claude.exe"),
         home.join(".local").join("bin").join("claude.cmd"),
@@ -1270,6 +1292,37 @@ pub fn claude_cli_candidates(home: &str, appdata: &str) -> Vec<PathBuf> {
         appdata.join("npm").join("claude.cmd"),
         appdata.join("npm").join("claude.exe"),
     ]
+    .into_iter()
+    // Last: the binary the VS Code extension carries, for people who have
+    // only the extension and so no `claude` anywhere else.
+    .chain(vscode_extension_claude(&home))
+    .collect()
+}
+
+/// The `claude.exe` bundled with the newest Claude Code VS Code extension:
+/// `~/.vscode/extensions/anthropic.claude-code-<version>-<platform>/resources/
+/// native-binary/claude.exe` (layout checked on a real install). The newest
+/// version folder wins; a folder without the binary is skipped.
+fn vscode_extension_claude(home: &std::path::Path) -> Option<PathBuf> {
+    let dir = home.join(".vscode").join("extensions");
+    let mut found: Vec<(Vec<u64>, PathBuf)> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let rest = name.strip_prefix("anthropic.claude-code-")?;
+            let version: Vec<u64> = rest
+                .split('-')
+                .next()?
+                .split('.')
+                .map(|n| n.parse().unwrap_or(0))
+                .collect();
+            let exe = e.path().join("resources").join("native-binary").join("claude.exe");
+            exe.is_file().then_some((version, exe))
+        })
+        .collect();
+    found.sort();
+    found.pop().map(|(_, exe)| exe)
 }
 
 /// Inserts (or replaces) `server`'s entry under `key` in `existing_json`,
@@ -1330,6 +1383,151 @@ pub fn remove_entry(
         return Ok(None);
     }
     serde_json::to_string_pretty(&root)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize config: {e}"))
+}
+
+// ---------------------------------------------------------------- local scope
+
+/// A path as Claude Code compares project keys: forward slashes, no trailing
+/// slash, case-folded (Windows paths are case-insensitive).
+fn claude_key_form(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+/// The key of `~/.claude.json` -> `projects` that holds `root`'s local
+/// scope. An existing key that names the same folder is reused whatever its
+/// separators or drive-letter case - real files carry both `C:\\Users\\...`
+/// (older versions) and `C:/Users/...` - so nothing is split in two. With no
+/// such key, the forward-slash form current Claude Code writes.
+pub fn claude_project_key(config: &serde_json::Value, root: &str) -> String {
+    let want = claude_key_form(root);
+    if let Some(projects) = config.get("projects").and_then(|p| p.as_object()) {
+        if let Some(k) = projects.keys().find(|k| claude_key_form(k) == want) {
+            return k.clone();
+        }
+    }
+    root.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+/// The `mcpServers` object of `root`'s local scope in `config`, if any.
+fn local_entries(config: &serde_json::Value, root: &str) -> Option<serde_json::Value> {
+    let key = claude_project_key(config, root);
+    config.get("projects")?.get(&key)?.get("mcpServers").cloned()
+}
+
+fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
+    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// Which of `MANAGED_SERVERS` `root`'s local scope in the Claude config at
+/// `claude_json` carries. Unreadable reads as none.
+pub fn managed_local_servers_in(claude_json: &std::path::Path, root: &str) -> Vec<String> {
+    let entries = read_json_file(claude_json).and_then(|c| local_entries(&c, root));
+    MANAGED_SERVERS
+        .iter()
+        .filter(|name| entries.as_ref().and_then(|e| e.get(**name)).is_some())
+        .map(|name| name.to_string())
+        .collect()
+}
+
+/// Whether `root`'s local scope in `claude_json` carries `name`.
+pub fn local_carries(claude_json: &std::path::Path, root: &str, name: &str) -> bool {
+    read_json_file(claude_json)
+        .and_then(|c| local_entries(&c, root))
+        .is_some_and(|e| e.get(name).is_some())
+}
+
+/// Inserts `server` under `projects[<root key>].mcpServers` in the Claude
+/// config text, replacing a same-named entry and taking out the names it
+/// supersedes. Every other key, project and server is kept. Errors on
+/// unparseable JSON rather than clobbering it.
+pub fn merge_local_entry(existing_json: &str, root: &str, server: &McpServer) -> Result<String, String> {
+    let mut config: serde_json::Value = serde_json::from_str(existing_json)
+        .map_err(|e| format!("existing config is not valid JSON: {e}"))?;
+    if !config.is_object() {
+        return Err("existing config is not a JSON object".to_string());
+    }
+    let key = claude_project_key(&config, root);
+    let obj = config.as_object_mut().unwrap();
+    let projects = obj
+        .entry("projects".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(projects) = projects.as_object_mut() else {
+        return Err("\"projects\" is not a JSON object".to_string());
+    };
+    let project = projects
+        .entry(key)
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(project) = project.as_object_mut() else {
+        return Err("the project's entry is not a JSON object".to_string());
+    };
+    let servers = project
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(servers) = servers.as_object_mut() else {
+        return Err("\"mcpServers\" is not a JSON object".to_string());
+    };
+    let mut entry = serde_json::Map::new();
+    entry.insert("type".into(), serde_json::json!("stdio"));
+    entry.insert("command".into(), serde_json::json!(server.command));
+    entry.insert("args".into(), serde_json::json!(server.args));
+    entry.insert("env".into(), serde_json::json!(server.env));
+    servers.insert(server.name.clone(), serde_json::Value::Object(entry));
+    for old in superseded_by(&server.name) {
+        servers.remove(*old);
+    }
+    serde_json::to_string_pretty(&config).map_err(|e| format!("failed to serialize config: {e}"))
+}
+
+/// Removes `name` from `root`'s local scope in the Claude config text.
+/// `Ok(None)` = it was not there.
+pub fn remove_local_entry(existing_json: &str, root: &str, name: &str) -> Result<Option<String>, String> {
+    let mut config: serde_json::Value = serde_json::from_str(existing_json)
+        .map_err(|e| format!("existing config is not valid JSON: {e}"))?;
+    let key = claude_project_key(&config, root);
+    let Some(servers) = config
+        .get_mut("projects")
+        .and_then(|p| p.get_mut(&key))
+        .and_then(|p| p.get_mut("mcpServers"))
+        .and_then(|s| s.as_object_mut())
+    else {
+        return Ok(None);
+    };
+    if servers.remove(name).is_none() {
+        return Ok(None);
+    }
+    serde_json::to_string_pretty(&config)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize config: {e}"))
+}
+
+/// Takes `names` out of `root`'s approval lists (`enabledMcpjsonServers`,
+/// `disabledMcpjsonServers`) in the Claude config text. `Ok(None)` = nothing
+/// to change. A stale approval is harmless; this only tidies it.
+pub fn clear_mcpjson_approvals(existing_json: &str, root: &str, names: &[&str]) -> Result<Option<String>, String> {
+    let mut config: serde_json::Value = serde_json::from_str(existing_json)
+        .map_err(|e| format!("existing config is not valid JSON: {e}"))?;
+    let key = claude_project_key(&config, root);
+    let Some(project) = config
+        .get_mut("projects")
+        .and_then(|p| p.get_mut(&key))
+        .and_then(|p| p.as_object_mut())
+    else {
+        return Ok(None);
+    };
+    let mut changed = false;
+    for list in ["enabledMcpjsonServers", "disabledMcpjsonServers"] {
+        if let Some(items) = project.get_mut(list).and_then(|l| l.as_array_mut()) {
+            let before = items.len();
+            items.retain(|v| !v.as_str().is_some_and(|s| names.contains(&s)));
+            changed |= items.len() != before;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    serde_json::to_string_pretty(&config)
         .map(Some)
         .map_err(|e| format!("failed to serialize config: {e}"))
 }
