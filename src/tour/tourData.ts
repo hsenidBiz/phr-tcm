@@ -276,6 +276,7 @@ export const TOUR_TOOLS: DetectedTool[] = [
     registered_servers: ["tcm"],
     scope: "project",
     global_registered_servers: [],
+    project_scope_servers: [],
   },
   {
     id: "vscode",
@@ -284,6 +285,7 @@ export const TOUR_TOOLS: DetectedTool[] = [
     registered_servers: [],
     scope: "project",
     global_registered_servers: [],
+    project_scope_servers: [],
   },
   {
     id: "cursor",
@@ -292,6 +294,7 @@ export const TOUR_TOOLS: DetectedTool[] = [
     registered_servers: [],
     scope: "project",
     global_registered_servers: [],
+    project_scope_servers: [],
   },
 ];
 

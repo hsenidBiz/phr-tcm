@@ -152,8 +152,10 @@ export default function AiBridge() {
   const register = useMutation({
     mutationFn: (id: string) =>
       unwrapStr(commands.registerAiTool(id, target, loadDisabledTools(), global)),
-    onSuccess: () => {
-      toast.success("Registered.");
+    onSuccess: (_, id) => {
+      // Claude Code reads its servers when a session starts, so the VS Code
+      // extension needs a reload before it shows tools registered meanwhile.
+      toast.success(id === "claude-code" ? "Registered. Restart Claude Code, or reload VS Code, to see the tools." : "Registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
     },
     onError: (e) => toast.error(`Could not register: ${e.message}`),
@@ -584,7 +586,8 @@ export default function AiBridge() {
                           on an older version added it back - offers every
                           tool twice. Nothing is removed on a scan: Register
                           replaces it, so the label comes with that button. */}
-                      {(t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) && (
+                      {((t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) ||
+                        (t.project_scope_servers ?? []).includes(TCM_SERVER)) && (
                         <>
                           <span className="text-xs text-warning">Needs updating</span>
                           {registerButton(t.id)}
@@ -607,7 +610,8 @@ export default function AiBridge() {
                       {/* Registered by an earlier version under the server's
                           old name. Registering replaces it in the same
                           config, so the same button is the fix. */}
-                      {(t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) && (
+                      {((t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) ||
+                        (t.project_scope_servers ?? []).length > 0) && (
                         <span className="text-xs text-warning">Needs updating</span>
                       )}
                       {registerButton(t.id)}

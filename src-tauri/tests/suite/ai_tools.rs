@@ -1155,19 +1155,21 @@ fn mcp_add_without_env_is_name_then_command() {
     );
 }
 
-/// A repository registration is `--scope project`, which the CLI keys
-/// on its cwd - the caller runs it inside the repo (see
-/// `run_claude_mcp_add`).
+/// A repository registration is `--scope local`, which the CLI keys on its
+/// cwd - the caller runs it inside the repo (see `run_claude_mcp_add`). It
+/// was `project` until Claude Code's VS Code extension was found never to
+/// approve a `.mcp.json` server: local scope needs no approval.
 #[test]
-fn a_repo_registration_asks_for_project_scope() {
+fn a_repo_registration_asks_for_local_scope() {
     let server = McpServer {
         name: "tcm".to_string(),
         command: "v2.exe".to_string(),
         args: vec!["--mcp".to_string()],
         env: Default::default(),
     };
-    let args = mcp_add_args(&server, "project");
-    assert_eq!(&args[2..4], ["--scope", "project"]);
+    let args = mcp_add_args(&server, "local");
+    assert_eq!(&args[2..4], ["--scope", "local"]);
+    assert_eq!(args, vec!["mcp", "add", "--scope", "local", "tcm", "--", "v2.exe", "--mcp"]);
 }
 
 /// The machine-wide choice is explicit: it sends every tool to its
@@ -2668,4 +2670,369 @@ fn agent_rules_name_the_sign_in_rule() {
     assert!(heal[at..at + 200].contains("When the sign-in page does not fit"), "{heal}");
     assert!(heal[..at].contains("put the old path back in Auto Test, Areas."), "the sign-in sentence follows the area exception: {heal}");
     assert!(!healer.contains("Stop at once on a login page"), "healer still stops on a login page outright");
+}
+
+// --- Claude Code local scope (a repository's registration lives in ~/.claude.json)
+
+use v2_lib::ai_tools::{
+    claude_project_key, clear_mcpjson_approvals, local_carries, managed_local_servers_in, merge_local_entry,
+    remove_local_entry,
+};
+use v2_lib::commands::ai_tools::{merge_local_into_file, migrate_project_scope, remove_local_from_file};
+
+fn tcm_for_tests() -> McpServer {
+    tcm_server(r"C:\Program Files\TCM\v2.exe")
+}
+
+fn read_json(path: &std::path::Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// The VS Code extension's bundled binary is a CLI candidate, newest version
+/// first, and only where the file really exists (real layout:
+/// `.vscode/extensions/anthropic.claude-code-<v>-<platform>/resources/native-binary/claude.exe`).
+#[test]
+fn the_vscode_extensions_bundled_cli_is_a_candidate() {
+    let home = TempDir::new();
+    for v in ["2.1.9", "2.1.311", "2.1.40"] {
+        let bin = home
+            .path()
+            .join(".vscode/extensions")
+            .join(format!("anthropic.claude-code-{v}-win32-x64"))
+            .join("resources/native-binary");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("claude.exe"), b"").unwrap();
+    }
+    // A newer folder with no binary in it is skipped.
+    std::fs::create_dir_all(home.path().join(".vscode/extensions/anthropic.claude-code-9.0.0-win32-x64")).unwrap();
+    let c = claude_cli_candidates(home.path().to_str().unwrap(), "C:/nowhere");
+    let last = c.last().unwrap().display().to_string().replace('\\', "/");
+    assert!(last.contains("anthropic.claude-code-2.1.311-win32-x64"), "{last}");
+    assert!(last.ends_with("resources/native-binary/claude.exe"), "{last}");
+    // The installers' own locations still come first.
+    assert!(c[0].ends_with("claude.exe") && c[0].to_string_lossy().contains(".local"));
+}
+
+/// A write always goes to the forward-slash key: an existing one for the
+/// same folder is reused (any case, keeping its drive-letter case), a legacy
+/// backslash key never is. A drive root keeps its slash.
+#[test]
+fn the_project_key_is_always_the_forward_slash_form() {
+    let cfg = serde_json::json!({"projects": {
+        r"C:\Users\Sam\repo": {}, "C:/Users/Sam/repo": {}, "D:/other": {}
+    }});
+    assert_eq!(claude_project_key(&cfg, r"c:\users\sam\repo\"), "C:/Users/Sam/repo");
+    assert_eq!(claude_project_key(&cfg, "C:/Users/Sam/repo"), "C:/Users/Sam/repo");
+    assert_eq!(claude_project_key(&cfg, r"d:\OTHER"), "D:/other");
+    assert_eq!(claude_project_key(&cfg, r"E:\new\place"), "E:/new/place");
+    assert_eq!(claude_project_key(&serde_json::json!({}), r"E:\new"), "E:/new");
+    assert_eq!(claude_project_key(&serde_json::json!({}), r"C:\"), "C:/");
+    // Only a legacy key exists: the write still goes to the forward form.
+    let legacy_only = serde_json::json!({"projects": {r"C:\Users\Sam\repo": {}}});
+    assert_eq!(claude_project_key(&legacy_only, r"C:\Users\Sam\repo"), "C:/Users/Sam/repo");
+}
+
+/// Real files hold both forms for one folder, the stale backslash one first.
+/// The write lands in the forward-slash key, detection reads it, and ours is
+/// taken out of the stale one (other servers there stay).
+#[test]
+fn with_both_key_forms_present_the_write_lands_in_the_forward_slash_key() {
+    let dir = TempDir::new();
+    let file = dir.path().join(".claude.json");
+    std::fs::write(
+        &file,
+        r#"{"projects":{
+            "C:\\work\\repo":{"mcpServers":{"tcm":{"command":"stale.exe"},"theirs":{"command":"t.exe"}}},
+            "C:/work/repo":{"mcpServers":{"mine":{"command":"m.exe"}}}}}"#,
+    )
+    .unwrap();
+    merge_local_into_file(&file, r"C:\work\repo", &tcm_for_tests()).unwrap();
+    let v = read_json(&file);
+    assert_eq!(v["projects"]["C:/work/repo"]["mcpServers"]["tcm"]["args"][0], "--mcp");
+    assert_eq!(v["projects"]["C:/work/repo"]["mcpServers"]["mine"]["command"], "m.exe");
+    let legacy = &v["projects"][r"C:\work\repo"]["mcpServers"];
+    assert!(legacy.get("tcm").is_none(), "ours is moved out of the stale key");
+    assert_eq!(legacy["theirs"]["command"], "t.exe", "nothing else there is touched");
+    assert_eq!(v["projects"].as_object().unwrap().len(), 2, "no third key");
+    assert!(local_carries(&file, r"C:\work\repo", "tcm"));
+    assert_eq!(managed_local_servers_in(&file, "C:/work/repo"), vec!["tcm"]);
+}
+
+/// A server only in the stale backslash key reads as registered but "needs
+/// updating", and Register (the write) moves it.
+#[test]
+fn a_legacy_only_entry_needs_updating_and_is_moved() {
+    let home = TempDir::new();
+    let repo = TempDir::new();
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    let home_str = home.path().to_str().unwrap().to_string();
+    let root = repo.path().to_str().unwrap().replace('\\', "/");
+    let backslashed = root.replace('/', "\\");
+    let file = home.path().join(".claude.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({"projects": {backslashed.clone(): {"mcpServers": {"tcm": {"command": "stale.exe"}}}}}).to_string(),
+    )
+    .unwrap();
+    let row = |_: ()| {
+        detect_in(&home_str, "", &|_| false, Some(&root)).into_iter().find(|t| t.id == "claude-code").unwrap()
+    };
+    let before = row(());
+    assert_eq!(before.registered_servers, vec!["tcm"]);
+    assert_eq!(before.project_scope_servers, vec!["tcm"], "flagged for moving");
+
+    merge_local_into_file(&file, &root, &tcm_for_tests()).unwrap();
+    let after = row(());
+    assert_eq!(after.registered_servers, vec!["tcm"]);
+    assert!(after.project_scope_servers.is_empty(), "moved: {after:?}");
+    let v = read_json(&file);
+    assert!(v["projects"][&backslashed]["mcpServers"].get("tcm").is_none());
+    assert_eq!(v["projects"][&root]["mcpServers"]["tcm"]["args"][0], "--mcp");
+}
+
+/// An empty or unparseable `~/.claude.json` is Claude Code mid-save: refused
+/// with a sentence that names no path, and left exactly as it was.
+#[test]
+fn an_empty_or_invalid_claude_json_is_refused_without_a_path() {
+    let dir = TempDir::new();
+    for (name, body) in [("empty.json", ""), ("bad.json", "{ not json"), ("list.json", "[]")] {
+        let file = dir.path().join(name);
+        std::fs::write(&file, body).unwrap();
+        let e = merge_local_into_file(&file, "C:/a/b", &tcm_for_tests()).unwrap_err();
+        assert_eq!(e, "Claude Code was saving its settings. Try again in a moment.");
+        assert!(!e.contains(name) && !e.contains("tcm-ai-tools"), "{e}");
+        assert!(remove_local_from_file(&file, "C:/a/b", "tcm").is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), body);
+    }
+}
+
+/// The file fallback writes `projects[key].mcpServers.tcm`, keeps every
+/// other key, and a second run changes nothing.
+#[test]
+fn the_file_fallback_writes_the_local_entry_and_is_idempotent() {
+    let dir = TempDir::new();
+    let file = dir.path().join(".claude.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({
+            "numStartups": 7,
+            "mcpServers": {"user-one": {"command": "u.exe"}},
+            "projects": {
+                "C:/work/repo": {"allowedTools": ["x"], "mcpServers": {"theirs": {"command": "t.exe"}, "tcm-testcases": {"command": "old.exe"}}},
+                "C:/work/other": {"mcpServers": {"o": {"command": "o.exe"}}}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    merge_local_into_file(&file, r"C:\work\repo", &tcm_for_tests()).unwrap();
+    let once = std::fs::read_to_string(&file).unwrap();
+    merge_local_into_file(&file, r"C:\work\repo", &tcm_for_tests()).unwrap();
+    assert_eq!(once, std::fs::read_to_string(&file).unwrap(), "not idempotent");
+
+    let v = read_json(&file);
+    assert_eq!(v["numStartups"], 7);
+    assert_eq!(v["mcpServers"]["user-one"]["command"], "u.exe");
+    assert_eq!(v["projects"]["C:/work/other"]["mcpServers"]["o"]["command"], "o.exe");
+    let p = &v["projects"]["C:/work/repo"];
+    assert_eq!(p["allowedTools"][0], "x");
+    assert_eq!(p["mcpServers"]["theirs"]["command"], "t.exe");
+    assert_eq!(p["mcpServers"]["tcm"]["command"], r"C:\Program Files\TCM\v2.exe");
+    assert_eq!(p["mcpServers"]["tcm"]["args"][0], "--mcp");
+    assert!(p["mcpServers"].get("tcm-testcases").is_none(), "the old name is superseded");
+    assert!(v.get("tcm").is_none());
+}
+
+/// A home with no `.claude.json` gets one, and a file that is not JSON is
+/// refused rather than overwritten.
+#[test]
+fn the_file_fallback_creates_the_file_and_never_clobbers_garbage() {
+    let dir = TempDir::new();
+    let file = dir.path().join(".claude.json");
+    merge_local_into_file(&file, "C:/a/b", &tcm_for_tests()).unwrap();
+    assert_eq!(read_json(&file)["projects"]["C:/a/b"]["mcpServers"]["tcm"]["args"][0], "--mcp");
+
+    // (An empty or invalid existing file is covered by
+    // `an_empty_or_invalid_claude_json_is_refused_without_a_path`.)
+}
+
+/// Unregister by file removes just that entry; a missing file or entry is a
+/// clean no-op.
+#[test]
+fn unregister_by_file_removes_only_that_entry() {
+    let dir = TempDir::new();
+    let file = dir.path().join(".claude.json");
+    std::fs::write(
+        &file,
+        r#"{"k":1,"projects":{"C:/r":{"mcpServers":{"tcm":{"command":"v2.exe"},"theirs":{"command":"t.exe"}}}}}"#,
+    )
+    .unwrap();
+    remove_local_from_file(&file, r"C:\r", "tcm").unwrap();
+    let v = read_json(&file);
+    assert!(v["projects"]["C:/r"]["mcpServers"].get("tcm").is_none());
+    assert_eq!(v["projects"]["C:/r"]["mcpServers"]["theirs"]["command"], "t.exe");
+    assert_eq!(v["k"], 1);
+    remove_local_from_file(&file, r"C:\r", "tcm").unwrap();
+    remove_local_from_file(&dir.path().join("absent.json"), r"C:\r", "tcm").unwrap();
+    assert_eq!(remove_local_entry(r#"{"projects":{}}"#, "C:/r", "tcm").unwrap(), None);
+}
+
+/// Migration takes TCM's entries out of `<repo>/.mcp.json`, keeps the other
+/// servers and the file, and leaves `mcpServers: {}` when ours were all.
+#[test]
+fn migration_removes_our_entries_from_the_shared_mcp_json() {
+    let repo = TempDir::new();
+    let home = TempDir::new();
+    let claude = home.path().join(".claude.json");
+    let root = repo.path().to_str().unwrap().to_string();
+    let names = vec!["tcm".to_string(), "tcm-testcases".to_string()];
+
+    let mcp = repo.path().join(".mcp.json");
+    std::fs::write(
+        &mcp,
+        r#"{"mcpServers":{"tcm":{"command":"v2.exe"},"tcm-testcases":{"command":"old.exe"},"theirs":{"command":"t.exe"}}}"#,
+    )
+    .unwrap();
+    migrate_project_scope(&root, &claude, &names);
+    let v = read_json(&mcp);
+    assert!(v["mcpServers"].get("tcm").is_none() && v["mcpServers"].get("tcm-testcases").is_none());
+    assert_eq!(v["mcpServers"]["theirs"]["command"], "t.exe");
+
+    std::fs::write(&mcp, r#"{"mcpServers":{"tcm":{"command":"v2.exe"}}}"#).unwrap();
+    migrate_project_scope(&root, &claude, &names);
+    assert_eq!(read_json(&mcp), serde_json::json!({"mcpServers": {}}));
+
+    // No `.mcp.json` at all: nothing is created.
+    std::fs::remove_file(&mcp).unwrap();
+    migrate_project_scope(&root, &claude, &names);
+    assert!(!mcp.exists());
+}
+
+/// A stale approval for our names leaves the project's lists; other names
+/// and other projects stay.
+#[test]
+fn migration_tidies_the_approval_lists() {
+    let text = serde_json::json!({"projects": {
+        "C:/r": {"enabledMcpjsonServers": ["tcm", "theirs"], "disabledMcpjsonServers": ["tcm-testcases"]},
+        "C:/s": {"enabledMcpjsonServers": ["tcm"]}
+    }})
+    .to_string();
+    let out = clear_mcpjson_approvals(&text, r"C:\r", &["tcm", "tcm-testcases"]).unwrap().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["projects"]["C:/r"]["enabledMcpjsonServers"], serde_json::json!(["theirs"]));
+    assert_eq!(v["projects"]["C:/r"]["disabledMcpjsonServers"], serde_json::json!([]));
+    assert_eq!(v["projects"]["C:/s"]["enabledMcpjsonServers"], serde_json::json!(["tcm"]));
+    assert_eq!(clear_mcpjson_approvals(&out, r"C:\r", &["tcm"]).unwrap(), None);
+
+    // The same migration, end to end through the real home-relative file.
+    let repo = TempDir::new();
+    let home = TempDir::new();
+    let claude = home.path().join(".claude.json");
+    let root = repo.path().to_str().unwrap().replace('\\', "/");
+    std::fs::write(
+        &claude,
+        serde_json::json!({"projects": {root.clone(): {"enabledMcpjsonServers": ["tcm"]}}}).to_string(),
+    )
+    .unwrap();
+    migrate_project_scope(&root, &claude, &["tcm".to_string()]);
+    assert_eq!(read_json(&claude)["projects"][&root]["enabledMcpjsonServers"], serde_json::json!([]));
+}
+
+/// A local entry counts as registered, an old `.mcp.json` entry still counts
+/// but is flagged for moving, and another tool's row never carries the flag.
+#[test]
+fn detection_sees_local_as_registered_and_project_as_needing_a_move() {
+    let home = TempDir::new();
+    let repo = TempDir::new();
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    let home_str = home.path().to_str().unwrap().to_string();
+    let root = repo.path().to_str().unwrap().replace('\\', "/");
+    let on_path = |_: &str| false;
+    let claude_row = |root: &str| {
+        detect_in(&home_str, "", &on_path, Some(root)).into_iter().find(|t| t.id == "claude-code").unwrap()
+    };
+
+    // Nothing anywhere.
+    let none = claude_row(&root);
+    assert!(none.registered_servers.is_empty() && none.project_scope_servers.is_empty());
+
+    // Old project scope: registered, and it needs moving.
+    std::fs::write(repo.path().join(".mcp.json"), r#"{"mcpServers":{"tcm":{"command":"v2.exe"}}}"#).unwrap();
+    let old = claude_row(&root);
+    assert_eq!(old.scope, "project");
+    assert_eq!(old.registered_servers, vec!["tcm"]);
+    assert_eq!(old.project_scope_servers, vec!["tcm"]);
+
+    // Local scope as well, under an old backslash key: registered, and the
+    // move is still pending until that copy is gone.
+    let backslashed = root.replace('/', "\\");
+    std::fs::write(
+        home.path().join(".claude.json"),
+        serde_json::json!({"projects": {backslashed: {"mcpServers": {"tcm": {"command": "v2.exe"}}}}}).to_string(),
+    )
+    .unwrap();
+    let both = claude_row(&root);
+    assert_eq!(both.registered_servers, vec!["tcm"], "one name, not listed twice");
+    assert_eq!(both.project_scope_servers, vec!["tcm"]);
+
+    // Local only, under the current forward-slash key: registered, nothing
+    // to move.
+    std::fs::remove_file(repo.path().join(".mcp.json")).unwrap();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        serde_json::json!({"projects": {root.clone(): {"mcpServers": {"tcm": {"command": "v2.exe"}}}}}).to_string(),
+    )
+    .unwrap();
+    let local = claude_row(&root);
+    assert_eq!(local.registered_servers, vec!["tcm"]);
+    assert!(local.project_scope_servers.is_empty());
+    assert!(local_carries(&home.path().join(".claude.json"), &root, "tcm"));
+    assert_eq!(managed_local_servers_in(&home.path().join(".claude.json"), &root), vec!["tcm"]);
+
+    // Another repository sees none of it.
+    let other = TempDir::new();
+    let elsewhere = claude_row(&other.path().to_str().unwrap().replace('\\', "/"));
+    assert!(elsewhere.registered_servers.is_empty());
+    for t in detect_in(&home_str, "", &on_path, Some(&root)).into_iter().filter(|t| t.id != "claude-code") {
+        assert!(t.project_scope_servers.is_empty(), "{}", t.id);
+    }
+}
+
+/// `retire_superseded_claude` in local scope looks inside the repository's
+/// key of `~/.claude.json`, not at its top level.
+#[cfg(windows)]
+#[test]
+fn the_old_name_is_retired_from_the_local_scope_too() {
+    let bin = TempDir::new();
+    let repo = TempDir::new();
+    let home = TempDir::new();
+    let log = bin.path().join("calls.txt");
+    let probe = cli_probe(bin.path(), &log, 0);
+    let config = home.path().join(".claude.json");
+    let root = repo.path().to_str().unwrap().replace('\\', "/");
+    std::fs::write(
+        &config,
+        serde_json::json!({"mcpServers": {"tcm-testcases": {"command": "user.exe"}},
+            "projects": {root.clone(): {"mcpServers": {"tcm": {"command": "v2.exe"}, "tcm-testcases": {"command": "old.exe"}}}}})
+        .to_string(),
+    )
+    .unwrap();
+
+    retire_superseded_claude(Some(&probe), TCM_SERVER, "local", Some(repo.path()), &config).unwrap();
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(calls.lines().count(), 1, "{calls}");
+    assert!(calls.contains("mcp remove --scope local tcm-testcases"), "{calls}");
+
+    // No CLI: removed from the repository's entry, user scope untouched.
+    retire_superseded_claude(None, TCM_SERVER, "local", Some(repo.path()), &config).unwrap();
+    let v = read_json(&config);
+    assert!(v["projects"][&root]["mcpServers"].get("tcm-testcases").is_none());
+    assert_eq!(v["projects"][&root]["mcpServers"]["tcm"]["command"], "v2.exe");
+    assert_eq!(v["mcpServers"]["tcm-testcases"]["command"], "user.exe");
+}
+
+#[test]
+fn merge_local_entry_refuses_a_misshapen_config() {
+    assert!(merge_local_entry("[]", "C:/r", &tcm_for_tests()).is_err());
+    assert!(merge_local_entry(r#"{"projects": 3}"#, "C:/r", &tcm_for_tests()).is_err());
 }
