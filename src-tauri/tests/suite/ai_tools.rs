@@ -2713,18 +2713,97 @@ fn the_vscode_extensions_bundled_cli_is_a_candidate() {
     assert!(c[0].ends_with("claude.exe") && c[0].to_string_lossy().contains(".local"));
 }
 
-/// The key reuses whatever form the file already holds for that folder, and
-/// otherwise writes the forward-slash form.
+/// A write always goes to the forward-slash key: an existing one for the
+/// same folder is reused (any case, keeping its drive-letter case), a legacy
+/// backslash key never is. A drive root keeps its slash.
 #[test]
-fn the_project_key_matches_how_the_file_already_names_the_folder() {
+fn the_project_key_is_always_the_forward_slash_form() {
     let cfg = serde_json::json!({"projects": {
-        r"C:\Users\Sam\repo": {}, "D:/other": {}
+        r"C:\Users\Sam\repo": {}, "C:/Users/Sam/repo": {}, "D:/other": {}
     }});
-    assert_eq!(claude_project_key(&cfg, "C:/Users/Sam/repo"), r"C:\Users\Sam\repo");
-    assert_eq!(claude_project_key(&cfg, r"c:\users\sam\repo\"), r"C:\Users\Sam\repo");
-    assert_eq!(claude_project_key(&cfg, r"D:\other"), "D:/other");
+    assert_eq!(claude_project_key(&cfg, r"c:\users\sam\repo\"), "C:/Users/Sam/repo");
+    assert_eq!(claude_project_key(&cfg, "C:/Users/Sam/repo"), "C:/Users/Sam/repo");
+    assert_eq!(claude_project_key(&cfg, r"d:\OTHER"), "D:/other");
     assert_eq!(claude_project_key(&cfg, r"E:\new\place"), "E:/new/place");
     assert_eq!(claude_project_key(&serde_json::json!({}), r"E:\new"), "E:/new");
+    assert_eq!(claude_project_key(&serde_json::json!({}), r"C:\"), "C:/");
+    // Only a legacy key exists: the write still goes to the forward form.
+    let legacy_only = serde_json::json!({"projects": {r"C:\Users\Sam\repo": {}}});
+    assert_eq!(claude_project_key(&legacy_only, r"C:\Users\Sam\repo"), "C:/Users/Sam/repo");
+}
+
+/// Real files hold both forms for one folder, the stale backslash one first.
+/// The write lands in the forward-slash key, detection reads it, and ours is
+/// taken out of the stale one (other servers there stay).
+#[test]
+fn with_both_key_forms_present_the_write_lands_in_the_forward_slash_key() {
+    let dir = TempDir::new();
+    let file = dir.path().join(".claude.json");
+    std::fs::write(
+        &file,
+        r#"{"projects":{
+            "C:\\work\\repo":{"mcpServers":{"tcm":{"command":"stale.exe"},"theirs":{"command":"t.exe"}}},
+            "C:/work/repo":{"mcpServers":{"mine":{"command":"m.exe"}}}}}"#,
+    )
+    .unwrap();
+    merge_local_into_file(&file, r"C:\work\repo", &tcm_for_tests()).unwrap();
+    let v = read_json(&file);
+    assert_eq!(v["projects"]["C:/work/repo"]["mcpServers"]["tcm"]["args"][0], "--mcp");
+    assert_eq!(v["projects"]["C:/work/repo"]["mcpServers"]["mine"]["command"], "m.exe");
+    let legacy = &v["projects"][r"C:\work\repo"]["mcpServers"];
+    assert!(legacy.get("tcm").is_none(), "ours is moved out of the stale key");
+    assert_eq!(legacy["theirs"]["command"], "t.exe", "nothing else there is touched");
+    assert_eq!(v["projects"].as_object().unwrap().len(), 2, "no third key");
+    assert!(local_carries(&file, r"C:\work\repo", "tcm"));
+    assert_eq!(managed_local_servers_in(&file, "C:/work/repo"), vec!["tcm"]);
+}
+
+/// A server only in the stale backslash key reads as registered but "needs
+/// updating", and Register (the write) moves it.
+#[test]
+fn a_legacy_only_entry_needs_updating_and_is_moved() {
+    let home = TempDir::new();
+    let repo = TempDir::new();
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    let home_str = home.path().to_str().unwrap().to_string();
+    let root = repo.path().to_str().unwrap().replace('\\', "/");
+    let backslashed = root.replace('/', "\\");
+    let file = home.path().join(".claude.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({"projects": {backslashed.clone(): {"mcpServers": {"tcm": {"command": "stale.exe"}}}}}).to_string(),
+    )
+    .unwrap();
+    let row = |_: ()| {
+        detect_in(&home_str, "", &|_| false, Some(&root)).into_iter().find(|t| t.id == "claude-code").unwrap()
+    };
+    let before = row(());
+    assert_eq!(before.registered_servers, vec!["tcm"]);
+    assert_eq!(before.project_scope_servers, vec!["tcm"], "flagged for moving");
+
+    merge_local_into_file(&file, &root, &tcm_for_tests()).unwrap();
+    let after = row(());
+    assert_eq!(after.registered_servers, vec!["tcm"]);
+    assert!(after.project_scope_servers.is_empty(), "moved: {after:?}");
+    let v = read_json(&file);
+    assert!(v["projects"][&backslashed]["mcpServers"].get("tcm").is_none());
+    assert_eq!(v["projects"][&root]["mcpServers"]["tcm"]["args"][0], "--mcp");
+}
+
+/// An empty or unparseable `~/.claude.json` is Claude Code mid-save: refused
+/// with a sentence that names no path, and left exactly as it was.
+#[test]
+fn an_empty_or_invalid_claude_json_is_refused_without_a_path() {
+    let dir = TempDir::new();
+    for (name, body) in [("empty.json", ""), ("bad.json", "{ not json"), ("list.json", "[]")] {
+        let file = dir.path().join(name);
+        std::fs::write(&file, body).unwrap();
+        let e = merge_local_into_file(&file, "C:/a/b", &tcm_for_tests()).unwrap_err();
+        assert_eq!(e, "Claude Code was saving its settings. Try again in a moment.");
+        assert!(!e.contains(name) && !e.contains("tcm-ai-tools"), "{e}");
+        assert!(remove_local_from_file(&file, "C:/a/b", "tcm").is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), body);
+    }
 }
 
 /// The file fallback writes `projects[key].mcpServers.tcm`, keeps every
@@ -2773,10 +2852,8 @@ fn the_file_fallback_creates_the_file_and_never_clobbers_garbage() {
     merge_local_into_file(&file, "C:/a/b", &tcm_for_tests()).unwrap();
     assert_eq!(read_json(&file)["projects"]["C:/a/b"]["mcpServers"]["tcm"]["args"][0], "--mcp");
 
-    let bad = dir.path().join("bad.json");
-    std::fs::write(&bad, "{ not json").unwrap();
-    assert!(merge_local_into_file(&bad, "C:/a/b", &tcm_for_tests()).is_err());
-    assert_eq!(std::fs::read_to_string(&bad).unwrap(), "{ not json");
+    // (An empty or invalid existing file is covered by
+    // `an_empty_or_invalid_claude_json_is_refused_without_a_path`.)
 }
 
 /// Unregister by file removes just that entry; a missing file or entry is a
@@ -2886,9 +2963,8 @@ fn detection_sees_local_as_registered_and_project_as_needing_a_move() {
     assert_eq!(old.registered_servers, vec!["tcm"]);
     assert_eq!(old.project_scope_servers, vec!["tcm"]);
 
-    // Local scope as well (the key written with backslashes, as Claude does
-    // on some versions): registered, and the move is still pending until the
-    // old entry is gone.
+    // Local scope as well, under an old backslash key: registered, and the
+    // move is still pending until that copy is gone.
     let backslashed = root.replace('/', "\\");
     std::fs::write(
         home.path().join(".claude.json"),
@@ -2899,8 +2975,14 @@ fn detection_sees_local_as_registered_and_project_as_needing_a_move() {
     assert_eq!(both.registered_servers, vec!["tcm"], "one name, not listed twice");
     assert_eq!(both.project_scope_servers, vec!["tcm"]);
 
-    // Local only: registered, nothing to move.
+    // Local only, under the current forward-slash key: registered, nothing
+    // to move.
     std::fs::remove_file(repo.path().join(".mcp.json")).unwrap();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        serde_json::json!({"projects": {root.clone(): {"mcpServers": {"tcm": {"command": "v2.exe"}}}}}).to_string(),
+    )
+    .unwrap();
     let local = claude_row(&root);
     assert_eq!(local.registered_servers, vec!["tcm"]);
     assert!(local.project_scope_servers.is_empty());

@@ -155,7 +155,7 @@ export default function AiBridge() {
     onSuccess: (_, id) => {
       // Claude Code reads its servers when a session starts, so the VS Code
       // extension needs a reload before it shows tools registered meanwhile.
-      toast.success(id === "claude-code" ? "Registered. Reload VS Code to see the tools." : "Registered.");
+      toast.success(id === "claude-code" ? "Registered. Restart Claude Code, or reload VS Code, to see the tools." : "Registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
     },
     onError: (e) => toast.error(`Could not register: ${e.message}`),

@@ -1534,8 +1534,13 @@ fn unregister_claude_code_in(root: &str, server_name: &str) -> Result<(), String
             Err(_) => via_file(),
         },
     };
-    let old = remove_from_file(&cwd.join(".mcp.json"), "mcpServers", server_name);
-    local.and(old)
+    // An old project-scope copy goes too, but a `.mcp.json` this app cannot
+    // read (somebody's half-edited file) must not fail an unregister that
+    // removed the local entry: log it and carry on.
+    if let Err(e) = remove_from_file(&cwd.join(".mcp.json"), "mcpServers", server_name) {
+        crate::applog::warn(format!("could not remove the old project-scope {server_name} entry: {e}"));
+    }
+    local
 }
 
 /// `~/.claude.json`: user scope, the local scope of every repository, and
@@ -1549,36 +1554,54 @@ fn claude_names(name: &str) -> Vec<String> {
     std::iter::once(name).chain(superseded_by(name).iter().copied()).map(str::to_string).collect()
 }
 
+/// The refusal for a `~/.claude.json` that is empty or not JSON: Claude Code
+/// rewrites it while saving, so the honest answer is to try again. Names no
+/// path.
+const CLAUDE_JSON_BUSY: &str = "Claude Code was saving its settings. Try again in a moment.";
+
+/// Read-modify-write `~/.claude.json` (`update_file_safely`: it re-reads
+/// right before writing and starts over if Claude Code wrote in between, so
+/// nothing of theirs is lost). A missing file is a new one; an empty or
+/// unparseable one is refused with `CLAUDE_JSON_BUSY`.
+fn update_claude_json(
+    claude_json: &std::path::Path,
+    change: &dyn Fn(&str) -> Result<Option<String>, String>,
+) -> Result<(), String> {
+    let missing = !claude_json.exists();
+    let mut edit = |existing: &str| -> Result<Option<String>, String> {
+        let text = if missing && existing.trim().is_empty() {
+            "{}"
+        } else if serde_json::from_str::<serde_json::Value>(existing).is_ok_and(|v| v.is_object()) {
+            existing
+        } else {
+            return Err(CLAUDE_JSON_BUSY.to_string());
+        };
+        change(text)
+    };
+    crate::ai_tools::update_file_safely(claude_json, &mut edit, &mut |_| Ok(()), &mut || {}).map(|_| ())
+}
+
 /// Write `server` into `root`'s local scope in the Claude config at
 /// `claude_json` (created if absent), keeping everything else in it.
 pub fn merge_local_into_file(claude_json: &std::path::Path, root: &str, server: &McpServer) -> Result<(), String> {
-    let existing = match std::fs::read_to_string(claude_json) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
-        Err(e) => return Err(format!("failed to read {}: {e}", claude_json.display())),
-    };
-    atomic_write(claude_json, &merge_local_entry(&existing, root, server)?)
+    update_claude_json(claude_json, &|text| merge_local_entry(text, root, server).map(Some))
 }
 
 /// Take `name` out of `root`'s local scope in the Claude config. A missing
 /// file or entry is a clean no-op.
 pub fn remove_local_from_file(claude_json: &std::path::Path, root: &str, name: &str) -> Result<(), String> {
-    let existing = match std::fs::read_to_string(claude_json) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("failed to read {}: {e}", claude_json.display())),
-    };
-    match remove_local_entry(&existing, root, name)? {
-        Some(updated) => atomic_write(claude_json, &updated),
-        None => Ok(()),
+    if !claude_json.exists() {
+        return Ok(());
     }
+    update_claude_json(claude_json, &|text| remove_local_entry(text, root, name))
 }
 
 /// Move a repository off project scope once it is registered in local
 /// scope: take `names` out of `<root>/.mcp.json` (the file stays, with
 /// `mcpServers` left empty if that was all it held; other servers are never
-/// touched) and out of the repository's approval lists in the Claude config.
-/// Best-effort and logged - the registration itself has worked.
+/// touched) and out of the repository's approval lists and old backslash
+/// key in the Claude config. Best-effort and logged - the registration
+/// itself has worked.
 pub fn migrate_project_scope(root: &str, claude_json: &std::path::Path, names: &[String]) {
     let mcp = std::path::Path::new(root).join(".mcp.json");
     for name in names {
@@ -1586,16 +1609,12 @@ pub fn migrate_project_scope(root: &str, claude_json: &std::path::Path, names: &
             crate::applog::warn(format!("could not remove the old project-scope {name} entry: {e}"));
         }
     }
-    let Ok(existing) = std::fs::read_to_string(claude_json) else { return };
+    if !claude_json.exists() {
+        return;
+    }
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    match clear_mcpjson_approvals(&existing, root, &refs) {
-        Ok(Some(updated)) => {
-            if let Err(e) = atomic_write(claude_json, &updated) {
-                crate::applog::warn(format!("could not tidy the old project approvals: {e}"));
-            }
-        }
-        Ok(None) => {}
-        Err(e) => crate::applog::warn(format!("could not tidy the old project approvals: {e}")),
+    if let Err(e) = update_claude_json(claude_json, &|text| clear_mcpjson_approvals(text, root, &refs)) {
+        crate::applog::warn(format!("could not tidy the old project approvals: {e}"));
     }
 }
 
