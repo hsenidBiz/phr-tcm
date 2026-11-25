@@ -97,6 +97,15 @@ export const gettingStarted: Screen = {
         "The Product Backlog Item you are working on, with its number and title. It can come from any project. Manual Entry, Import Test Cases, Update Test Cases, View Test Cases and Run Tests all work on this Product Backlog Item, and test cases you create go to its own project.",
     },
     {
+      id: "pbi-suite-switch",
+      shot: PBI,
+      group: "where-you-work",
+      locate: { role: "button", name: "Suite" },
+      name: "PBI / Suite switch",
+      does:
+        "With Auto Test switched on and nothing chosen yet, a **PBI / Suite** switch sits beside the search box. **Suite** searches the test suites by name instead; the one you choose shows as a chip with its title and plan, and Auto Test works on its cases. Choosing a Product Backlog Item clears the suite, and choosing a suite clears the Product Backlog Item.",
+    },
+    {
       id: "clear-pbi",
       shot: SHELL,
       group: "where-you-work",
