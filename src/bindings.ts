@@ -4709,6 +4709,15 @@ export type DetectedTool = {
 	 *  "global" row, where it would just repeat `registered_servers`.
 	 */
 	global_registered_servers: string[],
+	/**
+	 *  Claude Code only: our own servers found in the repository's shared
+	 *  `.mcp.json` (project scope, where earlier versions registered) or only
+	 *  under an old backslash project key of `~/.claude.json`. Claude
+	 *  Code does not start a project-scope server until it is approved, and
+	 *  the VS Code extension may never ask, so the next Register moves it to
+	 *  the person's own local scope. Always empty for every other tool.
+	 */
+	project_scope_servers: string[],
 };
 
 /**  How an `expect_dialog` answers: OK, or Cancel. */

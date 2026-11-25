@@ -413,6 +413,32 @@ test("a tool registered under both names is flagged as needing an update", async
   await waitFor(() => expect(registeredId).toBe("claude-code"));
 });
 
+// An entry still in the repository's shared .mcp.json (project scope) is
+// registered, but Claude Code may never start it: Register moves it to the
+// person's own local scope, and the toast says what to reload.
+test("a project-scope entry reads as needing an update, and Register says to restart", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        {
+          id: "claude-code", name: "Claude Code", installed: true,
+          registered_servers: ["tcm"], scope: "project",
+          global_registered_servers: [], project_scope_servers: ["tcm"],
+        },
+      ];
+    if (cmd === "register_ai_tool") return null;
+  });
+  render(<Toaster />);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("Needs updating")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Register" }));
+  expect(
+    await screen.findByText("Registered. Restart Claude Code, or reload VS Code, to see the tools."),
+  ).toBeInTheDocument();
+});
+
 test("a tool registered only under the current name is not flagged", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
