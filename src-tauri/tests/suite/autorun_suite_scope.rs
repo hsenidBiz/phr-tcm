@@ -264,12 +264,61 @@ async fn suite_run_skips_a_case_no_longer_in_the_suite() {
     assert_eq!(report.skipped[0].why, "not in this suite any more");
 }
 
-/// The PBI path keeps its own wording: `autorun_publish::a_case_outside_the_suite_is_skipped_and_none_inside_is_a_refusal`
-/// pins "it is not in this PBI's test suite" and runs with the rest of that module.
 #[test]
-fn pbi_run_publish_unchanged() {
-    let run: LocalRun = serde_json::from_str(r##"{"id":"r1","pbi_id":77,"started_at":"1","cases":[]}"##).unwrap();
-    assert!(run.suite.is_none(), "a PBI run takes the PBI path in publish_run");
+fn publish_target_picks_the_suite_or_the_pbi() {
+    use v2_lib::autorun::publish::{publish_target, PublishTarget};
+    let pbi: LocalRun = serde_json::from_str(r##"{"id":"r1","pbi_id":77,"started_at":"1","cases":[]}"##).unwrap();
+    assert_eq!(publish_target(&pbi), PublishTarget::Pbi(77));
+    let suite: LocalRun = serde_json::from_str(
+        r##"{"id":"r2","pbi_id":0,"started_at":"1","cases":[],"suite":{"plan_id":9,"suite_id":91,"title":"Login"}}"##,
+    )
+    .unwrap();
+    let PublishTarget::Suite(s) = publish_target(&suite) else { panic!("expected Suite") };
+    assert_eq!((s.plan_id, s.suite_id), (9, 91));
+}
+
+#[tokio::test]
+async fn suite_run_with_no_points_left_is_refused_in_suite_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = suite_run_file(dir.path());
+    let server = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/org/proj/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("t".into(), server.uri(), server.uri());
+    let r = v2_lib::autorun::publish::publish_run(&client, dir.path(), "org", "proj", &ensured(9, 91), "A", &run.id, &[])
+        .await
+        .unwrap();
+    match r {
+        v2_lib::autorun::publish::PublishResult::Refused { why } => {
+            assert_eq!(why, "none of these cases is in the suite in Azure DevOps any more")
+        }
+        other => panic!("expected Refused, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_deleted_suite_is_refused_not_a_bare_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = suite_run_file(dir.path());
+    let server = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/org/proj/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("t".into(), server.uri(), server.uri());
+    let r = v2_lib::autorun::publish::publish_run(&client, dir.path(), "org", "proj", &ensured(9, 91), "A", &run.id, &[])
+        .await
+        .unwrap();
+    match r {
+        v2_lib::autorun::publish::PublishResult::Refused { why } => {
+            assert_eq!(why, "this suite is no longer in Azure DevOps")
+        }
+        other => panic!("expected Refused, got {other:?}"),
+    }
 }
 
 #[tokio::test]

@@ -35,13 +35,10 @@ pub async fn auto_run_publish(
     // A run over a test suite goes to that suite's own test points: the
     // plan and suite are in the run itself, so there is no PBI area to read
     // and no requirement suite to find (and `pbi_id` is not used).
-    if let Some(suite_ref) = loaded.as_ref().ok().and_then(|o| o.as_ref()).and_then(|r| r.suite.clone()) {
-        let suite = crate::ado_testplan::EnsuredSuite {
-            plan_id: suite_ref.plan_id,
-            plan_name: suite_ref.title.clone(),
-            suite_id: suite_ref.suite_id,
-            created_plan: false,
-        };
+    let loaded_run = loaded.ok().flatten();
+    if let Some(crate::autorun::publish::PublishTarget::Suite(suite)) =
+        loaded_run.as_ref().map(crate::autorun::publish::publish_target)
+    {
         crate::applog::info(format!(
             "auto-run publish: sending run {run_id} for suite #{} to plan #{}",
             suite.suite_id, suite.plan_id

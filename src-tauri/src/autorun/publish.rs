@@ -241,6 +241,29 @@ pub fn refuse_locally(run: Result<Option<&LocalRun>, &str>) -> Option<String> {
     None
 }
 
+/// Where a run's results go: a suite run to the plan and suite stored in
+/// the run itself, a PBI run to the PBI's requirement suite (looked up).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PublishTarget {
+    Suite(EnsuredSuite),
+    Pbi(i32),
+}
+
+/// The one decision between the two paths. A suite run never reaches the
+/// PBI's area or requirement-suite lookup.
+pub fn publish_target(run: &LocalRun) -> PublishTarget {
+    match &run.suite {
+        // No plan name is stored on a run; nothing downstream reads it.
+        Some(s) => PublishTarget::Suite(EnsuredSuite {
+            plan_id: s.plan_id,
+            plan_name: String::new(),
+            suite_id: s.suite_id,
+            created_plan: false,
+        }),
+        None => PublishTarget::Pbi(run.pbi_id),
+    }
+}
+
 /// Send a reviewed run to Azure DevOps as one test run. Only cases with a
 /// confirmed `verdict` (`Passed`, `Failed` or `Blocked`) are sent - a
 /// proposal alone is never enough. See the rules in the task brief for the
@@ -297,14 +320,20 @@ pub async fn publish_run(
     let refused = |why: String| Ok(PublishResult::Refused { why });
     let over_suite = run.suite.is_some();
     let ids: Vec<i32> = confirmed.iter().map(|c| c.case_id).collect();
-    let points = client.get_test_points(organization, project, suite.plan_id, suite.suite_id, &ids).await?;
+    let points = match client.get_test_points(organization, project, suite.plan_id, suite.suite_id, &ids).await {
+        Ok(p) => p,
+        Err(AdoError::NotFound) if over_suite => {
+            return refused("this suite is no longer in Azure DevOps".into());
+        }
+        Err(e) => return Err(e),
+    };
     let points_of = |case_id: i32| -> Vec<i32> {
         points.iter().filter(|p| p.test_case_id == Some(case_id)).map(|p| p.point_id).collect()
     };
     for c in &confirmed {
         if points_of(c.case_id).is_empty() {
-            skipped.push(SkippedCase { case_id: c.case_id, why: if over_suite { "not in this suite any more" } else { "it is not in this PBI's test suite" }.into(),
-            });
+            let why = if over_suite { "not in this suite any more" } else { "it is not in this PBI's test suite" };
+            skipped.push(SkippedCase { case_id: c.case_id, why: why.into() });
         }
     }
     let sendable: Vec<&CaseRecord> = confirmed.iter().copied().filter(|c| !points_of(c.case_id).is_empty()).collect();
