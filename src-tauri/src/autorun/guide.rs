@@ -159,7 +159,7 @@ pub fn quick_rules() -> String {
 
 const QUICK_RULES: &str = r##"## Quick rules
 
-Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full` true.
+Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full` true. When `get_current_pbi` names a suite, read its cases with `get_suite_test_cases`.
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.
@@ -1124,7 +1124,8 @@ ask which one to use. If they named none and TCM has one, say
 "PBI <id>, <title>, is selected in TCM - is that the one?" and wait for their yes before you continue.
 If TCM has none, find it with `search_pbis`, or ask the person for the id. You cannot change TCM's
 selection. Only the assistant the person talks to asks: a subagent never asks about the PBI, it uses
-the PBI id it was given.
+the PBI id it was given. When `get_current_pbi` names a suite instead (no PBI is selected), the cases
+come from that suite: read them with `get_suite_test_cases`, passing the plan and suite ids it gives.
 
 ## Basic mode
 
@@ -1629,7 +1630,8 @@ each case that needs a name unchanged before the cases that change it, and
 does not change Run Tests' order. Without a saved order, Auto Test already
 works out a suggested order from the marks. A saved order replaces the
 suggestion for every later run until the person picks Use suggested order,
-so set one only when a particular order is wanted.
+so set one only when a particular order is wanted. When `get_current_pbi` names a suite, omit
+`pbi_id`: the order is the suite's.
 
 A case that needs the site in a particular state is marked the same way.
 A case that checks an empty list needs no cycles to exist, so it carries

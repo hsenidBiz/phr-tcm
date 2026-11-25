@@ -14,7 +14,7 @@ use super::report::css_key;
 use super::report_smart::{
     duration_of, CaseTrend, Cluster, Compare, Health, RunPoint, Timeline, Trend, HISTORY_RUNS, MIN_JUDGED_FOR_GRADE,
 };
-use super::CaseRecord;
+use super::{CaseRecord, LocalRun};
 use crate::html_escape::esc_attr;
 
 /// How many case links one compare panel lists before it says "and N more".
@@ -201,15 +201,29 @@ impl Counts {
     }
 }
 
+/// What a run was over, in words: `PBI #5`, or `suite <title>` for a run of a
+/// test suite. Not escaped; each place escapes it as it prints.
+pub(super) fn scope_label(run: &LocalRun) -> String {
+    match &run.suite {
+        Some(r) => format!("suite {}", r.title),
+        None => format!("PBI #{}", run.pbi_id),
+    }
+}
+
+/// `PBI` or `suite`: the word for what a run was over, for "this ...".
+pub(super) fn scope_noun(run: &LocalRun) -> &'static str {
+    if run.suite.is_some() { "suite" } else { "PBI" }
+}
+
 /// The top bar: sidebar toggle, the run's name and meta, the counts, the
 /// duration, Search and the light/dark toggle.
-pub(super) fn topbar(pbi: i32, environment: Option<&str>, when_html: &str, attended: bool, c: &Counts, duration_ms: u64) -> String {
+pub(super) fn topbar(scope: &str, environment: Option<&str>, when_html: &str, attended: bool, c: &Counts, duration_ms: u64) -> String {
     let mut h = String::from(
         "<header class=\"topbar\"><button type=\"button\" class=\"icon-btn\" id=\"rail-toggle\" aria-label=\"Show or hide the sidebar\" title=\"Sidebar (Ctrl+B)\">",
     );
     h.push_str(&icon("sidebar"));
     h.push_str("</button><span class=\"topbar__brand\">Auto Test report</span><span class=\"topbar__run\">");
-    h.push_str(&format!("<span class=\"topbar__meta mono\">PBI #{pbi}</span>"));
+    h.push_str(&format!("<span class=\"topbar__meta mono\">{}</span>", esc_attr(scope)));
     if let Some(env) = environment.map(str::trim).filter(|e| !e.is_empty()) {
         h.push_str(&format!("<span class=\"topbar__meta\">{}</span>", esc_attr(env)));
     }
@@ -487,7 +501,7 @@ fn stat(label: &str, value: &str, sub: &str) -> String {
 }
 
 /// The row of stat tiles.
-pub(super) fn stats(points: &[RunPoint], new_cases: Option<usize>, total: usize, health: Option<&Health>) -> String {
+pub(super) fn stats(points: &[RunPoint], new_cases: Option<usize>, total: usize, health: Option<&Health>, noun: &str) -> String {
     let last = points.last();
     let rate: Vec<f64> = points.iter().map(|p| f64::from(p.pass_rate.unwrap_or(0))).collect();
     let dur: Vec<f64> = points.iter().map(|p| p.duration_ms as f64).collect();
@@ -506,7 +520,7 @@ pub(super) fn stats(points: &[RunPoint], new_cases: Option<usize>, total: usize,
     let sub = match new_cases {
         Some(0) => "no new cases".to_string(),
         Some(n) => plural(n, "new case", "new cases"),
-        None => "first run of this PBI".to_string(),
+        None => format!("first run of this {noun}"),
     };
     h.push_str(&stat("Cases", &total.to_string(), &sub));
     h.push_str(&stat("Flaky", &last.map_or(0, |p| p.flaky).to_string(), &sparkline(&flaky, "Flaky failures of the recent runs")));
@@ -638,12 +652,13 @@ fn chart(title: &str, values: &[(f64, &RunPoint, String)], flaky: bool) -> Strin
 /// The History view: Trends and Compare, then the per-run table. `titles`
 /// is every case id the compare may name, with its title and its status key
 /// in this run.
-pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, titles: &HashMap<i32, (String, &'static str)>, shared: &str) -> String {
+pub(super) fn history_view(trend: &Trend, scope: &str, noun: &str, environment: Option<&str>, titles: &HashMap<i32, (String, &'static str)>, shared: &str) -> String {
     let env = environment.map(str::trim).filter(|e| !e.is_empty()).map_or("this environment".to_string(), |e| e.to_string());
     let n = trend.points.len();
     let mut h = format!(
-        "<section class=\"view page\" id=\"view-history\"><div class=\"page__head\"><h1 class=\"page__title\">History</h1><span class=\"muted\">{} of PBI #{pbi} in {}</span></div>",
+        "<section class=\"view page\" id=\"view-history\"><div class=\"page__head\"><h1 class=\"page__title\">History</h1><span class=\"muted\">{} of {} in {}</span></div>",
         plural(n, "recorded run", "recorded runs"),
+        esc_attr(scope),
         esc_attr(&env)
     );
     h.push_str("<div class=\"tabs\" role=\"tablist\"><button type=\"button\" class=\"tab\" role=\"tab\" aria-selected=\"true\" data-tab=\"trends\">Trends</button><button type=\"button\" class=\"tab\" role=\"tab\" aria-selected=\"false\" data-tab=\"compare\">Compare</button></div>");
@@ -651,7 +666,7 @@ pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, t
     // Trends.
     h.push_str("<div class=\"hist\" id=\"hist-trends\" role=\"tabpanel\">");
     if n < 2 {
-        h.push_str("<p class=\"trends__note muted\">Only one run of this PBI is on this machine in this environment, so there is no trend to draw yet.</p>");
+        h.push_str(&format!("<p class=\"trends__note muted\">Only one run of this {noun} is on this machine in this environment, so there is no trend to draw yet.</p>"));
     } else {
         h.push_str("<p class=\"trends__note muted\">Line: three-run average. Bars start at zero; the highlighted bar is this run.</p><div class=\"trends\">");
         let pick = |f: &dyn Fn(&RunPoint) -> (f64, String)| -> Vec<(f64, &RunPoint, String)> {
@@ -679,8 +694,8 @@ pub(super) fn history_view(trend: &Trend, pbi: i32, environment: Option<&str>, t
     // Compare.
     h.push_str("<div class=\"hist\" id=\"hist-compare\" role=\"tabpanel\" hidden>");
     match &trend.compare {
-        None => h.push_str(&format!("<p class=\"compare__base muted\">This is the first run of PBI #{pbi} in {}.</p>", esc_attr(&env))),
-        Some(c) => h.push_str(&compare_html(c, titles, shared)),
+        None => h.push_str(&format!("<p class=\"compare__base muted\">This is the first run of {} in {}.</p>", esc_attr(scope), esc_attr(&env))),
+        Some(c) => h.push_str(&compare_html(c, noun, titles, shared)),
     }
     h.push_str("</div>");
 
@@ -719,9 +734,9 @@ fn compare_list(title: &str, list: &[i32], titles: &HashMap<i32, (String, &'stat
     panel(title, &list.len().to_string(), &lines, "None this run.")
 }
 
-fn compare_html(c: &Compare, titles: &HashMap<i32, (String, &'static str)>, shared: &str) -> String {
+fn compare_html(c: &Compare, noun: &str, titles: &HashMap<i32, (String, &'static str)>, shared: &str) -> String {
     let mut h = format!(
-        "<p class=\"compare__base muted\">Against the previous run of this PBI, which started {}.</p><div class=\"panels\" id=\"compare-panels\">",
+        "<p class=\"compare__base muted\">Against the previous run of this {noun}, which started {}.</p><div class=\"panels\" id=\"compare-panels\">",
         time_tag(&c.previous_started_at)
     );
     // A blocked case shows the blocked icon: the status is the case's own.

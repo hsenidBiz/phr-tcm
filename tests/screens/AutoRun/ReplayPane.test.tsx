@@ -35,7 +35,7 @@ function mountPane(cases: PaneCase[], plan: never | null = null) {
     openRunSetup({
       org: "acme",
       project: "Web",
-      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
+      scope: { kind: "pbi", pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" } },
       cases,
       plan,
     });
@@ -107,7 +107,7 @@ test("start sends the selection, the browser and the watch choice", async () => 
   expect(calls[0]).toEqual({
     organization: "acme",
     project: "Web",
-    pbiId: 42,
+    scope: { kind: "pbi", pbi_id: 42 },
     cases: [
       { case_id: 1, title: "A", module: null },
       { case_id: 2, title: "B", module: null },

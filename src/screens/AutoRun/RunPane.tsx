@@ -13,6 +13,7 @@ import {
   commands,
   events,
   type ActionOutcome,
+  type AutoRunSuiteRef,
   type CaseRecord,
   type PlanView,
   type ReplayEnd,
@@ -68,6 +69,7 @@ export default function RunPane({
   org,
   project,
   pbiId,
+  suite = null,
   cases,
   replayTo,
   plan = null,
@@ -77,6 +79,8 @@ export default function RunPane({
   org: string;
   project: string;
   pbiId: number;
+  /** Set when the run is over a test suite (then `pbiId` is 0). */
+  suite?: AutoRunSuiteRef | null;
   /** The selection, run one after another in this order. One case is a
    * selection of one - there is no separate single-case path. */
   cases: { id: number; title: string }[];
@@ -760,6 +764,7 @@ export default function RunPane({
       const r = await commands.autoRunSaveRun({
         id,
         pbi_id: pbiId,
+        ...(suite ? { suite } : {}),
         started_at: startedAt,
         cases: all,
         // Written only when the run paused at a reset point.

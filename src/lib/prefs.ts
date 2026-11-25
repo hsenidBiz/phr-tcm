@@ -3,6 +3,7 @@
 
 import type { PbiHit } from "../bindings";
 import type { Section } from "../components/Sidebar";
+import type { SuiteScope } from "./scope";
 
 export const PREFS_KEY = "tcm-v2-prefs";
 
@@ -11,6 +12,8 @@ export type Prefs = {
   project: string;
   section: Section;
   pbi: PbiHit | null;
+  /** The test suite in the top bar, remembered the way the PBI is. Never set with a PBI. */
+  suite: SuiteScope | null;
   workMode: boolean;
 };
 
@@ -34,12 +37,27 @@ const SECTIONS: Section[] = [
   "settings",
 ];
 
+function readSuite(raw: unknown, pbi: unknown): SuiteScope | null {
+  // A PBI and a suite are never both current: the PBI wins if a file has both.
+  if (pbi || !raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.planId !== "number" || typeof s.suiteId !== "number" || typeof s.title !== "string") return null;
+  return {
+    planId: s.planId,
+    suiteId: s.suiteId,
+    title: s.title,
+    planName: typeof s.planName === "string" ? s.planName : "",
+    ...(typeof s.project === "string" && s.project ? { project: s.project } : {}),
+  };
+}
+
 export function loadPrefs(): Prefs {
   const defaults: Prefs = {
     org: "",
     project: "",
     section: "manual",
     pbi: null,
+    suite: null,
     workMode: false,
   };
   try {
@@ -61,6 +79,7 @@ export function loadPrefs(): Prefs {
                 project: typeof p.pbi.project === "string" && p.pbi.project ? p.pbi.project : (p.project ?? ""),
               }
             : null,
+        suite: readSuite(p.suite, p.pbi),
         workMode: Boolean(p.workMode),
       };
     }

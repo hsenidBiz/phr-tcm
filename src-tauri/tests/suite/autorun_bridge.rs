@@ -2478,7 +2478,7 @@ async fn a_click_that_navigates_is_recorded_under_the_page_it_was_on() {
 // --------------------------------------------------------- the read routes
 
 fn failed_run(id: &str, case_id: i32) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: id.to_string(),
         pbi_id: 42,
         started_at: "1700000000000".to_string(),
@@ -3875,6 +3875,9 @@ async fn an_order_that_is_not_one_is_refused() {
     let (status, out) = send(serde_json::json!({ "pbi_id": 100, "case_ids": [501, 502, 501] })).await;
     assert_eq!((status, out.as_str()), (400, "case 501 is listed twice"));
     let (status, out) = send(serde_json::json!({ "case_ids": [501] })).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("pbi_id is missing and no suite is current"), "{out}");
+    let (status, out) = send(serde_json::json!({ "pbi_id": "x", "case_ids": [501] })).await;
     assert_eq!(status, 400, "{out}");
     assert!(out.starts_with("that is not an order"), "{out}");
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), None);

@@ -117,7 +117,7 @@ fn failed_at_3(case_id: i32) -> CaseRecord {
 }
 
 fn run_of(id: &str, started_at: &str, cases: Vec<CaseRecord>) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: id.into(),
         pbi_id: 1,
         started_at: started_at.into(),

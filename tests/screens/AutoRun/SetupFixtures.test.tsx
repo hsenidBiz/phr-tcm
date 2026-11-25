@@ -66,7 +66,7 @@ function mount(saved: ReturnType<typeof fixture>[], onOpenFixtures: Mock | null 
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="Web" pbi={PBI} onOpenFixtures={onOpenFixtures ? () => onOpenFixtures() : undefined} />
+      <AutoRun org="acme" project="Web" scope={{ kind: "pbi", pbi: PBI }} onOpenFixtures={onOpenFixtures ? () => onOpenFixtures() : undefined} />
     </QueryClientProvider>,
   );
   return onOpenFixtures;

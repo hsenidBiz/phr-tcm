@@ -160,6 +160,15 @@ export const searchSuites: Screen = {
         "On a Product Backlog Item's suite, opens Run Tests for that Product Backlog Item. On any other suite, opens Run Tests on that folder, listing the suite's own cases (not those of the suites inside it), so you can tick the ones to run, set their order and open the runner.",
     },
     {
+      id: "auto-test",
+      shot: MORE,
+      group: "tree",
+      locate: { role: "menuitem", name: "Auto Test" },
+      name: "Auto Test",
+      does:
+        "Opens Auto Test on this suite, listing the suite's own cases (not those of the suites inside it). Offered while Auto Test is switched on in Settings.",
+    },
+    {
       id: "report",
       shot: MORE,
       group: "tree",

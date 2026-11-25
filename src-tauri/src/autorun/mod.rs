@@ -779,10 +779,109 @@ pub struct PublishedRun {
     pub at: String,
 }
 
+/// A test suite a run (or its order) belongs to, instead of a PBI. Named
+/// `AutoRunSuiteRef` in the generated TypeScript: `ado_testplan::SuiteRef`
+/// (a suite in the plan tree) already has the other name.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename = "AutoRunSuiteRef")]
+pub struct SuiteRef {
+    pub plan_id: i32,
+    pub suite_id: i32,
+    #[serde(default)]
+    pub title: String,
+}
+
+/// What an Auto Test run is over: a PBI's cases, or one test suite's own
+/// cases. On the wire `{"kind":"pbi","pbi_id":N}` or
+/// `{"kind":"suite","plan_id":..,"suite_id":..,"title":..}`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunScope {
+    Pbi(i32),
+    Suite(SuiteRef),
+}
+
+/// The shape `RunScope` has across IPC and on disk (a tuple variant cannot
+/// carry an internal tag). It lives in its own module so the generated
+/// TypeScript names it `RunScope`.
+mod run_scope_wire {
+    #[derive(serde::Serialize, serde::Deserialize, specta::Type)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum RunScope {
+        Pbi { pbi_id: i32 },
+        Suite { plan_id: i32, suite_id: i32, title: String },
+    }
+}
+use run_scope_wire::RunScope as RunScopeWire;
+
+impl From<RunScope> for RunScopeWire {
+    fn from(s: RunScope) -> Self {
+        match s {
+            RunScope::Pbi(pbi_id) => RunScopeWire::Pbi { pbi_id },
+            RunScope::Suite(r) => RunScopeWire::Suite { plan_id: r.plan_id, suite_id: r.suite_id, title: r.title },
+        }
+    }
+}
+
+impl From<RunScopeWire> for RunScope {
+    fn from(w: RunScopeWire) -> Self {
+        match w {
+            RunScopeWire::Pbi { pbi_id } => RunScope::Pbi(pbi_id),
+            RunScopeWire::Suite { plan_id, suite_id, title } => RunScope::Suite(SuiteRef { plan_id, suite_id, title }),
+        }
+    }
+}
+
+impl serde::Serialize for RunScope {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        RunScopeWire::from(self.clone()).serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RunScope {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        RunScopeWire::deserialize(d).map(RunScope::from)
+    }
+}
+
+impl specta::Type for RunScope {
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        <RunScopeWire as specta::Type>::definition(types)
+    }
+}
+
+impl From<i32> for RunScope {
+    fn from(pbi_id: i32) -> Self {
+        RunScope::Pbi(pbi_id)
+    }
+}
+
+impl RunScope {
+    /// A stable key: `pbi:<id>` or `suite:<plan>:<suite>`.
+    pub fn key(&self) -> String {
+        match self {
+            RunScope::Pbi(id) => format!("pbi:{id}"),
+            RunScope::Suite(r) => format!("suite:{}:{}", r.plan_id, r.suite_id),
+        }
+    }
+
+    /// The `pbi_id` and `suite` a `LocalRun` of this scope carries
+    /// (`pbi_id` is 0 for a suite run).
+    pub fn run_fields(&self) -> (i32, Option<SuiteRef>) {
+        match self {
+            RunScope::Pbi(id) => (*id, None),
+            RunScope::Suite(r) => (0, Some(r.clone())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct LocalRun {
     pub id: String,
     pub pbi_id: i32,
+    /// Set when the run was over a test suite (then `pbi_id` is 0). Left out
+    /// otherwise, so a PBI run reads and writes exactly as it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite: Option<SuiteRef>,
     /// Epoch milliseconds as a string - specta forbids u64 across IPC,
     /// and the frontend formats it anyway.
     pub started_at: String,
@@ -812,6 +911,16 @@ pub struct LocalRun {
     /// any case. Left out when false, so older run files read the same.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub video_unavailable: bool,
+}
+
+impl LocalRun {
+    /// What this run was over.
+    pub fn scope(&self) -> RunScope {
+        match &self.suite {
+            Some(r) => RunScope::Suite(r.clone()),
+            None => RunScope::Pbi(self.pbi_id),
+        }
+    }
 }
 
 /// One wait for the company network: the run found it gone before

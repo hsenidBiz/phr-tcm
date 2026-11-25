@@ -97,7 +97,7 @@ async fn go(root: &Path, wanted: bool, drivers: Vec<ScriptedDriver>, cases: &[i3
         cs.push((*id, "c".to_string()));
     }
     let mut browsers = Fake { drivers, closed: vec![], wanted };
-    let mut run = LocalRun { video_unavailable: false,
+    let mut run = LocalRun { video_unavailable: false, suite: None,
         id: "run-v".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),
@@ -305,7 +305,7 @@ fn the_screens_are_told_what_a_video_can_be_used_for() {
 
 fn run_naming(video: &str, published: bool) -> LocalRun {
     let case = CaseRecord { video: Some(video.to_string()), ..common::component_case(1, "x") };
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: "r".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -474,6 +474,7 @@ async fn a_blocked_case_keeps_its_video_too() {
 fn new_run() -> LocalRun {
     LocalRun {
         video_unavailable: false,
+        suite: None,
         id: "run-v".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),
@@ -589,7 +590,7 @@ async fn the_recording_starts_before_the_sign_in_and_stops_after_the_last_step()
     v2_lib::autorun::accounts::save_accounts(root, &[common::account()]).unwrap();
     store::save_script(root, &script_as(1, "admin")).unwrap();
     let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
-    let mut run = LocalRun { video_unavailable: false, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
+    let mut run = LocalRun { video_unavailable: false, suite: None, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
     let cancel = AtomicBool::new(false);
     run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "c".to_string())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
 
@@ -619,7 +620,7 @@ async fn a_case_stopped_before_it_starts_is_not_recorded() {
     v2_lib::autorun::accounts::save_accounts(root, &[common::account()]).unwrap();
     store::save_script(root, &script_as(1, "admin")).unwrap();
     let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
-    let mut run = LocalRun { video_unavailable: false, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
+    let mut run = LocalRun { video_unavailable: false, suite: None, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
     let cancel = AtomicBool::new(true);
     run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "c".to_string())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
     for d in &browsers.closed {
@@ -651,7 +652,7 @@ async fn a_case_blocked_before_it_starts_is_not_recorded() {
     let case = script(1);
     store::save_script(root, &case).unwrap();
     let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
-    let mut run = LocalRun { video_unavailable: false, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
+    let mut run = LocalRun { video_unavailable: false, suite: None, id: "run-v".into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] };
     let cancel = AtomicBool::new(false);
     run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "c".to_string())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
     assert_eq!(run.cases[0].proposed, "Blocked", "{}", run.cases[0].reason);

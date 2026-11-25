@@ -1180,6 +1180,12 @@ function applyPatches() {
     pbiTestCases: (_o: string, pbiId: number) =>
       ok((casesByPbi.get(pbiId) ?? []).map((c) => ({ id: c.id, title: c.title, tags: c.tags, automation_status: c.automation_status }))),
     pbiTestCasesFull: (_o: string, pbiId: number) => ok(casesByPbi.get(pbiId) ?? []),
+    // A suite's own cases: a requirement suite holds its PBI's sample cases;
+    // the demo folder holds the first PBI's.
+    suiteTestCasesFull: (_o: string, _p: string, _plan: number, suiteId: number) => {
+      const pbiId = PBI_BY_SUITE.get(suiteId);
+      return ok(pbiId != null ? (casesByPbi.get(pbiId) ?? []) : ([...casesByPbi.values()][0] ?? []));
+    },
     testCasesByIds: (_o: string, ids: number[]) =>
       ok(ids.map(findCase).filter((c): c is TestCaseFull => Boolean(c))),
 
@@ -1956,13 +1962,13 @@ function applyPatches() {
     autoRunReplay: async (
       _o: string,
       _p: string,
-      pbiId: number,
+      scope: { kind: string; pbi_id?: number },
       cases: { case_id: number; title: string }[],
       account: string | null,
     ) => {
       if (!Array.isArray(cases)) return err("Demo mode: no cases to run");
       await sleep(600);
-      const run = replayRun(pbiId, cases, account);
+      const run = replayRun(scope.pbi_id ?? 0, cases, account);
       autoRuns.unshift(run);
       return { status: "ok" as const, data: run };
     },

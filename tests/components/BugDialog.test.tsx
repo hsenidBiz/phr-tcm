@@ -663,3 +663,19 @@ test("the dialog is wide and sets its required fields in two columns", async () 
   // The title stays outside the grid, full width.
   expect(grid.contains(screen.getByLabelText("Bug title"))).toBe(false);
 });
+
+test("the footer names the PBI the bug links to, and only the case when there is none (a suite's run)", () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  mockIPC(() => null);
+  const dialog = (pbiId: number) => (
+    <QueryClientProvider client={qc}>
+      <BugDialog org="acme" project="Web" testCase={testCase} pbiId={pbiId} screenshots={[]} onClose={vi.fn()} onFiled={vi.fn()} />
+    </QueryClientProvider>
+  );
+  const { unmount } = render(dialog(42));
+  expect(screen.getByText(`Links to test case #${testCase.id} and PBI #42`, { exact: false })).toBeInTheDocument();
+  unmount();
+  render(dialog(0));
+  const note = screen.getByText(`Links to test case #${testCase.id}`, { exact: false });
+  expect(note.textContent).not.toMatch(/PBI/);
+});

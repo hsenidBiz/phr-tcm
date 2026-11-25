@@ -91,7 +91,7 @@ test("up and down reorder, Save order sends the new order and closes", async () 
   fireEvent.click(screen.getByRole("button", { name: "Save order" }));
 
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-  expect(calls.find((c) => c.cmd === "auto_run_save_order")?.args).toEqual({ pbiId: 42, caseIds: [1, 3, 2] });
+  expect(calls.find((c) => c.cmd === "auto_run_save_order")?.args).toEqual({ scope: { kind: "pbi", pbi_id: 42 }, caseIds: [1, 3, 2] });
 });
 
 test("Use suggested order is offered only when an order is saved", async () => {
@@ -105,7 +105,7 @@ test("a saved order that needs more pauses says so, and Use suggested order call
   expect(await screen.findByText("this order needs 3 pauses; the suggested order needs 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Use suggested order" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-  expect(calls.find((c) => c.cmd === "auto_run_clear_order")?.args).toEqual({ pbiId: 42 });
+  expect(calls.find((c) => c.cmd === "auto_run_clear_order")?.args).toEqual({ scope: { kind: "pbi", pbi_id: 42 } });
 });
 
 test("moving a case asks again and shows the new reset lines and count", async () => {
@@ -196,4 +196,30 @@ test("a save that fails shows a sentence, never the raw error with its path", as
   expect(screen.queryByText(/AppData/)).not.toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
   await waitFor(() => expect(logged.some((m) => m.includes("42.json"))).toBe(true));
+});
+
+test("a suite's order is planned, saved and cleared under the suite's scope", async () => {
+  const calls: { cmd: string; args: unknown }[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return cmd === "auto_run_plan" ? PLAN : null;
+  });
+  render(
+    <ExecutionOrderDialog
+      org="acme"
+      project="Web"
+      pbiId={0}
+      suite={{ plan_id: 9, suite_id: 92, title: "Password reset" }}
+      cases={CASES}
+      onClose={vi.fn()}
+    />,
+  );
+  await screen.findByText('Reset: revert "Cycle" (changed by #1 Publish the cycle)');
+  const scope = { kind: "suite", plan_id: 9, suite_id: 92, title: "Password reset" };
+  expect(calls.find((c) => c.cmd === "auto_run_plan")?.args).toMatchObject({ scope });
+  fireEvent.click(screen.getByRole("button", { name: "Move #3 up" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save order" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Save order" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "auto_run_save_order")).toBe(true));
+  expect(calls.find((c) => c.cmd === "auto_run_save_order")?.args).toMatchObject({ scope });
 });

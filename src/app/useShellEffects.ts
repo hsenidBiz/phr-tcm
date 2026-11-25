@@ -11,6 +11,7 @@ import {
 } from "../lib/modules";
 import { clearNewNav, pruneNewNav } from "../lib/newNav";
 import { savePrefs } from "../lib/prefs";
+import type { SuiteScope } from "../lib/scope";
 import { initTheme } from "../lib/theme";
 import { shortcutOrder, type Section } from "../components/Sidebar";
 import { tourRunningSnapshot } from "../tour/tourState";
@@ -122,14 +123,15 @@ export function usePersistPrefs(prefs: {
   homeProject: string;
   section: Section;
   pbi: PbiHit | null;
+  suite: SuiteScope | null;
   workMode: boolean;
   tourOpen: boolean;
 }) {
-  const { org, homeProject, section, pbi, workMode, tourOpen } = prefs;
+  const { org, homeProject, section, pbi, suite, workMode, tourOpen } = prefs;
   useEffect(() => {
     if (tourOpen) return;
     // The home project, not the effective one: a PBI picked from another
     // project must not move where the person's own files live.
-    savePrefs({ org, project: homeProject, section, pbi, workMode });
-  }, [org, homeProject, section, pbi, workMode, tourOpen]);
+    savePrefs({ org, project: homeProject, section, pbi, suite, workMode });
+  }, [org, homeProject, section, pbi, suite, workMode, tourOpen]);
 }

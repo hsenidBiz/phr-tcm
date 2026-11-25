@@ -2090,7 +2090,7 @@ test("the Basic mode switch waits while an unattended run is going", async () =>
     openRunSetup({
       org: "acme",
       project: "Web",
-      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
+      scope: { kind: "pbi", pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" } },
       cases: [{ id: 1, title: "Case 1" }],
       plan: null,
     });

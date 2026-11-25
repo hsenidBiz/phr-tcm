@@ -150,6 +150,7 @@ export default function Suites({
   onManageSuite,
   onSetCurrentPbi,
   onRunFolder,
+  onAutoTest,
 }: {
   org: string;
   /** The project the screen works in when the projects are not shown
@@ -180,6 +181,8 @@ export default function Suites({
     title: string;
     project: string;
   }) => void;
+  /** Open Auto Test on this suite (its own cases only). `project` is the plan's. */
+  onAutoTest?: (suite: { planId: number; suiteId: number; planName: string; title: string; project: string }) => void;
 }) {
   const qc = useQueryClient();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
@@ -473,6 +476,21 @@ export default function Suites({
                 project: projectOf(planId),
               }),
       },
+      ...(onAutoTest
+        ? [
+            {
+              label: "Auto Test",
+              onSelect: () =>
+                onAutoTest({
+                  planId,
+                  suiteId: s.id,
+                  planName: trees.find((t) => t.plan.id === planId)?.plan.name ?? "",
+                  title: s.name,
+                  project: projectOf(planId),
+                }),
+            },
+          ]
+        : []),
       { label: "Report", onSelect: () => report.mutate({ planId, suiteIds: allIds, label: s.name }) },
       { label: "Export JSON", onSelect: () => exportJson.mutate({ planId, suiteIds: allIds, label: s.name }) },
     ];

@@ -402,23 +402,12 @@ pub(crate) async fn suite_cases(
     } else {
         ctx.project.clone()
     };
-    let points = match client
-        .get_test_points_in(&ctx.org, &project, plan, suite, &[], children)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
-    };
     // One point per case per configuration: a suite run on two browsers
     // lists every case twice. Keep the suite's order, each case once.
-    let mut ids: Vec<i32> = vec![];
-    for p in &points {
-        if let Some(id) = p.test_case_id {
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
-        }
-    }
+    let ids = match client.suite_case_ids(&ctx.org, &project, plan, suite, children).await {
+        Ok(ids) => ids,
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
     match client
         .get_test_cases_by_ids(&ctx.org, &ids, ctx.module_ref.as_deref(), ctx.preconditions_ref.as_deref())
         .await

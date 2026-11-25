@@ -1288,13 +1288,14 @@ pub fn build_smart(
     );
 
     // ---- Insights.
+    let scope = report_view::scope_label(run);
     let health = report_smart::health(&trend.points, flaky_cases, views.len());
     let new_cases = trend.compare.as_ref().map(|c| c.new_cases.len());
     let prior = trend.points.len().saturating_sub(1);
     // One instant for every time on the page: the run's own start, shown by the script in one format.
     let when_tag = report_view::time_tag_as(&run.started_at, &when);
     let sub = if prior == 0 {
-        format!("Run of {when_tag} \u{b7} the first run of PBI #{} in this environment", run.pbi_id)
+        format!("Run of {when_tag} \u{b7} the first run of {} in this environment", esc_attr(&scope))
     } else {
         format!("Run of {when_tag} \u{b7} compared with the previous {}", if prior == 1 { "run".to_string() } else { format!("{prior} runs") })
     };
@@ -1318,7 +1319,7 @@ pub fn build_smart(
     let mut insights = format!(
         "<section class=\"view page\" id=\"view-insights\"><div class=\"page__head\"><h1 class=\"page__title\">Insights</h1><span class=\"muted\">{sub}</span></div>"
     );
-    insights.push_str(&report_view::stats(&trend.points, new_cases, views.len(), health.as_ref()));
+    insights.push_str(&report_view::stats(&trend.points, new_cases, views.len(), health.as_ref(), report_view::scope_noun(run)));
     insights.push_str(&report_view::minibar(&counts_now));
     insights.push_str("<div class=\"panels\">");
     insights.push_str(&report_view::panel("Failure clusters", &format!("{n_clusters} cluster{}", if n_clusters == 1 { "" } else { "s" }), &insight_clusters, "None this run."));
@@ -1339,7 +1340,10 @@ pub fn build_smart(
     if let Some(env) = run.environment.as_deref().filter(|e| !e.trim().is_empty()) {
         insights.push_str(&format!("<dt>Environment</dt><dd>{}</dd>", esc_attr(env)));
     }
-    insights.push_str(&format!("<dt>PBI</dt><dd>#{}</dd>", run.pbi_id));
+    match &run.suite {
+        Some(r) => insights.push_str(&format!("<dt>Suite</dt><dd>{}</dd>", esc_attr(&r.title))),
+        None => insights.push_str(&format!("<dt>PBI</dt><dd>#{}</dd>", run.pbi_id)),
+    }
     match &run.published {
         Some(p) => insights.push_str(&format!(
             "<dt>Azure DevOps</dt><dd>Sent as test run #{} - {}</dd>",
@@ -1390,7 +1394,7 @@ pub fn build_smart(
 
     // ---- History: the titles the compare lists need.
     let titles: std::collections::HashMap<i32, (String, &'static str)> = views.iter().map(|v| (v.case.case_id, (v.case.title.clone(), v.status()))).collect();
-    let history_html = report_view::history_view(&trend, run.pbi_id, run.environment.as_deref(), &titles, &shared);
+    let history_html = report_view::history_view(&trend, &scope, report_view::scope_noun(run), run.environment.as_deref(), &titles, &shared);
 
     // ---- The page.
     let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery }));
@@ -1419,18 +1423,18 @@ pub fn build_smart(
     h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", csp(&[head_js, app_js])));
     h.push_str(&format!("<script>{head_js}</script>"));
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-    h.push_str(&format!("<title>Auto Test report - PBI #{}</title>", run.pbi_id));
+    h.push_str(&format!("<title>Auto Test report - {}</title>", esc_attr(run.suite.as_ref().map_or(&scope, |r| &r.title))));
     h.push_str(&format!("<style>{TOKENS}\n{accent}{STYLE}</style></head><body data-start=\"{start}\">"));
     h.push_str("<a class=\"skip-link\" href=\"#main\">Skip to the report</a>");
     h.push_str("<div class=\"app\" data-rail=\"open\">");
-    h.push_str(&report_view::topbar(run.pbi_id, run.environment.as_deref(), &when_tag, run.mode != "unattended", &counts_now, run_ms));
+    h.push_str(&report_view::topbar(&scope, run.environment.as_deref(), &when_tag, run.mode != "unattended", &counts_now, run_ms));
     h.push_str("<div class=\"app__body\">");
     h.push_str(&report_view::sidebar(failure_cases, flaky_cases, views.len(), env!("CARGO_PKG_VERSION"), &flaky_note));
     h.push_str("<main class=\"app__main\" id=\"main\" tabindex=\"-1\">");
     // On paper only: the run's name and its counts, ahead of everything.
     h.push_str(&format!(
-        "<div class=\"print-only print-head\"><h1 class=\"page__title\">Auto Test report</h1><p>PBI #{}{} \u{b7} {}</p><p>{} passed, {} failed, {} flaky, {} blocked, {} not run</p></div>",
-        run.pbi_id,
+        "<div class=\"print-only print-head\"><h1 class=\"page__title\">Auto Test report</h1><p>{}{} \u{b7} {}</p><p>{} passed, {} failed, {} flaky, {} blocked, {} not run</p></div>",
+        esc_attr(&scope),
         run.environment.as_deref().filter(|e| !e.trim().is_empty()).map(|e| format!(" \u{b7} {}", esc_attr(e))).unwrap_or_default(),
         esc_attr(&when),
         counts_now.passed,

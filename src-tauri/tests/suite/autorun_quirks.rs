@@ -538,7 +538,7 @@ fn run_evidence_is_written_and_a_write_failure_does_not_fail_the_run() {
 /// that ran.
 #[test]
 fn a_repairs_source_carries_the_class_of_the_failure_that_led_to_it() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -674,7 +674,7 @@ fn one_run_counts_at_most_once_per_source_case() {
 /// failed in its case's newest run; the source keeps that failure's class.
 #[test]
 fn a_named_case_must_have_failed_there() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-9".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -705,7 +705,7 @@ fn a_named_case_must_have_failed_there() {
 fn a_saved_run_is_counted_by_its_id() {
     let dir = tempfile::tempdir().unwrap();
     save_quirks(dir.path(), "Acme", "Web", &[sourced(None)]).unwrap();
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-55".into(),
         pbi_id: 1,
         started_at: "1".into(),

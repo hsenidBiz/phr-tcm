@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { PbiHit } from "../bindings";
+import type { SuiteScope } from "../lib/scope";
 import { suspendCache } from "../lib/cache";
 import { clearTourRepositories, setTourRepositories } from "../lib/workingDir";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
@@ -18,7 +19,8 @@ type TourArgs = {
   ctx: MutableRefObject<AppContext>;
   setOrgRaw: Dispatch<SetStateAction<string>>;
   setHomeProjectRaw: Dispatch<SetStateAction<string>>;
-  setPbiRaw: Dispatch<SetStateAction<PbiHit | null>>;
+  setPbiRaw: (p: PbiHit | null) => void;
+  setSuiteRaw: (s: SuiteScope | null) => void;
   setSection: Dispatch<SetStateAction<Section>>;
   setWorkMode: Dispatch<SetStateAction<boolean>>;
   setWorkSection: Dispatch<SetStateAction<WorkSection>>;
@@ -38,6 +40,7 @@ export function useAppTour({
   setOrgRaw,
   setHomeProjectRaw,
   setPbiRaw,
+  setSuiteRaw,
   setSection,
   setWorkMode,
   setWorkSection,
@@ -112,6 +115,7 @@ export function useAppTour({
     setOrgRaw(back.org);
     setHomeProjectRaw(back.homeProject);
     setPbiRaw(back.pbi);
+    if (back.suite) setSuiteRaw(back.suite);
     setSection(back.section);
     setWorkMode(back.workMode);
     setWorkSection(back.workSection);

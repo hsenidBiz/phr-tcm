@@ -1160,3 +1160,33 @@ test("Export JSON writes a folder's cases, its subfolders' included, in the impo
   // The suggested name is the folder's, less what a file name cannot hold.
   expect(saveAsked!.defaultPath).toBe("Regression Web UI.json");
 });
+
+test("Auto Test in the More menu hands the suite and its plan up, for a requirement suite as well as a folder", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 91, name: "PBI 42 suite", suite_type: "requirementTestSuite", requirement_id: 42, parent_id: null },
+            { id: 93, name: "Sprint stories", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+          ],
+        },
+      ];
+  });
+  const asked: unknown[] = [];
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <Suites org="acme" project="Web" allProjects={false} onAutoTest={(s) => asked.push(s)} />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("PBI 42 suite");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Auto Test" }));
+  fireEvent.click(screen.getByRole("button", { name: "More actions for Sprint stories" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Auto Test" }));
+  expect(asked).toEqual([
+    { planId: 9, suiteId: 91, planName: "Auth - Test Plan", title: "PBI 42 suite", project: "Web" },
+    { planId: 9, suiteId: 93, planName: "Auth - Test Plan", title: "Sprint stories", project: "Web" },
+  ]);
+});

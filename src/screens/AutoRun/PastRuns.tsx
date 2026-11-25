@@ -4,7 +4,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { commands, type LocalRun_Serialize } from "../../bindings";
+import { commands, type AutoRunSuiteRef, type LocalRun_Serialize } from "../../bindings";
+import { currentKey, runKey } from "../../lib/scope";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -67,6 +68,7 @@ export default function PastRuns({
   org,
   project,
   pbiId,
+  suite = null,
   onReview,
   onReplay,
   replayBlocked,
@@ -83,6 +85,9 @@ export default function PastRuns({
    * while some other PBI is selected - it would be sent under the wrong
    * name with every `step_ids` empty, silently. */
   pbiId: number | null;
+  /** Set when the screen is on a test suite instead of a PBI (then `pbiId`
+   * is null): the runs of other scopes are told apart by scope key. */
+  suite?: AutoRunSuiteRef | null;
   onReview: (runId: string) => void;
   /** Replay case `caseId` in the supervised browser up to the page before
    * `step`, its first failed step. Offered only on a run of the PBI now
@@ -196,7 +201,8 @@ export default function PastRuns({
         {shownRuns.map((run) => {
           const unattended = run.mode === "unattended";
           const unconfirmed = run.cases.filter((c) => !c.verdict).length;
-          const otherPbi = pbiId != null && run.pbi_id !== pbiId;
+          const here = currentKey(pbiId, suite);
+          const otherScope = here != null && runKey(run) !== here;
           const counts = countBuckets(run.cases, flakyIds);
           const flakyCount = countFlaky(run.cases, flakyIds);
           return (
@@ -216,8 +222,10 @@ export default function PastRuns({
                       real time, so there is nothing here to propose again. */}
                   {run.published ? (
                     <span className="text-xs font-medium text-faint">Sent</span>
-                  ) : unattended && otherPbi ? (
-                    <span className="text-xs font-medium text-faint">for PBI #{run.pbi_id}</span>
+                  ) : unattended && otherScope ? (
+                    <span className="text-xs font-medium text-faint">
+                      {run.suite ? `for suite ${run.suite.title || `#${run.suite.suite_id}`}` : `for PBI #${run.pbi_id}`}
+                    </span>
                   ) : unattended ? (
                     <div className="flex items-center gap-2">
                       {unconfirmed > 0 && (
@@ -265,7 +273,7 @@ export default function PastRuns({
               <VideoUnavailableNote run={run} />
               <ul className="space-y-1">
                 {run.cases.filter((c) => matchesFilter(c, filter, flakyIds)).map((c, i, shown) => {
-                  const replayTo = onReplay && !otherPbi ? replayStep(c) : null;
+                  const replayTo = onReplay && !otherScope ? replayStep(c) : null;
                   const heading = shownBatchHeading(recordedBatches(run), shown, i);
                   return (
                     <Fragment key={`${run.id}-${c.case_id}`}>

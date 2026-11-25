@@ -103,7 +103,7 @@ test("a run from another organization brings that run's project home", async () 
     store.set({
       org: "other",
       project: "Mobile",
-      pbi: { ...PBI, project: "Mobile" },
+      scope: { kind: "pbi", pbi: { ...PBI, project: "Mobile" } },
       runId: "run-1",
       toPastRuns: true,
     }),
@@ -123,7 +123,7 @@ test("a run from this organization never moves the home project", async () => {
     store.set({
       org: "acme",
       project: "Payroll",
-      pbi: { ...PBI, project: "Payroll" },
+      scope: { kind: "pbi", pbi: { ...PBI, project: "Payroll" } },
       runId: "run-1",
       toPastRuns: true,
     }),

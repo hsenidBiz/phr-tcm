@@ -108,6 +108,19 @@ pub struct CurrentPbi {
     pub project: String,
 }
 
+/// The test suite Auto Test is on, as the assistants see it
+/// (`get_current_pbi` names it when no PBI is selected). Pushed with the bridge
+/// context; only ever read here.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize, specta::Type)]
+pub struct CurrentSuite {
+    pub plan_id: i32,
+    pub suite_id: i32,
+    pub title: String,
+    pub plan_name: String,
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct BridgeContext {
     pub org: String,
@@ -173,6 +186,9 @@ pub struct BridgeContext {
     /// The PBI selected in the top bar, or None when none is. The webview's
     /// to say; the assistants only read it (`get_current_pbi`).
     pub current_pbi: Option<CurrentPbi>,
+    /// The test suite Auto Test is on, or None. The webview's to say; the
+    /// assistants only read it (`get_current_pbi`).
+    pub current_suite: Option<CurrentSuite>,
 }
 
 /// The part of the context only Rust sets: which environment the context's
@@ -270,6 +286,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("app_simple_mode", &self.app_simple_mode)
             .field("all_projects", &self.all_projects)
             .field("current_pbi", &self.current_pbi.as_ref().map(|p| p.id))
+            .field("current_suite", &self.current_suite.as_ref().map(|s| (s.plan_id, s.suite_id)))
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()
@@ -552,6 +569,30 @@ fn current_pbi_answer(ctx: &BridgeContext) -> String {
     match &ctx.current_pbi {
         Some(p) => {
             let mut v = serde_json::json!({ "id": p.id, "title": p.title, "project": p.project });
+            if let Some(m) = mode {
+                v["autorun_mode"] = m;
+            }
+            if let Some(s) = ctx.app_simple_mode {
+                v["app_simple_mode"] = serde_json::json!(s);
+            }
+            v.to_string()
+        }
+        None if ctx.current_suite.is_some() => {
+            let su = ctx.current_suite.as_ref().expect("checked above");
+            let mut v = serde_json::json!({
+                "pbi": null,
+                "suite": {
+                    "plan_id": su.plan_id,
+                    "suite_id": su.suite_id,
+                    "title": su.title,
+                    "plan_name": su.plan_name,
+                    "project": su.project,
+                },
+                "note": format!(
+                    "No PBI is selected. The current suite is \"{}\" (plan {}, suite {}). Read its cases with get_suite_test_cases.",
+                    su.title, su.plan_id, su.suite_id
+                ),
+            });
             if let Some(m) = mode {
                 v["autorun_mode"] = m;
             }

@@ -1315,7 +1315,7 @@ fn case_script(case_id: i32, account: Option<&str>, steps: serde_json::Value) ->
 }
 
 fn new_run(pbi_id: i32) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: store::new_run_id(),
         pbi_id,
         started_at: "1700000000000".into(),

@@ -27,6 +27,7 @@ fn ctx() -> BridgeContext {
         app_simple_mode: None,
         gate: Default::default(),
         current_pbi: None,
+        current_suite: None,
     }
 }
 

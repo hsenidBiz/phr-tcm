@@ -254,7 +254,8 @@ export default function PlaywrightExportDialog({
           replace,
           prefs.moduleRef ?? null,
           prefs.preconditionsRef ?? null,
-          pbiId,
+          // 0 is a test suite's cases: no PBI to record them under.
+          pbiId || null,
         ),
       );
       setResult(written);
@@ -494,7 +495,7 @@ export default function PlaywrightExportDialog({
         <div>
           <h2 id={titleId} className="text-base font-semibold text-text">Export to Playwright</h2>
           <Hint>
-            Copies the passing scripts of PBI {pbiId} into your clone of the Playwright repo. Nothing is run,
+            Copies the passing scripts of {pbiId ? `PBI ${pbiId}` : "this suite"} into your clone of the Playwright repo. Nothing is run,
             committed or pushed.
           </Hint>
         </div>

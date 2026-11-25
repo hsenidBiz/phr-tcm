@@ -29,7 +29,7 @@ function runIn(over: Partial<BackgroundRun>): BackgroundRun {
   return {
     org: "acme",
     project: "Web",
-    pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
+    scope: { kind: "pbi", pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" } },
     cases: CASES,
     plan: null,
     phase: "running",
@@ -88,7 +88,7 @@ test("no run, or one still on its setup, shows no pill", () => {
   render(<RunPill />);
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   act(() => {
-    openRunSetup({ org: "acme", project: "Web", pbi: runIn({}).pbi, cases: CASES, plan: null });
+    openRunSetup({ org: "acme", project: "Web", scope: runIn({}).scope, cases: CASES, plan: null });
   });
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
@@ -104,7 +104,7 @@ test("the pill sits in the title bar, outside its drag group, centred with label
 test("a running run's pill names its click, and the click opens the run window", async () => {
   mockIPC((cmd) => (cmd === "auto_run_replay" ? new Promise(() => {}) : null), { shouldMockEvents: true });
   act(() => {
-    openRunSetup({ org: "acme", project: "Web", pbi: runIn({}).pbi, cases: CASES, plan: null });
+    openRunSetup({ org: "acme", project: "Web", scope: runIn({}).scope, cases: CASES, plan: null });
   });
   await act(async () => {
     void startRun({ account: null, browserName: "edge", watch: false, retryTransient: true, dbReadAccess: true });
