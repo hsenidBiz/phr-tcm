@@ -341,3 +341,126 @@ async fn bug_with_pbi_zero_links_only_the_case() {
     assert_eq!(rels.len(), 1, "{body}");
     assert!(rels[0]["value"]["url"].as_str().unwrap().ends_with("/workitems/555"));
 }
+
+// ------------------------------------------------ the assistant knows the suite
+
+fn current_suite() -> v2_lib::ai_bridge::CurrentSuite {
+    v2_lib::ai_bridge::CurrentSuite {
+        plan_id: 9,
+        suite_id: 91,
+        title: "Login".into(),
+        plan_name: "Release 4".into(),
+        project: Some("Web".into()),
+    }
+}
+
+#[tokio::test]
+async fn current_pbi_answer_with_a_suite() {
+    let ctx = v2_lib::ai_bridge::BridgeContext { current_suite: Some(current_suite()), ..Default::default() };
+    let (status, body) = crate::common::route_without_rules(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "pbi": null,
+            "suite": { "plan_id": 9, "suite_id": 91, "title": "Login", "plan_name": "Release 4", "project": "Web" },
+            "note": "No PBI is selected. The current suite is \"Login\" (plan 9, suite 91). Read its cases with get_suite_test_cases.",
+        })
+    );
+}
+
+#[tokio::test]
+async fn current_pbi_answer_with_neither_unchanged() {
+    let (status, body) =
+        crate::common::route_without_rules(&v2_lib::ai_bridge::BridgeContext::default(), None, "GET", "/current-pbi", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "No PBI is selected in TCM.");
+}
+
+#[tokio::test]
+async fn current_pbi_answer_with_a_pbi_ignores_the_suite() {
+    let ctx = v2_lib::ai_bridge::BridgeContext {
+        current_pbi: Some(v2_lib::ai_bridge::CurrentPbi { id: 5, title: "P".into(), project: "Web".into() }),
+        current_suite: Some(current_suite()),
+        ..Default::default()
+    };
+    let (_, body) = crate::common::route_without_rules(&ctx, None, "GET", "/current-pbi", "", "1.0.0").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v, serde_json::json!({ "id": 5, "title": "P", "project": "Web" }));
+}
+
+#[test]
+fn context_push_sets_and_clears_the_suite() {
+    use v2_lib::ai_bridge::BridgeContext;
+    use v2_lib::commands::ai_bridge::{clear_current_pbi, push_context_with, BridgeSwitches};
+    let with: BridgeSwitches = serde_json::from_str(
+        r#"{"dbWrites":false,"apiWrites":false,"suite":{"plan_id":9,"suite_id":91,"title":"Login","plan_name":"Release 4","project":"Web"}}"#,
+    )
+    .unwrap();
+    assert_eq!(with.suite, Some(current_suite()));
+    let older: BridgeSwitches = serde_json::from_str(r#"{"dbWrites":false,"apiWrites":false}"#).unwrap();
+    assert_eq!(older.suite, None, "a push with no suite keeps working");
+
+    let dir = tempfile::tempdir().unwrap();
+    let slot = std::sync::Mutex::new(BridgeContext::default());
+    let next = BridgeContext { org: "acme".into(), current_suite: Some(current_suite()), ..Default::default() };
+    push_context_with(&slot, Some(dir.path()), next, "");
+    assert_eq!(slot.lock().unwrap().current_suite, Some(current_suite()));
+    push_context_with(&slot, Some(dir.path()), BridgeContext { org: "acme".into(), ..Default::default() }, "");
+    assert_eq!(slot.lock().unwrap().current_suite, None);
+
+    slot.lock().unwrap().current_suite = Some(current_suite());
+    clear_current_pbi(&slot);
+    assert_eq!(slot.lock().unwrap().current_suite, None, "clear_bridge_pbi takes the suite too");
+}
+
+#[tokio::test]
+async fn autorun_order_validates_against_suite_cases() {
+    let dir = tempfile::tempdir().unwrap();
+    let _root = crate::serial::autorun();
+    store::set_root(dir.path().to_path_buf());
+    let server = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 1, "testCaseReference": { "id": 201, "name": "A" }, "configuration": { "name": "Chrome" } },
+                { "id": 2, "testCaseReference": { "id": 202, "name": "B" }, "configuration": { "name": "Chrome" } },
+                { "id": 3, "testCaseReference": { "id": 201, "name": "A" }, "configuration": { "name": "Edge" } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let ctx = v2_lib::ai_bridge::BridgeContext {
+        org: "acme".into(),
+        project: "Web".into(),
+        current_suite: Some(current_suite()),
+        ..Default::default()
+    };
+    let post = |body: serde_json::Value| {
+        let (ctx, client) = (&ctx, &client);
+        async move { crate::common::route_without_rules(ctx, Some(client), "POST", "/autorun-order", &body.to_string(), "1.0.0").await }
+    };
+
+    let (status, out) = post(serde_json::json!({ "case_ids": [202, 999] })).await;
+    assert_eq!((status, out.as_str()), (400, "case 999 is not in suite 91 (plan 9)"));
+
+    let (status, out) = post(serde_json::json!({ "case_ids": [202, 201] })).await;
+    assert_eq!(status, 200, "{out}");
+    let scope = RunScope::Suite(suite(9, 91));
+    assert_eq!(store::load_order(dir.path(), scope), Some(vec![202, 201]));
+
+    let no_suite = v2_lib::ai_bridge::BridgeContext { current_suite: None, ..ctx.clone() };
+    let (status, _) = crate::common::route_without_rules(
+        &no_suite,
+        Some(&client),
+        "POST",
+        "/autorun-order",
+        &serde_json::json!({ "case_ids": [201] }).to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 400, "no PBI and no suite: nothing to validate against");
+}

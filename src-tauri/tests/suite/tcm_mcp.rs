@@ -2178,7 +2178,7 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == NAME).unwrap();
-    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["pbi_id", "case_ids"]));
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["case_ids"]));
     assert_eq!(tool["inputSchema"]["properties"]["case_ids"]["type"], "array");
     let d = tool["description"].as_str().unwrap();
     assert!(d.contains("Run selected and Run unattended"), "{d}");

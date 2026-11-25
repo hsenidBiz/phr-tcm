@@ -233,12 +233,18 @@ pub struct BridgeSwitches {
     /// may take.
     #[serde(default)]
     pub pbi: Option<crate::ai_bridge::CurrentPbi>,
+    /// The test suite Auto Test is on, or none (see
+    /// `BridgeContext::current_suite`). Rides here like `pbi`.
+    #[serde(default)]
+    pub suite: Option<crate::ai_bridge::CurrentSuite>,
 }
 
 /// Take the selected PBI off the bridge's context: the webview calls it when
 /// the org changes or the person signs out, when nothing else is pushed.
 pub fn clear_current_pbi(slot: &std::sync::Mutex<BridgeContext>) {
-    slot.lock().unwrap_or_else(|e| e.into_inner()).current_pbi = None;
+    let mut ctx = slot.lock().unwrap_or_else(|e| e.into_inner());
+    ctx.current_pbi = None;
+    ctx.current_suite = None;
 }
 
 #[tauri::command]
@@ -435,6 +441,7 @@ fn push_context(
             autorun_mode: switches.autorun_mode,
             app_simple_mode: switches.app_simple_mode,
             current_pbi: switches.pbi.clone(),
+            current_suite: switches.suite.clone(),
             // Set from the active environment, never from the webview.
             db_no_ask: false,
             gate: Default::default(),

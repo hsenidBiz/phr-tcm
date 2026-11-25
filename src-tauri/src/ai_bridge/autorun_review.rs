@@ -487,7 +487,10 @@ pub(crate) async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crat
             Reported::New(id) | Reported::Updated(id) => id,
         };
         let id = id.clone();
-        divergences::note_pbi_in(list, &id, ctx.current_pbi.as_ref().map(|p| p.id));
+        // No PBI (the person is on a suite): there is nothing to note.
+        if let Some(pbi) = ctx.current_pbi.as_ref().map(|p| p.id) {
+            divergences::note_pbi_in(list, &id, Some(pbi));
+        }
         let stored = list.iter().find(|d| d.id == id).cloned().expect("the divergence just reported");
         Ok((stored, matches!(r, Reported::Updated(_))))
     });
@@ -637,8 +640,10 @@ pub(crate) fn autorun_defect_clear(body: &str) -> (u16, String) {
 /// order, and the PBI's other cases run after the listed ones.
 pub const ORDER_REPLACED: &str = "This replaced the PBI's whole Auto Test order: its other cases run after these, in list order. To add cases ahead of the saved order and keep the rest of it, send mode: \"append\".";
 
-/// `POST /autorun-order`, body `{ pbi_id, case_ids, mode? }`: Auto Test's own
-/// execution order for the PBI on this machine (`store::save_order`). Run
+/// `POST /autorun-order`, body `{ pbi_id?, case_ids, mode? }`: Auto Test's own
+/// execution order for the PBI on this machine (`store::save_order`). With no
+/// `pbi_id` the order is for the current suite (`BridgeContext::current_suite`)
+/// and the ids are checked against the suite's own test points. Run
 /// Tests' order is not touched. Every id must be one of the PBI's test
 /// cases, read from Azure DevOps the way the Auto Test tab lists them; a
 /// listed case with no saved script is saved in the order and named back.
@@ -646,12 +651,13 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct OrderBody {
-        pbi_id: i32,
+        #[serde(default)]
+        pbi_id: Option<i32>,
         case_ids: Vec<i32>,
         #[serde(default)]
         mode: Option<String>,
     }
-    let shape = "{ \"pbi_id\": 100, \"case_ids\": [503, 501, 502], \"mode\": \"replace\" | \"append\" (optional) }";
+    let shape = "{ \"pbi_id\": 100 (omit it for the current suite), \"case_ids\": [503, 501, 502], \"mode\": \"replace\" | \"append\" (optional) }";
     let o: OrderBody = match serde_json::from_str(body) {
         Ok(o) => o,
         Err(e) => return (400, format!("that is not an order: {e}. Expected {shape}.")),
@@ -676,18 +682,38 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
     let Some(client) = client else {
         return (503, "sign in to Test Case Manager first".to_string());
     };
-    let on_pbi: Vec<i32> = match client.get_pbi_test_cases(&ctx.org, o.pbi_id).await {
-        Ok(cases) => cases.into_iter().map(|c| c.id).collect(),
-        Err(crate::ado::AdoError::NotFound) => {
-            return (404, format!("Azure DevOps has no work item #{} - check the PBI id", o.pbi_id))
+    let (scope, on_scope, what): (crate::autorun::RunScope, Vec<i32>, String) = match o.pbi_id {
+        Some(pbi_id) => {
+            let ids = match client.get_pbi_test_cases(&ctx.org, pbi_id).await {
+                Ok(cases) => cases.into_iter().map(|c| c.id).collect(),
+                Err(crate::ado::AdoError::NotFound) => {
+                    return (404, format!("Azure DevOps has no work item #{pbi_id} - check the PBI id"))
+                }
+                Err(e) => return (502, format!("Azure DevOps error: {}", e.user_text())),
+            };
+            (crate::autorun::RunScope::Pbi(pbi_id), ids, format!("PBI {pbi_id}"))
         }
-        Err(e) => return (502, format!("Azure DevOps error: {}", e.user_text())),
+        None => {
+            let Some(su) = ctx.current_suite.as_ref() else {
+                return (400, "pbi_id is missing and no suite is current in TCM - send the PBI's id".to_string());
+            };
+            let project = su.project.clone().unwrap_or_else(|| ctx.project.clone());
+            let ids = match client.suite_case_ids(&ctx.org, &project, su.plan_id, su.suite_id, false).await {
+                Ok(ids) => ids,
+                Err(crate::ado::AdoError::NotFound) => {
+                    return (404, format!("Azure DevOps has no suite {} in plan {}", su.suite_id, su.plan_id))
+                }
+                Err(e) => return (502, format!("Azure DevOps error: {}", e.user_text())),
+            };
+            let r = crate::autorun::SuiteRef { plan_id: su.plan_id, suite_id: su.suite_id, title: su.title.clone() };
+            (crate::autorun::RunScope::Suite(r), ids, format!("suite {} (plan {})", su.suite_id, su.plan_id))
+        }
     };
     let not_on_pbi: Vec<String> = o
         .case_ids
         .iter()
-        .filter(|id| !on_pbi.contains(id))
-        .map(|id| format!("case {id} is not in PBI {}", o.pbi_id))
+        .filter(|id| !on_scope.contains(id))
+        .map(|id| format!("case {id} is not in {what}"))
         .collect();
     if !not_on_pbi.is_empty() {
         return (400, not_on_pbi.join("; "));
@@ -697,7 +723,7 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
     // be read past and then overwritten here.
     let (kept, saved): (Vec<i32>, Vec<i32>) = match crate::autorun::store::with_order_locked(|| {
         // Appending keeps the saved order's other cases after the given ones.
-        let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, o.pbi_id)) {
+        let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, scope.clone())) {
             (true, Some(existing)) => crate::autorun::store::append_order(&existing, &o.case_ids)
                 .into_iter()
                 .filter(|id| !o.case_ids.contains(id))
@@ -705,15 +731,15 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
             _ => Vec::new(),
         };
         let saved: Vec<i32> = o.case_ids.iter().chain(&kept).copied().collect();
-        crate::autorun::store::save_order(&root, o.pbi_id, &saved).map(|()| (kept, saved))
+        crate::autorun::store::save_order(&root, scope.clone(), &saved).map(|()| (kept, saved))
     }) {
         Ok(both) => both,
         Err(e) => return (500, format!("could not save the order: {e}")),
     };
     let how = if append { "appended" } else { "replaced" };
-    crate::applog::info(format!("AI set Auto Test's order for PBI {} ({how}): {} case(s)", o.pbi_id, saved.len()));
+    crate::applog::info(format!("AI set Auto Test's order for {what} ({how}): {} case(s)", saved.len()));
     let ids = |list: &[i32]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
-    let mut lines = vec![format!("saved Auto Test's order for PBI {}: {}", o.pbi_id, ids(&o.case_ids))];
+    let mut lines = vec![format!("saved Auto Test's order for {what}: {}", ids(&o.case_ids))];
     if append {
         lines.push(match kept.is_empty() {
             true => "Appended: the saved order had no other cases.".to_string(),

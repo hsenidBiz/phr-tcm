@@ -3876,6 +3876,9 @@ async fn an_order_that_is_not_one_is_refused() {
     assert_eq!((status, out.as_str()), (400, "case 501 is listed twice"));
     let (status, out) = send(serde_json::json!({ "case_ids": [501] })).await;
     assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("pbi_id is missing and no suite is current"), "{out}");
+    let (status, out) = send(serde_json::json!({ "pbi_id": "x", "case_ids": [501] })).await;
+    assert_eq!(status, 400, "{out}");
     assert!(out.starts_with("that is not an order"), "{out}");
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), None);
 }

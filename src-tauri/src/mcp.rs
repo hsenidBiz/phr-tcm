@@ -657,7 +657,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         guide_tool(&disabled),
         {
             "name": "get_current_pbi",
-            "description": "The PBI the person has selected in Test Case Manager's top bar: its id, title and project, or a plain sentence saying none is selected, and once the app has told it, which Auto Test mode the person has (simple or advanced; you cannot change it). Read only; it never changes the selection. Call it before searching for a PBI. If the person named a PBI, compare it with this one; if they named none and TCM has one, name it to them (\"PBI <id>, <title>, is selected in TCM - is that the one?\") and wait for their yes before you go on.",
+            "description": "The PBI the person has selected in Test Case Manager's top bar: its id, title and project, or a plain sentence saying none is selected. When Auto Test is on a test suite instead and no PBI is selected, it answers `{ pbi: null, suite: { plan_id, suite_id, title, plan_name, project }, note }`: the cases are that suite's, read with `get_suite_test_cases` (its plan and suite ids). Once the app has told it, it also says which Auto Test mode the person has (simple or advanced; you cannot change it). Read only; it never changes the selection. Call it before searching for a PBI. If the person named a PBI, compare it with this one; if they named none and TCM has one, name it to them (\"PBI <id>, <title>, is selected in TCM - is that the one?\") and wait for their yes before you go on.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -1027,14 +1027,14 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "name": "set_autorun_order",
             "description": "Set the order Auto Test runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Each call REPLACES the PBI's whole saved order (`mode: \"replace\"`, the default): cases you leave out run after the listed ones, in list order. `mode: \"append\"` keeps the saved order's other cases, in their order, after the ones you list. The answer says which it did. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
             "inputSchema": schema(serde_json::json!({
-                "pbi_id": { "type": "number", "description": "The PBI whose cases these are." },
+                "pbi_id": { "type": "number", "description": "The PBI whose cases these are. Leave it out when get_current_pbi names a suite: the order is then the current suite's, and its ids are checked against the suite's own cases." },
                 "case_ids": {
                     "type": "array",
                     "items": { "type": "number" },
                     "description": "The PBI's test case ids, in the order Auto Test should run them, each once.",
                 },
                 "mode": { "type": "string", "enum": ["replace", "append"], "description": "Optional: \"replace\" (the default) saves exactly this order; \"append\" keeps the saved order's other cases after these." },
-            }), &["pbi_id", "case_ids"]),
+            }), &["case_ids"]),
         },
         {
             "name": "propose_accounts",

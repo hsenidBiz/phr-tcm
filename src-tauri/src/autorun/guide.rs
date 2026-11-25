@@ -1124,7 +1124,8 @@ ask which one to use. If they named none and TCM has one, say
 "PBI <id>, <title>, is selected in TCM - is that the one?" and wait for their yes before you continue.
 If TCM has none, find it with `search_pbis`, or ask the person for the id. You cannot change TCM's
 selection. Only the assistant the person talks to asks: a subagent never asks about the PBI, it uses
-the PBI id it was given.
+the PBI id it was given. When `get_current_pbi` names a suite instead (no PBI is selected), the cases
+come from that suite: read them with `get_suite_test_cases`, passing the plan and suite ids it gives.
 
 ## Basic mode
 

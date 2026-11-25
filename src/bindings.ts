@@ -3567,6 +3567,11 @@ export type BridgeSwitches = {
 	 *  may take.
 	 */
 	pbi?: CurrentPbi | null,
+	/**
+	 *  The test suite Auto Test is on, or none (see
+	 *  `BridgeContext::current_suite`). Rides here like `pbi`.
+	 */
+	suite?: CurrentSuite | null,
 };
 
 /**  How the browser runs. */
@@ -4595,6 +4600,19 @@ export type CurrentReport = {
 	 *  showing a preview of something that no longer exists.
 	 */
 	missing: boolean,
+};
+
+/**
+ *  The test suite Auto Test is on, as the assistants see it
+ *  (`get_current_pbi` names it when no PBI is selected). Pushed with the bridge
+ *  context; only ever read here.
+ */
+export type CurrentSuite = {
+	plan_id: number,
+	suite_id: number,
+	title: string,
+	plan_name: string,
+	project?: string | null,
 };
 
 /**
