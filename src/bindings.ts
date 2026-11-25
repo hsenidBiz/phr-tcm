@@ -3271,7 +3271,7 @@ export type AutoApproveOutcome = {
 export type AutoRunSuiteRef = {
 	plan_id: number,
 	suite_id: number,
-	title: string,
+	title?: string,
 };
 
 /**
