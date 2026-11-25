@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.3",
+    date: "2026-11-25",
+    items: [
+      "Registering Claude Code from AI Bridge now works with Claude Code for VS Code: TCM's tools appear after you restart Claude Code or reload VS Code.",
+      "TCM keeps Claude Code's registration in your own Claude settings for each repository, and moves it out of the repository's .mcp.json the next time you press Register. If teammates share that repository, they should update TCM too.",
+    ],
+  },
+  {
     version: "2.4.8-beta.2",
     date: "2026-11-23",
     items: [
