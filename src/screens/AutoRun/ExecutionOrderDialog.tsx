@@ -100,8 +100,8 @@ export default function ExecutionOrderDialog({
       setBusy(false);
     }
   };
-  const save = () => run(() => unwrapStr(commands.autoRunSaveOrder(pbiId, order.map((c) => c.id))));
-  const useSuggested = () => run(() => unwrapStr(commands.autoRunClearOrder(pbiId)));
+  const save = () => run(() => unwrapStr(commands.autoRunSaveOrder({ kind: "pbi", pbi_id: pbiId }, order.map((c) => c.id))));
+  const useSuggested = () => run(() => unwrapStr(commands.autoRunClearOrder({ kind: "pbi", pbi_id: pbiId })));
 
   return (
     <Modal

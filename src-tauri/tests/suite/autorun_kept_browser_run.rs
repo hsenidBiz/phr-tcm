@@ -274,6 +274,7 @@ fn to_run(ids: &[i32]) -> Vec<CaseToRun> {
 fn new_run() -> LocalRun {
     LocalRun {
         video_unavailable: false,
+        suite: None,
         id: "run-k".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),

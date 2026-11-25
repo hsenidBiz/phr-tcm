@@ -18,7 +18,7 @@ export async function fetchPlan(
   /** An order not saved yet, planned in place of the saved one. */
   preview: number[] | null = null,
 ): Promise<PlanView | null> {
-  const r = await commands.autoRunPlan(org, project, pbiId, ids, preview);
+  const r = await commands.autoRunPlan(org, project, { kind: "pbi", pbi_id: pbiId }, ids, preview);
   if (r?.status === "error") throw new Error(String(r.error));
   if (r?.status !== "ok") return null;
   const plan = r.data;

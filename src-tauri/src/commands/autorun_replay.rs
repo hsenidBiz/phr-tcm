@@ -291,7 +291,7 @@ pub async fn auto_run_replay(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    pbi_id: i32,
+    scope: crate::autorun::RunScope,
     cases: Vec<ReplayCase>,
     account: Option<String>,
     browser_name: String,
@@ -318,19 +318,14 @@ pub async fn auto_run_replay(
     // that finds no supervised browser open.
     store::remember_browser(&root, &browser_name);
     let run_account = crate::autorun::accounts::account_for_run(&root, account.as_deref())?;
-    let mut run = LocalRun { video_unavailable: false,
-        id: store::new_run_id(),
-        pbi_id,
-        started_at: sessions::now_ms().to_string(),
-        cases: vec![],
-        mode: "unattended".to_string(),
-        published: None,
-        // A switch is refused while this run holds its slot, so this is the
-        // environment every case of it signs in to.
-        environment: crate::environments::active(&root).ok().map(|e| e.name),
-        resets: vec![],
-        network_pauses: vec![],
-    };
+    // A switch is refused while this run holds its slot, so this is the
+    // environment every case of it signs in to.
+    let mut run = new_replay_run(
+        &scope,
+        store::new_run_id(),
+        sessions::now_ms().to_string(),
+        crate::environments::active(&root).ok().map(|e| e.name),
+    );
 
     let sent: Vec<CaseToRun> = cases
         .iter()
@@ -339,7 +334,7 @@ pub async fn auto_run_replay(
     // The order and its reset points, worked out again here from the
     // scripts on disk and the PBI's own order: the reset points are never
     // taken on the webview's word.
-    let (list, resets) = planned_cases(&root, pbi_id, &sent);
+    let (list, resets) = planned_cases(&root, scope.clone(), &sent);
     let timing = replay_timing(watch);
     let mut browsers = run_browsers(Browser::from_name(&browser_name), watch);
     // Where the cases' preconditions are asked: nowhere while Database
@@ -424,14 +419,33 @@ pub fn auto_run_replay_cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// The empty record an unattended run starts from: a PBI run carries the
+/// PBI's id, a suite run carries the suite (and a `pbi_id` of 0).
+pub fn new_replay_run(scope: &crate::autorun::RunScope, id: String, started_at: String, environment: Option<String>) -> LocalRun {
+    let (pbi_id, suite) = scope.run_fields();
+    LocalRun {
+        video_unavailable: false,
+        suite,
+        id,
+        pbi_id,
+        started_at,
+        cases: vec![],
+        mode: "unattended".to_string(),
+        published: None,
+        environment,
+        resets: vec![],
+        network_pauses: vec![],
+    }
+}
+
 /// The selection in the order to run it, and the pauses in that order
 /// (reset points, and settings to set before a batch): the plan worked out from the scripts on disk and the PBI's own
 /// order (`autorun::auto_run_plan`'s `plan_at`), whatever order the cases
 /// were sent in. Where the two orders differ the plan wins, and the
 /// difference is logged (ids only).
-pub fn planned_cases(root: &std::path::Path, pbi_id: i32, sent: &[CaseToRun]) -> (Vec<CaseToRun>, Vec<Pause>) {
+pub fn planned_cases(root: &std::path::Path, scope: impl Into<crate::autorun::RunScope>, sent: &[CaseToRun]) -> (Vec<CaseToRun>, Vec<Pause>) {
     let ids: Vec<i32> = sent.iter().map(|c| c.case_id).collect();
-    let plan = super::autorun::plan_at(root, pbi_id, &ids, None);
+    let plan = super::autorun::plan_at(root, scope, &ids, None);
     if plan.order != ids {
         crate::applog::info(format!(
             "Auto-run unattended: the planned order {:?} replaces the order sent {:?}",

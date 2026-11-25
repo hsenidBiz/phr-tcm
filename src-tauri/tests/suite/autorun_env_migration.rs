@@ -521,7 +521,7 @@ fn a_link_in_place_of_an_item_fails_the_migration() {
 }
 
 fn a_run(id: &str) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: id.to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),

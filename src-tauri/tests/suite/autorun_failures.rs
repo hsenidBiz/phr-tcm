@@ -208,7 +208,7 @@ fn save_button() -> Action {
 
 #[test]
 fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and_skips_the_rest() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1700000000000".to_string(),
         pbi_id: 555,
         started_at: "1700000000000".to_string(),
@@ -361,7 +361,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
 
 #[test]
 fn describe_failures_names_the_run_when_no_case_failed() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -377,7 +377,7 @@ fn describe_failures_names_the_run_when_no_case_failed() {
 
 #[test]
 fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-2".to_string(),
         pbi_id: 1,
         started_at: "2".to_string(),
@@ -410,7 +410,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
 
 #[test]
 fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-3".to_string(),
         pbi_id: 1,
         started_at: "3".to_string(),
@@ -472,7 +472,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
 fn describe_failures_omits_proposed_when_proposed_is_empty() {
     // A supervised run never fills in `proposed` - only a person's own
     // verdict. The header must not print an empty "proposed " for it.
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -494,7 +494,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
     // action skipped because an earlier action in the SAME step already
     // failed) - that is not the whole-step "not run" case, so the not-run
     // outcome must still be shown, not silently dropped.
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -531,7 +531,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
     // The script for this case IS on disk, but it no longer has an action
     // at this index (a person edited it after this run happened) - that is
     // a different situation from no script at all, and must say so.
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -583,7 +583,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
 #[test]
 fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
     let dir = TempDir::new();
-    let older = LocalRun { video_unavailable: false,
+    let older = LocalRun { video_unavailable: false, suite: None,
         id: "run-1000".to_string(),
         pbi_id: 1,
         started_at: "1000".to_string(),
@@ -594,7 +594,7 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
         resets: vec![],
         network_pauses: vec![],
     };
-    let newer = LocalRun { video_unavailable: false,
+    let newer = LocalRun { video_unavailable: false, suite: None,
         id: "run-2000".to_string(),
         pbi_id: 1,
         started_at: "2000".to_string(),
@@ -636,7 +636,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
         stop_reason(&no_module).as_deref(),
         Some("the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script")
     );
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -687,7 +687,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         }],
         ..empty_case()
     };
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1700000000000".to_string(),
         pbi_id: 555,
         started_at: "1700000000000".to_string(),
@@ -734,7 +734,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
 
 #[test]
 fn describe_failures_names_each_steps_downloads_and_nothing_more() {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-dl".to_string(),
         pbi_id: 1,
         started_at: "4".to_string(),
@@ -865,7 +865,7 @@ mod component_steps {
 fn a_failure_line_names_the_picture_by_a_path_that_exists() {
     let dir = TempDir::new();
     let name = v2_lib::autorun::store::save_shot(dir.path(), b"jpeg bytes").unwrap();
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".to_string(),
         pbi_id: 1,
         started_at: "1".to_string(),
@@ -919,7 +919,7 @@ const NOW: u64 = 100 * HOUR;
 /// Run `id` started `ago` before `NOW`, its cases as (id, verdict,
 /// proposed).
 fn run_ago(id: &str, ago: u64, cases: &[(i32, &str, &str)]) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: id.to_string(),
         pbi_id: 5,
         started_at: (NOW - ago).to_string(),

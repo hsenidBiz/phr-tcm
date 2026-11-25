@@ -995,7 +995,7 @@ fn old_runs_and_proofs_still_load() {
     .expect("a run saved before environments still loads");
     assert_eq!(run.environment, None);
     assert!(serde_json::to_value(&run).unwrap().get("environment").is_none());
-    let named = LocalRun { video_unavailable: false, environment: Some("QA".into()), ..run };
+    let named = LocalRun { video_unavailable: false, suite: None, environment: Some("QA".into()), ..run };
     assert_eq!(serde_json::to_value(&named).unwrap()["environment"], "QA");
 
     let mut t = crate::common::template_on_stage("pms-rules", "Rules", "rules");
@@ -1022,7 +1022,7 @@ fn a_new_run_records_the_active_environment() {
     let root = dir.path();
     let (_, qa) = two_envs(root);
     set_active(root, &qa).unwrap();
-    let run = |id: &str| LocalRun { video_unavailable: false,
+    let run = |id: &str| LocalRun { video_unavailable: false, suite: None,
         id: id.into(),
         pbi_id: 7,
         started_at: "1".into(),

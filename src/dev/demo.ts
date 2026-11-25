@@ -1956,13 +1956,13 @@ function applyPatches() {
     autoRunReplay: async (
       _o: string,
       _p: string,
-      pbiId: number,
+      scope: { kind: string; pbi_id?: number },
       cases: { case_id: number; title: string }[],
       account: string | null,
     ) => {
       if (!Array.isArray(cases)) return err("Demo mode: no cases to run");
       await sleep(600);
-      const run = replayRun(pbiId, cases, account);
+      const run = replayRun(scope.pbi_id ?? 0, cases, account);
       autoRuns.unshift(run);
       return { status: "ok" as const, data: run };
     },

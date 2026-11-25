@@ -40,6 +40,25 @@ pub async fn pbi_test_cases_full(
     Ok(cases)
 }
 
+/// A test suite's own cases (not its child suites'), in the suite's order,
+/// each once, in full: what Auto Test works on when it is given a suite.
+#[tauri::command]
+#[specta::specta]
+pub async fn suite_test_cases_full(
+    app: tauri::AppHandle,
+    org: String,
+    project: String,
+    plan_id: i32,
+    suite_id: i32,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<Vec<ado::TestCaseFull>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_suite_cases_full(&org, &project, plan_id, suite_id, module_ref.as_deref(), preconditions_ref.as_deref())
+        .await
+}
+
 /// Test cases for arbitrary ids (suite browser handoffs).
 #[tauri::command]
 #[specta::specta]

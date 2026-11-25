@@ -351,7 +351,7 @@ fn case_page(pass: &'static [&'static str]) -> ScriptedDriver {
 }
 
 fn new_run() -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: "run-setup".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),

@@ -153,6 +153,7 @@ mod autorun_setup_run;
 mod autorun_setups;
 mod autorun_signin;
 mod autorun_store;
+mod autorun_suite_scope;
 mod autorun_tables;
 mod autorun_transient;
 mod autorun_video;

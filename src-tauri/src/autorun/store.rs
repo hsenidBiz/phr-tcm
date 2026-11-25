@@ -1,7 +1,7 @@
 //! Scripts and runs on disk, under the app's own data directory.
 
 use super::slots::SlotNo;
-use super::{unchecked, CaseScript, ClearedDefect, FlakyMark, LocalRun, StepScript, SuspectedDefect, Unchecked, UncheckedItem};
+use super::{unchecked, CaseScript, ClearedDefect, FlakyMark, LocalRun, RunScope, StepScript, SuspectedDefect, Unchecked, UncheckedItem};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -1945,9 +1945,22 @@ fn browser_name(name: &str) -> String {
     .to_string()
 }
 
-/// Where Auto Test's own order for each PBI lives: `orders/<pbi id>.json`.
-fn order_path(root: &Path, pbi_id: i32) -> PathBuf {
-    root.join("orders").join(format!("{pbi_id}.json"))
+/// Where Auto Test's own order for each run scope lives:
+/// `orders/<pbi id>.json` for a PBI (the path orders have always had) and
+/// `orders/suite-<plan>-<suite>.json` for a test suite.
+fn order_path(root: &Path, scope: &RunScope) -> PathBuf {
+    match scope {
+        RunScope::Pbi(pbi_id) => root.join("orders").join(format!("{pbi_id}.json")),
+        RunScope::Suite(r) => root.join("orders").join(format!("suite-{}-{}.json", r.plan_id, r.suite_id)),
+    }
+}
+
+/// How a scope reads in a log line (ids only).
+fn scope_label(scope: &RunScope) -> String {
+    match scope {
+        RunScope::Pbi(id) => format!("PBI {id}"),
+        RunScope::Suite(r) => format!("suite {} of plan {}", r.suite_id, r.plan_id),
+    }
 }
 
 /// Auto Test's own order for a PBI, as stored.
@@ -1960,13 +1973,14 @@ struct SavedOrder {
 /// when there is none. It is separate from Run Tests' order. A file that
 /// cannot be read, or holds no cases, is no order: it is logged, and the
 /// suggested order is used.
-pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
-    let path = order_path(root, pbi_id);
+pub fn load_order(root: &Path, scope: impl Into<RunScope>) -> Option<Vec<i32>> {
+    let scope: RunScope = scope.into();
+    let path = order_path(root, &scope);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
-            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be read: {e}"));
+            crate::applog::warn(format!("auto-run: the order for {} could not be read: {e}", scope_label(&scope)));
             return None;
         }
     };
@@ -1974,7 +1988,7 @@ pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
         Ok(saved) if !saved.case_ids.is_empty() => Some(saved.case_ids),
         Ok(_) => None,
         Err(e) => {
-            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} is not readable: {e}"));
+            crate::applog::warn(format!("auto-run: the order for {} is not readable: {e}", scope_label(&scope)));
             None
         }
     }
@@ -1983,7 +1997,7 @@ pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
 /// Save Auto Test's own order for a PBI, each case once where it first
 /// appears. Written by a temporary file and a rename, so a reader never
 /// sees half of it. An empty order is refused: clearing is `clear_order`.
-pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
+pub fn save_order(root: &Path, scope: impl Into<RunScope>, case_ids: &[i32]) -> Result<(), String> {
     super::roots::guard(root).map(drop)?;
     let mut ids: Vec<i32> = Vec::with_capacity(case_ids.len());
     for id in case_ids {
@@ -1994,11 +2008,12 @@ pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), Stri
     if ids.is_empty() {
         return Err("an order needs at least one case".to_string());
     }
-    let path = order_path(root, pbi_id);
+    let scope: RunScope = scope.into();
+    let path = order_path(root, &scope);
     // The raw error names the profile folder: it goes to the log, and the
     // caller gets a sentence without it.
     let not_saved = |e: String| {
-        crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be saved to {}: {e}", path.display()));
+        crate::applog::warn(format!("auto-run: the order for {} could not be saved to {}: {e}", scope_label(&scope), path.display()));
         ORDER_NOT_SAVED.to_string()
     };
     if let Some(dir) = path.parent() {
@@ -2072,10 +2087,11 @@ pub fn append_order(existing: &[i32], given: &[i32]) -> Vec<i32> {
 /// be only the cases ticked now: merged into the PBI's saved order
 /// (`merge_order`) so the rest of it is kept. With no saved order, it is
 /// saved as given.
-pub fn save_order_merged(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
-    with_order_locked(|| match load_order(root, pbi_id) {
-        Some(existing) => save_order(root, pbi_id, &merge_order(&existing, case_ids)),
-        None => save_order(root, pbi_id, case_ids),
+pub fn save_order_merged(root: &Path, scope: impl Into<RunScope>, case_ids: &[i32]) -> Result<(), String> {
+    let scope: RunScope = scope.into();
+    with_order_locked(|| match load_order(root, scope.clone()) {
+        Some(existing) => save_order(root, scope.clone(), &merge_order(&existing, case_ids)),
+        None => save_order(root, scope.clone(), case_ids),
     })
 }
 
@@ -2092,8 +2108,9 @@ pub fn with_order_locked<R>(f: impl FnOnce() -> R) -> R {
 
 /// Remove Auto Test's own order for a PBI, so the suggested order is used
 /// again. Only that one file goes; a PBI with no order is left as it is.
-pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
-    let path = order_path(root, pbi_id);
+pub fn clear_order(root: &Path, scope: impl Into<RunScope>) -> Result<(), String> {
+    let scope: RunScope = scope.into();
+    let path = order_path(root, &scope);
     // Under the order lock, so a clear cannot land between an append's read
     // and its write and then be written back over.
     with_order_locked(|| match super::roots::remove_file(root, &path) {
@@ -2102,7 +2119,7 @@ pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
         // Not a disk failure: nothing to look up in the log.
         Err(e) if e.to_string() == super::roots::ENVIRONMENT_SWITCHED => Err(e.to_string()),
         Err(e) => {
-            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be removed from {}: {e}", path.display()));
+            crate::applog::warn(format!("auto-run: the order for {} could not be removed from {}: {e}", scope_label(&scope), path.display()));
             Err(ORDER_NOT_CLEARED.to_string())
         }
     })

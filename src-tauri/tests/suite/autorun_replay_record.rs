@@ -44,7 +44,7 @@ fn stopped_at_2() -> ReplayEnd {
 
 /// A run at `started_at` in which case 77 failed at step 1.
 fn run_failing_step_1(started_at: u64) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: format!("run-{started_at}"),
         pbi_id: 1,
         started_at: started_at.to_string(),

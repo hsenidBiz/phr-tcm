@@ -21,6 +21,50 @@ impl AdoClient {
         self.get_test_points_in(org, project, plan_id, suite_id, test_case_ids, false).await
     }
 
+    /// The ids of a suite's cases in the suite's own order, each once. A
+    /// suite run on two configurations lists every case twice (one point
+    /// per case per configuration); the first place a case has is kept.
+    /// `recursive` brings in the child suites' cases too.
+    pub async fn suite_case_ids(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        suite_id: i32,
+        recursive: bool,
+    ) -> Result<Vec<i32>, AdoError> {
+        let points = self.get_test_points_in(org, project, plan_id, suite_id, &[], recursive).await?;
+        let mut ids: Vec<i32> = vec![];
+        for p in &points {
+            if let Some(id) = p.test_case_id {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// A suite's own cases (not its child suites'), in the suite's order, in
+    /// full with their step files: what Auto Test works on when it is given
+    /// a suite instead of a PBI.
+    pub async fn get_suite_cases_full(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        suite_id: i32,
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+    ) -> Result<Vec<crate::ado::TestCaseFull>, AdoError> {
+        let ids = self.suite_case_ids(org, project, plan_id, suite_id, false).await?;
+        let mut cases = self.get_test_cases_by_ids(org, &ids, module_ref, preconditions_ref).await?;
+        self.load_step_attachments(org, &mut cases).await;
+        // The work item read answers in id order; put the suite's order back.
+        cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));
+        Ok(cases)
+    }
+
     /// Same, with `recursive` mapping to the endpoint's documented
     /// `isRecursive` flag: the points of every child suite come too, so a
     /// folder suite reads in one call.

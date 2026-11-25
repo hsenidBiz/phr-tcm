@@ -381,7 +381,7 @@ impl Browsers for One {
 }
 
 fn new_run() -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: "run-l".into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),

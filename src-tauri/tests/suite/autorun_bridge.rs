@@ -2478,7 +2478,7 @@ async fn a_click_that_navigates_is_recorded_under_the_page_it_was_on() {
 // --------------------------------------------------------- the read routes
 
 fn failed_run(id: &str, case_id: i32) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: id.to_string(),
         pbi_id: 42,
         started_at: "1700000000000".to_string(),

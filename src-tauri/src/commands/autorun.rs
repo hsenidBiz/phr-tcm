@@ -3472,18 +3472,18 @@ pub fn auto_run_plan(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    pbi_id: i32,
+    scope: crate::autorun::RunScope,
     case_ids: Vec<i32>,
     preview_order: Option<Vec<i32>>,
 ) -> Result<PlanView, String> {
     let _ = (organization, project);
-    Ok(plan_at(&root(&app)?, pbi_id, &case_ids, preview_order.as_deref()))
+    Ok(plan_at(&root(&app)?, scope, &case_ids, preview_order.as_deref()))
 }
 
 /// The pure half of [`auto_run_plan`], so a test can reach it without an
 /// `AppHandle`. A script that cannot be read counts as no marks (and is
 /// logged), so one bad file never stops the plan.
-pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_order: Option<&[i32]>) -> PlanView {
+pub fn plan_at(root: &std::path::Path, scope: impl Into<crate::autorun::RunScope>, case_ids: &[i32], preview_order: Option<&[i32]>) -> PlanView {
     use crate::autorun::plan::{batches_for, needs_of, Marks, Needs};
     let selected: Vec<(i32, Marks, Needs)> = case_ids
         .iter()
@@ -3498,7 +3498,7 @@ pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_or
         .collect();
     let saved = match preview_order {
         Some(p) => Some(p.to_vec()),
-        None => store::load_order(root, pbi_id),
+        None => store::load_order(root, scope),
     };
     let (plan, counts) = batches_for(&selected, saved.as_deref());
     PlanView {
@@ -3516,18 +3516,18 @@ pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_or
 /// changed.
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_save_order(app: tauri::AppHandle, pbi_id: i32, case_ids: Vec<i32>) -> Result<(), String> {
+pub fn auto_run_save_order(app: tauri::AppHandle, scope: crate::autorun::RunScope, case_ids: Vec<i32>) -> Result<(), String> {
     // The dialog may order only the cases ticked now: the rest of the saved
     // order is kept.
-    store::save_order_merged(&root(&app)?, pbi_id, &case_ids)
+    store::save_order_merged(&root(&app)?, scope, &case_ids)
 }
 
 /// "Use suggested order": forget the PBI's own order, so the suggested
 /// order is used again.
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_clear_order(app: tauri::AppHandle, pbi_id: i32) -> Result<(), String> {
-    store::clear_order(&root(&app)?, pbi_id)
+pub fn auto_run_clear_order(app: tauri::AppHandle, scope: crate::autorun::RunScope) -> Result<(), String> {
+    store::clear_order(&root(&app)?, scope)
 }
 
 /// Import a BUNDLE of scripts from one file - the shape an assistant

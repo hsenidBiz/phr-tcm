@@ -270,6 +270,11 @@ export const commands = {
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull_Serialize[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**
+	 *  A test suite's own cases (not its child suites'), in the suite's order,
+	 *  each once, in full: what Auto Test works on when it is given a suite.
+	 */
+	suiteTestCasesFull: (org: string, project: string, planId: number, suiteId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull_Serialize[], AdoError>(__TAURI_INVOKE("suite_test_cases_full", { org, project, planId, suiteId, moduleRef, preconditionsRef })),
+	/**
 	 *  Save one existing case from the editor (no suite-ensure, no pacing).
 	 *  The case must carry update_id; blank-skip semantics apply as always.
 	 * 
@@ -909,19 +914,19 @@ export const commands = {
 	 *  Execution order dialog asks about a list the person has moved but not
 	 *  saved); nothing is written.
 	 */
-	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[], previewOrder: number[] | null) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds, previewOrder })),
+	autoRunPlan: (organization: string, project: string, scope: RunScope, caseIds: number[], previewOrder: number[] | null) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, scope, caseIds, previewOrder })),
 	/**
 	 *  Save Auto Test's own execution order for a PBI on this machine. Only
 	 *  the cases given move: the rest of an order already saved keeps its
 	 *  places (`store::merge_order`). Run Tests' order is separate and is not
 	 *  changed.
 	 */
-	autoRunSaveOrder: (pbiId: number, caseIds: number[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_order", { pbiId, caseIds })),
+	autoRunSaveOrder: (scope: RunScope, caseIds: number[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_order", { scope, caseIds })),
 	/**
 	 *  "Use suggested order": forget the PBI's own order, so the suggested
 	 *  order is used again.
 	 */
-	autoRunClearOrder: (pbiId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_order", { pbiId })),
+	autoRunClearOrder: (scope: RunScope) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_order", { scope })),
 	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
 	 *  writes for a whole PBI, and the shape the Auto Test screen's Import
@@ -959,6 +964,11 @@ export const commands = {
 	autoRunLoadRun: (runId: string) => typedError<{
 	id: string,
 	pbi_id: number,
+	/**
+	 *  Set when the run was over a test suite (then `pbi_id` is 0). Left out
+	 *  otherwise, so a PBI run reads and writes exactly as it always did.
+	 */
+	suite?: AutoRunSuiteRef | null,
 	/**
 	 *  Epoch milliseconds as a string - specta forbids u64 across IPC,
 	 *  and the frontend formats it anyway.
@@ -1212,7 +1222,7 @@ export const commands = {
 	 *  `db_read_access` is the Database Access module being on:
 	 *  while it is off no precondition is checked (`autorun::preconditions`).
 	 */
-	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient, dbReadAccess })),
+	autoRunReplay: (organization: string, project: string, scope: RunScope, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, scope, cases, account, browserName, watch, retryTransient, dbReadAccess })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
 	/**
@@ -3251,6 +3261,17 @@ export type AutoApproveOutcome = {
 	 *  tool's own it also depends on. Empty when there is nothing to do.
 	 */
 	note: string,
+};
+
+/**
+ *  A test suite a run (or its order) belongs to, instead of a PBI. Named
+ *  `AutoRunSuiteRef` in the generated TypeScript: `ado_testplan::SuiteRef`
+ *  (a suite in the plan tree) already has the other name.
+ */
+export type AutoRunSuiteRef = {
+	plan_id: number,
+	suite_id: number,
+	title: string,
 };
 
 /**
@@ -5675,6 +5696,11 @@ export type LocalRun_Deserialize = {
 	id: string,
 	pbi_id: number,
 	/**
+	 *  Set when the run was over a test suite (then `pbi_id` is 0). Left out
+	 *  otherwise, so a PBI run reads and writes exactly as it always did.
+	 */
+	suite?: AutoRunSuiteRef | null,
+	/**
 	 *  Epoch milliseconds as a string - specta forbids u64 across IPC,
 	 *  and the frontend formats it anyway.
 	 */
@@ -5712,6 +5738,11 @@ export type LocalRun_Deserialize = {
 export type LocalRun_Serialize = {
 	id: string,
 	pbi_id: number,
+	/**
+	 *  Set when the run was over a test suite (then `pbi_id` is 0). Left out
+	 *  otherwise, so a PBI run reads and writes exactly as it always did.
+	 */
+	suite?: AutoRunSuiteRef | null,
 	/**
 	 *  Epoch milliseconds as a string - specta forbids u64 across IPC,
 	 *  and the frontend formats it anyway.
@@ -7959,6 +7990,8 @@ export type RunReport = {
 	 */
 	failed: string | null,
 };
+
+export type RunScope = { kind: "pbi"; pbi_id: number } | { kind: "suite"; plan_id: number; suite_id: number; title: string };
 
 /**  How a run start was answered. */
 export type RunStart = 

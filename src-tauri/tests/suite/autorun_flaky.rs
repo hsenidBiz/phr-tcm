@@ -39,7 +39,7 @@ fn step_defaults() -> StepRecord {
 }
 
 fn run(n: u64, env: Option<&str>, cases: Vec<CaseRecord>) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: format!("run-{n}"),
         pbi_id: 1,
         started_at: n.to_string(),

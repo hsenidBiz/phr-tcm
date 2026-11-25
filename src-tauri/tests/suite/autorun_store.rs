@@ -104,7 +104,7 @@ fn run_ids_are_unique() {
 #[test]
 fn a_run_round_trips_with_the_humans_verdict() {
     let dir = TempDir::new();
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".to_string(),
         pbi_id: 42,
         started_at: "1786000000000".to_string(),
@@ -160,7 +160,7 @@ fn runs_come_back_newest_first() {
     for (id, at) in [("run-1", "1000"), ("run-2", "3000"), ("run-3", "2000")] {
         save_run(
             dir.path(),
-            &LocalRun { video_unavailable: false,
+            &LocalRun { video_unavailable: false, suite: None,
                 id: id.to_string(),
                 pbi_id: 42,
                 started_at: at.to_string(),
@@ -185,7 +185,7 @@ fn a_corrupt_run_file_is_skipped_rather_than_fatal() {
     let dir = TempDir::new();
     save_run(
         dir.path(),
-        &LocalRun { video_unavailable: false,
+        &LocalRun { video_unavailable: false, suite: None,
             id: "good".to_string(),
             pbi_id: 1,
             started_at: "1".to_string(),
@@ -668,7 +668,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let shot_a = save_and_prune(root, b"A", 2).unwrap();
-    let mut run = LocalRun { video_unavailable: false,
+    let mut run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -894,7 +894,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
     let dir = TempDir::new();
     let root = dir.path();
     let shot = save_and_prune(root, b"A", 10).unwrap();
-    let unpublished = LocalRun { video_unavailable: false,
+    let unpublished = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -921,7 +921,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
         network_pauses: vec![],
     };
     save_run(root, &unpublished).unwrap();
-    let published = LocalRun { video_unavailable: false,
+    let published = LocalRun { video_unavailable: false, suite: None,
         id: "run-2".into(),
         pbi_id: 1,
         started_at: "2".into(),
@@ -954,7 +954,7 @@ fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
     let dir = TempDir::new();
     let root = dir.path();
     let shot = save_and_prune(root, b"A", 10).unwrap();
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-1".into(),
         pbi_id: 1,
         started_at: "1".into(),
@@ -1125,7 +1125,7 @@ fn clear_runs_finishes_every_pass_and_then_reports_a_file_it_could_not_remove() 
     let shot = save_and_prune(root, b"A", 10).unwrap();
     save_run(
         root,
-        &LocalRun { video_unavailable: false,
+        &LocalRun { video_unavailable: false, suite: None,
             id: "run-1".into(),
             pbi_id: 1,
             started_at: "1".into(),
@@ -1199,7 +1199,7 @@ fn clear_runs_also_removes_every_runs_downloads() {
 
 /// A run with nothing in it, saved under `id`.
 fn saved_run(root: &std::path::Path, id: &str) {
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: id.to_string(),
         pbi_id: 42,
         started_at: "1786000000000".to_string(),
@@ -1436,7 +1436,7 @@ fn a_review_save_does_not_prune() {
     for i in 0..1001 {
         write(i);
     }
-    let run = LocalRun { video_unavailable: false,
+    let run = LocalRun { video_unavailable: false, suite: None,
         id: "run-review".into(),
         pbi_id: 1,
         started_at: "1700000000000".into(),

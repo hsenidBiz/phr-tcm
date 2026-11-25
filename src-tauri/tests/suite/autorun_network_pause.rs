@@ -90,7 +90,7 @@ fn quick() -> Timing {
 }
 
 fn new_run(id: &str) -> LocalRun {
-    LocalRun { video_unavailable: false,
+    LocalRun { video_unavailable: false, suite: None,
         id: id.into(),
         pbi_id: 42,
         started_at: "1700000000000".into(),

@@ -352,7 +352,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
     const res = await commands.autoRunReplay(
       r.org,
       r.project,
-      r.pbi.id,
+      { kind: "pbi", pbi_id: r.pbi.id },
       r.cases.map((c) => ({ case_id: c.id, title: c.title, module: c.module?.trim() || null })),
       opts.account,
       opts.browserName,
