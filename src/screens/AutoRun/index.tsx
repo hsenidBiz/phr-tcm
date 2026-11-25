@@ -1036,6 +1036,9 @@ export default function AutoRun({
                 {cases.isLoading && <ListSkeleton label="Loading test cases…" rows={5} />}
                 {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
 
+                {suiteScope && cases.isSuccess && rows.length === 0 && (
+                  <p className="text-sm text-muted">This suite has no test cases of its own. Open one of its child suites.</p>
+                )}
                 {rows.length > 0 && shownIdx.length === 0 && (
                   <p className="text-xs text-muted">
                     {searched

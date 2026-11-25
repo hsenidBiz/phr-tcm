@@ -1072,3 +1072,16 @@ fn a_case_waiting_for_a_repair_is_not_a_stop() {
     };
     assert_eq!(stop_reason(&case), None);
 }
+
+#[test]
+fn a_suite_runs_label_names_the_suite_not_a_pbi() {
+    use v2_lib::autorun::failures::run_label;
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1", "pbi_id": 0, "suite": { "plan_id": 9, "suite_id": 92, "title": "Password reset" },
+        "started_at": "1786000200000", "cases": []
+    }))
+    .unwrap();
+    let label = run_label(&run, &[]);
+    assert!(label.contains("suite Password reset"), "{label}");
+    assert!(!label.contains("PBI"), "{label}");
+}

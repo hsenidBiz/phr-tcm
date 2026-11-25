@@ -129,3 +129,19 @@ test("with no setSuite (Auto Test off) the bar has no switch", () => {
   expect(screen.queryByRole("group", { name: "Scope kind" })).not.toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Find PBI" })).toBeInTheDocument();
 });
+
+test("a suite that has child suites is marked as a folder in the list", async () => {
+  bar();
+  fireEvent.click(screen.getByRole("button", { name: "Suite" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Find suite" }), { target: { value: "Login folder" } });
+  const hit = await screen.findByRole("button", { name: /^Auth Plan › Login folder\s*folder$/ });
+  expect(hit).toHaveTextContent("folder");
+  fireEvent.change(screen.getByRole("textbox", { name: "Find suite" }), { target: { value: "reset" } });
+  const leaf = await screen.findByRole("button", { name: "Auth Plan › Login folder › Password reset" });
+  expect(leaf.textContent).toBe("Auth Plan › Login folder › Password reset");
+});
+
+test("the suite chip carries the full title and plan name as its tooltip", () => {
+  bar({ suite: { planId: 9, suiteId: 92, title: "Password reset", planName: "Auth Plan", project: "Web" } });
+  expect(screen.getByTitle("Password reset - Auth Plan")).toBeInTheDocument();
+});

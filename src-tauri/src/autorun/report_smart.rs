@@ -534,7 +534,7 @@ pub fn trend<'a>(run: &'a LocalRun, runs: &'a [LocalRun], marked: &[i32]) -> Tre
     env.push(run);
 
     // Run level: this PBI only.
-    let mut same_pbi: Vec<&LocalRun> = env.iter().copied().filter(|r| r.pbi_id == run.pbi_id).collect();
+    let mut same_pbi: Vec<&LocalRun> = env.iter().copied().filter(|r| r.scope().key() == run.scope().key()).collect();
     if same_pbi.len() > HISTORY_RUNS {
         same_pbi.drain(..same_pbi.len() - HISTORY_RUNS);
     }

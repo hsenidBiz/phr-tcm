@@ -2455,3 +2455,16 @@ test("moving to another scope cancels a run window still on its setup", async ()
   view.again({ kind: "suite", suite: { ...SUITE_SCOPE.suite, suiteId: 93, title: "Other suite" } });
   await waitFor(() => expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument());
 });
+
+test("a suite with no cases of its own says so and points at its child suites", async () => {
+  mockList([], []);
+  renderSuiteScreen();
+  expect(await screen.findByText("This suite has no test cases of its own. Open one of its child suites.")).toBeInTheDocument();
+});
+
+test("a PBI with no cases does not show the suite line", async () => {
+  mockList([], []);
+  renderScreen();
+  await waitFor(() => expect(screen.queryByText("Loading test cases…")).not.toBeInTheDocument());
+  expect(screen.queryByText(/no test cases of its own/)).not.toBeInTheDocument();
+});

@@ -1013,3 +1013,46 @@ fn list_labels_are_unchanged_when_the_titles_share_nothing() {
     assert!(panel.contains("title=\"Login works\">Login works</a>"), "{panel}");
     assert!(panel.contains("title=\"Logout works\">Logout works</a>"), "{panel}");
 }
+
+/// A run over a test suite: `pbi_id` 0 and the suite carried alongside.
+fn suite_run(id: &str, started: u64, suite_id: i32, title: &str) -> LocalRun {
+    serde_json::from_value(json!({
+        "id": id, "pbi_id": 0, "suite": { "plan_id": 9, "suite_id": suite_id, "title": title },
+        "started_at": started.to_string(), "mode": "unattended", "environment": "QA", "cases": [passed(1)]
+    }))
+    .unwrap()
+}
+
+fn report_of(now: &LocalRun, all: &[LocalRun]) -> String {
+    build_smart(now, &[], &Default::default(), "x", &no_shots, &|_| None, &ReportExtras { divergences: &[] }, &TrendInput { runs: all, flaky_marked: &[] }, &PagePalette::default())
+}
+
+#[test]
+fn two_suites_runs_keep_separate_histories() {
+    let a1 = suite_run("run-1", 1000, 91, "Alpha");
+    let b1 = suite_run("run-2", 2000, 92, "Beta");
+    let a2 = suite_run("run-3", 3000, 91, "Alpha");
+    let all = vec![a1, b1, a2.clone()];
+    let t = trend(&a2, &all, &[]);
+    assert_eq!(t.points.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["run-1", "run-3"]);
+}
+
+#[test]
+fn a_suite_runs_report_names_the_suite_and_never_a_pbi() {
+    let a1 = suite_run("run-1", 1000, 91, "Alpha <b>");
+    let html = report_of(&a1, &[a1.clone()]);
+    assert!(!html.contains("PBI #0") && !html.contains("PBI"), "no PBI wording");
+    assert!(html.contains("the first run of suite Alpha &lt;b&gt;"), "history line");
+    assert!(html.contains("<dt>Suite</dt><dd>Alpha &lt;b&gt;</dd>"));
+    assert!(html.contains("<title>Auto Test report - Alpha &lt;b&gt;</title>"));
+    assert!(!html.contains("Alpha <b>"), "escaped");
+}
+
+#[test]
+fn a_pbi_runs_report_is_unchanged() {
+    let (now, all) = history_fixture();
+    let html = report_of(&now, &all);
+    assert!(html.contains("<title>Auto Test report - PBI #42</title>"));
+    assert!(html.contains("<dt>PBI</dt><dd>#42</dd>"));
+    assert!(html.contains("PBI #42 in QA"));
+}

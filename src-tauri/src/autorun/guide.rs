@@ -159,7 +159,7 @@ pub fn quick_rules() -> String {
 
 const QUICK_RULES: &str = r##"## Quick rules
 
-Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full` true.
+Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full` true. When `get_current_pbi` names a suite, read its cases with `get_suite_test_cases`.
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.

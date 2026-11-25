@@ -14,12 +14,13 @@ import { SearchInput } from "./ui/search-input";
 
 const SHOWN_MAX = 50;
 
-type Entry = { project: string; planId: number; planName: string; suiteId: number; name: string; path: string };
+type Entry = { project: string; planId: number; planName: string; suiteId: number; name: string; path: string; folder: boolean };
 
 /** Every suite of the plans, each with its plan > folder > suite path. */
 function entriesOf(project: string, plans: PlanWithSuites[]): Entry[] {
   return plans.flatMap(({ plan, suites }) => {
     const byId = new Map(suites.map((s) => [s.id, s]));
+    const parents = new Set(suites.map((s) => s.parent_id).filter((id): id is number => id != null));
     const pathOf = (id: number): string[] => {
       const out: string[] = [];
       const seen = new Set<number>();
@@ -36,6 +37,7 @@ function entriesOf(project: string, plans: PlanWithSuites[]): Entry[] {
       suiteId: s.id,
       name: s.name,
       path: [plan.name, ...pathOf(s.id)].join(" › "),
+      folder: parents.has(s.id),
     }));
   });
 }
@@ -102,7 +104,10 @@ export default function SuitePicker({
 
   if (suite) {
     return (
-      <span className="flex h-10 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-accent/50 bg-accent-soft px-2.5 text-sm">
+      <span
+        title={suite.planName ? `${suite.title} - ${suite.planName}` : suite.title}
+        className="flex h-10 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-accent/50 bg-accent-soft px-2.5 text-sm"
+      >
         <IconSuite aria-hidden className="size-4 shrink-0 text-faint" />
         <span className="min-w-0 truncate text-text">{suite.title}</span>
         {suite.planName && <span className="min-w-0 shrink truncate text-xs text-muted">{suite.planName}</span>}
@@ -168,6 +173,7 @@ export default function SuitePicker({
                   }}
                 >
                   <span className="min-w-0 flex-1 break-words">{hit.path}</span>
+                  {hit.folder && <span className="shrink-0 text-xs text-muted">folder</span>}
                   {span && <ProjectChip project={hit.project} />}
                 </button>
               </li>

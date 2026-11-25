@@ -554,7 +554,9 @@ pub fn run_label(run: &LocalRun, scripts: &[CaseScript]) -> String {
     if let Some(at) = started(run) {
         parts.push(format!("started {at}"));
     }
-    if run.pbi_id > 0 {
+    if let Some(r) = &run.suite {
+        parts.push(format!("suite {}", r.title));
+    } else if run.pbi_id > 0 {
         parts.push(format!("PBI #{}", run.pbi_id));
     }
     parts.push(cases_word(run.cases.len()));
