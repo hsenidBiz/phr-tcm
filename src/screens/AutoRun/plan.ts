@@ -2,7 +2,7 @@
 // one, and word its batches and the pauses between them. The plan carries
 // no case titles - the screen has the case list and supplies them.
 
-import { commands, type Pause, type PlanView } from "../../bindings";
+import { commands, type Pause, type PlanView, type RunScope } from "../../bindings";
 
 /**
  * The plan for these cases. Null when the answer is not a plan for exactly
@@ -13,12 +13,19 @@ import { commands, type Pause, type PlanView } from "../../bindings";
 export async function fetchPlan(
   org: string,
   project: string,
-  pbiId: number,
+  /** A PBI's id, or the scope itself (a test suite's run). */
+  scope: number | RunScope,
   ids: number[],
   /** An order not saved yet, planned in place of the saved one. */
   preview: number[] | null = null,
 ): Promise<PlanView | null> {
-  const r = await commands.autoRunPlan(org, project, { kind: "pbi", pbi_id: pbiId }, ids, preview);
+  const r = await commands.autoRunPlan(
+    org,
+    project,
+    typeof scope === "number" ? { kind: "pbi", pbi_id: scope } : scope,
+    ids,
+    preview,
+  );
   if (r?.status === "error") throw new Error(String(r.error));
   if (r?.status !== "ok") return null;
   const plan = r.data;

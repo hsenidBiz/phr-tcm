@@ -122,7 +122,7 @@ function Shell() {
         </button>
       </header>
       {section === "autorun" ? (
-        <AutoRun org="acme" project="proj" pbi={pbi as never} />
+        <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: pbi as never }} />
       ) : (
         <p>Manual Entry screen</p>
       )}
@@ -441,7 +441,7 @@ test("while discovery holds the browser, no unattended run starts and the pill s
   // The store refuses too: no setup opens, so nothing can start.
   let opened = true;
   act(() => {
-    opened = openRunSetup({ org: "acme", project: "proj", pbi, cases: [{ id: 1, title: "Alpha check" }], plan: null });
+    opened = openRunSetup({ org: "acme", project: "proj", scope: { kind: "pbi", pbi }, cases: [{ id: 1, title: "Alpha check" }], plan: null });
   });
   expect(opened).toBe(false);
   expect(backgroundRunSnapshot().run).toBeNull();
@@ -455,7 +455,7 @@ test("while discovery holds the browser, no unattended run starts and the pill s
   });
   await waitFor(() => expect(screen.queryByRole("status", { name: /^Discovering/ })).not.toBeInTheDocument());
   act(() => {
-    opened = openRunSetup({ org: "acme", project: "proj", pbi, cases: [{ id: 1, title: "Alpha check" }], plan: null });
+    opened = openRunSetup({ org: "acme", project: "proj", scope: { kind: "pbi", pbi }, cases: [{ id: 1, title: "Alpha check" }], plan: null });
   });
   expect(opened).toBe(true);
   const start = await screen.findByRole("button", { name: "Start" });

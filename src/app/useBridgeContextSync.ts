@@ -19,6 +19,7 @@ import { subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useAutoRunMode } from "../screens/AutoRun/useAutoRunMode";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
+import type { SuiteScope } from "../lib/scope";
 import { useAutoDbCheck } from "./useAutoDbCheck";
 
 type Args = {
@@ -30,6 +31,8 @@ type Args = {
   bridgeProject: string;
   allProjects: boolean;
   pbi: PbiHit | null;
+  /** The test suite in the top bar, or none. Never set with a PBI. */
+  suite: SuiteScope | null;
   tourOpen: boolean;
 };
 
@@ -45,6 +48,7 @@ export function useBridgeContextSync({
   bridgeProject,
   allProjects,
   pbi,
+  suite,
   tourOpen,
 }: Args) {
   const qc = useQueryClient();
@@ -131,6 +135,13 @@ export function useBridgeContextSync({
   const bridgePbiId = pbi?.id ?? null;
   const bridgePbiTitle = pbi?.title ?? "";
   const bridgePbiProject = pbi?.project || project;
+  // The suite rides every push: a push replaces the PBI and the suite
+  // together, so one left out would be wiped from the bridge.
+  const bridgeSuitePlan = suite?.planId ?? null;
+  const bridgeSuiteId = suite?.suiteId ?? null;
+  const bridgeSuiteTitle = suite?.title ?? "";
+  const bridgeSuitePlanName = suite?.planName ?? "";
+  const bridgeSuiteProject = suite?.project || project;
   // Nothing is pushed without an org and a project, so the PBI of the org
   // just left (or of a signed-out session) would stay on the bridge: take it
   // off at once.
@@ -164,6 +175,16 @@ export function useBridgeContextSync({
               appSimpleMode,
               // The PBI in the top bar, for the assistants' get_current_pbi.
               pbi: bridgePbiId == null ? null : { id: bridgePbiId, title: bridgePbiTitle, project: bridgePbiProject },
+              suite:
+                bridgeSuitePlan == null || bridgeSuiteId == null
+                  ? null
+                  : {
+                      plan_id: bridgeSuitePlan,
+                      suite_id: bridgeSuiteId,
+                      title: bridgeSuiteTitle,
+                      plan_name: bridgeSuitePlanName,
+                      project: bridgeSuiteProject,
+                    },
             },
           ),
         )
@@ -199,6 +220,11 @@ export function useBridgeContextSync({
     bridgePbiId,
     bridgePbiTitle,
     bridgePbiProject,
+    bridgeSuitePlan,
+    bridgeSuiteId,
+    bridgeSuiteTitle,
+    bridgeSuitePlanName,
+    bridgeSuiteProject,
     tourOpen,
     dbMigrated,
   ]);

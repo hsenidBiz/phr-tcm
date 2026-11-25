@@ -82,6 +82,10 @@ function mockList(
     }
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "suite_test_cases_full") {
+      onCommand?.(cmd, args);
+      return cases;
+    }
     if (cmd === "auto_run_load_script") {
       const id = (args as { caseId?: number; case_id?: number }).caseId ?? (args as { case_id: number }).case_id;
       if (!scripted.includes(id)) return null;
@@ -130,7 +134,7 @@ function renderScreen() {
     <QueryClientProvider client={qc}>
       {/* The title row's Basic/Advanced switch, as CaseScreens mounts it. */}
       <AutoRunModeSwitch />
-      <AutoRun org="acme" project="proj" pbi={pbi as never} />
+      <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: pbi as never }} />
       {/* The unattended run's window, mounted beside the screen as App does. */}
       <ReplayPane />
     </QueryClientProvider>,
@@ -461,7 +465,7 @@ test("a run is not started if the PBI changed while the plan was on its way", as
   fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
   view.rerender(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <AutoRun org="acme" project="proj" pbi={{ ...pbi, id: 43 } as never} />
+      <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: { ...pbi, id: 43 } as never }} />
     </QueryClientProvider>,
   );
   await act(async () => {
@@ -900,7 +904,7 @@ test("Has a script is remembered for the project, and only for it", async () => 
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="other" pbi={pbi as never} />
+      <AutoRun org="acme" project="other" scope={{ kind: "pbi", pbi: pbi as never }} />
     </QueryClientProvider>,
   );
   expect(await screen.findByRole("button", { name: "Has a script (5)" })).toHaveAttribute("aria-pressed", "false");
@@ -1140,7 +1144,7 @@ test("a refresh of the runs that hides a ticked case unticks it", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={pbi as never} />
+      <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: pbi as never }} />
     </QueryClientProvider>,
   );
   openTab("Test cases");
@@ -1369,7 +1373,7 @@ test("the open cards are remembered for each PBI while the screen is mounted", a
   const other = { ...pbi, id: 43, title: "Other work" };
   const view = render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={pbi as never} />
+      <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: pbi as never }} />
     </QueryClientProvider>,
   );
   await screen.findByText("Alpha check");
@@ -1377,7 +1381,7 @@ test("the open cards are remembered for each PBI while the screen is mounted", a
 
   view.rerender(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={other as never} />
+      <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: other as never }} />
     </QueryClientProvider>,
   );
   // Another PBI's list starts shut.
@@ -1385,7 +1389,7 @@ test("the open cards are remembered for each PBI while the screen is mounted", a
 
   view.rerender(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={pbi as never} />
+      <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: pbi as never }} />
     </QueryClientProvider>,
   );
   expect(await screen.findByRole("button", { name: "Hide details for #1" })).toBeInTheDocument();
@@ -1693,7 +1697,7 @@ async function noProjectSetup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="" pbi={pbi as never} />
+      <AutoRun org="acme" project="" scope={{ kind: "pbi", pbi: pbi as never }} />
     </QueryClientProvider>,
   );
   openSetup();
@@ -1787,7 +1791,7 @@ test("a redraw with no hidden case ticked queues no selection update", async () 
   render(
     <QueryClientProvider client={qc}>
       <Profiler id="autorun" onRender={() => draws++}>
-        <AutoRun org="acme" project="proj" pbi={pbi as never} />
+        <AutoRun org="acme" project="proj" scope={{ kind: "pbi", pbi: pbi as never }} />
       </Profiler>
     </QueryClientProvider>,
   );
@@ -2033,7 +2037,7 @@ test("opening Auto Test with no Playwright repo set says so, with or without a P
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={null} onOpenPlaywright={onOpenPlaywright} />
+      <AutoRun org="acme" project="proj" scope={null} onOpenPlaywright={onOpenPlaywright} />
     </QueryClientProvider>,
   );
   expect(await screen.findByRole("dialog", { name: "Playwright is needed" })).toBeInTheDocument();
@@ -2067,10 +2071,10 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const first = render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={null} />
+      <AutoRun org="acme" project="proj" scope={null} />
     </QueryClientProvider>,
   );
-  expect(screen.getByText("Pick a PBI in the bar above to run its cases automatically.")).toBeInTheDocument();
+  expect(screen.getByText("Pick a PBI or a suite in the bar above to run its cases automatically.")).toBeInTheDocument();
   expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
   expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
   first.unmount();
@@ -2079,7 +2083,7 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
   asked = 0;
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="proj" pbi={null} />
+      <AutoRun org="acme" project="proj" scope={null} />
     </QueryClientProvider>,
   );
   // Absence only means something once the card has asked and been answered.
@@ -2116,7 +2120,7 @@ test("Auto Test sends results to the PBI's project while its files stay home", a
         org="acme"
         project="Web"
         adoProject="Payroll"
-        pbi={{ ...pbi, project: "Payroll" } as never}
+        scope={{ kind: "pbi", pbi: { ...pbi, project: "Payroll" } as never }}
       />
     </QueryClientProvider>,
   );
@@ -2381,4 +2385,73 @@ test("a mixed selection runs only the cases that still have a script", async () 
   expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Run 2 unattended" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run 3 selected" })).not.toBeInTheDocument();
+});
+
+// ---- A test suite as the scope ----
+
+const SUITE_SCOPE = {
+  kind: "suite" as const,
+  suite: { planId: 9, suiteId: 92, title: "Password reset", planName: "Auth Plan", project: "proj" },
+};
+
+function renderSuiteScreen(suite = SUITE_SCOPE) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = (sc: typeof SUITE_SCOPE) => (
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" scope={sc} />
+      <ReplayPane />
+    </QueryClientProvider>
+  );
+  const view = render(tree(suite));
+  openTab("Test cases");
+  return { ...view, again: (sc: typeof SUITE_SCOPE) => view.rerender(tree(sc)) };
+}
+
+test("a suite scope lists the suite's own cases, read from the suite and not from a PBI", async () => {
+  const asked: Array<{ cmd: string; args: unknown }> = [];
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd, args) => {
+    asked.push({ cmd, args });
+    return null;
+  });
+  renderSuiteScreen();
+  expect(await screen.findByText("Alpha check")).toBeInTheDocument();
+  const read = asked.find((a) => a.cmd === "suite_test_cases_full");
+  expect(read?.args).toMatchObject({ org: "acme", project: "proj", planId: 9, suiteId: 92 });
+  expect(asked.some((a) => a.cmd === "pbi_test_cases_full")).toBe(false);
+});
+
+test("an unattended run on a suite plans and replays with the suite scope", async () => {
+  const seen: Array<{ cmd: string; scope: unknown }> = [];
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd, args) => {
+    if (cmd === "auto_run_plan") {
+      seen.push({ cmd, scope: (args as { scope: unknown }).scope });
+      return PLANNED([1]);
+    }
+    if (cmd === "auto_run_replay") {
+      seen.push({ cmd, scope: (args as { scope: unknown }).scope });
+      return new Promise(() => {});
+    }
+    return null;
+  });
+  renderSuiteScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  await screen.findByRole("heading", { name: "Unattended run" });
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(seen.map((s) => s.cmd)).toEqual(["auto_run_plan", "auto_run_replay"]));
+  for (const s of seen) {
+    expect(s.scope).toEqual({ kind: "suite", plan_id: 9, suite_id: 92, title: "Password reset" });
+  }
+});
+
+test("moving to another scope cancels a run window still on its setup", async () => {
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => (cmd === "auto_run_plan" ? PLANNED([1]) : null));
+  const view = renderSuiteScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  await screen.findByRole("heading", { name: "Unattended run" });
+  view.again({ kind: "suite", suite: { ...SUITE_SCOPE.suite, suiteId: 93, title: "Other suite" } });
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument());
 });

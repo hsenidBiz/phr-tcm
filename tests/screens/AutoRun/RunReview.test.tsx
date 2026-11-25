@@ -76,6 +76,8 @@ function renderReview(
      * the fixture run's own `pbi_id` (42), so existing tests keep
      * exercising the same-PBI path unless they say otherwise. */
     pbiId?: number;
+    /** The test suite the screen is on, when it is on one (then `pbiId` is 0). */
+    suite?: { plan_id: number; suite_id: number; title: string } | null;
     runId?: string;
     stepIds?: Record<number, string[]>;
     sharedSteps?: Record<number, number[]>;
@@ -105,6 +107,7 @@ function renderReview(
         project="Web"
         pbiTitle={overrides.pbiTitle ?? "Login flow"}
         pbiId={overrides.pbiId ?? 42}
+        suite={overrides.suite}
         runId={overrides.runId ?? "run-1"}
         stepIds={overrides.stepIds ?? {}}
         sharedSteps={overrides.sharedSteps ?? {}}
@@ -1322,4 +1325,48 @@ test("Simple keeps Raise bug and the failure video in the run review", async () 
   await screen.findByText("Valid login");
   expect(await within(caseCard(201)).findByRole("button", { name: "Play video" })).toBeInTheDocument();
   expect(within(caseCard(201)).getByRole("button", { name: /Raise bug/ })).toBeInTheDocument();
+});
+
+// ---- A run over a test suite ----
+
+const SUITE_REF = { plan_id: 9, suite_id: 92, title: "Password reset" };
+const SUITE_RUN = { ...SEND_RUN, pbi_id: 0, suite: SUITE_REF };
+
+test("a suite's run is sent under the suite's name, with pbi_id 0 for the publish", async () => {
+  const publishCalls: Array<Record<string, unknown>> = [];
+  renderReview(SUITE_RUN, {
+    pbiId: 0,
+    suite: SUITE_REF,
+    pbiTitle: "Password reset",
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_publish") {
+        publishCalls.push(args as Record<string, unknown>);
+        return { status: "sent", run_id: 9, web_url: "https://dev.azure.com/acme/_testManagement/runs/9", sent: [1, 2], skipped: [], problems: [] };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+  const send = screen.getByRole("button", { name: "Send to Azure DevOps" });
+  expect(send).toBeEnabled();
+  fireEvent.click(send);
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(publishCalls).toHaveLength(1));
+  expect(publishCalls[0]).toMatchObject({ pbiId: 0, runId: "run-9", runName: "Password reset - Auto Test" });
+});
+
+test("a run of another suite cannot be sent from here, and says which suite it is for", async () => {
+  renderReview(SUITE_RUN, { pbiId: 0, suite: { plan_id: 9, suite_id: 93, title: "Other" } });
+  await screen.findByText(/proposed: passed/i);
+  const send = screen.getByRole("button", { name: "Send to Azure DevOps" });
+  expect(send).toBeDisabled();
+  expect(send).toHaveAttribute("title", "this run is for suite Password reset - select that suite to send it");
+});
+
+test("a PBI run cannot be sent while a suite is the scope", async () => {
+  renderReview(SEND_RUN, { pbiId: 0, suite: SUITE_REF });
+  await screen.findByText(/proposed: passed/i);
+  expect(screen.getByRole("button", { name: "Send to Azure DevOps" })).toBeDisabled();
 });

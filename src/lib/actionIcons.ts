@@ -230,6 +230,9 @@ export {
   // suites, and a feature in it (a folder of specs and test cases) - a
   // folder with code on it, since that is what a feature holds.
   Folder as IconRepoFolder,
+  // The test suite in the top bar's chip (Auto Test's scope): a folder, as
+  // Search Suites draws one.
+  Folder as IconSuite,
   FolderCode as IconRepoFeature,
   // Seeing test case text formatted instead of as the Markdown typed (the
   // case editors' Preview toggle) - an eye, since it only shows what was

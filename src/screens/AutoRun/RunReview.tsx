@@ -12,7 +12,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invalidateRuns } from "./flaky";
 import { toast } from "../../lib/toast";
-import { commands, type LocalRun_Serialize, type PublishResult, type TestCaseFull } from "../../bindings";
+import { commands, type AutoRunSuiteRef, type LocalRun_Serialize, type PublishResult, type TestCaseFull } from "../../bindings";
 import BugDialog from "../../components/BugDialog";
 import { sharedStepQueryKey, sharedStepText } from "../../lib/sharedSteps";
 import { loadScript } from "../../lib/scriptBatch";
@@ -21,6 +21,7 @@ import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
+import { currentKey, runKey } from "../../lib/scope";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconBug, IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
@@ -82,8 +83,9 @@ function proposalLine(c: { proposed?: string; reason?: string }): string {
 
 /** What both the disabled Send button's title and a refused send say when
  * this run belongs to a different PBI than the one now selected. */
-function mismatchSentence(runPbiId: number): string {
-  return `this run is for PBI #${runPbiId} - select that PBI to send it`;
+function mismatchSentence(run: { pbi_id: number; suite?: AutoRunSuiteRef | null }): string {
+  if (run.suite) return `this run is for suite ${run.suite.title || `#${run.suite.suite_id}`} - select that suite to send it`;
+  return `this run is for PBI #${run.pbi_id} - select that PBI to send it`;
 }
 
 /** What a step's line is called in the review: the sign-in, the runner's
@@ -107,6 +109,7 @@ export function cleanupFailure(c: {
 export default function RunReview(props: {
   org: string;
   project: string;
+  /** The PBI's title, or the suite's: the run is named `<title> - Auto Test`. */
   pbiTitle: string;
   /** The PBI currently selected on the Auto Test screen. `run.pbi_id` is
    * always what actually gets sent (see `doSend` below); this is only
@@ -114,6 +117,9 @@ export default function RunReview(props: {
    * selected - sending it would use this PBI's title and step ids, which
    * belong to the wrong PBI entirely. */
   pbiId: number;
+  /** Set when the screen is on a test suite (then `pbiId` is 0): the run
+   * must be that suite's to be sent. */
+  suite?: AutoRunSuiteRef | null;
   runId: string;
   /** The case's real Azure DevOps step ids, aligned with its script steps.
    * Only the Send button reads this, to build what `auto_run_publish`
@@ -371,7 +377,7 @@ export default function RunReview(props: {
    * toast, and it does not go away just because the person tries again. */
   const [sendRefusal, setSendRefusal] = useState<string | null>(null);
 
-  const pbiMismatch = (r: LocalRun_Serialize) => r.pbi_id !== props.pbiId;
+  const pbiMismatch = (r: LocalRun_Serialize) => runKey(r) !== currentKey(props.pbiId, props.suite);
 
   const doSend = async () => {
     if (!run) return;
@@ -381,7 +387,7 @@ export default function RunReview(props: {
     // reaches Azure DevOps, so it refuses on its own too rather than
     // trusting the button was never somehow pressed anyway.
     if (pbiMismatch(run)) {
-      setSendRefusal(mismatchSentence(run.pbi_id));
+      setSendRefusal(mismatchSentence(run));
       return;
     }
     setSending(true);
@@ -467,7 +473,7 @@ export default function RunReview(props: {
   const unconfirmed = run.cases.length - confirmed;
   const mismatch = pbiMismatch(run);
   const sendDisabled = dirty || confirmed === 0 || sending || mismatch;
-  const sendTitle = mismatch ? mismatchSentence(run.pbi_id) : dirty ? "Save the review first" : undefined;
+  const sendTitle = mismatch ? mismatchSentence(run) : dirty ? "Save the review first" : undefined;
   // Counted off the cases as they stand on screen, so a verdict confirmed
   // here moves its case to its new bucket at once.
   const counts = countBuckets(run.cases, flakyIds);

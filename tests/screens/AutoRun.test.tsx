@@ -35,7 +35,7 @@ function renderAutoRun(open: TabName | null = "Test cases") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="Web" pbi={PBI} />
+      <AutoRun org="acme" project="Web" scope={{ kind: "pbi", pbi: PBI }} />
       <RunHost />
     </QueryClientProvider>,
   );
@@ -141,7 +141,7 @@ test("without a PBI it asks for one instead of loading", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project="Web" pbi={null} />
+      <AutoRun org="acme" project="Web" scope={null} />
     </QueryClientProvider>,
   );
   expect(await screen.findByText(/pick a pbi/i)).toBeInTheDocument();

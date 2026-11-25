@@ -68,7 +68,7 @@ function mount(opts: {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <AutoRun org="acme" project={opts.project ?? "Web"} pbi={PBI} />
+      <AutoRun org="acme" project={opts.project ?? "Web"} scope={{ kind: "pbi", pbi: PBI }} />
     </QueryClientProvider>,
   );
   return qc;

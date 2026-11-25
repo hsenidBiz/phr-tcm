@@ -15,11 +15,13 @@ import type { ResultFilter } from "../../../src/screens/AutoRun/verdicts";
 /** The screen holds the filter; this stands in for it. */
 function WithFilter({
   pbiId,
+  suite,
   onReview,
   onReplay,
   replayBlocked,
 }: {
   pbiId: number | null;
+  suite?: { plan_id: number; suite_id: number; title: string } | null;
   onReview: (id: string) => void;
   onReplay: (caseId: number, title: string, step: number) => void;
   replayBlocked?: string;
@@ -30,6 +32,7 @@ function WithFilter({
       org="Acme"
       project="Web"
       pbiId={pbiId}
+      suite={suite}
       onReview={onReview}
       onReplay={onReplay}
       replayBlocked={replayBlocked}
@@ -66,6 +69,7 @@ function renderPastRuns(
   pbiId: number | null,
   onCommand?: (cmd: string, args: unknown) => unknown,
   replayBlocked?: string,
+  suite: { plan_id: number; suite_id: number; title: string } | null = null,
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_list_runs") return runs;
@@ -76,7 +80,7 @@ function renderPastRuns(
   const onReplay = vi.fn();
   render(
     <QueryClientProvider client={qc}>
-      <WithFilter pbiId={pbiId} onReview={onReview} onReplay={onReplay} replayBlocked={replayBlocked} />
+      <WithFilter pbiId={pbiId} suite={suite} onReview={onReview} onReplay={onReplay} replayBlocked={replayBlocked} />
     </QueryClientProvider>,
   );
   return { onReview, onReplay };
@@ -694,4 +698,32 @@ test("Advanced keeps Replay to step in Past runs", async () => {
 test("a mode that never answers keeps Replay to step in Past runs", async () => {
   renderPastRuns([FAILED_AT_2], 42, (cmd) => (cmd === "get_app_settings" ? new Promise(() => {}) : null));
   expect(await screen.findByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+});
+
+// ---- Runs over a test suite ----
+
+const SUITE_REF = { plan_id: 9, suite_id: 92, title: "Password reset" };
+
+test("a suite's run is labelled with its suite while a PBI is the scope, and offers no Review there", async () => {
+  renderPastRuns([runOf({ pbi_id: 0, suite: SUITE_REF })], 42);
+  expect(await screen.findByText("for suite Password reset")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
+});
+
+test("a suite's run offers Review on its own suite, and a PBI run is dimmed there", async () => {
+  const { onReview } = renderPastRuns(
+    [runOf({ id: "s-1", pbi_id: 0, suite: SUITE_REF }), runOf({ id: "p-1", pbi_id: 7 })],
+    null,
+    undefined,
+    undefined,
+    SUITE_REF,
+  );
+  expect(await screen.findByText("for PBI #7")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Review" }));
+  expect(onReview).toHaveBeenCalledWith("s-1");
+});
+
+test("a run of another suite is told apart by its scope key", async () => {
+  renderPastRuns([runOf({ pbi_id: 0, suite: { plan_id: 9, suite_id: 93, title: "Other" } })], null, undefined, undefined, SUITE_REF);
+  expect(await screen.findByText("for suite Other")).toBeInTheDocument();
 });

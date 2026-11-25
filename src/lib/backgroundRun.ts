@@ -24,12 +24,12 @@ import {
   events,
   type AutorunNetworkWait,
   type AutorunResetNeeded,
-  type PbiHit,
   type PlanView,
   type ReplayProgress,
   type StepRecord,
 } from "../bindings";
 import { announce } from "./assignedAlerts";
+import { toRunScope, type Scope } from "./scope";
 import { DISCOVERY_BUSY, discoveryIsActive } from "./discoveryActive";
 
 /** A case's written step, as the script editor shows it. */
@@ -49,7 +49,8 @@ export type RunPhase = "setup" | "running" | "finished" | "failed";
 export type BackgroundRun = {
   org: string;
   project: string;
-  pbi: PbiHit;
+  /** What the run is over: a PBI's cases or a test suite's. */
+  scope: Scope;
   /** The selection, in run order. */
   cases: RunCase[];
   /** The plan the setup shows: phases and reset points. */
@@ -93,7 +94,7 @@ export type NetworkWaitView = AutorunNetworkWait & { since?: number };
 export type ReviewRequest = {
   org: string;
   project: string;
-  pbi: PbiHit;
+  scope: Scope;
   runId: string;
   /** Opened from the pill or the toast: the screen moves to Past runs.
    * A run that finished with its window open goes straight to the review
@@ -215,7 +216,7 @@ export function onRunEnded(cb: (e: RunEnded) => void): () => void {
 export function openRunSetup(s: {
   org: string;
   project: string;
-  pbi: PbiHit;
+  scope: Scope;
   cases: RunCase[];
   plan: PlanView | null;
 }): boolean {
@@ -352,7 +353,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
     const res = await commands.autoRunReplay(
       r.org,
       r.project,
-      { kind: "pbi", pbi_id: r.pbi.id },
+      toRunScope(r.scope),
       r.cases.map((c) => ({ case_id: c.id, title: c.title, module: c.module?.trim() || null })),
       opts.account,
       opts.browserName,
@@ -372,7 +373,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
       // Its window is open: straight into the review, as always.
       setState({
         run: null,
-        review: { org: cur.org, project: cur.project, pbi: cur.pbi, runId: id, toPastRuns: false },
+        review: { org: cur.org, project: cur.project, scope: cur.scope, runId: id, toPastRuns: false },
       });
       announceEnd({ ok: true, inBackground: false, runId: id, error: "" });
     } else {
@@ -461,7 +462,7 @@ export function reviewFinishedRun(): void {
   if (!r || r.phase !== "finished" || !r.resultId) return;
   setState({
     run: null,
-    review: { org: r.org, project: r.project, pbi: r.pbi, runId: r.resultId, toPastRuns: true },
+    review: { org: r.org, project: r.project, scope: r.scope, runId: r.resultId, toPastRuns: true },
   });
 }
 

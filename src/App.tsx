@@ -29,6 +29,7 @@ import { useEnvironmentChangeSync } from "./hooks/useEnvironmentChangeSync";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import ContextBar from "./components/ContextBar";
 import { effectiveProject, useAllProjects } from "./lib/projectScope";
+import { scopeKey, scopeOf, type SuiteScope } from "./lib/scope";
 import Sidebar, { WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import { useModules, useModulesHydrated } from "./lib/modules";
 import TitleBar from "./components/TitleBar";
@@ -90,11 +91,23 @@ export default function App() {
   // person picked (switched off) or the one the first PBI / the only project /
   // the Auto Test files chose (projects shown together).
   const [homeProject, setHomeProjectRaw] = useState(initial.project);
-  const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
+  const [pbi, setPbiState] = useState<PbiHit | null>(initial.pbi);
+  // The test suite Auto Test is on, the other kind of scope. A PBI and a
+  // suite are never both current: setting one drops the other (the two raw
+  // setters below), and both are remembered the same way.
+  const [suite, setSuiteState] = useState<SuiteScope | null>(initial.suite);
+  const setPbiRaw = (p: PbiHit | null) => {
+    setPbiState(p);
+    if (p) setSuiteState(null);
+  };
+  const setSuiteRaw = (s: SuiteScope | null) => {
+    setSuiteState(s);
+    if (s) setPbiState(null);
+  };
   const allProjects = useAllProjects();
   // The project every PBI-scoped screen and write uses: the PBI's own while
   // the projects show together, otherwise the home project.
-  const project = effectiveProject(allProjects, pbi, homeProject);
+  const project = effectiveProject(allProjects, pbi ?? suite, homeProject);
   const [workMode, setWorkMode] = useState(initial.workMode);
   // Work Manager's own rail section; the board stays the landing view.
   const [workSection, setWorkSection] = useState<WorkSection>("board");
@@ -121,8 +134,8 @@ export default function App() {
 
   // Read inside stable callbacks, so starting the tour does not depend on
   // a fresh closure over seven pieces of state.
-  const ctx = useRef<AppContext>({ section, org, homeProject, pbi, workMode, workSection, caseSelection });
-  ctx.current = { section, org, homeProject, pbi, workMode, workSection, caseSelection };
+  const ctx = useRef<AppContext>({ section, org, homeProject, pbi, suite, workMode, workSection, caseSelection });
+  ctx.current = { section, org, homeProject, pbi, suite, workMode, workSection, caseSelection };
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings asks for it. Declared ahead of every other effect in
@@ -143,6 +156,7 @@ export default function App() {
     setOrgRaw,
     setHomeProjectRaw,
     setPbiRaw,
+    setSuiteRaw,
     setSection,
     setWorkMode,
     setWorkSection,
@@ -169,9 +183,10 @@ export default function App() {
     setSeenAllProjects(allProjects);
     // (Turning it off sets the home project to the PBI's just below, so the
     // effective project does not move then.)
-    if (allProjects && effectiveProject(true, pbi, homeProject) !== homeProject) setCaseSelection(null);
-    if (!allProjects && !tourOpen && pbi?.project && pbi.project !== homeProject) {
-      setHomeProjectRaw(pbi.project);
+    if (allProjects && effectiveProject(true, pbi ?? suite, homeProject) !== homeProject) setCaseSelection(null);
+    const held = pbi ?? suite;
+    if (!allProjects && !tourOpen && held?.project && held.project !== homeProject) {
+      setHomeProjectRaw(held.project);
     }
   }
 
@@ -190,7 +205,7 @@ export default function App() {
   );
   useKeyboardShortcuts(setSection, setWorkMode);
   useGlobalBackendEvents();
-  usePersistPrefs({ org, homeProject, section, pbi, workMode, tourOpen });
+  usePersistPrefs({ org, homeProject, section, pbi, suite, workMode, tourOpen });
 
   // Changing scope drops the case selection too. It is a list of work item
   // ids handed over from Search Suites, and ids mean nothing in a different
@@ -202,6 +217,7 @@ export default function App() {
     setOrgRaw(o);
     setHomeProjectRaw("");
     setPbiRaw(null);
+    setSuiteRaw(null);
     setCaseSelection(null);
     // A pending notification handoff belongs to the organisation it was
     // raised in; carrying it across would open someone else's item id.
@@ -210,6 +226,7 @@ export default function App() {
   const setProject = (p: string) => {
     setHomeProjectRaw(p);
     setPbiRaw(null);
+    setSuiteRaw(null);
     setCaseSelection(null);
   };
   // Every PBI pick (the context bar, the screens' own pickers, Search
@@ -219,24 +236,35 @@ export default function App() {
   // install the first PBI's project becomes the home project. The tour and
   // the unattended-run host keep the raw setter.
   const setPbi = (p: PbiHit | null) => {
-    if (effectiveProject(allProjects, p, homeProject) !== project) setCaseSelection(null);
-    if (allProjects && !homeProject && p?.project) {
-      setHomeProjectRaw(p.project);
+    // Clearing the PBI leaves a suite as it is: the scope is still the suite's.
+    if (effectiveProject(allProjects, p ?? suite, homeProject) !== project) setCaseSelection(null);
+    adoptHomeProject(p?.project);
+    if (p) setRunFolder(null);
+    setPbiRaw(p);
+  };
+  // The same for a suite pick (the context bar, Search Suites' Auto Test).
+  const setSuite = (s: SuiteScope | null) => {
+    if (effectiveProject(allProjects, s ?? pbi, homeProject) !== project) setCaseSelection(null);
+    adoptHomeProject(s?.project);
+    if (s) setRunFolder(null);
+    setSuiteRaw(s);
+  };
+  function adoptHomeProject(picked: string | undefined) {
+    if (allProjects && !homeProject && picked) {
+      setHomeProjectRaw(picked);
       // Auto Test, API Templates and Playwright keep their files there, so
       // say so rather than let it happen unseen. An organization with one
       // project had it chosen already: nothing to announce.
       if (projects.data?.length !== 1) {
-        toast.info(`Home project set to ${p.project}. Change it in Settings.`);
+        toast.info(`Home project set to ${picked}. Change it in Settings.`);
       }
     }
-    if (p) setRunFolder(null);
-    setPbiRaw(p);
-  };
+  }
   // Settings' Home project picker. Moving the home project moves the
   // effective project only when no PBI pins it, and then the case selection
   // (work item ids of the old project) goes, the same rule setPbi follows.
   const changeHomeProject = (p: string) => {
-    if (effectiveProject(allProjects, pbi, p) !== project) setCaseSelection(null);
+    if (effectiveProject(allProjects, pbi ?? suite, p) !== project) setCaseSelection(null);
     setHomeProjectRaw(p);
   };
   const { startOnModules, setStartOnModules, goToSection, openPbiById, toggleSettings } = useAppNavigation({
@@ -270,6 +298,7 @@ export default function App() {
   // its end is caught here, and Review on its pill or toast brings the
   // person to the run's PBI in Auto Test, whose screen opens the review.
   // Not over the walkthrough, whose sample scope is not the person's.
+  const heldScope = scopeOf(pbi, suite);
   useBackgroundRunHost((r) => {
     if (tourOpen) {
       clearReviewRequest();
@@ -285,9 +314,11 @@ export default function App() {
         setHomeProjectRaw(r.project);
         setCaseSelection(null);
       }
-      if (pbi?.id !== r.pbi.id) {
-        if (effectiveProject(true, r.pbi, homeProject) !== project) setCaseSelection(null);
-        setPbiRaw(r.pbi);
+      if (!heldScope || scopeKey(heldScope) !== scopeKey(r.scope)) {
+        const carried = r.scope.kind === "pbi" ? r.scope.pbi : r.scope.suite;
+        if (effectiveProject(true, carried, homeProject) !== project) setCaseSelection(null);
+        if (r.scope.kind === "pbi") setPbiRaw(r.scope.pbi);
+        else setSuiteRaw(r.scope.suite);
       }
     } else {
       if (org !== r.org || homeProject !== r.project) {
@@ -295,7 +326,10 @@ export default function App() {
         setHomeProjectRaw(r.project);
         setCaseSelection(null);
       }
-      if (pbi?.id !== r.pbi.id) setPbiRaw(r.pbi);
+      if (!heldScope || scopeKey(heldScope) !== scopeKey(r.scope)) {
+        if (r.scope.kind === "pbi") setPbiRaw(r.scope.pbi);
+        else setSuiteRaw(r.scope.suite);
+      }
     }
     if (section !== "autorun" || workMode) goToSection("autorun");
   });
@@ -337,7 +371,7 @@ export default function App() {
   // show together: it stays put as PBIs of other projects are picked (the
   // assistant names a project when it means another one).
   const bridgeProject = allProjects ? homeProject : project;
-  useBridgeContextSync({ signedIn, org, project, bridgeProject, allProjects, pbi, tourOpen });
+  useBridgeContextSync({ signedIn, org, project, bridgeProject, allProjects, pbi, suite, tourOpen });
   useSimpleModeSwitches();
 
   // The organization's projects, and the home project nobody has to pick.
@@ -474,6 +508,8 @@ export default function App() {
               homeProject={homeProject}
               pbi={pbi}
               setPbi={setPbi}
+              suite={suite}
+              setSuite={setSuite}
               account={status.data?.account ?? null}
               workMode={workMode}
               onToggleWork={() => {
@@ -615,6 +651,7 @@ export default function App() {
                 homeProject={homeProject}
                 allProjects={allProjects}
                 pbi={pbi}
+                suite={suite}
                 modules={modules}
                 caseSelection={caseSelection}
                 runFolder={runFolder}
@@ -622,6 +659,7 @@ export default function App() {
                 settingsFill={settingsFill}
                 startOnModules={startOnModules}
                 setPbi={setPbi}
+                setSuite={setSuite}
                 setCaseSelection={setCaseSelection}
                 setRunFolder={setRunFolder}
                 setManageFocus={setManageFocus}

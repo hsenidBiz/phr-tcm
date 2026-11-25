@@ -14,6 +14,8 @@ import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
+import SuitePicker from "./SuitePicker";
+import type { SuiteScope } from "../lib/scope";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
 
@@ -28,6 +30,8 @@ export default function ContextBar({
   homeProject,
   pbi,
   setPbi,
+  suite = null,
+  setSuite,
   account,
   workMode,
   onToggleWork,
@@ -50,6 +54,10 @@ export default function ContextBar({
   homeProject: string;
   pbi: PbiHit | null;
   setPbi: (p: PbiHit | null) => void;
+  /** The test suite Auto Test is on, the other kind of scope: a PBI and a
+   * suite are never both current. */
+  suite?: SuiteScope | null;
+  setSuite?: (s: SuiteScope | null) => void;
   account: string | null;
   workMode: boolean;
   onToggleWork: () => void;
@@ -71,6 +79,21 @@ export default function ContextBar({
   // The review gate's final confirmation spotlights the PBI chip so the
   // user verifies the target before an irreversible create.
   const [pbiGlow, setPbiGlow] = useState(false);
+  // Which kind of scope the box finds. A held PBI or suite shows as its chip
+  // whatever this says; it decides what the box looks for once none is held.
+  const [scopeMode, setScopeMode] = useState<"pbi" | "suite">(suite ? "suite" : "pbi");
+  useEffect(() => {
+    if (suite) setScopeMode("suite");
+  }, [suite]);
+  useEffect(() => {
+    if (pbi) setScopeMode("pbi");
+  }, [pbi]);
+  const suiteMode = Boolean(setSuite) && !pbi && (suite != null || scopeMode === "suite");
+  const picker = suiteMode ? (
+    <SuitePicker org={org} project={project} suite={suite} onChange={setSuite!} allProjects={allProjects} />
+  ) : (
+    <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} perProject={!allProjects} />
+  );
   // The gear turns forward when Settings opens and back when it closes -
   // however it closes (the gear, the sidebar, the command palette). `n`
   // remounts the icon so each change plays afresh (index.css, ico-cog-turn).
@@ -198,7 +221,28 @@ export default function ContextBar({
         {/* The PBI search takes ALL the width between the Project picker and
             the right-hand group, with no maximum: the group never shrinks, so
             this is what gives way. min-w forces a wrap instead of a squeeze. */}
-        <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
+        <div className="flex min-w-56 flex-1 items-center gap-2" data-tour="pbi" inert={locked}>
+          {/* PBI or Suite: what the box beside it finds. Gone while one is
+              held - its chip, and the chip's clear button, are the way back. */}
+          {setSuite && !pbi && !suite && (
+            <div role="group" aria-label="Scope kind" className="flex shrink-0 rounded-md border border-border p-0.5">
+              {(["pbi", "suite"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={scopeMode === m}
+                  className={cn(
+                    "rounded px-2 py-1 text-xs transition-colors",
+                    scopeMode === m ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
+                  )}
+                  onClick={() => setScopeMode(m)}
+                >
+                  <span className="label-trim">{m === "pbi" ? "PBI" : "Suite"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
           {/* React Bits ElectricBorder wraps the chip while confirmation is
               armed, in the theme accent so it follows light/dark and presets. */}
           {pbiGlow ? (
@@ -212,11 +256,12 @@ export default function ContextBar({
               // so the glow traces the control instead of a rounder box.
               borderRadius={cssLengthPx("--radius-md", 6)}
             >
-              <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} perProject={!allProjects} />
+              {picker}
             </ElectricBorder>
           ) : (
-            <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} perProject={!allProjects} />
+            picker
           )}
+          </div>
         </div>
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}

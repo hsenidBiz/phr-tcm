@@ -13,7 +13,7 @@ import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type
 import { ListSkeleton } from "../../components/ui/list-skeleton";
 import { createPortal } from "react-dom";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
-import { commands, events, type AutorunResetNeeded, type Divergence, type PbiHit, type PlanView } from "../../bindings";
+import { commands, events, type AutorunResetNeeded, type Divergence, type PlanView } from "../../bindings";
 import { loadScript } from "../../lib/scriptBatch";
 import { Checkbox } from "../../components/ui/checkbox";
 import { ListToolbar, ToolbarSwitch } from "../../components/ui/list-toolbar";
@@ -27,6 +27,7 @@ import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { cn } from "../../lib/cn";
 import { useDiscoveryActive } from "../../lib/discoveryActive";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { scopeKey, scopeTitle, suiteRefOf, toRunScope, type Scope } from "../../lib/scope";
 import {
   IconCancel,
   IconClearScripts,
@@ -112,7 +113,7 @@ export default function AutoRun({
   org,
   project,
   adoProject = project,
-  pbi,
+  scope,
   onOpenPlaywright,
   onOpenModules,
   onOpenFixtures,
@@ -124,7 +125,8 @@ export default function AutoRun({
   /** The project the PBI belongs to: where results are sent in Azure
    * DevOps. The same as `project` unless the projects show together. */
   adoProject?: string;
-  pbi: PbiHit | null;
+  /** What Auto Test is on: a PBI's cases, a test suite's, or nothing yet. */
+  scope: Scope | null;
   /** The Playwright tab, for the "Playwright is needed" dialog. */
   onOpenPlaywright?: () => void;
   /** Modules in Settings, for the same dialog when the module is off. */
@@ -135,13 +137,31 @@ export default function AutoRun({
 }) {
   const { prefs } = useFieldRefs(org, project);
 
+  // The scope in the three shapes the screen needs: the PBI (null for a
+  // suite), the suite a saved run would carry, and the key that tells one
+  // scope from another everywhere a "which PBI" check used to be.
+  const pbi = scope?.kind === "pbi" ? scope.pbi : null;
+  const suiteScope = scope?.kind === "suite" ? scope.suite : null;
+  const suiteRef = suiteScope ? suiteRefOf(suiteScope) : null;
+  const sKey = scope ? scopeKey(scope) : null;
+  const runScope = scope ? toRunScope(scope) : null;
+
   const cases = useQuery({
-    queryKey: ["autorun-cases", org, pbi?.id, prefs.moduleRef, prefs.preconditionsRef],
+    queryKey: ["autorun-cases", org, sKey, prefs.moduleRef, prefs.preconditionsRef],
     queryFn: () =>
       unwrap(
-        commands.pbiTestCasesFull(org, pbi!.id, prefs.moduleRef, prefs.preconditionsRef),
+        suiteScope
+          ? commands.suiteTestCasesFull(
+              org,
+              suiteScope.project || adoProject,
+              suiteScope.planId,
+              suiteScope.suiteId,
+              prefs.moduleRef,
+              prefs.preconditionsRef,
+            )
+          : commands.pbiTestCasesFull(org, pbi!.id, prefs.moduleRef, prefs.preconditionsRef),
       ),
-    enabled: Boolean(org && pbi),
+    enabled: Boolean(org && scope),
     retry: false,
   });
 
@@ -460,15 +480,15 @@ export default function AutoRun({
    * the screen to the run's PBI. */
   const reviewRequest = background.review;
   useEffect(() => {
-    if (!reviewRequest || !pbi || reviewRequest.pbi.id !== pbi.id || reviewRequest.org !== org) return;
+    if (!reviewRequest || !scope || scopeKey(reviewRequest.scope) !== scopeKey(scope) || reviewRequest.org !== org) return;
     clearReviewRequest();
     if (reviewRequest.toPastRuns) setTab("runs");
     setReviewing(reviewRequest.runId);
-  }, [reviewRequest, pbi, org]);
+  }, [reviewRequest, scope, org]);
   // A run window still on its setup belongs to the PBI it was opened for:
   // another PBI, or leaving the screen, cancels it. A run that started
   // carries on.
-  useEffect(() => () => cancelRunSetup(), [pbi?.id]);
+  useEffect(() => () => cancelRunSetup(), [sKey]);
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-autorun-group") === "on",
   );
@@ -498,11 +518,11 @@ export default function AutoRun({
   };
   /** The open cards, per PBI, while the screen is mounted. Not saved: a
    * list that comes back half open on the next visit reads as clutter. */
-  const [openCards, setOpenCards] = useState<Record<number, ReadonlySet<number>>>({});
-  const openHere = (pbi && openCards[pbi.id]) || NONE_OPEN;
+  const [openCards, setOpenCards] = useState<Record<string, ReadonlySet<number>>>({});
+  const openHere = (sKey && openCards[sKey]) || NONE_OPEN;
   const setOpenHere = (change: (prev: ReadonlySet<number>) => ReadonlySet<number>) => {
-    if (!pbi) return;
-    const key = pbi.id;
+    if (!sKey) return;
+    const key = sKey;
     setOpenCards((all) => ({ ...all, [key]: change(all[key] ?? NONE_OPEN) }));
   };
   const toggleCard = (id: number) =>
@@ -524,7 +544,7 @@ export default function AutoRun({
   const [highlightId, setHighlightId] = useState<number | null>(null);
   useEffect(() => {
     if (!focus || focus.kind !== "case") return;
-    if (!pbi) {
+    if (!scope) {
       clearAutoRunFocus();
       return;
     }
@@ -539,7 +559,7 @@ export default function AutoRun({
     setSearch("");
     setOpenHere((prev) => new Set([...prev, focus.caseId]));
     setHighlightId(focus.caseId);
-  }, [focus, pbi, cases.data, cases.isError]);
+  }, [focus, scope, cases.data, cases.isError]);
   useEffect(() => {
     if (highlightId === null) return;
     document.querySelector(`[data-case-id="${highlightId}"]`)?.scrollIntoView?.({ block: "center" });
@@ -708,19 +728,19 @@ export default function AutoRun({
    * leaves list order, as before. */
   const [planning, setPlanning] = useState(false);
   const planningRef = useRef(false);
-  const pbiIdNow = useRef<number | undefined>(undefined);
-  pbiIdNow.current = pbi?.id;
+  const scopeKeyNow = useRef<string | null>(null);
+  scopeKeyNow.current = sKey;
   const startPlanned = async (kind: "supervised" | "unattended", ids: number[] = selectedInOrder) => {
     // One at a time: a second click while the plan is on its way would
     // start a second run.
-    if (!pbi || planningRef.current || ids.length === 0) return;
+    if (!scope || !runScope || !sKey || planningRef.current || ids.length === 0) return;
     planningRef.current = true;
     setPlanning(true);
-    const asked = pbi.id;
+    const asked = sKey;
     try {
-      const plan = await fetchPlan(org, project, asked, ids);
+      const plan = await fetchPlan(org, project, runScope, ids);
       // The person moved to another PBI while the plan was on its way.
-      if (pbiIdNow.current !== asked) return;
+      if (scopeKeyNow.current !== asked) return;
       const order = plan?.order ?? ids;
       if (kind === "supervised") {
         setRunPlan(plan);
@@ -730,12 +750,12 @@ export default function AutoRun({
           .map((id) => rows.find((x) => x.id === id))
           .filter((c): c is (typeof rows)[number] => Boolean(c))
           .map((c) => ({ id: c.id, title: c.title, module: c.module_value, steps: c.steps }));
-        if (picked.length > 0) openRunSetup({ org, project, pbi, cases: picked, plan });
+        if (picked.length > 0) openRunSetup({ org, project, scope, cases: picked, plan });
       }
     } catch (e) {
       // The raw error goes to the app log; the person gets a sentence.
-      logUi(`auto-run: the plan for PBI ${asked} could not be worked out: ${e instanceof Error ? e.message : String(e)}`);
-      if (pbiIdNow.current === asked) toast.error("Could not work out the order. Try again, or see Settings → Logs.");
+      logUi(`auto-run: the plan for ${asked} could not be worked out: ${e instanceof Error ? e.message : String(e)}`);
+      if (scopeKeyNow.current === asked) toast.error("Could not work out the order. Try again, or see Settings → Logs.");
     } finally {
       planningRef.current = false;
       setPlanning(false);
@@ -795,14 +815,14 @@ export default function AutoRun({
     );
   };
 
-  if (!org || !pbi) {
+  if (!org || !scope) {
     return (
       <div className="space-y-4">
         {/* What the assistants left for a person to decide. */}
         <WaitingForYou org={org} project={project} />
         {/* Assistants work whatever PBI is open, or none. */}
         <AssistantsCard />
-        <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to run its cases automatically.</p>
+        <p className="max-w-prose text-sm text-muted">Pick a PBI or a suite in the bar above to run its cases automatically.</p>
         {playwrightNeeded}
       </div>
     );
@@ -994,7 +1014,7 @@ export default function AutoRun({
                                 // A shortcut: the dialog lives in the Playwright tab.
                                 onSelect: () =>
                                   requestPlaywrightExport({
-                                    pbiId: pbi.id,
+                                    pbiId: pbi?.id ?? 0,
                                     caseIds: rows.map((c) => c.id),
                                     modules: rows.map((c): [number, string] => [c.id, c.module_value]),
                                   }),
@@ -1140,7 +1160,8 @@ export default function AutoRun({
                 <PastRuns
                   org={org}
                   project={project}
-                  pbiId={pbi.id}
+                  pbiId={pbi?.id ?? null}
+                  suite={suiteRef}
                   onReview={setReviewing}
                   onReplay={replayCase}
                   replayBlocked={runBlocked}
@@ -1183,7 +1204,8 @@ export default function AutoRun({
         <ExecutionOrderDialog
           org={org}
           project={project}
-          pbiId={pbi.id}
+          pbiId={pbi?.id ?? 0}
+          suite={suiteRef}
           cases={(selectedInOrder.length > 0
             ? selectedRows
             : rows.filter((_, i) => hasScript(i))
@@ -1256,7 +1278,8 @@ export default function AutoRun({
             <RunPane
               org={org}
               project={project}
-              pbiId={pbi.id}
+              pbiId={pbi?.id ?? 0}
+              suite={suiteRef}
               cases={picked}
               replayTo={replayTo?.step}
               // A replay to a step runs one case and never pauses.
@@ -1316,8 +1339,9 @@ export default function AutoRun({
           key={reviewing}
           org={org}
           project={adoProject}
-          pbiTitle={pbi.title}
-          pbiId={pbi.id}
+          pbiTitle={scopeTitle(scope)}
+          pbiId={pbi?.id ?? 0}
+          suite={suiteRef}
           runId={reviewing}
           stepIds={Object.fromEntries(rows.map((c) => [c.id, c.step_ids]))}
           sharedSteps={Object.fromEntries(

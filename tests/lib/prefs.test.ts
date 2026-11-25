@@ -10,7 +10,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const base: Prefs = { org: "", project: "", section: "manual", pbi: null, workMode: false };
+const base: Prefs = { org: "", project: "", section: "manual", pbi: null, suite: null, workMode: false };
 
 const sections = [...CASE_ITEMS.map((i) => i.id), "settings"] as const;
 
@@ -58,4 +58,18 @@ test("a saved PBI with an empty or odd project takes the saved project, and none
 test("corrupt saved prefs load as defaults", () => {
   localStorage.setItem(PREFS_KEY, "{not json");
   expect(loadPrefs()).toEqual(base);
+});
+
+const savedSuite = { planId: 9, suiteId: 92, title: "Password reset", planName: "Auth Plan", project: "Web" };
+
+test("a saved suite survives a reload", () => {
+  savePrefs({ ...base, suite: savedSuite });
+  expect(loadPrefs().suite).toEqual(savedSuite);
+});
+
+test("a file with a PBI and a suite keeps only the PBI, and a damaged suite is dropped", () => {
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, pbi: storedPbi, suite: savedSuite }));
+  expect(loadPrefs().suite).toBeNull();
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, suite: { planId: "x", title: 3 } }));
+  expect(loadPrefs().suite).toBeNull();
 });

@@ -1,5 +1,6 @@
 import type { PbiHit } from "../bindings";
 import type { Section, WorkSection } from "../components/Sidebar";
+import type { SuiteScope } from "../lib/scope";
 
 /** Suite-browser handoff: edit an arbitrary set of cases (not persisted).
  * The cases belong to their plan's project, which may not be the effective
@@ -16,6 +17,7 @@ export type AppContext = {
   org: string;
   homeProject: string;
   pbi: PbiHit | null;
+  suite: SuiteScope | null;
   workMode: boolean;
   workSection: WorkSection;
   caseSelection: CaseSelection | null;

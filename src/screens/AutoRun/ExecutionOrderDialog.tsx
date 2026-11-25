@@ -7,7 +7,7 @@
 
 import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { commands, type PlanView } from "../../bindings";
+import { commands, type AutoRunSuiteRef, type PlanView } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
@@ -16,18 +16,23 @@ import { unwrapStr } from "../../lib/ipc";
 import { logUi } from "../../lib/uiLog";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "../ManageCases/CaseOrderList";
+import { runScopeOf } from "../../lib/scope";
 import { batchLabel, fetchPlan, pauseLines, planBatches } from "./plan";
 
 export default function ExecutionOrderDialog({
   org,
   project,
   pbiId,
+  suite = null,
   cases,
   onClose,
 }: {
   org: string;
   project: string;
   pbiId: number;
+  /** Set when the cases are a test suite's: the order belongs to the suite
+   * then, and `pbiId` is 0. */
+  suite?: AutoRunSuiteRef | null;
   /** The cases to order, in list order, with their titles. */
   cases: SuiteCase[];
   onClose: () => void;
@@ -35,6 +40,8 @@ export default function ExecutionOrderDialog({
   // What it holds is this environment's: it never outlives a switch.
   useCloseOnEnvironmentChange(onClose);
   const titleId = useId();
+  const scope = runScopeOf(pbiId, suite);
+  const scopeLabel = suite ? `suite ${suite.suite_id}` : `PBI ${pbiId}`;
   const titles = useMemo(() => new Map(cases.map((c) => [c.id, c.title])), [cases]);
   const titleOf = (id: number) => titles.get(id);
   const [plan, setPlan] = useState<PlanView | null>(null);
@@ -54,7 +61,7 @@ export default function ExecutionOrderDialog({
   useEffect(() => {
     let live = true;
     const mine = ++asked.current;
-    void fetchPlan(org, project, pbiId, cases.map((c) => c.id)).catch(() => null).then((p) => {
+    void fetchPlan(org, project, scope, cases.map((c) => c.id)).catch(() => null).then((p) => {
       if (!live || mine !== asked.current) return;
       setPlan(p);
       setFailed(p == null);
@@ -79,7 +86,7 @@ export default function ExecutionOrderDialog({
   const moved = (next: SuiteCase[]) => {
     setOrder(next);
     const mine = ++asked.current;
-    void fetchPlan(org, project, pbiId, cases.map((c) => c.id), next.map((c) => c.id)).catch(() => null).then((p) => {
+    void fetchPlan(org, project, scope, cases.map((c) => c.id), next.map((c) => c.id)).catch(() => null).then((p) => {
       if (mine !== asked.current) return;
       setFailed(p == null);
       if (p) setPlan(p);
@@ -95,13 +102,13 @@ export default function ExecutionOrderDialog({
     } catch (e) {
       // The raw error can name the profile folder: it goes to the app log,
       // and the person gets a sentence.
-      logUi(`auto-run: the execution order for PBI ${pbiId} was not saved: ${e instanceof Error ? e.message : String(e)}`);
+      logUi(`auto-run: the execution order for ${scopeLabel} was not saved: ${e instanceof Error ? e.message : String(e)}`);
       setError("Could not save the order. Try again, or see Settings → Logs.");
       setBusy(false);
     }
   };
-  const save = () => run(() => unwrapStr(commands.autoRunSaveOrder({ kind: "pbi", pbi_id: pbiId }, order.map((c) => c.id))));
-  const useSuggested = () => run(() => unwrapStr(commands.autoRunClearOrder({ kind: "pbi", pbi_id: pbiId })));
+  const save = () => run(() => unwrapStr(commands.autoRunSaveOrder(scope, order.map((c) => c.id))));
+  const useSuggested = () => run(() => unwrapStr(commands.autoRunClearOrder(scope)));
 
   return (
     <Modal

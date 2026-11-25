@@ -33,7 +33,7 @@ function renderScreen() {
     <QueryClientProvider client={qc}>
       {/* The switch rides in the title row (CaseScreens), beside the screen. */}
       <AutoRunModeSwitch />
-      <AutoRun org="acme" project="Web" pbi={PBI} />
+      <AutoRun org="acme" project="Web" scope={{ kind: "pbi", pbi: PBI }} />
     </QueryClientProvider>,
   );
 }

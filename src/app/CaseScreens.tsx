@@ -1,4 +1,5 @@
 import type { PbiHit } from "../bindings";
+import { scopeOf, type SuiteScope } from "../lib/scope";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
 import BridgeStatusBadge from "../components/BridgeStatusBadge";
 import SpecsStatusPill from "../components/SpecsStatusPill";
@@ -35,6 +36,7 @@ type Props = {
   homeProject: string;
   allProjects: boolean;
   pbi: PbiHit | null;
+  suite: SuiteScope | null;
   modules: ReadonlySet<Module>;
   caseSelection: CaseSelection | null;
   runFolder: RunFolderTarget | null;
@@ -42,6 +44,7 @@ type Props = {
   settingsFill: boolean;
   startOnModules: boolean;
   setPbi: (p: PbiHit | null) => void;
+  setSuite: (s: SuiteScope | null) => void;
   setCaseSelection: (s: CaseSelection | null) => void;
   setRunFolder: (f: RunFolderTarget | null) => void;
   setManageFocus: (f: ManageFocus | null) => void;
@@ -61,6 +64,7 @@ export default function CaseScreens({
   homeProject,
   allProjects,
   pbi,
+  suite,
   modules,
   caseSelection,
   runFolder,
@@ -68,6 +72,7 @@ export default function CaseScreens({
   settingsFill,
   startOnModules,
   setPbi,
+  setSuite,
   setCaseSelection,
   setRunFolder,
   setManageFocus,
@@ -155,6 +160,15 @@ export default function CaseScreens({
             goToSection("run");
             setRunFolder({ ...f, project: f.project || project });
           }}
+          // Only where Auto Test is on: the menu item has nowhere to go otherwise.
+          onAutoTest={
+            modules.has("auto_run")
+              ? (s) => {
+                  setSuite({ planId: s.planId, suiteId: s.suiteId, title: s.title, planName: s.planName, project: s.project || project });
+                  goToSection("autorun");
+                }
+              : undefined
+          }
           onManageSuite={(planId, suiteId, planProject) => {
             setManageFocus({ planId, suiteId, project: planProject || project });
             goToSection("manage");
@@ -172,7 +186,7 @@ export default function CaseScreens({
           // DevOps follow the PBI.
           project={allProjects ? homeProject : project}
           adoProject={project}
-          pbi={pbi}
+          scope={scopeOf(pbi, suite)}
           onOpenPlaywright={() => goToSection("playwright")}
           onOpenFixtures={
             sectionShown("apitemplates", modules, simple)

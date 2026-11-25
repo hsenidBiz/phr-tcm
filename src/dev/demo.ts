@@ -1180,9 +1180,12 @@ function applyPatches() {
     pbiTestCases: (_o: string, pbiId: number) =>
       ok((casesByPbi.get(pbiId) ?? []).map((c) => ({ id: c.id, title: c.title, tags: c.tags, automation_status: c.automation_status }))),
     pbiTestCasesFull: (_o: string, pbiId: number) => ok(casesByPbi.get(pbiId) ?? []),
-    // A suite's own cases: the sample data has no suite-only cases, so the
-    // first PBI's cases stand in for whichever suite is picked.
-    suiteTestCasesFull: () => ok([...casesByPbi.values()][0] ?? []),
+    // A suite's own cases: a requirement suite holds its PBI's sample cases;
+    // the demo folder holds the first PBI's.
+    suiteTestCasesFull: (_o: string, _p: string, _plan: number, suiteId: number) => {
+      const pbiId = PBI_BY_SUITE.get(suiteId);
+      return ok(pbiId != null ? (casesByPbi.get(pbiId) ?? []) : ([...casesByPbi.values()][0] ?? []));
+    },
     testCasesByIds: (_o: string, ids: number[]) =>
       ok(ids.map(findCase).filter((c): c is TestCaseFull => Boolean(c))),
 

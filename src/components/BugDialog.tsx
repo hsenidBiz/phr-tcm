@@ -393,7 +393,9 @@ export default function BugDialog({
         </div>
       )}
       <p className="text-xs text-muted">
-        Links to test case #{testCase.id} and PBI #{pbiId}
+        {/* A bug filed from a suite's run (pbiId 0) links the case only. */}
+        Links to test case #{testCase.id}
+        {pbiId > 0 && ` and PBI #${pbiId}`}
         {screenshots.length + pasted.length > 0 &&
           ` · ${screenshots.length + pasted.length} screenshot(s) attached`}
         . Paste (Ctrl+V) to add more.
