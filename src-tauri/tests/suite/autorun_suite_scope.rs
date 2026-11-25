@@ -165,3 +165,130 @@ async fn replay_records_the_suite_scope() {
     let pbi_run = v2_lib::commands::autorun_replay::new_replay_run(&RunScope::Pbi(42), "r".into(), "1".into(), None);
     assert_eq!((pbi_run.pbi_id, pbi_run.suite), (42, None));
 }
+
+// ---- publishing a suite run ------------------------------------------------
+
+fn suite_run_file(root: &std::path::Path) -> LocalRun {
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-s", "pbi_id": 0, "started_at": "1700000000000", "mode": "unattended",
+        "suite": { "plan_id": 9, "suite_id": 91, "title": "Login" },
+        "cases": [
+          { "case_id": 7, "title": "In", "verdict": "Passed", "note": "", "proposed": "Passed", "reason": "ok",
+            "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "ok" }] }] },
+          { "case_id": 8, "title": "Moved out", "verdict": "Passed", "note": "", "proposed": "Passed", "reason": "ok",
+            "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "ok" }] }] }
+        ]
+    }))
+    .unwrap();
+    store::save_run(root, &run).unwrap();
+    run
+}
+
+async fn mount_suite_publish(server: &MockServer) {
+    use wiremock::matchers::path as p;
+    Mock::given(wm_method("GET"))
+        .and(p("/org/proj/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 701, "testCaseReference": { "id": 7, "name": "In" }, "configuration": { "name": "Chrome" }, "results": {} }]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("POST"))
+        .and(p("/org/proj/_apis/test/runs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 900, "webAccessUrl": "https://x/run/900" })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(p("/org/proj/_apis/test/Runs/900/results"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 1, "testCase": { "id": "7" }, "testPoint": { "id": "701" } }]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("PATCH"))
+        .and(p("/org/proj/_apis/test/Runs/900/results"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "count": 1 })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("PATCH"))
+        .and(p("/org/proj/_apis/test/runs/900"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 900 })))
+        .mount(server)
+        .await;
+}
+
+fn ensured(plan_id: i32, suite_id: i32) -> v2_lib::ado_testplan::EnsuredSuite {
+    v2_lib::ado_testplan::EnsuredSuite { plan_id, plan_name: "Login".into(), suite_id, created_plan: false }
+}
+
+#[tokio::test]
+async fn suite_run_publishes_to_its_suite_points() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = suite_run_file(dir.path());
+    let server = MockServer::start().await;
+    mount_suite_publish(&server).await;
+    let client = AdoClient::with_base_urls("t".into(), server.uri(), server.uri());
+    let result = v2_lib::autorun::publish::publish_run(
+        &client, dir.path(), "org", "proj", &ensured(9, 91), "Auto Test", &run.id, &[],
+    )
+    .await
+    .unwrap();
+    let v2_lib::autorun::publish::PublishResult::Sent(report) = result else { panic!("expected Sent") };
+    assert_eq!(report.sent, vec![7]);
+    let reqs = server.received_requests().await.unwrap();
+    let create = reqs.iter().find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/test/runs")).unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&create.body).unwrap();
+    assert_eq!(body["pointIds"], serde_json::json!([701]));
+    assert_eq!(body["plan"]["id"], "9");
+    assert!(
+        !reqs.iter().any(|r| r.url.path().contains("/wit/workitems")),
+        "no work item is read for a suite run"
+    );
+}
+
+#[tokio::test]
+async fn suite_run_skips_a_case_no_longer_in_the_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = suite_run_file(dir.path());
+    let server = MockServer::start().await;
+    mount_suite_publish(&server).await;
+    let client = AdoClient::with_base_urls("t".into(), server.uri(), server.uri());
+    let result = v2_lib::autorun::publish::publish_run(
+        &client, dir.path(), "org", "proj", &ensured(9, 91), "Auto Test", &run.id, &[],
+    )
+    .await
+    .unwrap();
+    let v2_lib::autorun::publish::PublishResult::Sent(report) = result else { panic!("expected Sent") };
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].case_id, 8);
+    assert_eq!(report.skipped[0].why, "not in this suite any more");
+}
+
+/// The PBI path keeps its own wording: `autorun_publish::a_case_outside_the_suite_is_skipped_and_none_inside_is_a_refusal`
+/// pins "it is not in this PBI's test suite" and runs with the rest of that module.
+#[test]
+fn pbi_run_publish_unchanged() {
+    let run: LocalRun = serde_json::from_str(r##"{"id":"r1","pbi_id":77,"started_at":"1","cases":[]}"##).unwrap();
+    assert!(run.suite.is_none(), "a PBI run takes the PBI path in publish_run");
+}
+
+#[tokio::test]
+async fn bug_with_pbi_zero_links_only_the_case() {
+    let server = MockServer::start().await;
+    Mock::given(wm_method("POST"))
+        .and(wm_path("/org/proj/_apis/wit/workitems/$Bug"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 9100, "_links": { "html": { "href": "https://example.invalid/wi/9100" } }
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("t".into(), server.uri(), server.uri());
+    let fields = vec![("System.Title".to_string(), "Broke".to_string())];
+    client.create_work_item("org", "proj", "Bug", &fields, &[555, 0], None).await.unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
+    let rels: Vec<&serde_json::Value> =
+        body.as_array().unwrap().iter().filter(|o| o["path"] == "/relations/-").collect();
+    assert_eq!(rels.len(), 1, "{body}");
+    assert!(rels[0]["value"]["url"].as_str().unwrap().ends_with("/workitems/555"));
+}

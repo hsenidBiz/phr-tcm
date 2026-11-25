@@ -295,6 +295,7 @@ pub async fn publish_run(
         .collect();
 
     let refused = |why: String| Ok(PublishResult::Refused { why });
+    let over_suite = run.suite.is_some();
     let ids: Vec<i32> = confirmed.iter().map(|c| c.case_id).collect();
     let points = client.get_test_points(organization, project, suite.plan_id, suite.suite_id, &ids).await?;
     let points_of = |case_id: i32| -> Vec<i32> {
@@ -302,12 +303,20 @@ pub async fn publish_run(
     };
     for c in &confirmed {
         if points_of(c.case_id).is_empty() {
-            skipped.push(SkippedCase { case_id: c.case_id, why: "it is not in this PBI's test suite".into() });
+            skipped.push(SkippedCase { case_id: c.case_id, why: if over_suite { "not in this suite any more" } else { "it is not in this PBI's test suite" }.into(),
+            });
         }
     }
     let sendable: Vec<&CaseRecord> = confirmed.iter().copied().filter(|c| !points_of(c.case_id).is_empty()).collect();
     if sendable.is_empty() {
-        return refused("none of these cases is in the PBI's test suite in Azure DevOps".into());
+        return refused(
+            if over_suite {
+                "none of these cases is in the suite in Azure DevOps any more"
+            } else {
+                "none of these cases is in the PBI's test suite in Azure DevOps"
+            }
+            .into(),
+        );
     }
     let point_ids: Vec<i32> = sendable.iter().flat_map(|c| points_of(c.case_id)).collect();
 
