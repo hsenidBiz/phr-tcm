@@ -91,7 +91,7 @@ test("up and down reorder, Save order sends the new order and closes", async () 
   fireEvent.click(screen.getByRole("button", { name: "Save order" }));
 
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-  expect(calls.find((c) => c.cmd === "auto_run_save_order")?.args).toEqual({ pbiId: 42, caseIds: [1, 3, 2] });
+  expect(calls.find((c) => c.cmd === "auto_run_save_order")?.args).toEqual({ scope: { kind: "pbi", pbi_id: 42 }, caseIds: [1, 3, 2] });
 });
 
 test("Use suggested order is offered only when an order is saved", async () => {
@@ -105,7 +105,7 @@ test("a saved order that needs more pauses says so, and Use suggested order call
   expect(await screen.findByText("this order needs 3 pauses; the suggested order needs 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Use suggested order" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-  expect(calls.find((c) => c.cmd === "auto_run_clear_order")?.args).toEqual({ pbiId: 42 });
+  expect(calls.find((c) => c.cmd === "auto_run_clear_order")?.args).toEqual({ scope: { kind: "pbi", pbi_id: 42 } });
 });
 
 test("moving a case asks again and shows the new reset lines and count", async () => {

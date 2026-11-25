@@ -787,6 +787,7 @@ pub struct PublishedRun {
 pub struct SuiteRef {
     pub plan_id: i32,
     pub suite_id: i32,
+    #[serde(default)]
     pub title: String,
 }
 
