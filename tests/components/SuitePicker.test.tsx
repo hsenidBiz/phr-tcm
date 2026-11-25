@@ -7,8 +7,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import ContextBar from "../../src/components/ContextBar";
 import type { SuiteScope } from "../../src/lib/scope";
+import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 
 afterEach(() => {
+  resetAppSimpleModeStore();
   clearMocks();
   localStorage.clear();
 });
@@ -113,4 +115,17 @@ test("the PBI box stays the default and is untouched by the switch until Suite i
   fireEvent.click(screen.getByRole("button", { name: "Suite" }));
   expect(screen.queryByRole("textbox", { name: "Find PBI" })).not.toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Find suite" })).toBeInTheDocument();
+});
+
+test("Suite mode still works with app Basic mode on", () => {
+  setAppSimpleModeForTest(true);
+  bar();
+  fireEvent.click(screen.getByRole("button", { name: "Suite" }));
+  expect(screen.getByRole("textbox", { name: "Find suite" })).toBeInTheDocument();
+});
+
+test("with no setSuite (Auto Test off) the bar has no switch", () => {
+  bar({ setSuite: undefined });
+  expect(screen.queryByRole("group", { name: "Scope kind" })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Find PBI" })).toBeInTheDocument();
 });

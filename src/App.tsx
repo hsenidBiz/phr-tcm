@@ -190,6 +190,16 @@ export default function App() {
     }
   }
 
+  // A suite is Auto Test's scope: with the module off there is no switch to
+  // hold one, and a remembered one goes (through the raw setter, so the
+  // saved prefs clear too). Not before the module list has arrived.
+  const autoRunOn = modules.has("auto_run");
+  useEffect(() => {
+    if (modulesHydrated && !autoRunOn && !tourOpen && suite) setSuiteRaw(null);
+    // setSuiteRaw is this component's own, new every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modulesHydrated, autoRunOn, tourOpen, suite]);
+
   useStartupEffects();
   usePublishAppSimpleMode();
   const simpleMode = useAppSimpleMode();
@@ -509,7 +519,7 @@ export default function App() {
               pbi={pbi}
               setPbi={setPbi}
               suite={suite}
-              setSuite={setSuite}
+              setSuite={autoRunOn ? setSuite : undefined}
               account={status.data?.account ?? null}
               workMode={workMode}
               onToggleWork={() => {

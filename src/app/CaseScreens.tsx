@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { PbiHit } from "../bindings";
 import { scopeOf, type SuiteScope } from "../lib/scope";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
@@ -84,6 +85,8 @@ export default function CaseScreens({
   changeHomeProject,
 }: Props) {
   const simple = useAppSimpleMode().on;
+  // One object per pick, so Auto Test's effects keyed on it do not re-run on every App render.
+  const scope = useMemo(() => scopeOf(pbi, suite), [pbi, suite]);
   return (
     // key={section} remounts the wrapper on tab switch, so every
     // screen fades up briefly (120ms) instead of snapping in.
@@ -186,7 +189,7 @@ export default function CaseScreens({
           // DevOps follow the PBI.
           project={allProjects ? homeProject : project}
           adoProject={project}
-          scope={scopeOf(pbi, suite)}
+          scope={scope}
           onOpenPlaywright={() => goToSection("playwright")}
           onOpenFixtures={
             sectionShown("apitemplates", modules, simple)

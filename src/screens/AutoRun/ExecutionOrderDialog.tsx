@@ -41,7 +41,7 @@ export default function ExecutionOrderDialog({
   useCloseOnEnvironmentChange(onClose);
   const titleId = useId();
   const scope = runScopeOf(pbiId, suite);
-  const scopeLabel = suite ? `suite ${suite.suite_id}` : `PBI ${pbiId}`;
+  const scopeLabel = suite ? `suite ${suite.plan_id}/${suite.suite_id}` : `PBI ${pbiId}`;
   const titles = useMemo(() => new Map(cases.map((c) => [c.id, c.title])), [cases]);
   const titleOf = (id: number) => titles.get(id);
   const [plan, setPlan] = useState<PlanView | null>(null);

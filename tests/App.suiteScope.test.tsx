@@ -28,12 +28,16 @@ const PLANS = [
 ];
 const storedPrefs = () => JSON.parse(localStorage.getItem("tcm-v2-prefs") ?? "{}");
 
-function mount(saved: Record<string, unknown>, extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+function mount(
+  saved: Record<string, unknown>,
+  extra: (cmd: string, args: unknown) => unknown = () => undefined,
+  modules: string[] = [...ALL_MODULES],
+) {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   localStorage.setItem("tcm-v2-prefs", JSON.stringify({ org: "acme", project: "Web", section: "manual", workMode: false, ...saved }));
   const pushes: Array<{ switches: { pbi: unknown; suite: unknown } }> = [];
   mockIPC((cmd, args) => {
-    if (cmd === "modules_get") return [...ALL_MODULES];
+    if (cmd === "modules_get") return modules;
     if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update") return null;
     if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
@@ -111,4 +115,13 @@ test("Search Suites' Auto Test sets the suite and opens Auto Test on its cases",
   expect(storedPrefs().suite).toMatchObject({ planId: 9, suiteId: 92, title: "Password reset", planName: "Auth Plan" });
   await waitFor(() => expect(asked.length).toBeGreaterThan(0));
   expect(asked[0]).toMatchObject({ org: "acme", project: "Web", planId: 9, suiteId: 92 });
+});
+
+test("with Auto Test off there is no suite switch, and a remembered suite is dropped from the prefs", async () => {
+  mount({ pbi: null, suite: SUITE }, () => undefined, ["playwright"]);
+  await screen.findByText("a@b.com");
+  await waitFor(() => expect(storedPrefs().suite).toBeNull());
+  expect(screen.queryByRole("button", { name: "Clear suite" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Scope kind" })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Find PBI" })).toBeInTheDocument();
 });
