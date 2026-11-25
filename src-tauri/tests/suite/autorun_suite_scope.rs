@@ -464,3 +464,35 @@ async fn autorun_order_validates_against_suite_cases() {
     .await;
     assert_eq!(status, 400, "no PBI and no suite: nothing to validate against");
 }
+
+#[tokio::test]
+async fn order_route_follows_the_scope_in_its_words_and_pbi_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let _root = crate::serial::autorun();
+    store::set_root(dir.path().to_path_buf());
+    let server = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 1, "testCaseReference": { "id": 201, "name": "A" }, "configuration": { "name": "Chrome" } }]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut ctx = v2_lib::ai_bridge::BridgeContext {
+        org: "acme".into(),
+        project: "Web".into(),
+        current_suite: Some(current_suite()),
+        ..Default::default()
+    };
+    let body = serde_json::json!({ "case_ids": [201] }).to_string();
+    let (status, out) = crate::common::route_without_rules(&ctx, Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("This replaced the suite's whole Auto Test order"), "{out}");
+    assert!(out.contains("order for suite 91 (plan 9)"), "{out}");
+    assert!(v2_lib::ai_bridge::ORDER_REPLACED.contains("the PBI's whole"));
+
+    ctx.current_pbi = Some(v2_lib::ai_bridge::CurrentPbi { id: 5, title: "P".into(), project: "Web".into() });
+    let (status, out) = crate::common::route_without_rules(&ctx, Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "send pbi_id - PBI 5 is selected in TCM"));
+}

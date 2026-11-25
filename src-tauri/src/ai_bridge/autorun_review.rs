@@ -640,6 +640,9 @@ pub(crate) fn autorun_defect_clear(body: &str) -> (u16, String) {
 /// order, and the PBI's other cases run after the listed ones.
 pub const ORDER_REPLACED: &str = "This replaced the PBI's whole Auto Test order: its other cases run after these, in list order. To add cases ahead of the saved order and keep the rest of it, send mode: \"append\".";
 
+/// What `set_autorun_order` says after a replace on a suite.
+pub const ORDER_REPLACED_SUITE: &str = "This replaced the suite's whole Auto Test order: its other cases run after these, in list order. To add cases ahead of the saved order and keep the rest of it, send mode: \"append\".";
+
 /// `POST /autorun-order`, body `{ pbi_id?, case_ids, mode? }`: Auto Test's own
 /// execution order for the PBI on this machine (`store::save_order`). With no
 /// `pbi_id` the order is for the current suite (`BridgeContext::current_suite`)
@@ -694,6 +697,9 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
             (crate::autorun::RunScope::Pbi(pbi_id), ids, format!("PBI {pbi_id}"))
         }
         None => {
+            if let Some(p) = ctx.current_pbi.as_ref() {
+                return (400, format!("send pbi_id - PBI {} is selected in TCM", p.id));
+            }
             let Some(su) = ctx.current_suite.as_ref() else {
                 return (400, "pbi_id is missing and no suite is current in TCM - send the PBI's id".to_string());
             };
@@ -746,7 +752,13 @@ pub(crate) async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ad
             false => format!("Appended: the saved order's other cases run after these, as they were: {}", ids(&kept)),
         });
     } else {
-        lines.push(ORDER_REPLACED.to_string());
+        lines.push(
+            match scope {
+                crate::autorun::RunScope::Pbi(_) => ORDER_REPLACED,
+                crate::autorun::RunScope::Suite(_) => ORDER_REPLACED_SUITE,
+            }
+            .to_string(),
+        );
     }
     for id in &o.case_ids {
         if !matches!(crate::autorun::store::load_script(&root, *id), Ok(Some(_))) {

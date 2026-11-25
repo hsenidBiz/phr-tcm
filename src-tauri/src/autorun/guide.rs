@@ -1630,7 +1630,8 @@ each case that needs a name unchanged before the cases that change it, and
 does not change Run Tests' order. Without a saved order, Auto Test already
 works out a suggested order from the marks. A saved order replaces the
 suggestion for every later run until the person picks Use suggested order,
-so set one only when a particular order is wanted.
+so set one only when a particular order is wanted. When `get_current_pbi` names a suite, omit
+`pbi_id`: the order is the suite's.
 
 A case that needs the site in a particular state is marked the same way.
 A case that checks an empty list needs no cycles to exist, so it carries
