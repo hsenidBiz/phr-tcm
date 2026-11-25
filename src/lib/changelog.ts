@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.4",
+    date: "2026-11-25",
+    items: [
+      "Auto Test can work on a test suite, for cases that have no PBI: choose Suite in the top bar, or Auto Test from a suite's More menu in Search Suites.",
+      "Script, run and review a suite's own test cases as you would a PBI's. Results go to the suite's own test points, and bugs link to the test case.",
+      "Your assistant knows the current suite and can script its cases.",
+    ],
+  },
+  {
     version: "2.4.8-beta.3",
     date: "2026-11-25",
     items: [
