@@ -6,7 +6,7 @@ import { useReducedMotion, useThemeIs } from "./decorShared";
 
 /** Snow alone, for every theme except Halloween (none) and Christmas (its own
  * scenery draws it, in ChristmasCorner): in the (positioned) content column,
- * behind the page, clipped, taking no height and no click. Colours are the
+ * over the page like the Christmas snow, clipped, taking no height and no click. Colours are the
  * --color-snow tokens, so a light theme gets a flake it can see. */
 export default function SnowLayer() {
   const halloween = useThemeIs("halloween");

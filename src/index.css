@@ -2193,13 +2193,13 @@ table {
   animation: christmas-fall 12s linear infinite;
 }
 /* The plain snow layer (SnowLayer): same flakes and fall, its own colours,
-   behind the page. */
+   over the page like the seasonal snow (below modals, z-50, and the palette). */
 .snow-layer {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  z-index: -1;
+  z-index: 10;
 }
 .snow-layer .christmas-flake {
   background: var(--color-snow);
