@@ -53,8 +53,10 @@ pub fn autorun() -> MutexGuard<'static, ()> {
 
 /// The agent registry (`autorun::agents`): which assistants are connected,
 /// their labels and numbers. Taken by every test that registers a caller and
-/// calls `agents::clear()` first. When a test also needs `autorun()`, take
-/// this one first.
+/// calls `agents::clear()` first, and by every test that releases or ends a
+/// browser (`release_autorun_browsers`, `release_for_assistant`, a reset): those
+/// unbind slots, and a test that had just bound an assistant to one would find
+/// it gone. When a test also needs `autorun()`, take this one first.
 pub fn agents() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)

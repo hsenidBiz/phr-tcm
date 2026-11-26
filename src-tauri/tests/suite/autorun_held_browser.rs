@@ -221,6 +221,7 @@ impl Ends for AppBrowser {
 /// the app started in jobs of its own. With nothing held it says so.
 #[tokio::test(flavor = "multi_thread")]
 async fn release_clears_every_record_and_closes_only_the_apps_own_browsers() {
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let _t = crate::serial::api_template_run();
     let _h = crate::serial::held_browsers();
@@ -247,6 +248,7 @@ async fn release_clears_every_record_and_closes_only_the_apps_own_browsers() {
 /// Stop rather than closing the browser under it.
 #[tokio::test]
 async fn release_is_refused_while_a_template_run_is_going() {
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let _t = crate::serial::api_template_run();
     let claim = v2_lib::api_templates::runner::claim().expect("the run slot is free");
@@ -357,6 +359,7 @@ impl Ends for StartsDuringRelease {
 /// between; and a run that already holds its claim refuses Release.
 #[tokio::test(flavor = "multi_thread")]
 async fn release_holds_the_run_claims_until_every_browser_is_ended() {
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let _t = crate::serial::api_template_run();
     let _h = crate::serial::held_browsers();
@@ -816,6 +819,7 @@ fn a_template_held_off_by_the_assistants_browser_names_the_release() {
 /// The assistant's release never stops a replay going: it waits for it.
 #[tokio::test]
 async fn the_assistants_release_never_stops_a_replay() {
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
     let (status, said) = release_for_assistant(v2_lib::autorun::slots::SlotNo::MAIN).await;
@@ -851,6 +855,7 @@ fn body_of<'a>(source: &'a str, name: &str) -> &'a str {
 /// ends its browser mid-run.
 #[tokio::test]
 async fn release_refuses_while_a_fixture_cleanup_or_setup_run_holds_its_browser() {
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let _t = crate::serial::api_template_run();
     let before = |body: &str, first: &str, then: &str| match (body.find(first), body.find(then)) {
@@ -955,6 +960,7 @@ async fn a_reset_forgets_where_the_last_replay_stood() {
 #[tokio::test]
 async fn a_reset_during_a_replay_is_refused() {
     use v2_lib::commands::autorun::{reset_for_assistant, REPLAY_RUNNING_AT_RESET};
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
     let answer = tokio::time::timeout(std::time::Duration::from_secs(2), reset_for_assistant(v2_lib::autorun::slots::SlotNo::MAIN, "acme", "Web"))

@@ -797,6 +797,7 @@ async fn a_refusal_for_a_replay_in_another_slot_names_that_slots_case_and_step()
         replay_running_refusal, supervised_page_within_in, REPLAY_GOING,
     };
     use v2_lib::autorun::replay_to::state;
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
@@ -879,6 +880,7 @@ async fn the_answer_of_a_replay_that_ended_unwatched_goes_to_the_next_call() {
 #[tokio::test]
 async fn a_replay_going_is_stopped_on_request_and_says_where() {
     use v2_lib::ai_bridge::autorun_replay_stop_with;
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     // The replay's step and action are process-wide: a replay of
     // `autorun_replay_to` (under the leases lock) would move them.
