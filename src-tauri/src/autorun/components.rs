@@ -388,9 +388,12 @@ pub fn expand(c: &Component, inputs: &serde_json::Map<String, Value>) -> Result<
     for action in &c.actions {
         let mut a = action.clone();
         if !text.is_empty() {
-            let mut v = serde_json::to_value(&a).map_err(unreadable)?;
-            fill_text_in(&mut v, &text);
-            a = serde_json::from_value(v).map_err(unreadable)?;
+            // The run-time marks go through the round trip.
+            a = crate::browser::actions::with_run_marks(|| {
+                let mut v = serde_json::to_value(&a).map_err(unreadable)?;
+                fill_text_in(&mut v, &text);
+                serde_json::from_value(v).map_err(unreadable)
+            })?;
         }
         for t in a.targets_mut() {
             put_targets(t, &links, c)?;
@@ -413,11 +416,14 @@ fn expand_one(
     uses: &mut Vec<ComponentUse>,
 ) -> Result<Vec<(Action, Option<String>)>, String> {
     match action {
-        Action::UseComponent { component, inputs } => {
+        Action::UseComponent { component, inputs, sensitive } => {
             let c = find(file, component).ok_or_else(|| not_saved(component))?;
             let actions = expand(c, inputs)?;
             uses.push(ComponentUse { name: c.name.clone(), version: c.version });
-            Ok(actions.into_iter().map(|a| (a, Some(c.name.clone()))).collect())
+            // A secret input may end up in any value the component types or
+            // compares: all of them are hidden.
+            let mark = |a: Action| if *sensitive { crate::browser::actions::marked_sensitive(a) } else { a };
+            Ok(actions.into_iter().map(|a| (mark(a), Some(c.name.clone()))).collect())
         }
         Action::WhenVisible { selector, within_ms, then } | Action::WhenHidden { selector, within_ms, then } if uses_any(then) => {
             let mut inner = Vec::with_capacity(then.len());
@@ -524,7 +530,7 @@ pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &Compon
             out.push(Ran { action: None, component: outcomes[j].component.clone() });
             continue;
         };
-        let Action::UseComponent { component, inputs } = a else {
+        let Action::UseComponent { component, inputs, .. } = a else {
             out.push(Ran { action: Some(a.clone()), component: None });
             continue;
         };

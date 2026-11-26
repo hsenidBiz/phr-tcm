@@ -600,3 +600,35 @@ fn a_saved_script_and_a_kept_action_come_back_without_the_mark() {
         assert!(!serde_json::to_string(&k.action).unwrap().contains("sensitive"));
     }
 }
+
+/// A script is prepared in more than one pass (fixtures first, then the
+/// setup's outputs, then later passes): a mark one pass put on a fill or a
+/// check survives the next pass over the same steps.
+#[test]
+fn the_hidden_mark_survives_a_second_pass_over_the_steps() {
+    let first: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "case 1", "setup": { "fixture": "own" },
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "fill", "selector": { "css": "#a" }, "value": "{{fixture.api.token}}" },
+            { "kind": "expect_text", "selector": { "css": "#generated-key" }, "equals": "{{fixture.api.token}}" }
+        ] }]
+    }))
+    .unwrap();
+    let fixtures = BTreeMap::from([(
+        "api".to_string(),
+        FixtureValues { name: "Api".into(), outputs: Some([("token".to_string(), json!("tok-9f8e7d"))].into()) },
+    )]);
+    let pass_one = resolve(&first, &fixtures, &BTreeMap::new()).unwrap();
+    assert!(matches!(pass_one.steps[0].actions[0], Action::Fill { sensitive: true, .. }));
+
+    // The second pass: a step that names the setup's output joins the script.
+    let mut second = pass_one.clone();
+    second.steps[0].actions.push(act(json!({ "kind": "fill", "selector": "#b", "value": "{{setup.cycle_name}}" })));
+    let pass_two = resolve(&second, &BTreeMap::new(), &[("cycle_name".to_string(), json!("Draft 7"))].into()).unwrap();
+    let actions = &pass_two.steps[0].actions;
+    assert_eq!(Say::of(&actions[0]).label, TYPE_HIDDEN);
+    assert_eq!(Say::of(&actions[1]).label, CHECK_HIDDEN);
+    assert_eq!(Say::of(&actions[2]).label, "Type 'Draft 7'");
+    // Nothing that is written out carries it.
+    assert!(!serde_json::to_string(&pass_two).unwrap().contains("sensitive"));
+}

@@ -23,6 +23,50 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+thread_local! {
+    static KEEP_MARKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` (synchronous, so it stays on this thread) with the run-time
+/// `sensitive` marks written when an action is serialised. The run's own
+/// passes over a script that go through JSON (filling in a setup's values,
+/// expanding a component) use it so the mark survives them; nothing that
+/// saves or sends an action out does.
+pub fn with_run_marks<T>(f: impl FnOnce() -> T) -> T {
+    let before = KEEP_MARKS.with(|k| k.replace(true));
+    let out = f();
+    KEEP_MARKS.with(|k| k.set(before));
+    out
+}
+
+/// `skip_serializing_if` for the `sensitive` marks: written only for a run's
+/// own pass (`with_run_marks`), and only when set.
+fn hide_mark(mark: &bool) -> bool {
+    !*mark || !KEEP_MARKS.with(|k| k.get())
+}
+
+/// `action` with its value marked `sensitive`, when it is one that types or
+/// compares a value (a guard's own actions too).
+pub(crate) fn marked_sensitive(action: Action) -> Action {
+    match action {
+        Action::Fill { selector, value, .. } => Action::Fill { selector, value, sensitive: true },
+        Action::CheckText { value, .. } => Action::CheckText { value, sensitive: true },
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms, .. } => {
+            Action::ExpectText { selector, equals, matches, same_as, timeout_ms, sensitive: true }
+        }
+        Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
+            Action::ExpectContainsText { selector, value, timeout_ms, sensitive: true }
+        }
+        Action::WhenVisible { selector, within_ms, then } => {
+            Action::WhenVisible { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
+        }
+        Action::WhenHidden { selector, within_ms, then } => {
+            Action::WhenHidden { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
+        }
+        other => other,
+    }
+}
+
 /// `expect_checked` with no `checked` asks for a ticked box.
 fn ticked() -> bool {
     true
@@ -43,6 +87,11 @@ pub enum Action {
         #[serde(default)]
         #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
         inputs: serde_json::Map<String, serde_json::Value>,
+        /// An input came from a secret placeholder: what the expanded
+        /// actions type or compare is hidden from the watcher's label. A
+        /// run-time mark, written only inside `with_run_marks`.
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
     },
     Click { selector: Target },
     /// Move the pointer onto `selector` (waited for as a click waits, scrolled
@@ -62,10 +111,10 @@ pub enum Action {
         /// The value came from a secret placeholder (a setup's or a fixture's
         /// output named like a password or a token) that was filled in before
         /// the step ran: the watcher's label never shows it. Set when the
-        /// placeholder is resolved. A run-time mark: read when sent in, never
-        /// written (a saved script, a kept action or anything sent out comes
-        /// back without it).
-        #[serde(default, skip_serializing)]
+        /// placeholder is resolved. A run-time mark: written only inside
+        /// `with_run_marks` (the run's own passes over a script), so a saved
+        /// script, a kept action or anything sent out comes back without it.
+        #[serde(default, skip_serializing_if = "hide_mark")]
         sensitive: bool,
     },
     /// Choose an option in a native list (`<select>`), by the option's
@@ -91,7 +140,7 @@ pub enum Action {
         /// The compared text came from a secret placeholder: the watcher's
         /// label never shows it. A run-time mark: read when sent in, never written (a saved
         /// script, a kept action or anything sent out comes back without it).
-        #[serde(default, skip_serializing)]
+        #[serde(default, skip_serializing_if = "hide_mark")]
         sensitive: bool,
     },
     /// The address holds `contains`, or is exactly `equals` (a value
@@ -149,7 +198,7 @@ pub enum Action {
         /// The compared text came from a secret placeholder: the watcher's
         /// label never shows it. A run-time mark: read when sent in, never written (a saved
         /// script, a kept action or anything sent out comes back without it).
-        #[serde(default, skip_serializing)]
+        #[serde(default, skip_serializing_if = "hide_mark")]
         sensitive: bool,
     },
     /// The first whole number in the one element's text is the first whole
@@ -173,7 +222,7 @@ pub enum Action {
         /// The compared text came from a secret placeholder: the watcher's
         /// label never shows it. A run-time mark: read when sent in, never written (a saved
         /// script, a kept action or anything sent out comes back without it).
-        #[serde(default, skip_serializing)]
+        #[serde(default, skip_serializing_if = "hide_mark")]
         sensitive: bool,
     },
     /// How many elements match: exactly `equals`, or `at_least` / `at_most`

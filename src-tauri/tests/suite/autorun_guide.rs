@@ -1377,7 +1377,7 @@ fn the_guide_teaches_components() {
     let start = section[..use_at].rfind('{').unwrap();
     let action: Action =
         serde_json::from_str(first_balanced(section, start, '{', '}')).expect("the use is not an action");
-    let Action::UseComponent { component: named, inputs } = &action else { panic!("{action:?}") };
+    let Action::UseComponent { component: named, inputs, .. } = &action else { panic!("{action:?}") };
     assert_eq!(named, "Pick a date");
     let ran = expand(&component, inputs).expect("the use does not expand");
     assert_eq!(ran.len(), component.actions.len());

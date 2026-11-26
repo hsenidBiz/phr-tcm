@@ -708,7 +708,7 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "page_until", "next": "n", "until": "u", "max_pages": 2 })).unwrap(),
-        Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() },
+        Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new(), sensitive: false },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 

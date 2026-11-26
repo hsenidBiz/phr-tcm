@@ -129,7 +129,8 @@ fn strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
 
 /// The steps as JSON: every value an action carries is a string in it.
 fn steps_value(steps: &[StepScript]) -> Value {
-    serde_json::to_value(steps).unwrap_or(Value::Null)
+    // For the run's own passes: the hidden marks stay on the actions.
+    crate::browser::actions::with_run_marks(|| serde_json::to_value(steps).unwrap_or(Value::Null))
 }
 
 /// Every one of our placeholders in `steps`, in order, each once.
@@ -248,11 +249,21 @@ fn holds_secret_placeholder(action: &serde_json::Map<String, Value>) -> bool {
     let fields: &[&str] = match action.get("kind").and_then(Value::as_str) {
         Some("fill" | "check_text" | "expect_contains_text") => &["value"],
         Some("expect_text") => &["equals", "matches"],
+        Some("use_component") => {
+            let mut texts = Vec::new();
+            if let Some(inputs) = action.get("inputs") {
+                strings(inputs, &mut texts);
+            }
+            return texts.into_iter().any(secret_placeholder_in);
+        }
         _ => return false,
     };
-    fields.iter().filter_map(|f| action.get(*f).and_then(Value::as_str)).any(|v| {
-        exec::placeholders(v).into_iter().any(|name| parse(&name).is_some() && super::capture_redact::secret_name(&name))
-    })
+    fields.iter().filter_map(|f| action.get(*f).and_then(Value::as_str)).any(secret_placeholder_in)
+}
+
+/// Does this text name one of our placeholders by a secret-looking name?
+fn secret_placeholder_in(v: &str) -> bool {
+    exec::placeholders(v).into_iter().any(|name| parse(&name).is_some() && super::capture_redact::secret_name(&name))
 }
 
 /// `steps` with every string value's placeholders that `vars` names filled

@@ -3125,7 +3125,7 @@ async fn a_component_is_retired_only_when_no_script_uses_it() {
     let c: Component = serde_json::from_str(&component_body(None)).unwrap();
     put(dir.path(), "acme", "Web", c).unwrap();
     let mut used = scripted(7);
-    used.steps[0].actions.push(Action::UseComponent { component: "pick a date".into(), inputs: Default::default() });
+    used.steps[0].actions.push(Action::UseComponent { component: "pick a date".into(), inputs: Default::default(), sensitive: false });
     save_scripts_atomically(dir.path(), &[used]).unwrap();
     let body = serde_json::json!({ "name": "Pick a date" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
@@ -4464,7 +4464,7 @@ async fn a_tried_component_answers_each_of_its_actions() {
     }))
     .unwrap();
     v2_lib::autorun::components::put(dir.path(), "acme", "Web", c).unwrap();
-    let use_it = Action::UseComponent { component: "Three checks".into(), inputs: serde_json::Map::new() };
+    let use_it = Action::UseComponent { component: "Three checks".into(), inputs: serde_json::Map::new(), sensitive: false };
 
     let (mut account, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
     let mut d = crate::common::FakePage { body_has_text: false, ..crate::common::FakePage::default() }.driver();

@@ -19,7 +19,7 @@ fn use_component_round_trips() {
     let v = json!({"kind": "use_component", "component": "pick-date", "inputs": {"day": "5", "n": 2}});
     let a: Action = serde_json::from_value(v.clone()).unwrap();
     match &a {
-        Action::UseComponent { component, inputs } => {
+        Action::UseComponent { component, inputs, .. } => {
             assert_eq!(component, "pick-date");
             assert_eq!(inputs.len(), 2);
         }
@@ -51,7 +51,7 @@ fn an_input_placeholder_with_a_role_is_refused() {
 
 #[test]
 fn use_component_has_no_targets() {
-    let a = Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() };
+    let a = Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new(), sensitive: false };
     assert!(a.targets().is_empty());
 }
 
@@ -103,7 +103,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
 }
 
 fn use_it(name: &str) -> Action {
-    Action::UseComponent { component: name.into(), inputs: serde_json::Map::new() }
+    Action::UseComponent { component: name.into(), inputs: serde_json::Map::new(), sensitive: false }
 }
 
 #[test]
@@ -992,4 +992,48 @@ fn old_script_and_component_files_with_counts_still_load() {
     let prints = tried(&[&more]);
     let s = save_tried(dir.path(), "o", "p", more, Some("checks the day"), session(&prints), 60, no_users()).unwrap();
     assert_eq!((s.version, s.changes), (7, 6));
+}
+
+/// A secret placeholder given to a component as an input (`{{setup.password}}`)
+/// is filled in before the component is expanded at run time: the expanded
+/// actions that type or compare it are still hidden from the watcher's label,
+/// and the mark is never written out.
+#[test]
+fn a_component_given_a_secret_input_stays_hidden_once_expanded() {
+    use std::collections::BTreeMap;
+    use v2_lib::autorun::components::{expand_actions, ComponentFile};
+    use v2_lib::autorun::setup::resolve;
+    use v2_lib::browser::highlight::{Say, CHECK_HIDDEN, TYPE_HIDDEN};
+    let c = made(
+        "Type it",
+        json!([{ "name": "day", "kind": "text", "description": "" }]),
+        json!([
+            { "kind": "fill", "selector": { "css": "#a" }, "value": "{{day}}" },
+            { "kind": "check_text", "value": "got {{day}}" },
+            { "kind": "click", "selector": { "css": "#go" } }
+        ]),
+    );
+    let file = ComponentFile { components: vec![c] };
+    let mut sc = script(1, vec![Action::UseComponent {
+        component: "Type it".into(),
+        inputs: given(json!({ "day": "{{setup.password}}" })),
+        sensitive: false,
+    }]);
+    sc.setup = Some(serde_json::from_value(json!({ "fixture": "own" })).unwrap());
+    let resolved = resolve(&sc, &BTreeMap::new(), &[("password".to_string(), json!("S3cret-pw"))].into()).unwrap();
+    let (out, _) = expand_actions(&file, &resolved.steps[0].actions).unwrap();
+    assert!(matches!(&out[0], Action::Fill { value, sensitive: true, .. } if value == "S3cret-pw"), "{:?}", out[0]);
+    assert_eq!(Say::of(&out[0]).label, TYPE_HIDDEN);
+    assert_eq!(Say::of(&out[1]).label, CHECK_HIDDEN);
+    assert!(!serde_json::to_string(&out).unwrap().contains("sensitive"));
+
+    // A plain input is shown as ever.
+    let mut plain = script(2, vec![Action::UseComponent {
+        component: "Type it".into(),
+        inputs: given(json!({ "day": "Monday" })),
+        sensitive: false,
+    }]);
+    plain.setup = sc.setup.clone();
+    let (out, _) = expand_actions(&file, &plain.steps[0].actions).unwrap();
+    assert_eq!(Say::of(&out[0]).label, "Type 'Monday'");
 }

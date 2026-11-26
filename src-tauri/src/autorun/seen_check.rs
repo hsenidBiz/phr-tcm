@@ -1693,7 +1693,7 @@ fn script_links(script: &CaseScript, components: &ComponentFile) -> Vec<(Target,
                 (t.clone(), class)
             })
             .collect();
-        if let Action::UseComponent { component, inputs } = action {
+        if let Action::UseComponent { component, inputs, .. } = action {
             // Each target input as strictly as its uses inside the
             // component checked it; one the project cannot place vouches
             // for nothing.
@@ -2535,7 +2535,7 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
 /// for a use that cannot be expanded (its own step refuses that).
 fn as_run(components: &ComponentFile, action: &Action) -> Vec<Action> {
     match action {
-        Action::UseComponent { component, inputs } => {
+        Action::UseComponent { component, inputs, .. } => {
             find(components, component).and_then(|c| expand(c, inputs).ok()).unwrap_or_default()
         }
         _ => Vec::new(),
@@ -2675,7 +2675,7 @@ fn scan_deferring(
                         guard_kind: String::new(),
                     });
                 }
-                if let Action::UseComponent { component, inputs } = action {
+                if let Action::UseComponent { component, inputs, .. } = action {
                     let used = find(components, component)
                         .ok_or_else(|| not_saved(component))
                         .and_then(|c| expand(c, inputs).map(|ex| (c, ex)));
@@ -3043,7 +3043,7 @@ pub fn check_resolved_inputs_with(
                     ));
                 }
             }
-            let (Action::UseComponent { component, inputs: given }, Action::UseComponent { inputs: filled_in, .. }) = (sa, fa)
+            let (Action::UseComponent { component, inputs: given, .. }, Action::UseComponent { inputs: filled_in, .. }) = (sa, fa)
             else {
                 continue;
             };
