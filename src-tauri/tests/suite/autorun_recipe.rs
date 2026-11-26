@@ -210,6 +210,23 @@ fn placeholders_are_filled_in_for_one_account_everywhere_they_appear() {
     assert!(has_placeholder("x {{password}}") && has_placeholder("{{username}}") && !has_placeholder("plain"));
 }
 
+/// The sign-in fill that gets the password is marked, so the Auto Test
+/// browser's label hides it wherever it runs (a trial included); the user
+/// name's fill is not.
+#[test]
+fn the_fill_that_gets_the_password_is_marked_sensitive() {
+    let account = Account { key: "admin".into(), label: "Admin".into(), username: "kim".into(), password: "pw-1".into(), password_source: None };
+    let steps = for_account(&recipe(sample()).steps, &account);
+    let mut marks = vec![];
+    for step in &steps {
+        if let RecipeStep::Do(v2_lib::browser::actions::Action::Fill { value, sensitive, .. }) = step {
+            marks.push((value.clone(), *sensitive));
+        }
+    }
+    assert!(marks.contains(&("pw-1".to_string(), true)), "{marks:?}");
+    assert!(marks.contains(&("kim".to_string(), false)), "{marks:?}");
+}
+
 #[test]
 fn a_recipe_is_saved_per_project() {
     let dir = tempfile::tempdir().unwrap();

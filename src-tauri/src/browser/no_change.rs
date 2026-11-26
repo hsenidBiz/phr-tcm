@@ -316,6 +316,7 @@ pub async fn expect_no_change<D: Driver>(
     region: Option<&Target>,
     within_ms: Option<u32>,
     timing: &Timing,
+    drew: &mut bool,
 ) -> ActionOutcome {
     let within = within_ms.unwrap_or(WAIT_MS);
     let watched = region.unwrap_or(selector);
@@ -324,9 +325,7 @@ pub async fn expect_no_change<D: Driver>(
         Ok(r) => r,
         Err(b) => return blocked(b),
     };
-    if let Err(e) = point_and_pause(d, &ready, timing, &Say::new(Kind::Check, "Check: nothing changes")).await {
-        return failed_by(e);
-    }
+    *drew |= point_and_pause(d, &ready, timing, &Say::new(Kind::Check, "Check: nothing changes")).await;
     // The pointer goes onto the control before the page is read, so what the
     // pointer alone does (a hint, a hover menu) is in "before".
     if let Err(b) = input::hover_forced(d, &ready).await {

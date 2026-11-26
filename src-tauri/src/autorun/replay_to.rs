@@ -1043,7 +1043,7 @@ pub fn touches_sign_in(
         for a in actions {
             match a {
                 Action::SignIn { .. } => return Some("signed in".to_string()),
-                Action::Fill { selector, value } => {
+                Action::Fill { selector, value, .. } => {
                     let t = text(selector);
                     let v = value.to_lowercase();
                     if t.contains("password")

@@ -17,7 +17,7 @@ fn click(name: &str) -> Action {
 }
 
 fn fill(name: &str, value: &str) -> Action {
-    Action::Fill { selector: role("textbox", name), value: value.into() }
+    Action::Fill { selector: role("textbox", name), value: value.into(), sensitive: false }
 }
 
 fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {

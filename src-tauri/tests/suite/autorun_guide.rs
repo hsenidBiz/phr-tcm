@@ -26,7 +26,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
     let samples = vec![
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
-        Action::Fill { selector: "s".into(), value: "v".into() },
+        Action::Fill { selector: "s".into(), value: "v".into(), sensitive: false },
         serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },

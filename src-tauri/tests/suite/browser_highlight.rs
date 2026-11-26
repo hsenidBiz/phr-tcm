@@ -5,7 +5,11 @@
 
 use crate::common::{FakePage, ScriptedDriver};
 use serde_json::{json, Value};
-use v2_lib::browser::actions::{execute_with, Action, HIGHLIGHT_JS};
+use std::collections::BTreeMap;
+use v2_lib::autorun::setup::{resolve, FixtureValues};
+use v2_lib::autorun::CaseScript;
+use v2_lib::browser::actions::{execute_in, execute_with, Action, Policy, HIGHLIGHT_JS};
+use v2_lib::browser::expect::IS_PASSWORD_JS;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::highlight::{self, kind_of, Kind, Say, CHECK_HIDDEN, RESULT_JS, SHOW_JS, TYPE_HIDDEN, TYPE_PASSWORD};
 use v2_lib::browser::timing::Timing;
@@ -105,6 +109,10 @@ fn labels_say_what_the_step_does() {
     assert_eq!(say(json!({ "kind": "fill", "selector": "#name", "value": "Smith" })), "Type 'Smith'");
     assert_eq!(say(json!({ "kind": "select_option", "selector": "#a", "label": "Manager" })), "Choose 'Manager'");
     assert_eq!(say(json!({ "kind": "upload", "selector": "#a", "file": "file.xlsx" })), "Upload 'file.xlsx'");
+    assert_eq!(
+        say(json!({ "kind": "upload", "selector": "#a", "file": "C:\\files\\Leave Dates.xlsx" })),
+        "Upload 'Leave Dates.xlsx'"
+    );
     assert_eq!(say(json!({ "kind": "check_text", "value": "Saved" })), "Check: shows 'Saved'");
     assert_eq!(say(json!({ "kind": "expect_contains_text", "selector": "#a", "value": "Saved" })), "Check: shows 'Saved'");
 }
@@ -202,13 +210,31 @@ async fn with_the_highlight_on_a_click_is_drawn_first_and_its_result_follows() {
 
 #[tokio::test]
 async fn a_step_that_failed_turns_the_box_red() {
+    // The box is drawn, then the click itself is refused.
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if m == "Input.dispatchMouseEvent" {
+            return Err(CdpError::Protocol { method: m.into(), message: "Cannot find context with specified id".into() });
+        }
+        page.answer(m, p)
+    });
+    let out = execute_with(&mut d, &act(json!({ "kind": "click", "selector": "#go" })), &on()).await;
+    assert!(!out.ok);
+    assert_eq!(results(&d), vec![false]);
+}
+
+/// A step that never got as far as a box (the element was covered) has no
+/// box to turn red, so no result call is made.
+#[tokio::test]
+async fn a_step_blocked_before_any_box_sends_no_result() {
     let mut covered = crate::common::ready_probe();
     covered["hit"] = json!(false);
     covered["covered_by"] = json!("div.modal-backdrop");
     let mut d = FakePage { probes: vec![covered], ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &act(json!({ "kind": "click", "selector": "#go" })), &on()).await;
     assert!(!out.ok);
-    assert_eq!(results(&d), vec![false]);
+    assert!(drawn(&d).is_empty());
+    assert!(results(&d).is_empty());
 }
 
 /// A check is drawn once it has finished, over the one element, with its
@@ -266,4 +292,205 @@ fn the_overlay_cannot_be_restyled_or_clicked_and_leaves_the_element_alone() {
     assert!(!SHOW_JS.contains("outline"));
     assert!(!SHOW_JS.contains("innerHTML"), "the label is text, never markup");
     assert!(RESULT_JS.contains("800") && RESULT_JS.contains("2000"), "about 0.8 s on success, 2 s on failure");
+}
+
+/// The calls that carry `value` anywhere in them.
+fn carrying<'a>(d: &'a ScriptedDriver, value: &str) -> Vec<&'a (String, Value)> {
+    d.calls.iter().filter(|(_, p)| p.to_string().contains(value)).collect()
+}
+
+/// Nothing about the highlight - the box, its label, its result - may carry
+/// `value`. The fill itself has to (it types it): that is the one place it
+/// goes, and it is not the highlight's.
+fn assert_value_only_typed(d: &ScriptedDriver, value: &str) {
+    for (m, p) in carrying(d, value) {
+        assert!(p["functionDeclaration"] != HIGHLIGHT_JS, "the box carried the value: {m} {p}");
+        assert!(!p.to_string().contains("tcm.action-highlight"), "a highlight call carried the value: {m} {p}");
+    }
+    assert!(carrying(d, value).len() <= 2, "the value went to more than the typing itself");
+}
+
+/// The app's own sign-in and reset fill a password that was resolved before
+/// the step ran, so the label cannot know it by looking at the value: a
+/// runner-own fill is always the hidden value, whatever the field is.
+#[tokio::test]
+async fn a_runner_own_fill_is_hidden_in_any_field_and_the_value_reaches_no_highlight_call() {
+    let mut d = FakePage::default().driver();
+    let fill = act(json!({ "kind": "fill", "selector": "#nickname", "value": "Tr0ub4dor-3" }));
+    let out = execute_in(&mut d, &fill, &on(), &Policy::open().as_runner()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(drawn(&d), vec![("type".to_string(), TYPE_HIDDEN.to_string())]);
+    assert_value_only_typed(&d, "Tr0ub4dor-3");
+    assert_eq!(results(&d), vec![true]);
+    // The same fill, not the runner's, still says what it types.
+    let mut d = FakePage::default().driver();
+    let _ = execute_in(&mut d, &fill, &on(), &Policy::open()).await;
+    assert_eq!(drawn(&d), vec![("type".to_string(), "Type 'Tr0ub4dor-3'".to_string())]);
+}
+
+/// A page that cannot say whether the field is a password is treated as if
+/// it were one.
+#[tokio::test]
+async fn a_failed_password_look_fails_closed() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if p["functionDeclaration"] == IS_PASSWORD_JS {
+            return Err(CdpError::Protocol { method: m.into(), message: "Cannot find context with specified id".into() });
+        }
+        page.answer(m, p)
+    });
+    let out = execute_with(&mut d, &act(json!({ "kind": "fill", "selector": "#a", "value": "hunter2" })), &on()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(drawn(&d), vec![("type".to_string(), TYPE_PASSWORD.to_string())]);
+    assert_value_only_typed(&d, "hunter2");
+    // A check likewise.
+    let page = FakePage { texts: vec!["hunter2"], ..FakePage::default() };
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if p["functionDeclaration"] == IS_PASSWORD_JS {
+            return Err(CdpError::Protocol { method: m.into(), message: "gone".into() });
+        }
+        page.answer(m, p)
+    });
+    let _ = execute_with(
+        &mut d,
+        &act(json!({ "kind": "expect_contains_text", "selector": "#a", "value": "hunter2" })),
+        &on(),
+    )
+    .await;
+    let labels = drawn(&d);
+    assert!(!labels.is_empty());
+    for (_, label) in labels {
+        assert_eq!(label, CHECK_HIDDEN);
+    }
+}
+
+/// A box the page will not take never fails the step, and with no box there
+/// is no result to send.
+#[tokio::test]
+async fn a_box_that_could_not_be_drawn_fails_nothing_and_owes_no_result() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if p["functionDeclaration"] == HIGHLIGHT_JS {
+            return Err(CdpError::Protocol { method: m.into(), message: "Cannot find context with specified id".into() });
+        }
+        page.answer(m, p)
+    });
+    for step in [
+        json!({ "kind": "click", "selector": "#go" }),
+        json!({ "kind": "fill", "selector": "#a", "value": "x" }),
+        json!({ "kind": "hover", "selector": "#a" }),
+    ] {
+        let out = execute_with(&mut d, &act(step.clone()), &on()).await;
+        assert!(out.ok, "{step}: {}", out.detail);
+    }
+    assert!(results(&d).is_empty(), "a result was sent for a box that was never drawn");
+}
+
+/// A box drawn in a frame's own window can never be reached by the result
+/// call (it runs in the top window), so it is given a short life of its own:
+/// the pause and two seconds. The overlay is hidden from assistive technology.
+#[test]
+fn a_box_in_a_frames_own_window_has_a_short_life_and_the_overlay_is_hidden_from_assistive_technology() {
+    assert!(SHOW_JS.contains("function(kind, label, holdMs)"));
+    assert!(SHOW_JS.contains("win === win.top ? 20000 : (Number(holdMs) || 0) + 2000"));
+    assert!(SHOW_JS.contains("setAttribute('aria-hidden', 'true')"));
+}
+
+#[tokio::test]
+async fn the_pause_is_handed_to_the_box() {
+    let mut d = FakePage::default().driver();
+    let _ = execute_with(&mut d, &act(json!({ "kind": "click", "selector": "#go" })), &on()).await;
+    let shown: Vec<_> = d.calls.iter().filter(|(_, p)| p["functionDeclaration"] == HIGHLIGHT_JS).collect();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].1["arguments"][2]["value"], json!(5));
+}
+
+fn resolved(value: &str, fixtures: &BTreeMap<String, FixtureValues>, setup: BTreeMap<String, Value>) -> Action {
+    let sc: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "case 1", "setup": { "fixture": "own" },
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "fill", "selector": { "css": "#a" }, "value": value }
+        ] }]
+    }))
+    .unwrap();
+    let out = resolve(&sc, fixtures, &setup).unwrap();
+    out.steps[0].actions[0].clone()
+}
+
+/// A setup's or a fixture's output named like a secret is filled in before
+/// the step runs; the resolved fill carries that, and its label hides it.
+#[test]
+fn a_setup_or_fixture_secret_is_hidden_once_resolved() {
+    let fixtures = BTreeMap::from([(
+        "api".to_string(),
+        FixtureValues {
+            name: "Api".into(),
+            outputs: Some([("token".to_string(), json!("tok-9f8e7d")), ("cycle".to_string(), json!("Q3"))].into()),
+        },
+    )]);
+    let setup: BTreeMap<String, Value> =
+        [("password".to_string(), json!("S3cret-pw")), ("cycle_name".to_string(), json!("Draft 7"))].into();
+
+    let a = resolved("{{setup.password}}", &fixtures, setup.clone());
+    assert!(matches!(a, Action::Fill { sensitive: true, ref value, .. } if value == "S3cret-pw"), "{a:?}");
+    assert_eq!(Say::of(&a).label, TYPE_HIDDEN);
+
+    let a = resolved("Bearer {{fixture.api.token}}", &fixtures, setup.clone());
+    assert!(matches!(a, Action::Fill { sensitive: true, .. }), "{a:?}");
+    assert_eq!(Say::of(&a).label, TYPE_HIDDEN);
+
+    // Nothing secret-named: shown as ever, and not marked.
+    let a = resolved("{{setup.cycle_name}}", &fixtures, setup.clone());
+    assert!(matches!(a, Action::Fill { sensitive: false, .. }), "{a:?}");
+    assert_eq!(Say::of(&a).label, "Type 'Draft 7'");
+    let a = resolved("{{fixture.api.cycle}}", &fixtures, setup);
+    assert_eq!(Say::of(&a).label, "Type 'Q3'");
+}
+
+/// The mark is carried into a fill nested in a guard as well.
+#[test]
+fn the_mark_reaches_a_fill_inside_a_guard() {
+    let sc: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "case 1", "setup": { "fixture": "own" },
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "when_visible", "selector": { "css": "#b" }, "then": [
+                { "kind": "fill", "selector": { "css": "#c" }, "value": "{{setup.password}}" }
+            ] }
+        ] }]
+    }))
+    .unwrap();
+    let out = resolve(&sc, &BTreeMap::new(), &[("password".to_string(), json!("S3cret-pw"))].into()).unwrap();
+    let Action::WhenVisible { then, .. } = &out.steps[0].actions[0] else { panic!("not a guard") };
+    assert!(matches!(then[0], Action::Fill { sensitive: true, .. }), "{:?}", then[0]);
+}
+
+#[test]
+fn the_drag_label_uses_the_drop_position_wording() {
+    use v2_lib::browser::actions::DropAt;
+    assert_eq!(highlight::drag_label(DropAt::Onto), "Drag");
+    let before = highlight::drag_label(DropAt::Before);
+    assert_eq!(before, format!("Drag {}", DropAt::Before.word()));
+    assert_eq!(
+        Say::of(&act(json!({ "kind": "drag", "from": "#a", "to": "#b", "position": "before" }))).label,
+        before
+    );
+}
+
+/// A check of a secret-named or password element says nothing of its text.
+#[test]
+fn a_check_of_a_secret_shows_no_value() {
+    let say = |v: Value| Say::of(&act(v)).label;
+    for step in [
+        json!({ "kind": "expect_contains_text", "selector": "#password", "value": "hunter2" }),
+        json!({ "kind": "expect_text", "selector": "#api-token", "equals": "hunter2" }),
+        json!({ "kind": "expect_text", "selector": "#password", "same_as": "kept" }),
+        json!({ "kind": "check_text", "value": "{{password}}" }),
+        json!({ "kind": "check_text", "value": format!("{}hunter2", v2_lib::browser::expect::NOTED_SECRET) }),
+    ] {
+        let label = say(step.clone());
+        assert_eq!(label, CHECK_HIDDEN, "{step}");
+        assert!(!label.contains("hunter2"));
+    }
+    // Any other element: the text is shown, until the page says it is a password.
+    assert_eq!(say(json!({ "kind": "expect_text", "selector": "#a", "equals": "Saved" })), "Check: text is 'Saved'");
 }

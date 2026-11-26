@@ -175,7 +175,7 @@ pub async fn plan_field<D: Driver>(
     let text_like = editable || tag == "textarea" || (tag == "input" && TEXT_TYPES.contains(&kind));
     if text_like {
         return Ok(match value {
-            FieldValue::Text(t) => act(Action::Fill { selector: locator.clone(), value: t.clone() }),
+            FieldValue::Text(t) => act(Action::Fill { selector: locator.clone(), value: t.clone(), sensitive: false }),
             FieldValue::Bool(_) => takes("text, not true or false"),
         });
     }

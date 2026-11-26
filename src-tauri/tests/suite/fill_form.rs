@@ -204,7 +204,7 @@ fn failed(p: Planned) -> String {
 #[tokio::test]
 async fn a_text_box_gets_fill_with_an_exact_locator() {
     let p = plan(vec![control("textbox", "First name", "input", "text")], "First name", text("Ann")).await;
-    let Planned::Act { action: Action::Fill { selector, value }, locator, matched } = p else { panic!("{p:?}") };
+    let Planned::Act { action: Action::Fill { selector, value, .. }, locator, matched } = p else { panic!("{p:?}") };
     assert_eq!(value, "Ann");
     assert_eq!(matched, 1);
     assert_eq!(selector, locator);

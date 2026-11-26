@@ -2705,13 +2705,13 @@ fn a_call_that_could_swap_the_login_is_not_taken_as_the_same_sign_in() {
     let recipe = menu_recipe();
     let target = |v: Value| serde_json::from_value(v).unwrap();
     assert_eq!(call_touches_sign_in(&[Action::SignIn { account: "other".into() }], &recipe), Some("signed in".to_string()));
-    let fill = Action::Fill { selector: target(json!({ "css": "input[type=password]" })), value: "x".into() };
+    let fill = Action::Fill { selector: target(json!({ "css": "input[type=password]" })), value: "x".into(), sensitive: false };
     assert_eq!(call_touches_sign_in(&[fill], &recipe), Some("filled a login field".to_string()));
     let go = Action::Navigate { url: recipe.start_url.clone() };
     assert_eq!(call_touches_sign_in(&[go], &recipe), Some("went to the sign-in address".to_string()));
     let plain = [
         Action::Click { selector: "#s1".into() },
-        Action::Fill { selector: target(json!({ "css": "#search" })), value: "x".into() },
+        Action::Fill { selector: target(json!({ "css": "#search" })), value: "x".into(), sensitive: false },
     ];
     assert_eq!(call_touches_sign_in(&plain, &recipe), None);
 }
@@ -4040,7 +4040,7 @@ fn touches_sign_in_looks_inside_and_at_other_ways_in() {
     use v2_lib::autorun::replay_to::touches_sign_in;
     use v2_lib::browser::actions::Action;
     let recipe = menu_recipe();
-    let fill = |css: &str, value: &str| Action::Fill { selector: serde_json::from_value(json!({ "css": css })).unwrap(), value: value.into() };
+    let fill = |css: &str, value: &str| Action::Fill { selector: serde_json::from_value(json!({ "css": css })).unwrap(), value: value.into(), sensitive: false };
     let inside = Action::WhenVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), within_ms: None, then: vec![fill("#txtPwd", "{{password}}")] };
     assert!(touches_sign_in(&[inside], &recipe).is_some());
     let looped = Action::RepeatWhileVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), max: Some(2), except: vec![], then: vec![fill("#a", "{{username}}")], settle_ms: None };

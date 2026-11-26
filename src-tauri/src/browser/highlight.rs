@@ -16,9 +16,9 @@
 //!
 //! The label is built here, in Rust, already hidden where it would show a
 //! secret, and handed to the page as text. A secret never travels into this
-//! script. A highlight never changes what a step reports: only the call
-//! before an action can fail it (as it always could: the page refused,
-//! which the action would have met next), and every call after is ignored.
+//! script. A highlight never changes what a step reports: every call it makes,
+//! before the action and after, is ignored when it fails, and the action's
+//! own first look at the page reports what is wrong with the page.
 
 use super::actions::{Action, DropAt};
 use super::cdp::{CdpError, Driver};
@@ -37,7 +37,7 @@ pub const TYPE_PASSWORD: &str = "Type password";
 /// What any other secret's typing says in place of its text.
 pub const TYPE_HIDDEN: &str = "Type a hidden value";
 /// What a check of a secret says in place of its text.
-pub const CHECK_HIDDEN: &str = "Check: shows a hidden value";
+pub const CHECK_HIDDEN: &str = "Check: hidden value";
 
 /// How long the page may take to answer the call that sets the result: a
 /// page held by a dialog must not hold the step up.
@@ -150,9 +150,28 @@ impl Say {
     /// What `action` says. A typed or checked value is cut to `SHOWN_MAX`
     /// characters, and never shown when the action marks it secret.
     pub fn of(action: &Action) -> Say {
+        Say::of_in(action, false)
+    }
+
+    /// `of`, for an action that may be the runner's own (`runner_own`: the
+    /// app's sign-in and password reset). What the runner types is a
+    /// password that was filled in before the step ran, so a fill of its own
+    /// is always the hidden value, whatever the field is called.
+    pub fn of_in(action: &Action, runner_own: bool) -> Say {
         let kind = kind_of(action);
+        if runner_own && matches!(action, Action::Fill { .. }) {
+            return Say { kind, label: TYPE_HIDDEN.into(), if_password: None };
+        }
         let (label, if_password) = label_of(action);
         Say { kind, label, if_password }
+    }
+}
+
+/// What a drag says: where it drops, in the words the drop position uses.
+pub fn drag_label(at: DropAt) -> String {
+    match at {
+        DropAt::Onto => "Drag".to_string(),
+        at => format!("Drag {}", at.word()),
     }
 }
 
@@ -178,6 +197,12 @@ fn marks_secret(value: &str, field_words: &str) -> bool {
         || crate::autorun::capture_redact::secret_name(field_words)
 }
 
+/// What an upload says: the bare file name, however the file was named.
+pub fn upload_label(file: &str) -> String {
+    let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
+    format!("Upload '{}'", shown(name))
+}
+
 /// The label for an action, and the label to use instead when the element
 /// is a password input (the rule `expect::is_password` states).
 fn label_of(action: &Action) -> (String, Option<String>) {
@@ -189,16 +214,10 @@ fn label_of(action: &Action) -> (String, Option<String>) {
             Some(n) if *n > 1 => (format!("Press {} x{n}", shown(key)), None),
             _ => (format!("Press {}", shown(key)), None),
         },
-        Action::Drag { position, .. } => (
-            match position.unwrap_or_default() {
-                DropAt::Onto => "Drag".to_string(),
-                at => format!("Drag {}", at.word()),
-            },
-            None,
-        ),
+        Action::Drag { position, .. } => (drag_label(position.unwrap_or_default()), None),
         Action::PageUntil { .. } => ("Click next page".into(), None),
-        Action::Fill { selector, value } => {
-            if marks_secret(value, &selector.describe()) {
+        Action::Fill { selector, value, sensitive } => {
+            if *sensitive || marks_secret(value, &selector.describe()) {
                 (TYPE_HIDDEN.into(), None)
             } else if value.is_empty() {
                 ("Clear".into(), Some(TYPE_PASSWORD.into()))
@@ -211,13 +230,31 @@ fn label_of(action: &Action) -> (String, Option<String>) {
             (_, Some(v)) => (format!("Choose {}", quoted(v)), None),
             _ => ("Choose".into(), None),
         },
-        Action::Upload { file, .. } => (format!("Upload {}", quoted(file)), None),
-        Action::CheckText { value } | Action::ExpectContainsText { value, .. } => {
-            (format!("Check: shows {}", quoted(value)), Some(CHECK_HIDDEN.into()))
+        Action::Upload { file, .. } => (upload_label(file), None),
+        Action::CheckText { value } => {
+            if marks_secret(value, "") {
+                (CHECK_HIDDEN.into(), None)
+            } else {
+                (format!("Check: shows {}", quoted(value)), None)
+            }
         }
-        Action::ExpectText { equals, matches, same_as, .. } => match (equals, matches, same_as) {
-            (Some(v), _, _) => (format!("Check: text is {}", quoted(v)), Some(CHECK_HIDDEN.into())),
+        Action::ExpectContainsText { selector, value, .. } => {
+            if marks_secret(value, &selector.describe()) {
+                (CHECK_HIDDEN.into(), None)
+            } else {
+                (format!("Check: shows {}", quoted(value)), Some(CHECK_HIDDEN.into()))
+            }
+        }
+        Action::ExpectText { selector, equals, matches, same_as, .. } => match (equals, matches, same_as) {
+            (Some(v), _, _) => {
+                if marks_secret(v, &selector.describe()) {
+                    (CHECK_HIDDEN.into(), None)
+                } else {
+                    (format!("Check: text is {}", quoted(v)), Some(CHECK_HIDDEN.into()))
+                }
+            }
             (_, Some(_), _) => ("Check: text matches".into(), None),
+            _ if crate::autorun::capture_redact::secret_name(&selector.describe()) => (CHECK_HIDDEN.into(), None),
             _ => ("Check: text as noted".into(), None),
         },
         Action::ExpectTextMoved { .. } => ("Check: number moved".into(), None),
@@ -282,11 +319,17 @@ pub fn draws_after(action: &Action) -> bool {
 /// (over the top document, offset by same-origin frames) and the overlay
 /// state kept under a symbol on the window it is drawn in.
 ///
-/// `this` is the element. Arguments: the colour's key (`Kind::key`) and the
-/// label. Draws the box and label in a closed shadow root, with inline
-/// styles only and `pointer-events: none`, follows the element while it is
-/// shown, and takes itself away after 20 seconds if no result ever comes.
-pub const SHOW_JS: &str = r#"function(kind, label) {
+/// `this` is the element. Arguments: the colour's key (`Kind::key`), the
+/// label and how long the step holds the box before it acts (the pause, in
+/// milliseconds). Draws the box and label in a closed shadow root, with inline
+/// styles only and `pointer-events: none` (hidden from assistive technology),
+/// follows the element while it is shown, and takes itself away after 20
+/// seconds if no result ever comes.
+///
+/// A box drawn in a frame's own window (its parent is another site) is one the
+/// result call, which runs in the top window, can never reach. It takes
+/// itself away after the pause and 2 seconds instead.
+pub const SHOW_JS: &str = r#"function(kind, label, holdMs) {
   try {
     const KEY = Symbol.for('tcm.action-highlight');
     const COLOURS = { click: '#2563eb', type: '#16a34a', check: '#d97706', quiet: '#64748b' };
@@ -316,6 +359,7 @@ pub const SHOW_JS: &str = r#"function(kind, label) {
     if (old) old.stop();
     const colour = COLOURS[kind] || COLOURS.quiet;
     const host = doc.createElement('div');
+    host.setAttribute('aria-hidden', 'true');
     host.setAttribute('style', 'all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: visible !important; pointer-events: none !important; z-index: 2147483647 !important;');
     const root = host.attachShadow({ mode: 'closed' });
     const base = 'position: fixed; pointer-events: none; box-sizing: border-box; margin: 0; ';
@@ -365,7 +409,8 @@ pub const SHOW_JS: &str = r#"function(kind, label) {
       },
     };
     win[KEY] = state;
-    timer = win.setTimeout(() => state.stop(), 20000);
+    const life = win === win.top ? 20000 : (Number(holdMs) || 0) + 2000;
+    timer = win.setTimeout(() => state.stop(), life);
     tick();
     return true;
   } catch (err) {
@@ -388,17 +433,18 @@ pub const RESULT_JS: &str = r#"function(ok) {
 }"#;
 
 /// Draw `say` over `handle`. A password field's own label replaces the
-/// typed one. The only call here that can fail, and it fails the way the
-/// action's own first look at the element would.
-pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say) -> Result<(), CdpError> {
+/// typed one. The caller ignores a failure (`actions::point_at`).
+pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Timing) -> Result<(), CdpError> {
     let mut label = say.label.as_str();
     if let Some(hidden) = &say.if_password {
-        // A failed look at the element is left to the call below to report.
-        if is_password(d, handle).await.unwrap_or(false) {
+        // A failed look at the element cannot say it is not a password:
+        // the hidden label is used. Nothing is lost - the call below reports
+        // a page that cannot be reached.
+        if is_password(d, handle).await.unwrap_or(true) {
             label = hidden;
         }
     }
-    page::call_value(d, handle, SHOW_JS, &[json!(say.kind.key()), json!(label)]).await?;
+    page::call_value(d, handle, SHOW_JS, &[json!(say.kind.key()), json!(label), json!(timing.highlight_ms)]).await?;
     Ok(())
 }
 
@@ -425,7 +471,7 @@ pub async fn after_check<D: Driver>(d: &mut D, action: &Action, ok: bool, timing
     let Some(target) = action.targets().first().copied() else { return };
     let Ok(found) = resolve_explained(d, target).await else { return };
     if let [handle] = found.handles.as_slice() {
-        if show(d, handle, &Say::of(action)).await.is_ok() {
+        if show(d, handle, &Say::of(action), timing).await.is_ok() {
             d.idle(Duration::from_millis(timing.highlight_ms)).await;
             conclude(d, timing, ok).await;
         }

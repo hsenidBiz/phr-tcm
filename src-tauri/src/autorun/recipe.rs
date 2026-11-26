@@ -707,7 +707,7 @@ impl SignInRecipe {
         let mut password = None;
         let mut username = None;
         let mut look = |a: &Action| {
-            if let Action::Fill { selector, value } = a {
+            if let Action::Fill { selector, value, .. } = a {
                 let v = value.to_lowercase();
                 if v.contains("{{password}}") && password.is_none() {
                     password = Some(selector.clone());
@@ -788,9 +788,11 @@ impl SignInRecipe {
 
 fn fill_in(action: &Action, account: &Account) -> Action {
     match action {
-        Action::Fill { selector, value } => Action::Fill {
+        Action::Fill { selector, value, sensitive } => Action::Fill {
             selector: selector.clone(),
             value: value.replace(USERNAME, &account.username).replace(PASSWORD, &account.password),
+            // The password is now in the value: the label must still hide it.
+            sensitive: *sensitive || value.contains(PASSWORD),
         },
         other => other.clone(),
     }

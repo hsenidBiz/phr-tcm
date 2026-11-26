@@ -51,7 +51,7 @@ fn script() -> CaseScript {
             step_number: 1,
             actions: vec![
                 Action::Navigate { url: "https://app.invalid/login".to_string() },
-                Action::Fill { selector: "#user".into(), value: "kim".to_string() },
+                Action::Fill { selector: "#user".into(), value: "kim".to_string(), sensitive: false },
                 Action::Click { selector: "text=Sign in".into() },
                 Action::CheckText { value: "Dashboard".to_string() },
             ],

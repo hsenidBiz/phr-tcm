@@ -110,7 +110,7 @@ async fn a_fill_types_the_value_and_never_puts_it_in_source() {
     let mut d = FakePage::default().driver();
     let out = execute_with(
         &mut d,
-        &Action::Fill { selector: "#user".into(), value: nasty.into() },
+        &Action::Fill { selector: "#user".into(), value: nasty.into(), sensitive: false },
         &quick(),
     )
     .await;
@@ -130,7 +130,7 @@ async fn a_fill_into_something_that_takes_no_text_says_so() {
     let mut d = FakePage { probes: vec![not_editable], ..FakePage::default() }.driver();
     let out = execute_with(
         &mut d,
-        &Action::Fill { selector: "#logo".into(), value: "x".into() },
+        &Action::Fill { selector: "#logo".into(), value: "x".into(), sensitive: false },
         &quick(),
     )
     .await;
@@ -367,8 +367,40 @@ async fn a_page_refusal_during_the_highlight_is_the_pages_doing() {
     });
     let watched = Timing { highlight_ms: 5, ..quick() };
     let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &watched).await;
+    // A highlight never fails a step: the box is skipped and the step goes
+    // on, so its outcome comes from the click itself. A page that really
+    // is gone is reported by the click's own first call (see the next test).
+    assert!(out.ok, "{}", out.detail);
+    assert!(!out.harness, "the browser answered: {}", out.detail);
+    assert!(d.calls.iter().any(|(m, _)| m == "Input.dispatchMouseEvent"), "the click still happened");
+}
+
+/// ... and when the page itself is what refuses, the action's own call says
+/// so, as the page's doing and not the harness's.
+#[tokio::test]
+async fn a_page_refusal_in_the_action_after_a_skipped_highlight_is_still_the_pages_doing() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => Err(CdpError::Protocol {
+                method: "Runtime.callFunctionOn".into(),
+                message: "Cannot find context with specified id".into(),
+            }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => Err(CdpError::Protocol {
+                method: "Runtime.callFunctionOn".into(),
+                message: "Cannot find context with specified id".into(),
+            }),
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => {
+                Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] }))
+            }
+            _ => Ok(json!({})),
+        }
+    });
+    let watched = Timing { highlight_ms: 5, ..quick() };
+    let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &watched).await;
     assert!(!out.ok);
-    assert!(out.detail.contains("the page refused"), "{}", out.detail);
     assert!(out.detail.contains("Cannot find context"), "{}", out.detail);
     assert!(!out.harness, "the browser answered: {}", out.detail);
 }
@@ -623,7 +655,7 @@ fn only_checks_and_expectations_are_checks() {
     let samples = vec![
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
-        Action::Fill { selector: "s".into(), value: "v".into() },
+        Action::Fill { selector: "s".into(), value: "v".into(), sensitive: false },
         serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },

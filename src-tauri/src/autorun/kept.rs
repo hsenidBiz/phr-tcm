@@ -173,7 +173,7 @@ pub fn types_a_credential(action: &Action, steps: Option<&[Action]>, accounts: &
         .filter(|s| !s.is_empty())
         .collect();
     std::iter::once(action).chain(steps.into_iter().flatten()).flat_map(Action::each).any(|a| match a {
-        Action::Fill { selector, value } => {
+        Action::Fill { selector, value, .. } => {
             secrets.contains(&value.trim())
                 || serde_json::to_string(selector).is_ok_and(|t| t.to_ascii_lowercase().contains("password"))
         }

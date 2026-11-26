@@ -1748,7 +1748,7 @@ async fn try_refuses_a_body_that_names_no_case() {
 /// Pure, so this is provable without a browser at all.
 #[test]
 fn describe_try_never_carries_a_fills_value() {
-    let action = Action::Fill { selector: "#password".into(), value: "hunter2".to_string() };
+    let action = Action::Fill { selector: "#password".into(), value: "hunter2".to_string(), sensitive: false };
     let out = describe_try(&action, true);
     assert!(!out.contains("hunter2"), "{out}");
     assert_eq!(out, "AI tried fill #password in the supervised browser: ok");

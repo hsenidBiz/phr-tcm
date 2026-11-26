@@ -520,7 +520,7 @@ fn roles() -> Vec<FieldChoice> {
 }
 
 fn fill(target: Target, value: &str) -> RecipeStep {
-    RecipeStep::Do(Action::Fill { selector: target, value: value.into() })
+    RecipeStep::Do(Action::Fill { selector: target, value: value.into(), sensitive: false })
 }
 
 fn click(target: Target) -> RecipeStep {

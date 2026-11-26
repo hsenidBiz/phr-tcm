@@ -1549,7 +1549,7 @@ impl Em<'_> {
             Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url, self.input.origins)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
             Action::Hover { selector, .. } => self.line(indent, &format!("await {}.hover();", one(selector))),
-            Action::Fill { selector, value } => {
+            Action::Fill { selector, value, .. } => {
                 self.line(indent, &format!("await {}.fill({});", one(selector), lit(value)))
             }
             Action::SelectOption { selector, label, value, .. } => {
