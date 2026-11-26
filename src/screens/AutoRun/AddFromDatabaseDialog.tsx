@@ -172,7 +172,7 @@ export default function AddFromDatabaseDialog({
       {list.data?.cut_short && (
         <p className="text-xs text-muted">Showing the first 200 - type to narrow the list</p>
       )}
-      {cutNote && (
+      {cutNote && selectableTicked === selectable.length && (
         <p className="text-xs text-muted">Selected the first 200 - add these, then Select all again for the rest</p>
       )}
       {said && (
