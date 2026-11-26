@@ -165,3 +165,14 @@ fn the_browser_limit_defaults_to_five_and_is_held_to_one_to_eight() {
     assert!(loaded.beta_updates);
     assert_eq!(v2_lib::app_settings::clamp_autorun_browsers(loaded.autorun_browsers), 8);
 }
+
+#[test]
+fn an_unusable_browser_limit_costs_nothing_else() {
+    for bad in ["300", "-1", "\"5\"", "2.5", "null"] {
+        let d = dir();
+        std::fs::write(d.path().join("app-settings.json"), format!(r#"{{"autorun_browsers": {bad}, "beta_updates": true}}"#)).unwrap();
+        let loaded = load(d.path());
+        assert!(loaded.beta_updates, "{bad} reset the other settings");
+        assert_eq!(v2_lib::app_settings::clamp_autorun_browsers(loaded.autorun_browsers), 5, "{bad}");
+    }
+}

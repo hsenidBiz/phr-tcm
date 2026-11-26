@@ -144,6 +144,7 @@ pub fn load(dir: &Path) -> AppSettings {
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .map(without_unusable_page_size)
+        .map(without_unusable_browser_limit)
         .and_then(|v| serde_json::from_value::<AppSettings>(v).ok())
         .unwrap_or_default()
 }
@@ -157,6 +158,19 @@ fn without_unusable_page_size(mut settings: serde_json::Value) -> serde_json::Va
         let usable = map.get("page_size").is_none_or(|v| serde_json::from_value::<PageSize>(v.clone()).is_ok_and(PageSize::in_range));
         if !usable {
             map.remove("page_size");
+        }
+    }
+    settings
+}
+
+/// `settings` with `autorun_browsers` dropped when it is not a whole number
+/// from 0 to 255 (a string, a negative, 300...), so it reads as the default
+/// instead of failing the whole file; `autorun_browser_limit` clamps the rest.
+fn without_unusable_browser_limit(mut settings: serde_json::Value) -> serde_json::Value {
+    if let Some(map) = settings.as_object_mut() {
+        let usable = map.get("autorun_browsers").is_none_or(|v| v.as_u64().is_some_and(|n| n <= u64::from(u8::MAX)));
+        if !usable {
+            map.remove("autorun_browsers");
         }
     }
     settings

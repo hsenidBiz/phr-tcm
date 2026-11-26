@@ -15,7 +15,9 @@ function lastSegment(path: string): string {
   return parts[parts.length - 1].trim();
 }
 
-export default function ActivityStrip({ onOpen, section }: { onOpen: () => void; section: string }) {
+/** `onAutoTest` is true when the person is not already on Auto Test (Work
+ *  Manager counts: it is a different screen whatever section is remembered). */
+export default function ActivityStrip({ onOpen, onAutoTest }: { onOpen: () => void; onAutoTest: boolean }) {
   const { agents, trial } = useAgents();
   const working = agents.filter((a) => isWorking(a.activity));
   if (working.length === 0 && !trial) return null;
@@ -23,8 +25,9 @@ export default function ActivityStrip({ onOpen, section }: { onOpen: () => void;
   const discovering = working.filter((a) => a.activity.kind === "discovering");
   let line: string;
   if (discovering.length > 0) {
-    const first = discovering[0].activity;
-    const area = first.kind === "discovering" && first.area ? lastSegment(first.area) : null;
+    // The area comes from the first discovering assistant that has one.
+    const named = discovering.map((a) => a.activity).find((a) => a.kind === "discovering" && a.area);
+    const area = named && named.kind === "discovering" && named.area ? lastSegment(named.area) : null;
     const more = discovering.length > 1 ? ` (+${discovering.length - 1} more)` : "";
     line = `Discovery is running${area ? ` · ${area}` : ""}${more}`;
   } else if (working.length > 0) {
@@ -32,6 +35,9 @@ export default function ActivityStrip({ onOpen, section }: { onOpen: () => void;
   } else {
     line = `Trying a sign-in · ${lastSegment(trial?.environment ?? "")}`;
   }
+  // A sign-in trial next to working assistants stays visible as a prefix; on
+  // its own it is the whole line (above).
+  if (trial && working.length > 0) line = `Checking a sign-in · ${line}`;
 
   const detail = [
     ...working.map((a) =>
@@ -45,10 +51,18 @@ export default function ActivityStrip({ onOpen, section }: { onOpen: () => void;
   return (
     <section aria-label="Assistant activity" className="border-b border-border bg-surface px-6 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-3">
-        <p className="min-w-0 truncate text-muted" title={detail}>
-          {line}
-        </p>
-        {section !== "autorun" && (
+        {onAutoTest ? (
+          // The line itself opens Auto Test, so the detail in its title is
+          // reachable by keyboard too (the Assistants card has it in full).
+          <button type="button" className="min-w-0 truncate text-left text-muted hover:text-text" title={detail} onClick={onOpen}>
+            {line}
+          </button>
+        ) : (
+          <p className="min-w-0 truncate text-muted" title={detail}>
+            {line}
+          </p>
+        )}
+        {onAutoTest && (
           <Button size="sm" variant="outline" aria-label="Open Auto Test" className="shrink-0" onClick={onOpen}>
             <IconGoTo aria-hidden />
             Open Auto Test

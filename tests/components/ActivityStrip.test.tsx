@@ -42,7 +42,7 @@ function mount(agents: AgentView[], trial: { environment: string } | null = null
     }
     return null;
   });
-  return { ...render(<ActivityStrip section="settings" onOpen={() => {}} />), stop };
+  return { ...render(<ActivityStrip onAutoTest onOpen={() => {}} />), stop };
 }
 
 test("all idle draws nothing", async () => {
@@ -78,13 +78,38 @@ test("non-discovering assistants are counted", async () => {
 test("the Open Auto Test button is absent on Auto Test and calls onOpen elsewhere", async () => {
   const open = vi.fn();
   mockIPC((cmd) => (cmd === "auto_run_agents" ? [agent()] : null));
-  const on = render(<ActivityStrip section="autorun" onOpen={open} />);
+  const on = render(<ActivityStrip onAutoTest={false} onOpen={open} />);
   await screen.findByText("An assistant is working");
   expect(screen.queryByRole("button", { name: "Open Auto Test" })).toBeNull();
   on.unmount();
-  render(<ActivityStrip section="settings" onOpen={open} />);
+  render(<ActivityStrip onAutoTest onOpen={open} />);
   fireEvent.click(await screen.findByRole("button", { name: "Open Auto Test" }));
   expect(open).toHaveBeenCalledTimes(1);
+});
+
+test("the line itself is a button that opens Auto Test, except on Auto Test", async () => {
+  const open = vi.fn();
+  mockIPC((cmd) => (cmd === "auto_run_agents" ? [agent()] : null));
+  const on = render(<ActivityStrip onAutoTest={false} onOpen={open} />);
+  const plain = await screen.findByText("An assistant is working");
+  expect(plain.tagName).toBe("P");
+  on.unmount();
+  render(<ActivityStrip onAutoTest onOpen={open} />);
+  const line = await screen.findByRole("button", { name: "An assistant is working" });
+  fireEvent.click(line);
+  expect(open).toHaveBeenCalledTimes(1);
+});
+
+test("the area comes from the first discovering assistant that has one", async () => {
+  mount([discovering(1, null), discovering(2, "Admin / Leave Types")]);
+  expect(await screen.findByText("Discovery is running · Leave Types (+1 more)")).toBeInTheDocument();
+});
+
+test("a sign-in trial next to working assistants prefixes the line", async () => {
+  mount([discovering(1)], { environment: "Staging" });
+  expect(
+    await screen.findByText("Checking a sign-in · Discovery is running · Strategic Objectives"),
+  ).toBeInTheDocument();
 });
 
 test("no per-assistant Stop in the strip", async () => {
@@ -115,6 +140,16 @@ test("the strip is in the layout flow above main", () => {
   expect(app.indexOf("<ActivityStrip")).toBeLessThan(app.indexOf("<main"));
   const strip = source("components/ActivityStrip.tsx");
   expect(strip).not.toMatch(/\b(fixed|absolute|sticky)\b|\bz-\d/);
+});
+
+test("Work Manager counts as not being on Auto Test, and the button leaves it", () => {
+  // `section` can still read "autorun" while Work Manager is showing, so the
+  // flag is built from workMode too; goToSection exits Work Manager.
+  const src = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
+  const app = readFileSync(join(src, "App.tsx"), "utf-8");
+  expect(app).toContain('<ActivityStrip onAutoTest={workMode || section !== "autorun"} onOpen={() => goToSection("autorun")} />');
+  const nav = readFileSync(join(src, "app/useAppNavigation.ts"), "utf-8");
+  expect(nav).toMatch(/const goToSection[\s\S]*?setWorkMode\(false\)/);
 });
 
 test("the interrupted-upload check is keyed by account and organisation", () => {

@@ -112,10 +112,11 @@ pub fn reads_an_imported_set(method: &str, path: &str, body: &str) -> bool {
 
 /// Where slot `n`'s window opens: the main browser's is wherever the browser
 /// puts it, and each extra one is offset from the one before so the windows
-/// are never exactly stacked.
+/// are never exactly stacked. The step is small enough that the last slot's
+/// window (a 1280 x 720 page plus its chrome) still fits a 1920 x 1080 screen.
 pub fn window_position(n: SlotNo) -> Option<(i32, i32)> {
     (!n.is_main()).then(|| {
-        let step = 60 * i32::from(n.0);
+        let step = 30 * i32::from(n.0);
         (step, step)
     })
 }

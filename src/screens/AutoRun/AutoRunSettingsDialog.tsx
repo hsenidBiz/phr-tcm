@@ -10,8 +10,8 @@ import { IconCancel } from "../../lib/actionIcons";
 
 export default function AutoRunSettingsDialog({ onClose }: { onClose: () => void }) {
   return (
-    <Modal onClose={onClose} className="flex w-full max-w-2xl flex-col gap-1 p-5">
-      <h2 className="text-sm font-semibold text-text">Auto Test settings</h2>
+    <Modal onClose={onClose} labelledBy="autorun-settings-title" className="flex w-full max-w-2xl flex-col gap-1 p-5">
+      <h2 id="autorun-settings-title" className="text-sm font-semibold text-text">Auto Test settings</h2>
       <div className="divide-y divide-border">
         <PageSizeSettings />
         <BrowserLimitSettings />

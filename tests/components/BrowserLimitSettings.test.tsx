@@ -17,7 +17,8 @@ function rust(start: number) {
   const calls: unknown[] = [];
   let autorun_browsers = start;
   mockIPC((cmd, args) => {
-    if (cmd === "get_app_settings") return { close_to_tray: true, autorun_browsers };
+    // Rust answers the clamped value, whatever the file holds.
+    if (cmd === "get_autorun_browsers") return Math.min(Math.max(autorun_browsers, 1), 8);
     if (cmd === "set_autorun_browsers") {
       calls.push(args);
       autorun_browsers = (args as { count: number }).count;
@@ -73,4 +74,11 @@ test("a number outside 1 to 8, or not whole, is refused inline and nothing is se
   fireEvent.click(save());
   await waitFor(() => expect(calls).toEqual([{ count: 1 }]));
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+});
+
+test("a stored 40 shows 8, the value Rust holds it to", async () => {
+  rust(40);
+  renderRow();
+  await waitFor(() => expect(box()).toHaveValue(8));
+  expect(save()).toBeDisabled();
 });

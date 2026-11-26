@@ -844,8 +844,16 @@ mod card {
     #[test]
     fn extra_windows_open_offset() {
         assert_eq!(window_position(SlotNo::MAIN), None);
-        assert_eq!(window_position(SlotNo(1)), Some((60, 60)));
-        assert_eq!(window_position(SlotNo(2)), Some((120, 120)));
+        assert_eq!(window_position(SlotNo(1)), Some((30, 30)));
+        assert_eq!(window_position(SlotNo(2)), Some((60, 60)));
+    }
+
+    #[test]
+    fn every_extra_window_fits_a_1080p_screen() {
+        for n in 1..8 {
+            let (x, y) = window_position(SlotNo(n)).unwrap();
+            assert!(x >= 0 && y >= 0 && x + 1280 <= 1920 && y + 860 <= 1080, "slot {n} at ({x}, {y})");
+        }
     }
 
     /// An open that replaces the browser an assistant holds keeps its
