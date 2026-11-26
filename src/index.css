@@ -93,6 +93,12 @@
   --color-success: #15803d;
   --color-warning: #a16207;
   --color-info: #2563eb;
+  /* Falling snow in the themes with no scenery of their own
+     (components/SnowLayer.tsx): a soft cool flake with a faint darker edge,
+     clear on white and quiet. The dark block below swaps it for near-white;
+     every theme is one or the other. */
+  --color-snow: #93a8c6;
+  --color-snow-edge: rgb(51 65 85 / 0.5);
 
   /* The accent is two jobs. --color-accent is the FILL: buttons, selected
      borders, switches, focus rings, glows, the brand flask. Accent-coloured
@@ -148,6 +154,8 @@
   --color-info: #60a5fa;
 
   /* Brighter on dark: the light values sink into the surface. */
+  --color-snow: #f4f8ff;
+  --color-snow-edge: transparent;
 }
 
 @theme inline {
@@ -2184,6 +2192,19 @@ table {
   background: var(--color-text);
   animation: christmas-fall 12s linear infinite;
 }
+/* The plain snow layer (SnowLayer): same flakes and fall, its own colours,
+   over the page like the seasonal snow (below modals, z-50, and the palette). */
+.snow-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 10;
+}
+.snow-layer .christmas-flake {
+  background: var(--color-snow);
+  box-shadow: 0 0 0 1px var(--color-snow-edge);
+}
 .christmas-snowman {
   position: absolute;
   left: 0;
@@ -2332,7 +2353,8 @@ table {
   .christmas-presents {
     display: none;
   }
-  .christmas-snow {
+  .christmas-snow,
+  .snow-layer {
     display: none;
   }
 }

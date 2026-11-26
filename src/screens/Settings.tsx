@@ -42,6 +42,7 @@ import { loadGlobalAllowed, saveGlobalAllowed } from "../lib/aiScope";
 import { applyLocalStorage, collectLocalStorage } from "../lib/backup";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
+import SnowSetting from "../components/SnowSetting";
 import { LOG_KIND_CLASS, levelOf, tokenizeLog } from "../lib/logSyntax";
 import {
   ACCENTS,
@@ -887,6 +888,7 @@ export default function Settings({
             </button>
           </div>
         </SettingRow>
+        <SnowSetting />
         <SettingRow name="Accent" description="Overrides the theme's accent colour.">
           <div className="flex gap-2">
             {ACCENTS.map((a) => (
