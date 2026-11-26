@@ -185,3 +185,23 @@ describe("edgePath", () => {
     expect(nums[nums.length - 1]).toBe(to.y + to.h / 2);
   });
 });
+
+test("every box lands on a whole pixel, whatever the heights", () => {
+  // The centring offset is rounded, so a column that is an odd number of px
+  // shorter than the tallest still sits on whole pixels (it was half a px).
+  const flow = {
+    id: "f",
+    title: "F",
+    module: "M",
+    subject: { name: "id", type: "number" },
+    sources: [],
+    stages: [
+      { id: "a", title: "A", creates: true, check: "SELECT 1" },
+      { id: "b", title: "B", requires: ["a"], check: "SELECT 1" },
+      { id: "c", title: "C", requires: ["a"], check: "SELECT 1" },
+    ],
+  } as unknown as Flow;
+  const { boxes } = layoutFlow(flow, { a: 1, b: 2, c: 3 }, { b: 1 });
+  for (const b of boxes) expect(Number.isInteger(b.y)).toBe(true);
+  expect(GEOMETRY.perFailure % 4).toBe(0);
+});

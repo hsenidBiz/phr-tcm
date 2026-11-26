@@ -11,6 +11,20 @@ export function failedHint(f: HereFailure): string {
   return `Failed on this environment${f.step ? ` at ${f.step}` : ""}${f.detail ? `: ${f.detail}` : ""}. Ask the assistant to make it work here.`;
 }
 
+/** The short reason a failure shows on the page itself, the second line
+ * under a template: "failed at step 3: HTTP 500". The tooltip keeps the full
+ * sentence; null when the failure names neither a step nor a reason. Worded
+ * as the View flow page words it (`flow_page.rs`). */
+export function failureLine(f: HereFailure): string | null {
+  const at = f.step ? (/^\d+$/.test(f.step) ? `step ${f.step}` : f.step) : null;
+  let detail = f.detail ? f.detail.split(/\s+/).filter(Boolean).join(" ") : null;
+  if (detail && [...detail].length > 120) detail = `${[...detail].slice(0, 119).join("").trimEnd()}\u2026`;
+  if (at && detail) return `failed at ${at}: ${detail}`;
+  if (at) return `failed at ${at}`;
+  if (detail) return `failed: ${detail}`;
+  return null;
+}
+
 /**
  * Whether a template, flow or fixture has worked on the active environment.
  * A confirmed one carries no mark: only what needs a look is flagged.
