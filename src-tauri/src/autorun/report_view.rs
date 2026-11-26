@@ -383,7 +383,25 @@ pub(super) fn timeline_body(t: &Timeline) -> String {
             esc_attr(&why),
         ));
     }
-    h.push_str("<div class=\"timeline__grid\"><div class=\"timeline__labels\"><span>Steps</span></div><div><div class=\"timeline__track\"><div class=\"timeline__lane\" role=\"img\" aria-label=\"Steps on a time axis\">");
+    // The anomaly is named on the track itself, not only by a colour and the
+    // callout above: a label over the marker, kept inside the lane's ends.
+    let marker_label = if t.anomaly.is_some() {
+        let pct = t.anomaly_at_ms as f64 / total * 100.0;
+        let edge = if pct < 12.0 {
+            " data-edge=\"start\""
+        } else if pct > 88.0 {
+            " data-edge=\"end\""
+        } else {
+            ""
+        };
+        format!("<div class=\"timeline__flags\"><span class=\"timeline__flag\"{edge} style=\"left:{pct:.2}%\">First anomaly</span></div>")
+    } else {
+        String::new()
+    };
+    let spacer = if t.anomaly.is_some() { "<span></span>" } else { "" };
+    h.push_str(&format!(
+        "<div class=\"timeline__grid\"><div class=\"timeline__labels\">{spacer}<span>Steps</span></div><div><div class=\"timeline__track\">{marker_label}<div class=\"timeline__lane\" role=\"img\" aria-label=\"Steps on a time axis\">"
+    ));
     let mut at = 0u64;
     for s in &t.steps {
         let ms = s.ms.unwrap_or(0);
@@ -461,8 +479,9 @@ pub(super) fn history_body(t: Option<&CaseTrend>) -> String {
     } else {
         ""
     };
+    let last = t.strip.last().map_or("not run", word);
     format!(
-        "<div class=\"history\"><div class=\"strip\" role=\"img\" aria-label=\"Outcome of its last {n} runs, oldest first\">{cells}</div><p>{grade}{flaky}</p><p class=\"muted\">Oldest to newest, up to {HISTORY_RUNS} runs in this environment. A grade comes from the pass rate and how often the result flipped (A steady, F unreliable).</p></div>"
+        "<div class=\"history\"><div class=\"strip\" role=\"img\" aria-label=\"Outcome of its last {n} runs, oldest first; the last one {last}\">{cells}</div><p class=\"strip__caption muted\">oldest \u{2192} newest; last: {last}</p><p>{grade}{flaky}</p><p class=\"muted\">Oldest to newest, up to {HISTORY_RUNS} runs in this environment. A grade comes from the pass rate and how often the result flipped (A steady, F unreliable).</p></div>"
     )
 }
 
@@ -470,8 +489,11 @@ pub(super) fn history_body(t: Option<&CaseTrend>) -> String {
 // Insights
 // ----------------------------------------------------------------------
 
-/// A sparkline (96 by 24) of `values`; empty for fewer than two.
-pub(super) fn sparkline(values: &[f64], label: &str) -> String {
+/// A sparkline (96 by 24) of `values`; empty for fewer than two. Under it,
+/// its smallest and largest value as text, and the values themselves in the
+/// accessible name, so no fact lives only in the shape. `fmt` writes one
+/// value the way the tile writes its own.
+pub(super) fn sparkline(values: &[f64], label: &str, fmt: &dyn Fn(f64) -> String) -> String {
     if values.len() < 2 {
         return String::new();
     }
@@ -486,10 +508,14 @@ pub(super) fn sparkline(values: &[f64], label: &str) -> String {
         .collect();
     let line: Vec<String> = pts.iter().map(|(x, y)| format!("{x:.1},{y:.1}")).collect();
     let (lx, ly) = pts[pts.len() - 1];
+    let range = if lo == hi { fmt(lo) } else { format!("{}\u{2013}{}", fmt(lo), fmt(hi)) };
+    let all: Vec<String> = values.iter().map(|v| fmt(*v)).collect();
     format!(
-        "<svg class=\"spark\" width=\"96\" height=\"24\" viewBox=\"0 0 96 24\" role=\"img\" aria-label=\"{}\"><polyline points=\"{}\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><circle class=\"spark__last\" cx=\"{lx:.1}\" cy=\"{ly:.1}\" r=\"2\"/></svg>",
+        "<svg class=\"spark\" width=\"96\" height=\"24\" viewBox=\"0 0 96 24\" role=\"img\" aria-label=\"{}: {}, oldest first\"><polyline points=\"{}\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><circle class=\"spark__last\" cx=\"{lx:.1}\" cy=\"{ly:.1}\" r=\"2\"/></svg><span class=\"spark__range\">{}</span>",
         esc_attr(label),
-        line.join(" ")
+        esc_attr(&all.join(", ")),
+        line.join(" "),
+        esc_attr(&range),
     )
 }
 
@@ -510,12 +536,12 @@ pub(super) fn stats(points: &[RunPoint], new_cases: Option<usize>, total: usize,
     h.push_str(&stat(
         "Pass rate",
         &last.and_then(|p| p.pass_rate).map_or("-".to_string(), |r| format!("{r}%")),
-        &sparkline(&rate, "Pass rate of the recent runs"),
+        &sparkline(&rate, "Pass rate of the recent runs", &|v| format!("{v:.0}%")),
     ));
     h.push_str(&stat(
         "Duration",
         &last.filter(|p| p.duration_ms > 0).map_or("-".to_string(), |p| took(p.duration_ms)),
-        &sparkline(&dur, "Duration of the recent runs"),
+        &sparkline(&dur, "Duration of the recent runs", &|v| took(v as u64)),
     ));
     let sub = match new_cases {
         Some(0) => "no new cases".to_string(),
@@ -523,7 +549,7 @@ pub(super) fn stats(points: &[RunPoint], new_cases: Option<usize>, total: usize,
         None => format!("first run of this {noun}"),
     };
     h.push_str(&stat("Cases", &total.to_string(), &sub));
-    h.push_str(&stat("Flaky", &last.map_or(0, |p| p.flaky).to_string(), &sparkline(&flaky, "Flaky failures of the recent runs")));
+    h.push_str(&stat("Flaky", &last.map_or(0, |p| p.flaky).to_string(), &sparkline(&flaky, "Flaky failures of the recent runs", &|v| format!("{v:.0}"))));
     match health {
         Some(hl) => h.push_str(&stat(
             "Health",

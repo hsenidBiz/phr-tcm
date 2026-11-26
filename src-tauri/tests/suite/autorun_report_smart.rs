@@ -1079,3 +1079,36 @@ fn the_trend_bars_use_the_stronger_rule_colour_with_a_four_unit_gap() {
     assert!((x1 - x0 - (w + 4.0)).abs() < 0.2, "x0={x0} x1={x1} width={w}");
 }
 
+#[test]
+fn the_timeline_names_its_anomaly_on_the_track() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    assert!(html.contains("<span class=\"timeline__flag\""), "{html}");
+    assert!(html.contains(">First anomaly</span>"), "a label over the marker, not only a colour: {html}");
+    assert!(web_file("autorun-report.css").contains(".timeline__flag {"));
+}
+
+#[test]
+fn the_history_strip_says_its_direction_and_its_last_outcome() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    assert!(html.contains("<p class=\"strip__caption muted\">oldest \u{2192} newest; last: "), "{html}");
+}
+
+#[test]
+fn a_sparkline_prints_its_range_and_carries_its_values_in_its_name() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    // Under the shape, its smallest and largest value as text...
+    let range = html.split("<span class=\"spark__range\">").nth(1).expect("a range label").split("</span>").next().unwrap();
+    assert!(range.contains('%'), "the first sparkline is the pass rate, in percent: {range}");
+    // ...and every value in its accessible name, oldest first.
+    let name = html
+        .split("aria-label=\"Pass rate of the recent runs: ")
+        .nth(1)
+        .expect("values in the name")
+        .split('"')
+        .next()
+        .unwrap();
+    assert!(name.ends_with(", oldest first") && name.contains('%'), "{name}");
+}
