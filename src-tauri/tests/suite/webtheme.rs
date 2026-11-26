@@ -191,3 +191,25 @@ mod diagram_contrast_review {
         assert!(css.contains(".trend__bar--last { fill: var(--text); }"));
     }
 }
+
+mod diagram_contrast_round2 {
+    use crate::common::contrast;
+
+    #[test]
+    fn the_average_line_halo_separates_the_line_from_every_bar_in_both_modes() {
+        let tokens = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/autorun-report-tokens.css")).unwrap();
+        for mode in ["light", "dark"] {
+            let at = tokens.find(&format!(":root[data-mode=\"{mode}\"]{{")).unwrap();
+            let b = tokens[at..].split('}').next().unwrap();
+            let var = |name: &str| -> String {
+                let i = b.find(&format!("{name}:")).unwrap();
+                b[i + name.len() + 1..].split(';').next().unwrap().to_string()
+            };
+            let (text, bg, bar) = (var("--text"), var("--bg"), var("--border-strong"));
+            // The line is --text, the last bar is --text: only the --bg halo between them
+            // keeps the line visible, and it must stand out from both the line and the bars.
+            assert!(contrast(&text, &bg) >= 4.5, "{mode}: line on its halo");
+            assert!(contrast(&bar, &bg) >= 3.0, "{mode}: the halo against the ordinary bars");
+        }
+    }
+}

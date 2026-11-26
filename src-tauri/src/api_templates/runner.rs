@@ -294,6 +294,9 @@ pub struct RunRequest {
 /// Where the application's own response excerpt starts in a step's detail.
 pub const RESPONSE_MARK: &str = " - the response began:";
 
+/// Where the retry note starts in a step's detail, after any response excerpt.
+pub const RETRY_MARK: &str = " - it was refused the same way on all";
+
 /// One step's result. Also used for the parts of a run that come before
 /// the steps - `"Sign in"`, `"Anti-forgery token"`, `"Browser"` - when one
 /// of those is what stopped it.
@@ -376,8 +379,14 @@ impl RunReport {
             return None;
         }
         let detail = &self.steps.iter().rev().find(|s| !s.ok)?.detail;
-        let cut = detail.split(RESPONSE_MARK).next().unwrap_or("").trim();
-        (!cut.is_empty()).then(|| cut.to_string())
+        let mut cut = detail.split(RESPONSE_MARK).next().unwrap_or("").trim().to_string();
+        // The retry note follows the excerpt; it is the runner's own words and stays.
+        if detail.contains(RESPONSE_MARK) {
+            if let Some(i) = detail.find(RETRY_MARK) {
+                cut.push_str(&detail[i..]);
+            }
+        }
+        (!cut.is_empty()).then_some(cut)
     }
 }
 
@@ -1299,7 +1308,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
         if attempt > 1 {
             result = result.map_err(|mut f| {
                 if f.unread {
-                    f.detail = format!("{} - it was refused the same way on all {attempt} tries", f.detail);
+                    f.detail = format!("{}{RETRY_MARK} {attempt} tries", f.detail);
                 }
                 f
             });

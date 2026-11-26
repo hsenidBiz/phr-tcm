@@ -662,7 +662,11 @@ fn chart(title: &str, values: &[(f64, &RunPoint, String)], flaky: bool) -> Strin
         avg.push(format!("{:.1},{:.1}", x + bw / 2.0, h - (mean / max * (h - 4.0)).clamp(0.0, h - 4.0)));
     }
     if n >= 2 {
-        svg.push_str(&format!("<polyline class=\"trend__avg\" fill=\"none\" points=\"{}\"/>", avg.join(" ")));
+        // A halo in the page colour under the line, so it shows over the bars,
+        // the highlighted one (the same colour as the line) included.
+        let points = avg.join(" ");
+        svg.push_str(&format!("<polyline class=\"trend__avg-halo\" fill=\"none\" points=\"{points}\"/>"));
+        svg.push_str(&format!("<polyline class=\"trend__avg\" fill=\"none\" points=\"{points}\"/>"));
     }
     svg.push_str("</svg>");
     let dates = format!(

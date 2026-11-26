@@ -1207,3 +1207,59 @@ mod page_tests {
         let _ = std::fs::remove_file(path);
     }
 }
+
+mod short_reason_round2 {
+    use v2_lib::api_templates::flow::Flow;
+    use v2_lib::api_templates::flow_page::page_html;
+    use v2_lib::api_templates::here::{Here, HereFailure};
+    use v2_lib::api_templates::runner::{RunReport, StepReport};
+    use v2_lib::api_templates::store::SavedTemplate;
+    use v2_lib::api_templates::{ApiTemplate, Effect};
+    use v2_lib::webtheme::PagePalette;
+
+    fn report(detail: &str) -> RunReport {
+        RunReport {
+            ok: false,
+            template: "t".into(),
+            outputs: Default::default(),
+            created: Default::default(),
+            steps: vec![StepReport { name: "Rules".into(), handler: None, status: Some(400), ok: false, detail: detail.into() }],
+            failed: Some("Rules".into()),
+            unreached: false,
+        }
+    }
+
+    #[test]
+    fn the_retry_note_stays_in_the_short_reason_after_the_response_is_cut() {
+        let with = report("expected status 200, got 400 - the response began: <html>secret</html> - it was refused the same way on all 3 tries");
+        assert_eq!(with.short_reason().as_deref(), Some("expected status 200, got 400 - it was refused the same way on all 3 tries"));
+        let plain = report("expected status 200, got 400 - it was refused the same way on all 3 tries");
+        assert_eq!(plain.short_reason().as_deref(), Some("expected status 200, got 400 - it was refused the same way on all 3 tries"));
+        let none = report("expected status 200, got 400 - the response began: <b>x</b>");
+        assert_eq!(none.short_reason().as_deref(), Some("expected status 200, got 400"));
+    }
+
+    #[test]
+    fn a_new_reason_that_says_failed_at_is_not_cut_but_an_old_record_still_is() {
+        let flow: Flow = serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+        let line = |failure: HereFailure| {
+            let t = ApiTemplate { effect: Effect::Edit, ..crate::common::saved_on_stage("x", "Save the rules", "rules") };
+            let saved = SavedTemplate { template: t, runs: vec![], here: Here::Failed { failure } };
+            page_html(&flow, &[saved], &PagePalette::default())
+        };
+        let html = line(HereFailure {
+            at: "t".into(),
+            step: Some("Rules".into()),
+            detail: Some("full message".into()),
+            reason: Some("the page said failed at the gate: no".into()),
+        });
+        assert!(html.contains(">failed at Rules: the page said failed at the gate: no</span>"), "{html}");
+        let old = line(HereFailure {
+            at: "t".into(),
+            step: Some("Rules".into()),
+            detail: Some("made 1; failed at Rules (h): expected 200 - the response began: x".into()),
+            reason: None,
+        });
+        assert!(old.contains(">failed at Rules: expected 200</span>"), "{old}");
+    }
+}

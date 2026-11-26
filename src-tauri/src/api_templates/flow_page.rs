@@ -197,12 +197,21 @@ fn here_hint(here: &Here) -> String {
 /// either case nothing from the application's response excerpt on. Cut to
 /// 120 characters; the `title` keeps the full sentence.
 fn short_reason(f: &crate::api_templates::here::HereFailure) -> Option<String> {
-    let raw = f.reason.as_deref().or(f.detail.as_deref())?;
-    let mut text = raw.split(crate::api_templates::runner::RESPONSE_MARK).next().unwrap_or("");
-    if let Some(at) = text.find("failed at ") {
-        // "<captured>; failed at <name> (<handler>): <detail>" - keep the detail.
-        text = text[at..].split_once(": ").map_or("", |(_, rest)| rest);
-    }
+    let mut text = match (f.reason.as_deref(), f.detail.as_deref()) {
+        // The runner's own reason is already short: used as it is, even if it says "failed at".
+        (Some(reason), _) => reason,
+        // An older record: cut the full message down.
+        (None, Some(detail)) => {
+            let mut text = detail.split(crate::api_templates::runner::RESPONSE_MARK).next().unwrap_or("");
+            if let Some(at) = text.find("failed at ") {
+                // "<captured>; failed at <name> (<handler>): <detail>" - keep the detail.
+                text = text[at..].split_once(": ").map_or("", |(_, rest)| rest);
+            }
+            text
+        }
+        (None, None) => return None,
+    };
+    text = text.trim();
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.is_empty() {
         return None;

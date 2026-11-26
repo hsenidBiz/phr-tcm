@@ -170,3 +170,12 @@ test("an older record with only the full message is cut down to the reason", () 
     }),
   ).toBe("failed at Evaluation rules: expected status 200, got 400");
 });
+
+test("a new reason that itself says failed at is kept whole; only an old record is cut", () => {
+  expect(failureLine({ at: "t", step: "Rules", detail: "full", reason: "the page said failed at the gate: no" })).toBe(
+    "failed at Rules: the page said failed at the gate: no",
+  );
+  expect(failureLine({ at: "t", step: "Rules", detail: "made 1; failed at Rules (h): expected 200", reason: null })).toBe(
+    "failed at Rules: expected 200",
+  );
+});

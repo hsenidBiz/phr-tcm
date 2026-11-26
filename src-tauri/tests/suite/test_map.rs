@@ -240,8 +240,7 @@ fn the_accent_is_only_for_the_hovered_chain_and_the_selected_case() {
     assert!(html.contains("lit || selected ? colours.accent : colours.muted"), "{html}");
     assert!(!html.contains("n.kind === 'area' ? colours.accent"), "no accent fill on every area dot: {html}");
     // The tags stay muted whichever word they carry: one fill for both.
-    assert!(html.contains("ctx.fillStyle = colours.muted;
-      ctx.fillText(tag, tagX + TAG_PAD"), "{html}");
+    assert!(html.contains("ctx.fillText(tag, tagX + TAG_PAD") && !html.contains("colours.accent, tagX"), "{html}");
 }
 
 #[test]

@@ -21,12 +21,15 @@ export function failureLine(f: HereFailure): string | null {
   // ("<captured>; failed at <name> (<handler>): <detail> - the response
   // began: ..."), of which only the detail proper is wanted. The
   // application's response excerpt is never printed on the page.
-  let raw = f.reason ?? f.detail ?? "";
-  raw = raw.split(" - the response began:")[0];
-  const marked = raw.indexOf("failed at ");
-  if (marked >= 0) {
-    const colon = raw.indexOf(": ", marked);
-    raw = colon >= 0 ? raw.slice(colon + 2) : "";
+  // The runner's own reason is used as it is, even if it says "failed at".
+  let raw = f.reason ?? "";
+  if (f.reason == null) {
+    raw = (f.detail ?? "").split(" - the response began:")[0];
+    const marked = raw.indexOf("failed at ");
+    if (marked >= 0) {
+      const colon = raw.indexOf(": ", marked);
+      raw = colon >= 0 ? raw.slice(colon + 2) : "";
+    }
   }
   let detail: string | null = raw.split(/\s+/).filter(Boolean).join(" ") || null;
   if (detail && [...detail].length > 120) detail = `${[...detail].slice(0, 119).join("").trimEnd()}\u2026`;

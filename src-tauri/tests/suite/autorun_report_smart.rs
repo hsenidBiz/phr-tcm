@@ -1112,3 +1112,16 @@ fn a_sparkline_prints_its_range_and_carries_its_values_in_its_name() {
         .unwrap();
     assert!(name.ends_with(", oldest first") && name.contains('%'), "{name}");
 }
+
+#[test]
+fn the_average_line_has_a_page_coloured_halo_so_it_shows_over_the_highlighted_bar() {
+    let css = web_file("autorun-report.css");
+    // The last bar and the line are both --text; the halo (--bg) separates them.
+    assert!(css.contains(".trend__avg-halo { stroke: var(--bg); stroke-width: 4;"), "{css}");
+    assert!(css.contains(".trend__avg { stroke: var(--text); stroke-width: 1.5;"), "{css}");
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    let halo = html.find("<polyline class=\"trend__avg-halo\"").expect("a halo line");
+    let line = html.find("<polyline class=\"trend__avg\"").expect("the line");
+    assert!(halo < line, "the halo is drawn first, under the line");
+}
