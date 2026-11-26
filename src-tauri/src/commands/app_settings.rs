@@ -200,6 +200,27 @@ pub fn reset_page_size() -> Result<PageSize, String> {
     Ok(viewport::current())
 }
 
+/// How many Auto Test browsers may be open at once.
+#[tauri::command]
+#[specta::specta]
+pub fn get_autorun_browsers() -> u8 {
+    app_settings::autorun_browser_limit()
+}
+
+/// Save how many Auto Test browsers may be open at once. A value outside
+/// 1 to 8 is held to that range. Lowering it closes no browser; it only stops
+/// new ones until the count falls below it. Answers what was saved.
+#[tauri::command]
+#[specta::specta]
+pub fn set_autorun_browsers(count: u8) -> Result<u8, String> {
+    let count = app_settings::clamp_autorun_browsers(count);
+    app_settings::update(|s| s.autorun_browsers = count).map_err(|e| {
+        crate::applog::warn(format!("saving the browser limit failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })?;
+    Ok(count)
+}
+
 /// Stay signed in. Off removes the kept sign-in from Credential Manager at
 /// once; on keeps the current one, so the very next launch goes straight in.
 #[tauri::command]

@@ -2717,7 +2717,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
     assert!(section_titles(&g).contains(&"Working beside other assistants"));
     let section = flat_guide(&guide_section(&g, "Working beside other assistants").expect("the section"));
     for said in [
-        "Up to three Auto Test browsers can be open at once. One assistant working alone always uses the main one, as before.",
+        "Up to the number of Auto Test browsers set in Auto Test settings (five by default) can be open at once. One assistant working alone always uses the main one, as before.",
         "Each assistant needs an account of its own: signing an account in anywhere ends its session everywhere else.",
         "`get_accounts` says who uses an account (`in_use_by`)",
         "`propose_accounts` so the person can add one.",

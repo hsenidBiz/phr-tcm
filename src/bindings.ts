@@ -1951,6 +1951,14 @@ export const commands = {
 	 *  so, in the sentence a failed `set_page_size` uses.
 	 */
 	resetPageSize: () => typedError<PageSize, string>(__TAURI_INVOKE("reset_page_size")),
+	/**  How many Auto Test browsers may be open at once. */
+	getAutorunBrowsers: () => __TAURI_INVOKE<number>("get_autorun_browsers"),
+	/**
+	 *  Save how many Auto Test browsers may be open at once. A value outside
+	 *  1 to 8 is held to that range. Lowering it closes no browser; it only stops
+	 *  new ones until the count falls below it. Answers what was saved.
+	 */
+	setAutorunBrowsers: (count: number) => typedError<number, string>(__TAURI_INVOKE("set_autorun_browsers", { count })),
 	/**
 	 *  The saved style. The starting one is created on the first read when
 	 *  this machine has none yet.
@@ -3156,6 +3164,12 @@ export type AppSettings = {
 	 *  leaves the rest of the file alone.
 	 */
 	page_size?: PageSize,
+	/**
+	 *  How many Auto Test browsers may be open at once, the main one
+	 *  included: `MIN_AUTORUN_BROWSERS..=MAX_AUTORUN_BROWSERS`. Read through
+	 *  `autorun_browser_limit`, which clamps, so a hand-edited value is safe.
+	 */
+	autorun_browsers?: number,
 };
 
 /**  Whether the account's menu leads to the area that was asked for. */

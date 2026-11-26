@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetAppSimpleModeStore, setAppSimpleModeForTest } from "../../src/lib/appSimpleMode";
 import type { Module } from "../../src/lib/modules";
@@ -39,11 +39,25 @@ function renderAutoRunTitle() {
   );
 }
 
-test("app Basic mode hides Auto Test's Basic/Advanced switch and leaves no wrapper", () => {
+test("app Basic mode hides Auto Test's Basic/Advanced switch but keeps the Settings button", () => {
+  // The header's right side now always holds the Settings button (Basic mode
+  // shows it too), so the wrapper stays; only the switch is gone.
   setAppSimpleModeForTest(true);
-  const { container } = renderAutoRunTitle();
+  renderAutoRunTitle();
   expect(screen.queryByRole("group", { name: "Auto Test mode" })).not.toBeInTheDocument();
-  expect(container.querySelector(".ml-auto")).toBeNull();
+  expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+});
+
+test("the Settings button opens the Auto Test settings dialog", async () => {
+  setAppSimpleModeForTest(false);
+  renderAutoRunTitle();
+  expect(screen.queryByRole("heading", { name: "Auto Test settings" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  expect(await screen.findByRole("heading", { name: "Auto Test settings" })).toBeInTheDocument();
+  expect(screen.getByText("Browser page size")).toBeInTheDocument();
+  expect(screen.getByText("Browsers at once")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("heading", { name: "Auto Test settings" })).not.toBeInTheDocument();
 });
 
 test("with app Basic mode off the switch shows as before", () => {

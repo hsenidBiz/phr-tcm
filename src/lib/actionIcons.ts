@@ -205,6 +205,8 @@ export {
   // Choosing something on a page by clicking it in the browser - a
   // recorded sign-in's signed-in check.
   MousePointerClick as IconPickOnPage,
+  // Opening a screen's own settings (Auto Test's Settings button).
+  Settings as IconSettings,
   // Opening the bundled game in Settings' optional extras.
   Gamepad2 as IconPlayGame,
   // The app's own mark, for the way BACK to the test case side - the

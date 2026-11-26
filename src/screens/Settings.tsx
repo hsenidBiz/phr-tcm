@@ -15,7 +15,6 @@ import { commands, events, type AppSettings, type BackupPreview, type GuideStatu
 import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
-import PageSizeSettings from "../components/PageSizeSettings";
 import { hydrateModules, useModule } from "../lib/modules";
 import { unattendedRunGoing, useBackgroundRun } from "../lib/backgroundRun";
 import Modules from "./Modules";
@@ -761,7 +760,7 @@ export default function Settings({
       data-settings-card="auto-run"
       className={cn(tiles.spareStack && LEFT_TRACK_WIDTH)}
     >
-      <PageSizeSettings />
+      <SettingRow description="Browser page size and how many browsers can be open are in Auto Test → Settings." />
     </SettingsCard>
   );
 

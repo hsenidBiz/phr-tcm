@@ -28,7 +28,7 @@ function wholeSize(width: string, height: string): PageSize | null {
   return { width: Number(width), height: Number(height) };
 }
 
-/** The "Browser page size" row of Settings' Auto Test card: the page every
+/** The "Browser page size" row of Auto Test's settings dialog: the page every
  *  browser the app drives shows, kept by Rust with the other app settings
  *  (the `["app-settings"]` query). Rust refuses a size outside its range and
  *  says so in a sentence; that sentence is shown as it is. */

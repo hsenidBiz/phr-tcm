@@ -5654,13 +5654,20 @@ async fn a_start_refused_for_want_of_a_browser_lets_go_of_its_case() {
     claims::clear();
     v2_lib::commands::autorun_slots::clear();
     register_agent(START_A);
-    for (n, id) in [(0, "2123456789abcdef0123456789abcdef"), (1, "3123456789abcdef0123456789abcdef"), (2, "4123456789abcdef0123456789abcdef")] {
+    // Five browsers are allowed by default, so main and four extras are bound.
+    for (n, id) in [
+        (0, "2123456789abcdef0123456789abcdef"),
+        (1, "3123456789abcdef0123456789abcdef"),
+        (2, "4123456789abcdef0123456789abcdef"),
+        (3, "5123456789abcdef0123456789abcdef"),
+        (4, "6123456789abcdef0123456789abcdef"),
+    ] {
         let other = register_agent(id);
         v2_lib::commands::autorun_slots::bind(SlotNo(n), &other);
     }
     let (status, out) = start_as(START_A, 135421).await;
     assert_eq!(status, 409, "{out}");
-    assert!(out.contains("browsers are open already"), "{out}");
+    assert!(out.contains("are open already"), "{out}");
     assert_eq!(claims::holder(135421, v2_lib::autorun::sessions::now_ms()), None);
     agents::clear();
     claims::clear();

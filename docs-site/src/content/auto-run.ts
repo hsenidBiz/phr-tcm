@@ -972,7 +972,7 @@ export const autoRun: Screen = {
       locate: { text: "Its own browser, Edge, signed in as portal.tester" },
       name: "Its own browser",
       does:
-        "Up to three assistants can work at once, each in its own browser and signed in as an account of its own. A second assistant opens a browser of its own when the main one is in use, and its row says **Its own browser**.",
+        "As many assistants as the number set in **Settings** at the top of Auto Test (five by default) can work at once, each in its own browser and signed in as an account of its own. A second assistant opens a browser of its own when the main one is in use, and its row says **Its own browser**.",
       tips: [
         "An unattended run does not start while any assistant's browser is open: wait for them to finish, or press **Release Auto Test browser** on the Setup card, which closes them all.",
       ],

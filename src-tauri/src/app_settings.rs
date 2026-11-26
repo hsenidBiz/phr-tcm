@@ -86,6 +86,27 @@ pub struct AppSettings {
     /// A missing, unreadable or out-of-range value reads as the default, and
     /// leaves the rest of the file alone.
     pub page_size: PageSize,
+    /// How many Auto Test browsers may be open at once, the main one
+    /// included: `MIN_AUTORUN_BROWSERS..=MAX_AUTORUN_BROWSERS`. Read through
+    /// `autorun_browser_limit`, which clamps, so a hand-edited value is safe.
+    pub autorun_browsers: u8,
+}
+
+/// The fewest Auto Test browsers that can be allowed at once.
+pub const MIN_AUTORUN_BROWSERS: u8 = 1;
+/// The most: the main browser and every extra slot (`autorun::slots::SLOT_COUNT`).
+pub const MAX_AUTORUN_BROWSERS: u8 = 8;
+/// What a fresh install allows.
+pub const DEFAULT_AUTORUN_BROWSERS: u8 = 5;
+
+/// `n` held to the allowed range.
+pub fn clamp_autorun_browsers(n: u8) -> u8 {
+    n.clamp(MIN_AUTORUN_BROWSERS, MAX_AUTORUN_BROWSERS)
+}
+
+/// How many Auto Test browsers may be open at once, as the settings say now.
+pub fn autorun_browser_limit() -> u8 {
+    clamp_autorun_browsers(current().autorun_browsers)
 }
 
 impl Default for AppSettings {
@@ -107,6 +128,7 @@ impl Default for AppSettings {
             app_simple_mode: None,
             switch_markers_migrated: false,
             page_size: DEFAULT_PAGE,
+            autorun_browsers: DEFAULT_AUTORUN_BROWSERS,
         }
     }
 }
