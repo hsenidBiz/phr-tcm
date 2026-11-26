@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.9",
+    date: "2026-11-26",
+    items: [
+      "API template flows are easier to read: each stage has a coloured edge for what it does, the arrows are plain, and a legend lists what the colours mean",
+      "A failed template shows where and why it failed right on the flow, without hovering",
+      "The test map reads as an outline, with each area's case count and a NEW or UPDATE tag on every case",
+      "Lines and bars in the test map and run report are easier to see in light and dark themes, and the run report labels its first problem step and its history",
+    ],
+  },
+  {
     version: "2.4.8-beta.8",
     date: "2026-11-26",
     items: [
