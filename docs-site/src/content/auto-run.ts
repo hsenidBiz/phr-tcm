@@ -911,7 +911,7 @@ export const autoRun: Screen = {
       locate: { role: "heading", nameRe: "^Proposed by the assistant" },
       name: "Proposed by the assistant",
       does:
-        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the app read from the environment's database, or type one. On a test environment the app looks each password up itself, so a password never passes through the assistant, and **Sync Database** reads them again, for example after a reset. The **Accounts** tab has the same button for the accounts you have saved: it changes only the passwords that differ, then opens **Add accounts from the database**, where you search the environment's logins, tick the ones you want (**Select all shown** ticks every login not yet saved) and press **Add selected** to make an account of each. **Dismiss** drops the list.",
+        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the app read from the environment's database, or type one. On a test environment the app looks each password up itself, so a password never passes through the assistant, and **Sync Database** reads them again, for example after a reset. The **Accounts** tab has the same button for the accounts you have saved: it changes only the passwords that differ, then opens **Add accounts from the database**, where you search the environment's logins, tick the ones you want (**Select all** ticks every login in the database that is not yet saved, even those a search hides) and press **Add selected** to make an account of each. **Dismiss** drops the list.",
     },
     {
       id: "add-account",

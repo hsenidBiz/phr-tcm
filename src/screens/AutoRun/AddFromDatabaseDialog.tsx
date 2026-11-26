@@ -64,23 +64,21 @@ export default function AddFromDatabaseDialog({
     gcTime: 0,
   });
   const logins = list.data?.logins ?? [];
-  // Only a ticked row that is shown now counts and is added: a tick on a row
-  // a search has hidden is not the person's pick any more.
-  const shownPicks = logins.filter((l) => !l.saved && picked.has(l.login)).map((l) => l.login);
-  const count = shownPicks.length;
-  // Select all shown acts on the rows that can be ticked: saved rows never.
-  const selectable = logins.filter((l) => !l.saved).map((l) => l.login);
+  // The whole list, whatever the search shows: what Select all ticks. Same
+  // command with an empty search; with no search typed it is the same query.
+  const full = useQuery({
+    queryKey: ["db-logins", ""],
+    queryFn: () => unwrapStr(commands.envListDbLogins("", dbReadAccessOn())),
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  // Every ticked login counts and is added, shown by the search or not.
+  const count = picked.size;
+  const selectable = (full.data?.logins ?? []).filter((l) => !l.saved).map((l) => l.login);
   const selectableTicked = selectable.filter((l) => picked.has(l)).length;
-
-  // A new search's answer clears the ticks it does not list.
-  useEffect(() => {
-    if (!list.data) return;
-    const shown = new Set(list.data.logins.map((l) => l.login));
-    setPicked((cur) => {
-      const kept = [...cur].filter((l) => shown.has(l));
-      return kept.length === cur.size ? cur : new Set(kept);
-    });
-  }, [list.data]);
+  /** Select all met the 200 cap, so only the first 200 were ticked. */
+  const [cutNote, setCutNote] = useState(false);
 
   const toggle = (login: string, on: boolean) =>
     setPicked((cur) => {
@@ -90,15 +88,10 @@ export default function AddFromDatabaseDialog({
       return next;
     });
 
-  const toggleAll = (on: boolean) =>
-    setPicked((cur) => {
-      const next = new Set(cur);
-      for (const l of selectable) {
-        if (on) next.add(l);
-        else next.delete(l);
-      }
-      return next;
-    });
+  const toggleAll = (on: boolean) => {
+    setPicked(on ? new Set(selectable) : new Set());
+    setCutNote(on && !!full.data?.cut_short);
+  };
 
   const add = async () => {
     if (count === 0) return;
@@ -107,9 +100,10 @@ export default function AddFromDatabaseDialog({
     setSaid("");
     setReopenNote(false);
     try {
-      const done = await unwrapStr(commands.envAddDbLogins(shownPicks, dbReadAccessOn()));
+      const done = await unwrapStr(commands.envAddDbLogins([...picked], dbReadAccessOn()));
       setSaid(addedSentence(done));
       setPicked(new Set());
+      setCutNote(false);
       // The add is done: a failure to read the accounts again is not a
       // problem with it, only a note that the list behind is behind.
       try {
@@ -141,16 +135,19 @@ export default function AddFromDatabaseDialog({
         value={text}
         onChange={setText}
       />
-      <label className="flex items-center gap-2 text-xs text-muted">
-        <Checkbox
-          checked={selectable.length > 0 && selectableTicked === selectable.length}
-          indeterminate={selectableTicked > 0}
-          disabled={selectable.length === 0 || busy}
-          ariaLabel="Select all shown"
-          onCheckedChange={toggleAll}
-        />
-        Select all shown
-      </label>
+      <div className="flex items-center justify-between gap-2 text-xs text-muted">
+        <label className="flex items-center gap-2">
+          <Checkbox
+            checked={selectable.length > 0 && selectableTicked === selectable.length}
+            indeterminate={selectableTicked > 0 || picked.size > 0}
+            disabled={selectable.length === 0 || busy}
+            ariaLabel="Select all"
+            onCheckedChange={toggleAll}
+          />
+          Select all
+        </label>
+        <span>{count} selected</span>
+      </div>
       <div className="max-h-72 min-h-24 overflow-auto rounded-md border border-border">
         {list.isLoading && <p className="p-3 text-xs text-muted">Loading logins...</p>}
         {list.isError && <p className="p-3 text-xs text-danger">{list.error.message}</p>}
@@ -174,6 +171,9 @@ export default function AddFromDatabaseDialog({
       </div>
       {list.data?.cut_short && (
         <p className="text-xs text-muted">Showing the first 200 - type to narrow the list</p>
+      )}
+      {cutNote && selectableTicked === selectable.length && (
+        <p className="text-xs text-muted">Selected the first 200 - add these, then Select all again for the rest</p>
       )}
       {said && (
         <p role="status" className="text-xs text-text">

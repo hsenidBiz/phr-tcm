@@ -1342,7 +1342,9 @@ test("an add that worked shows its sentence and a quiet note, not a problem, whe
   expect(within(picker).queryByText("cannot read the version")).not.toBeInTheDocument();
 });
 
-test("a tick on a row a search hides is cleared, and Add selected counts and adds only shown ticks", async () => {
+// Rule changed 2026-11-26: a tick on a row a search hides is kept (it used to
+// be dropped), counted, and added.
+test("a tick on a row a search hides is kept, and Add selected counts and adds every tick", async () => {
   const adds: unknown[] = [];
   mountWithProposals({
     testEnvironment: true,
@@ -1370,14 +1372,13 @@ test("a tick on a row a search hides is cleared, and Add selected counts and add
   expect(within(picker).getByLabelText("Search logins")).toHaveAttribute("maxlength", "128");
   fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "lee" } });
   await waitFor(() => expect(within(picker).queryByText("zed.one")).not.toBeInTheDocument());
-  expect(await within(picker).findByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
-  // Back to everything: the hidden tick did not come back.
+  // The hidden zed.one stays ticked and counted.
+  expect(within(picker).getByRole("button", { name: "Add selected (2)" })).toBeInTheDocument();
   fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "" } });
   await within(picker).findByText("zed.one");
-  expect(within(picker).getByRole("checkbox", { name: "Add zed.one" })).toHaveAttribute("aria-checked", "false");
-  expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
-  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (1)" }));
-  await waitFor(() => expect(adds).toEqual([{ logins: ["lee.two"], dbRead: false }]));
+  expect(within(picker).getByRole("checkbox", { name: "Add zed.one" })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (2)" }));
+  await waitFor(() => expect(adds).toEqual([{ logins: ["lee.two", "zed.one"], dbRead: false }]));
 });
 
 // ---- Remove all ----------------------------------------------------------
@@ -1431,24 +1432,30 @@ test("Cancel after Remove all closes without saving, and a reopen shows the rows
   expect(saved).toEqual([]);
 });
 
-// ---- Select all shown in the picker --------------------------------------
+// ---- Select all in the picker --------------------------------------------
 
 type Login = { login: string; saved: boolean };
 
-/** Opens the picker over a list of logins the search answers with. */
-async function openPicker(logins: (term: string) => Login[]) {
+/** Opens the picker over a list of logins the search answers with. `sent`
+ * collects the logins each Add selected sends. */
+async function openPicker(logins: (term: string) => Login[], cutShort = false) {
+  const sent: string[][] = [];
   mountWithProposals({
     testEnvironment: true,
     accounts: [{ key: "hr.a", label: "A", username: "kim", password: "p" }],
     fill: () => SAME_COUNTS,
-    picker: (_cmd, args) => ({
-      logins: logins((args as { search?: string }).search ?? ""),
-      cut_short: false,
-    }),
+    picker: (cmd, args) => {
+      if (cmd === "env_add_db_logins") {
+        sent.push((args as { logins: string[] }).logins);
+        return { added: sent[sent.length - 1].length, already_saved: 0, not_added: [] };
+      }
+      return { logins: logins((args as { search?: string }).search ?? ""), cut_short: cutShort };
+    },
   });
   await screen.findByDisplayValue("kim");
   fireEvent.click(screen.getByRole("button", { name: "Sync Database" }));
-  return screen.findByRole("dialog", { name: "Add accounts from the database" });
+  const dialog = await screen.findByRole("dialog", { name: "Add accounts from the database" });
+  return Object.assign(dialog, { sent });
 }
 
 const SOME_SAVED = (term: string): Login[] =>
@@ -1456,24 +1463,29 @@ const SOME_SAVED = (term: string): Login[] =>
     l.login.includes(term),
   );
 
-test("Select all shown ticks only the unsaved shown rows, and unticking clears them", async () => {
+const searchPicker = (picker: HTMLElement, value: string) =>
+  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value } });
+
+test("Select all ticks every unsaved login, never a saved one, and unticking clears them", async () => {
   const picker = await openPicker(SOME_SAVED);
   await within(picker).findByText("lee.two");
-  const all = within(picker).getByRole("checkbox", { name: "Select all shown" });
+  const all = within(picker).getByRole("checkbox", { name: "Select all" });
   fireEvent.click(all);
   expect(within(picker).getByRole("checkbox", { name: "Add lee.two" })).toHaveAttribute("aria-checked", "true");
   expect(within(picker).getByRole("checkbox", { name: "Add mo.three" })).toHaveAttribute("aria-checked", "true");
   expect(within(picker).getByRole("button", { name: "Add selected (2)" })).toBeInTheDocument();
+  expect(within(picker).getByText("2 selected")).toBeInTheDocument();
   expect(all).toHaveAttribute("aria-checked", "true");
   fireEvent.click(all);
   expect(within(picker).getByRole("checkbox", { name: "Add lee.two" })).toHaveAttribute("aria-checked", "false");
   expect(within(picker).getByRole("button", { name: "Add selected (0)" })).toBeInTheDocument();
+  expect(all).toHaveAttribute("aria-checked", "false");
 });
 
-test("Select all shown is mixed after one row is unticked", async () => {
+test("Select all is mixed after one row is unticked", async () => {
   const picker = await openPicker(SOME_SAVED);
   await within(picker).findByText("lee.two");
-  const all = within(picker).getByRole("checkbox", { name: "Select all shown" });
+  const all = within(picker).getByRole("checkbox", { name: "Select all" });
   expect(all).toHaveAttribute("aria-checked", "false");
   fireEvent.click(all);
   fireEvent.click(within(picker).getByRole("checkbox", { name: "Add lee.two" }));
@@ -1481,24 +1493,51 @@ test("Select all shown is mixed after one row is unticked", async () => {
   expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
 });
 
-test("Select all shown is disabled when every shown row is saved", async () => {
+test("Select all is disabled when every login is saved", async () => {
   const picker = await openPicker((term) => SOME_SAVED(term).filter((l) => l.saved));
   await within(picker).findByText("kim");
-  expect(within(picker).getByRole("checkbox", { name: "Select all shown" })).toHaveAttribute("aria-disabled", "true");
+  expect(within(picker).getByRole("checkbox", { name: "Select all" })).toHaveAttribute("aria-disabled", "true");
 });
 
-test("a new search answer clears the selection and Select all shown follows", async () => {
+test("Select all ticks the whole database list even while a search shows fewer", async () => {
   const picker = await openPicker(SOME_SAVED);
   await within(picker).findByText("lee.two");
-  const all = within(picker).getByRole("checkbox", { name: "Select all shown" });
-  fireEvent.click(all);
-  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "mo" } });
-  // The answer lists only mo.three: the tick on the hidden lee.two is gone,
-  // the one still shown stays.
-  await waitFor(() => expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument());
-  expect(within(picker).queryByText("lee.two")).not.toBeInTheDocument();
-  fireEvent.change(within(picker).getByLabelText("Search logins"), { target: { value: "lee" } });
+  searchPicker(picker, "mo");
+  await waitFor(() => expect(within(picker).queryByText("lee.two")).not.toBeInTheDocument());
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Select all" }));
+  // lee.two is hidden by the search but still ticked and counted.
+  expect(within(picker).getByRole("button", { name: "Add selected (2)" })).toBeInTheDocument();
+  expect(within(picker).getByText("2 selected")).toBeInTheDocument();
+  expect(within(picker).getByRole("checkbox", { name: "Add mo.three" })).toHaveAttribute("aria-checked", "true");
+  expect(within(picker).getByRole("checkbox", { name: "Select all" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("a tick survives a search that hides it, and Add selected sends it", async () => {
+  const picker = await openPicker(SOME_SAVED);
   await within(picker).findByText("lee.two");
-  expect(within(picker).getByRole("button", { name: "Add selected (0)" })).toBeInTheDocument();
-  expect(within(picker).getByRole("checkbox", { name: "Select all shown" })).toHaveAttribute("aria-checked", "false");
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Add lee.two" }));
+  searchPicker(picker, "mo");
+  await waitFor(() => expect(within(picker).queryByText("lee.two")).not.toBeInTheDocument());
+  // Used to be dropped when the search answered without it (the old
+  // drop-on-search rule): now it stays counted.
+  expect(within(picker).getByRole("button", { name: "Add selected (1)" })).toBeInTheDocument();
+  expect(within(picker).getByRole("checkbox", { name: "Select all" })).toHaveAttribute("aria-checked", "mixed");
+  searchPicker(picker, "");
+  await within(picker).findByText("lee.two");
+  expect(within(picker).getByRole("checkbox", { name: "Add lee.two" })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (1)" }));
+  await waitFor(() => expect(picker.sent).toEqual([["lee.two"]]));
+});
+
+test("a cut-short list says Select all took the first 200", async () => {
+  const picker = await openPicker(SOME_SAVED, true);
+  await within(picker).findByText("lee.two");
+  expect(within(picker).getByText("Showing the first 200 - type to narrow the list")).toBeInTheDocument();
+  expect(within(picker).queryByText(/Selected the first 200/)).not.toBeInTheDocument();
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Select all" }));
+  expect(
+    within(picker).getByText("Selected the first 200 - add these, then Select all again for the rest"),
+  ).toBeInTheDocument();
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Select all" }));
+  expect(within(picker).queryByText(/Selected the first 200/)).not.toBeInTheDocument();
 });
