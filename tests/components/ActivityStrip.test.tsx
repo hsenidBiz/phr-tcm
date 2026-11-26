@@ -1,9 +1,8 @@
-// The activity strip: nothing while idle, three lines then a count, what a
-// line says, Stop only where it works, a trial with no Stop, and where the
-// strip sits in the layout.
+// The activity strip: nothing while idle, one short line, the Open Auto Test
+// button, a trial with no Stop, and where the strip sits in the layout.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +42,7 @@ function mount(agents: AgentView[], trial: { environment: string } | null = null
     }
     return null;
   });
-  return { ...render(<ActivityStrip onOpen={() => {}} />), stop };
+  return { ...render(<ActivityStrip section="settings" onOpen={() => {}} />), stop };
 }
 
 test("all idle draws nothing", async () => {
@@ -52,55 +51,57 @@ test("all idle draws nothing", async () => {
   expect(container.firstChild).toBeNull();
 });
 
-test("three lines, then and N more", async () => {
-  mount([1, 2, 3, 4].map((n) => agent({ label: `Assistant ${n}`, slot: n })));
-  expect(await screen.findByText("and 1 more")).toBeInTheDocument();
-  expect(screen.getAllByRole("listitem")).toHaveLength(4);
+// The strip is one short line now: the old per-assistant lines, their
+// label/browser/account text and the per-assistant Stop buttons moved to the
+// title (detail) and to Auto Test's Assistants card (Stop).
+const discovering = (n: number, area: string | null = "Performance & Evaluation / Admin / Strategic Objectives") =>
+  agent({ label: `Assistant ${n}`, slot: n, activity: { kind: "discovering", area } });
+
+test("one discovering assistant names the last part of the screen path", async () => {
+  mount([discovering(1)]);
+  expect(await screen.findByText("Discovery is running · Strategic Objectives")).toBeInTheDocument();
 });
 
-test("a line says label, doing, browser and account", async () => {
+test("two discovering assistants add (+1 more)", async () => {
+  mount([discovering(1), discovering(2)]);
+  expect(await screen.findByText("Discovery is running · Strategic Objectives (+1 more)")).toBeInTheDocument();
+});
+
+test("non-discovering assistants are counted", async () => {
+  const two = mount([agent({ slot: 1 }), agent({ label: "Assistant 2", slot: 2 })]);
+  expect(await screen.findByText("2 assistants are working")).toBeInTheDocument();
+  two.unmount();
+  mount([agent()]);
+  expect(await screen.findByText("An assistant is working")).toBeInTheDocument();
+});
+
+test("the Open Auto Test button is absent on Auto Test and calls onOpen elsewhere", async () => {
+  const open = vi.fn();
+  mockIPC((cmd) => (cmd === "auto_run_agents" ? [agent()] : null));
+  const on = render(<ActivityStrip section="autorun" onOpen={open} />);
+  await screen.findByText("An assistant is working");
+  expect(screen.queryByRole("button", { name: "Open Auto Test" })).toBeNull();
+  on.unmount();
+  render(<ActivityStrip section="settings" onOpen={open} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open Auto Test" }));
+  expect(open).toHaveBeenCalledTimes(1);
+});
+
+test("no per-assistant Stop in the strip", async () => {
+  mount([agent({ can_stop: true, slot: 2 })]);
+  await screen.findByText("An assistant is working");
+  expect(screen.queryByRole("button", { name: /^Stop/ })).toBeNull();
+});
+
+test("the title holds the full per-assistant detail", async () => {
   mount([
     agent({ activity: { kind: "replaying", case_id: 5, step: 2, of: 9 }, browser: "Edge", account: "hr.sup" }),
   ]);
-  expect(await screen.findByText("Assistant 1 · Replaying case 5 (step 2 of 9) · Edge · hr.sup")).toBeInTheDocument();
+  const line = await screen.findByText("An assistant is working");
+  expect(line).toHaveAttribute("title", "Assistant 1 · Replaying case 5 (step 2 of 9) · Edge · hr.sup");
 });
 
-test("Stop only when the assistant can be stopped", async () => {
-  const stop = vi.fn();
-  const first = mount([agent({ can_stop: false })], null, stop);
-  await screen.findByText(/Assistant 1/);
-  expect(screen.queryByRole("button", { name: "Stop Assistant 1" })).toBeNull();
-  first.unmount();
-
-  mount([agent({ can_stop: true, slot: 2 })], null, stop);
-  fireEvent.click(await screen.findByRole("button", { name: "Stop Assistant 1" }));
-  await waitFor(() => expect(stop).toHaveBeenCalledWith({ slot: 2 }));
-});
-
-test("a second Stop click while the first is pending calls once, and re-enables after", async () => {
-  let release: (v: null) => void = () => {};
-  const stop = vi.fn();
-  mockIPC((cmd, args) => {
-    if (cmd === "auto_run_agents") return [agent({ can_stop: true, slot: 2 })];
-    if (cmd === "auto_run_sign_in_trial") return null;
-    if (cmd === "auto_run_stop_agent") {
-      stop(args);
-      return new Promise<null>((res) => (release = res));
-    }
-    return null;
-  });
-  render(<ActivityStrip onOpen={() => {}} />);
-  const btn = await screen.findByRole("button", { name: "Stop Assistant 1" });
-  fireEvent.click(btn);
-  await waitFor(() => expect(btn).toBeDisabled());
-  fireEvent.click(btn);
-  expect(stop).toHaveBeenCalledTimes(1);
-  release(null);
-  await waitFor(() => expect(btn).toBeEnabled());
-  expect(stop).toHaveBeenCalledTimes(1);
-});
-
-test("a sign-in trial shows with no Stop", async () => {
+test("a sign-in trial shows its own line with no Stop", async () => {
   mount([agent({ activity: { kind: "idle" } })], { environment: "Staging" });
   expect(await screen.findByText("Trying a sign-in · Staging")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Stop/ })).toBeNull();
