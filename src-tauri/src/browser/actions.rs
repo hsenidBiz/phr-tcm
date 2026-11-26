@@ -12,6 +12,7 @@ use super::drag;
 use super::keys;
 use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
 use super::expect::{self, Check};
+use super::highlight::{self, Say};
 use super::input::{self, Blocked};
 use super::locator::{resolve_explained, Target};
 use super::page;
@@ -2183,13 +2184,10 @@ fn not_an_address(kind: &str, url: &str) -> String {
     format!("{kind} needs an http, https or file address, not {url:?}")
 }
 
-/// `this` is the element about to be touched.
-pub const HIGHLIGHT_JS: &str = r#"function() {
-  const prev = this.style.outline;
-  this.style.outline = '3px solid #7c5cff';
-  setTimeout(() => { this.style.outline = prev; }, 1200);
-  return true;
-}"#;
+/// The script that draws a step's box over its element: see `highlight`.
+/// `this` is the element about to be touched; arguments are the colour's key
+/// and the label.
+pub const HIGHLIGHT_JS: &str = super::highlight::SHOW_JS;
 
 /// `this` is the document. Argument: the words to look for.
 ///
@@ -2220,15 +2218,30 @@ pub const CHECK_TEXT_JS: &str = r#"function(want) {
 /// argument and never concatenated into this source.
 pub const RESOLVE_URL_JS: &str = r#"function(rel) { return new URL(rel, location.href).href; }"#;
 
+/// Draw `say` over the element and pause for `timing.highlight_ms`, so a
+/// watcher sees WHERE and WHAT before it happens. With the highlight off
+/// (`highlight_ms` of 0) nothing is drawn and nothing waits.
 pub(crate) async fn point_and_pause<D: Driver>(
     d: &mut D,
     ready: &input::Ready,
     timing: &Timing,
+    say: &Say,
 ) -> Result<(), CdpError> {
-    page::call_value(d, &ready.handle, HIGHLIGHT_JS, &[]).await?;
-    if timing.highlight_ms > 0 {
-        d.idle(Duration::from_millis(timing.highlight_ms)).await;
+    point_at(d, &ready.handle, timing, say).await
+}
+
+/// `point_and_pause` for an element that is held as a bare handle.
+pub(crate) async fn point_at<D: Driver>(
+    d: &mut D,
+    handle: &page::Handle,
+    timing: &Timing,
+    say: &Say,
+) -> Result<(), CdpError> {
+    if timing.highlight_ms == 0 {
+        return Ok(());
     }
+    highlight::show(d, handle, say).await?;
+    d.idle(Duration::from_millis(timing.highlight_ms)).await;
     Ok(())
 }
 
@@ -2682,7 +2695,7 @@ fn written_note(ready: &input::Ready) -> String {
 /// tooltip, a hover menu) to show.
 pub const HOVER_SETTLE_MS: u64 = 300;
 
-async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, timing: &Timing) -> ActionOutcome {
+async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, timing: &Timing, say: &Say) -> ActionOutcome {
     settle(d, timing).await;
     let mut own = timing.clone();
     if let Some(ms) = within_ms {
@@ -2692,7 +2705,7 @@ async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, 
         Ok(r) => r,
         Err(b) => return blocked(b),
     };
-    if let Err(e) = point_and_pause(d, &ready, timing).await {
+    if let Err(e) = point_and_pause(d, &ready, timing, say).await {
         return failed_by(e);
     }
     match input::hover(d, &ready).await {
@@ -2713,7 +2726,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Ok(r) => r,
                 Err(b) => return blocked(b),
             };
-            if let Err(e) = point_and_pause(d, &ready, timing).await {
+            if let Err(e) = point_and_pause(d, &ready, timing, &Say::of(action)).await {
                 return failed_by(e);
             }
             // A control named like a save opens the no-save window before
@@ -2730,14 +2743,14 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 }
             }
         }
-        Action::Hover { selector, within_ms } => hover(d, selector, *within_ms, timing).await,
+        Action::Hover { selector, within_ms } => hover(d, selector, *within_ms, timing, &Say::of(action)).await,
         Action::Fill { selector, value } => {
             settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, true, timing).await {
                 Ok(r) => r,
                 Err(b) => return blocked(b),
             };
-            if let Err(e) = point_and_pause(d, &ready, timing).await {
+            if let Err(e) = point_and_pause(d, &ready, timing, &Say::of(action)).await {
                 return failed_by(e);
             }
             match input::fill(d, &ready, value).await {
@@ -2755,7 +2768,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Ok(r) => r,
                 Err(b) => return blocked(b),
             };
-            if let Err(e) = point_and_pause(d, &ready, timing).await {
+            if let Err(e) = point_and_pause(d, &ready, timing, &Say::of(action)).await {
                 return failed_by(e);
             }
             match input::select_option(d, &ready, label.as_deref(), value.as_deref()).await {
@@ -3327,6 +3340,7 @@ pub async fn upload_in<D: Driver>(
 ) -> ActionOutcome {
     let path = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf()).to_string_lossy().into_owned();
     let mut out = upload(d, selector, &path, shown, timing).await;
+    highlight::conclude(d, timing, out.ok).await;
     append_dialogs(d, &mut out);
     out
 }
@@ -3336,13 +3350,14 @@ async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str
         Ok(h) => h,
         Err(out) => return out,
     };
+    let say = Say::new(highlight::Kind::Type, format!("Upload '{}'", highlight::shown(shown)));
     let kind = match page::call_value(d, &handle, FILE_INPUT_JS, &[]).await {
         Ok(v) => v,
         Err(e) => return failed_by(e),
     };
     let done = || ActionOutcome::passed(format!("uploaded {shown} to {}", selector.describe()));
     if kind["file"].as_bool() != Some(true) {
-        let (result, switched_off) = through_chooser(d, selector, path, timing).await;
+        let (result, switched_off) = through_chooser(d, selector, path, timing, &say).await;
         let mut out = match result {
             Ok(()) => done(),
             Err(out) => out,
@@ -3354,6 +3369,9 @@ async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str
     }
     if kind["disabled"].as_bool() == Some(true) {
         return ActionOutcome::failed(format!("{} {}", selector.describe(), input::DISABLED));
+    }
+    if let Err(e) = point_at(d, &handle, timing, &say).await {
+        return failed_by(e);
     }
     let backend = match page::backend_id(d, &handle).await {
         Ok(id) => id,
@@ -3380,12 +3398,13 @@ async fn through_chooser<D: Driver>(
     selector: &Target,
     path: &str,
     timing: &Timing,
+    say: &Say,
 ) -> (Result<(), ActionOutcome>, bool) {
     let out = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": true })).await {
         // Switched off below anyway: a browser that refused may still have
         // switched it on.
         Err(e) => Err(failed_by(e)),
-        Ok(_) => choose(d, selector, path, timing).await,
+        Ok(_) => choose(d, selector, path, timing, say).await,
     };
     let switched_off = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": false })).await {
         Ok(_) => true,
@@ -3397,9 +3416,9 @@ async fn through_chooser<D: Driver>(
     (out, switched_off)
 }
 
-async fn choose<D: Driver>(d: &mut D, selector: &Target, path: &str, timing: &Timing) -> Result<(), ActionOutcome> {
+async fn choose<D: Driver>(d: &mut D, selector: &Target, path: &str, timing: &Timing, say: &Say) -> Result<(), ActionOutcome> {
     let ready = input::wait_ready(d, selector, false, timing).await.map_err(blocked)?;
-    point_and_pause(d, &ready, timing).await.map_err(failed_by)?;
+    point_and_pause(d, &ready, timing, say).await.map_err(failed_by)?;
     // A chooser event left over from an earlier upload must not stand in
     // for the one this click opens.
     d.forget_events();
@@ -3542,6 +3561,11 @@ pub async fn execute_in<D: Driver>(
         return gone;
     }
     let mut out = run(d, action, timing, policy).await;
+    if highlight::draws_before(action) {
+        highlight::conclude(d, timing, out.ok).await;
+    } else {
+        highlight::after_check(d, action, out.ok, timing).await;
+    }
     append_dialogs(d, &mut out);
     out
 }

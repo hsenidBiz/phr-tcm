@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use super::actions::{blocked, failed_by, harness, point_and_pause, settle, shown_now, ActionOutcome};
 use super::cdp::{CdpError, Driver};
 use super::expect::{self, Check};
+use super::highlight::{Kind, Say};
 use super::input;
 use super::locator::Target;
 use super::page;
@@ -191,7 +192,7 @@ pub async fn page_until<D: Driver>(
             Ok(r) => r,
             Err(b) => return blocked(b),
         };
-        if let Err(e) = point_and_pause(d, &ready, timing).await {
+        if let Err(e) = point_and_pause(d, &ready, timing, &Say::new(Kind::Click, "Click next page")).await {
             return failed_by(e);
         }
         // The page as it is now: a click that turns it is waited for before

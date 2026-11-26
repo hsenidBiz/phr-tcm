@@ -29,6 +29,7 @@
 use super::actions::{blocked, failed_by, path_only, point_and_pause, settle, ActionOutcome};
 use super::cdp::{CdpError, Driver};
 use super::dialogs::seconds;
+use super::highlight::{Kind, Say};
 use super::input;
 use super::locator::{resolve_explained, Target};
 use super::net_record::NetEntry;
@@ -323,7 +324,7 @@ pub async fn expect_no_change<D: Driver>(
         Ok(r) => r,
         Err(b) => return blocked(b),
     };
-    if let Err(e) = point_and_pause(d, &ready, timing).await {
+    if let Err(e) = point_and_pause(d, &ready, timing, &Say::new(Kind::Check, "Check: nothing changes")).await {
         return failed_by(e);
     }
     // The pointer goes onto the control before the page is read, so what the

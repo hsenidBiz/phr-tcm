@@ -61,7 +61,8 @@ fn validation_catches_what_would_only_fail_at_run_time() {
 #[tokio::test]
 async fn a_click_highlights_then_sends_real_mouse_events() {
     let mut d = FakePage::default().driver();
-    let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &quick()).await;
+    let watched = Timing { highlight_ms: 5, ..quick() };
+    let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &watched).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(out.detail, "clicked #go");
     let methods = d.methods();
@@ -364,7 +365,8 @@ async fn a_page_refusal_during_the_highlight_is_the_pages_doing() {
             _ => Ok(json!({})),
         }
     });
-    let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &quick()).await;
+    let watched = Timing { highlight_ms: 5, ..quick() };
+    let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &watched).await;
     assert!(!out.ok);
     assert!(out.detail.contains("the page refused"), "{}", out.detail);
     assert!(out.detail.contains("Cannot find context"), "{}", out.detail);

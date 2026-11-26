@@ -1893,6 +1893,10 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
             "Runtime.evaluate" if params["expression"] == "document.title" => {
                 Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
             }
+            // The highlight's result call, sent when the browser is watched.
+            "Runtime.evaluate" if params["expression"].as_str().is_some_and(|e| e.contains("tcm.action-highlight")) => {
+                Ok(serde_json::json!({ "result": { "value": true } }))
+            }
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
                 Ok(serde_json::json!({ "result": { "value": true } }))
             }
