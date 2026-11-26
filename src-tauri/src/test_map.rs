@@ -1,7 +1,9 @@
-//! The Test map: a set of cases drawn as a tree of the areas they test, in
-//! the browser - areas and cases as nodes, membership as limbs. The tree is
-//! built here from each case's `area` path (`build_tree`) and the page is
-//! written beside the review page that links to it (`write_beside`).
+//! The Test map: a set of cases drawn as an indented outline of the areas
+//! they test, in the browser - a row per area (its name and case count) and
+//! per case ("#id Title" and a NEW or UPDATE tag), guide lines turning with
+//! rounded elbows. The tree is built here from each case's `area` path
+//! (`build_tree`) and the page is written beside the review page that links
+//! to it (`write_beside`).
 //!
 //! Same page shell as the other reports - the app's palette, the
 //! light/dark switch - but static: no revision poll, no comment boxes.
@@ -39,6 +41,35 @@ pub struct MapNode {
     pub children: Vec<MapNode>,
 }
 
+/// Whether any case in the tree is new (no work item id), and whether any
+/// is an update - the tags the legend explains.
+fn tags_used(nodes: &[MapNode]) -> (bool, bool) {
+    nodes.iter().fold((false, false), |(n, u), node| {
+        let (cn, cu) = tags_used(&node.children);
+        (n || cn || node.cases.iter().any(|c| c.id.is_none()), u || cu || node.cases.iter().any(|c| c.id.is_some()))
+    })
+}
+
+/// The legend strip under the outline: only what this map draws.
+fn legend_html(nodes: &[MapNode]) -> String {
+    if nodes.is_empty() {
+        return String::new();
+    }
+    let (has_new, has_update) = tags_used(nodes);
+    let mut items = String::from(
+        "<li><span class='k-ring' aria-hidden='true'></span>Open area</li>\
+         <li><span class='k-dot filled' aria-hidden='true'></span>Folded area</li>\
+         <li><span class='k-dot' aria-hidden='true'></span>Test case</li>",
+    );
+    if has_new {
+        items.push_str("<li><span class='k-tag' aria-hidden='true'>NEW</span>created on upload</li>");
+    }
+    if has_update {
+        items.push_str("<li><span class='k-tag' aria-hidden='true'>UPDATE</span>updates its work item</li>");
+    }
+    format!("<footer class='legend'><ul aria-label='Legend'>{items}</ul></footer>")
+}
+
 /// Areas and cases in the whole tree, for the canvas's accessible name.
 fn totals(nodes: &[MapNode]) -> (usize, usize) {
     nodes.iter().fold((0, 0), |(a, c), n| {
@@ -58,10 +89,12 @@ fn list_html(nodes: &[MapNode], next: &mut usize, out: &mut String) {
             out.push_str("<ol>");
             for c in &n.cases {
                 // "#id Title" for a case in Azure DevOps; a new case is its
-                // title alone - the page says it is new when it is opened.
+                // title alone, and both end with what an upload would do
+                // (the outline's NEW / UPDATE tag, in words).
                 let id = c.id.map(|i| format!("#{i} ")).unwrap_or_default();
+                let does = if c.id.is_some() { "update" } else { "new" };
                 out.push_str(&format!(
-                    "<li><button type='button' class='case' data-i='{}'>{id}{}</button></li>",
+                    "<li><button type='button' class='case' data-i='{}'>{id}{} ({does})</button></li>",
                     *next,
                     esc(&c.title)
                 ));
@@ -206,19 +239,15 @@ pub fn export_test_map_html(
          <div class='tools'>\
          <button type='button' id='map-expand'>Expand all</button>\
          <button type='button' id='map-collapse'>Collapse all</button>\
-         <span class='sep' aria-hidden='true'></span>\
-         <button type='button' id='map-out' aria-label='Zoom out'>-</button>\
-         <button type='button' id='map-in' aria-label='Zoom in'>+</button>\
-         <button type='button' id='map-reset'>Reset</button>\
-         <span id='map-zoom' aria-live='polite'>100%</span>\
          </div></header>\
          <div class='layout'>\
          <div id='viewport' class='viewport'>\
-         <canvas id='graph' role='img' aria-label='Test map: {areas} areas, {cases} test cases'></canvas>\
+         <canvas id='graph' role='img' aria-label='Test map: {areas} areas, {cases} test cases' aria-describedby='map-desc'></canvas>\
+         <p id='map-desc' class='sr-only'>An outline of the areas and the test cases in each, with whether an upload creates or updates each case. Click an area to fold it; click a case to read its steps.</p>\
          {empty}</div>\
          <div id='map-list' class='sr-only'>{list}</div>\
          <aside id='detail' class='detail' aria-label='Test case' hidden></aside>\
-         </div>\
+         </div>{legend}\
          <script type='application/json' id='map-data'>{data}</script>\
          <script>{graph_js}</script>\
          <script>{js}</script>\
@@ -237,6 +266,7 @@ pub fn export_test_map_html(
         cases = cases,
         empty = empty,
         list = list,
+        legend = legend_html(nodes),
         data = script_json(&nodes, "[]"),
         graph_js = GRAPH_JS,
         js = MAP_JS,

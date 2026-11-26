@@ -62,8 +62,12 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
     assert_eq!(parsed[0]["children"][0]["cases"][1]["title"], "Fill details</script><b>x</b>");
 
     // The chrome the script drives, and the script itself.
-    for id in ["map-expand", "map-collapse", "map-in", "map-out", "map-reset", "map-zoom", "viewport", "graph", "detail", "map-list"] {
+    for id in ["map-expand", "map-collapse", "viewport", "graph", "detail", "map-list", "map-desc"] {
         assert!(html.contains(&format!("id='{id}'")), "missing #{id}: {html}");
+    }
+    // The outline reads at normal size, so the zoom controls are gone.
+    for id in ["map-in", "map-out", "map-reset", "map-zoom"] {
+        assert!(!html.contains(&format!("id='{id}'")), "the zoom control #{id} was removed: {html}");
     }
     assert!(html.contains("getElementById('map-data')"), "the script reads the data block");
     assert!(html.contains("root.testMap = {"), "the graph helpers are embedded");
@@ -74,7 +78,10 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
     // The canvas says what it is; the hidden list carries every case for
     // screen readers and the keyboard, numbered the way the script numbers
     // its case nodes (an area's cases before its children).
-    assert!(html.contains("<canvas id='graph' role='img' aria-label='Test map: 2 areas, 3 test cases'>"), "{html}");
+    assert!(
+        html.contains("<canvas id='graph' role='img' aria-label='Test map: 2 areas, 3 test cases' aria-describedby='map-desc'>"),
+        "{html}"
+    );
     let list = html
         .split("<div id='map-list' class='sr-only'>")
         .nth(1)
@@ -82,9 +89,13 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
         .expect("the hidden list");
     assert!(list.contains("<h3>Manage Events (3)</h3>"), "{list}");
     assert!(list.contains("<h3>Create (2)</h3>"), "{list}");
-    assert!(list.contains("<button type='button' class='case' data-i='0'>#81310 Page navigation</button>"), "{list}");
-    assert!(list.contains("<button type='button' class='case' data-i='1'>#81314 Validation &amp; limits</button>"), "{list}");
-    assert!(list.contains("<button type='button' class='case' data-i='2'>Fill details&lt;/script&gt;&lt;b&gt;x&lt;/b&gt;</button>"), "{list}");
+    // Each case ends with what an upload would do, as its row's tag says.
+    assert!(list.contains("<button type='button' class='case' data-i='0'>#81310 Page navigation (update)</button>"), "{list}");
+    assert!(list.contains("<button type='button' class='case' data-i='1'>#81314 Validation &amp; limits (update)</button>"), "{list}");
+    assert!(
+        list.contains("<button type='button' class='case' data-i='2'>Fill details&lt;/script&gt;&lt;b&gt;x&lt;/b&gt; (new)</button>"),
+        "{list}"
+    );
     assert!(!list.contains("<b>x</b>"), "titles are escaped in the list: {list}");
     // The app's palette and the light/dark switch, like every other report.
     assert!(html.contains("--accent"), "{html}");
@@ -197,4 +208,76 @@ fn limbs_are_drawn_in_the_muted_token_not_the_hairline_border() {
     // needs 3:1, which --muted gives in both palettes (see webtheme.rs).
     assert!(!html.contains("strokeStyle = colours.border"), "no stroke may use the hairline");
     assert!(html.contains("strokeStyle = colours.muted"), "limbs use the stronger token");
+}
+
+#[test]
+fn the_outline_rows_say_their_count_and_their_tag_without_a_click() {
+    let path = tmp_path("map-rows.html");
+    export_test_map_html(&tree(), &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    // The graph helpers write "Name · count" for an area and NEW / UPDATE for
+    // a case, and the page script draws both on every row.
+    assert!(html.contains("node.name + ' \u{b7} ' + node.count"), "an area row always carries its count: {html}");
+    assert!(html.contains("'UPDATE'") && html.contains("'NEW'"), "{html}");
+    assert!(html.contains("G.areaLabel(n)") && html.contains("G.caseTag(n)"), "the rows draw them: {html}");
+    // Only the case title is cut; the area's row is drawn whole.
+    assert!(html.contains("G.clipLabel(n.data.title"), "{html}");
+    assert!(!html.contains("clipLabel(G.areaLabel"), "an area is never clipped: {html}");
+    // Row height 24, elbows 8, and no zoom-to-read thresholds.
+    assert!(html.contains("var ROW = 24, INDENT = 24"), "{html}");
+    assert!(html.contains("ELBOW_R = 8"), "{html}");
+    assert!(!html.contains("labelAlpha"), "labels no longer wait for a zoom: {html}");
+    // The dot no longer encodes the count (the count is written).
+    assert!(!html.contains("areaRadius"), "{html}");
+}
+
+#[test]
+fn the_accent_is_only_for_the_hovered_chain_and_the_selected_case() {
+    let path = tmp_path("map-accent.html");
+    export_test_map_html(&tree(), &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    // Dots are accent only when lit or selected; area dots are not accent.
+    assert!(html.contains("lit || selected ? colours.accent : colours.muted"), "{html}");
+    assert!(!html.contains("n.kind === 'area' ? colours.accent"), "no accent fill on every area dot: {html}");
+    // The tags stay muted whichever word they carry: one fill for both.
+    assert!(html.contains("ctx.fillStyle = colours.muted;
+      ctx.fillText(tag, tagX + TAG_PAD"), "{html}");
+}
+
+#[test]
+fn the_legend_names_only_the_tags_the_map_uses() {
+    let path = tmp_path("map-legend.html");
+    // `tree()` has both an update (#81310) and a new case.
+    export_test_map_html(&tree(), &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    let legend = html.split("<footer class='legend'>").nth(1).and_then(|r| r.split("</footer>").next()).expect("a legend strip");
+    assert!(legend.contains(">NEW</span>created on upload") && legend.contains(">UPDATE</span>updates its work item"), "{legend}");
+    assert!(legend.contains("Open area") && legend.contains("Folded area") && legend.contains("Test case"), "{legend}");
+    assert!(!legend.contains("dot size"), "the dot no longer encodes the count: {legend}");
+
+    let only_updates = vec![MapNode { name: "A".into(), count: 1, cases: vec![case(Some(1), "x")], children: vec![] }];
+    let path = tmp_path("map-legend2.html");
+    export_test_map_html(&only_updates, &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    let legend = html.split("<footer class='legend'>").nth(1).and_then(|r| r.split("</footer>").next()).unwrap();
+    assert!(legend.contains("UPDATE") && !legend.contains(">NEW<"), "{legend}");
+
+    // An empty map has nothing to explain.
+    let path = tmp_path("map-legend3.html");
+    export_test_map_html(&[], &path, "", &PagePalette::default(), None).unwrap();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("<footer class='legend'>"));
+}
+
+#[test]
+fn the_canvas_is_described_for_assistive_technology() {
+    let path = tmp_path("map-desc.html");
+    export_test_map_html(&tree(), &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    // A title (the canvas's name, 60 characters or fewer) and a one-sentence
+    // description it points at; the hidden list beside it carries every case.
+    let name = html.split("aria-label='Test map: ").nth(1).unwrap().split('\'').next().unwrap();
+    assert!(("Test map: ".len() + name.len()) <= 60, "{name}");
+    let desc = html.split("<p id='map-desc' class='sr-only'>").nth(1).unwrap().split("</p>").next().unwrap();
+    assert!(desc.starts_with("An outline of the areas"), "{desc}");
+    assert!(html.contains("aria-describedby='map-desc'"));
 }

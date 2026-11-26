@@ -1,8 +1,11 @@
 /* Test map page. Colours are the palette variables the app emits
    (--bg, --surface, --surface-2, --text, --muted, --faint, --border,
    --accent, --success, --danger, --warning), so the page follows the
-   app's theme and its own light/dark switch. The graph itself is drawn on
-   the canvas by test-map.js from the same variables. */
+   app's theme and its own light/dark switch. The outline itself is drawn on
+   the canvas by test-map.js from the same variables: guide lines and dots
+   in --muted (3:1 on the page in both schemes; --border is a hairline and
+   too faint for a line that matters), text in --text, the accent only on
+   the hovered chain and the selected case. */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -39,8 +42,6 @@ body {
   cursor: pointer;
 }
 .tools button:hover { border-color: var(--accent); color: var(--accent); }
-.tools .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
-#map-zoom { min-width: 3.5em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .layout { flex: 1 1 auto; display: flex; min-height: 0; }
 .viewport {
@@ -51,6 +52,13 @@ body {
   user-select: none;
 }
 .viewport.dragging { cursor: grabbing; }
+/* The legend: a strip under the outline, listing what the outline draws. */
+.legend { flex: 0 0 auto; padding: 8px 16px; border-top: 1px solid var(--border); background: var(--surface); }
+.legend ul { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 12px; }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.k-ring, .k-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.k-dot { background: var(--muted); }
+.k-tag { padding: 0 5px; border: 1px solid var(--muted); border-radius: 4px; font-size: 10px; font-weight: 600; line-height: 14px; }
 .viewport.over-node { cursor: pointer; }
 #graph { display: block; position: absolute; left: 0; top: 0; }
 .empty { position: absolute; left: 16px; top: 16px; margin: 0; color: var(--muted); }

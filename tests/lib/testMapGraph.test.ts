@@ -29,22 +29,30 @@ type Edge = { a: Node; b: Node };
 type Graph = { nodes: Node[]; edges: Edge[] };
 type Helpers = {
   ROW: number;
-  LEVEL: number;
+  INDENT: number;
+  DOT_R: number;
+  ELBOW_R: number;
   buildGraph: (tree: unknown[]) => Graph;
   layoutTree: (graph: Graph) => { width: number; height: number };
   fold: (graph: Graph, area: Node, folded: boolean) => void;
-  pathTo: (node: Node) => Node[];
-  labelAlpha: (kind: "case-id" | "case-title", scale: number, reduced?: boolean) => number;
-  fitTransform: (nodes: Node[], w: number, h: number, pad: number) => { scale: number; tx: number; ty: number };
-  fitWidthTransform: (
-    nodes: Node[],
+  kidsOf: (area: Node) => Node[];
+  elbowPath: (parent: Node, kid: Node) => string;
+  trunkPath: (parent: Node) => string;
+  linkPath: (parent: Node, kid: Node) => string;
+  clampView: (
+    tx: number,
+    ty: number,
+    contentW: number,
+    contentH: number,
     w: number,
+    h: number,
     pad: number,
-    labelSpace: number,
-  ) => { scale: number; tx: number; ty: number };
-  caseLabel: (node: Node, withTitle: boolean) => string;
+  ) => { tx: number; ty: number };
+  pathTo: (node: Node) => Node[];
+  caseLabel: (node: Node) => string;
+  caseTag: (node: Node) => string;
+  areaLabel: (node: Node) => string;
   clipLabel: (text: string, room: number, measure: (s: string) => number) => string;
-  areaLabelRoom: (scale: number, r: number) => number;
 };
 
 let G: Helpers;
@@ -85,14 +93,6 @@ beforeAll(() => {
 
 const visible = (g: Graph) => g.nodes.filter((n) => !n.hidden);
 const label = (n: Node) => n.name ?? n.data!.title;
-const isUnder = (n: Node, a: Node): boolean => {
-  let p: Node | null | undefined = n.kind === "case" ? n.area : n.parent;
-  while (p) {
-    if (p === a) return true;
-    p = p.parent;
-  }
-  return false;
-};
 
 describe("buildGraph", () => {
   test("one node per area and case, one edge per membership, cases numbered in walk order", () => {
@@ -115,70 +115,67 @@ describe("buildGraph", () => {
     expect(areas[2].parent).toBeNull();
   });
 
-  test("area radius grows with count and is clamped", () => {
-    const big = G.buildGraph([{ name: "Huge", count: 1000, cases: [], children: [] }]);
-    expect(big.nodes[0].r).toBe(16);
-    const tiny = G.buildGraph([{ name: "Tiny", count: 0, cases: [], children: [] }]);
-    expect(tiny.nodes[0].r).toBe(7);
-    const mid = G.buildGraph([{ name: "Mid", count: 16, cases: [], children: [] }]);
-    expect(mid.nodes[0].r).toBe(11);
+  test("a dot is the same size whatever the count: the count is written, not drawn", () => {
+    // It was 7-16 by count; the row now says "Name · count" instead.
+    const g = G.buildGraph([
+      { name: "Huge", count: 1000, cases: [], children: [] },
+      { name: "Tiny", count: 0, cases: [], children: [] },
+    ]);
+    expect(g.nodes.map((n) => n.r)).toEqual([G.DOT_R, G.DOT_R]);
+    expect(G.DOT_R).toBe(4);
   });
 });
 
 describe("layoutTree", () => {
-  test("every visible case has its own row; depth sets the column", () => {
-    const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    const cases = g.nodes.filter((n) => n.kind === "case");
-    const rows = cases.map((c) => c.y);
-    expect(new Set(rows).size).toBe(rows.length);
-    // File order top to bottom.
-    expect(rows).toEqual([...rows].sort((a, b) => a - b));
-    // Adjacent rows are one ROW apart within a tree.
-    expect(rows[1] - rows[0]).toBe(G.ROW);
-    expect(rows[2] - rows[1]).toBe(G.ROW);
-    const [manage, create, reports] = g.nodes.filter((n) => n.kind === "area");
-    expect(manage.x).toBe(0);
-    expect(create.x).toBe(G.LEVEL);
-    expect(reports.x).toBe(0);
-    // A case sits one level right of its area.
-    expect(cases[0].x).toBe(G.LEVEL);
-    expect(cases[1].x).toBe(2 * G.LEVEL);
-  });
-
-  test("an area sits at the midpoint of the rows beneath it", () => {
-    const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    const [manage, create] = g.nodes.filter((n) => n.kind === "area");
-    const under = (a: Node) => visible(g).filter((n) => n !== a && isUnder(n, a)).map((n) => n.y);
-    const m = under(manage);
-    expect(manage.y).toBeCloseTo((Math.min(...m) + Math.max(...m)) / 2);
-    const c = under(create);
-    expect(create.y).toBeCloseTo((Math.min(...c) + Math.max(...c)) / 2);
-  });
-
-  test("top-level areas stack as separate trees with a gap, and never overlap", () => {
+  test("the outline is 24px rows: an area, its cases, then its child areas, indented by depth", () => {
     const g = G.buildGraph(tree());
     const size = G.layoutTree(g);
-    const manage = g.nodes[0];
-    const reports = g.nodes.find((n) => n.name === "Reports")!;
-    const manageRows = visible(g).filter((n) => n === manage || isUnder(n, manage)).map((n) => n.y);
-    expect(reports.y).toBeGreaterThan(Math.max(...manageRows) + G.ROW);
-    const rows = visible(g).map((n) => n.y);
-    expect(size.height).toBeGreaterThanOrEqual(Math.max(...rows));
-    expect(size.width).toBeGreaterThanOrEqual(2 * G.LEVEL);
+    expect(G.ROW).toBe(24);
+    expect(G.INDENT).toBe(24);
+    // Document order: the area, its own cases, then its child areas.
+    const byRow = [...visible(g)].sort((a, b) => a.y - b.y);
+    expect(byRow.map(label)).toEqual([
+      "Manage Events",
+      "Page navigation",
+      "Create",
+      "Validation & limits",
+      "Fill details",
+      "Reports",
+      "Export",
+    ]);
+    const [manage, nav, create, limits, fill, reports, exportCase] = byRow;
+    // Rows one ROW apart inside a tree, the dot centred in its row.
+    expect(nav.y - manage.y).toBe(G.ROW);
+    expect(create.y - nav.y).toBe(G.ROW);
+    expect(manage.y).toBe(G.ROW / 2);
+    expect(fill.y - limits.y).toBe(G.ROW);
+    // Depth sets the indent; a case is one level in from its area.
+    expect([manage.x, nav.x, create.x, limits.x, fill.x]).toEqual([
+      0,
+      G.INDENT,
+      G.INDENT,
+      2 * G.INDENT,
+      2 * G.INDENT,
+    ]);
+    expect([reports.x, exportCase.x]).toEqual([0, G.INDENT]);
+    expect(size.width).toBe(2 * G.INDENT);
+    // A small gap between the two top-level trees, on the 4px grid.
+    expect(reports.y - fill.y).toBe(G.ROW + 8);
+    expect(size.height).toBe(exportCase.y + G.ROW / 2);
+    for (const n of g.nodes) expect(n.y % 4).toBe(0);
   });
 
-  test("a folded area collapses to one row and the layout closes the gap", () => {
+  test("a folded area is one row and the layout closes the gap", () => {
     const g = G.buildGraph(tree());
     const manage = g.nodes[0];
     const before = G.layoutTree(g).height;
     G.fold(g, manage, true);
     const after = G.layoutTree(g).height;
-    expect(after).toBeLessThan(before);
+    // Four rows left the outline: its case, Create, and Create's two cases.
+    expect(after).toBe(before - 4 * G.ROW);
     expect(visible(g).map(label)).toEqual(["Manage Events", "Reports", "Export"]);
     const reports = g.nodes.find((n) => n.name === "Reports")!;
-    expect(reports.y - manage.y).toBeLessThan(3 * G.ROW + 40);
+    expect(reports.y - manage.y).toBe(G.ROW + 8);
     G.fold(g, manage, false);
     expect(G.layoutTree(g).height).toBe(before);
   });
@@ -217,96 +214,93 @@ describe("fold", () => {
   });
 });
 
-describe("labelAlpha", () => {
-  test("is 0 below, ramps across ±0.1, and is 1 above each threshold", () => {
-    expect(G.labelAlpha("case-id", 0.3)).toBe(0);
-    expect(G.labelAlpha("case-id", 0.4)).toBe(0);
-    expect(G.labelAlpha("case-id", 0.5)).toBeCloseTo(0.5);
-    expect(G.labelAlpha("case-id", 0.6)).toBe(1);
-    expect(G.labelAlpha("case-title", 0.6)).toBe(0);
-    expect(G.labelAlpha("case-title", 0.75)).toBeCloseTo(0.25);
-    expect(G.labelAlpha("case-title", 0.9)).toBe(1);
+describe("guide lines", () => {
+  test("the trunk runs from under the parent's dot to where the last kid's elbow begins", () => {
+    const g = G.buildGraph(tree());
+    G.layoutTree(g);
+    const manage = g.nodes[0];
+    const create = g.nodes.find((n) => n.name === "Create")!;
+    expect(G.kidsOf(manage).map(label)).toEqual(["Page navigation", "Create"]);
+    expect(G.trunkPath(manage)).toBe(`M0 ${manage.y + G.DOT_R + 4} L0 ${create.y - G.ELBOW_R}`);
+    // A folded area has no trunk.
+    G.fold(g, manage, true);
+    expect(G.trunkPath(manage)).toBe("");
   });
 
-  test("reduced motion makes the ramp a step at the threshold", () => {
-    expect(G.labelAlpha("case-id", 0.49, true)).toBe(0);
-    expect(G.labelAlpha("case-id", 0.5, true)).toBe(1);
-    expect(G.labelAlpha("case-title", 0.79, true)).toBe(0);
-    expect(G.labelAlpha("case-title", 0.8, true)).toBe(1);
+  test("each guide turns with an 8px elbow and stops short of the dot it reaches", () => {
+    const g = G.buildGraph(tree());
+    G.layoutTree(g);
+    const manage = g.nodes[0];
+    const nav = g.nodes[1];
+    // Down the trunk to 8px above the row, a quarter turn of radius 8 onto
+    // the row, level to the dot's edge.
+    expect(G.elbowPath(manage, nav)).toBe(
+      `M0 ${nav.y - 8} Q0 ${nav.y} 8 ${nav.y} L${nav.x - G.DOT_R - 4} ${nav.y}`,
+    );
+    expect(G.ELBOW_R).toBe(8);
+    // One move, one quarter turn, one level line: orthogonal, no diagonals.
+    expect(G.elbowPath(manage, nav).match(/[MLQ]/g)!.join("")).toBe("MQL");
+  });
+
+  test("a link is the trunk down to one kid and its elbow, what a hover lights", () => {
+    const g = G.buildGraph(tree());
+    G.layoutTree(g);
+    const manage = g.nodes[0];
+    const create = g.nodes.find((n) => n.name === "Create")!;
+    expect(G.linkPath(manage, create)).toBe(
+      `M0 ${manage.y + G.DOT_R + 4} L0 ${create.y - 8} Q0 ${create.y} 8 ${create.y} L${create.x - G.DOT_R - 4} ${create.y}`,
+    );
+    const limits = g.nodes.find((n) => n.kind === "case" && n.data!.title.startsWith("Validation"))!;
+    expect(G.linkPath(create, limits).startsWith(`M${create.x} `)).toBe(true);
   });
 });
 
-describe("fitTransform", () => {
-  test("keeps every visible node inside the viewport with the padding, capped at 1.5", () => {
-    const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    const t = G.fitTransform(g.nodes, 800, 600, 40);
-    expect(t.scale).toBeLessThanOrEqual(1.5);
-    for (const n of g.nodes) {
-      const sx = n.x * t.scale + t.tx;
-      const sy = n.y * t.scale + t.ty;
-      expect(sx - n.r * t.scale).toBeGreaterThanOrEqual(40 - 1e-6);
-      expect(sx + n.r * t.scale).toBeLessThanOrEqual(800 - 40 + 1e-6);
-      expect(sy - n.r * t.scale).toBeGreaterThanOrEqual(40 - 1e-6);
-      expect(sy + n.r * t.scale).toBeLessThanOrEqual(600 - 40 + 1e-6);
-    }
+describe("clampView", () => {
+  test("content bigger than the view can pan only until its far edge arrives, and never past the pad", () => {
+    // 1000x2000 of content in a 400x300 view with a 16 pad.
+    expect(G.clampView(100, 100, 1000, 2000, 400, 300, 16)).toEqual({ tx: 16, ty: 16 });
+    expect(G.clampView(-9999, -9999, 1000, 2000, 400, 300, 16)).toEqual({
+      tx: 400 - 1000 - 16,
+      ty: 300 - 2000 - 16,
+    });
+    expect(G.clampView(-50, -60, 1000, 2000, 400, 300, 16)).toEqual({ tx: -50, ty: -60 });
   });
 
-  test("ignores hidden nodes and copes with a single node", () => {
-    const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    g.nodes.forEach((n, i) => (n.hidden = i !== 0));
-    const t = G.fitTransform(g.nodes, 400, 300, 40);
-    expect(t.scale).toBe(1.5);
-    expect(g.nodes[0].x * t.scale + t.tx).toBeCloseTo(200);
-    expect(g.nodes[0].y * t.scale + t.ty).toBeCloseTo(150);
-  });
-
-  test("a 0x0 viewport clamps to the zoom floor instead of going negative", () => {
-    const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    const t = G.fitTransform(g.nodes, 0, 0, 40);
-    expect(t.scale).toBe(0.2);
-    expect(Number.isFinite(t.tx)).toBe(true);
-    expect(Number.isFinite(t.ty)).toBe(true);
+  test("content smaller than the view sits at the pad", () => {
+    expect(G.clampView(-40, 90, 200, 100, 800, 600, 16)).toEqual({ tx: 16, ty: 16 });
   });
 });
 
-describe("fitWidthTransform", () => {
-  test("fits the tree's width plus label room, never above 100%, top-left with the padding", () => {
+describe("rows", () => {
+  test("an area row writes its name and its count, descendants included", () => {
     const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    const t = G.fitWidthTransform(g.nodes, 2000, 40, 300);
-    expect(t.scale).toBe(1);
-    const minX = Math.min(...g.nodes.map((n) => n.x - n.r));
-    const minY = Math.min(...g.nodes.map((n) => n.y - n.r));
-    expect(minX * t.scale + t.tx).toBeCloseTo(40);
-    expect(minY * t.scale + t.ty).toBeCloseTo(40);
+    const [manage, create, reports] = g.nodes.filter((n) => n.kind === "area");
+    expect(G.areaLabel(manage)).toBe("Manage Events · 3");
+    expect(G.areaLabel(create)).toBe("Create · 2");
+    expect(G.areaLabel(reports)).toBe("Reports · 1");
   });
 
-  test("shrinks a wide tree to the viewport width, down to the zoom floor", () => {
-    const g = G.buildGraph(tree());
-    G.layoutTree(g);
-    const maxX = Math.max(...g.nodes.map((n) => n.x + n.r));
-    const minX = Math.min(...g.nodes.map((n) => n.x - n.r));
-    const t = G.fitWidthTransform(g.nodes, 400, 40, 300);
-    expect(t.scale).toBeCloseTo(Math.max(0.2, (400 - 80) / (maxX - minX + 300)));
-    expect(G.fitWidthTransform(g.nodes, 0, 40, 300).scale).toBe(0.2);
-  });
-});
-
-describe("caseLabel", () => {
-  test("shows the id, the title alone for a new case, and never cuts a long title", () => {
+  test("a case row is #id Title, or the title alone when it is new, with a NEW or UPDATE tag", () => {
     const long = "A very long title that keeps going well past seventy characters and is shown whole";
     const g = G.buildGraph([
       { name: "A", count: 2, cases: [mapCase(7, "Short"), mapCase(null, long)], children: [] },
     ]);
     const [, c1, c2] = g.nodes;
-    expect(G.caseLabel(c1, false)).toBe("#7");
-    expect(G.caseLabel(c1, true)).toBe("#7  Short");
-    // A new case has no id: nothing at the id-only level, no "NEW" prefix.
-    expect(G.caseLabel(c2, false)).toBe("");
-    expect(G.caseLabel(c2, true)).toBe(long);
+    expect(G.caseLabel(c1)).toBe("#7 Short");
+    expect(G.caseTag(c1)).toBe("UPDATE");
+    // The label is the whole title; the page cuts it to the room it has.
+    expect(G.caseLabel(c2)).toBe(long);
+    expect(G.caseTag(c2)).toBe("NEW");
+  });
+
+  test("a title is cut to the room with an ellipsis, or to nothing if not even a letter fits", () => {
+    const measure = (s: string) => s.length * 7;
+    expect(G.clipLabel("Reports", 100, measure)).toBe("Reports");
+    const cut = G.clipLabel("Manage Events and Registrations", 70, measure);
+    expect(cut).toBe("Manage Ev…");
+    expect(measure(cut)).toBeLessThanOrEqual(70);
+    expect(G.clipLabel("Reports", 10, measure)).toBe("");
+    expect(G.clipLabel("Reports", 0, measure)).toBe("");
   });
 });
 
@@ -321,22 +315,5 @@ describe("pathTo", () => {
     expect(G.pathTo(manage)).toEqual([manage]);
     expect(G.pathTo(cases[3]).map(label)).toEqual(["Reports", "Export"]);
     expect(G.pathTo(reports)).toEqual([reports]);
-  });
-});
-
-describe("area labels", () => {
-  const measure = (s: string) => s.length * 7;
-  test("a label that fits is kept, a long one is cut with an ellipsis, no room means no label", () => {
-    expect(G.clipLabel("Reports", 100, measure)).toBe("Reports");
-    const cut = G.clipLabel("Manage Events and Registrations", 70, measure);
-    expect(cut).toBe("Manage Ev…");
-    expect(measure(cut)).toBeLessThanOrEqual(70);
-    expect(G.clipLabel("Reports", 10, measure)).toBe("");
-    expect(G.clipLabel("Reports", 0, measure)).toBe("");
-  });
-  test("the room is the gap before the next column, so it shrinks as the map zooms out", () => {
-    expect(G.areaLabelRoom(1, 10)).toBe(G.LEVEL - 16 + 10 - 6);
-    expect(G.areaLabelRoom(0.5, 5)).toBeLessThan(G.areaLabelRoom(1, 10));
-    expect(G.areaLabelRoom(0.2, 2)).toBeGreaterThanOrEqual(0);
   });
 });
