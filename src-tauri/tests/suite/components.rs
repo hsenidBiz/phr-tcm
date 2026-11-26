@@ -1037,3 +1037,31 @@ fn a_component_given_a_secret_input_stays_hidden_once_expanded() {
     let (out, _) = expand_actions(&file, &plain.steps[0].actions).unwrap();
     assert_eq!(Say::of(&out[0]).label, "Type 'Monday'");
 }
+
+/// A secret input reaches a fill inside a `repeat_while_visible` too.
+#[test]
+fn a_secret_input_is_hidden_in_a_repeat_while_visible_as_well() {
+    use std::collections::BTreeMap;
+    use v2_lib::autorun::components::{expand_actions, ComponentFile};
+    use v2_lib::autorun::setup::resolve;
+    use v2_lib::browser::highlight::{Say, TYPE_HIDDEN};
+    let c = made(
+        "Keep typing",
+        json!([{ "name": "key", "kind": "text", "description": "" }]),
+        json!([{ "kind": "repeat_while_visible", "selector": { "css": "#row" }, "then": [
+            { "kind": "fill", "selector": { "css": "#a" }, "value": "{{key}}" }
+        ] }]),
+    );
+    let file = ComponentFile { components: vec![c] };
+    let mut sc = script(1, vec![Action::UseComponent {
+        component: "Keep typing".into(),
+        inputs: given(json!({ "key": "{{setup.api_token}}" })),
+        sensitive: false,
+    }]);
+    sc.setup = Some(serde_json::from_value(json!({ "fixture": "own" })).unwrap());
+    let resolved = resolve(&sc, &BTreeMap::new(), &[("api_token".to_string(), json!("tok-123"))].into()).unwrap();
+    let (out, _) = expand_actions(&file, &resolved.steps[0].actions).unwrap();
+    let Action::RepeatWhileVisible { then, .. } = &out[0] else { panic!("{:?}", out[0]) };
+    assert!(matches!(&then[0], Action::Fill { value, sensitive: true, .. } if value == "tok-123"), "{:?}", then[0]);
+    assert_eq!(Say::of(&then[0]).label, TYPE_HIDDEN);
+}

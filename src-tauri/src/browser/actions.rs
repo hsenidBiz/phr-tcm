@@ -33,10 +33,16 @@ thread_local! {
 /// expanding a component) use it so the mark survives them; nothing that
 /// saves or sends an action out does.
 pub fn with_run_marks<T>(f: impl FnOnce() -> T) -> T {
-    let before = KEEP_MARKS.with(|k| k.replace(true));
-    let out = f();
-    KEEP_MARKS.with(|k| k.set(before));
-    out
+    // Restored on the way out of a panic too: the flag never stays set on a
+    // thread that has left the scope.
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            KEEP_MARKS.with(|k| k.set(self.0));
+        }
+    }
+    let _restore = Restore(KEEP_MARKS.with(|k| k.replace(true)));
+    f()
 }
 
 /// `skip_serializing_if` for the `sensitive` marks: written only for a run's
@@ -63,8 +69,45 @@ pub(crate) fn marked_sensitive(action: Action) -> Action {
         Action::WhenHidden { selector, within_ms, then } => {
             Action::WhenHidden { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
         }
+        Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => Action::RepeatWhileVisible {
+            selector,
+            max,
+            except,
+            then: then.into_iter().map(marked_sensitive).collect(),
+            settle_ms,
+        },
         other => other,
     }
+}
+
+/// The texts a marked check compares: what its outcome must never say.
+fn hidden_texts(action: &Action) -> Vec<&str> {
+    match action {
+        Action::CheckText { value, sensitive: true } => vec![value],
+        Action::ExpectContainsText { value, sensitive: true, .. } => vec![value],
+        Action::ExpectText { equals, matches, sensitive: true, .. } => {
+            equals.iter().chain(matches.iter()).map(String::as_str).collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// What an outcome says in place of a marked check's compared text.
+pub const HIDDEN_VALUE: &str = "the hidden value";
+
+/// `out` with a marked check's compared text taken out of every sentence it
+/// echoes (a pass, an expected-versus-seen failure), as written and as a
+/// debug-quoted string. Everything else is as it was.
+fn hide_compared_text(action: &Action, mut out: ActionOutcome) -> ActionOutcome {
+    let mut texts = hidden_texts(action);
+    texts.retain(|t| !t.is_empty());
+    texts.sort_by_key(|t| std::cmp::Reverse(t.len()));
+    for t in texts {
+        let quoted = format!("{t:?}");
+        let escaped = &quoted[1..quoted.len() - 1];
+        out.detail = out.detail.replace(escaped, HIDDEN_VALUE).replace(t, HIDDEN_VALUE);
+    }
+    out
 }
 
 /// `expect_checked` with no `checked` asks for a ticked box.
@@ -3663,7 +3706,7 @@ pub async fn execute_in<D: Driver>(
         return gone;
     }
     let mut drew = false;
-    let mut out = run(d, action, timing, policy, &mut drew).await;
+    let mut out = hide_compared_text(action, run(d, action, timing, policy, &mut drew).await);
     if drew {
         highlight::conclude(d, timing, out.ok).await;
     } else if !highlight::draws_before(action) {

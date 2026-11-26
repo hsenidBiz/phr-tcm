@@ -632,3 +632,51 @@ fn the_hidden_mark_survives_a_second_pass_over_the_steps() {
     // Nothing that is written out carries it.
     assert!(!serde_json::to_string(&pass_two).unwrap().contains("sensitive"));
 }
+
+/// The mark is a run-time one: a panic inside a marked pass cannot leave the
+/// thread writing it.
+#[test]
+fn a_panic_inside_a_marked_pass_leaves_no_mark_written() {
+    let fill = Action::Fill { selector: "#a".into(), value: "x".into(), sensitive: true };
+    let _ = std::panic::catch_unwind(|| {
+        v2_lib::browser::actions::with_run_marks(|| panic!("inside"));
+    });
+    assert!(!serde_json::to_string(&fill).unwrap().contains("sensitive"));
+    let inside = v2_lib::browser::actions::with_run_marks(|| serde_json::to_string(&fill).unwrap());
+    assert!(inside.contains("sensitive"));
+}
+
+/// What a marked check says about itself - a pass, a failure that sets the
+/// expected text against what was seen - never holds what it compares.
+#[tokio::test]
+async fn a_marked_checks_outcome_never_holds_the_compared_text() {
+    let secret = "S3cret-pw \"q\"";
+    let marked = |v: Value| {
+        let mut v = v;
+        v["sensitive"] = json!(true);
+        act(v)
+    };
+    let checks = [
+        marked(json!({ "kind": "check_text", "value": secret })),
+        marked(json!({ "kind": "expect_contains_text", "selector": "#a", "value": secret })),
+        marked(json!({ "kind": "expect_text", "selector": "#a", "equals": secret })),
+    ];
+    for check in checks {
+        // Seen text that differs (a failure) and seen text that is the same (a pass).
+        for texts in [vec!["something else"], vec!["S3cret-pw \"q\""]] {
+            let mut d = FakePage { texts, ..FakePage::default() }.driver();
+            let out = execute_with(&mut d, &check, &off()).await;
+            assert!(!out.detail.contains("S3cret-pw"), "{check:?}: {}", out.detail);
+        }
+    }
+}
+
+/// The failure still says what was wrong, with the hidden value in its place.
+#[tokio::test]
+async fn a_marked_checks_failure_says_the_hidden_value_in_place_of_the_text() {
+    let check = act(json!({ "kind": "expect_contains_text", "selector": "#a", "value": "S3cret-pw", "sensitive": true }));
+    let mut d = FakePage { texts: vec!["something else"], ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &off()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("the hidden value") && !out.detail.contains("S3cret"), "{}", out.detail);
+}
