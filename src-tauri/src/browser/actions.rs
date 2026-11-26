@@ -2339,9 +2339,9 @@ pub const CHECK_TEXT_JS: &str = r#"function(want) {
 pub const RESOLVE_URL_JS: &str = r#"function(rel) { return new URL(rel, location.href).href; }"#;
 
 /// Draw `say` over the element and pause for `timing.highlight_ms`, so a
-/// watcher sees WHERE and WHAT before it happens. With the highlight off
-/// (`highlight_ms` of 0) nothing is drawn and nothing waits. `true` when a
-/// box was drawn.
+/// watcher sees WHERE and WHAT before it happens. The box is drawn either
+/// way; `highlight_ms` of 0 (the Pause before each action choice off) only
+/// skips the wait. `true` when a box was drawn.
 pub(crate) async fn point_and_pause<D: Driver>(
     d: &mut D,
     ready: &input::Ready,
@@ -2358,14 +2358,13 @@ pub(crate) async fn point_and_pause<D: Driver>(
 /// value, draws nothing and waits for nothing. The action's own first look at
 /// the page reports what is wrong with it.
 pub(crate) async fn point_at<D: Driver>(d: &mut D, handle: &page::Handle, timing: &Timing, say: &Say) -> bool {
-    if timing.highlight_ms == 0 {
-        return false;
-    }
     if !matches!(highlight::show(d, handle, say, timing).await, Ok(true)) {
         crate::applog::warn("Auto Test highlight: the box could not be drawn over the element; the step goes on");
         return false;
     }
-    d.idle(Duration::from_millis(timing.highlight_ms)).await;
+    if timing.highlight_ms > 0 {
+        d.idle(Duration::from_millis(timing.highlight_ms)).await;
+    }
     true
 }
 
