@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.7",
+    date: "2026-11-26",
+    items: [
+      "While Auto Test runs a watched case, each step is marked on the page with a box and a short label saying what it does: blue for a click, green for typing or choosing, amber for a check, grey for hovering",
+      "The box turns green when the step worked and red when it failed, so a failed-case video shows where it went wrong",
+      "Passwords and other hidden values are never shown in the label or in a check's result",
+    ],
+  },
+  {
     version: "2.4.8-beta.6",
     date: "2026-11-26",
     items: [
