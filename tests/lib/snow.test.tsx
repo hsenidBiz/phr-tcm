@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ChristmasCorner } from "../../src/components/ChristmasDecor";
 import SnowLayer from "../../src/components/SnowLayer";
 import Settings from "../../src/screens/Settings";
 import { resetExtrasStore, setExtrasForTest } from "../../src/lib/extras";
@@ -113,6 +114,24 @@ describe("SnowLayer", () => {
   });
 });
 
+describe("the Christmas theme's own snow", () => {
+  beforeEach(() => root.setAttribute("data-theme", "christmas"));
+
+  test("the Snow switch stills its flakes but leaves the snowman and tree", async () => {
+    const { container } = render(<ChristmasCorner />);
+    expect(container.querySelectorAll(".christmas-flake")).toHaveLength(20);
+    expect(container.querySelectorAll(".christmas-snowman")).toHaveLength(1);
+    expect(container.querySelectorAll(".christmas-tree")).toHaveLength(1);
+    await act(async () => setSnowOff(true));
+    expect(container.querySelectorAll(".christmas-flake")).toHaveLength(0);
+    expect(container.querySelector(".christmas-snow")).toBeNull();
+    expect(container.querySelectorAll(".christmas-snowman")).toHaveLength(1);
+    expect(container.querySelectorAll(".christmas-tree")).toHaveLength(1);
+    await act(async () => setSnowOff(false));
+    expect(container.querySelectorAll(".christmas-flake")).toHaveLength(20);
+  });
+});
+
 describe("the snow CSS", () => {
   const css = readFileSync(resolve(__dirname, "../../src/index.css"), "utf8").split(String.fromCharCode(13)).join("");
 
@@ -163,6 +182,15 @@ describe("the Settings switch", () => {
     expect(screen.queryByRole("switch", { name: "Snow" })).toBeNull();
     await act(async () => setExtrasForTest(true));
     expect(await screen.findByRole("switch", { name: "Snow" })).toBeInTheDocument();
+  });
+
+  test("under Halloween, which never snows, there is no Snow row", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(DEC1);
+    root.setAttribute("data-theme", "halloween");
+    renderSettings();
+    await screen.findByRole("heading", { name: "Appearance" });
+    expect(screen.queryByRole("switch", { name: "Snow" })).toBeNull();
   });
 
   test("a docs capture never shows it", async () => {

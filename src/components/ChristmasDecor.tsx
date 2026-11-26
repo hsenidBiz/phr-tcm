@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSnowOff } from "../lib/snow";
 import Snowfall from "./Snowfall";
 import { HitContext, useBriefState, useDecorPresses, useHit, useReducedMotion, useThemeIs } from "./decorShared";
 
@@ -6,7 +7,7 @@ import { HitContext, useBriefState, useDecorPresses, useHit, useReducedMotion, u
  * bar's bottom edge, baubles and a sprig of mistletoe hanging under it,
  * Santa's sleigh and two reindeer crossing the top of the window now and
  * then (dropping presents that fade as they fall), and (ChristmasCorner)
- * snow falling over the content area with a snowman in its bottom-left
+ * snow falling over the content area (unless the Snow switch is off) with a snowman in its bottom-left
  * corner and a decorated tree in its bottom-right one, behind the page. All colours come
  * from the theme through the .christmas-* classes in index.css. It is
  * decoration: aria-hidden, takes no height, and takes no click itself
@@ -287,11 +288,13 @@ export default function ChristmasDecor({ random = Math.random }: { random?: Rand
 /** The snowfall and the snowman, in the (positioned) content column, so
  * both clear the left rail. */
 export function ChristmasCorner() {
-  if (!useThemeIs("christmas")) return null;
+  const on = useThemeIs("christmas");
+  const snowOff = useSnowOff();
+  if (!on) return null;
 
   return (
     <>
-      <Snowfall className="christmas-snow" />
+      {!snowOff && <Snowfall className="christmas-snow" />}
       <svg className="christmas-snowman" width="90" height="90" viewBox="0 0 80 80" aria-hidden="true">
         <path className="christmas-drift" d="M0 80 L0 69 Q18 63 38 69 Q56 74 72 79 L74 80z" />
         <path className="christmas-arm" d="M17 45 L8 36 M35 45 L44 39" />
