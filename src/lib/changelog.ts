@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.8",
+    date: "2026-11-26",
+    items: [
+      "The Auto Test browser marks each step again while you write scripts and when Pause before each action is off. That setting now only adds the pause",
+      "The step marker also shows on sites with stricter page security",
+    ],
+  },
+  {
     version: "2.4.8-beta.7",
     date: "2026-11-26",
     items: [

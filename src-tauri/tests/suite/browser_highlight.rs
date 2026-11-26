@@ -1,11 +1,13 @@
 //! What the Auto Test browser draws over a step: the colour for each kind of
-//! action, the label (cut, and never a secret), that nothing is sent or
-//! waited for with the highlight off, and that the result call never
+//! action, the label (cut, and never a secret), that the box is drawn
+//! whether or not the step pauses, and that the result call never
 //! changes what a step reports.
 
 use crate::common::{FakePage, ScriptedDriver};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use v2_lib::autorun::setup::{resolve, FixtureValues};
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::actions::{execute_in, execute_with, Action, Policy, HIGHLIGHT_JS};
@@ -170,26 +172,57 @@ async fn a_check_of_a_password_field_shows_no_text() {
     assert_eq!(drawn(&d), vec![("check".to_string(), CHECK_HIDDEN.to_string())]);
 }
 
-/// With the highlight off nothing is drawn and no result is sent, for a
-/// click, a fill, a hover and a check alike.
+/// The box is always drawn: the Pause before each action choice only sets
+/// whether the step waits on it. With the pause off (`highlight_ms` 0) the
+/// box is still shown, with the right colour and label, nothing idles, and
+/// the result still follows, for a click, a fill, a hover and a check alike.
 #[tokio::test]
-async fn with_the_highlight_off_the_script_is_never_called() {
-    for step in [
-        json!({ "kind": "click", "selector": "#a" }),
-        json!({ "kind": "fill", "selector": "#a", "value": "x" }),
-        json!({ "kind": "hover", "selector": "#a" }),
-        json!({ "kind": "expect_visible", "selector": "#a" }),
-        json!({ "kind": "expect_no_change", "selector": "#a" }),
-    ] {
+async fn with_the_pause_off_the_box_is_still_drawn_and_nothing_waits() {
+    let cases = [
+        (json!({ "kind": "click", "selector": "#a" }), "click", "Click"),
+        (json!({ "kind": "fill", "selector": "#a", "value": "x" }), "type", "Type 'x'"),
+        (json!({ "kind": "hover", "selector": "#a" }), "quiet", "Hover"),
+        (json!({ "kind": "expect_visible", "selector": "#a" }), "check", "Check: visible"),
+    ];
+    for (step, kind, label) in cases {
+        let clock = Arc::new(AtomicU64::new(0));
         let mut d = FakePage::default().driver();
-        let _ = execute_with(&mut d, &act(step.clone()), &off()).await;
-        assert!(drawn(&d).is_empty(), "{step}");
-        assert!(results(&d).is_empty(), "{step}");
-        assert!(
-            !d.calls.iter().any(|(_, p)| p.to_string().contains("tcm.action-highlight")),
-            "{step}: something about the highlight was sent"
-        );
+        d.idle_clock = Some(clock.clone());
+        let out = execute_with(&mut d, &act(step.clone()), &off()).await;
+        assert!(out.ok, "{step}: {}", out.detail);
+        assert_eq!(drawn(&d), vec![(kind.to_string(), label.to_string())], "{step}");
+        assert_eq!(results(&d), vec![true], "{step}");
+        // A hover has its own short settle; the pause is what must be absent.
+        if step["kind"] != "hover" {
+            assert_eq!(clock.load(Ordering::SeqCst), 0, "{step}: the step waited with the pause off");
+        }
     }
+}
+
+/// With a pause of 350 ms: the box, then the 350 ms pause, then the action,
+/// then the result.
+#[tokio::test]
+async fn with_a_350_ms_pause_the_box_comes_first_then_the_wait_then_the_action_then_the_result() {
+    let clock = Arc::new(AtomicU64::new(0));
+    let at_mouse = Arc::new(AtomicU64::new(u64::MAX));
+    let (c, m) = (clock.clone(), at_mouse.clone());
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, p| {
+        if method == "Input.dispatchMouseEvent" {
+            let _ = m.compare_exchange(u64::MAX, c.load(Ordering::SeqCst), Ordering::SeqCst, Ordering::SeqCst);
+        }
+        page.answer(method, p)
+    });
+    d.idle_clock = Some(clock.clone());
+    let timing = Timing { highlight_ms: 350, ..off() };
+    let out = execute_with(&mut d, &act(json!({ "kind": "click", "selector": "#go" })), &timing).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(at_mouse.load(Ordering::SeqCst), 350, "the pause was not over before the click");
+    let show = position(&d, |_, p| p["functionDeclaration"] == HIGHLIGHT_JS);
+    let first_mouse = position(&d, |m, _| m == "Input.dispatchMouseEvent");
+    let result = position(&d, is_result);
+    assert!(show < first_mouse && first_mouse < result);
+    assert_eq!(results(&d), vec![true]);
 }
 
 /// With it on, the box is drawn before the action, with the right colour
@@ -291,6 +324,10 @@ fn the_overlay_cannot_be_restyled_or_clicked_and_leaves_the_element_alone() {
     assert!(!SHOW_JS.contains("el.style") && !SHOW_JS.contains("this.style"), "it must not touch the element's style");
     assert!(!SHOW_JS.contains("outline"));
     assert!(!SHOW_JS.contains("innerHTML"), "the label is text, never markup");
+    // A page whose CSP has no 'unsafe-inline' for styles blocks the style
+    // attribute, leaving the box as bare text; the CSSOM is not blocked.
+    assert!(!SHOW_JS.contains("setAttribute('style'"), "styles go through the CSSOM");
+    assert!(SHOW_JS.contains("e.style.cssText = t"));
     assert!(RESULT_JS.contains("800") && RESULT_JS.contains("2000"), "about 0.8 s on success, 2 s on failure");
 }
 

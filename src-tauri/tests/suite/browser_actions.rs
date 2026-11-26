@@ -1789,7 +1789,12 @@ async fn remember_text_notes_the_text_for_a_later_same_as() {
     let out = execute_with(&mut d, &none, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
     assert_eq!(out.detail, v2_lib::browser::actions::no_noted_text("never"));
-    assert_eq!(d.calls.len(), calls);
+    // The highlight box is always drawn now, so the failed check may find its
+    // element again to draw it; what must not happen is a read of the text.
+    assert!(
+        !d.calls[calls..].iter().any(|(_, p)| p["functionDeclaration"] == v2_lib::browser::expect::READ_TEXT_JS),
+        "nothing noted is no read of the page's text"
+    );
 }
 
 #[test]

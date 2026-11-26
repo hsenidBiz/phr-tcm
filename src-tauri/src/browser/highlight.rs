@@ -3,9 +3,10 @@
 //! about to do, and, once the step is over, the same box turned green or
 //! red.
 //!
-//! It is on only when `Timing::highlight_ms` is above 0 (the person's Pause
+//! The box is always drawn. `Timing::highlight_ms` (the person's Pause
 //! before each action choice, for a watched run and the assistant's
-//! exploring). With it off nothing here sends a call or waits.
+//! exploring) only sets how long a step waits on it: with the choice off the
+//! box is drawn and the step does not wait.
 //!
 //! Drawn ON the page, never on the element: a fixed-position overlay inside
 //! a closed shadow root appended to the top document, so the site's own CSS
@@ -321,8 +322,8 @@ pub fn draws_after(action: &Action) -> bool {
 ///
 /// `this` is the element. Arguments: the colour's key (`Kind::key`), the
 /// label and how long the step holds the box before it acts (the pause, in
-/// milliseconds). Draws the box and label in a closed shadow root, with inline
-/// styles only and `pointer-events: none` (hidden from assistive technology),
+/// milliseconds). Draws the box and label in a closed shadow root, with styles set
+/// through the CSSOM and `pointer-events: none` (hidden from assistive technology),
 /// follows the element while it is shown, and takes itself away after 20
 /// seconds if no result ever comes.
 ///
@@ -363,15 +364,18 @@ pub const SHOW_JS: &str = r#"function(kind, label, holdMs) {
       try { const above = win.top[KEY]; if (above) above.stop(); } catch (err) { /* another site */ }
     }
     const colour = COLOURS[kind] || COLOURS.quiet;
+    // Styles go through the CSSOM: a page whose CSP has no 'unsafe-inline'
+    // for styles blocks the style attribute but not cssText.
+    const css = (e, t) => { e.style.cssText = t; };
     const host = doc.createElement('div');
     host.setAttribute('aria-hidden', 'true');
-    host.setAttribute('style', 'all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: visible !important; pointer-events: none !important; z-index: 2147483647 !important;');
+    css(host, 'all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: visible !important; pointer-events: none !important; z-index: 2147483647 !important;');
     const root = host.attachShadow({ mode: 'closed' });
     const base = 'position: fixed; pointer-events: none; box-sizing: border-box; margin: 0; ';
     const box = doc.createElement('div');
-    box.setAttribute('style', base + 'border: 3px solid ' + colour + '; border-radius: 4px; box-shadow: 0 0 0 1px rgba(255,255,255,0.9), 0 0 0 4px rgba(15,23,42,0.18);');
+    css(box, base + 'border: 3px solid ' + colour + '; border-radius: 4px; box-shadow: 0 0 0 1px rgba(255,255,255,0.9), 0 0 0 4px rgba(15,23,42,0.18);');
     const tag = doc.createElement('div');
-    tag.setAttribute('style', base + 'background: ' + colour + '; color: #ffffff; font: 600 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 2px 8px; border-radius: 4px; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 3px rgba(0,0,0,0.35);');
+    css(tag, base + 'background: ' + colour + '; color: #ffffff; font: 600 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 2px 8px; border-radius: 4px; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 3px rgba(0,0,0,0.35);');
     tag.textContent = String(label);
     root.appendChild(box);
     root.appendChild(tag);
@@ -460,9 +464,6 @@ pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Tim
 /// has moved on, a tab that is gone, a dialog that holds the page - none of
 /// it is the step's business.
 pub async fn conclude<D: Driver>(d: &mut D, timing: &Timing, ok: bool) {
-    if timing.highlight_ms == 0 {
-        return;
-    }
     let expression = format!("({RESULT_JS})({ok})");
     let _ = d
         .call_within("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }), RESULT_WAIT)
@@ -473,14 +474,16 @@ pub async fn conclude<D: Driver>(d: &mut D, timing: &Timing, ok: bool) {
 /// element, draw the check's box over it and then its result. Nothing is
 /// drawn when the element is not there, or is several.
 pub async fn after_check<D: Driver>(d: &mut D, action: &Action, ok: bool, timing: &Timing) {
-    if timing.highlight_ms == 0 || !draws_after(action) {
+    if !draws_after(action) {
         return;
     }
     let Some(target) = action.targets().first().copied() else { return };
     let Ok(found) = resolve_explained(d, target).await else { return };
     if let [handle] = found.handles.as_slice() {
         if matches!(show(d, handle, &Say::of(action), timing).await, Ok(true)) {
-            d.idle(Duration::from_millis(timing.highlight_ms)).await;
+            if timing.highlight_ms > 0 {
+                d.idle(Duration::from_millis(timing.highlight_ms)).await;
+            }
             conclude(d, timing, ok).await;
         }
     }
