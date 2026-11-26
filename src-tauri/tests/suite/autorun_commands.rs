@@ -185,7 +185,7 @@ fn importing_a_utf8_file_with_a_bom_keeps_non_ascii_text_intact() {
     let loaded = load_script(&root, 301).unwrap().unwrap();
     assert_eq!(loaded.title, "Caf\u{e9} accents in the title too");
     match &loaded.steps[0].actions[0] {
-        v2_lib::browser::actions::Action::CheckText { value: got } => {
+        v2_lib::browser::actions::Action::CheckText { value: got, .. } => {
             assert_eq!(got, value, "non-ASCII text was corrupted on import");
         }
         other => panic!("unexpected action: {other:?}"),

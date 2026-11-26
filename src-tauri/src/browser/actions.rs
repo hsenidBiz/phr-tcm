@@ -62,8 +62,10 @@ pub enum Action {
         /// The value came from a secret placeholder (a setup's or a fixture's
         /// output named like a password or a token) that was filled in before
         /// the step ran: the watcher's label never shows it. Set when the
-        /// placeholder is resolved, never written by hand.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        /// placeholder is resolved. A run-time mark: read when sent in, never
+        /// written (a saved script, a kept action or anything sent out comes
+        /// back without it).
+        #[serde(default, skip_serializing)]
         sensitive: bool,
     },
     /// Choose an option in a native list (`<select>`), by the option's
@@ -84,7 +86,14 @@ pub enum Action {
         within_ms: Option<u32>,
     },
     WaitFor { selector: Target, timeout_ms: u32 },
-    CheckText { value: String },
+    CheckText {
+        value: String,
+        /// The compared text came from a secret placeholder: the watcher's
+        /// label never shows it. A run-time mark: read when sent in, never written (a saved
+        /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing)]
+        sensitive: bool,
+    },
     /// The address holds `contains`, or is exactly `equals` (a value
     /// starting with / is compared with the path, query and fragment), or is
     /// the one `remember_url` noted as `same_as` - exactly one of the three.
@@ -137,6 +146,11 @@ pub enum Action {
         same_as: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// The compared text came from a secret placeholder: the watcher's
+        /// label never shows it. A run-time mark: read when sent in, never written (a saved
+        /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing)]
+        sensitive: bool,
     },
     /// The first whole number in the one element's text is the first whole
     /// number in the text `remember_text` noted as `same_as`, plus `by`
@@ -156,6 +170,11 @@ pub enum Action {
         value: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// The compared text came from a secret placeholder: the watcher's
+        /// label never shows it. A run-time mark: read when sent in, never written (a saved
+        /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing)]
+        sensitive: bool,
     },
     /// How many elements match: exactly `equals`, or `at_least` / `at_most`
     /// - exactly one of the three. Only `at_most` (like `equals: 0`) waits
@@ -1672,7 +1691,7 @@ impl Action {
                     .into_iter()
                     .try_for_each(|u| u.validate().map_err(|why| format!("page_until until: {why}")))
             }
-            Action::CheckText { value } if value.trim().is_empty() => {
+            Action::CheckText { value, .. } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
             Action::CheckUrl { contains, equals, same_as, .. } => {
@@ -2250,7 +2269,7 @@ pub(crate) async fn point_at<D: Driver>(d: &mut D, handle: &page::Handle, timing
     if timing.highlight_ms == 0 {
         return false;
     }
-    if highlight::show(d, handle, say, timing).await.is_err() {
+    if !matches!(highlight::show(d, handle, say, timing).await, Ok(true)) {
         crate::applog::warn("Auto Test highlight: the box could not be drawn over the element; the step goes on");
         return false;
     }
@@ -2799,7 +2818,7 @@ async fn run<D: Driver>(
             }
         }
         Action::WaitFor { selector, timeout_ms } => wait_for(d, selector, *timeout_ms, timing).await,
-        Action::CheckText { value } => {
+        Action::CheckText { value, .. } => {
             let doc = match page::document(d).await {
                 Ok(h) => h,
                 Err(e) => return failed_by(e),
@@ -2844,7 +2863,7 @@ async fn run<D: Driver>(
             let check = Check::SameText { name: same_as, noted: &noted, by: Some(*by) };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms, .. } => {
             // `validate` holds the three to exactly one.
             let re;
             let noted;
@@ -2868,7 +2887,7 @@ async fn run<D: Driver>(
             };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectContainsText { selector, value, timeout_ms } => {
+        Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
             expect::expect(d, selector, Check::ContainsText(value), wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {

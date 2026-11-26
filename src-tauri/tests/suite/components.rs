@@ -69,7 +69,7 @@ fn component(name: &str) -> Component {
         name: name.into(),
         description: "pick a date".into(),
         inputs: vec![ComponentInput { name: "day".into(), kind: InputKind::Text, description: "the day".into() }],
-        actions: vec![Action::CheckText { value: "x".into() }],
+        actions: vec![Action::CheckText { value: "x".into(), sensitive: false }],
         tried_at: 7,
         tried_area: "Leave".into(),
         version: 1,
@@ -535,7 +535,7 @@ fn a_change_needs_why() {
     calendar_seen(dir.path());
     let first = pick_a_date();
     let mut more = pick_a_date();
-    more.actions.push(Action::CheckText { value: "picked".into() });
+    more.actions.push(Action::CheckText { value: "picked".into(), sensitive: false });
     let prints = tried(&[&first, &more]);
     let save = |c: Component, why: Option<&str>| save_tried(dir.path(), "o", "p", c, why, session(&prints), 50, no_users());
 
@@ -576,7 +576,7 @@ fn a_component_change_may_remove_a_check() {
     // Untried, a change is still refused.
     let mut untried = pick_a_date();
     untried.actions.remove(1);
-    untried.actions.push(Action::CheckText { value: "never tried".into() });
+    untried.actions.push(Action::CheckText { value: "never tried".into(), sensitive: false });
     let err = save(untried, Some("a check nobody tried")).unwrap_err();
     assert!(err.contains("Try the component live in discovery first"), "{err}");
 }
@@ -589,7 +589,7 @@ fn a_component_can_change_any_number_of_times() {
         .map(|n| {
             let mut c = pick_a_date();
             for _ in 0..n {
-                c.actions.push(Action::CheckText { value: "picked".into() });
+                c.actions.push(Action::CheckText { value: "picked".into(), sensitive: false });
             }
             c
         })
@@ -773,7 +773,7 @@ fn a_change_that_puts_an_unseen_locator_into_a_using_script_is_refused() {
     let (v1, v2) = (pick_a_date_v1(), pick_a_date_v2());
     let mut v3 = pick_a_date_v1();
     v3.inputs.push(ComponentInput { name: "month".into(), kind: InputKind::Text, description: "".into() });
-    v3.actions.push(Action::CheckText { value: "{{month}}".into() });
+    v3.actions.push(Action::CheckText { value: "{{month}}".into(), sensitive: false });
     let prints = tried(&[&v1, &v2, &v3]);
     save_tried(dir.path(), "o", "p", v1, None, session(&prints), 50, no_users()).unwrap();
     save_script(dir.path(), &picks(12, "15")).unwrap();
@@ -988,7 +988,7 @@ fn old_script_and_component_files_with_counts_still_load() {
     assert_eq!((view.components[0].version, view.components[0].changes), (6, 5));
 
     let mut more = pick_a_date();
-    more.actions.push(Action::CheckText { value: "picked".into() });
+    more.actions.push(Action::CheckText { value: "picked".into(), sensitive: false });
     let prints = tried(&[&more]);
     let s = save_tried(dir.path(), "o", "p", more, Some("checks the day"), session(&prints), 60, no_users()).unwrap();
     assert_eq!((s.version, s.changes), (7, 6));

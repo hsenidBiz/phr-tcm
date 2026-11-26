@@ -236,19 +236,23 @@ pub fn fixture_values(root: &Path, org: &str, project: &str, steps: &[StepScript
     out
 }
 
-/// Is this action (as JSON) a `fill` whose value names one of our
-/// placeholders by a secret-looking name - `{{setup.password}}`,
-/// `{{fixture.api.token}}`? The rule is the one every capture redaction
-/// uses (`capture_redact::secret_name`). Such a fill is marked `sensitive`
-/// once the value is filled in, so the Auto Test browser's label never
-/// shows it.
+/// Is this action (as JSON) one that types or compares a value, and does
+/// that value name one of our placeholders by a secret-looking name -
+/// `{{setup.password}}`, `{{fixture.api.token}}`? The rule is the one every
+/// capture redaction uses (`capture_redact::secret_name`), applied to the
+/// placeholder as written. Such an action is marked `sensitive` once the
+/// value is filled in, so the Auto Test browser's label never shows it: a
+/// `fill`'s value, a `check_text` or `expect_contains_text` value, an
+/// `expect_text`'s `equals` or `matches`.
 fn holds_secret_placeholder(action: &serde_json::Map<String, Value>) -> bool {
-    action.get("kind").and_then(Value::as_str) == Some("fill")
-        && action.get("value").and_then(Value::as_str).is_some_and(|v| {
-            exec::placeholders(v)
-                .into_iter()
-                .any(|name| parse(&name).is_some() && super::capture_redact::secret_name(&name))
-        })
+    let fields: &[&str] = match action.get("kind").and_then(Value::as_str) {
+        Some("fill" | "check_text" | "expect_contains_text") => &["value"],
+        Some("expect_text") => &["equals", "matches"],
+        _ => return false,
+    };
+    fields.iter().filter_map(|f| action.get(*f).and_then(Value::as_str)).any(|v| {
+        exec::placeholders(v).into_iter().any(|name| parse(&name).is_some() && super::capture_redact::secret_name(&name))
+    })
 }
 
 /// `steps` with every string value's placeholders that `vars` names filled

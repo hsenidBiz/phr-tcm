@@ -231,23 +231,23 @@ fn label_of(action: &Action) -> (String, Option<String>) {
             _ => ("Choose".into(), None),
         },
         Action::Upload { file, .. } => (upload_label(file), None),
-        Action::CheckText { value } => {
-            if marks_secret(value, "") {
+        Action::CheckText { value, sensitive } => {
+            if *sensitive || marks_secret(value, "") {
                 (CHECK_HIDDEN.into(), None)
             } else {
                 (format!("Check: shows {}", quoted(value)), None)
             }
         }
-        Action::ExpectContainsText { selector, value, .. } => {
-            if marks_secret(value, &selector.describe()) {
+        Action::ExpectContainsText { selector, value, sensitive, .. } => {
+            if *sensitive || marks_secret(value, &selector.describe()) {
                 (CHECK_HIDDEN.into(), None)
             } else {
                 (format!("Check: shows {}", quoted(value)), Some(CHECK_HIDDEN.into()))
             }
         }
-        Action::ExpectText { selector, equals, matches, same_as, .. } => match (equals, matches, same_as) {
+        Action::ExpectText { selector, equals, matches, same_as, sensitive, .. } => match (equals, matches, same_as) {
             (Some(v), _, _) => {
-                if marks_secret(v, &selector.describe()) {
+                if *sensitive || marks_secret(v, &selector.describe()) {
                     (CHECK_HIDDEN.into(), None)
                 } else {
                     (format!("Check: text is {}", quoted(v)), Some(CHECK_HIDDEN.into()))
@@ -357,6 +357,11 @@ pub const SHOW_JS: &str = r#"function(kind, label, holdMs) {
     const doc = win.document;
     const old = win[KEY];
     if (old) old.stop();
+    if (win !== win.top) {
+      // The result call runs in the top window, so a box left there by an
+      // earlier step must not be the one it recolours.
+      try { const above = win.top[KEY]; if (above) above.stop(); } catch (err) { /* another site */ }
+    }
     const colour = COLOURS[kind] || COLOURS.quiet;
     const host = doc.createElement('div');
     host.setAttribute('aria-hidden', 'true');
@@ -433,8 +438,9 @@ pub const RESULT_JS: &str = r#"function(ok) {
 }"#;
 
 /// Draw `say` over `handle`. A password field's own label replaces the
-/// typed one. The caller ignores a failure (`actions::point_at`).
-pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Timing) -> Result<(), CdpError> {
+/// typed one. `true` when the page script drew it. The caller ignores a
+/// failure (`actions::point_at`).
+pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Timing) -> Result<bool, CdpError> {
     let mut label = say.label.as_str();
     if let Some(hidden) = &say.if_password {
         // A failed look at the element cannot say it is not a password:
@@ -444,8 +450,10 @@ pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Tim
             label = hidden;
         }
     }
-    page::call_value(d, handle, SHOW_JS, &[json!(say.kind.key()), json!(label), json!(timing.highlight_ms)]).await?;
-    Ok(())
+    let drawn =
+        page::call_value(d, handle, SHOW_JS, &[json!(say.kind.key()), json!(label), json!(timing.highlight_ms)]).await?;
+    // The script answers false when it caught an error: nothing was drawn.
+    Ok(drawn.as_bool().unwrap_or(false))
 }
 
 /// Turn the box green or red, and let it go. Quiet by design: a page that
@@ -471,7 +479,7 @@ pub async fn after_check<D: Driver>(d: &mut D, action: &Action, ok: bool, timing
     let Some(target) = action.targets().first().copied() else { return };
     let Ok(found) = resolve_explained(d, target).await else { return };
     if let [handle] = found.handles.as_slice() {
-        if show(d, handle, &Say::of(action), timing).await.is_ok() {
+        if matches!(show(d, handle, &Say::of(action), timing).await, Ok(true)) {
             d.idle(Duration::from_millis(timing.highlight_ms)).await;
             conclude(d, timing, ok).await;
         }

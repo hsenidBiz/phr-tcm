@@ -321,14 +321,14 @@ const SHOT_MARK_FULL: &str = "\u{1}screenshot:full_page";
 /// The marked action standing for a screenshot of the window (or, with
 /// `full_page`, of the whole page).
 pub fn screenshot_action(full_page: bool) -> Action {
-    Action::CheckText { value: (if full_page { SHOT_MARK_FULL } else { SHOT_MARK }).to_string() }
+    Action::CheckText { value: (if full_page { SHOT_MARK_FULL } else { SHOT_MARK }).to_string(), sensitive: false }
 }
 
 /// `Some(full_page)` when `action` is the marked stand-in for a screenshot.
 pub fn screenshot_ask(action: &Action) -> Option<bool> {
     match action {
-        Action::CheckText { value } if value == SHOT_MARK => Some(false),
-        Action::CheckText { value } if value == SHOT_MARK_FULL => Some(true),
+        Action::CheckText { value, .. } if value == SHOT_MARK => Some(false),
+        Action::CheckText { value, .. } if value == SHOT_MARK_FULL => Some(true),
         _ => None,
     }
 }
@@ -385,7 +385,7 @@ pub struct FillForm {
 /// The step a marked stand-in carries; `None` for any other action, or a
 /// stand-in whose step cannot be read.
 pub fn fill_form_ask(action: &Action) -> Option<FillForm> {
-    let Action::CheckText { value } = action else { return None };
+    let Action::CheckText { value, .. } = action else { return None };
     let json = value.strip_prefix(FILL_FORM_MARK)?;
     let raw: Value = serde_json::from_str(json).ok()?;
     parse_fill_form(raw.as_object()?).ok()
@@ -435,7 +435,7 @@ pub fn fill_form_from(raw: &Value) -> Option<Result<Action, String>> {
     if o.get("kind").and_then(Value::as_str) != Some(FILL_FORM_KIND) {
         return None;
     }
-    Some(parse_fill_form(o).map(|_| Action::CheckText { value: format!("{FILL_FORM_MARK}{raw}") }))
+    Some(parse_fill_form(o).map(|_| Action::CheckText { value: format!("{FILL_FORM_MARK}{raw}"), sensitive: false }))
 }
 
 // ---- keys an action does not have (backlog 87) -------------------------------

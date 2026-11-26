@@ -53,7 +53,7 @@ fn script() -> CaseScript {
                 Action::Navigate { url: "https://app.invalid/login".to_string() },
                 Action::Fill { selector: "#user".into(), value: "kim".to_string(), sensitive: false },
                 Action::Click { selector: "text=Sign in".into() },
-                Action::CheckText { value: "Dashboard".to_string() },
+                Action::CheckText { value: "Dashboard".to_string(), sensitive: false },
             ],
             unchecked: None,
             cleanup: false,
@@ -212,7 +212,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         area: None,
         steps: vec![StepScript {
             step_number: 1,
-            actions: vec![Action::CheckText { value: "ok".to_string() }],
+            actions: vec![Action::CheckText { value: "ok".to_string(), sensitive: false }],
             unchecked: None,
             cleanup: false,
             because: Vec::new(), by_auto_run: false,
@@ -295,8 +295,8 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         account: None,
         area: None,
         steps: vec![
-            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "a".to_string() }], unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false },
-            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "b".to_string() }], unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false },
+            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "a".to_string(), sensitive: false }], unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false },
+            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "b".to_string(), sensitive: false }], unchecked: None, cleanup: false, because: Vec::new(), by_auto_run: false },
         ],
         repairs: 0,
         last_repair: None,

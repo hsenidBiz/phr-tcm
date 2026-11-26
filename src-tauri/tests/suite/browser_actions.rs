@@ -143,7 +143,7 @@ async fn a_fill_into_something_that_takes_no_text_says_so() {
 #[tokio::test]
 async fn a_transport_error_is_reported_as_a_harness_problem() {
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
-    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into(), sensitive: false }, &quick()).await;
     assert!(!out.ok);
     assert!(out.detail.contains("browser"), "{}", out.detail);
     assert!(out.harness, "a dropped socket is the harness's fault, not the page's");
@@ -155,7 +155,7 @@ async fn a_transport_error_is_reported_as_a_harness_problem() {
 #[tokio::test]
 async fn a_harness_outcome_serializes_without_a_harness_key() {
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
-    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into(), sensitive: false }, &quick()).await;
     assert!(out.harness);
     let v = serde_json::to_value(&out).unwrap();
     assert!(v.get("harness").is_none(), "{v}");
@@ -319,12 +319,12 @@ async fn navigate_refuses_a_javascript_url_without_touching_the_browser() {
 #[tokio::test]
 async fn check_text_and_check_url_answer_from_the_page() {
     let mut d = FakePage::default().driver();
-    assert!(execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await.ok);
+    assert!(execute_with(&mut d, &Action::CheckText { value: "Dashboard".into(), sensitive: false }, &quick()).await.ok);
     let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None }, &quick()).await;
     assert!(out.ok && out.detail.contains("https://app.example/home"), "{}", out.detail);
 
     let mut d = FakePage { body_has_text: false, ..FakePage::default() }.driver();
-    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into(), sensitive: false }, &quick()).await;
     assert!(!out.ok && out.detail.contains("does NOT contain"), "{}", out.detail);
     assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), equals: None, same_as: None, timeout_ms: None }, &quick()).await.ok);
 }
@@ -417,7 +417,7 @@ async fn a_page_refusal_during_a_check_is_the_pages_doing() {
         })
     };
     for action in [
-        Action::CheckText { value: "Dashboard".into() },
+        Action::CheckText { value: "Dashboard".into(), sensitive: false },
         Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None },
     ] {
         let mut d = refusing();
@@ -434,7 +434,7 @@ async fn a_page_refusal_during_a_check_is_the_pages_doing() {
 async fn a_closed_browser_at_those_same_sites_is_still_the_harness() {
     for action in [
         Action::Click { selector: "#go".into() },
-        Action::CheckText { value: "Dashboard".into() },
+        Action::CheckText { value: "Dashboard".into(), sensitive: false },
         Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None },
         Action::Navigate { url: "https://app.example/x".into() },
     ] {
@@ -659,15 +659,15 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
-        Action::CheckText { value: "v".into() },
+        Action::CheckText { value: "v".into(), sensitive: false },
         Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
         Action::RememberUrl { name: "a".into() },
         Action::RememberText { selector: "s".into(), name: "n".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None, sensitive: false },
         Action::ExpectTextMoved { selector: "s".into(), same_as: "n".into(), by: 1, timeout_ms: None },
-        Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
+        Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None, sensitive: false },
         Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
         serde_json::from_value(json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
@@ -1771,6 +1771,7 @@ async fn remember_text_notes_the_text_for_a_later_same_as() {
         matches: None,
         same_as: Some("counts".into()),
         timeout_ms: None,
+        sensitive: false,
     };
     let out = execute_with(&mut d, &remember, &quick()).await;
     assert!(out.ok, "{}", out.detail);
@@ -1783,7 +1784,7 @@ async fn remember_text_notes_the_text_for_a_later_same_as() {
     assert!(out.detail.contains("2 / 4 / 7") && out.detail.contains("3 / 4 / 7"), "{}", out.detail);
     assert!(out.detail.contains("noted as \"counts\""), "{}", out.detail);
     // Nothing noted under the name: no look at the page.
-    let none = Action::ExpectText { selector: "#pills".into(), equals: None, matches: None, same_as: Some("never".into()), timeout_ms: None };
+    let none = Action::ExpectText { selector: "#pills".into(), equals: None, matches: None, same_as: Some("never".into()), timeout_ms: None, sensitive: false };
     let calls = d.calls.len();
     let out = execute_with(&mut d, &none, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
@@ -1826,7 +1827,7 @@ async fn a_text_noted_from_a_password_field_is_never_said() {
     assert!(execute_with(&mut d, &remember, &quick()).await.ok);
     let mut d2 = FakePage { texts: vec!["other-secret"], password: false, ..FakePage::default() }.driver();
     d2.noted_text = d.noted_text.clone();
-    let same = Action::ExpectText { selector: "#pw".into(), equals: None, matches: None, same_as: Some("p".into()), timeout_ms: None };
+    let same = Action::ExpectText { selector: "#pw".into(), equals: None, matches: None, same_as: Some("p".into()), timeout_ms: None, sensitive: false };
     let out = execute_with(&mut d2, &same, &quick()).await;
     assert!(!out.ok, "{}", out.detail);
     assert!(!out.detail.contains("hunter2") && !out.detail.contains("other-secret"), "{}", out.detail);

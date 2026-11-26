@@ -494,3 +494,109 @@ fn a_check_of_a_secret_shows_no_value() {
     // Any other element: the text is shown, until the page says it is a password.
     assert_eq!(say(json!({ "kind": "expect_text", "selector": "#a", "equals": "Saved" })), "Check: text is 'Saved'");
 }
+
+fn resolved_action(action: Value) -> Action {
+    let sc: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "case 1", "setup": { "fixture": "own" },
+        "steps": [{ "step_number": 1, "actions": [action] }]
+    }))
+    .unwrap();
+    let fixtures = BTreeMap::from([(
+        "api".to_string(),
+        FixtureValues { name: "Api".into(), outputs: Some([("token".to_string(), json!("tok-9f8e7d"))].into()) },
+    )]);
+    let setup: BTreeMap<String, Value> = [("password".to_string(), json!("S3cret-pw"))].into();
+    resolve(&sc, &fixtures, &setup).unwrap().steps[0].actions[0].clone()
+}
+
+/// A check of a setup's or a fixture's secret is marked once resolved, so no
+/// highlight call carries what it compares.
+#[tokio::test]
+async fn a_check_of_a_setup_or_fixture_secret_shows_no_value() {
+    let steps = [
+        (json!({ "kind": "expect_text", "selector": "#generated-key", "equals": "{{fixture.api.token}}" }), "tok-9f8e7d"),
+        (json!({ "kind": "check_text", "value": "{{setup.password}}" }), "S3cret-pw"),
+        (json!({ "kind": "expect_contains_text", "selector": "#note", "value": "k {{fixture.api.token}}" }), "tok-9f8e7d"),
+    ];
+    for (step, secret) in steps {
+        let action = resolved_action(step.clone());
+        assert_eq!(Say::of(&action).label, CHECK_HIDDEN, "{step}");
+        let mut d = FakePage { texts: vec!["tok-9f8e7d", "S3cret-pw", "k tok-9f8e7d"], ..FakePage::default() }.driver();
+        let _ = execute_with(&mut d, &action, &on()).await;
+        for (_, p) in &d.calls {
+            let text = p.to_string();
+            if text.contains(secret) {
+                assert!(
+                    p["functionDeclaration"] != HIGHLIGHT_JS && !text.contains("tcm.action-highlight"),
+                    "a highlight call carried the value: {p}"
+                );
+            }
+        }
+    }
+}
+
+/// A box drawn in a frame's own window also clears one the top window still
+/// holds (where it can be read), so an earlier step's box is never the one
+/// the result recolours.
+#[test]
+fn a_box_in_a_frame_clears_the_one_the_top_window_still_holds() {
+    assert!(SHOW_JS.contains("if (win !== win.top)"));
+    assert!(SHOW_JS.contains("win.top[KEY]"));
+    assert!(SHOW_JS.contains("above.stop()"));
+}
+
+/// When the page script says it drew nothing (it caught an error), there is
+/// no pause and no result call.
+#[tokio::test]
+async fn a_script_that_drew_nothing_means_no_pause_and_no_result() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if p["functionDeclaration"] == HIGHLIGHT_JS {
+            return Ok(json!({ "result": { "value": false } }));
+        }
+        page.answer(m, p)
+    });
+    let out = execute_with(&mut d, &act(json!({ "kind": "click", "selector": "#go" })), &on()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(results(&d).is_empty());
+}
+
+/// `sensitive` is a run-time mark: sent in, it is read; written out, it is not.
+#[test]
+fn the_sensitive_mark_is_never_written() {
+    let sc: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "case 1",
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "fill", "selector": { "css": "#a" }, "value": "x", "sensitive": true },
+            { "kind": "check_text", "value": "y", "sensitive": true }
+        ] }]
+    }))
+    .unwrap();
+    assert!(matches!(sc.steps[0].actions[0], Action::Fill { sensitive: true, .. }));
+    assert!(!serde_json::to_string(&sc).unwrap().contains("sensitive"));
+}
+
+#[test]
+fn a_saved_script_and_a_kept_action_come_back_without_the_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let sc: CaseScript = serde_json::from_value(json!({
+        "case_id": 7, "title": "case 7",
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "fill", "selector": { "css": "#a" }, "value": "x", "sensitive": true }
+        ] }]
+    }))
+    .unwrap();
+    v2_lib::autorun::store::save_script(dir.path(), &sc).unwrap();
+    let back = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert!(matches!(back.steps[0].actions[0], Action::Fill { sensitive: false, .. }));
+    let file = std::fs::read_to_string(dir.path().join("autorun").join("scripts").join("case-7.json"));
+    if let Ok(text) = file {
+        assert!(!text.contains("sensitive"), "{text}");
+    }
+    let action = sc.steps[0].actions[0].clone();
+    v2_lib::autorun::kept::keep(dir.path(), "s1", &action, None, None, 1, 2).unwrap();
+    let list = v2_lib::autorun::kept::list_of(dir.path(), "s1").unwrap();
+    for k in &list.actions {
+        assert!(!serde_json::to_string(&k.action).unwrap().contains("sensitive"));
+    }
+}

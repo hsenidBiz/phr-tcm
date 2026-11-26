@@ -16,7 +16,7 @@ fn script(case_id: i32, checked: bool, stamped: bool) -> CaseScript {
         area: None,
         steps: vec![StepScript {
             step_number: 1,
-            actions: vec![Action::CheckText { value: "Dashboard".to_string() }],
+            actions: vec![Action::CheckText { value: "Dashboard".to_string(), sensitive: false }],
             unchecked: None,
             cleanup: false,
             because: Vec::new(), by_auto_run: false,

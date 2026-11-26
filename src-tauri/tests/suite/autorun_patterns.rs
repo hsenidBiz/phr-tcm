@@ -400,7 +400,7 @@ fn refusals_of_one_request_are_one_pattern_whatever_failed_after() {
     ]);
     let scripts = vec![
         script(1, 1, Action::WaitFor { selector: role("heading", "Goals"), timeout_ms: 100 }),
-        script(2, 1, Action::CheckText { value: "Saved".into() }),
+        script(2, 1, Action::CheckText { value: "Saved".into(), sensitive: false }),
     ];
     let found = find_patterns(&run, &scripts);
     assert_eq!(found.len(), 1, "{found:?}");
