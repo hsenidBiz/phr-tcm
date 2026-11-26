@@ -821,7 +821,7 @@ impl Draft {
                             choice.text.clone()
                         }
                     };
-                    Action::Fill { selector: target.clone(), value }
+                    Action::Fill { selector: target.clone(), value, sensitive: false }
                 }
             };
             steps.push(super::recipe::RecipeStep::Do(action));

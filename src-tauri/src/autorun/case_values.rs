@@ -264,7 +264,7 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
                 out.push(pattern(step, p, s));
             }
         }
-        Action::CheckText { value } => out.push(text(step, value, false, s)),
+        Action::CheckText { value, .. } => out.push(text(step, value, false, s)),
         Action::ExpectText { equals, matches, .. } => {
             if let Some(v) = equals {
                 out.push(text(step, v, true, s));

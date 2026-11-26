@@ -1748,7 +1748,7 @@ async fn try_refuses_a_body_that_names_no_case() {
 /// Pure, so this is provable without a browser at all.
 #[test]
 fn describe_try_never_carries_a_fills_value() {
-    let action = Action::Fill { selector: "#password".into(), value: "hunter2".to_string() };
+    let action = Action::Fill { selector: "#password".into(), value: "hunter2".to_string(), sensitive: false };
     let out = describe_try(&action, true);
     assert!(!out.contains("hunter2"), "{out}");
     assert_eq!(out, "AI tried fill #password in the supervised browser: ok");
@@ -1892,6 +1892,10 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
             }
             "Runtime.evaluate" if params["expression"] == "document.title" => {
                 Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
+            }
+            // The highlight's result call, sent when the browser is watched.
+            "Runtime.evaluate" if params["expression"].as_str().is_some_and(|e| e.contains("tcm.action-highlight")) => {
+                Ok(serde_json::json!({ "result": { "value": true } }))
             }
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
                 Ok(serde_json::json!({ "result": { "value": true } }))
@@ -3121,7 +3125,7 @@ async fn a_component_is_retired_only_when_no_script_uses_it() {
     let c: Component = serde_json::from_str(&component_body(None)).unwrap();
     put(dir.path(), "acme", "Web", c).unwrap();
     let mut used = scripted(7);
-    used.steps[0].actions.push(Action::UseComponent { component: "pick a date".into(), inputs: Default::default() });
+    used.steps[0].actions.push(Action::UseComponent { component: "pick a date".into(), inputs: Default::default(), sensitive: false });
     save_scripts_atomically(dir.path(), &[used]).unwrap();
     let body = serde_json::json!({ "name": "Pick a date" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
@@ -4460,7 +4464,7 @@ async fn a_tried_component_answers_each_of_its_actions() {
     }))
     .unwrap();
     v2_lib::autorun::components::put(dir.path(), "acme", "Web", c).unwrap();
-    let use_it = Action::UseComponent { component: "Three checks".into(), inputs: serde_json::Map::new() };
+    let use_it = Action::UseComponent { component: "Three checks".into(), inputs: serde_json::Map::new(), sensitive: false };
 
     let (mut account, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
     let mut d = crate::common::FakePage { body_has_text: false, ..crate::common::FakePage::default() }.driver();

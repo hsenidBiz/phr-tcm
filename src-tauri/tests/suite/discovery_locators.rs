@@ -75,7 +75,7 @@ fn tab_actions_have_no_targets() {
 
 #[test]
 fn typed_value_is_only_a_fill() {
-    let f = Action::Fill { selector: Target::from("#a"), value: "hi".into() };
+    let f = Action::Fill { selector: Target::from("#a"), value: "hi".into(), sensitive: false };
     assert_eq!(f.typed_value(), Some("hi"));
     assert_eq!(click("#a").typed_value(), None);
 }

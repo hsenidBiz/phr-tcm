@@ -22,7 +22,8 @@
 //! An action does not check its own effect: a drag the page ignored still
 //! passes. The script follows it with a check of the new order.
 
-use super::actions::{blocked, failed_by, ActionOutcome, DropAt, HIGHLIGHT_JS};
+use super::actions::{blocked, failed_by, point_at, ActionOutcome, DropAt};
+use super::highlight::{drag_label, Kind, Say};
 use super::cdp::{CdpError, Driver};
 use super::input::{self, Blocked};
 use super::locator::{resolve_explained, Target};
@@ -151,6 +152,7 @@ pub async fn drag<D: Driver>(
     at: DropAt,
     within_ms: u32,
     timing: &Timing,
+    drew: &mut bool,
 ) -> ActionOutcome {
     let (from_words, to_words) = (from.describe(), to.describe());
     let nothing = |why: &str| ActionOutcome::failed(format!("{}: {why}", nothing_to_drag(&from_words)));
@@ -178,12 +180,7 @@ pub async fn drag<D: Driver>(
         Ok(r) => return nothing(&input::matched_many(r.handles.len())),
         Err(e) => return failed_by(e),
     };
-    if let Err(e) = page::call_value(d, &from_handle, HIGHLIGHT_JS, &[]).await {
-        return failed_by(e);
-    }
-    if timing.highlight_ms > 0 {
-        d.idle(Duration::from_millis(timing.highlight_ms)).await;
-    }
+    *drew |= point_at(d, &from_handle, timing, &Say::new(Kind::Click, drag_label(at))).await;
 
     // Both into view - each only as far as it needs, so the second does
     // not push the first back out - then both measured where they now are.

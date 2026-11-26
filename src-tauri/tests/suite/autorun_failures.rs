@@ -440,7 +440,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         area: None,
         steps: vec![StepScript {
             step_number: 1,
-            actions: vec![Action::Fill { selector: "#password".into(), value: "correct horse battery staple".to_string() }],
+            actions: vec![Action::Fill { selector: "#password".into(), value: "correct horse battery staple".to_string(), sensitive: false }],
             unchecked: None,
             cleanup: false,
             because: Vec::new(), by_auto_run: false,

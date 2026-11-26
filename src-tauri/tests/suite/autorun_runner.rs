@@ -132,7 +132,7 @@ async fn a_sign_in_for_an_unknown_account_fails_and_stops_the_rest_of_the_step()
         "Web",
         &step(vec![
             Action::SignIn { account: "ghost".into() },
-            Action::CheckText { value: "ok".into() },
+            Action::CheckText { value: "ok".into(), sensitive: false },
         ]),
         &quick(),
         &mut acc,
@@ -168,7 +168,7 @@ async fn a_sign_in_with_no_recipe_saved_fails_and_stops_the_rest_of_the_step() {
         "Web",
         &step(vec![
             Action::SignIn { account: "admin".into() },
-            Action::CheckText { value: "ok".into() },
+            Action::CheckText { value: "ok".into(), sensitive: false },
         ]),
         &quick(),
         &mut acc,
@@ -202,7 +202,7 @@ async fn a_successful_sign_in_sets_the_account_and_the_actions_after_it_run() {
         "Web",
         &step(vec![
             Action::SignIn { account: "admin".into() },
-            Action::CheckText { value: "ok".into() },
+            Action::CheckText { value: "ok".into(), sensitive: false },
         ]),
         &quick(),
         &mut acc,
@@ -312,7 +312,7 @@ async fn a_failed_page_action_gets_a_screenshot_and_a_harness_failure_gets_none(
         dir.path(),
         "Acme",
         "Web",
-        &step(vec![Action::CheckText { value: "not on the page".into() }]),
+        &step(vec![Action::CheckText { value: "not on the page".into(), sensitive: false }]),
         &quick(),
         &mut acc,
     )
@@ -334,7 +334,7 @@ async fn a_failed_page_action_gets_a_screenshot_and_a_harness_failure_gets_none(
         dir.path(),
         "Acme",
         "Web",
-        &step(vec![Action::CheckText { value: "x".into() }]),
+        &step(vec![Action::CheckText { value: "x".into(), sensitive: false }]),
         &quick(),
         &mut acc2,
     )
@@ -395,7 +395,7 @@ async fn with_addresses_switched_off_a_saved_navigate_fails_with_the_projects_se
     let mut acc: Option<String> = None;
     let step = StepScript {
         step_number: 4,
-        actions: vec![Action::Navigate { url: "/hr/leave/apply".into() }, Action::CheckText { value: "Leave".into() }],
+        actions: vec![Action::Navigate { url: "/hr/leave/apply".into() }, Action::CheckText { value: "Leave".into(), sensitive: false }],
         unchecked: None,
         cleanup: false,
         because: Vec::new(), by_auto_run: false,

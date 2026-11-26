@@ -201,7 +201,7 @@ fn created_then_deleted(script: &CaseScript) -> Vec<(i32, String)> {
     let mut created: Vec<String> = Vec::new();
     let mut out: Vec<(i32, String)> = Vec::new();
     for (step, a) in each_action(script) {
-        if let Action::Fill { selector, value } = a {
+        if let Action::Fill { selector, value, .. } = a {
             let v = value.trim();
             if v.chars().count() >= MIN_CREATED_VALUE && !is_search_field(selector) {
                 typed.push(v.to_string());

@@ -26,19 +26,19 @@ fn the_guide_names_every_action_the_executor_can_run() {
     let samples = vec![
         Action::Navigate { url: "u".into() },
         Action::Click { selector: "s".into() },
-        Action::Fill { selector: "s".into(), value: "v".into() },
+        Action::Fill { selector: "s".into(), value: "v".into(), sensitive: false },
         serde_json::from_value(serde_json::json!({ "kind": "select_option", "selector": "s", "label": "v" })).unwrap(),
         Action::Hover { selector: "s".into(), within_ms: None },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
-        Action::CheckText { value: "v".into() },
+        Action::CheckText { value: "v".into(), sensitive: false },
         Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
         Action::RememberUrl { name: "a".into() },
         Action::RememberText { selector: "s".into(), name: "a".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, same_as: None, timeout_ms: None, sensitive: false },
         Action::ExpectTextMoved { selector: "s".into(), same_as: "n".into(), by: 1, timeout_ms: None },
-        Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
+        Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None, sensitive: false },
         Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
         serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
@@ -1377,7 +1377,7 @@ fn the_guide_teaches_components() {
     let start = section[..use_at].rfind('{').unwrap();
     let action: Action =
         serde_json::from_str(first_balanced(section, start, '{', '}')).expect("the use is not an action");
-    let Action::UseComponent { component: named, inputs } = &action else { panic!("{action:?}") };
+    let Action::UseComponent { component: named, inputs, .. } = &action else { panic!("{action:?}") };
     assert_eq!(named, "Pick a date");
     let ran = expand(&component, inputs).expect("the use does not expand");
     assert_eq!(ran.len(), component.actions.len());

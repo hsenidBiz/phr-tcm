@@ -77,8 +77,8 @@ fn a_list_null_or_empty_label_is_refused() {
 #[test]
 fn a_stand_in_is_only_read_back_when_marked() {
     use v2_lib::browser::actions::Action;
-    assert!(fill_form_ask(&Action::CheckText { value: "hello".into() }).is_none());
-    assert!(fill_form_ask(&Action::CheckText { value: "\u{1}fill_form:{not json".into() }).is_none());
+    assert!(fill_form_ask(&Action::CheckText { value: "hello".into(), sensitive: false }).is_none());
+    assert!(fill_form_ask(&Action::CheckText { value: "\u{1}fill_form:{not json".into(), sensitive: false }).is_none());
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn failed(p: Planned) -> String {
 #[tokio::test]
 async fn a_text_box_gets_fill_with_an_exact_locator() {
     let p = plan(vec![control("textbox", "First name", "input", "text")], "First name", text("Ann")).await;
-    let Planned::Act { action: Action::Fill { selector, value }, locator, matched } = p else { panic!("{p:?}") };
+    let Planned::Act { action: Action::Fill { selector, value, .. }, locator, matched } = p else { panic!("{p:?}") };
     assert_eq!(value, "Ann");
     assert_eq!(matched, 1);
     assert_eq!(selector, locator);

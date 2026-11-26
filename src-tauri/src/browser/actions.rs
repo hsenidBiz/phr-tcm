@@ -12,6 +12,7 @@ use super::drag;
 use super::keys;
 use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
 use super::expect::{self, Check};
+use super::highlight::{self, Say};
 use super::input::{self, Blocked};
 use super::locator::{resolve_explained, Target};
 use super::page;
@@ -21,6 +22,93 @@ use crate::autorun::refusals::RefusedRequest;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
+
+thread_local! {
+    static KEEP_MARKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` (synchronous, so it stays on this thread) with the run-time
+/// `sensitive` marks written when an action is serialised. The run's own
+/// passes over a script that go through JSON (filling in a setup's values,
+/// expanding a component) use it so the mark survives them; nothing that
+/// saves or sends an action out does.
+pub fn with_run_marks<T>(f: impl FnOnce() -> T) -> T {
+    // Restored on the way out of a panic too: the flag never stays set on a
+    // thread that has left the scope.
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            KEEP_MARKS.with(|k| k.set(self.0));
+        }
+    }
+    let _restore = Restore(KEEP_MARKS.with(|k| k.replace(true)));
+    f()
+}
+
+/// `skip_serializing_if` for the `sensitive` marks: written only for a run's
+/// own pass (`with_run_marks`), and only when set.
+fn hide_mark(mark: &bool) -> bool {
+    !*mark || !KEEP_MARKS.with(|k| k.get())
+}
+
+/// `action` with its value marked `sensitive`, when it is one that types or
+/// compares a value (a guard's own actions too).
+pub(crate) fn marked_sensitive(action: Action) -> Action {
+    match action {
+        Action::Fill { selector, value, .. } => Action::Fill { selector, value, sensitive: true },
+        Action::CheckText { value, .. } => Action::CheckText { value, sensitive: true },
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms, .. } => {
+            Action::ExpectText { selector, equals, matches, same_as, timeout_ms, sensitive: true }
+        }
+        Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
+            Action::ExpectContainsText { selector, value, timeout_ms, sensitive: true }
+        }
+        Action::WhenVisible { selector, within_ms, then } => {
+            Action::WhenVisible { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
+        }
+        Action::WhenHidden { selector, within_ms, then } => {
+            Action::WhenHidden { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
+        }
+        Action::RepeatWhileVisible { selector, max, except, then, settle_ms } => Action::RepeatWhileVisible {
+            selector,
+            max,
+            except,
+            then: then.into_iter().map(marked_sensitive).collect(),
+            settle_ms,
+        },
+        other => other,
+    }
+}
+
+/// The texts a marked check compares: what its outcome must never say.
+fn hidden_texts(action: &Action) -> Vec<&str> {
+    match action {
+        Action::CheckText { value, sensitive: true } => vec![value],
+        Action::ExpectContainsText { value, sensitive: true, .. } => vec![value],
+        Action::ExpectText { equals, matches, sensitive: true, .. } => {
+            equals.iter().chain(matches.iter()).map(String::as_str).collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// What an outcome says in place of a marked check's compared text.
+pub const HIDDEN_VALUE: &str = "the hidden value";
+
+/// `out` with a marked check's compared text taken out of every sentence it
+/// echoes (a pass, an expected-versus-seen failure), as written and as a
+/// debug-quoted string. Everything else is as it was.
+fn hide_compared_text(action: &Action, mut out: ActionOutcome) -> ActionOutcome {
+    let mut texts = hidden_texts(action);
+    texts.retain(|t| !t.is_empty());
+    texts.sort_by_key(|t| std::cmp::Reverse(t.len()));
+    for t in texts {
+        let quoted = format!("{t:?}");
+        let escaped = &quoted[1..quoted.len() - 1];
+        out.detail = out.detail.replace(escaped, HIDDEN_VALUE).replace(t, HIDDEN_VALUE);
+    }
+    out
+}
 
 /// `expect_checked` with no `checked` asks for a ticked box.
 fn ticked() -> bool {
@@ -42,6 +130,11 @@ pub enum Action {
         #[serde(default)]
         #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
         inputs: serde_json::Map<String, serde_json::Value>,
+        /// An input came from a secret placeholder: what the expanded
+        /// actions type or compare is hidden from the watcher's label. A
+        /// run-time mark, written only inside `with_run_marks`.
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
     },
     Click { selector: Target },
     /// Move the pointer onto `selector` (waited for as a click waits, scrolled
@@ -55,7 +148,18 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         within_ms: Option<u32>,
     },
-    Fill { selector: Target, value: String },
+    Fill {
+        selector: Target,
+        value: String,
+        /// The value came from a secret placeholder (a setup's or a fixture's
+        /// output named like a password or a token) that was filled in before
+        /// the step ran: the watcher's label never shows it. Set when the
+        /// placeholder is resolved. A run-time mark: written only inside
+        /// `with_run_marks` (the run's own passes over a script), so a saved
+        /// script, a kept action or anything sent out comes back without it.
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
+    },
     /// Choose an option in a native list (`<select>`), by the option's
     /// visible text (`label`, trimmed, exact) or by its `value`, exactly
     /// one of them. Waited for as a `fill` waits (`within_ms` is how long,
@@ -74,7 +178,14 @@ pub enum Action {
         within_ms: Option<u32>,
     },
     WaitFor { selector: Target, timeout_ms: u32 },
-    CheckText { value: String },
+    CheckText {
+        value: String,
+        /// The compared text came from a secret placeholder: the watcher's
+        /// label never shows it. A run-time mark: read when sent in, never written (a saved
+        /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
+    },
     /// The address holds `contains`, or is exactly `equals` (a value
     /// starting with / is compared with the path, query and fragment), or is
     /// the one `remember_url` noted as `same_as` - exactly one of the three.
@@ -127,6 +238,11 @@ pub enum Action {
         same_as: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// The compared text came from a secret placeholder: the watcher's
+        /// label never shows it. A run-time mark: read when sent in, never written (a saved
+        /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
     },
     /// The first whole number in the one element's text is the first whole
     /// number in the text `remember_text` noted as `same_as`, plus `by`
@@ -146,6 +262,11 @@ pub enum Action {
         value: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// The compared text came from a secret placeholder: the watcher's
+        /// label never shows it. A run-time mark: read when sent in, never written (a saved
+        /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
     },
     /// How many elements match: exactly `equals`, or `at_least` / `at_most`
     /// - exactly one of the three. Only `at_most` (like `equals: 0`) waits
@@ -1662,7 +1783,7 @@ impl Action {
                     .into_iter()
                     .try_for_each(|u| u.validate().map_err(|why| format!("page_until until: {why}")))
             }
-            Action::CheckText { value } if value.trim().is_empty() => {
+            Action::CheckText { value, .. } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
             Action::CheckUrl { contains, equals, same_as, .. } => {
@@ -2183,13 +2304,10 @@ fn not_an_address(kind: &str, url: &str) -> String {
     format!("{kind} needs an http, https or file address, not {url:?}")
 }
 
-/// `this` is the element about to be touched.
-pub const HIGHLIGHT_JS: &str = r#"function() {
-  const prev = this.style.outline;
-  this.style.outline = '3px solid #7c5cff';
-  setTimeout(() => { this.style.outline = prev; }, 1200);
-  return true;
-}"#;
+/// The script that draws a step's box over its element: see `highlight`.
+/// `this` is the element about to be touched; arguments are the colour's key
+/// and the label.
+pub const HIGHLIGHT_JS: &str = super::highlight::SHOW_JS;
 
 /// `this` is the document. Argument: the words to look for.
 ///
@@ -2220,16 +2338,35 @@ pub const CHECK_TEXT_JS: &str = r#"function(want) {
 /// argument and never concatenated into this source.
 pub const RESOLVE_URL_JS: &str = r#"function(rel) { return new URL(rel, location.href).href; }"#;
 
+/// Draw `say` over the element and pause for `timing.highlight_ms`, so a
+/// watcher sees WHERE and WHAT before it happens. With the highlight off
+/// (`highlight_ms` of 0) nothing is drawn and nothing waits. `true` when a
+/// box was drawn.
 pub(crate) async fn point_and_pause<D: Driver>(
     d: &mut D,
     ready: &input::Ready,
     timing: &Timing,
-) -> Result<(), CdpError> {
-    page::call_value(d, &ready.handle, HIGHLIGHT_JS, &[]).await?;
-    if timing.highlight_ms > 0 {
-        d.idle(Duration::from_millis(timing.highlight_ms)).await;
+    say: &Say,
+) -> bool {
+    point_at(d, &ready.handle, timing, say).await
+}
+
+/// `point_and_pause` for an element that is held as a bare handle.
+///
+/// A highlight never fails a step: when the page will not take the box (a
+/// dialog holds it, the element is gone) this says so in the log, without a
+/// value, draws nothing and waits for nothing. The action's own first look at
+/// the page reports what is wrong with it.
+pub(crate) async fn point_at<D: Driver>(d: &mut D, handle: &page::Handle, timing: &Timing, say: &Say) -> bool {
+    if timing.highlight_ms == 0 {
+        return false;
     }
-    Ok(())
+    if !matches!(highlight::show(d, handle, say, timing).await, Ok(true)) {
+        crate::applog::warn("Auto Test highlight: the box could not be drawn over the element; the step goes on");
+        return false;
+    }
+    d.idle(Duration::from_millis(timing.highlight_ms)).await;
+    true
 }
 
 /// A page address as given, or a relative reference made absolute against
@@ -2682,7 +2819,14 @@ fn written_note(ready: &input::Ready) -> String {
 /// tooltip, a hover menu) to show.
 pub const HOVER_SETTLE_MS: u64 = 300;
 
-async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, timing: &Timing) -> ActionOutcome {
+async fn hover<D: Driver>(
+    d: &mut D,
+    selector: &Target,
+    within_ms: Option<u32>,
+    timing: &Timing,
+    say: &Say,
+    drew: &mut bool,
+) -> ActionOutcome {
     settle(d, timing).await;
     let mut own = timing.clone();
     if let Some(ms) = within_ms {
@@ -2692,9 +2836,7 @@ async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, 
         Ok(r) => r,
         Err(b) => return blocked(b),
     };
-    if let Err(e) = point_and_pause(d, &ready, timing).await {
-        return failed_by(e);
-    }
+    *drew |= point_and_pause(d, &ready, timing, say).await;
     match input::hover(d, &ready).await {
         Ok(()) => {
             d.idle(Duration::from_millis(HOVER_SETTLE_MS)).await;
@@ -2704,7 +2846,13 @@ async fn hover<D: Driver>(d: &mut D, selector: &Target, within_ms: Option<u32>, 
     }
 }
 
-async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
+async fn run<D: Driver>(
+    d: &mut D,
+    action: &Action,
+    timing: &Timing,
+    policy: &Policy,
+    drew: &mut bool,
+) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
         Action::Click { selector } => {
@@ -2713,9 +2861,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Ok(r) => r,
                 Err(b) => return blocked(b),
             };
-            if let Err(e) = point_and_pause(d, &ready, timing).await {
-                return failed_by(e);
-            }
+            *drew |= point_and_pause(d, &ready, timing, &Say::of(action)).await;
             // A control named like a save opens the no-save window before
             // the click: whatever it sends in the next seconds is stopped.
             // Judged by the selector's words and by the element it found.
@@ -2730,16 +2876,14 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 }
             }
         }
-        Action::Hover { selector, within_ms } => hover(d, selector, *within_ms, timing).await,
-        Action::Fill { selector, value } => {
+        Action::Hover { selector, within_ms } => hover(d, selector, *within_ms, timing, &Say::of(action), drew).await,
+        Action::Fill { selector, value, .. } => {
             settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, true, timing).await {
                 Ok(r) => r,
                 Err(b) => return blocked(b),
             };
-            if let Err(e) = point_and_pause(d, &ready, timing).await {
-                return failed_by(e);
-            }
+            *drew |= point_and_pause(d, &ready, timing, &Say::of_in(action, policy.runner_own)).await;
             match input::fill(d, &ready, value).await {
                 Ok(()) => ActionOutcome::passed(format!("filled {}{}", selector.describe(), written_note(&ready))),
                 Err(b) => blocked(b),
@@ -2755,9 +2899,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Ok(r) => r,
                 Err(b) => return blocked(b),
             };
-            if let Err(e) = point_and_pause(d, &ready, timing).await {
-                return failed_by(e);
-            }
+            *drew |= point_and_pause(d, &ready, timing, &Say::of(action)).await;
             match input::select_option(d, &ready, label.as_deref(), value.as_deref()).await {
                 Ok(chosen) => ActionOutcome::passed(format!(
                     "chose \"{chosen}\" in {}{}",
@@ -2768,7 +2910,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             }
         }
         Action::WaitFor { selector, timeout_ms } => wait_for(d, selector, *timeout_ms, timing).await,
-        Action::CheckText { value } => {
+        Action::CheckText { value, .. } => {
             let doc = match page::document(d).await {
                 Ok(h) => h,
                 Err(e) => return failed_by(e),
@@ -2813,7 +2955,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             let check = Check::SameText { name: same_as, noted: &noted, by: Some(*by) };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+        Action::ExpectText { selector, equals, matches, same_as, timeout_ms, .. } => {
             // `validate` holds the three to exactly one.
             let re;
             let noted;
@@ -2837,7 +2979,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectContainsText { selector, value, timeout_ms } => {
+        Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
             expect::expect(d, selector, Check::ContainsText(value), wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
@@ -2885,7 +3027,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             expect::expect(d, selector, Check::Checked(*checked), wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectNoChange { selector, region, within_ms } => {
-            super::no_change::expect_no_change(d, selector, region.as_ref(), *within_ms, timing).await
+            super::no_change::expect_no_change(d, selector, region.as_ref(), *within_ms, timing, drew).await
         }
         // The runner intercepts `sign_in` before it ever reaches this
         // executor (it alone has the tester's accounts and the project's
@@ -2958,7 +3100,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::PageUntil { next, until, until_all, max_pages } => {
-            super::page_until::page_until(d, next, &page_goals(until, until_all), *max_pages, timing).await
+            super::page_until::page_until(d, next, &page_goals(until, until_all), *max_pages, timing, drew).await
         }
         Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
             Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,
@@ -2983,7 +3125,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         }
         Action::Drag { from, to, position, within_ms } => {
             let within = within_ms.unwrap_or(drag::DRAG_WAIT_MS);
-            drag::drag(d, from, to, position.unwrap_or_default(), within, timing).await
+            drag::drag(d, from, to, position.unwrap_or_default(), within, timing, drew).await
         }
         Action::ExpectFocused { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Focused, wait(timeout_ms, timing), timing.poll_ms).await
@@ -3326,23 +3468,35 @@ pub async fn upload_in<D: Driver>(
     timing: &Timing,
 ) -> ActionOutcome {
     let path = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf()).to_string_lossy().into_owned();
-    let mut out = upload(d, selector, &path, shown, timing).await;
+    let mut drew = false;
+    let mut out = upload(d, selector, &path, shown, timing, &mut drew).await;
+    if drew {
+        highlight::conclude(d, timing, out.ok).await;
+    }
     append_dialogs(d, &mut out);
     out
 }
 
-async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str, timing: &Timing) -> ActionOutcome {
+async fn upload<D: Driver>(
+    d: &mut D,
+    selector: &Target,
+    path: &str,
+    shown: &str,
+    timing: &Timing,
+    drew: &mut bool,
+) -> ActionOutcome {
     let handle = match find_one(d, selector, timing).await {
         Ok(h) => h,
         Err(out) => return out,
     };
+    let say = Say::new(highlight::Kind::Type, highlight::upload_label(path));
     let kind = match page::call_value(d, &handle, FILE_INPUT_JS, &[]).await {
         Ok(v) => v,
         Err(e) => return failed_by(e),
     };
     let done = || ActionOutcome::passed(format!("uploaded {shown} to {}", selector.describe()));
     if kind["file"].as_bool() != Some(true) {
-        let (result, switched_off) = through_chooser(d, selector, path, timing).await;
+        let (result, switched_off) = through_chooser(d, selector, path, timing, &say, drew).await;
         let mut out = match result {
             Ok(()) => done(),
             Err(out) => out,
@@ -3355,6 +3509,7 @@ async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str
     if kind["disabled"].as_bool() == Some(true) {
         return ActionOutcome::failed(format!("{} {}", selector.describe(), input::DISABLED));
     }
+    *drew |= point_at(d, &handle, timing, &say).await;
     let backend = match page::backend_id(d, &handle).await {
         Ok(id) => id,
         Err(e) => return failed_by(e),
@@ -3380,12 +3535,14 @@ async fn through_chooser<D: Driver>(
     selector: &Target,
     path: &str,
     timing: &Timing,
+    say: &Say,
+    drew: &mut bool,
 ) -> (Result<(), ActionOutcome>, bool) {
     let out = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": true })).await {
         // Switched off below anyway: a browser that refused may still have
         // switched it on.
         Err(e) => Err(failed_by(e)),
-        Ok(_) => choose(d, selector, path, timing).await,
+        Ok(_) => choose(d, selector, path, timing, say, drew).await,
     };
     let switched_off = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": false })).await {
         Ok(_) => true,
@@ -3397,9 +3554,16 @@ async fn through_chooser<D: Driver>(
     (out, switched_off)
 }
 
-async fn choose<D: Driver>(d: &mut D, selector: &Target, path: &str, timing: &Timing) -> Result<(), ActionOutcome> {
+async fn choose<D: Driver>(
+    d: &mut D,
+    selector: &Target,
+    path: &str,
+    timing: &Timing,
+    say: &Say,
+    drew: &mut bool,
+) -> Result<(), ActionOutcome> {
     let ready = input::wait_ready(d, selector, false, timing).await.map_err(blocked)?;
-    point_and_pause(d, &ready, timing).await.map_err(failed_by)?;
+    *drew |= point_and_pause(d, &ready, timing, say).await;
     // A chooser event left over from an earlier upload must not stand in
     // for the one this click opens.
     d.forget_events();
@@ -3541,7 +3705,13 @@ pub async fn execute_in<D: Driver>(
     if let Some(gone) = in_missing_tab(d, action) {
         return gone;
     }
-    let mut out = run(d, action, timing, policy).await;
+    let mut drew = false;
+    let mut out = hide_compared_text(action, run(d, action, timing, policy, &mut drew).await);
+    if drew {
+        highlight::conclude(d, timing, out.ok).await;
+    } else if !highlight::draws_before(action) {
+        highlight::after_check(d, action, out.ok, timing).await;
+    }
     append_dialogs(d, &mut out);
     out
 }

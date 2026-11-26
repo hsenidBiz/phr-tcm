@@ -798,7 +798,7 @@ pub(crate) async fn discover_action_heard<B: DiscoveryBrowser>(
         return (409, NO_DISCOVERY.to_string());
     };
     let component = match action {
-        crate::browser::actions::Action::UseComponent { component, inputs } => {
+        crate::browser::actions::Action::UseComponent { component, inputs, .. } => {
             match component_to_try(root, organization, project, component, inputs, draft) {
                 Ok(found) => Some(found),
                 Err(refused) => return refused,
@@ -2499,7 +2499,7 @@ pub(crate) async fn autorun_discover_actions(
     // is not saved, misses an input or leads outside the recipe refuses
     // the batch before any earlier action drives the browser.
     for (i, action) in actions.iter().enumerate() {
-        if let crate::browser::actions::Action::UseComponent { component, inputs } = action {
+        if let crate::browser::actions::Action::UseComponent { component, inputs, .. } = action {
             if let Err((status, why)) =
                 component_to_try(&root, &ctx.org, &ctx.project, component, inputs, draft_for(action, draft.as_ref()))
             {

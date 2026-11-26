@@ -644,7 +644,7 @@ async fn fill_reset_form<D: Driver>(
         return Err("the reset page's fields are not known".to_string());
     };
     let secrets = [account.password.as_str(), RESET_PASSWORDS[0], RESET_PASSWORDS[1]];
-    let fill = |selector: &Target, value: &str| Action::Fill { selector: selector.clone(), value: value.to_string() };
+    let fill = |selector: &Target, value: &str| Action::Fill { selector: selector.clone(), value: value.to_string(), sensitive: true };
     let mut actions = Vec::with_capacity(3);
     if !page.no_current_password {
         actions.push(fill(&page.field, &account.password));

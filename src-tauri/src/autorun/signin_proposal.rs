@@ -156,7 +156,7 @@ pub struct SignInProposalView {
 fn action_in_words(a: &Action) -> String {
     match a {
         Action::Navigate { url } => format!("go to {}", crate::browser::save_guard::path_of(url)),
-        Action::Fill { selector, value } => {
+        Action::Fill { selector, value, .. } => {
             let with = if value.contains(recipe::PASSWORD) {
                 "the password"
             } else if value.contains(recipe::USERNAME) {

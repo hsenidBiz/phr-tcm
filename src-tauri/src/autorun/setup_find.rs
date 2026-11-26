@@ -212,11 +212,13 @@ pub fn browser_with_prefix(actions: &[Action], prefix: &str) -> Result<Vec<Actio
     actions
         .iter()
         .map(|a| {
-            let mut value = serde_json::to_value(a)
-                .map_err(|_| "the browser find rule could not be read".to_string())?;
-            replace_in(&mut value, prefix);
-            serde_json::from_value::<Action>(value)
-                .map_err(|_| "the browser find rule could not be read".to_string())
+            crate::browser::actions::with_run_marks(|| {
+                let mut value = serde_json::to_value(a)
+                    .map_err(|_| "the browser find rule could not be read".to_string())?;
+                replace_in(&mut value, prefix);
+                serde_json::from_value::<Action>(value)
+                    .map_err(|_| "the browser find rule could not be read".to_string())
+            })
         })
         .collect()
 }

@@ -1549,7 +1549,7 @@ impl Em<'_> {
             Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url, self.input.origins)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
             Action::Hover { selector, .. } => self.line(indent, &format!("await {}.hover();", one(selector))),
-            Action::Fill { selector, value } => {
+            Action::Fill { selector, value, .. } => {
                 self.line(indent, &format!("await {}.fill({});", one(selector), lit(value)))
             }
             Action::SelectOption { selector, label, value, .. } => {
@@ -1563,7 +1563,7 @@ impl Em<'_> {
             Action::WaitFor { selector, timeout_ms } => {
                 self.line(indent, &format!("await {}.waitFor({});", one(selector), wait_opts(selector, *timeout_ms)))
             }
-            Action::CheckText { value } => self.line(
+            Action::CheckText { value, .. } => self.line(
                 indent,
                 &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
@@ -1632,7 +1632,7 @@ impl Em<'_> {
                     ),
                 );
             }
-            Action::ExpectText { selector, equals, matches, same_as, timeout_ms } => {
+            Action::ExpectText { selector, equals, matches, same_as, timeout_ms, .. } => {
                 // `validate` holds the three to exactly one.
                 if let Some(name) = same_as {
                     // Read as the app reads it (`readText`), on both sides.
@@ -1674,7 +1674,7 @@ impl Em<'_> {
                     ),
                 )
             }
-            Action::ExpectContainsText { selector, value, timeout_ms } => {
+            Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
                 let w = lit(&collapse(value));
                 let l = one(selector);
                 self.line(

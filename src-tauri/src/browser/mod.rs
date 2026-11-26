@@ -68,6 +68,7 @@ pub mod net_capture;
 pub mod save_guard;
 pub mod downloads;
 pub mod timing;
+pub mod highlight;
 pub mod page;
 pub mod session;
 pub mod locator;

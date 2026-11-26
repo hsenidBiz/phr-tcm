@@ -470,7 +470,7 @@ async fn an_action_never_logs_a_query_string_or_a_typed_value() {
     d.dialogs_on_call.push(("Input.insertText".into(), "alert".into(), format!("Saved {typed}")));
     let (mut browser, _) = slot(d, exploring("Leave"));
 
-    let fill = Action::Fill { selector: "#name".into(), value: typed.to_string() };
+    let fill = Action::Fill { selector: "#name".into(), value: typed.to_string(), sensitive: false };
     let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &fill, None, None).await;
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
