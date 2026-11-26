@@ -254,10 +254,15 @@ test("a long bubble wraps onto more lines instead of being cut off", () => {
 const hueOf = (slot: number | null) =>
   (one(exploring, slot).querySelector(".assistant-scene__walker") as HTMLElement).style.getPropertyValue("--assistant-hue");
 
-test("a slot beyond the third still renders, in the third slot's look", () => {
+test("a slot beyond the third still renders, in its own look", () => {
   expect(one(exploring, 5).querySelector(".assistant-scene__walker")).toHaveAttribute("data-slot", "5");
-  expect(hueOf(5)).toBe(hueOf(2));
+  expect(hueOf(5)).not.toBe(hueOf(2));
   expect(hueOf(5)).toBe(hueFor(5));
+});
+
+test("the eight browser slots each get a different hue", () => {
+  const hues = [0, 1, 2, 3, 4, 5, 6, 7].map(hueFor);
+  expect(new Set(hues).size).toBe(8);
 });
 
 test("no browser is recorded as data-slot none", () => {

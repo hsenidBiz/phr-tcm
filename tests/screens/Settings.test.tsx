@@ -1832,16 +1832,20 @@ test("startOnModules opens on Modules", async () => {
   expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
 });
 
-/// The page size is Auto Test's, so its card is there only with Auto Test on.
-test("the Auto Test card with the browser page size shows only while Auto Test is on", async () => {
+/// The page size moved to Auto Test's own settings dialog; the card stays,
+/// with one line pointing there, and is there only with Auto Test on.
+test("the Auto Test card points to Auto Test settings and shows only while Auto Test is on", async () => {
   mockIPC(() => undefined);
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByRole("heading", { name: "Changelog" });
   expect(screen.queryByRole("heading", { name: "Auto Test" })).not.toBeInTheDocument();
   act(() => setModulesForTest(["db_access", "auto_run"]));
   const card = (await screen.findByRole("heading", { name: "Auto Test" })).closest("section")!;
-  expect(within(card).getByText("Browser page size")).toBeInTheDocument();
-  expect(within(card).getByRole("spinbutton", { name: "Width" })).toBeInTheDocument();
+  expect(
+    within(card).getByText("Browser page size and how many browsers can be open are in Auto Test → Settings."),
+  ).toBeInTheDocument();
+  expect(within(card).queryByText("Browser page size")).not.toBeInTheDocument();
+  expect(within(card).queryByRole("spinbutton", { name: "Width" })).not.toBeInTheDocument();
   act(() => setModulesForTest([]));
   await waitFor(() => expect(screen.queryByRole("heading", { name: "Auto Test" })).not.toBeInTheDocument());
 });

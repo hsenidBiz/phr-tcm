@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { PbiHit } from "../bindings";
 import { scopeOf, type SuiteScope } from "../lib/scope";
 import { useAppSimpleMode } from "../lib/appSimpleMode";
@@ -26,6 +26,9 @@ import {
 } from "./lazyScreens";
 import { TITLES, TITLE_NOTES } from "./titles";
 import AutoRunModeSwitch from "../screens/AutoRun/ModeSwitch";
+import AutoRunSettingsDialog from "../screens/AutoRun/AutoRunSettingsDialog";
+import { Button } from "../components/ui/button";
+import { IconSettings } from "../lib/actionIcons";
 import type { CaseSelection } from "./types";
 
 type ManageFocus = { planId: number; suiteId: number; project: string };
@@ -85,6 +88,7 @@ export default function CaseScreens({
   changeHomeProject,
 }: Props) {
   const simple = useAppSimpleMode().on;
+  const [autoRunSettingsOpen, setAutoRunSettingsOpen] = useState(false);
   // One object per pick, so Auto Test's effects keyed on it do not re-run on every App render.
   const scope = useMemo(() => scopeOf(pbi, suite), [pbi, suite]);
   return (
@@ -102,7 +106,17 @@ export default function CaseScreens({
         {section === "playwright" && <SpecsStatusPill />}
         {/* Auto Test's Basic/Advanced switch rides in the title row, at the right.
             App Basic mode holds Auto Test in Basic, so the switch says nothing there. */}
-        {section === "autorun" && modules.has("auto_run") && !simple && <div className="ml-auto"><AutoRunModeSwitch /></div>}
+        {/* The Settings button shows in Basic mode too; only the switch is left out of it. */}
+        {section === "autorun" && modules.has("auto_run") && (
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setAutoRunSettingsOpen(true)}>
+              <IconSettings aria-hidden />
+              Settings
+            </Button>
+            {!simple && <AutoRunModeSwitch />}
+          </div>
+        )}
+        {autoRunSettingsOpen && <AutoRunSettingsDialog onClose={() => setAutoRunSettingsOpen(false)} />}
         {TITLE_NOTES[section] && (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
             <span className="label-trim">{TITLE_NOTES[section]}</span>

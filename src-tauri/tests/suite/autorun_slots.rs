@@ -44,20 +44,20 @@ fn changed() -> Overrides {
     o
 }
 
-/// Three browsers in all: main, and two beside it. A number from the cap up
-/// is no slot.
+/// Eight browsers at most (the ceiling the arrays are sized for): main, and
+/// seven beside it. A number from the ceiling up is no slot.
 #[test]
 fn slot_numbers() {
-    assert_eq!((EXTRA_CAP, SLOT_COUNT), (2, 3));
-    assert_eq!(SlotNo::all(), [SlotNo(0), SlotNo(1), SlotNo(2)]);
-    assert_eq!(SlotNo::extras(), [SlotNo(1), SlotNo(2)]);
+    assert_eq!((EXTRA_CAP, SLOT_COUNT), (7, 8));
+    assert_eq!(SlotNo::all().map(|s| s.0), [0, 1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(SlotNo::extras().map(|s| s.0), [1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(SlotNo::from_number(0), Some(SlotNo::MAIN));
-    assert_eq!(SlotNo::from_number(2), Some(SlotNo(2)));
-    assert_eq!(SlotNo::from_number(3), None);
+    assert_eq!(SlotNo::from_number(7), Some(SlotNo(7)));
+    assert_eq!(SlotNo::from_number(8), None);
     assert_eq!(SlotNo::from_number(255), None);
     assert!(SlotNo::MAIN.is_main());
     assert!(SlotNo::extras().iter().all(|s| !s.is_main()));
-    assert_eq!(SlotNo::all().map(SlotNo::index), [0, 1, 2]);
+    assert_eq!(SlotNo::all().map(SlotNo::index), [0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
 /// Each slot saves into a folder of its own, and emptying one leaves the
@@ -586,7 +586,7 @@ mod card {
     use v2_lib::autorun::replay_to::{state, OneReplay};
     use v2_lib::commands::autorun_slots::{
         agent_views, auto_run_agents, auto_run_end_agent_discovery, auto_run_release_agent, auto_run_stop_agent,
-        bind, bind_if_free, bound, clear, hold_binding, next_views_to_send, on_sweep, slot_for, slot_for_with,
+        bind, bind_if_free, bound, clear, hold_binding, next_views_to_send, on_sweep, slot_for, slot_for_limited, slot_for_with,
         slot_if_any, slot_of, unbind, unbind_agent, window_position, AgentActivity, Need, ALL_BROWSERS_OPEN,
         NO_BROWSER_OF_YOURS, NO_SUCH_BROWSER,
     };
@@ -681,7 +681,9 @@ mod card {
         assert_eq!(slot_for(&caller(ID_B), Need::Open), Ok(SlotNo(1)));
         assert_eq!(bound(SlotNo(1)), Some(key(ID_B)), "the slot is bound in the same step");
         assert_eq!(slot_for(&caller(ID_C), Need::Open), Ok(SlotNo(2)));
-        assert_eq!(slot_for(&caller(ID_D), Need::Open), Err((409, ALL_BROWSERS_OPEN.to_string())));
+        // The limit is 3 here (main and two extras): the default of 5 would
+        // hand ID_D a third extra.
+        assert_eq!(slot_for_limited(&caller(ID_D), Need::Open, &|_| true, 3), Err((409, ALL_BROWSERS_OPEN.to_string())));
         assert_eq!(slot_of(&key(ID_D)), None, "a refused open binds nothing");
         // Each keeps its own browser on every later call.
         assert_eq!(slot_for(&caller(ID_B), Need::Read), Ok(SlotNo(1)));
@@ -693,6 +695,65 @@ mod card {
         unbind(SlotNo(1));
         assert_eq!(slot_for(&caller(ID_D), Need::Open), Ok(SlotNo(1)));
         assert_eq!(slot_if_any(&caller(ID_D)), Some(SlotNo(1)));
+        fresh();
+    }
+
+    /// The limit counts extras (open or reserved) and never the main browser:
+    /// at the default of 5 the fifth extra is refused, and the main browser is
+    /// handed out at any limit.
+    #[test]
+    fn the_fifth_extra_is_refused_at_a_limit_of_five() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let ids = ["a1", "b2", "c3", "d4", "e5", "f6"].map(|s| s.repeat(16));
+        for id in &ids {
+            register(id, "claude-code", T0);
+        }
+        let empty = |_: SlotNo| true;
+        assert_eq!(slot_for_limited(&caller(&ids[0]), Need::Act, &empty, 5), Ok(SlotNo::MAIN));
+        for (i, id) in ids[1..5].iter().enumerate() {
+            assert_eq!(slot_for_limited(&caller(id), Need::Open, &empty, 5), Ok(SlotNo(i as u8 + 1)));
+        }
+        assert_eq!(slot_for_limited(&caller(&ids[5]), Need::Open, &empty, 5), Err((409, ALL_BROWSERS_OPEN.to_string())));
+        assert_eq!(slot_of(&key(&ids[5])), None, "a refused open binds nothing");
+        // A limit of 1 allows main only, and still never refuses main itself.
+        fresh();
+        for id in &ids[..2] {
+            register(id, "claude-code", T0);
+        }
+        assert_eq!(slot_for_limited(&caller(&ids[0]), Need::Open, &empty, 1), Ok(SlotNo::MAIN));
+        assert_eq!(slot_for_limited(&caller(&ids[1]), Need::Open, &empty, 1), Err((409, ALL_BROWSERS_OPEN.to_string())));
+        fresh();
+    }
+
+    /// Lowering the limit while five extras are open closes none: they keep
+    /// their bindings, and only a new open is refused.
+    #[test]
+    fn lowering_the_limit_closes_nothing_and_refuses_a_new_open() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let ids = ["a1", "b2", "c3", "d4", "e5", "f6", "07"].map(|s| s.repeat(16));
+        for id in &ids {
+            register(id, "claude-code", T0);
+        }
+        bind(SlotNo::MAIN, &key(&ids[0]));
+        for (i, id) in ids[1..6].iter().enumerate() {
+            bind(SlotNo(i as u8 + 1), &key(id));
+        }
+        let open = |_: SlotNo| false;
+        assert_eq!(slot_for_limited(&caller(&ids[6]), Need::Open, &open, 3), Err((409, ALL_BROWSERS_OPEN.to_string())));
+        for (i, id) in ids[1..6].iter().enumerate() {
+            assert_eq!(bound(SlotNo(i as u8 + 1)), Some(key(id)), "slot {} was closed", i + 1);
+            assert_eq!(slot_for_limited(&caller(id), Need::Act, &open, 3), Ok(SlotNo(i as u8 + 1)));
+        }
+        // Once the count falls below the limit a new open is handed a browser.
+        unbind(SlotNo(5));
+        unbind(SlotNo(4));
+        unbind(SlotNo(3));
+        let free = |n: SlotNo| n.0 >= 3;
+        assert_eq!(slot_for_limited(&caller(&ids[6]), Need::Open, &free, 5), Ok(SlotNo(3)));
         fresh();
     }
 
@@ -716,7 +777,7 @@ mod card {
         assert_eq!(slot_if_any(&caller(ID_B)), None);
         assert!(!NO_BROWSER_OF_YOURS.contains(['\u{2013}', '\u{2014}']));
         assert!(!ALL_BROWSERS_OPEN.contains(['\u{2013}', '\u{2014}']));
-        assert!(ALL_BROWSERS_OPEN.starts_with("3 Auto Test browsers are open already"));
+        assert!(ALL_BROWSERS_OPEN.starts_with("The most Auto Test browsers allowed at once are open already"));
         fresh();
     }
 
@@ -783,8 +844,16 @@ mod card {
     #[test]
     fn extra_windows_open_offset() {
         assert_eq!(window_position(SlotNo::MAIN), None);
-        assert_eq!(window_position(SlotNo(1)), Some((60, 60)));
-        assert_eq!(window_position(SlotNo(2)), Some((120, 120)));
+        assert_eq!(window_position(SlotNo(1)), Some((30, 30)));
+        assert_eq!(window_position(SlotNo(2)), Some((60, 60)));
+    }
+
+    #[test]
+    fn every_extra_window_fits_a_1080p_screen() {
+        for n in 1..8 {
+            let (x, y) = window_position(SlotNo(n)).unwrap();
+            assert!(x >= 0 && y >= 0 && x + 1280 <= 1920 && y + 860 <= 1080, "slot {n} at ({x}, {y})");
+        }
     }
 
     /// An open that replaces the browser an assistant holds keeps its
@@ -878,10 +947,12 @@ mod card {
         }
         bind(SlotNo::MAIN, &key(ID_A));
         let slot_1_has_a_browser = |n: SlotNo| n != SlotNo(1);
-        assert_eq!(slot_for_with(&caller(ID_B), Need::Open, &slot_1_has_a_browser), Ok(SlotNo(2)));
+        // At a limit of 3 (main and two extras): the default of 5 would have a
+        // third extra to give.
+        assert_eq!(slot_for_limited(&caller(ID_B), Need::Open, &slot_1_has_a_browser, 3), Ok(SlotNo(2)));
         assert_eq!(bound(SlotNo(1)), None, "a slot with a browser in it was bound");
         assert_eq!(
-            slot_for_with(&caller(ID_C), Need::Open, &slot_1_has_a_browser),
+            slot_for_limited(&caller(ID_C), Need::Open, &slot_1_has_a_browser, 3),
             Err((409, ALL_BROWSERS_OPEN.to_string())),
             "the only empty slot was taken already"
         );
@@ -1926,8 +1997,9 @@ mod card {
         let _a = crate::serial::autorun();
         fresh();
         let no = NO_SUCH_BROWSER.to_string();
-        assert_eq!(auto_run_stop_agent(7).await, Err(no.clone()));
-        assert_eq!(auto_run_end_agent_discovery(3).await, Err(no.clone()));
+        // Eight slots now, so the first number that is no slot is 8 (it was 3).
+        assert_eq!(auto_run_stop_agent(8).await, Err(no.clone()));
+        assert_eq!(auto_run_end_agent_discovery(9).await, Err(no.clone()));
         assert_eq!(auto_run_release_agent(255).await, Err(no));
         assert!(NO_SUCH_BROWSER.contains("not open any more"));
         fresh();
@@ -2025,10 +2097,12 @@ mod global_checks {
     /// sentence is the one said when main and an extra are both open.
     #[test]
     fn first_open_finds_the_lowest_open_slot() {
-        assert_eq!(first_open([false, true, true]), Some(SlotNo(1)));
-        assert_eq!(first_open([false, false, true]), Some(SlotNo(2)));
-        assert_eq!(first_open([true, false, true]), Some(SlotNo::MAIN));
-        assert_eq!(first_open([false, false, false]), None);
+        // Eight slots now (was three): the same patterns, padded.
+        let pad = |a: [bool; 3]| std::array::from_fn::<bool, 8, _>(|i| a.get(i).copied().unwrap_or(false));
+        assert_eq!(first_open(pad([false, true, true])), Some(SlotNo(1)));
+        assert_eq!(first_open(pad([false, false, true])), Some(SlotNo(2)));
+        assert_eq!(first_open(pad([true, false, true])), Some(SlotNo::MAIN));
+        assert_eq!(first_open(pad([false, false, false])), None);
     }
 
     /// With nothing open, every global check says so; a lock that is taken

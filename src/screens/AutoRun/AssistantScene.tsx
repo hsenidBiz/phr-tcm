@@ -44,15 +44,23 @@ export function poseFor(a: AgentActivity): ScenePose {
 /** The character's colour for a browser slot, so two assistants can be told
  * apart (and matched to their row's square). Tokens only, and never danger or
  * warning, which mean a problem. Slot 0 (the main browser) takes the theme
- * accent, slot 1 the info blue. Slot 2 and any above it take a blend of the
- * two: teal in the default green theme, so it is neither of the first two and
- * neither red nor amber. An assistant with no browser is the muted text
- * colour. */
+ * accent, slot 1 the info blue, and slots 2 to 7 each a different blend of
+ * those two or of one of them with the text colour (greens, teals, blues and
+ * darker or lighter shades of them, in step with the theme, so each reads on
+ * light and dark). An assistant with no browser is the muted text colour. */
+const BLENDS = [
+  "var(--color-accent)",
+  "var(--color-info)",
+  "color-mix(in srgb, var(--color-accent) 75%, var(--color-info))",
+  "color-mix(in srgb, var(--color-accent) 50%, var(--color-info))",
+  "color-mix(in srgb, var(--color-accent) 25%, var(--color-info))",
+  "color-mix(in srgb, var(--color-accent) 60%, var(--color-text))",
+  "color-mix(in srgb, var(--color-info) 60%, var(--color-text))",
+  "color-mix(in srgb, var(--color-accent) 50%, var(--color-muted))",
+];
 export function hueFor(slot: number | null): string {
   if (slot === null) return "var(--color-muted)";
-  if (slot === 0) return "var(--color-accent)";
-  if (slot === 1) return "var(--color-info)";
-  return "color-mix(in srgb, var(--color-accent) 50%, var(--color-info))";
+  return BLENDS[Math.min(Math.max(slot, 0), BLENDS.length - 1)];
 }
 
 /** The short line for the speech bubble, or null when there is nothing short

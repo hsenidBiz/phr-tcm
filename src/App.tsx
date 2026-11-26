@@ -601,7 +601,7 @@ export default function App() {
               flow, so it pushes the page down rather than covering it. */}
           {/* Not in the help site's shots: the sample assistants are always working, and the strip would
               push every screen down and repeat the Assistants card's Stop (isCaptureMode). */}
-          {signedIn && modules.has("auto_run") && !isCaptureMode() && <ActivityStrip onOpen={() => goToSection("autorun")} />}
+          {signedIn && modules.has("auto_run") && !isCaptureMode() && <ActivityStrip onAutoTest={workMode || section !== "autorun"} onOpen={() => goToSection("autorun")} />}
 
           {/* Work Manager scrolls inside its own columns - the outer main
               must not add a second scrollbar around the board. */}

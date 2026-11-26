@@ -153,7 +153,7 @@ export const settings: Screen = {
         "**API Templates**: Create the test data a case needs, such as cycles, drafts and settings, through the app's own pages before the case runs, so every run starts from a known state. It needs Auto Test, and adds API Templates to the sidebar's bottom group.",
         "**Playwright**: Export passing Auto Test scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync. It needs Auto Test, and adds Playwright to the sidebar's bottom group, under Auto Test.",
         "With Auto Test on, [[Ctrl+9]] opens it. The screens above it keep [[Ctrl+1]] to [[Ctrl+8]].",
-        "With Auto Test on, Settings also shows an **Auto Test** card with **Browser page size**: the Width and Height of the page every browser the app drives shows, 1280 x 720 until you change it (800 x 600 to 3840 x 2160). **Save** keeps a new size and **Reset to default** puts 1280 x 720 back. A browser that is already open keeps its size; the next one the app opens uses the new one.",
+        "With Auto Test on, Settings also shows an **Auto Test** card with one line: the browser page size and how many browsers can be open at once are set in **Settings** at the top of Auto Test.",
       ],
     },
 

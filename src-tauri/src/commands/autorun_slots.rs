@@ -76,7 +76,7 @@ pub fn need_of(method: &str, path: &str) -> Option<Need> {
 
 /// Said to an assistant that opens a browser when every browser there can be
 /// is open already.
-pub const ALL_BROWSERS_OPEN: &str = "3 Auto Test browsers are open already, the most at once - wait for another assistant to finish, or ask the person to release one on the Auto Test screen";
+pub const ALL_BROWSERS_OPEN: &str = "The most Auto Test browsers allowed at once are open already - wait for another assistant to finish, or ask the person to release one on the Auto Test screen";
 
 /// Said to an assistant that acts on or reads a browser when it has none and
 /// main is another assistant's.
@@ -112,10 +112,11 @@ pub fn reads_an_imported_set(method: &str, path: &str, body: &str) -> bool {
 
 /// Where slot `n`'s window opens: the main browser's is wherever the browser
 /// puts it, and each extra one is offset from the one before so the windows
-/// are never exactly stacked.
+/// are never exactly stacked. The step is small enough that the last slot's
+/// window (a 1280 x 720 page plus its chrome) still fits a 1920 x 1080 screen.
 pub fn window_position(n: SlotNo) -> Option<(i32, i32)> {
     (!n.is_main()).then(|| {
-        let step = 60 * i32::from(n.0);
+        let step = 30 * i32::from(n.0);
         (step, step)
     })
 }
@@ -147,6 +148,20 @@ pub fn slot_for(caller: &Caller, need: Need) -> Result<SlotNo, (u16, String)> {
 /// slot `n` has no session and nothing working in it. Rule 4 gives out only a
 /// slot that is empty and unbound, so a test can say a slot is not.
 pub fn slot_for_with(caller: &Caller, need: Need, is_empty: &dyn Fn(SlotNo) -> bool) -> Result<SlotNo, (u16, String)> {
+    slot_for_limited(caller, need, is_empty, crate::app_settings::autorun_browser_limit())
+}
+
+/// `slot_for_with`, with how many browsers may be open at once (main
+/// included) given: an assistant is handed an extra browser only while fewer
+/// than `limit - 1` extras are in use (open, or reserved by an assistant).
+/// Lowering the limit closes nothing; it only stops new ones. The main
+/// browser is never refused for it.
+pub fn slot_for_limited(
+    caller: &Caller,
+    need: Need,
+    is_empty: &dyn Fn(SlotNo) -> bool,
+    limit: u8,
+) -> Result<SlotNo, (u16, String)> {
     let Caller::Agent(key) = caller else {
         return Ok(SlotNo::MAIN);
     };
@@ -172,6 +187,11 @@ pub fn slot_for_with(caller: &Caller, need: Need, is_empty: &dyn Fn(SlotNo) -> b
         return Err((409, NO_BROWSER_OF_YOURS.to_string()));
     }
     let empty = empty.unwrap_or_default();
+    let allowed = usize::from(crate::app_settings::clamp_autorun_browsers(limit)) - 1;
+    let in_use = SlotNo::extras().iter().zip(empty).filter(|(n, e)| !e || t.bound[n.index()].is_some()).count();
+    if in_use >= allowed {
+        return Err((409, ALL_BROWSERS_OPEN.to_string()));
+    }
     for (n, empty) in SlotNo::extras().into_iter().zip(empty) {
         if empty && t.bound[n.index()].is_none() {
             t.bound[n.index()] = Some(key.clone());

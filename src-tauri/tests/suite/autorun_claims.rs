@@ -148,7 +148,8 @@ fn a_second_mapping_run_is_refused_naming_whose_browser() {
     register(ID_A);
     register(ID_B);
     slots::bind(SlotNo(1), &key(ID_B));
-    let going = [false, true, false];
+    // Eight slots now (was three): the same pattern, padded.
+    let going = [false, true, false, false, false, false, false, false];
     assert_eq!(mapping_refusal(SlotNo::MAIN, going), Some(mapping_going("Assistant 2's browser")));
     assert_eq!(
         mapping_going("Assistant 2's browser"),
@@ -168,23 +169,23 @@ fn a_mapping_run_in_a_browser_nobody_holds_names_the_browser_without_a_label() {
     fresh();
     // The person's main browser, or an assistant that has gone.
     assert_eq!(
-        mapping_refusal(SlotNo(1), [true, false, false]),
+        mapping_refusal(SlotNo(1), [true, false, false, false, false, false, false, false]),
         Some(mapping_going("the main Auto Test browser"))
     );
     register(ID_A);
     slots::bind(SlotNo::MAIN, &key(ID_A));
     assert_eq!(
-        mapping_refusal(SlotNo(1), [true, false, false]),
+        mapping_refusal(SlotNo(1), [true, false, false, false, false, false, false, false]),
         Some(mapping_going("Assistant 1's browser"))
     );
     agents::note_bye(ID_A, T0);
     assert_eq!(
-        mapping_refusal(SlotNo(1), [true, false, false]),
+        mapping_refusal(SlotNo(1), [true, false, false, false, false, false, false, false]),
         Some(mapping_going("the main Auto Test browser"))
     );
     slots::unbind(SlotNo::MAIN);
     assert_eq!(
-        mapping_refusal(SlotNo::MAIN, [false, false, true]),
+        mapping_refusal(SlotNo::MAIN, [false, false, true, false, false, false, false, false]),
         Some(mapping_going("an Auto Test browser"))
     );
     let said = mapping_going("Assistant 1's browser");

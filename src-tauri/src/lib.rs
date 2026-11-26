@@ -458,6 +458,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::get_page_size,
             app_settings::set_page_size,
             app_settings::reset_page_size,
+            app_settings::get_autorun_browsers,
+            app_settings::set_autorun_browsers,
             writing_style::writing_style_get,
             writing_style::writing_style_save,
             writing_style::writing_style_read_file,

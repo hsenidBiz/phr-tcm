@@ -2388,7 +2388,8 @@ only guessed: only from a request discovery saw.
 
 ## Working beside other assistants
 
-Up to three Auto Test browsers can be open at once. One assistant working
+Up to the number of Auto Test browsers set in Auto Test settings (five by
+default) can be open at once. One assistant working
 alone always uses the main one, as before.
 
 - Each assistant needs an account of its own: signing an account in anywhere

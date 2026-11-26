@@ -32,6 +32,7 @@ fn a_missing_file_is_the_defaults() {
             app_simple_mode: None,
             switch_markers_migrated: false,
             page_size: DEFAULT_PAGE,
+            autorun_browsers: 5,
         }
     );
 }
@@ -68,6 +69,7 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             app_simple_mode: None,
             switch_markers_migrated: false,
             page_size: DEFAULT_PAGE,
+            autorun_browsers: 5,
         }
     );
 }
@@ -92,6 +94,7 @@ fn saved_settings_read_back() {
         app_simple_mode: None,
         switch_markers_migrated: false,
         page_size: PageSize { width: 1920, height: 1080 },
+        autorun_browsers: 3,
     };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);
@@ -148,4 +151,28 @@ fn failed_case_video_defaults_off() {
     let d = dir();
     std::fs::write(d.path().join("app-settings.json"), r#"{"beta_updates":true}"#).unwrap();
     assert!(!load(d.path()).autorun_failed_video);
+}
+
+#[test]
+fn the_browser_limit_defaults_to_five_and_is_held_to_one_to_eight() {
+    use v2_lib::app_settings::clamp_autorun_browsers;
+    assert_eq!(AppSettings::default().autorun_browsers, 5);
+    assert_eq!([0, 1, 5, 8, 9, 255].map(clamp_autorun_browsers), [1, 1, 5, 8, 8, 8]);
+    // A hand-edited file with a value out of range still loads; the rest is kept.
+    let d = dir();
+    std::fs::write(d.path().join("app-settings.json"), r#"{"autorun_browsers": 40, "beta_updates": true}"#).unwrap();
+    let loaded = load(d.path());
+    assert!(loaded.beta_updates);
+    assert_eq!(v2_lib::app_settings::clamp_autorun_browsers(loaded.autorun_browsers), 8);
+}
+
+#[test]
+fn an_unusable_browser_limit_costs_nothing_else() {
+    for bad in ["300", "-1", "\"5\"", "2.5", "null"] {
+        let d = dir();
+        std::fs::write(d.path().join("app-settings.json"), format!(r#"{{"autorun_browsers": {bad}, "beta_updates": true}}"#)).unwrap();
+        let loaded = load(d.path());
+        assert!(loaded.beta_updates, "{bad} reset the other settings");
+        assert_eq!(v2_lib::app_settings::clamp_autorun_browsers(loaded.autorun_browsers), 5, "{bad}");
+    }
 }
