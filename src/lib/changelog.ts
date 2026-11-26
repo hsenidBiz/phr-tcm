@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.6",
+    date: "2026-11-26",
+    items: [
+      "The line that shows what your assistants are doing is now one short line, with Open Auto Test when you are elsewhere.",
+      "Auto Test has its own Settings: the browser page size, and how many Auto Test browsers can be open at once (five by default, up to eight).",
+    ],
+  },
+  {
     version: "2.4.8-beta.5",
     date: "2026-11-26",
     items: [
