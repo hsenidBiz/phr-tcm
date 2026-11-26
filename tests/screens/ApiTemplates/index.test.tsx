@@ -823,10 +823,9 @@ test("a flow map sits in a pan and zoom viewport with its three controls", async
   expect(level.textContent).not.toBe(before);
 });
 
-// ---------------------------------------------------------------------------
-// The map's arrows take the colour of what the stage they lead into does.
+// A stage's tone is a left edge on the stage; the arrows are all muted.
 
-test("each arrow is coloured by what its stage does, and a pulse runs along it", async () => {
+test("each stage carries its tone as a left edge, and every arrow is muted with a pulse", async () => {
   const on = (id: string, title: string, effect: string, stage: string) => ({
     template: template({ id, title, effect, stage: { flow: "pms-performance-cycle", id: stage } }),
     runs: [],
@@ -844,18 +843,27 @@ test("each arrow is coloured by what its stage does, and a pulse runs along it",
   await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
-  const edges = [...within(flow).getByTestId("flow-map").querySelectorAll("g[data-tone]")];
-  const tones = edges.map((g) => g.getAttribute("data-tone"));
+  const map = within(flow).getByTestId("flow-map");
+  // The colour moved from the arrows onto the stages (the edge colour is a
+  // class on the stage, from the one effect its templates share).
+  const edgeOf = (name: string) => within(map).getByRole("group", { name });
+  expect(edgeOf("Evaluation rules").className).toContain("border-l-warning");
+  expect(edgeOf("Participants").className).toContain("border-l-success");
+  expect(edgeOf("Publish").className).toContain("border-l-danger");
+  expect(edgeOf("Cycle setup").className).toContain("border-l-accent");
+  expect(edgeOf("Competencies").className).toContain("border-l-accent");
+  expect(edgeOf("Evaluation rules")).toHaveAttribute("data-tone", "edit");
+
+  // Every arrow is the muted token, whatever the stage it leads into does.
+  const edges = [...map.querySelectorAll("g.flow-edge")];
   // setup->rules, rules->competencies, rules->participants, participants->publish.
-  expect(tones).toEqual(["edit", "none", "create", "delete"]);
-  const cls = edges.map((g) => g.getAttribute("class"));
-  expect(cls[0]).toContain("text-warning");
-  expect(cls[1]).toContain("text-accent");
-  expect(cls[2]).toContain("text-success");
-  expect(cls[3]).toContain("text-danger");
-  for (const c of cls) expect(c).toContain("flow-edge");
-  // Each arrow carries a bright stretch that runs its length (pathLength 1,
-  // so every arrow at the same pace), a later column starting later.
+  expect(edges).toHaveLength(4);
+  for (const g of edges) {
+    expect(g.getAttribute("class")).toContain("text-muted");
+    expect(g.getAttribute("class")).not.toMatch(/text-(success|warning|danger|accent)/);
+  }
+  // Each arrow still carries a pulse that runs its length (pathLength 1, so
+  // every arrow at the same pace), a later column starting later.
   const pulses = edges.map((g) => g.querySelector("path.flow-pulse") as SVGElement);
   for (const p of pulses) expect(p).toHaveAttribute("pathLength", "1");
   expect(pulses[0].getAttribute("d")).toBe(edges[0].querySelector("path[data-edge]")!.getAttribute("d"));

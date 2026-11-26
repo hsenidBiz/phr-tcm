@@ -576,7 +576,7 @@ where
         let before = here::fixture_here(&state, f, &|id| now.templates.iter().flatten().find(|t| t.id == id).cloned());
         if let Err(refused) = fixture_run::ready_to_run(root, org, project, f, Some(&now.templates)) {
             if refused.counts {
-                let failure = HereFailure { at: crate::applog::stamp(), step: None, detail: Some(refused.why.clone()) };
+                let failure = HereFailure { at: crate::applog::stamp(), step: None, detail: Some(refused.why.clone()), reason: None };
                 here::note_fixture_run(root, org, project, f, &refused.templates, false, Some(failure), TrySource::Plain);
             }
             return Err(setup_blocked(&before, &refused.why));

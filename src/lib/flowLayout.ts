@@ -17,18 +17,23 @@ import type { Flow } from "../bindings";
 export type Placed = { id: string; col: number; row: number; x: number; y: number; h: number };
 
 /** Box width, the gaps between columns and between boxes in a column, and
- * a box's height parts: its header, one line per template, bottom padding. */
-export const GEOMETRY = { colW: 208, gapX: 56, gapY: 16, head: 40, perTemplate: 24, pad: 12 };
+ * a box's height parts: its header, one line per template, two lines of
+ * failure reason under a template that failed here, bottom padding. All on
+ * the 4px grid. */
+export const GEOMETRY = { colW: 208, gapX: 56, gapY: 16, head: 40, perTemplate: 24, perFailure: 32, pad: 12 };
 
 /** A stage box's height: a line per template, and one line even with none
- * (it says "No template yet"). */
-function boxHeight(templates: number): number {
-  return GEOMETRY.head + GEOMETRY.perTemplate * Math.max(1, templates) + GEOMETRY.pad;
+ * (it says "No template yet"), plus room under each failed template for the
+ * reason it shows. */
+function boxHeight(templates: number, failures: number): number {
+  return GEOMETRY.head + GEOMETRY.perTemplate * Math.max(1, templates) + GEOMETRY.perFailure * failures + GEOMETRY.pad;
 }
 
 export function layoutFlow(
   flow: Flow,
   templateCounts: Record<string, number>,
+  /** How many of each stage's templates show a failure line. */
+  failureCounts: Record<string, number> = {},
 ): { boxes: Placed[]; edges: Array<{ from: string; to: string }>; width: number; height: number } {
   const byId = new Map(flow.stages.map((s) => [s.id, s]));
 
@@ -56,7 +61,7 @@ export function layoutFlow(
     const col = colOf(s.id);
     const row = rowsUsed.get(col) ?? 0;
     const y = nextY.get(col) ?? 0;
-    const h = boxHeight(templateCounts[s.id] ?? 0);
+    const h = boxHeight(templateCounts[s.id] ?? 0, failureCounts[s.id] ?? 0);
     rowsUsed.set(col, row + 1);
     nextY.set(col, y + h + GEOMETRY.gapY);
     return { id: s.id, col, row, x: col * (GEOMETRY.colW + GEOMETRY.gapX), y, h };
@@ -73,10 +78,11 @@ export function layoutFlow(
   // halfway down and its arrows fan out up and down rather than all running
   // along the top. A column's stack is where its next box would have gone,
   // less the trailing gap. The tallest column's offset is 0, so `height`
-  // stands.
+  // stands. The offset is rounded, so every position is a whole pixel and
+  // an edge is not drawn blurred across two.
   const centred = boxes.map((b) => {
     const stack = (nextY.get(b.col) ?? 0) - GEOMETRY.gapY;
-    return { ...b, y: b.y + (height - stack) / 2 };
+    return { ...b, y: b.y + Math.round((height - stack) / 2) };
   });
   return { boxes: centred, edges, width, height };
 }

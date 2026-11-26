@@ -304,7 +304,7 @@ export const apiTemplates: Screen = {
       group: "flows",
       locate: { role: "button", name: "View flow Set up a locked account in the browser" },
       name: "View flow",
-      does: "Opens the flow on a page of its own in your browser: its stages, the check each one runs, and the templates that perform them.",
+      does: "Opens the flow on a page of its own in your browser: its stages with a coloured left edge for what they do, the templates that perform them with any \"failed at...\" line, and a legend strip at the bottom.",
     },
     {
       id: "remove-flow",
@@ -425,7 +425,7 @@ export const apiTemplates: Screen = {
       group: "flows",
       locate: { role: "group", name: "Lock the account" },
       name: "Stage",
-      does: "One stage of the flow. The arrows come in from the stages it needs first; a dashed box is a stage that can be skipped.",
+      does: "One stage of the flow. The arrows come in from the stages it needs first, a dashed box is a stage that can be skipped, the coloured left edge says what its templates do, and a template that failed here shows a \"failed at...\" line under it.",
     },
     {
       id: "stage-template",

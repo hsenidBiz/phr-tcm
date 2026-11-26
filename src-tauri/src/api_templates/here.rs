@@ -22,6 +22,11 @@ pub struct HereFailure {
     pub at: String,
     pub step: Option<String>,
     pub detail: Option<String>,
+    /// The runner's own short reason, without the capture summary, the
+    /// handler or the application's response excerpt: what the flow pages
+    /// print on a line. Older records carry none and fall back to `detail`.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]

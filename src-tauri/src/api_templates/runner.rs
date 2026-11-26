@@ -291,6 +291,12 @@ pub struct RunRequest {
     pub keep: BTreeMap<String, String>,
 }
 
+/// Where the application's own response excerpt starts in a step's detail.
+pub const RESPONSE_MARK: &str = " - the response began:";
+
+/// Where the retry note starts in a step's detail, after any response excerpt.
+pub const RETRY_MARK: &str = " - it was refused the same way on all";
+
 /// One step's result. Also used for the parts of a run that come before
 /// the steps - `"Sign in"`, `"Anti-forgery token"`, `"Browser"` - when one
 /// of those is what stopped it.
@@ -362,6 +368,25 @@ impl RunReport {
         let handler = stopped.and_then(|s| s.handler.clone()).map(|h| format!(" ({h})")).unwrap_or_default();
         let detail = stopped.map(|s| s.detail.clone()).unwrap_or_default();
         format!("{captured}; failed at {name}{handler}: {detail}")
+    }
+
+    /// The runner's own reason for the step that stopped it, short enough
+    /// for a line on a page: its detail up to the application's response
+    /// excerpt (`RESPONSE_MARK`), which is never printed there. None when
+    /// the run did not fail or the step said nothing.
+    pub fn short_reason(&self) -> Option<String> {
+        if self.ok {
+            return None;
+        }
+        let detail = &self.steps.iter().rev().find(|s| !s.ok)?.detail;
+        let mut cut = detail.split(RESPONSE_MARK).next().unwrap_or("").trim().to_string();
+        // The retry note follows the excerpt; it is the runner's own words and stays.
+        if detail.contains(RESPONSE_MARK) {
+            if let Some(i) = detail.find(RETRY_MARK) {
+                cut.push_str(&detail[i..]);
+            }
+        }
+        (!cut.is_empty()).then_some(cut)
     }
 }
 
@@ -1283,7 +1308,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
         if attempt > 1 {
             result = result.map_err(|mut f| {
                 if f.unread {
-                    f.detail = format!("{} - it was refused the same way on all {attempt} tries", f.detail);
+                    f.detail = format!("{}{RETRY_MARK} {attempt} tries", f.detail);
                 }
                 f
             });
@@ -1774,7 +1799,7 @@ async fn run_step<D: Driver>(
         } else {
             (scrub_tokens(&super::exec::hide_text(&e, &hide), Some(token)), shown(text, token, &hide))
         };
-        let detail = if shown.is_empty() { e } else { format!("{e} - the response began: {shown}") };
+        let detail = if shown.is_empty() { e } else { format!("{e}{RESPONSE_MARK} {shown}") };
         (Some(status), detail)
     })?;
 
@@ -2010,7 +2035,7 @@ async fn run_postback<D: Driver>(
             } else {
                 shown(&kept, token, &hide_of(ctx))
             };
-            let detail = if began.is_empty() { why } else { format!("{why} - the response began: {began}") };
+            let detail = if began.is_empty() { why } else { format!("{why}{RESPONSE_MARK} {began}") };
             Err((Some(a.status), detail).into())
         }
         Verdict::Pass { detail, captured } => {

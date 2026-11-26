@@ -1577,3 +1577,33 @@ pub fn on_big_stack<Fut: std::future::Future<Output = ()>>(make: impl FnOnce() -
         std::panic::resume_unwind(panic);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Colour contrast (WCAG 2.x relative luminance), for the diagram pages.
+
+/// `#rrggbb` as 0-1 channels.
+pub fn rgb(hex: &str) -> [f64; 3] {
+    let h = hex.trim().trim_start_matches('#');
+    assert_eq!(h.len(), 6, "a six-digit colour: {hex}");
+    let c = |i: usize| f64::from(u8::from_str_radix(&h[i..i + 2], 16).expect("hex digits")) / 255.0;
+    [c(0), c(2), c(4)]
+}
+
+/// `fg` at `pct` percent over `bg`, the way `color-mix(in srgb, ...)` blends.
+pub fn mix(fg: &str, pct: f64, bg: &str) -> String {
+    let (f, b) = (rgb(fg), rgb(bg));
+    let ch = |i: usize| ((f[i] * pct / 100.0 + b[i] * (1.0 - pct / 100.0)) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", ch(0), ch(1), ch(2))
+}
+
+fn luminance(hex: &str) -> f64 {
+    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let [r, g, b] = rgb(hex);
+    0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+/// The contrast ratio of two colours, 1 to 21.
+pub fn contrast(a: &str, b: &str) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}

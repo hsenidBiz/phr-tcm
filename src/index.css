@@ -1315,16 +1315,16 @@ table {
 .flow-pulse { display: none; }
 
 @media (prefers-reduced-motion: no-preference) {
-  /* API Templates flow map: each arrow keeps its stage's colour, and a
-     short bright stretch runs along it from start to end - the Test map's
-     hover pulse - each column a beat after the one before it (FlowMap sets
-     the delay). The path's length is 1, so the stretch is 0.18 of it. */
+  /* API Templates flow map: the arrows are muted, and a short darker
+     stretch runs along each from start to end, each column a beat after the
+     one before it (FlowMap sets the delay). No glow. The path's length is 1,
+     so the stretch is 0.18 of it. */
   .flow-pulse {
     display: inline;
-    stroke: color-mix(in srgb, currentColor 35%, white);
-    stroke-width: 3;
+    stroke: var(--color-text);
+    stroke-opacity: 0.55;
+    stroke-width: 2.5;
     stroke-dasharray: 0.18 1;
-    filter: drop-shadow(0 0 2px currentColor);
     animation: flow-run 1.8s linear infinite;
   }
   @keyframes flow-run {

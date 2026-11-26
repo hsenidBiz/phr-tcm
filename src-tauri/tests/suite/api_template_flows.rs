@@ -896,8 +896,8 @@ mod gate_tests {
 }
 
 // ---------------------------------------------------------------------------
-// The flow on its own page (the tab's "View flow"): large coloured stages
-// joined by connectors that blend from one stage's colour into the next.
+// The flow on its own page (the tab's "View flow"): neutral stages with a
+// tone edge and tag, joined by thin muted connectors with arrowheads.
 
 mod page_tests {
     use v2_lib::api_templates::flow::Flow;
@@ -949,7 +949,7 @@ mod page_tests {
     }
 
     #[test]
-    fn the_page_colours_each_stage_and_blends_each_connector() {
+    fn the_page_colours_each_stage_and_joins_them_with_arrows() {
         let templates = [
             on("pms-create-cycle", "Create a cycle", Effect::Create, "setup"),
             on("pms-save-rules", "Save the rules", Effect::Edit, "rules"),
@@ -963,10 +963,11 @@ mod page_tests {
         assert!(html.contains("No template yet"));
         assert!(html.contains("Creates the record"));
 
-        // One connector per `requires`, each a gradient from the stage it
-        // leaves to the stage it reaches: setup (create) into rules (edit).
+        // One connector per `requires`, each ending in the arrowhead marker.
+        // (No per-edge gradient any more: the stroke is the muted token.)
         assert_eq!(html.matches("class='wire'").count(), 4);
-        assert!(html.contains("<stop offset='0' style='stop-color:var(--success)'/><stop offset='1' style='stop-color:var(--warning)'/>"), "{html}");
+        assert_eq!(html.matches("marker-end='url(#arrow)'").count(), 4);
+        assert!(!html.contains("linearGradient"), "{html}");
         assert!(html.contains("data-from='setup' data-to='rules'"));
 
         // The browser lays the columns out, so text wraps rather than
@@ -974,10 +975,9 @@ mod page_tests {
         assert_eq!(html.matches("<div class='col'>").count(), 4);
         assert!(!html.contains("text-overflow:ellipsis"), "nothing is truncated");
         assert!(html.contains("overflow-wrap:anywhere"));
-        assert!(html.contains("data-grad='g0'"));
         assert!(html.contains("window.FlowPage"), "the connector script is in the page");
-        // Motion only for those who have not asked for less.
-        assert!(html.contains("@media (prefers-reduced-motion:no-preference)"));
+        // Nothing moves: no animation, so reduced motion has nothing to hide.
+        assert!(!html.contains("@keyframes") && !html.contains("animation"), "{html}");
         // The same in words, for a screen reader.
         assert!(html.contains("<li>Evaluation rules. Requires: Cycle setup. Templates: Save the rules.</li>"), "{html}");
         // The scheme restore in <head>, the light/dark switch, and the
@@ -996,17 +996,167 @@ mod page_tests {
 
         let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         failed.here = Here::Failed {
-            failure: HereFailure { at: "2026-11-06 10:00:00".into(), step: Some("2".into()), detail: Some("HTTP 500".into()) },
+            failure: HereFailure { at: "2026-11-06 10:00:00".into(), step: Some("2".into()), detail: Some("HTTP 500".into()), reason: None },
         };
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("Failed on this environment at 2: HTTP 500. Ask the assistant to make it work here."), "{html}");
         assert!(html.contains(">failed here</span>"), "{html}");
-        assert!(html.contains("Templates: Save the rules (failed here).</li>"), "{html}");
+        // The reason is visible and in the screen-reader list, not only in
+        // the hover title.
+        assert!(html.contains("failed at step 2: HTTP 500</span>"), "{html}");
+        assert!(html.contains("Templates: Save the rules (failed here, failed at step 2: HTTP 500).</li>"), "{html}");
         assert!(!html.to_lowercase().contains("unproven"), "{html}");
 
         let confirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         let html = page_html(&flow(), &[confirmed], &PagePalette::default());
         assert!(!html.contains("unconfirmed here") && !html.contains("failed here"), "{html}");
+    }
+
+    fn css_of(html: &str) -> &str {
+        html.split("<style>").nth(1).and_then(|r| r.split("</style>").next()).expect("the style block")
+    }
+
+    #[test]
+    fn stage_boxes_are_flat_with_a_tone_edge_and_no_shadow_or_gradient() {
+        let html = page_html(&flow(), &[on("pms-save-rules", "Save the rules", Effect::Edit, "rules")], &PagePalette::default());
+        let css = css_of(&html);
+        let page = css.split(".bar{").nth(1).expect("the page's own rules");
+        assert!(!page.contains("box-shadow") && !page.contains("gradient("), "no shadow, no gradient: {page}");
+        assert!(!page.contains("letter-spacing"), "no tracked capitals: {page}");
+        assert!(page.contains("border-left:4px solid var(--tone)"), "the tone edge: {page}");
+        assert!(page.contains("border-radius:8px"), "{page}");
+        assert!(page.contains(".bar h1{margin:0;font-size:24px;font-weight:600"), "{page}");
+        assert!(page.contains(".stage h2{") && page.contains("font-size:13px;font-weight:600"), "{page}");
+        // The tag carries the tone as a ~14% tint, in the normal text colour.
+        assert!(page.contains("color:var(--text);background:color-mix(in srgb,var(--tone) 14%,var(--surface))"), "{page}");
+        assert!(!page.contains("color:#fff"), "no white text on a tone fill: {page}");
+        assert!(html.contains("<span class='tag'>Edit</span>"), "{html}");
+        // An open stage has the accent border and no tag.
+        assert!(page.contains(".stage.open{border:1px solid var(--accent)}"), "{page}");
+        let open = page_html(&flow(), &[], &PagePalette::default());
+        assert!(!open.contains("<span class='tag'>"), "{open}");
+        assert!(page.contains(".stage.optional{border-style:dashed"), "optional stays dashed: {page}");
+        // Connectors: 1.5px muted, an arrowhead 6px wide.
+        assert!(page.contains(".wire{fill:none;stroke:var(--muted);stroke-width:1.5}"), "{page}");
+        assert!(html.contains("markerWidth='6' markerHeight='6'"), "{html}");
+        // The diagram is described by the list beside it.
+        assert!(html.contains("<svg aria-hidden='true'>"), "{html}");
+        assert!(html.contains("<ol class='sr-only'"), "{html}");
+    }
+
+    #[test]
+    fn the_legend_is_a_bottom_strip_naming_only_the_tones_used() {
+        let templates = [
+            on("pms-create-cycle", "Create a cycle", Effect::Create, "setup"),
+            on("pms-save-rules", "Save the rules", Effect::Edit, "rules"),
+        ];
+        let html = page_html(&flow(), &templates, &PagePalette::default());
+        let legend = html.split("<footer class='legend'>").nth(1).and_then(|r| r.split("</footer>").next()).expect("a legend footer");
+        assert!(legend.contains("<li class='create'>Create</li>") && legend.contains("<li class='edit'>Edit</li>"), "{legend}");
+        assert!(legend.contains("<li class='open'>Open: no template yet, or mixed</li>"), "other stages have none: {legend}");
+        assert!(legend.contains("<li class='optional'>Optional stage</li>"), "{legend}");
+        assert!(!legend.contains("class='delete'") && !legend.contains("class='read'"), "unused tones stay out: {legend}");
+        assert!(html.find("</main>").unwrap() < html.find("<footer class='legend'>").unwrap(), "below the diagram");
+
+        // A flow with only a create stage names only Create.
+        let mut f = flow();
+        f.stages.retain(|s| s.id == "setup");
+        f.stages[0].requires.clear();
+        f.stages[0].optional = false;
+        let html = page_html(&f, &[on("pms-create-cycle", "Create a cycle", Effect::Create, "setup")], &PagePalette::default());
+        let legend = html.split("<footer class='legend'>").nth(1).and_then(|r| r.split("</footer>").next()).unwrap();
+        assert!(legend.contains("class='create'") && !legend.contains("class='open'") && !legend.contains("class='edit'"), "{legend}");
+    }
+
+    #[test]
+    fn a_failure_shows_its_reason_on_a_second_line_and_keeps_the_title() {
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed {
+            failure: HereFailure { at: "2026-11-06".into(), step: Some("3".into()), detail: Some("the server said no".into()), reason: None },
+        };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains("<span class='why' title='Failed on this environment at 3: the server said no."), "{html}");
+        assert!(html.contains(">failed at step 3: the server said no</span>"), "{html}");
+        assert!(css_of(&html).contains(".stage li .why{flex-basis:100%"), "on its own line");
+
+        // A long reason is cut on the page, whole in the title.
+        let long = "x".repeat(300);
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed { failure: HereFailure { at: "t".into(), step: None, detail: Some(long.clone()), reason: None } };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains("\u{2026}</span>"), "{html}");
+        assert!(html.contains(&long), "the title keeps it whole");
+
+        // No failure, no line.
+        let mut unconfirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        unconfirmed.here = Here::Unconfirmed;
+        assert!(!page_html(&flow(), &[unconfirmed], &PagePalette::default()).contains("class='why'"));
+    }
+
+    /// The failure the assistant's run records: its `message()` as the detail
+    /// and its `short_reason()` beside it.
+    fn failure_of_a_real_run() -> HereFailure {
+        use v2_lib::api_templates::runner::{RunReport, StepReport};
+        let report = RunReport {
+            ok: false,
+            template: "pms-save-rules".into(),
+            outputs: Default::default(),
+            created: [("cycleId".to_string(), serde_json::json!(274))].into_iter().collect(),
+            steps: vec![StepReport {
+                name: "Evaluation rules".into(),
+                handler: Some("SaveEvalRulesProgress".into()),
+                status: Some(400),
+                ok: false,
+                detail: "expected status 200, got 400 - the response began: <html>Server secret page</html>".into(),
+            }],
+            failed: Some("Evaluation rules".into()),
+            unreached: false,
+        };
+        assert_eq!(report.short_reason().as_deref(), Some("expected status 200, got 400"));
+        HereFailure { at: "t".into(), step: report.failed.clone(), detail: Some(report.message()), reason: report.short_reason() }
+    }
+
+    #[test]
+    fn the_failure_line_says_failed_at_once_and_never_prints_the_response() {
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed { failure: failure_of_a_real_run() };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains(">failed at Evaluation rules: expected status 200, got 400</span>"), "{html}");
+        // Once on the visible line; the capture summary, the handler and the
+        // response excerpt stay in the title only.
+        let line = html.split("<span class='why'").nth(1).unwrap().split("</span>").next().unwrap();
+        let visible = line.split_once('>').unwrap().1;
+        assert_eq!(visible.matches("failed at").count(), 1, "{visible}");
+        assert!(!visible.contains("SaveEvalRulesProgress") && !visible.contains("cycleId") && !visible.contains("response began"), "{visible}");
+        // The screen-reader list: the same short line.
+        assert!(html.contains("Templates: Save the rules (failed here, failed at Evaluation rules: expected status 200, got 400).</li>"), "{html}");
+        let list = html.split("<ol class='sr-only'").nth(1).unwrap();
+        assert!(!list.contains("Server secret page"), "the application's page is never printed: {list}");
+        // The title keeps the full sentence.
+        assert!(html.contains("cycleId 274 created; failed at Evaluation rules (SaveEvalRulesProgress)"), "{html}");
+    }
+
+    #[test]
+    fn an_older_record_with_only_the_full_message_is_cut_down_too() {
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed {
+            failure: HereFailure {
+                at: "t".into(),
+                step: Some("Evaluation rules".into()),
+                detail: Some("cycleId 274 created; failed at Evaluation rules (h): expected status 200, got 400 - the response began: <b>x</b>".into()),
+                reason: None,
+            },
+        };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains(">failed at Evaluation rules: expected status 200, got 400</span>"), "{html}");
+    }
+
+    #[test]
+    fn a_flow_with_no_stages_draws_no_legend_footer() {
+        let mut f = flow();
+        f.stages.clear();
+        let html = page_html(&f, &[], &PagePalette::default());
+        assert!(!html.contains("<footer class='legend'>"), "{html}");
     }
 
     #[test]
@@ -1055,5 +1205,61 @@ mod page_tests {
         let html = std::fs::read_to_string(&path).unwrap();
         assert!(html.contains("<title>Performance cycle wizard - flow</title>"), "{html}");
         let _ = std::fs::remove_file(path);
+    }
+}
+
+mod short_reason_round2 {
+    use v2_lib::api_templates::flow::Flow;
+    use v2_lib::api_templates::flow_page::page_html;
+    use v2_lib::api_templates::here::{Here, HereFailure};
+    use v2_lib::api_templates::runner::{RunReport, StepReport};
+    use v2_lib::api_templates::store::SavedTemplate;
+    use v2_lib::api_templates::{ApiTemplate, Effect};
+    use v2_lib::webtheme::PagePalette;
+
+    fn report(detail: &str) -> RunReport {
+        RunReport {
+            ok: false,
+            template: "t".into(),
+            outputs: Default::default(),
+            created: Default::default(),
+            steps: vec![StepReport { name: "Rules".into(), handler: None, status: Some(400), ok: false, detail: detail.into() }],
+            failed: Some("Rules".into()),
+            unreached: false,
+        }
+    }
+
+    #[test]
+    fn the_retry_note_stays_in_the_short_reason_after_the_response_is_cut() {
+        let with = report("expected status 200, got 400 - the response began: <html>secret</html> - it was refused the same way on all 3 tries");
+        assert_eq!(with.short_reason().as_deref(), Some("expected status 200, got 400 - it was refused the same way on all 3 tries"));
+        let plain = report("expected status 200, got 400 - it was refused the same way on all 3 tries");
+        assert_eq!(plain.short_reason().as_deref(), Some("expected status 200, got 400 - it was refused the same way on all 3 tries"));
+        let none = report("expected status 200, got 400 - the response began: <b>x</b>");
+        assert_eq!(none.short_reason().as_deref(), Some("expected status 200, got 400"));
+    }
+
+    #[test]
+    fn a_new_reason_that_says_failed_at_is_not_cut_but_an_old_record_still_is() {
+        let flow: Flow = serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+        let line = |failure: HereFailure| {
+            let t = ApiTemplate { effect: Effect::Edit, ..crate::common::saved_on_stage("x", "Save the rules", "rules") };
+            let saved = SavedTemplate { template: t, runs: vec![], here: Here::Failed { failure } };
+            page_html(&flow, &[saved], &PagePalette::default())
+        };
+        let html = line(HereFailure {
+            at: "t".into(),
+            step: Some("Rules".into()),
+            detail: Some("full message".into()),
+            reason: Some("the page said failed at the gate: no".into()),
+        });
+        assert!(html.contains(">failed at Rules: the page said failed at the gate: no</span>"), "{html}");
+        let old = line(HereFailure {
+            at: "t".into(),
+            step: Some("Rules".into()),
+            detail: Some("made 1; failed at Rules (h): expected 200 - the response began: x".into()),
+            reason: None,
+        });
+        assert!(old.contains(">failed at Rules: expected 200</span>"), "{old}");
     }
 }

@@ -46,14 +46,14 @@ export const reviewPage: Screen = {
         { activate: { css: '#map-list button.case[data-i="0"]' } },
         { waitFor: { css: "#detail h2" } },
       ],
-      alt: "The Test map: the test cases as a tree of their areas, with one case opened beside it",
+      alt: "The Test map: the test cases as an outline of their areas, with one case opened beside it",
     },
   ],
   groups: [
     { id: "search", title: "Search and options", summary: "Find a case, and choose what the page shows." },
     { id: "case", title: "A test case", summary: "Everything about one case, and your comment on it." },
     { id: "side", title: "The whole set and the spec", summary: "Comments about a file as a whole, the specification beside the cases, and light or dark." },
-    { id: "map", title: "The Test map", summary: "The same cases as a tree of their areas." },
+    { id: "map", title: "The Test map", summary: "The same cases as an outline of their areas." },
   ],
   controls: [
     // --- Search and options ----------------------------------------------------------
@@ -310,20 +310,12 @@ export const reviewPage: Screen = {
       does: "Folds every area to its name.",
     },
     {
-      id: "map-zoom",
-      shot: MAP,
-      group: "map",
-      locate: { css: "#map-in" },
-      name: "Zoom",
-      does: "**-** and **+** zoom out and in, and **Reset** fits the whole map again. You can also drag the map around.",
-    },
-    {
       id: "map-graph",
       shot: MAP,
       group: "map",
       locate: { css: "#graph" },
       name: "The map",
-      does: "Each area of the project, and the cases in it. Click a case to read it beside the map.",
+      does: "One row per area, read as \"Area · count\", and one per case, read as \"#id Title\" with a NEW or UPDATE tag; click an area to fold it, click a case to read it beside the map, scroll the wheel or drag to move around, and a legend strip under the map names the marks.",
     },
     {
       id: "map-detail",

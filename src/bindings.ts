@@ -5627,6 +5627,12 @@ export type HereFailure = {
 	at: string,
 	step: string | null,
 	detail: string | null,
+	/**
+	 *  The runner's own short reason, without the capture summary, the
+	 *  handler or the application's response excerpt: what the flow pages
+	 *  print on a line. Older records carry none and fall back to `detail`.
+	 */
+	reason?: string | null,
 };
 
 /**

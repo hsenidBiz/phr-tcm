@@ -862,7 +862,7 @@ pub(crate) fn note_assistant_template_run(
     if report.unreached {
         return;
     }
-    let failure = HereFailure { at: crate::applog::stamp(), step: report.failed.clone(), detail: Some(report.message()) };
+    let failure = HereFailure { at: crate::applog::stamp(), step: report.failed.clone(), detail: Some(report.message()), reason: report.short_reason() };
     note_template_run(root, org, project, ran, report.ok, Some(failure), TrySource::Assistant);
 }
 

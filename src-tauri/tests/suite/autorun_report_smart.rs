@@ -1056,3 +1056,72 @@ fn a_pbi_runs_report_is_unchanged() {
     assert!(html.contains("<dt>PBI</dt><dd>#42</dd>"));
     assert!(html.contains("PBI #42 in QA"));
 }
+
+// ------------------------------------------------ diagram rules: seen, not hovered
+
+#[test]
+fn the_trend_bars_use_the_stronger_rule_colour_with_a_four_unit_gap() {
+    let css = web_file("autorun-report.css");
+    // The hairline --border (about 1.2:1) is gone from the bars: an
+    // essential mark needs 3:1, which --border-strong gives in both modes.
+    assert!(css.contains(".trend__bar { fill: var(--border-strong); }"), "{css}");
+    assert!(!css.contains(".trend__bar { fill: var(--border); }"));
+    assert!(css.contains(".trend__bar--last { fill: var(--text); }"), "the last bar keeps its highlight");
+
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    // Consecutive bars start one bar width plus the 4 gap apart.
+    let attr = |r: &str, name: &str| -> f64 {
+        r.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    };
+    let bars: Vec<&str> = html.split("<rect class=\"trend__bar").skip(1).take(2).collect();
+    let (x0, x1, w) = (attr(bars[0], " x"), attr(bars[1], " x"), attr(bars[0], " width"));
+    assert!((x1 - x0 - (w + 4.0)).abs() < 0.2, "x0={x0} x1={x1} width={w}");
+}
+
+#[test]
+fn the_timeline_names_its_anomaly_on_the_track() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    assert!(html.contains("<span class=\"timeline__flag\""), "{html}");
+    assert!(html.contains(">First anomaly</span>"), "a label over the marker, not only a colour: {html}");
+    assert!(web_file("autorun-report.css").contains(".timeline__flag {"));
+}
+
+#[test]
+fn the_history_strip_says_its_direction_and_its_last_outcome() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    assert!(html.contains("<p class=\"strip__caption muted\">oldest \u{2192} newest; last: "), "{html}");
+}
+
+#[test]
+fn a_sparkline_prints_its_range_and_carries_its_values_in_its_name() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    // Under the shape, its smallest and largest value as text...
+    let range = html.split("<span class=\"spark__range\">").nth(1).expect("a range label").split("</span>").next().unwrap();
+    assert!(range.contains('%'), "the first sparkline is the pass rate, in percent: {range}");
+    // ...and every value in its accessible name, oldest first.
+    let name = html
+        .split("aria-label=\"Pass rate of the recent runs: ")
+        .nth(1)
+        .expect("values in the name")
+        .split('"')
+        .next()
+        .unwrap();
+    assert!(name.ends_with(", oldest first") && name.contains('%'), "{name}");
+}
+
+#[test]
+fn the_average_line_has_a_page_coloured_halo_so_it_shows_over_the_highlighted_bar() {
+    let css = web_file("autorun-report.css");
+    // The last bar and the line are both --text; the halo (--bg) separates them.
+    assert!(css.contains(".trend__avg-halo { stroke: var(--bg); stroke-width: 4;"), "{css}");
+    assert!(css.contains(".trend__avg { stroke: var(--text); stroke-width: 1.5;"), "{css}");
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    let halo = html.find("<polyline class=\"trend__avg-halo\"").expect("a halo line");
+    let line = html.find("<polyline class=\"trend__avg\"").expect("the line");
+    assert!(halo < line, "the halo is drawn first, under the line");
+}

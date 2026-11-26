@@ -176,6 +176,7 @@ figcaption { color: var(--text-faint); font-size: var(--text-xs); }
 .note { color: var(--text-muted); font-style: italic; }
 .history { display: grid; gap: var(--space-3); }
 .strip { display: flex; gap: 2px; height: 16px; }
+.strip__caption { font-size: var(--text-sm); }
 .strip__cell { width: 6px; padding: 0; border: 0; border-radius: var(--radius-sm); }
 
 /* Timeline. */
@@ -183,6 +184,10 @@ figcaption { color: var(--text-faint); font-size: var(--text-xs); }
 .timeline__anomaly { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-left: 2px solid var(--fail-fg); border-radius: var(--radius-sm); }
 .timeline__anomaly-label { color: var(--text-muted); font-weight: 500; }
 .timeline__grid { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: var(--space-3); }
+.timeline__flags { position: relative; height: 16px; }
+.timeline__flag { position: absolute; top: 0; white-space: nowrap; color: var(--text); font-size: var(--text-xs); line-height: var(--leading-xs); transform: translateX(-50%); }
+.timeline__flag[data-edge='start'] { transform: none; }
+.timeline__flag[data-edge='end'] { transform: translateX(-100%); }
 .timeline__labels { display: grid; grid-auto-rows: 16px; align-items: center; color: var(--text-faint); font-size: var(--text-sm); }
 .timeline__track { position: relative; }
 .timeline__lane { position: relative; height: 16px; border-radius: var(--radius-sm); background: var(--bg-subtle); }
@@ -203,6 +208,7 @@ figcaption { color: var(--text-faint); font-size: var(--text-xs); }
 .stat__value { font-size: var(--text-xl); font-weight: 500; line-height: var(--leading-xl); }
 .stat__sub { color: var(--text-faint); font-size: var(--text-sm); }
 .spark { display: block; color: var(--text-muted); }
+.spark__range { display: block; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-xs); }
 .spark__last { fill: var(--text); }
 .stats-bar { padding: var(--space-4) 0; border-bottom: 1px solid var(--border); }
 .minibar { display: grid; gap: var(--space-2); }
@@ -247,9 +253,13 @@ th { color: var(--text-muted); font-weight: 500; }
 .trend__value { font-size: var(--text-md); font-weight: 600; }
 .trend__svg { display: block; width: 100%; height: auto; }
 .trend__axis { stroke: var(--border-strong); }
-.trend__bar { fill: var(--border); }
-.trend__bar--last { fill: var(--text-faint); }
+/* --border is a hairline tone (about 1.2:1 on the page); a bar is an essential
+   mark, so it takes the stronger rule colour (3:1 or more in both modes). */
+.trend__bar { fill: var(--border-strong); }
+/* The highlighted bar is this run's: --text, 5.5:1 (light) and 4.4:1 (dark) against the other bars. --accent was only 1.7:1 and 2.0:1 against them. */
+.trend__bar--last { fill: var(--text); }
 .trend__bar--last.tone-flaky { fill: var(--flaky-fg); }
+.trend__avg-halo { stroke: var(--bg); stroke-width: 4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .trend__avg { stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .trend__dates { display: flex; justify-content: space-between; margin-top: var(--space-1); color: var(--text-faint); font-size: var(--text-xs); }
 .runs__title { margin-top: var(--space-5); }

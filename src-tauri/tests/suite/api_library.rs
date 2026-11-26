@@ -78,7 +78,7 @@ fn on_stage(mut t: ApiTemplate, stage: &str) -> ApiTemplate {
 }
 
 fn fail(step: &str, detail: &str) -> HereFailure {
-    HereFailure { at: "2026-11-06 10:00:00".into(), step: Some(step.into()), detail: Some(detail.into()) }
+    HereFailure { at: "2026-11-06 10:00:00".into(), step: Some(step.into()), detail: Some(detail.into()), reason: None }
 }
 
 fn lookup(templates: &[ApiTemplate]) -> impl Fn(&str) -> Option<ApiTemplate> + '_ {
