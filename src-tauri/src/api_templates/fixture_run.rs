@@ -783,7 +783,7 @@ fn record_run(
     let report = FixtureReport { ok, outputs, made, steps: ran.steps, failed, warnings };
     append(root, org, project, f, &at, &report, failed_step);
     if !refused && report.failed.as_deref() != Some(RUN_STOPPED) {
-        let failure = HereFailure { at: at.clone(), step: failed_step.map(|n| format!("step {n}")), detail: report.failed.clone() };
+        let failure = HereFailure { at: at.clone(), step: failed_step.map(|n| format!("step {n}")), detail: report.failed.clone(), reason: None };
         here::note_fixture_run(root, org, project, f, &templates, report.ok, Some(failure), source);
     }
     match failed_step {

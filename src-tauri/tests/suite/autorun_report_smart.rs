@@ -1066,7 +1066,7 @@ fn the_trend_bars_use_the_stronger_rule_colour_with_a_four_unit_gap() {
     // essential mark needs 3:1, which --border-strong gives in both modes.
     assert!(css.contains(".trend__bar { fill: var(--border-strong); }"), "{css}");
     assert!(!css.contains(".trend__bar { fill: var(--border); }"));
-    assert!(css.contains(".trend__bar--last { fill: var(--text-faint); }"), "the last bar keeps its highlight");
+    assert!(css.contains(".trend__bar--last { fill: var(--text); }"), "the last bar keeps its highlight");
 
     let (now, all) = history_fixture();
     let html = page(&now, &all, &[], &no_shots);

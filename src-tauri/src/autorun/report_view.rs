@@ -624,7 +624,8 @@ pub(super) fn case_line(status: &str, id: i32, title: &str, value: &str, shared:
 // ----------------------------------------------------------------------
 
 /// One trend chart: its title and this run's value, bars in a muted
-/// neutral, this run's bar in a lighter one (amber when `flaky`), the
+/// neutral, this run's bar in the text colour, which stands out from them
+/// by 3:1 or more in both modes (amber when `flaky`), the
 /// three-run average over the bars, the dates under it.
 fn chart(title: &str, values: &[(f64, &RunPoint, String)], flaky: bool) -> String {
     let n = values.len();

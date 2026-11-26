@@ -996,7 +996,7 @@ mod page_tests {
 
         let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         failed.here = Here::Failed {
-            failure: HereFailure { at: "2026-11-06 10:00:00".into(), step: Some("2".into()), detail: Some("HTTP 500".into()) },
+            failure: HereFailure { at: "2026-11-06 10:00:00".into(), step: Some("2".into()), detail: Some("HTTP 500".into()), reason: None },
         };
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("Failed on this environment at 2: HTTP 500. Ask the assistant to make it work here."), "{html}");
@@ -1072,7 +1072,7 @@ mod page_tests {
     fn a_failure_shows_its_reason_on_a_second_line_and_keeps_the_title() {
         let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         failed.here = Here::Failed {
-            failure: HereFailure { at: "2026-11-06".into(), step: Some("3".into()), detail: Some("the server said no".into()) },
+            failure: HereFailure { at: "2026-11-06".into(), step: Some("3".into()), detail: Some("the server said no".into()), reason: None },
         };
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("<span class='why' title='Failed on this environment at 3: the server said no."), "{html}");
@@ -1082,7 +1082,7 @@ mod page_tests {
         // A long reason is cut on the page, whole in the title.
         let long = "x".repeat(300);
         let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
-        failed.here = Here::Failed { failure: HereFailure { at: "t".into(), step: None, detail: Some(long.clone()) } };
+        failed.here = Here::Failed { failure: HereFailure { at: "t".into(), step: None, detail: Some(long.clone()), reason: None } };
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("\u{2026}</span>"), "{html}");
         assert!(html.contains(&long), "the title keeps it whole");
@@ -1091,6 +1091,72 @@ mod page_tests {
         let mut unconfirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         unconfirmed.here = Here::Unconfirmed;
         assert!(!page_html(&flow(), &[unconfirmed], &PagePalette::default()).contains("class='why'"));
+    }
+
+    /// The failure the assistant's run records: its `message()` as the detail
+    /// and its `short_reason()` beside it.
+    fn failure_of_a_real_run() -> HereFailure {
+        use v2_lib::api_templates::runner::{RunReport, StepReport};
+        let report = RunReport {
+            ok: false,
+            template: "pms-save-rules".into(),
+            outputs: Default::default(),
+            created: [("cycleId".to_string(), serde_json::json!(274))].into_iter().collect(),
+            steps: vec![StepReport {
+                name: "Evaluation rules".into(),
+                handler: Some("SaveEvalRulesProgress".into()),
+                status: Some(400),
+                ok: false,
+                detail: "expected status 200, got 400 - the response began: <html>Server secret page</html>".into(),
+            }],
+            failed: Some("Evaluation rules".into()),
+            unreached: false,
+        };
+        assert_eq!(report.short_reason().as_deref(), Some("expected status 200, got 400"));
+        HereFailure { at: "t".into(), step: report.failed.clone(), detail: Some(report.message()), reason: report.short_reason() }
+    }
+
+    #[test]
+    fn the_failure_line_says_failed_at_once_and_never_prints_the_response() {
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed { failure: failure_of_a_real_run() };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains(">failed at Evaluation rules: expected status 200, got 400</span>"), "{html}");
+        // Once on the visible line; the capture summary, the handler and the
+        // response excerpt stay in the title only.
+        let line = html.split("<span class='why'").nth(1).unwrap().split("</span>").next().unwrap();
+        let visible = line.split_once('>').unwrap().1;
+        assert_eq!(visible.matches("failed at").count(), 1, "{visible}");
+        assert!(!visible.contains("SaveEvalRulesProgress") && !visible.contains("cycleId") && !visible.contains("response began"), "{visible}");
+        // The screen-reader list: the same short line.
+        assert!(html.contains("Templates: Save the rules (failed here, failed at Evaluation rules: expected status 200, got 400).</li>"), "{html}");
+        let list = html.split("<ol class='sr-only'").nth(1).unwrap();
+        assert!(!list.contains("Server secret page"), "the application's page is never printed: {list}");
+        // The title keeps the full sentence.
+        assert!(html.contains("cycleId 274 created; failed at Evaluation rules (SaveEvalRulesProgress)"), "{html}");
+    }
+
+    #[test]
+    fn an_older_record_with_only_the_full_message_is_cut_down_too() {
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed {
+            failure: HereFailure {
+                at: "t".into(),
+                step: Some("Evaluation rules".into()),
+                detail: Some("cycleId 274 created; failed at Evaluation rules (h): expected status 200, got 400 - the response began: <b>x</b>".into()),
+                reason: None,
+            },
+        };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains(">failed at Evaluation rules: expected status 200, got 400</span>"), "{html}");
+    }
+
+    #[test]
+    fn a_flow_with_no_stages_draws_no_legend_footer() {
+        let mut f = flow();
+        f.stages.clear();
+        let html = page_html(&f, &[], &PagePalette::default());
+        assert!(!html.contains("<footer class='legend'>"), "{html}");
     }
 
     #[test]

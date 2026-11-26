@@ -58,7 +58,7 @@ fn legend_html(nodes: &[MapNode]) -> String {
     let (has_new, has_update) = tags_used(nodes);
     let mut items = String::from(
         "<li><span class='k-ring' aria-hidden='true'></span>Open area</li>\
-         <li><span class='k-dot filled' aria-hidden='true'></span>Folded area</li>\
+         <li id='k-folded' hidden><span class='k-ring k-fold' aria-hidden='true'></span>Folded area</li>\
          <li><span class='k-dot' aria-hidden='true'></span>Test case</li>",
     );
     if has_new {

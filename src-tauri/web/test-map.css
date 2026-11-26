@@ -58,6 +58,9 @@ body {
 .legend li { display: flex; align-items: center; gap: 8px; }
 .k-ring, .k-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
 .k-dot { background: var(--muted); }
+.legend li[hidden] { display: none; }
+.k-fold { position: relative; }
+.k-fold::after { content: ''; position: absolute; inset: 1px; border-radius: 50%; background: var(--muted); }
 .k-tag { padding: 0 5px; border: 1px solid var(--muted); border-radius: 4px; font-size: 10px; font-weight: 600; line-height: 14px; }
 .viewport.over-node { cursor: pointer; }
 #graph { display: block; position: absolute; left: 0; top: 0; }

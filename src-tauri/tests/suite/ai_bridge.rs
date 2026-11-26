@@ -3294,6 +3294,7 @@ mod api_template_routes {
             at: "2026-11-06 09:00:00".into(),
             step: Some(step.into()),
             detail: Some(detail.into()),
+            reason: None,
         }
     }
 

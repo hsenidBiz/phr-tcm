@@ -281,3 +281,21 @@ fn the_canvas_is_described_for_assistive_technology() {
     assert!(desc.starts_with("An outline of the areas"), "{desc}");
     assert!(html.contains("aria-describedby='map-desc'"));
 }
+
+#[test]
+fn a_cut_title_shows_whole_on_hover_and_folded_areas_have_their_own_mark() {
+    let path = tmp_path("map-review.html");
+    export_test_map_html(&tree(), &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    // Hover: the canvas tooltip is the whole label while a cut row is hovered, empty otherwise.
+    assert!(html.contains("n.cut = title !== (n.data.title || '')"), "{html}");
+    assert!(html.contains("hover && hover.kind === 'case' && hover.cut ? G.caseLabel(hover) : ''"), "{html}");
+    assert!(html.contains("canvas.title = tip"), "{html}");
+    // A folded area: a ring with a dot inside; the legend names it only once something is folded.
+    assert!(html.contains("if (n.folded) { ctx.beginPath(); ctx.arc(px, py, 1.5"), "{html}");
+    assert!(html.contains("<li id='k-folded' hidden>"), "{html}");
+    assert!(html.contains("document.getElementById('k-folded')"), "{html}");
+    // Ctrl + wheel is left to the browser, and a pan lands on whole pixels.
+    assert!(html.contains("if (e.ctrlKey) return;"), "{html}");
+    assert!(html.contains("tx = Math.round(t.tx); ty = Math.round(t.ty);"), "{html}");
+}

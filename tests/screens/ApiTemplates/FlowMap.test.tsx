@@ -139,3 +139,34 @@ test("failureLine words the step and the reason, cutting a long reason", () => {
   expect(long.endsWith("…")).toBe(true);
   expect([...long].length).toBeLessThan(135);
 });
+
+test("the failure line says failed at once and never prints the application's response", () => {
+  // What the assistant's run records: message() as the detail, the runner's own reason beside it.
+  const failure = {
+    at: "t",
+    step: "Evaluation rules",
+    detail:
+      "cycleId 274 created; failed at Evaluation rules (SaveEvalRulesProgress): expected status 200, got 400 - the response began: <html>Server secret page</html>",
+    reason: "expected status 200, got 400",
+  };
+  renderMap([saved("b", "Save rules", "edit", "rules", { state: "failed", failure })]);
+  const line = screen.getByText("failed at Evaluation rules: expected status 200, got 400");
+  expect(line.textContent!.match(/failed at/g)).toHaveLength(1);
+  expect(line.textContent).not.toMatch(/SaveEvalRulesProgress|cycleId|response began|secret/);
+  // The title keeps the full sentence; the reader's list carries the short line only.
+  expect(line).toHaveAttribute("title", expect.stringContaining("cycleId 274 created; failed at Evaluation rules"));
+  const list = screen.getByText(/Templates: Save rules \(failed here/, { selector: "li" });
+  expect(list.textContent).toContain("failed here, failed at Evaluation rules: expected status 200, got 400).");
+  expect(list.textContent).not.toContain("secret");
+});
+
+test("an older record with only the full message is cut down to the reason", () => {
+  expect(
+    failureLine({
+      at: "t",
+      step: "Evaluation rules",
+      detail: "cycleId 274 created; failed at Evaluation rules (h): expected status 200, got 400 - the response began: <b>x</b>",
+      reason: null,
+    }),
+  ).toBe("failed at Evaluation rules: expected status 200, got 400");
+});

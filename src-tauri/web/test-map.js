@@ -79,7 +79,8 @@
   }
   function clamp() {
     var t = G.clampView(tx, ty, contentW, contentH, width, height, PAD);
-    tx = t.tx; ty = t.ty;
+    // Whole pixels, so text and guides stay crisp after a pan.
+    tx = Math.round(t.tx); ty = Math.round(t.ty);
   }
   function resize() {
     var r = viewport.getBoundingClientRect();
@@ -169,14 +170,19 @@
       var px = tx + n.x, py = ty + n.y;
       var lit = !!(focus && focus.keep[n.i]);
       var selected = n === activeNode;
-      // The dot: an area is a ring while open and a filled dot while
-      // folded; a case is a filled dot. The accent is for the lit chain and
-      // the selected case only.
+      // The dot: a case is a filled dot, an open area a ring, and a folded
+      // area a ring with a dot inside, so folded reads at a glance. The
+      // accent is for the lit chain and the selected case only.
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = lit || selected ? colours.accent : colours.muted;
       ctx.fillStyle = lit || selected ? colours.accent : colours.muted;
       ctx.beginPath(); ctx.arc(px, py, G.DOT_R, 0, Math.PI * 2);
-      if (n.kind === 'area' && !n.folded && !selected) ctx.stroke(); else ctx.fill();
+      if (n.kind === 'area') {
+        ctx.stroke();
+        if (n.folded) { ctx.beginPath(); ctx.arc(px, py, 1.5, 0, Math.PI * 2); ctx.fill(); }
+      } else {
+        ctx.fill();
+      }
       if (selected) {
         ctx.beginPath(); ctx.arc(px, py, G.DOT_R + 3, 0, Math.PI * 2); ctx.stroke();
       }
@@ -204,6 +210,8 @@
       ctx.fillStyle = colours.text;
       ctx.fillText(title, x0 + idW, py);
       var tagX = x0 + idW + ctx.measureText(title).width + TAG_GAP;
+      // A cut title says so, so the hover can show the whole row.
+      n.cut = title !== (n.data.title || '');
       // The tag: muted, outlined, its words telling NEW from UPDATE.
       ctx.lineWidth = 1;
       ctx.strokeStyle = colours.muted;
@@ -214,6 +222,10 @@
       ctx.fillStyle = colours.muted;
       ctx.fillText(tag, tagX + TAG_PAD, py + 0.5);
     });
+    // The whole "#id Title" as the tooltip while a cut row is hovered, and
+    // none otherwise.
+    var tip = hover && hover.kind === 'case' && hover.cut ? G.caseLabel(hover) : '';
+    if (canvas.title !== tip) canvas.title = tip;
   }
 
   // ---- Hit testing: a row, from its dot (and a little left of it) to the
@@ -352,6 +364,9 @@
     extent = G.layoutTree(graph);
     measureContent();
     clamp();
+    // The legend names a folded area only while one is folded.
+    var key = document.getElementById('k-folded');
+    if (key) key.hidden = !areaNodes.some(function (a) { return a.folded; });
     if (hover && hover.hidden) { hover = null; setCursor(); }
     if (activeNode && activeNode.hidden) hideCase();
     draw();
@@ -431,6 +446,8 @@
   });
   // The wheel scrolls the outline like a document.
   viewport.addEventListener('wheel', function (e) {
+    // Ctrl + wheel is the browser's own zoom: leave it alone.
+    if (e.ctrlKey) return;
     e.preventDefault();
     tx -= e.deltaX; ty -= e.deltaY;
     clamp();

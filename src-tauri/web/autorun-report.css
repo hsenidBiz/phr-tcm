@@ -256,7 +256,8 @@ th { color: var(--text-muted); font-weight: 500; }
 /* --border is a hairline tone (about 1.2:1 on the page); a bar is an essential
    mark, so it takes the stronger rule colour (3:1 or more in both modes). */
 .trend__bar { fill: var(--border-strong); }
-.trend__bar--last { fill: var(--text-faint); }
+/* The highlighted bar is this run's: --text, 5.5:1 (light) and 4.4:1 (dark) against the other bars. --accent was only 1.7:1 and 2.0:1 against them. */
+.trend__bar--last { fill: var(--text); }
 .trend__bar--last.tone-flaky { fill: var(--flaky-fg); }
 .trend__avg { stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .trend__dates { display: flex; justify-content: space-between; margin-top: var(--space-1); color: var(--text-faint); font-size: var(--text-xs); }

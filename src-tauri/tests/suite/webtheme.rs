@@ -156,3 +156,38 @@ mod diagram_contrast {
         }
     }
 }
+
+mod diagram_contrast_review {
+    use crate::common::{contrast, mix};
+    use v2_lib::webtheme::ReportPalette;
+
+    #[test]
+    fn muted_text_reads_on_the_selected_rows_accent_tint_and_on_surface_2() {
+        for (name, p) in [("light", ReportPalette::default()), ("dark", ReportPalette::default_dark())] {
+            // The selected row is the accent at 14% over the page; its "#id" is muted.
+            let tint = mix(&p.accent, 14.0, &p.bg);
+            let r = contrast(&p.muted, &tint);
+            assert!(r >= 4.5, "{name}: muted on the selected row is {r:.2}:1");
+            assert!(contrast(&p.text, &tint) >= 4.5, "{name}: text on the selected row");
+            let r = contrast(&p.muted, &p.surface_2);
+            assert!(r >= 4.5, "{name}: muted on surface-2 is {r:.2}:1");
+        }
+    }
+
+    #[test]
+    fn the_run_reports_highlighted_bar_stands_out_from_the_others_by_3_to_1() {
+        let tokens = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/autorun-report-tokens.css")).unwrap();
+        for mode in ["light", "dark"] {
+            let at = tokens.find(&format!(":root[data-mode=\"{mode}\"]{{")).unwrap();
+            let b = tokens[at..].split('}').next().unwrap();
+            let var = |name: &str| -> String {
+                let i = b.find(&format!("{name}:")).unwrap();
+                b[i + name.len() + 1..].split(';').next().unwrap().to_string()
+            };
+            let r = contrast(&var("--text"), &var("--border-strong"));
+            assert!(r >= 3.0, "{mode}: the last bar (--text) against the other bars is {r:.2}:1");
+        }
+        let css = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/autorun-report.css")).unwrap();
+        assert!(css.contains(".trend__bar--last { fill: var(--text); }"));
+    }
+}

@@ -192,9 +192,30 @@ fn here_hint(here: &Here) -> String {
     }
 }
 
-/// The visible second line under a template that failed here: the step and
-/// the short reason the `title` already carries in full. None when the
-/// failure names neither.
+/// A failure's reason as one short line: the runner's own `reason`, or for an
+/// older record the part of its `detail` after "failed at <step>: ", and in
+/// either case nothing from the application's response excerpt on. Cut to
+/// 120 characters; the `title` keeps the full sentence.
+fn short_reason(f: &crate::api_templates::here::HereFailure) -> Option<String> {
+    let raw = f.reason.as_deref().or(f.detail.as_deref())?;
+    let mut text = raw.split(crate::api_templates::runner::RESPONSE_MARK).next().unwrap_or("");
+    if let Some(at) = text.find("failed at ") {
+        // "<captured>; failed at <name> (<handler>): <detail>" - keep the detail.
+        text = text[at..].split_once(": ").map_or("", |(_, rest)| rest);
+    }
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        return None;
+    }
+    Some(if text.chars().count() > 120 {
+        format!("{}\u{2026}", text.chars().take(119).collect::<String>().trim_end())
+    } else {
+        text
+    })
+}
+
+/// The visible second line under a template that failed here: "failed at
+/// <step>: <short reason>". None when the failure names neither.
 fn failure_line(here: &Here) -> Option<String> {
     let Here::Failed { failure } = here else { return None };
     let at = failure.step.as_ref().map(|step| {
@@ -204,15 +225,7 @@ fn failure_line(here: &Here) -> Option<String> {
             step.clone()
         }
     });
-    let detail = failure.detail.as_ref().map(|d| {
-        let d = d.split_whitespace().collect::<Vec<_>>().join(" ");
-        if d.chars().count() > 120 {
-            format!("{}\u{2026}", d.chars().take(119).collect::<String>().trim_end())
-        } else {
-            d
-        }
-    });
-    match (at, detail) {
+    match (at, short_reason(failure)) {
         (Some(a), Some(d)) => Some(format!("failed at {a}: {d}")),
         (Some(a), None) => Some(format!("failed at {a}")),
         (None, Some(d)) => Some(format!("failed: {d}")),
@@ -365,6 +378,13 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         legend.push_str("<li class='optional'>Optional stage</li>");
     }
 
+    // No stages, nothing to name: no footer either.
+    let legend_footer = if legend.is_empty() {
+        String::new()
+    } else {
+        format!("<footer class='legend'><ul class='key' aria-label='Legend'>{legend}</ul></footer>")
+    };
+
     format!(
         "<!DOCTYPE html>\n\
          <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">{restore}\
@@ -377,7 +397,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
          <marker id='arrow' viewBox='0 0 6 6' refX='6' refY='3' markerWidth='6' markerHeight='6' markerUnits='userSpaceOnUse' orient='auto'>\
          <path d='M0 0 L6 3 L0 6 z'/></marker></defs>{paths}</svg>\
          {boxes}</div></main>\
-         <footer class='legend'><ul class='key' aria-label='Legend'>{legend}</ul></footer>\
+         {legend_footer}\
          <ol class='sr-only' aria-label='Stages of {title}'>{words}</ol>\
          <script>{switch_js}</script><script>{flow_js}</script></body></html>",
         scheme = palette.initial_scheme(),
@@ -385,7 +405,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         vars = palette.css(),
         css = page_css(),
         flow_js = FLOW_JS,
-        legend = legend,
+        legend_footer = legend_footer,
         switch = crate::webtheme::SWITCH_HTML,
         switch_js = crate::webtheme::SWITCH_JS,
         title = esc(&flow.title),
