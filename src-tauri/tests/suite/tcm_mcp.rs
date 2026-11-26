@@ -4874,3 +4874,11 @@ fn the_discovery_tools_name_the_screenshot_action() {
         assert!(!said.contains('\u{2014}'), "{name} has an em dash");
     }
 }
+
+#[test]
+fn the_sign_in_check_description_says_it_resets_an_expired_password() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let d = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "check_autorun_sign_in").unwrap()["description"].as_str().unwrap().to_string();
+    assert!(d.contains("This is how an expired password is reset: call it for the expired account; you never type the password."), "{d}");
+}

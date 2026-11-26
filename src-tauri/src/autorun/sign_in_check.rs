@@ -314,6 +314,15 @@ pub async fn expiring<S: RowSource>(rows: &S, expiry_query: &str, accounts: &[Ac
         .collect()
 }
 
+/// How an expired account gets reset when the app may not do it now.
+pub fn reset_hint(test_environment: bool) -> &'static str {
+    if test_environment {
+        "turn on Reset expired passwords for this test environment in Environments, then check again"
+    } else {
+        "passwords are reset only on a test environment"
+    }
+}
+
 fn not_tried(key: &str, why: impl AsRef<str>, pre: &Precheck) -> SignInCheck {
     SignInCheck {
         account: key.to_string(),
@@ -508,7 +517,9 @@ fn ready(
     // test environment with Reset expired passwords on), as a run or a
     // discovery would; otherwise the sign-in could only land on the reset page.
     if let Some(words) = pre.expired.as_ref().filter(|_| !super::signin::reset_enabled(root)) {
-        return Err(Stop { check: not_tried(key, words, pre), keep: true, area: asked });
+        let test_env = crate::environments::read_active(root).ok().flatten().is_some_and(|e| e.test_environment);
+        let why = format!("{words}; {}", reset_hint(test_env));
+        return Err(Stop { check: not_tried(key, why, pre), keep: true, area: asked });
     }
     if let Some(sentence) = &pre.elsewhere {
         return Err(Stop { check: not_tried(key, sentence, pre), keep: true, area: asked });
