@@ -87,17 +87,12 @@ test("the Open Auto Test button is absent on Auto Test and calls onOpen elsewher
   expect(open).toHaveBeenCalledTimes(1);
 });
 
-test("the line itself is a button that opens Auto Test, except on Auto Test", async () => {
-  const open = vi.fn();
+test("the line is plain text everywhere; the Open Auto Test button is the one way in", async () => {
   mockIPC((cmd) => (cmd === "auto_run_agents" ? [agent()] : null));
-  const on = render(<ActivityStrip onAutoTest={false} onOpen={open} />);
-  const plain = await screen.findByText("An assistant is working");
-  expect(plain.tagName).toBe("P");
-  on.unmount();
-  render(<ActivityStrip onAutoTest onOpen={open} />);
-  const line = await screen.findByRole("button", { name: "An assistant is working" });
-  fireEvent.click(line);
-  expect(open).toHaveBeenCalledTimes(1);
+  render(<ActivityStrip onAutoTest onOpen={() => {}} />);
+  const line = await screen.findByText("An assistant is working");
+  expect(line.tagName).toBe("P");
+  expect(screen.getAllByRole("button")).toHaveLength(1);
 });
 
 test("the area comes from the first discovering assistant that has one", async () => {

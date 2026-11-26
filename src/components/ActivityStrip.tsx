@@ -51,17 +51,9 @@ export default function ActivityStrip({ onOpen, onAutoTest }: { onOpen: () => vo
   return (
     <section aria-label="Assistant activity" className="border-b border-border bg-surface px-6 py-1.5 text-xs">
       <div className="flex items-center justify-between gap-3">
-        {onAutoTest ? (
-          // The line itself opens Auto Test, so the detail in its title is
-          // reachable by keyboard too (the Assistants card has it in full).
-          <button type="button" className="min-w-0 truncate text-left text-muted hover:text-text" title={detail} onClick={onOpen}>
-            {line}
-          </button>
-        ) : (
-          <p className="min-w-0 truncate text-muted" title={detail}>
-            {line}
-          </p>
-        )}
+        <p className="min-w-0 truncate text-muted" title={detail}>
+          {line}
+        </p>
         {onAutoTest && (
           <Button size="sm" variant="outline" aria-label="Open Auto Test" className="shrink-0" onClick={onOpen}>
             <IconGoTo aria-hidden />
