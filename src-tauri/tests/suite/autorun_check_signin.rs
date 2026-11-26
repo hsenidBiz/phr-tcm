@@ -14,7 +14,7 @@ use v2_lib::autorun::replay::Browsers;
 use v2_lib::autorun::setup_find::RowSource;
 use v2_lib::autorun::sign_in_check::{
     cancel, check_accounts, check_rank, expiring, going_sentence, is_stale, load_marks, mark_phrase, precheck,
-    prefer_reaching, proposal_rank, summary, AreaReach, Mark, Precheck, SignInCheck, CANCELLED, EXPIRY_NOT_CHECKED,
+    prefer_reaching, proposal_rank, reset_hint, summary, AreaReach, Mark, Precheck, SignInCheck, CANCELLED, EXPIRY_NOT_CHECKED,
     NOT_TRIED, NO_OTHER_SIGN_IN_CHECK,
 };
 use v2_lib::browser::timing::Timing;
@@ -934,4 +934,16 @@ async fn an_account_named_twice_is_checked_and_counted_once() {
     assert_eq!(fake.opened, 1);
     assert_eq!(signin_attempts::take(dir.path(), "sup").unwrap(), 3, "counted more than once");
     signin_attempts::close(dir.path(), "sup");
+}
+
+/// An expired account that is not tried says how to get it reset: the switch on
+/// a test environment, the plain limit anywhere else. Never a URL.
+#[test]
+fn the_not_tried_answer_says_how_a_reset_is_turned_on() {
+    let on_test = reset_hint(true);
+    assert!(on_test.contains("Reset expired passwords") && on_test.contains("test environment") && on_test.contains("Environments"), "{on_test}");
+    let elsewhere = reset_hint(false);
+    assert!(elsewhere.contains("only on a test environment"), "{elsewhere}");
+    assert!(!elsewhere.contains("Reset expired passwords"), "{elsewhere}");
+    assert!(!on_test.contains("http") && !elsewhere.contains("http"));
 }

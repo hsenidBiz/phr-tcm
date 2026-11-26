@@ -1290,7 +1290,17 @@ Each environment has its own Auto Test scripts, areas, components, quirks, disco
     on or the sign-in with the new one did not finish, the stop reads
     "password expired - the reset may have gone through": the site may now
     expect the held password, so do not reset it on the site again - tell
-    the person to check Accounts. You never type or see either password. A database that is off or does not answer never
+    the person to check Accounts. You never type or see either password.
+    To reset an expired password, do not refuse and do not type one. Ask TCM
+    to sign in as that account with `check_autorun_sign_in` (give the account
+    key). On a test environment where resets are allowed (Reset expired
+    passwords on, or Basic mode), TCM changes the password on the site itself
+    and keeps the new one; you never see or enter it. The answer says "the
+    password may have been reset - check Accounts" when it did. If the
+    environment does not allow it, tell the person which switch turns resets
+    on (a test environment's Reset expired passwords in Environments), or that
+    only a test environment can reset passwords - never offer to type a
+    password or write one into the database. A database that is off or does not answer never
     blocks a sign-in; the check is skipped and said once. A query that is
     wrong is said as that ("could not run"), not as a database that is down.
 - A password comes from the database, from the person or from the

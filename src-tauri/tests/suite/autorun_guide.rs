@@ -2916,3 +2916,13 @@ fn the_guide_points_at_get_bugs_before_a_defect_is_reported() {
     let g = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(g.contains("call `get_bugs` with the case"), "the guide should name get_bugs");
 }
+
+/// An expired password is reset by asking TCM to sign in, never refused and
+/// never typed by the assistant.
+#[test]
+fn the_guide_tells_the_assistant_to_ask_tcm_to_reset_an_expired_password() {
+    let g = autorun_guide();
+    assert!(g.contains("To reset an expired password, do not refuse and do not type one."), "rule missing");
+    assert!(g.contains("with `check_autorun_sign_in` (give the account"), "tool not named");
+    assert!(g.contains("never offer to type a"), "the never-type line is missing");
+}
