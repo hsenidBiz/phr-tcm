@@ -40,6 +40,7 @@ import { loadPrefs } from "./lib/prefs";
 import { isCaptureMode } from "./dev/capture";
 import HalloweenDecor, { HalloweenWeb } from "./components/HalloweenDecor";
 import ChristmasDecor, { ChristmasCorner } from "./components/ChristmasDecor";
+import SnowLayer from "./components/SnowLayer";
 import {
   ChangelogModal,
   CommandPalette,
@@ -571,6 +572,7 @@ export default function App() {
           {signedIn && <HalloweenWeb />}
           {signedIn && <ChristmasDecor />}
           {signedIn && <ChristmasCorner />}
+          {signedIn && <SnowLayer />}
           {/* Inert for the whole tour, EXCEPT at a stop the user is meant
               to act on: there the ringed control has to answer a click,
               and inert is inherited, so nothing inside it could. The

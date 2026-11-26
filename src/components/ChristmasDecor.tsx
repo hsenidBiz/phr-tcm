@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import Snowfall from "./Snowfall";
 import { HitContext, useBriefState, useDecorPresses, useHit, useReducedMotion, useThemeIs } from "./decorShared";
 
 /** The Christmas theme's scenery: a string of fairy lights along the PBI
@@ -32,18 +33,6 @@ const BAUBLES = [
   { right: "31%", string: 10, delay: "-1.6s", tone: 3 },
   { right: "22%", string: 20, delay: "-0.4s", tone: 2 },
 ] as const;
-
-const FLAKES = Array.from({ length: 20 }, (_, i) => {
-  const duration = 9 + ((i * 7) % 10);
-  return {
-    left: `${((i * 61.8) % 100).toFixed(1)}%`,
-    size: 2 + (i % 3),
-    duration: `${duration}s`,
-    delay: `${-((i * 1.7) % duration).toFixed(1)}s`,
-    drift: `${((i % 5) - 2) * 14}px`,
-    opacity: (0.5 + (i % 4) * 0.12).toFixed(2),
-  };
-});
 
 const SPIN_MS = 1200;
 const SLEIGH_WIDTH = 120;
@@ -302,25 +291,7 @@ export function ChristmasCorner() {
 
   return (
     <>
-      <div className="christmas-snow" aria-hidden="true">
-        {FLAKES.map((f, i) => (
-          <span
-            key={i}
-            className="christmas-flake"
-            style={
-              {
-                left: f.left,
-                width: f.size,
-                height: f.size,
-                opacity: f.opacity,
-                animationDuration: f.duration,
-                animationDelay: f.delay,
-                "--drift": f.drift,
-              } as React.CSSProperties
-            }
-          />
-        ))}
-      </div>
+      <Snowfall className="christmas-snow" />
       <svg className="christmas-snowman" width="90" height="90" viewBox="0 0 80 80" aria-hidden="true">
         <path className="christmas-drift" d="M0 80 L0 69 Q18 63 38 69 Q56 74 72 79 L74 80z" />
         <path className="christmas-arm" d="M17 45 L8 36 M35 45 L44 39" />

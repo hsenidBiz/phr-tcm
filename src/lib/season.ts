@@ -38,6 +38,13 @@ export function christmasOffered(now: number): boolean {
   return d.getMonth() === 11 && d.getDate() >= 7;
 }
 
+/** True from 1 December 00:00 through 31 December 23:59:59 local time, every
+ * year: when snow falls in the themes that have none of their own. It ends
+ * where the Christmas window does. */
+export function snowSeason(now: number): boolean {
+  return new Date(now).getMonth() === 11;
+}
+
 const SEASONS: Season[] = [
   {
     // 2026 only, switched before 1 November (local time); a week per machine.

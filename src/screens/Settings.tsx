@@ -42,6 +42,7 @@ import { loadGlobalAllowed, saveGlobalAllowed } from "../lib/aiScope";
 import { applyLocalStorage, collectLocalStorage } from "../lib/backup";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
+import { snowCanFall, setSnowOff, useNow, useSnowOff } from "../lib/snow";
 import { LOG_KIND_CLASS, levelOf, tokenizeLog } from "../lib/logSyntax";
 import {
   ACCENTS,
@@ -219,6 +220,8 @@ export default function Settings({
   const panelRef = useRef<HTMLDivElement>(null);
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
+  const snowOff = useSnowOff();
+  const now = useNow();
   const [confirmReset, setConfirmReset] = useState(false);
   // Basic mode has no Modules page: every module is on, and nothing offers it.
   const simple = useAppSimpleMode().on;
@@ -887,6 +890,14 @@ export default function Settings({
             </button>
           </div>
         </SettingRow>
+        {snowCanFall({ now, unlocked: extrasUnlocked, capture: isCaptureMode() }) && (
+          <SettingRow
+            asLabel
+            name="Snow"
+            description="Falling snow in December. Turn it off any time."
+            control={<Switch checked={!snowOff} onCheckedChange={(on) => setSnowOff(!on)} ariaLabel="Snow" />}
+          />
+        )}
         <SettingRow name="Accent" description="Overrides the theme's accent colour.">
           <div className="flex gap-2">
             {ACCENTS.map((a) => (
