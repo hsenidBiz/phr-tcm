@@ -30,12 +30,14 @@ test("a connector leaves a box's right edge and reaches the next box's left edge
   expect(d).toBe("M100 20 C150 20 150 120 200 120");
 });
 
-test("draw places every connector and its colour blend where the boxes landed", () => {
+// The connectors are plain muted curves with an arrowhead marker now: no
+// per-edge gradient to lay along them, and no animated spark path.
+test("draw places every connector where the boxes landed", () => {
   document.body.innerHTML = `
     <div id="canvas">
-      <svg><defs><linearGradient id="g0" x1="0" x2="1"></linearGradient></defs>
-        <g class="edge" data-from="setup" data-to="rules" data-grad="g0"><path class="wire"></path><path class="spark"></path></g>
-        <g class="edge" data-from="setup" data-to="gone" data-grad="g1"><path class="wire" d=""></path></g>
+      <svg>
+        <g class="edge" data-from="setup" data-to="rules"><path class="wire"></path></g>
+        <g class="edge" data-from="setup" data-to="gone"><path class="wire" d=""></path></g>
       </svg>
       <div class="stage" data-stage="setup"></div>
       <div class="stage" data-stage="rules"></div>
@@ -48,12 +50,9 @@ test("draw places every connector and its colour blend where the boxes landed", 
 
   page().draw();
 
-  const [wire, spark] = Array.from(document.querySelectorAll("g[data-to=rules] path"));
+  const wire = document.querySelector("g[data-to=rules] path")!;
   // Relative to the canvas: setup's right edge at 260, mid-height 140; rules' left at 356, mid-height 160.
   expect(wire.getAttribute("d")).toBe("M260 140 C308 140 308 160 356 160");
-  expect(spark.getAttribute("d")).toBe(wire.getAttribute("d"));
-  const grad = document.getElementById("g0")!;
-  expect([grad.getAttribute("x1"), grad.getAttribute("x2")]).toEqual(["260", "356"]);
   // A connector to a stage that is not on the page is left undrawn.
   expect(document.querySelector("g[data-to=gone] path")!.getAttribute("d")).toBe("");
 });

@@ -896,8 +896,8 @@ mod gate_tests {
 }
 
 // ---------------------------------------------------------------------------
-// The flow on its own page (the tab's "View flow"): large coloured stages
-// joined by connectors that blend from one stage's colour into the next.
+// The flow on its own page (the tab's "View flow"): neutral stages with a
+// tone edge and tag, joined by thin muted connectors with arrowheads.
 
 mod page_tests {
     use v2_lib::api_templates::flow::Flow;
@@ -949,7 +949,7 @@ mod page_tests {
     }
 
     #[test]
-    fn the_page_colours_each_stage_and_blends_each_connector() {
+    fn the_page_colours_each_stage_and_joins_them_with_arrows() {
         let templates = [
             on("pms-create-cycle", "Create a cycle", Effect::Create, "setup"),
             on("pms-save-rules", "Save the rules", Effect::Edit, "rules"),
@@ -963,10 +963,11 @@ mod page_tests {
         assert!(html.contains("No template yet"));
         assert!(html.contains("Creates the record"));
 
-        // One connector per `requires`, each a gradient from the stage it
-        // leaves to the stage it reaches: setup (create) into rules (edit).
+        // One connector per `requires`, each ending in the arrowhead marker.
+        // (No per-edge gradient any more: the stroke is the muted token.)
         assert_eq!(html.matches("class='wire'").count(), 4);
-        assert!(html.contains("<stop offset='0' style='stop-color:var(--success)'/><stop offset='1' style='stop-color:var(--warning)'/>"), "{html}");
+        assert_eq!(html.matches("marker-end='url(#arrow)'").count(), 4);
+        assert!(!html.contains("linearGradient"), "{html}");
         assert!(html.contains("data-from='setup' data-to='rules'"));
 
         // The browser lays the columns out, so text wraps rather than
@@ -974,10 +975,9 @@ mod page_tests {
         assert_eq!(html.matches("<div class='col'>").count(), 4);
         assert!(!html.contains("text-overflow:ellipsis"), "nothing is truncated");
         assert!(html.contains("overflow-wrap:anywhere"));
-        assert!(html.contains("data-grad='g0'"));
         assert!(html.contains("window.FlowPage"), "the connector script is in the page");
-        // Motion only for those who have not asked for less.
-        assert!(html.contains("@media (prefers-reduced-motion:no-preference)"));
+        // Nothing moves: no animation, so reduced motion has nothing to hide.
+        assert!(!html.contains("@keyframes") && !html.contains("animation"), "{html}");
         // The same in words, for a screen reader.
         assert!(html.contains("<li>Evaluation rules. Requires: Cycle setup. Templates: Save the rules.</li>"), "{html}");
         // The scheme restore in <head>, the light/dark switch, and the
@@ -1001,12 +1001,96 @@ mod page_tests {
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("Failed on this environment at 2: HTTP 500. Ask the assistant to make it work here."), "{html}");
         assert!(html.contains(">failed here</span>"), "{html}");
-        assert!(html.contains("Templates: Save the rules (failed here).</li>"), "{html}");
+        // The reason is visible and in the screen-reader list, not only in
+        // the hover title.
+        assert!(html.contains("failed at step 2: HTTP 500</span>"), "{html}");
+        assert!(html.contains("Templates: Save the rules (failed here, failed at step 2: HTTP 500).</li>"), "{html}");
         assert!(!html.to_lowercase().contains("unproven"), "{html}");
 
         let confirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         let html = page_html(&flow(), &[confirmed], &PagePalette::default());
         assert!(!html.contains("unconfirmed here") && !html.contains("failed here"), "{html}");
+    }
+
+    fn css_of(html: &str) -> &str {
+        html.split("<style>").nth(1).and_then(|r| r.split("</style>").next()).expect("the style block")
+    }
+
+    #[test]
+    fn stage_boxes_are_flat_with_a_tone_edge_and_no_shadow_or_gradient() {
+        let html = page_html(&flow(), &[on("pms-save-rules", "Save the rules", Effect::Edit, "rules")], &PagePalette::default());
+        let css = css_of(&html);
+        let page = css.split(".bar{").nth(1).expect("the page's own rules");
+        assert!(!page.contains("box-shadow") && !page.contains("gradient("), "no shadow, no gradient: {page}");
+        assert!(!page.contains("letter-spacing"), "no tracked capitals: {page}");
+        assert!(page.contains("border-left:4px solid var(--tone)"), "the tone edge: {page}");
+        assert!(page.contains("border-radius:8px"), "{page}");
+        assert!(page.contains(".bar h1{margin:0;font-size:24px;font-weight:600"), "{page}");
+        assert!(page.contains(".stage h2{") && page.contains("font-size:13px;font-weight:600"), "{page}");
+        // The tag carries the tone as a ~14% tint, in the normal text colour.
+        assert!(page.contains("color:var(--text);background:color-mix(in srgb,var(--tone) 14%,var(--surface))"), "{page}");
+        assert!(!page.contains("color:#fff"), "no white text on a tone fill: {page}");
+        assert!(html.contains("<span class='tag'>Edit</span>"), "{html}");
+        // An open stage has the accent border and no tag.
+        assert!(page.contains(".stage.open{border:1px solid var(--accent)}"), "{page}");
+        let open = page_html(&flow(), &[], &PagePalette::default());
+        assert!(!open.contains("<span class='tag'>"), "{open}");
+        assert!(page.contains(".stage.optional{border-style:dashed"), "optional stays dashed: {page}");
+        // Connectors: 1.5px muted, an arrowhead 6px wide.
+        assert!(page.contains(".wire{fill:none;stroke:var(--muted);stroke-width:1.5}"), "{page}");
+        assert!(html.contains("markerWidth='6' markerHeight='6'"), "{html}");
+        // The diagram is described by the list beside it.
+        assert!(html.contains("<svg aria-hidden='true'>"), "{html}");
+        assert!(html.contains("<ol class='sr-only'"), "{html}");
+    }
+
+    #[test]
+    fn the_legend_is_a_bottom_strip_naming_only_the_tones_used() {
+        let templates = [
+            on("pms-create-cycle", "Create a cycle", Effect::Create, "setup"),
+            on("pms-save-rules", "Save the rules", Effect::Edit, "rules"),
+        ];
+        let html = page_html(&flow(), &templates, &PagePalette::default());
+        let legend = html.split("<footer class='legend'>").nth(1).and_then(|r| r.split("</footer>").next()).expect("a legend footer");
+        assert!(legend.contains("<li class='create'>Create</li>") && legend.contains("<li class='edit'>Edit</li>"), "{legend}");
+        assert!(legend.contains("<li class='open'>Open: no template yet, or mixed</li>"), "other stages have none: {legend}");
+        assert!(legend.contains("<li class='optional'>Optional stage</li>"), "{legend}");
+        assert!(!legend.contains("class='delete'") && !legend.contains("class='read'"), "unused tones stay out: {legend}");
+        assert!(html.find("</main>").unwrap() < html.find("<footer class='legend'>").unwrap(), "below the diagram");
+
+        // A flow with only a create stage names only Create.
+        let mut f = flow();
+        f.stages.retain(|s| s.id == "setup");
+        f.stages[0].requires.clear();
+        f.stages[0].optional = false;
+        let html = page_html(&f, &[on("pms-create-cycle", "Create a cycle", Effect::Create, "setup")], &PagePalette::default());
+        let legend = html.split("<footer class='legend'>").nth(1).and_then(|r| r.split("</footer>").next()).unwrap();
+        assert!(legend.contains("class='create'") && !legend.contains("class='open'") && !legend.contains("class='edit'"), "{legend}");
+    }
+
+    #[test]
+    fn a_failure_shows_its_reason_on_a_second_line_and_keeps_the_title() {
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed {
+            failure: HereFailure { at: "2026-11-06".into(), step: Some("3".into()), detail: Some("the server said no".into()) },
+        };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains("<span class='why' title='Failed on this environment at 3: the server said no."), "{html}");
+        assert!(html.contains(">failed at step 3: the server said no</span>"), "{html}");
+        assert!(css_of(&html).contains(".stage li .why{flex-basis:100%"), "on its own line");
+
+        // A long reason is cut on the page, whole in the title.
+        let long = "x".repeat(300);
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed { failure: HereFailure { at: "t".into(), step: None, detail: Some(long.clone()) } };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        assert!(html.contains("\u{2026}</span>"), "{html}");
+        assert!(html.contains(&long), "the title keeps it whole");
+
+        // No failure, no line.
+        let mut unconfirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        unconfirmed.here = Here::Unconfirmed;
+        assert!(!page_html(&flow(), &[unconfirmed], &PagePalette::default()).contains("class='why'"));
     }
 
     #[test]

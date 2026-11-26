@@ -1,11 +1,13 @@
-//! A flow on its own page, in the browser: the stages as large coloured
-//! boxes left to right, joined by thick curved connectors that blend from
-//! one stage's colour into the next - the API Templates tab's "View flow",
-//! as the Test map is the review page's "View as Tree".
+//! A flow on its own page, in the browser: the stages as plain boxes left
+//! to right, joined by thin curved connectors that end in an arrowhead -
+//! the API Templates tab's "View flow", as the Test map is the review
+//! page's "View as Tree".
 //!
-//! A stage's colour says what it does: the one effect its templates share
+//! A stage's tone says what it does: the one effect its templates share
 //! (create, edit, delete), or the page's accent when no template performs
-//! it yet or its templates disagree - the same rule the tab's arrows use.
+//! it yet or its templates disagree - the same rule the tab's flow map
+//! uses. The tone is a 4px left edge and a small tag; the box itself stays
+//! neutral, so every line of text reads on the page's own surface.
 //!
 //! The browser lays the stages out - a column per depth, each centred -
 //! so a long title wraps and its box grows instead of being cut short.
@@ -29,8 +31,8 @@ pub const GAP_Y: u32 = 24;
 
 const FLOW_JS: &str = include_str!("../../web/flow-page.js");
 
-/// What a stage's colour stands for. A stage whose templates agree is a
-/// filled box in that effect's colour; `Open` is outlined in the accent
+/// What a stage's tone stands for. A stage whose templates agree has a left
+/// edge and a tag in that effect's colour; `Open` is outlined in the accent
 /// instead, so it never reads as a create stage in a theme whose accent is
 /// green.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,17 @@ impl Tone {
             Tone::Delete => "--danger",
             Tone::Read => "--muted",
             Tone::Open => "--accent",
+        }
+    }
+
+    /// The word on the stage's tag; `Open` has none.
+    fn tag(self) -> Option<&'static str> {
+        match self {
+            Tone::Create => Some("Create"),
+            Tone::Edit => Some("Edit"),
+            Tone::Delete => Some("Delete"),
+            Tone::Read => Some("Read"),
+            Tone::Open => None,
         }
     }
 
@@ -179,6 +192,34 @@ fn here_hint(here: &Here) -> String {
     }
 }
 
+/// The visible second line under a template that failed here: the step and
+/// the short reason the `title` already carries in full. None when the
+/// failure names neither.
+fn failure_line(here: &Here) -> Option<String> {
+    let Here::Failed { failure } = here else { return None };
+    let at = failure.step.as_ref().map(|step| {
+        if !step.is_empty() && step.chars().all(|c| c.is_ascii_digit()) {
+            format!("step {step}")
+        } else {
+            step.clone()
+        }
+    });
+    let detail = failure.detail.as_ref().map(|d| {
+        let d = d.split_whitespace().collect::<Vec<_>>().join(" ");
+        if d.chars().count() > 120 {
+            format!("{}\u{2026}", d.chars().take(119).collect::<String>().trim_end())
+        } else {
+            d
+        }
+    });
+    match (at, detail) {
+        (Some(a), Some(d)) => Some(format!("failed at {a}: {d}")),
+        (Some(a), None) => Some(format!("failed at {a}")),
+        (None, Some(d)) => Some(format!("failed: {d}")),
+        (None, None) => None,
+    }
+}
+
 fn effect_word(e: &Effect) -> &'static str {
     match e {
         Effect::Create => "create",
@@ -205,32 +246,20 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         .collect();
     let title_of: HashMap<&str, &str> = flow.stages.iter().map(|s| (s.id.as_str(), s.title.as_str())).collect();
 
-    // Connectors: one gradient per edge, from the stage it leaves to the
-    // stage it reaches. Their shape and the gradient's run are filled in by
-    // the page's script once the browser has placed the boxes.
-    let mut defs = String::new();
+    // Connectors: one thin muted curve per edge, ending in an arrowhead at
+    // the stage it reaches. Their shape is filled in by the page's script
+    // once the browser has placed the boxes.
     let mut paths = String::new();
-    let mut n = 0;
     for s in &flow.stages {
         for r in &s.requires {
-            let (Some(from), Some(_)) = (col_of.get(r.as_str()), col_of.get(s.id.as_str())) else {
+            if !col_of.contains_key(r.as_str()) || !col_of.contains_key(s.id.as_str()) {
                 continue;
-            };
-            defs.push_str(&format!(
-                "<linearGradient id='g{n}' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='1' y2='0'>\
-                 <stop offset='0' style='stop-color:var({})'/><stop offset='1' style='stop-color:var({})'/></linearGradient>",
-                tone[r.as_str()].var(),
-                tone[s.id.as_str()].var(),
-            ));
+            }
             paths.push_str(&format!(
-                "<g class='edge' data-from='{}' data-to='{}' data-grad='g{n}'>\
-                 <path class='wire' d='' stroke='url(#g{n})'/>\
-                 <path class='spark' d='' pathLength='1' style='animation-delay:{:.2}s'/></g>",
+                "<g class='edge' data-from='{}' data-to='{}'><path class='wire' d='' marker-end='url(#arrow)'/></g>",
                 esc(r),
                 esc(&s.id),
-                *from as f32 * 0.25,
             ));
-            n += 1;
         }
     }
 
@@ -261,8 +290,15 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
                         Some(word) => format!("<span class='fx' title='{}'>{word}</span>", esc_attr(&here_hint(&saved.here))),
                         None => String::new(),
                     };
+                    // The reason is on the page, not only in the hover.
+                    let why = match failure_line(&saved.here) {
+                        Some(line) => {
+                            format!("<span class='why' title='{}'>{}</span>", esc_attr(&here_hint(&saved.here)), esc(&line))
+                        }
+                        None => String::new(),
+                    };
                     format!(
-                        "<li><span class='name'>{}</span>{mark}<span class='fx'>{}</span></li>",
+                        "<li><span class='name'>{}</span>{mark}<span class='fx'>{}</span>{why}</li>",
                         esc(&tpl.title),
                         effect_word(&tpl.effect)
                     )
@@ -271,7 +307,8 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         };
         boxes.push_str(&format!(
             "<div class='stage {cls}{opt}' data-stage='{id}' style='--tone:var({var})'>\
-             <h2>{title}</h2><p class='under'>{under}</p><ul>{rows}</ul></div>",
+             <div class='head'><h2>{title}</h2>{tag}</div><p class='under'>{under}</p><ul>{rows}</ul></div>",
+            tag = t.tag().map(|w| format!("<span class='tag'>{w}</span>")).unwrap_or_default(),
             cls = t.class(),
             opt = if s.optional { " optional" } else { "" },
             id = esc(&s.id),
@@ -292,9 +329,10 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
                 .get(&s.id)
                 .map(|l| {
                     l.iter()
-                        .map(|t| match here_mark(&t.here) {
-                            None => t.template.title.clone(),
-                            Some(word) => format!("{} ({word})", t.template.title),
+                        .map(|t| match (here_mark(&t.here), failure_line(&t.here)) {
+                            (None, _) => t.template.title.clone(),
+                            (Some(word), None) => format!("{} ({word})", t.template.title),
+                            (Some(word), Some(line)) => format!("{} ({word}, {line})", t.template.title),
                         })
                         .collect()
                 })
@@ -309,20 +347,37 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         })
         .collect();
 
+    // The legend lists only what this flow uses.
+    let mut legend = String::new();
+    for t in [Tone::Create, Tone::Edit, Tone::Delete, Tone::Read, Tone::Open] {
+        if flow.stages.iter().any(|s| tone[s.id.as_str()] == t) {
+            let word = match t {
+                Tone::Create => "Create",
+                Tone::Edit => "Edit",
+                Tone::Delete => "Delete",
+                Tone::Read => "Read",
+                Tone::Open => "Open: no template yet, or mixed",
+            };
+            legend.push_str(&format!("<li class='{}'>{word}</li>", t.class()));
+        }
+    }
+    if flow.stages.iter().any(|s| s.optional) {
+        legend.push_str("<li class='optional'>Optional stage</li>");
+    }
+
     format!(
         "<!DOCTYPE html>\n\
          <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">{restore}\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{title} - flow</title><style>{vars}{css}</style></head><body>{switch}\
          <header class='bar'><h1>{title}</h1>\
-         <p class='subtitle'>{module} \u{b7} Tracks {subject} \u{b7} {stages} stage{s}</p>\
-         <ul class='key' aria-label='Colours'>\
-         <li class='create'>Create</li><li class='edit'>Edit</li><li class='delete'>Delete</li>\
-         <li class='read'>Read</li>\
-         <li class='open'>No template yet, or mixed</li></ul></header>\
+         <p class='subtitle'>{module} \u{b7} Tracks {subject} \u{b7} {stages} stage{s}</p></header>\
          <main class='viewport'><div id='canvas' class='canvas'>\
-         <svg aria-hidden='true'><defs>{defs}</defs>{paths}</svg>\
+         <svg aria-hidden='true'><defs>\
+         <marker id='arrow' viewBox='0 0 6 6' refX='6' refY='3' markerWidth='6' markerHeight='6' markerUnits='userSpaceOnUse' orient='auto'>\
+         <path d='M0 0 L6 3 L0 6 z'/></marker></defs>{paths}</svg>\
          {boxes}</div></main>\
+         <footer class='legend'><ul class='key' aria-label='Legend'>{legend}</ul></footer>\
          <ol class='sr-only' aria-label='Stages of {title}'>{words}</ol>\
          <script>{switch_js}</script><script>{flow_js}</script></body></html>",
         scheme = palette.initial_scheme(),
@@ -330,6 +385,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         vars = palette.css(),
         css = page_css(),
         flow_js = FLOW_JS,
+        legend = legend,
         switch = crate::webtheme::SWITCH_HTML,
         switch_js = crate::webtheme::SWITCH_JS,
         title = esc(&flow.title),
@@ -357,37 +413,36 @@ fn page_css() -> String {
 
 const PAGE_CSS: &str = "
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif}
-.bar{padding:28px 40px 8px}
-.bar h1{margin:0;font-size:30px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
-.subtitle{margin:4px 0 14px;color:var(--muted)}
-.key{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0;padding:0;list-style:none;color:var(--muted);font-size:12px}
-.key li{display:flex;align-items:center;gap:6px}
-.key li::before{content:'';width:22px;height:6px;border-radius:3px;background:var(--k)}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif}
+.bar{padding:24px 40px 4px}
+.bar h1{margin:0;font-size:24px;font-weight:600;line-height:1.3}
+.subtitle{margin:4px 0 12px;color:var(--muted)}
+.legend{padding:12px 40px 24px;border-top:1px solid var(--border)}
+.key{display:flex;flex-wrap:wrap;gap:8px 24px;margin:0;padding:0;list-style:none;color:var(--muted);font-size:12px}
+.key li{display:flex;align-items:center;gap:8px}
+.key li::before{content:'';width:4px;height:16px;border-radius:2px;background:var(--k)}
 .key .create{--k:var(--success)}.key .edit{--k:var(--warning)}.key .delete{--k:var(--danger)}.key .read{--k:var(--muted)}
-.key .open::before{background:transparent;border:2px solid var(--accent);height:10px;width:18px}
-.viewport{overflow:auto;padding:28px 40px 48px}
+.key .open::before{width:16px;height:16px;border-radius:4px;background:transparent;border:1px solid var(--accent)}
+.key .optional::before{width:16px;height:16px;border-radius:4px;background:transparent;border:1px dashed var(--muted)}
+.viewport{overflow:auto;padding:24px 40px 40px}
 .canvas svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
-.wire{fill:none;stroke-width:10;stroke-linecap:round}
-.spark{display:none;fill:none;stroke:color-mix(in srgb,#fff 88%,transparent);stroke-width:5;stroke-linecap:round;
- stroke-dasharray:.18 1;filter:drop-shadow(0 0 4px #fff)}
-.stage{position:relative;z-index:1;display:flex;flex-direction:column;padding:12px 14px;border-radius:14px;color:#fff;
- background:linear-gradient(135deg,var(--tone),color-mix(in srgb,var(--tone) 72%,#000));
- box-shadow:0 10px 28px color-mix(in srgb,var(--tone) 35%,transparent),0 2px 6px color-mix(in srgb,#000 25%,transparent)}
-.stage.open,.stage.optional,.stage.read{background:color-mix(in srgb,var(--tone) 10%,var(--surface));color:var(--text);border:2.5px solid var(--tone);box-shadow:none}
-.stage.optional{border-style:dashed}
-.stage h2{margin:0;font-size:14px;font-weight:800;line-height:1.3;letter-spacing:.06em;text-transform:uppercase;overflow-wrap:anywhere}
-.under{margin:2px 0 8px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.85}
+.wire{fill:none;stroke:var(--muted);stroke-width:1.5}
+#arrow path{fill:var(--muted)}
+.stage{position:relative;z-index:1;display:flex;flex-direction:column;padding:12px 16px;border-radius:8px;
+ background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--tone)}
+.stage.open{border:1px solid var(--accent)}
+.stage.optional{border-style:dashed;border-left-style:solid}
+.stage.open.optional{border-style:dashed}
+.head{display:flex;align-items:flex-start;gap:8px}
+.stage h2{flex:1;min-width:0;margin:0;font-size:13px;font-weight:600;line-height:20px;overflow-wrap:anywhere}
+.tag{flex:none;margin-top:2px;padding:0 8px;border-radius:4px;font-size:10px;font-weight:600;line-height:16px;text-transform:uppercase;
+ color:var(--text);background:color-mix(in srgb,var(--tone) 14%,var(--surface))}
+.under{margin:0 0 8px;font-size:12px;color:var(--muted)}
 .stage ul{margin:0;padding:0;list-style:none}
-.stage li{display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:12px;line-height:1.35}
+.stage li{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0 8px;padding:4px 0;font-size:12px;line-height:16px}
 .stage li .name{flex:1;min-width:0;overflow-wrap:anywhere}
-.stage li .fx{flex:none;margin-top:1px;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase;background:color-mix(in srgb,#000 22%,transparent)}
-.stage.open li .fx,.stage.optional li .fx,.stage.read li .fx{background:color-mix(in srgb,var(--tone) 18%,transparent);color:var(--text)}
-.stage li.none{opacity:.8;font-style:italic}
+.stage li .fx{flex:none;padding:0 8px;border-radius:4px;font-size:10px;font-weight:600;line-height:16px;text-transform:uppercase;color:var(--text);background:var(--surface-2)}
+.stage li .why{flex-basis:100%;color:var(--muted);overflow-wrap:anywhere}
+.stage li.none{color:var(--muted);font-style:italic}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media (prefers-reduced-motion:no-preference){
- .spark{display:inline;animation:flow-run 1.8s linear infinite}
- @keyframes flow-run{from{stroke-dashoffset:.18}to{stroke-dashoffset:-1}}
-}
-@media print{.spark{display:none}}
 ";

@@ -3,8 +3,8 @@
  * the browser lays out, so a long title wraps and its box grows. Only the
  * browser knows where each box ended up, so the connectors are drawn here:
  * one curve per `g.edge`, from the right edge of the stage it leaves to the
- * left edge of the stage it reaches, each at mid-height, and each edge's
- * colour blend laid along it. Drawn again when the window changes size,
+ * left edge of the stage it reaches, each at mid-height, ending in the
+ * arrowhead the page's marker draws. Drawn again when the window changes size,
  * since wrapping can move every box.
  *
  * ES5 on purpose: the page opens in whatever browser the person has.
@@ -47,11 +47,6 @@
       var d = wire(a, b);
       var paths = g.querySelectorAll('path');
       for (var p = 0; p < paths.length; p++) paths[p].setAttribute('d', d);
-      var grad = document.getElementById(g.getAttribute('data-grad'));
-      if (grad) {
-        grad.setAttribute('x1', String(a.right));
-        grad.setAttribute('x2', String(b.left));
-      }
     }
   }
 
