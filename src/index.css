@@ -97,8 +97,8 @@
      (components/SnowLayer.tsx): a soft cool flake with a faint darker edge,
      clear on white and quiet. The dark block below swaps it for near-white;
      every theme is one or the other. */
-  --color-snow: #b3c6dc;
-  --color-snow-edge: rgb(71 85 105 / 0.4);
+  --color-snow: #93a8c6;
+  --color-snow-edge: rgb(51 65 85 / 0.5);
 
   /* The accent is two jobs. --color-accent is the FILL: buttons, selected
      borders, switches, focus rings, glows, the brand flask. Accent-coloured
@@ -2203,7 +2203,7 @@ table {
 }
 .snow-layer .christmas-flake {
   background: var(--color-snow);
-  box-shadow: 0 0 0 0.5px var(--color-snow-edge);
+  box-shadow: 0 0 0 1px var(--color-snow-edge);
 }
 .christmas-snowman {
   position: absolute;
