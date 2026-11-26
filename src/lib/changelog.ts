@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.10",
+    date: "2026-11-26",
+    items: [
+      "Add accounts from the database has a Select all that ticks every login not yet saved, even the ones your search hides. Ticks are kept while you search, and a count shows how many are selected",
+    ],
+  },
+  {
     version: "2.4.8-beta.9",
     date: "2026-11-26",
     items: [
