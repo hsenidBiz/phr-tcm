@@ -31,6 +31,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-26",
     items: [
       "Snow falls gently across the app in December. You can turn it off in Settings.",
+      "On a test environment, your assistant now asks TCM to reset an expired password by signing in as that account, instead of refusing. It never types a password.",
     ],
   },
   {
