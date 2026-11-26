@@ -90,3 +90,69 @@ fn the_restore_script_only_takes_the_two_schemes_and_survives_a_file_origin() {
     assert!(js.contains("=== 'dark'") && js.contains("=== 'light'"), "a stored value is checked, never applied raw");
     assert!(js.contains("try") && js.contains("catch"), "file:// localStorage can throw");
 }
+
+// ---- Diagram contrast: the pages' text and essential marks, both palettes.
+
+mod diagram_contrast {
+    use crate::common::{contrast, mix};
+    use v2_lib::webtheme::ReportPalette;
+
+    fn both() -> [(&'static str, ReportPalette); 2] {
+        [("light", ReportPalette::default()), ("dark", ReportPalette::default_dark())]
+    }
+
+    #[test]
+    fn flow_page_text_reaches_4_5_to_1_and_its_marks_3_to_1_in_both_palettes() {
+        for (name, p) in both() {
+            let mut texts = vec![
+                ("text on surface", contrast(&p.text, &p.surface)),
+                ("muted on surface (under line, failure line)", contrast(&p.muted, &p.surface)),
+                ("muted on page (subtitle, legend)", contrast(&p.muted, &p.bg)),
+                ("text on surface-2 (template chips)", contrast(&p.text, &p.surface_2)),
+            ];
+            // The tag: normal text on a 14% tint of the tone over the surface.
+            for (tone, c) in [("success", &p.success), ("warning", &p.warning), ("danger", &p.danger), ("muted", &p.muted), ("accent", &p.accent)] {
+                texts.push((tone, contrast(&p.text, &mix(c, 14.0, &p.surface))));
+            }
+            for (what, ratio) in &texts {
+                assert!(*ratio >= 4.5, "{name}: {what} is {ratio:.2}:1");
+            }
+            // Essential marks: the connectors and arrowheads (muted on the
+            // page), and the accent outline of an open stage.
+            for (what, ratio) in [
+                ("connector on page", contrast(&p.muted, &p.bg)),
+                ("accent outline on surface", contrast(&p.accent, &p.surface)),
+            ] {
+                assert!(ratio >= 3.0, "{name}: {what} is {ratio:.2}:1");
+            }
+        }
+    }
+
+    #[test]
+    fn the_hairline_border_is_not_what_draws_an_essential_mark() {
+        for (name, p) in both() {
+            assert!(contrast(&p.border, &p.bg) < 3.0, "{name}: --border really is a hairline");
+            assert!(contrast(&p.muted, &p.bg) >= 3.0, "{name}: the test map's limbs use --muted");
+        }
+    }
+
+    #[test]
+    fn the_run_reports_trend_bars_reach_3_to_1() {
+        let tokens = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/autorun-report-tokens.css")).unwrap();
+        let block = |marker: &str| -> String {
+            let at = tokens.find(marker).expect(marker);
+            tokens[at..].split('}').next().unwrap().to_string()
+        };
+        let var = |b: &str, name: &str| -> String {
+            let at = b.find(&format!("{name}:")).unwrap_or_else(|| panic!("{name}"));
+            b[at + name.len() + 1..].split(';').next().unwrap().to_string()
+        };
+        for mode in ["light", "dark"] {
+            let b = block(&format!(":root[data-mode=\"{mode}\"]{{"));
+            let (bg, strong, border) = (var(&b, "--bg"), var(&b, "--border-strong"), var(&b, "--border"));
+            let ratio = contrast(&strong, &bg);
+            assert!(ratio >= 3.0, "{mode}: --border-strong is {ratio:.2}:1");
+            assert!(contrast(&border, &bg) < 3.0, "{mode}: the old bar colour was below 3:1");
+        }
+    }
+}

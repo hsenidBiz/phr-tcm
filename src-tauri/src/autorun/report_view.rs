@@ -603,7 +603,7 @@ pub(super) fn case_line(status: &str, id: i32, title: &str, value: &str, shared:
 fn chart(title: &str, values: &[(f64, &RunPoint, String)], flaky: bool) -> String {
     let n = values.len();
     let current = values.last().map(|v| v.2.clone()).unwrap_or_default();
-    let (w, h, gap) = (300.0_f64, 64.0_f64, 3.0_f64);
+    let (w, h, gap) = (300.0_f64, 64.0_f64, 4.0_f64);
     let bw = ((w - gap * (n as f64 - 1.0)) / n as f64).max(1.0);
     let max = values.iter().map(|v| v.0).fold(0.0_f64, f64::max);
     let max = if max <= 0.0 { 1.0 } else { max };

@@ -187,3 +187,14 @@ fn has_areas_and_write_beside_need_at_least_one_area() {
 fn html_has_back(path: &str) -> bool {
     std::fs::read_to_string(path).unwrap().contains("id='map-back'")
 }
+
+#[test]
+fn limbs_are_drawn_in_the_muted_token_not_the_hairline_border() {
+    let path = tmp_path("map-limbs.html");
+    export_test_map_html(&tree(), &path, "", &PagePalette::default(), None).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    // --border is about 1.1:1 on the page: a limb is an essential mark and
+    // needs 3:1, which --muted gives in both palettes (see webtheme.rs).
+    assert!(!html.contains("strokeStyle = colours.border"), "no stroke may use the hairline");
+    assert!(html.contains("strokeStyle = colours.muted"), "limbs use the stronger token");
+}

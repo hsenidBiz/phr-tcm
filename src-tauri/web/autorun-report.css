@@ -247,7 +247,9 @@ th { color: var(--text-muted); font-weight: 500; }
 .trend__value { font-size: var(--text-md); font-weight: 600; }
 .trend__svg { display: block; width: 100%; height: auto; }
 .trend__axis { stroke: var(--border-strong); }
-.trend__bar { fill: var(--border); }
+/* --border is a hairline tone (about 1.2:1 on the page); a bar is an essential
+   mark, so it takes the stronger rule colour (3:1 or more in both modes). */
+.trend__bar { fill: var(--border-strong); }
 .trend__bar--last { fill: var(--text-faint); }
 .trend__bar--last.tone-flaky { fill: var(--flaky-fg); }
 .trend__avg { stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }

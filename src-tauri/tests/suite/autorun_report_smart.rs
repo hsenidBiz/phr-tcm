@@ -1056,3 +1056,26 @@ fn a_pbi_runs_report_is_unchanged() {
     assert!(html.contains("<dt>PBI</dt><dd>#42</dd>"));
     assert!(html.contains("PBI #42 in QA"));
 }
+
+// ------------------------------------------------ diagram rules: seen, not hovered
+
+#[test]
+fn the_trend_bars_use_the_stronger_rule_colour_with_a_four_unit_gap() {
+    let css = web_file("autorun-report.css");
+    // The hairline --border (about 1.2:1) is gone from the bars: an
+    // essential mark needs 3:1, which --border-strong gives in both modes.
+    assert!(css.contains(".trend__bar { fill: var(--border-strong); }"), "{css}");
+    assert!(!css.contains(".trend__bar { fill: var(--border); }"));
+    assert!(css.contains(".trend__bar--last { fill: var(--text-faint); }"), "the last bar keeps its highlight");
+
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    // Consecutive bars start one bar width plus the 4 gap apart.
+    let attr = |r: &str, name: &str| -> f64 {
+        r.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    };
+    let bars: Vec<&str> = html.split("<rect class=\"trend__bar").skip(1).take(2).collect();
+    let (x0, x1, w) = (attr(bars[0], " x"), attr(bars[1], " x"), attr(bars[0], " width"));
+    assert!((x1 - x0 - (w + 4.0)).abs() < 0.2, "x0={x0} x1={x1} width={w}");
+}
+

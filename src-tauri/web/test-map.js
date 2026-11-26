@@ -190,16 +190,16 @@
     function onScreen(n) { return n.y >= top && n.y <= bottom; }
 
     ctx.lineWidth = Math.max(1, 1.2 * scale);
-    ctx.strokeStyle = colours.border;
+    ctx.strokeStyle = colours.muted;
     edges.forEach(function (e) {
       if (e.a.hidden || e.b.hidden) return;
       if (!onScreen(e.a) && !onScreen(e.b) && (e.a.y - top) * (e.b.y - top) > 0 && (e.a.y - bottom) * (e.b.y - bottom) > 0) return;
       var onChain = focus && focus.keep[e.a.i] && focus.keep[e.b.i];
       ctx.globalAlpha = focus && !onChain ? 0.25 : 1;
-      ctx.strokeStyle = onChain ? colours.accent : colours.border;
+      ctx.strokeStyle = onChain ? colours.accent : colours.muted;
       limb(e.a, e.b);
     });
-    ctx.strokeStyle = colours.border;
+    ctx.strokeStyle = colours.muted;
     if (focus && hover.kind === 'case' && !reduced) drawPulse(focus.chain);
 
     ctx.textAlign = 'left';
@@ -214,7 +214,7 @@
       if (n === activeNode) {
         ctx.strokeStyle = colours.accent; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2); ctx.stroke();
-        ctx.lineWidth = Math.max(1, 1.2 * scale); ctx.strokeStyle = colours.border;
+        ctx.lineWidth = Math.max(1, 1.2 * scale); ctx.strokeStyle = colours.muted;
       }
 
       ctx.fillStyle = colours.text;
