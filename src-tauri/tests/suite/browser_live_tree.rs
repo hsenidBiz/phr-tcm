@@ -368,6 +368,7 @@ async fn a_held_browser_is_alive_only_while_its_own_page_answers() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "starts a real Edge"]
 async fn release_closes_the_apps_browsers_and_nothing_else() {
+    let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
     let _a = crate::serial::autorun();
     let _t = crate::serial::api_template_run();
     let _held = crate::serial::held_browsers();

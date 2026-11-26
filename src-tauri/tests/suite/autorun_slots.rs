@@ -553,6 +553,7 @@ mod routing {
         use v2_lib::commands::autorun::{
             clear_cookies_for_assistant, release_for_assistant, reset_for_assistant, NO_BROWSER_OPEN,
         };
+        let _ag = crate::serial::agents(); // a release unbinds slots: agents first, as serial.rs orders them
         let _a = crate::serial::autorun();
         let one = SlotNo(1);
         show_overrides(&changed());
