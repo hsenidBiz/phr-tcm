@@ -175,7 +175,7 @@ test("Run in background closes the window, and the pill reopens it from another 
   mockScreen();
   renderShell();
   await startUnattended();
-  expect(await screen.findByText("case 1 of 2")).toBeInTheDocument();
+  expect(await screen.findByText("Case 1 of 2")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Run in background" }));
   await waitFor(() => expect(heading()).not.toBeInTheDocument());
@@ -191,7 +191,7 @@ test("Run in background closes the window, and the pill reopens it from another 
   fireEvent.click(pill);
   expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
   expect(screen.getByText("Manual Entry screen")).toBeInTheDocument();
-  expect(screen.getByText("case 2 of 2")).toBeInTheDocument();
+  expect(screen.getByText("Case 2 of 2")).toBeInTheDocument();
   expect(within(screen.getByText("Beta check").closest("li")!).getByText("Step 1 of 1")).toBeInTheDocument();
 });
 

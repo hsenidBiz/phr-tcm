@@ -2,8 +2,8 @@
  * The widths of Auto Test's dialogs, in one place so they stay consistent.
  *
  * Large: the dialogs that show data (scripts, accounts, areas, a run). About
- * 94% of the window, up to 1400px, and no taller than 90% of it.
+ * 94% of the window, up to 1400px, and no taller than the space under the title bar (max-h-full of the backdrop), so the footer is never off-screen.
  * Short form: a few fields and a button.
  */
-export const MODAL_LARGE = "w-[min(94vw,1400px)] max-w-none max-h-[90vh]";
+export const MODAL_LARGE = "w-[min(94vw,1400px)] max-w-none max-h-full";
 export const MODAL_SHORT = "w-full max-w-2xl";

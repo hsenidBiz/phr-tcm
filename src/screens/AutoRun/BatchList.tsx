@@ -19,12 +19,12 @@ export default function BatchList({
   if (batches.length === 0) return null;
   const at = currentId == null ? null : batchOf(plan, currentId);
   return (
-    <div className="space-y-1.5 text-xs">
+    <div className="space-y-1.5 border-t border-border pt-4 text-xs">
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-medium text-muted">Batch</span>
         {at && (
           <span role="status" className="text-muted">
-            {at.n} of {at.of}
+            <span className="sr-only">Batch</span> {at.n} of {at.of}
           </span>
         )}
       </div>

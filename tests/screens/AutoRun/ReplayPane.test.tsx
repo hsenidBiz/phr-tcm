@@ -278,7 +278,7 @@ test("progress moves the rows and the finished run is handed on", async () => {
     });
 
   await send({ phase: "opening" });
-  expect(await screen.findByText("case 1 of 1")).toBeInTheDocument();
+  expect(await screen.findByText("Case 1 of 1")).toBeInTheDocument();
   expect(
     within(screen.getByText("Case A").closest("li")!).getByText("Opening the browser"),
   ).toBeInTheDocument();
@@ -299,7 +299,7 @@ test("progress moves the rows and the finished run is handed on", async () => {
   ).toBeInTheDocument();
 
   await send({ index: 1, total: 2, case_id: 2, title: "Case B", phase: "opening" });
-  expect(await screen.findByText("case 2 of 2")).toBeInTheDocument();
+  expect(await screen.findByText("Case 2 of 2")).toBeInTheDocument();
 
   await send({ index: 1, total: 2, case_id: 2, title: "Case B", phase: "done", proposed: "" });
   expect(

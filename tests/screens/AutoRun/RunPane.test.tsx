@@ -1541,10 +1541,20 @@ test("the batch label row shows 1 of N and the current batch tab is marked curre
     </QueryClientProvider>,
   );
   await screen.findByRole("list", { name: "Batches" });
-  const label = screen.getAllByRole("status").find((n) => /^\d+ of \d+$/.test(n.textContent ?? ""));
-  expect(label).toHaveTextContent("1 of 2");
+  const label = screen.getAllByRole("status").find((n) => /^Batch \d+ of \d+$/.test(n.textContent ?? ""));
+  expect(label).toHaveTextContent("Batch 1 of 2");
   const current = within(screen.getByRole("list", { name: "Batches" }))
     .getAllByRole("listitem")
     .filter((li) => li.getAttribute("aria-current") === "step");
   expect(current.map((li) => li.textContent)).toEqual(["1 · 1 case"]);
+});
+
+// A window shorter than the panel must not push Save off-screen: the panel
+// is capped to the space under the title bar (max-h-full), not 90vh.
+test("the run panel is capped to the space it sits in so Save stays reachable", async () => {
+  mockSession();
+  renderPane([{ id: 1, title: "Valid login" }]);
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.className).toContain("max-h-full");
+  expect(dialog.className).not.toContain("90vh");
 });

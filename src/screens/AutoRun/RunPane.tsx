@@ -845,8 +845,8 @@ export default function RunPane({
 
   return (
     // Walking away at a reset point ends the run there, as Stop does.
-    <Modal onClose={pausedAt ? stopAtReset : close} className={`${MODAL_LARGE} space-y-4 overflow-x-hidden overflow-y-auto p-4`}>
-      <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3">
+    <Modal onClose={pausedAt ? stopAtReset : close} className={`${MODAL_LARGE} space-y-4 overflow-y-auto p-4`}>
+      <div className="flex items-baseline justify-between gap-3">
         <h2 className="min-w-0 text-sm font-semibold text-text">
           <span className="id-mono text-faint">#{pausedAt ? cases[pausedAt.next]?.id : caseId}</span>{" "}
           {pausedAt ? cases[pausedAt.next]?.title : title}

@@ -24,10 +24,10 @@ test.each(LARGE)("%s uses the shared large modal class", (name) => {
   expect(src).toContain('from "./modalWidths"');
 });
 
-test("the large class is wide, uncapped by max-w, and 90vh tall", () => {
+test("the large class is wide, uncapped by max-w, and as tall as the space under the title bar", () => {
   expect(MODAL_LARGE).toContain("w-[min(94vw,1400px)]");
   expect(MODAL_LARGE).toContain("max-w-none");
-  expect(MODAL_LARGE).toContain("max-h-[90vh]");
+  expect(MODAL_LARGE).toContain("max-h-full"); // not 90vh: that overran a short window, hiding the footer
 });
 
 test.each(["SiteAddressDialog"])("%s is the short form", (name) => {

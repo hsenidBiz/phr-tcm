@@ -33,7 +33,7 @@ export default function VerdictPicker({
   disabled?: boolean;
 } & Naming) {
   return (
-    <div role="group" aria-label={label} aria-labelledby={labelledBy} className="inline-flex">
+    <div role="group" aria-label={label} aria-labelledby={labelledBy} className="flex w-fit">
       {VERDICTS.map((v) => {
         const pressed = value === v;
         const Icon = VERDICT_ICON[v];
@@ -47,6 +47,7 @@ export default function VerdictPicker({
               // One joined group: shared borders (-ml-px), rounded at the outer ends only.
               "-ml-px inline-flex items-center gap-1.5 border border-border px-3 py-1.5 text-xs font-medium transition-colors first:ml-0 first:rounded-l-md last:rounded-r-md [&_svg]:size-3.5",
               pressed && "relative z-10",
+              "hover:relative hover:z-[5] focus-visible:relative focus-visible:z-20",
               pressed ? verdictTone[v] : "text-muted hover:border-border-strong",
             )}
             onClick={() => onPick(v)}
