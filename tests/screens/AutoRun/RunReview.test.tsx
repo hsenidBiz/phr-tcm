@@ -1281,9 +1281,9 @@ test("a failed case's kept video shows Play and Download, and Raise bug offers i
     },
   });
   await screen.findByText("Valid login");
-  expect(await within(caseCard(201)).findByRole("button", { name: "Play video" })).toBeInTheDocument();
+  expect(await within(caseCard(201)).findByRole("button", { name: "Watch video" })).toBeInTheDocument();
   expect(within(caseCard(201)).getByRole("button", { name: "Download video" })).toBeInTheDocument();
-  expect(within(caseCard(202)).queryByRole("button", { name: "Play video" })).toBeNull();
+  expect(within(caseCard(202)).queryByRole("button", { name: "Watch video" })).toBeNull();
 
   fireEvent.click(within(caseCard(201)).getByRole("button", { name: /Raise bug/ }));
   const box = await screen.findByRole("checkbox", { name: "Attach the video of the failure" });
@@ -1323,7 +1323,7 @@ test("Simple keeps Raise bug and the failure video in the run review", async () 
     },
   });
   await screen.findByText("Valid login");
-  expect(await within(caseCard(201)).findByRole("button", { name: "Play video" })).toBeInTheDocument();
+  expect(await within(caseCard(201)).findByRole("button", { name: "Watch video" })).toBeInTheDocument();
   expect(within(caseCard(201)).getByRole("button", { name: /Raise bug/ })).toBeInTheDocument();
 });
 

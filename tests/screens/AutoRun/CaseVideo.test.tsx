@@ -4,7 +4,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const dialog = vi.hoisted(() => ({ save: vi.fn() }));
@@ -13,6 +13,18 @@ const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi
 vi.mock("../../../src/lib/toast", () => ({ toast: toastMock }));
 
 import CaseVideo, { VIDEO_GONE } from "../../../src/screens/AutoRun/CaseVideo";
+import { VIDEO_WONT_PLAY } from "../../../src/screens/AutoRun/VideoPlayer";
+import type { Timeline } from "../../../src/screens/AutoRun/videoTimeline";
+
+const TIMELINE: Timeline = {
+  title: "Video of #7 Leave request",
+  length_ms: 20000,
+  marks: [],
+  steps: [
+    { name: "Sign in", at_ms: 0, failed: false, actions: [] },
+    { name: "Step 1", at_ms: 4000, failed: true, actions: [{ label: "Click", at_ms: 4200 }] },
+  ],
+};
 
 const NAME = "video-1700000000000-000001.mp4";
 
@@ -32,7 +44,7 @@ function show(name: string | null | undefined) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <CaseVideo name={name} />
+      <CaseVideo name={name} timeline={TIMELINE} />
     </QueryClientProvider>,
   );
 }
@@ -49,10 +61,10 @@ test("a case with no video shows no controls and asks nothing", () => {
   expect(asked).toEqual([]);
 });
 
-test("a video that exists shows Play and Download with its size", async () => {
+test("a video that exists shows Watch and Download with its size", async () => {
   mockIPC((cmd) => (cmd === "auto_run_video_info" ? { size: 2048, playable: true, attachable: true } : null));
   show(NAME);
-  expect(await screen.findByRole("button", { name: "Play video" })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Watch video" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Download video" })).toBeEnabled();
   expect(screen.getByText("2.0 KB")).toBeInTheDocument();
 });
@@ -61,28 +73,82 @@ test("a video that is gone says so and has no controls", async () => {
   mockIPC((cmd) => (cmd === "auto_run_video_info" ? null : null));
   show(NAME);
   expect(await screen.findByText(VIDEO_GONE)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Watch video" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Download video" })).toBeNull();
 });
 
-test("Play fetches the video by name and shows it in a video element", async () => {
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+test("Watch video opens the player over the app with the case's steps", async () => {
   const asked: unknown[] = [];
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
     if (cmd === "auto_run_video") {
       asked.push(args);
-      return btoa("mp4-bytes");
+      return btoa("mp4");
     }
     return null;
   });
   show(NAME);
-  fireEvent.click(await screen.findByRole("button", { name: "Play video" }));
-  const video = await screen.findByLabelText("Video of the failed case");
-  expect(video).toHaveAttribute("src", "blob:the-video");
+  fireEvent.click(await screen.findByRole("button", { name: "Watch video" }));
+  const dialog = await screen.findByRole("dialog", { name: "Video of #7 Leave request" });
+  await waitFor(() => expect(within(dialog).getByLabelText("Video of #7 Leave request")).toHaveAttribute("src", "blob:the-video"));
+  expect(within(dialog).getByRole("list", { name: "Steps" })).toBeInTheDocument();
   expect(asked).toEqual([{ name: NAME }]);
-  fireEvent.click(screen.getByRole("button", { name: "Close video" }));
-  await waitFor(() => expect(screen.queryByLabelText("Video of the failed case")).toBeNull());
+});
+
+test("closing the player goes back to the row and lets the video go", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") return btoa("mp4");
+    return null;
+  });
+  show(NAME);
+  const watchButton = await screen.findByRole("button", { name: "Watch video" });
+  watchButton.focus();
+  fireEvent.click(watchButton);
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() => expect(within(dialog).getByLabelText("Video of #7 Leave request")).toHaveAttribute("src", "blob:the-video"));
+  fireEvent.click(screen.getByRole("button", { name: "Close player" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:the-video");
+  expect(screen.getByRole("button", { name: "Watch video" })).toHaveFocus();
+});
+
+test("closing before the video loads leaves it closed", async () => {
+  const gate = deferred<string>();
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") return gate.promise;
+    return null;
+  });
+  show(NAME);
+  fireEvent.click(await screen.findByRole("button", { name: "Watch video" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Close player" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  gate.resolve(btoa("mp4"));
+  await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
+  await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:the-video"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("a video that cannot be fetched opens the player with the will-not-play note", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") throw new Error("gone");
+    return null;
+  });
+  show(NAME);
+  fireEvent.click(await screen.findByRole("button", { name: "Watch video" }));
+  const dialog = await screen.findByRole("dialog", { name: "Video of #7 Leave request" });
+  expect(await within(dialog).findByText(VIDEO_WONT_PLAY)).toBeInTheDocument();
+  expect(within(dialog).getByRole("list", { name: "Steps" })).toBeInTheDocument();
 });
 
 test("a video too large to play can still be downloaded", async () => {
@@ -97,7 +163,7 @@ test("a video too large to play can still be downloaded", async () => {
     return null;
   });
   show(NAME);
-  expect(await screen.findByRole("button", { name: "Play video" })).toBeDisabled();
+  expect(await screen.findByRole("button", { name: "Watch video" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Download video" }));
   await waitFor(() => expect(saved).toEqual([{ name: NAME, destPath: "C:/out/failure.mp4" }]));
   expect(toastMock.success).toHaveBeenCalledWith("Saved the video");
@@ -123,7 +189,7 @@ function showCompact(name: string | null | undefined) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <CaseVideo name={name} compact />
+      <CaseVideo name={name} compact timeline={TIMELINE} />
     </QueryClientProvider>,
   );
 }
@@ -140,24 +206,23 @@ test("compact: Watch and Download are icon buttons named for the failure video, 
   // No second line of words: the label and the size are only in the tooltips.
   expect(screen.queryByText("Video of the failure")).toBeNull();
   expect(screen.queryByText("2.0 KB")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Watch video" })).toBeNull();
 });
 
-test("compact: Watch shows the video, and the same button's place then closes it", async () => {
+test("compact: Watch opens the player and the row stays one line", async () => {
   mockIPC((cmd) => {
     if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
     if (cmd === "auto_run_video") return btoa("mp4-bytes");
     return null;
   });
   showCompact(NAME);
-  fireEvent.click(await screen.findByRole("button", { name: "Watch the failure video" }));
-  expect(await screen.findByLabelText("Video of the failed case")).toHaveAttribute("src", "blob:the-video");
-  // The video takes its own line after everything else on the row, so Replay stays on the row.
-  expect(screen.getByLabelText("Video of the failed case")).toHaveClass("order-last", "basis-full");
-  // The focus follows the swap: Close when it appears, Watch again after closing.
-  await waitFor(() => expect(screen.getByRole("button", { name: "Close the failure video" })).toHaveFocus());
-  fireEvent.click(screen.getByRole("button", { name: "Close the failure video" }));
-  await waitFor(() => expect(screen.queryByLabelText("Video of the failed case")).toBeNull());
+  const watchButton = await screen.findByRole("button", { name: "Watch the failure video" });
+  watchButton.focus();
+  fireEvent.click(watchButton);
+  const dialog = await screen.findByRole("dialog", { name: "Video of #7 Leave request" });
+  await waitFor(() => expect(within(dialog).getByLabelText("Video of #7 Leave request")).toHaveAttribute("src", "blob:the-video"));
+  fireEvent.click(screen.getByRole("button", { name: "Close player" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.getByRole("button", { name: "Watch the failure video" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Watch the failure video" })).toHaveFocus();
 });

@@ -706,7 +706,7 @@ test("only a case with a kept video shows Watch and Download for it, with its si
   expect(download).toHaveAttribute("title", "Download the failure video (2.9 KB)");
   // The old second line is gone.
   expect(within(row).queryByText("Video of the failure")).not.toBeInTheDocument();
-  expect(within(row).queryByRole("button", { name: "Play video" })).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "Watch video" })).not.toBeInTheDocument();
   const other = screen.getByRole("listitem", { name: "Run of No video" });
   expect(within(other).queryByRole("button", { name: "Watch the failure video" })).not.toBeInTheDocument();
   expect(within(other).queryByRole("button", { name: "Download the failure video" })).not.toBeInTheDocument();
@@ -719,7 +719,7 @@ const VIDEO_RUN = runOf({
   cases: [{ case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Failed", steps: [], video: "video-1700000000000-000001.mp4" }],
 });
 
-test("Watch and Download on the row call the same commands as Play video and Download video did", async () => {
+test("Watch and Download on the row call the same commands as Play video and Download video did, and Watch opens the player", async () => {
   const calls: { cmd: string; args: unknown }[] = [];
   URL.createObjectURL = vi.fn(() => "blob:the-video");
   URL.revokeObjectURL = vi.fn();
@@ -734,7 +734,8 @@ test("Watch and Download on the row call the same commands as Play video and Dow
   });
   const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
   fireEvent.click(await within(row).findByRole("button", { name: "Watch the failure video" }));
-  expect(await within(row).findByLabelText("Video of the failed case")).toHaveAttribute("src", "blob:the-video");
+  const player = await screen.findByRole("dialog", { name: "Video of #201 Valid login" });
+  await waitFor(() => expect(within(player).getByLabelText("Video of #201 Valid login")).toHaveAttribute("src", "blob:the-video"));
   fireEvent.click(within(row).getByRole("button", { name: "Download the failure video" }));
   await waitFor(() => expect(calls).toHaveLength(2));
   expect(calls).toEqual([

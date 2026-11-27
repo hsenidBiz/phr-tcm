@@ -28,7 +28,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
-import { stepLabel } from "./videoTimeline";
+import { caseTimeline, stepLabel } from "./videoTimeline";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import OutcomeGroups from "./OutcomeGroups";
@@ -649,7 +649,7 @@ export default function RunReview(props: {
                     steps are unfolded; nothing for a case that saved none. */}
                 <RunDownloads runId={run.id} steps={c.steps} />
                 {/* The video kept of a failed case, when "Keep a video of failed cases" was on. */}
-                <CaseVideo name={c.video} />
+                <CaseVideo name={c.video} timeline={caseTimeline(c)} />
               </li>
             </Fragment>
           );

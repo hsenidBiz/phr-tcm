@@ -30,6 +30,7 @@ import { invalidateRuns, useFlakyMarks } from "./flaky";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
+import { caseTimeline } from "./videoTimeline";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import { useAutoRunMode } from "./useAutoRunMode";
@@ -354,7 +355,7 @@ export default function PastRuns({
                           )}
                           {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
                           <FiledBugs bugs={c.bugs} />
-                          <CaseVideo compact name={c.video} />
+                          <CaseVideo compact name={c.video} timeline={caseTimeline(c)} />
                           {replayTo !== null && !simple && (
                             <Button
                               size="sm"
