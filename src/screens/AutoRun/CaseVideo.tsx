@@ -7,7 +7,7 @@
 // gets no controls.
 
 import { Button } from "../../components/ui/button";
-import { IconCancel, IconExport, IconPlayVideo } from "../../lib/actionIcons";
+import { IconCancel, IconDownload, IconExport, IconPlayVideo } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { toast } from "../../lib/toast";
 import { fileSize } from "./TestFilesDialog";
@@ -28,10 +28,92 @@ export function VideoUnavailableNote({ run }: { run: { video_unavailable?: boole
   return <p className="text-xs text-faint">{VIDEO_UNAVAILABLE}</p>;
 }
 
-export default function CaseVideo({ name, className }: { name?: string | null; className?: string }) {
+/** The tooltip of a video that is too large to play in the page. */
+const TOO_LARGE = "This video is too large to play here - download it instead";
+
+const VIDEO_PLAYER =
+  "max-h-96 max-w-full rounded border border-border";
+
+/**
+ * `compact` is the variant for a case's one-line row (Past runs): two icon
+ * buttons, Watch and Download, that sit in the row beside its result, with
+ * the video itself opening on a line of its own under the row's buttons. A
+ * video that is gone leaves the same note, short, and both buttons off.
+ */
+export default function CaseVideo({
+  name,
+  className,
+  compact = false,
+}: {
+  name?: string | null;
+  className?: string;
+  compact?: boolean;
+}) {
   const { info, src, close, play, save } = useVideoFile(name);
 
   if (!name || info.isLoading || info.isError) return null;
+  if (compact) {
+    const iconButton = "px-2";
+    if (!info.data) {
+      return (
+        <>
+          <span className="max-w-48 truncate text-xs text-faint" title={VIDEO_GONE}>
+            {VIDEO_GONE}
+          </span>
+          <Button size="sm" variant="outline" className={iconButton} disabled aria-label="Watch the failure video" title={VIDEO_GONE}>
+            <IconPlayVideo aria-hidden />
+          </Button>
+          <Button size="sm" variant="outline" className={iconButton} disabled aria-label="Download the failure video" title={VIDEO_GONE}>
+            <IconDownload aria-hidden />
+          </Button>
+        </>
+      );
+    }
+    const { size, playable } = info.data;
+    const sized = fileSize(size);
+    return (
+      <>
+        {src ? (
+          <Button size="sm" variant="outline" className={iconButton} aria-label="Close the failure video" title="Close the video" onClick={close}>
+            <IconCancel aria-hidden />
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className={iconButton}
+            aria-label="Watch the failure video"
+            disabled={!playable || play.isPending}
+            title={playable ? `Watch the failure video (${sized})` : TOO_LARGE}
+            onClick={() => play.mutate()}
+          >
+            <IconPlayVideo aria-hidden />
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className={iconButton}
+          aria-label="Download the failure video"
+          disabled={save.isPending}
+          title={`Download the failure video (${sized})`}
+          onClick={() => save.mutate()}
+        >
+          <IconDownload aria-hidden />
+        </Button>
+        {src && (
+          <video
+            aria-label="Video of the failed case"
+            src={src}
+            controls
+            autoPlay
+            onError={() => toast.error("This video cannot be played here - download it instead.")}
+            className={cn("basis-full", VIDEO_PLAYER)}
+          />
+        )}
+      </>
+    );
+  }
   if (!info.data) return <p className={cn("text-xs text-faint", className)}>{VIDEO_GONE}</p>;
   const { size, playable } = info.data;
 
@@ -50,7 +132,7 @@ export default function CaseVideo({ name, className }: { name?: string | null; c
             size="sm"
             variant="outline"
             disabled={!playable || play.isPending}
-            title={playable ? "Watch the video here" : "This video is too large to play here - download it instead"}
+            title={playable ? "Watch the video here" : TOO_LARGE}
             onClick={() => play.mutate()}
           >
             <IconPlayVideo aria-hidden />
@@ -62,7 +144,7 @@ export default function CaseVideo({ name, className }: { name?: string | null; c
           Download video
         </Button>
       </div>
-      {src && <video aria-label="Video of the failed case" src={src} controls autoPlay onError={() => toast.error("This video cannot be played here - download it instead.")} className="max-h-96 max-w-full rounded border border-border" />}
+      {src && <video aria-label="Video of the failed case" src={src} controls autoPlay onError={() => toast.error("This video cannot be played here - download it instead.")} className={VIDEO_PLAYER} />}
     </div>
   );
 }

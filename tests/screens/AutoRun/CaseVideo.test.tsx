@@ -117,3 +117,70 @@ test("cancelling the save dialog saves nothing", async () => {
   expect(saved).toEqual([]);
   expect(toastMock.success).not.toHaveBeenCalled();
 });
+
+// The compact variant is the one-line row's: two icon buttons, no second line.
+function showCompact(name: string | null | undefined) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <CaseVideo name={name} compact />
+    </QueryClientProvider>,
+  );
+}
+
+test("compact: Watch and Download are icon buttons named for the failure video, with the size in the tooltip", async () => {
+  mockIPC((cmd) => (cmd === "auto_run_video_info" ? { size: 2048, playable: true, attachable: true } : null));
+  showCompact(NAME);
+  const watch = await screen.findByRole("button", { name: "Watch the failure video" });
+  expect(watch).toHaveAttribute("title", "Watch the failure video (2.0 KB)");
+  expect(screen.getByRole("button", { name: "Download the failure video" })).toHaveAttribute(
+    "title",
+    "Download the failure video (2.0 KB)",
+  );
+  // No second line of words: the label and the size are only in the tooltips.
+  expect(screen.queryByText("Video of the failure")).toBeNull();
+  expect(screen.queryByText("2.0 KB")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
+});
+
+test("compact: Watch shows the video, and the same button's place then closes it", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") return btoa("mp4-bytes");
+    return null;
+  });
+  showCompact(NAME);
+  fireEvent.click(await screen.findByRole("button", { name: "Watch the failure video" }));
+  expect(await screen.findByLabelText("Video of the failed case")).toHaveAttribute("src", "blob:the-video");
+  fireEvent.click(screen.getByRole("button", { name: "Close the failure video" }));
+  await waitFor(() => expect(screen.queryByLabelText("Video of the failed case")).toBeNull());
+  expect(screen.getByRole("button", { name: "Watch the failure video" })).toBeEnabled();
+});
+
+test("compact: a video too large to play can still be downloaded", async () => {
+  mockIPC((cmd) => (cmd === "auto_run_video_info" ? { size: 80 * 1024 * 1024, playable: false, attachable: false } : null));
+  showCompact(NAME);
+  const watch = await screen.findByRole("button", { name: "Watch the failure video" });
+  expect(watch).toBeDisabled();
+  expect(watch).toHaveAttribute("title", "This video is too large to play here - download it instead");
+  expect(screen.getByRole("button", { name: "Download the failure video" })).toBeEnabled();
+});
+
+test("compact: a video that is gone leaves the note and both buttons off", async () => {
+  mockIPC(() => null);
+  showCompact(NAME);
+  expect(await screen.findByText(VIDEO_GONE)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Watch the failure video" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Download the failure video" })).toBeDisabled();
+});
+
+test("compact: a case with no video shows nothing and asks nothing", () => {
+  const asked: string[] = [];
+  mockIPC((cmd) => {
+    asked.push(cmd);
+    return null;
+  });
+  showCompact(undefined);
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(asked).toEqual([]);
+});

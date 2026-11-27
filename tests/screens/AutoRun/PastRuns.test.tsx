@@ -471,12 +471,63 @@ test("a run that stopped at a reset point shows the reset line between its cases
     ],
     7,
   );
+  // The recorded lines are folded into one tag; pressing it shows them, in the report's words.
+  const tag = await screen.findByRole("button", { name: "2 setup tasks done before this batch" });
+  expect(screen.queryByText('Reset: revert "cycle published" - stopped')).not.toBeInTheDocument();
+  fireEvent.click(tag);
   const line = await screen.findByText('Reset: revert "cycle published" - stopped');
   expect(screen.getByText('Reset: revert "rota" - stopped')).toBeInTheDocument();
   const items = Array.from(line.closest("ul")!.children);
   const at = items.indexOf(line);
   expect(items.indexOf(screen.getByRole("listitem", { name: "Run of Publish the cycle" }))).toBeLessThan(at);
   expect(items.indexOf(screen.getByRole("listitem", { name: "Run of Edit a draft cycle" }))).toBe(at + 2);
+});
+
+test("a batch's setup lines fold into one warning tag that counts them and opens on press", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          { case_id: 201, title: "Publish the cycle", verdict: "", note: "", proposed: "Passed" },
+          { case_id: 202, title: "Edit a draft cycle", verdict: "", note: "", proposed: "Passed" },
+        ],
+        resets: [
+          { before_case_id: 201, batch: 1, set: [["Approval workflow", "ON"]], outcome: "continued" },
+          { before_case_id: 202, batch: 2, set: [["Approval workflow", "OFF"], ["Rating scale", "5"]], outcome: "continued" },
+        ],
+      }),
+    ],
+    7,
+  );
+  // One setting is "1 setup task"; two are "2 setup tasks".
+  const one = await screen.findByRole("button", { name: "1 setup task done before this batch" });
+  const two = screen.getByRole("button", { name: "2 setup tasks done before this batch" });
+  expect(one).toHaveAttribute("aria-expanded", "false");
+  expect(one).toHaveClass("text-warning");
+  expect(screen.queryByText(/Before Batch 1/)).not.toBeInTheDocument();
+  fireEvent.click(one);
+  expect(one).toHaveAttribute("aria-expanded", "true");
+  // The line's words are the report's, unchanged.
+  expect(screen.getByText("Before Batch 1: make sure Approval workflow is ON - continued")).toBeInTheDocument();
+  expect(screen.queryByText("Set Approval workflow to OFF - continued")).not.toBeInTheDocument();
+  fireEvent.click(two);
+  expect(screen.getByText("Set Approval workflow to OFF - continued")).toBeInTheDocument();
+  expect(screen.getByText("Set Rating scale to 5 - continued")).toBeInTheDocument();
+  fireEvent.click(one);
+  expect(screen.queryByText(/Before Batch 1/)).not.toBeInTheDocument();
+});
+
+test("a case row is one line: the full title is on hover, and the id and result stay", async () => {
+  renderPastRuns(
+    [runOf({ cases: [{ case_id: 201, title: "A very long title ".repeat(8), verdict: "Failed", note: "", proposed: "" }] })],
+    7,
+  );
+  const row = await screen.findByRole("listitem", { name: /^Run of A very long title/ });
+  const title = within(row).getByText(/^A very long title/);
+  expect(title).toHaveClass("truncate");
+  expect(title).toHaveAttribute("title", "A very long title ".repeat(8));
+  expect(within(row).getByText("#201")).toBeInTheDocument();
+  expect(within(row).getByText("Failed")).toBeInTheDocument();
 });
 
 test("a run with no reset points shows no reset line", async () => {
@@ -626,7 +677,8 @@ test("Clear results refreshes the Flaky cases list, which reads the same run fil
   await waitFor(() => expect(screen.queryByRole("listitem", { name: "Flaky case Valid login" })).toBeNull());
 });
 
-test("only a case with a kept video shows Play and Download for it", async () => {
+// The video controls moved from a second line to two icon buttons on the case's own row.
+test("only a case with a kept video shows Watch and Download for it, with its size in the tooltip", async () => {
   const asked: unknown[] = [];
   renderPastRuns(
     [
@@ -648,13 +700,77 @@ test("only a case with a kept video shows Play and Download for it", async () =>
     },
   );
   const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
-  expect(await within(row).findByRole("button", { name: "Play video" })).toBeInTheDocument();
-  expect(within(row).getByRole("button", { name: "Download video" })).toBeInTheDocument();
+  const watch = await within(row).findByRole("button", { name: "Watch the failure video" });
+  expect(watch).toHaveAttribute("title", "Watch the failure video (2.9 KB)");
+  const download = within(row).getByRole("button", { name: "Download the failure video" });
+  expect(download).toHaveAttribute("title", "Download the failure video (2.9 KB)");
+  // The old second line is gone.
+  expect(within(row).queryByText("Video of the failure")).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "Play video" })).not.toBeInTheDocument();
   const other = screen.getByRole("listitem", { name: "Run of No video" });
-  expect(within(other).queryByRole("button", { name: "Play video" })).not.toBeInTheDocument();
-  expect(within(other).queryByRole("button", { name: "Download video" })).not.toBeInTheDocument();
+  expect(within(other).queryByRole("button", { name: "Watch the failure video" })).not.toBeInTheDocument();
+  expect(within(other).queryByRole("button", { name: "Download the failure video" })).not.toBeInTheDocument();
   // Only the video's own name was asked about.
   expect(asked).toEqual([{ name: "video-1700000000000-000001.mp4" }]);
+});
+
+const VIDEO_RUN = runOf({
+  pbi_id: 42,
+  cases: [{ case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Failed", steps: [], video: "video-1700000000000-000001.mp4" }],
+});
+
+test("Watch and Download on the row call the same commands as Play video and Download video did", async () => {
+  const calls: { cmd: string; args: unknown }[] = [];
+  URL.createObjectURL = vi.fn(() => "blob:the-video");
+  URL.revokeObjectURL = vi.fn();
+  saveDialog.mockResolvedValue("C:/out/failure.mp4");
+  renderPastRuns([VIDEO_RUN], 42, (cmd, args) => {
+    if (cmd === "auto_run_video_info") return { size: 3000, playable: true, attachable: true };
+    if (cmd === "auto_run_video" || cmd === "auto_run_save_video") {
+      calls.push({ cmd, args });
+      return cmd === "auto_run_video" ? btoa("mp4-bytes") : null;
+    }
+    return undefined;
+  });
+  const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  fireEvent.click(await within(row).findByRole("button", { name: "Watch the failure video" }));
+  expect(await within(row).findByLabelText("Video of the failed case")).toHaveAttribute("src", "blob:the-video");
+  fireEvent.click(within(row).getByRole("button", { name: "Download the failure video" }));
+  await waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls).toEqual([
+    { cmd: "auto_run_video", args: { name: "video-1700000000000-000001.mp4" } },
+    { cmd: "auto_run_save_video", args: { name: "video-1700000000000-000001.mp4", destPath: "C:/out/failure.mp4" } },
+  ]);
+});
+
+test("a video that is gone leaves a short note on the row and both buttons off", async () => {
+  renderPastRuns([VIDEO_RUN], 42, (cmd) => (cmd === "auto_run_video_info" ? null : undefined));
+  const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  expect(await within(row).findByText("The video of this case is no longer on this machine.")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Watch the failure video" })).toBeDisabled();
+  expect(within(row).getByRole("button", { name: "Download the failure video" })).toBeDisabled();
+});
+
+test("the video buttons sit before Replay to step on the row", async () => {
+  const failed = {
+    ...VIDEO_RUN,
+    cases: [
+      {
+        case_id: 201,
+        title: "Valid login",
+        verdict: "",
+        note: "",
+        proposed: "Failed",
+        steps: [{ step_number: 2, outcomes: [{ ok: false, detail: "no" }] }],
+        video: "video-1700000000000-000001.mp4",
+      },
+    ],
+  };
+  renderPastRuns([failed], 42, (cmd) => (cmd === "auto_run_video_info" ? { size: 3000, playable: true, attachable: true } : undefined));
+  const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  const watch = await within(row).findByRole("button", { name: "Watch the failure video" });
+  const replay = within(row).getByRole("button", { name: "Replay to step 2 for case 201" });
+  expect(watch.compareDocumentPosition(replay) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 test("a run in a browser that cannot record says so once as quiet text, never as a Not checked badge", async () => {
