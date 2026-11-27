@@ -16,6 +16,7 @@ export default function QueueActionBar({
   setReviewing,
   holdActive,
   hasBlockers,
+  checkingRules,
   submitPending,
   online,
   pureUpdates,
@@ -36,6 +37,8 @@ export default function QueueActionBar({
   setReviewing: (on: boolean) => void;
   holdActive: boolean;
   hasBlockers: boolean;
+  /** The project's field rules are still being read. */
+  checkingRules: boolean;
   submitPending: boolean;
   online: boolean;
   pureUpdates: boolean;
@@ -92,7 +95,7 @@ export default function QueueActionBar({
         // and creating something needs the fuller row read first.
         <Button
           tabIndex={-1}
-          disabled={holdActive || hasBlockers || submitPending || !online}
+          disabled={holdActive || hasBlockers || checkingRules || submitPending || !online}
           title={online ? undefined : OFFLINE_HINT}
           onClick={() => (pureUpdates ? onSubmit() : arm(true))}
         >
@@ -168,6 +171,7 @@ export default function QueueActionBar({
                 queueLength === 0 ||
                 holdActive ||
                 hasBlockers ||
+                checkingRules ||
                 submitPending ||
                 !online ||
                 // While the check is in flight, and while a duplicate is
@@ -200,6 +204,9 @@ export default function QueueActionBar({
             </Button>
             {hasBlockers && (
               <span className="text-xs text-danger">Fix the flagged items first.</span>
+            )}
+            {!hasBlockers && checkingRules && (
+              <span className="text-xs text-muted">Checking the project's field rules</span>
             )}
             {holdActive && (
               <span className="text-xs text-warning">Check the cases marked "Outcome unknown" first.</span>

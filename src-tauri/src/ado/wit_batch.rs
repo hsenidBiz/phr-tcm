@@ -78,18 +78,35 @@ impl BatchItem {
         // a refusal of the batch as a whole is `{"count": 1, "value":
         // {"Message": ..}}` - the 1000-link limit came back that way and
         // read as "HTTP 500" until the nested, capitalised form was tried.
+        //
+        // When the body names the fields a rule refused, that is the answer:
+        // one plain sentence per field ("Module is required"), the same
+        // parser the editor's save uses. The raw body stays in the log.
+        if self.body.is_object() {
+            let reasons = super::rule_errors::field_reasons(&self.body.to_string(), &Default::default());
+            if !reasons.is_empty() {
+                return reasons.join("; ");
+            }
+        }
         let candidates = [
+            &self.body["errorMessage"],
             &self.body["message"],
             &self.body["Message"],
             &self.body["value"]["Message"],
             &self.body["value"]["message"],
         ];
         if let Some(m) = candidates.iter().filter_map(|v| v.as_str()).find(|m| !m.trim().is_empty()) {
-            return m.trim().to_string();
+            let said = super::rule_errors::strip_urls(m);
+            if !said.is_empty() {
+                return said;
+            }
         }
         if let serde_json::Value::String(s) = &self.body {
             if !s.trim().is_empty() && !s.starts_with('<') {
-                return s.clone();
+                let said = super::rule_errors::strip_urls(s);
+                if !said.is_empty() {
+                    return said;
+                }
             }
         }
         format!("Azure DevOps returned HTTP {}", self.code)

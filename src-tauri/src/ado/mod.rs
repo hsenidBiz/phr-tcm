@@ -13,6 +13,7 @@ pub mod attachments;
 pub mod bugs;
 pub mod endpoints;
 pub mod fanout;
+pub mod field_rules;
 pub mod rule_errors;
 pub mod wit_batch;
 pub use endpoints::{tags_write_ops, RelinkOutcome};
@@ -227,6 +228,36 @@ impl AdoError {
             AdoError::Http { body, .. } if !body.trim().is_empty() => body.trim().to_string(),
             other => other.to_string(),
         }
+    }
+}
+
+impl AdoError {
+    /// This error with a rule refusal's body replaced by its plain sentence,
+    /// for a caller that shows `user_text()` or carries the error to the
+    /// screen. Any other error comes back as it was.
+    pub fn with_plain_body(self) -> AdoError {
+        match self {
+            AdoError::Http { status, body } if (400..500).contains(&status) => {
+                match rule_errors::plain_reason(&body, &Default::default()) {
+                    Some(said) => AdoError::Http { status, body: said },
+                    None => AdoError::Http { status, body },
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// What an editor save or a single create of a Test Case shows. A 400
+    /// that names the field a rule refused becomes one plain sentence per
+    /// field ("Module is required"), through the same parser the queue's
+    /// `$batch` answers use; every other failure reads as it always did.
+    pub fn plain_text(&self) -> String {
+        if let AdoError::Http { status: 400..=499, body } = self {
+            if let Some(said) = rule_errors::plain_reason(body, &Default::default()) {
+                return said;
+            }
+        }
+        self.to_string()
     }
 }
 

@@ -540,7 +540,9 @@ pub async fn route_timed_simple(
     let answer = crate::simple_view::reword_network_refusal(simple, &under, answer);
     // One line per call: the route and how long it took, so a slow call can
     // be told from a slow site. The query and the body are never logged.
-    crate::applog::debug(call_time_line(method, target, answer.0, started.elapsed().as_millis()));
+    if let Some(line) = call_log_line(method, target, answer.0, &answer.1, started.elapsed().as_millis()) {
+        crate::applog::debug(line);
+    }
     crate::assistant_activity::record_call(
         caller,
         &ctx.org,
@@ -551,6 +553,36 @@ pub async fn route_timed_simple(
         answer.0,
     );
     answer
+}
+
+/// The line a finished bridge call leaves in the log, or None for the one
+/// call that is routine: a successful `GET /tools`. Every connector polls it
+/// every few seconds, and with three assistants that was 36 lines a minute
+/// burying real problems. A `/tools` call still logs when it fails, and when
+/// its answer differs from the previous one served (that is the moment a
+/// tool switch changes what assistants see - the very first answer counts as
+/// a change). The previous answer is one hash for the whole app, not one per
+/// connector: a per-connector "first call" would need an id this layer does
+/// not carry. The payload itself is never logged. Other routes are unchanged.
+pub fn call_log_line(method: &str, target: &str, status: u16, payload: &str, ms: u128) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
+    if method != "GET" || path != "/tools" {
+        return Some(call_time_line(method, target, status, ms));
+    }
+    if !(200..300).contains(&status) {
+        return Some(call_time_line(method, target, status, ms));
+    }
+    static PREVIOUS: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    payload.hash(&mut hasher);
+    let now = hasher.finish();
+    let mut previous = PREVIOUS.lock().unwrap_or_else(|e| e.into_inner());
+    if *previous == Some(now) {
+        return None;
+    }
+    *previous = Some(now);
+    Some(format!("Bridge call: GET /tools answered {status} (the tool list changed)"))
 }
 
 /// The log line a bridge call leaves: method, path (the query left out),

@@ -41,6 +41,13 @@ export type QueueRowProps = {
    * the report is dismissed. Opens with the same toggle as `diff`. */
   fileChange?: SyncChange;
   reviewing: boolean;
+  /** Why Azure DevOps refused this row in the last submit, in plain words
+   * (the field and what it needs). Shown on a failed row. */
+  failedReason?: string;
+  /** A project field rule this case breaks ("Module is required ..."),
+   * shown at all times, not only in review: the case cannot be sent until
+   * it is put right. */
+  fieldProblem?: string | null;
   /** Validation problem, shown in review. */
   problem: string | null;
   /** Duplicate-title warning, shown in review when there is no problem. */
@@ -118,6 +125,8 @@ export function QueueRowInner({
   touched,
   fileChange,
   reviewing,
+  failedReason,
+  fieldProblem,
   problem,
   duplicate,
   quality = "",
@@ -149,6 +158,8 @@ export function QueueRowInner({
     uploaded && "uploaded",
     held && "held",
     failed && "failed",
+    failed && failedReason && "failed-why",
+    fieldProblem && "field-rule",
     diff?.noop && "noop",
     reviewing && (problem || duplicate) && "review",
     showQuality && "quality",
@@ -242,6 +253,16 @@ export function QueueRowInner({
           {failed && (
             <span id={id("failed")} className="sr-only">
               Upload failed
+            </span>
+          )}
+          {failed && failedReason && (
+            <span id={id("failed-why")} className="text-xs text-danger">
+              {failedReason}
+            </span>
+          )}
+          {fieldProblem && (
+            <span id={id("field-rule")} className="text-xs text-danger">
+              {fieldProblem}
             </span>
           )}
           <span className="text-xs text-faint">{tc.steps.length} steps</span>

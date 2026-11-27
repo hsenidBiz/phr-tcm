@@ -51,6 +51,8 @@ function standIns(): Partial<Commands> {
     // Manual Entry's field pickers.
     listTestCaseFields: () => ok([]),
     testCaseFieldValues: () => ok(["Checkout", "Basket", "Sign in"]),
+    // The sample project asks nothing of a case beyond what the tour fills in.
+    checkFieldRules: () => Promise.resolve({ checked: true, problems: [] }),
     listProjectTags: () => ok(["Checkout", "Regression", "Payments"]),
     classificationPaths: () => ok(["Website", "Website\\Checkout"]),
     classificationPathsAll: () =>

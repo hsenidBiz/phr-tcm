@@ -188,6 +188,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::preview_app_backup,
             misc::dev_probe_boards_suite,
             cases::list_test_case_fields,
+            cases::check_field_rules,
             cases::pbi_test_cases_full,
             cases::suite_test_cases_full,
             cases::update_test_case,

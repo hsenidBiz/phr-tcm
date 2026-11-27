@@ -18,6 +18,9 @@ export type SubmitSummary = {
   /** May or may not exist in Azure DevOps - held until checked. */
   unknown: number;
   headline: string;
+  /** The failed cases grouped by what Azure DevOps said, most common first:
+   * "64 failed: Module is required". Empty when nothing failed. */
+  failures: string[];
 };
 
 export function summariseSubmit(results: SubmitItemResult[]): SubmitSummary {
@@ -32,6 +35,18 @@ export function summariseSubmit(results: SubmitItemResult[]): SubmitSummary {
   if (failed > 0) parts.push(`${failed} failed`);
   if (unknown > 0) parts.push(`${unknown} unknown`);
 
+  // A failed case that came back with no reason is counted under the
+  // sentence the row itself would show.
+  const byReason = new Map<string, number>();
+  for (const r of results) {
+    if (r.action !== "failed") continue;
+    const why = (r.error ?? "").trim() || "Azure DevOps gave no reason";
+    byReason.set(why, (byReason.get(why) ?? 0) + 1);
+  }
+  const failures = [...byReason.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([why, n]) => `${n} failed: ${why}`);
+
   const uploaded = created + updated;
   const lead = uploaded === 0 ? "Nothing uploaded" : `${plural(uploaded, "test case")} uploaded`;
 
@@ -41,5 +56,6 @@ export function summariseSubmit(results: SubmitItemResult[]): SubmitSummary {
     failed,
     unknown,
     headline: parts.length ? `${lead} - ${parts.join(", ")}` : lead,
+    failures,
   };
 }

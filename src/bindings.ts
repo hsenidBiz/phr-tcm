@@ -268,6 +268,13 @@ export const commands = {
 	 */
 	devProbeBoardsSuite: (organization: string, project: string, pbiId: number, caseId: number, planId: number) => typedError<string, string>(__TAURI_INVOKE("dev_probe_boards_suite", { organization, project, pbiId, caseId, planId })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
+	/**
+	 *  Check a queue against the project's Test Case field rules before it is
+	 *  sent: a required field left empty, a value outside a fixed list. Read
+	 *  only, and it never fails - rules that cannot be read come back
+	 *  `checked: false`, and the upload goes on as it always did.
+	 */
+	checkFieldRules: (organization: string, project: string, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null) => __TAURI_INVOKE<RuleCheck>("check_field_rules", { organization, project, queue, moduleRef, preconditionsRef }),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull_Serialize[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**
 	 *  A test suite's own cases (not its child suites'), in the suite's order,
@@ -7944,6 +7951,28 @@ export type ResultFailureDetail = {
 export type RowCheck = {
 	table: string,
 	has: string,
+};
+
+/**
+ *  What the check found. `checked` is false when the rules could not be
+ *  read: the queue is then sent as it always was and the screen says so once.
+ */
+export type RuleCheck = {
+	checked: boolean,
+	problems: RuleProblem[],
+};
+
+/**  One thing wrong with one queued case. */
+export type RuleProblem = {
+	/**  Position in the queue that was checked. */
+	index: number,
+	reference_name: string,
+	/**  The field's display name, never only its reference name. */
+	field: string,
+	/**  "required" or "not_allowed". */
+	kind: string,
+	/**  A sentence fit for the row. */
+	message: string,
 };
 
 /**
