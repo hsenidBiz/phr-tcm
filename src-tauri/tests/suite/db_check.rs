@@ -79,6 +79,22 @@ fn validate_column_needs_order_by() {
 }
 
 #[test]
+fn validate_reads_quotes_and_order_by_without_comments() {
+    let e = || Ok(column("s", "A"));
+    // An apostrophe in a comment opens no literal.
+    let sql = "-- don't
+SELECT s FROM t WHERE n = {{noted.req}} ORDER BY id";
+    assert!(validate(sql, e(), None).is_ok());
+    let block = "/* it's */ SELECT s FROM t WHERE n = {{noted.req}} ORDER BY id";
+    assert!(validate(block, e(), None).is_ok());
+    // A quote in a literal still counts, and `--` inside one is no comment.
+    assert!(validate("SELECT s FROM t WHERE a = '--' AND n = '{{noted.req}}' ORDER BY id", e(), None).is_err());
+    // A commented ORDER BY orders nothing.
+    assert!(validate("SELECT s FROM t -- order by x", e(), None).is_err());
+    assert!(validate("SELECT s FROM t /* ORDER BY x */", e(), None).is_err());
+}
+
+#[test]
 fn validate_refuses_bad_regex() {
     let e = Expect::Column { name: "s".into(), equals: None, matches: Some("(".into()) };
     assert!(validate("SELECT s FROM t ORDER BY id", Ok(e), None).is_err());
@@ -109,6 +125,14 @@ fn bind_leaves_unanswered_and_unbound_lists_them() {
     let out = bind("{{setup.a}} {{noted.b}}", |n| (n == "setup.a").then(|| "1".into())).unwrap();
     assert_eq!(out, "N'1' {{noted.b}}");
     assert_eq!(unbound(&out), vec!["{{noted.b}}".to_string()]);
+}
+
+#[test]
+fn a_stray_open_brace_pair_does_not_swallow_a_placeholder() {
+    let sql = "SELECT '{{' + {{noted.a}}";
+    assert_eq!(noted_names(sql), vec!["a"]);
+    let out = bind(sql, |n| (n == "noted.a").then(|| "1".into())).unwrap();
+    assert_eq!(out, "SELECT '{{' + N'1'");
 }
 
 #[test]
@@ -201,6 +225,25 @@ fn judge_count_on_capped_fails_with_sentence() {
 }
 
 #[test]
+fn judge_count_at_most_on_capped_says_more_than_found() {
+    let r = rows(&["id"], &[&["1"], &["2"], &["3"]], true);
+    let want = Expect::Count { equals: None, at_least: None, at_most: Some(2) };
+    assert_eq!(judge(&want, &r), Verdict::Fail("expected at most 2 rows, found more than 3".into()));
+    // Too few kept rows cannot show the limit holds: the capped sentence.
+    let few = rows(&["id"], &[&["1"]], true);
+    match judge(&want, &few) {
+        Verdict::Fail(d) => assert!(d.contains("COUNT(*)"), "{d}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn judge_column_names_match_in_any_case() {
+    let r = rows(&["STATUS"], &[&["Approved"]], false);
+    assert!(matches!(judge(&column("status", "Approved"), &r), Verdict::Pass(_)));
+}
+
+#[test]
 fn judge_secret_column_hidden() {
     let r = rows(&["password_hash"], &[&["xyz"]], false);
     match judge(&column("password_hash", "abc"), &r) {
@@ -216,6 +259,15 @@ fn judge_secret_column_hidden() {
 fn judge_truncated_cell_compares_as_printed() {
     let r = rows(&["note"], &[&["a long text cut off..."]], false);
     assert!(matches!(judge(&column("note", "a long text cut off..."), &r), Verdict::Pass(_)));
+}
+
+#[test]
+fn judge_the_full_value_does_not_match_a_truncated_cell() {
+    let r = rows(&["note"], &[&["a long text cut off..."]], false);
+    assert_eq!(
+        judge(&column("note", "a long text cut off and more"), &r),
+        Verdict::Fail("expected note 'a long text cut off and more', found 'a long text cut off...'".into())
+    );
 }
 
 #[test]

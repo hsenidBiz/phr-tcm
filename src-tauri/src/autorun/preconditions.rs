@@ -17,6 +17,7 @@
 //! No sentence here carries SQL, a server name or a connection detail: the
 //! activity log the gate writes is the one place those go.
 
+use super::db_check::{DbRows, DbSource, NO_DATABASE};
 use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
@@ -314,6 +315,24 @@ pub enum PreconditionDb<D> {
     /// The Database Access module is off: no check runs, and a case with
     /// preconditions goes on carrying `NOT_CHECKED`.
     ReadingOff,
+}
+
+impl<D: DbRows> PreconditionDb<D> {
+    /// The same place, as the database a run's `expect_database` steps ask
+    /// (`db_check::DbSource`). The sentence for none is the check's own: the
+    /// one about preconditions is reworded, any other is said after what the
+    /// step was doing.
+    pub fn source(&self) -> DbSource<'_> {
+        match self {
+            PreconditionDb::Ready(d) => DbSource::Ready(d),
+            PreconditionDb::ReadingOff => DbSource::ReadingOff,
+            PreconditionDb::Missing(why) if why == NEED_DB => DbSource::Missing(NO_DATABASE.to_string()),
+            PreconditionDb::Missing(why) => DbSource::Missing(format!(
+                "This step checks the database, but {}",
+                why.strip_prefix(&format!("{COULD_NOT}: ")).unwrap_or(why)
+            )),
+        }
+    }
 }
 
 impl<D> PreconditionDb<D> {

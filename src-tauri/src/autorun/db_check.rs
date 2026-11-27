@@ -1,14 +1,22 @@
-//! The pure half of the `expect_database` step: what a check may ask,
-//! how its placeholders become quoted literals, how the answer text is read
-//! and how a verdict is reached. The runner (not this module) owns the
-//! connection, the polling and the clock.
+//! The `expect_database` step: what a check may ask, how its placeholders
+//! become quoted literals, how the answer text is read, how a verdict is
+//! reached, and (`run_check`) the asking and asking again until it is right.
 
-use crate::autorun::capture_redact::secret_name;
+use crate::api_templates::gate::{self, SqlcmdStageDb, StageDb};
+use crate::autorun::preconditions::NoDb;
+use crate::db::RealRunner;
+use crate::autorun::capture_redact::{redact_text, secret_name};
 use crate::autorun::setup_find::quoted_literal;
-use crate::browser::actions::{Action, HIDDEN_VALUE};
+use crate::browser::actions::{Action, ActionOutcome, HIDDEN_VALUE};
+use crate::browser::expect::NOTED_SECRET;
 use crate::browser::table;
 use crate::db::guard::{self, Verdict as GuardVerdict};
 use crate::db::query;
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 /// The longest a check may keep asking before it fails.
 pub const MAX_TIMEOUT_MS: u32 = 60_000;
@@ -95,8 +103,12 @@ fn placeholders(sql: &str) -> Vec<(usize, usize, String)> {
         });
         if named {
             out.push((start, end, name.to_string()));
+            from = end;
+        } else {
+            // Not one of ours: its `{{` may be a stray one, ahead of a real
+            // placeholder that the span just read has swallowed.
+            from = start + 2;
         }
-        from = end;
     }
     out
 }
@@ -128,6 +140,43 @@ pub fn unbound(sql: &str) -> Vec<String> {
     placeholders(sql).into_iter().map(|(s, e, _)| sql[s..e].to_string()).collect()
 }
 
+/// `sql` without its `--` line comments and `/* */` block comments, those
+/// inside a quoted literal being text, not comments.
+fn without_comments(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    let mut in_quote = false;
+    while let Some(c) = chars.next() {
+        if in_quote {
+            out.push(c);
+            in_quote = c != '\'';
+        } else if c == '\'' {
+            in_quote = true;
+            out.push(c);
+        } else if c == '-' && chars.peek() == Some(&'-') {
+            for n in chars.by_ref() {
+                if n == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut last = ' ';
+            for n in chars.by_ref() {
+                if last == '*' && n == '/' {
+                    break;
+                }
+                last = n;
+            }
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// `sql` without the text of its quoted literals.
 fn without_literals(sql: &str) -> String {
     let mut in_quote = false;
@@ -156,12 +205,15 @@ pub fn validate(sql: &str, e: Result<Expect, String>, timeout_ms: Option<u32>) -
     if timeout_ms.is_some_and(|t| t > MAX_TIMEOUT_MS) {
         return Err(format!("expect_database waits at most {MAX_TIMEOUT_MS} ms"));
     }
-    let found = placeholders(sql);
-    for (start, _, _) in &found {
-        if sql[..*start].matches('\'').count() % 2 == 1 {
+    // Quotes and ORDER BY are read without the comments: an apostrophe in a
+    // comment opens no literal, and `-- order by x` orders nothing.
+    let bare = without_comments(sql);
+    for (start, _, _) in placeholders(&bare) {
+        if bare[..start].matches('\'').count() % 2 == 1 {
             return Err(QUOTED_PLACEHOLDER.to_string());
         }
     }
+    let found = placeholders(sql);
     let mut probe = String::with_capacity(sql.len());
     let mut at = 0;
     for (start, end, _) in &found {
@@ -177,7 +229,7 @@ pub fn validate(sql: &str, e: Result<Expect, String>, timeout_ms: Option<u32>) -
     }
     if matches!(e, Expect::Column { .. }) {
         let re = regex::Regex::new(r"(?i)\border\s+by\b").map_err(|x| x.to_string())?;
-        if !re.is_match(&without_literals(sql)) {
+        if !re.is_match(&without_literals(&bare)) {
             return Err(NEEDS_ORDER_BY.to_string());
         }
     }
@@ -282,6 +334,12 @@ pub fn judge(e: &Expect, rows: &Rows) -> Verdict {
                 _ => return Verdict::Fail(COUNT_ONE.to_string()),
             };
             if rows.capped && !(at_least.is_some() && ok) {
+                // The rows kept already pass the limit: more than that exist.
+                if let (Some(w), None, None) = (at_most, equals, at_least) {
+                    if n > *w as usize {
+                        return Verdict::Fail(format!("expected {words}, found more than {n}"));
+                    }
+                }
                 return Verdict::Fail(CAPPED_COUNT.to_string());
             }
             if ok {
@@ -295,7 +353,8 @@ pub fn judge(e: &Expect, rows: &Rows) -> Verdict {
 }
 
 fn judge_column(name: &str, equals: Option<&str>, matches: Option<&str>, rows: &Rows) -> Verdict {
-    let Some(at) = rows.columns.iter().position(|c| c.eq_ignore_ascii_case(name)) else {
+    let wanted_name = name.to_lowercase();
+    let Some(at) = rows.columns.iter().position(|c| c.to_lowercase() == wanted_name) else {
         return Verdict::Fail(format!("no column named '{name}'; the query returned {}", rows.columns.join(", ")));
     };
     let printed = rows.columns[at].as_str();
@@ -340,5 +399,123 @@ fn found(cell: &str) -> String {
         "NULL".to_string()
     } else {
         format!("'{cell}'")
+    }
+}
+
+/// The database a check asks: whatever can answer a `SELECT` with the rows
+/// as `sqlcmd` prints them, in a future that can move between threads. Not a
+/// blanket impl over `StageDb`: `Runner::run`'s future is not provably `Send`
+/// for every runner, so each database a run really asks says so itself.
+pub trait DbRows: Send + Sync {
+    fn select<'a>(&'a self, sql: &'a str) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
+}
+
+/// The real database, asked through `sqlcmd`.
+impl DbRows for SqlcmdStageDb<RealRunner> {
+    fn select<'a>(&'a self, sql: &'a str) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        Box::pin(StageDb::select(self, sql))
+    }
+}
+
+/// No database: every ask is refused with the sentence for none.
+impl DbRows for NoDb {
+    fn select<'a>(&'a self, sql: &'a str) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        Box::pin(StageDb::select(self, sql))
+    }
+}
+
+/// Where a run's `expect_database` steps are asked.
+#[derive(Clone)]
+pub enum DbSource<'a> {
+    /// The database to ask.
+    Ready(&'a dyn DbRows),
+    /// No database to ask: the sentence that says why.
+    Missing(String),
+    /// The Database Access module is off.
+    ReadingOff,
+}
+
+/// A run that was given no database says so (`NO_DATABASE`).
+impl Default for DbSource<'_> {
+    fn default() -> Self {
+        DbSource::Missing(NO_DATABASE.to_string())
+    }
+}
+
+/// Said when a check runs and the active environment has no database.
+pub const NO_DATABASE: &str =
+    "This step checks the database, but no database is chosen for this environment on the AI Bridge tab";
+/// Said when a check runs while the Database Access module is off.
+pub const READING_OFF: &str = "This step checks the database, but Database Access is turned off";
+const SECRET_NOTED: &str = "a value read from a password field cannot be used in a database check";
+
+/// Carry out one `expect_database`: bind its `{{noted.*}}` placeholders from
+/// `noted` as quoted literals, then ask, judge and ask again every
+/// `POLL_MS` until the answer is right, `timeout_ms` has run out or `cancel`
+/// is set. A query the database refuses fails at once; one that could not
+/// reach it ends the wait early with the network sentence.
+pub async fn run_check(
+    src: &DbSource<'_>,
+    a: &Action,
+    noted: &BTreeMap<String, String>,
+    timeout_ms: u32,
+    cancel: Option<&AtomicBool>,
+) -> ActionOutcome {
+    let db = match src {
+        DbSource::Ready(db) => *db,
+        DbSource::Missing(why) => return ActionOutcome::failed(why.clone()),
+        DbSource::ReadingOff => return ActionOutcome::failed(READING_OFF),
+    };
+    let Action::ExpectDatabase { sql, .. } = a else {
+        return ActionOutcome::failed("this is not a database check");
+    };
+    let expect = match try_expectation(a) {
+        Some(Ok(e)) => e,
+        Some(Err(why)) => return ActionOutcome::failed(why),
+        None => return ActionOutcome::failed("this is not a database check"),
+    };
+    for name in noted_names(sql) {
+        if noted.get(&name).is_some_and(|v| v.starts_with(NOTED_SECRET)) {
+            return ActionOutcome::failed(SECRET_NOTED);
+        }
+    }
+    let bound = match bind(sql, |full| full.strip_prefix("noted.").and_then(|n| noted.get(n).cloned())) {
+        Ok(b) => b,
+        Err(why) => return ActionOutcome::failed(why),
+    };
+    let left = unbound(&bound);
+    if !left.is_empty() {
+        return ActionOutcome::failed(format!(
+            "expect_database has no value yet for {}",
+            left.join(", ")
+        ));
+    }
+    let began = Instant::now();
+    let limit = Duration::from_millis(u64::from(timeout_ms.min(MAX_TIMEOUT_MS)));
+    loop {
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            return ActionOutcome::failed(crate::autorun::runner::AFTER_STOP);
+        }
+        let last = match db.select(&bound).await {
+            Err(said) => {
+                if said == query::DB_UNREACHABLE || query::is_unreachable(&said) || gate::unreachable(&said) {
+                    crate::applog::warn(format!("db: a database check could not reach the database: {said}"));
+                    return ActionOutcome::failed(query::DB_UNREACHABLE);
+                }
+                return ActionOutcome::failed(redact_text(&said));
+            }
+            Ok(text) => match parse(&text) {
+                Err(why) => return ActionOutcome::failed(why),
+                Ok(rows) => match judge(&expect, &rows) {
+                    Verdict::Pass(detail) => return ActionOutcome::passed(detail),
+                    Verdict::Fail(detail) => detail,
+                },
+            },
+        };
+        let spent = began.elapsed();
+        if spent >= limit {
+            return ActionOutcome::failed(last);
+        }
+        tokio::time::sleep(Duration::from_millis(POLL_MS).min(limit - spent)).await;
     }
 }

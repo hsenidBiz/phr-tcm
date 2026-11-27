@@ -9,6 +9,7 @@
 use super::lease::Held;
 use super::nav::{self, Route};
 use super::api_checks;
+use super::db_check::{self, DbSource};
 use super::popups;
 use super::recipe::{self, SignInRecipe};
 use super::run_files::RunFiles;
@@ -424,6 +425,9 @@ pub async fn run_step_routed<D: Driver>(
 /// What an unattended run shares with each step it runs, and learns back.
 #[derive(Default)]
 pub struct InRun<'a> {
+    /// Where this run's `expect_database` steps are asked. The default is
+    /// no database (`db_check::NO_DATABASE`).
+    pub db: DbSource<'a>,
     /// The run's Stop: a wait inside the step (an `expect_download`'s) ends
     /// at its next look once it is set. `None` in a watched run or a try,
     /// where nothing waits that long unasked.
@@ -1351,6 +1355,19 @@ async fn run_expanded<D: Driver>(
             Action::ExpectResponse { .. } => {
                 let book = requests.get_or_insert_with(|| api_checks::StepRequests::new(mark, Vec::new()));
                 api_checks::expect_response(d, action, book, timing).await
+            }
+            // Only the runner holds the run's database and the values the
+            // case has noted.
+            Action::ExpectDatabase { timeout_ms, .. } => {
+                let noted_texts = d.noted_texts().map(|m| m.clone()).unwrap_or_default();
+                let limit = timeout_ms
+                    .unwrap_or_else(|| u32::try_from(timing.expect_ms).unwrap_or(db_check::MAX_TIMEOUT_MS))
+                    .min(db_check::MAX_TIMEOUT_MS);
+                let outcome = db_check::run_check(&run.db, action, &noted_texts, limit, run.cancel).await;
+                if outcome.detail == AFTER_STOP {
+                    blocked = Some(AFTER_STOP);
+                }
+                outcome
             }
             Action::ApiRequest { path, .. } => {
                 // Its fetch is the run's own request: a 5xx it gets back is

@@ -1293,6 +1293,16 @@ impl FakeStageDb {
     }
 }
 
+/// It holds no rows to read: a database check against it is refused.
+impl v2_lib::autorun::db_check::DbRows for FakeStageDb {
+    fn select<'a>(
+        &'a self,
+        _sql: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
+        Box::pin(async { Err("FakeStageDb: no rows to read".to_string()) })
+    }
+}
+
 impl v2_lib::api_templates::gate::StageDb for FakeStageDb {
     fn label(&self) -> String {
         "fake-server/fake-db".to_string()

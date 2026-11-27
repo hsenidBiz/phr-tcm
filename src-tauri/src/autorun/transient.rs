@@ -8,6 +8,7 @@
 //!   page load) failed at the network level: `net::ERR_*`, or, for an
 //!   `api_request` (the page's own `fetch`, which never says `net::ERR`),
 //!   "Failed to fetch";
+//! - a database check (`expect_database`) could not reach the database;
 //! - the sign-in page would not load, `net::ERR_*` (the case's own
 //!   sign-in or a `sign_in` action);
 //! - the browser stopped answering (a harness failure);
@@ -128,6 +129,8 @@ fn network_glitch(action: &Action, out: &ActionOutcome) -> bool {
             out.detail.find(WOULD_NOT_LOAD).is_some_and(|at| net_error(&out.detail[at + WOULD_NOT_LOAD.len()..]))
         }
         Action::SignIn { .. } => page_would_not_load(&out.detail) || is_site_slow(&out.detail),
+        // The database could not be reached: the network, not the data.
+        Action::ExpectDatabase { .. } => out.detail == crate::db::query::DB_UNREACHABLE,
         _ => false,
     }
 }
