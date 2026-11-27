@@ -63,3 +63,7 @@ Rejected:
 - The exact field names and where the times are captured (the replay step loop, `browser::actions::execute_in`, discovery's try/act routes).
 - How the inline `CaseVideo` hands over to the modal: replace it, or keep a small preview with a "Watch" button.
 - The timeline drawing: a div bar or SVG.
+
+## Added 27 November 2026 (owner)
+
+The same player, with its step markers and its jump-to-step / jump-to-action list, also appears in the **run report** (the HTML report page), for each case that has a video. It replaces any inline video there. The report is a self-contained page, so the player is built from the page's own JS and CSS (`src-tauri/web/`) using `PagePalette` colours rather than the app's React component. It shares the same timing data.
