@@ -32,7 +32,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       "When you ask an assistant for evidence while it checks a fix, it can record a video of its checks. Recordings appear under Auto Test, Past runs, where you can play, save or remove them",
       "Auto Test videos are now recorded at the browser page size you set in Auto Test settings",
-      "An assistant can move a saved script to another of your saved accounts when it says why. A repair never changes the account",
+      "An assistant writing or rewriting a script can move it to another of your saved accounts when it says why. An assistant fixing a failed case never changes the account",
       "Every account picker has a search box",
       "The open test case reads step by step, with each step's assumed values and unchecked parts shown under it, and rulings on one line each",
       "The manual run window lines up neatly and its Save button no longer drops off a short window",
