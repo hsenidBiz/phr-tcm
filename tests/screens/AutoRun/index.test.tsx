@@ -1931,23 +1931,25 @@ test("coming back to Auto Test finds a run paused at a reset point, and Continue
   const answers: { runId: string; continueRun: boolean }[] = [];
   mockWaiting(waiting, answers);
   const first = renderScreen();
-  await screen.findByRole("region", { name: "Before Batch 2" });
+  // The pause heading is sentence case now ("Before batch N"); the region is named by it.
+  await screen.findByRole("region", { name: "Before batch 2" });
   // The person leaves Auto Test and comes back: the pause is found again.
   first.unmount();
   renderScreen();
-  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
+  const panel = await screen.findByRole("region", { name: "Before batch 2" });
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
   // A case the list does not show falls back to its id.
-  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  // The panel now groups cases by area; titles without " - " fall in "Other".
+  const left = within(panel).getByRole("list", { name: "Cases in Other" });
   expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
     "#2 Edit a draft cycle",
     "#9",
   ]);
   fireEvent.click(within(panel).getByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: true }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument());
 });
 
 test("Stop on a paused run found again answers Stop", async () => {
@@ -1956,19 +1958,19 @@ test("Stop on a paused run found again answers Stop", async () => {
   renderScreen();
   fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: false }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument());
 });
 
 test("a pause that comes while the run's own dialog is closed shows the panel", async () => {
   mockWaiting({ current: null }, []);
   renderScreen();
   await screen.findByText("Publish the cycle");
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
   const { emit } = await import("@tauri-apps/api/event");
   await act(async () => {
     await emit("autorun-reset-needed", WAITING);
   });
-  expect(await screen.findByRole("region", { name: "Before Batch 2" })).toBeInTheDocument();
+  expect(await screen.findByRole("region", { name: "Before batch 2" })).toBeInTheDocument();
 });
 
 test("coming back to Auto Test finds a run waiting for the network and shows its panel", async () => {

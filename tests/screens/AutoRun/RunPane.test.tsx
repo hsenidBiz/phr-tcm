@@ -1247,7 +1247,8 @@ async function reachTheReset(s: ReturnType<typeof mockSession>) {
   await waitFor(() => expect(s.launched).toEqual(["edge"]));
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  return screen.findByRole("region", { name: "Before Batch 2" });
+  // The pause heading is sentence case now ("Before batch N"); the region is named by it.
+  return screen.findByRole("region", { name: "Before batch 2" });
 }
 
 test("the supervised pane pauses at a reset point before the next case's browser is used", async () => {
@@ -1261,7 +1262,8 @@ test("the supervised pane pauses at a reset point before the next case's browser
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
-  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  // The panel now groups cases by area; titles without " - " fall in "Other".
+  const left = within(panel).getByRole("list", { name: "Cases in Other" });
   expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
     "#2 Edit a draft cycle",
     "#3 Other",
@@ -1279,7 +1281,7 @@ test("Continue at a reset point opens a fresh browser for the next case and the 
   fireEvent.click(screen.getByRole("button", { name: "Continue the run" }));
   expect(await screen.findByText("Case 2 of 3")).toBeInTheDocument();
   await waitFor(() => expect(s.launched).toEqual(["edge", "edge"]));
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 
   // Case 2 and 3, then the one write.
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
@@ -1327,7 +1329,7 @@ test("without a plan the supervised pane never pauses", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
   expect(await screen.findByText("Case 2 of 3")).toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 });
 
 test("while discovery holds the browser, Open browser is off and says why", async () => {
@@ -1380,8 +1382,9 @@ test("a run whose Batch 1 needs settings starts paused, then pauses again with S
       <RunPane org="acme" project="Web" pbiId={42} cases={RESET_CASES} plan={BATCH_PLAN} onClose={onClose} />
     </QueryClientProvider>,
   );
-  const first = await screen.findByRole("region", { name: "Before Batch 1" });
-  expect(within(first).getByRole("list", { name: "Set" })).toHaveTextContent("Make sure Approval workflow is ON");
+  const first = await screen.findByRole("region", { name: "Before batch 1" });
+  // Heading is sentence case now and the Set list is the "Set up" checklist.
+  expect(within(first).getByRole("list", { name: "Set up" })).toHaveTextContent("Make sure Approval workflow is ON");
   expect(within(first).queryByRole("list", { name: "Put back" })).not.toBeInTheDocument();
   // The panel was re-laid out: a "Batch" label row with "1 of 2" beside
   // it, and one small tab per batch ("1 · 1 case").
@@ -1395,8 +1398,9 @@ test("a run whose Batch 1 needs settings starts paused, then pauses again with S
   expect(s.launched).toEqual([]);
 
   fireEvent.click(within(first).getByRole("button", { name: "Continue the run" }));
-  const panel = await reachTheResetNamed(s, "Before Batch 2");
-  expect(within(panel).getByRole("list", { name: "Set" })).toHaveTextContent("Set Approval workflow to OFF");
+  const panel = await reachTheResetNamed(s, "Before batch 2");
+  // The "Set" list is now the "Set up" checklist.
+  expect(within(panel).getByRole("list", { name: "Set up" })).toHaveTextContent("Set Approval workflow to OFF");
   expect(within(panel).getByRole("list", { name: "Put back" })).toHaveTextContent(
     'Reset: revert "cycle published" (changed by #1 Publish the cycle)',
   );

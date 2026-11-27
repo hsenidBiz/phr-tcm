@@ -77,9 +77,70 @@ export function planBatches(plan: PlanView | null | undefined): { n: number; ids
   }));
 }
 
-/** A pause's heading: `Before Batch N`. */
+/** A pause's heading: `Before batch N`. */
 export function pauseHeading(batch: number | undefined): string {
-  return batch && batch > 0 ? `Before Batch ${batch}` : "Before the next batch";
+  return batch && batch > 0 ? `Before batch ${batch}` : "Before the next batch";
+}
+
+/** What a set line names, as chips, and the sentence left once those words
+ * are taken out. */
+export interface SetItem {
+  chips: string[];
+  text: string;
+}
+
+/** Split a set line like `Make sure 000015 stage intermediate_competency of
+ * cycle 11892 is ON` into its employee number, cycle and stage plus the
+ * rest. A line naming none of them is not recognised: null, and the caller
+ * shows it whole. */
+export function parseSetLine(line: string): SetItem | null {
+  let rest = line.replace(/^\s*make sure\s+/i, "");
+  const chips: string[] = [];
+  const employee = /\b(\d{6})\b/.exec(rest);
+  if (employee) {
+    chips.push(`Employee ${employee[1]}`);
+    rest = rest.replace(employee[0], " ");
+  }
+  const cycle = /(?:\s+of)?(?:^|\s+)cycle\s+(\d+)\b/i.exec(rest);
+  if (cycle) {
+    chips.push(`Cycle ${cycle[1]}`);
+    rest = rest.replace(cycle[0], " ");
+  }
+  const stage = /\bstage\s+(\S+)/i.exec(rest);
+  if (stage) {
+    chips.push(`Stage ${stage[1]}`);
+    rest = rest.replace(stage[0], " ");
+  }
+  if (chips.length === 0) return null;
+  const text = rest.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return { chips, text: text.charAt(0).toUpperCase() + text.slice(1) };
+}
+
+/** The cases still to run, grouped by the area before a title's first
+ * ` - `. Areas keep the order they first appear in; a case without one goes
+ * in `Other`, last. The title in each item has the area taken off. */
+export function groupByArea(
+  ids: readonly number[],
+  titleOf: (id: number) => string | undefined,
+): { area: string; items: { id: number; title: string }[] }[] {
+  const groups = new Map<string, { id: number; title: string }[]>();
+  const other: { id: number; title: string }[] = [];
+  for (const id of ids) {
+    const title = titleOf(id)?.trim() ?? "";
+    const at = title.indexOf(" - ");
+    const area = at > 0 ? title.slice(0, at).trim() : "";
+    if (!area) {
+      other.push({ id, title });
+      continue;
+    }
+    const list = groups.get(area) ?? [];
+    list.push({ id, title: title.slice(at + 3).trim() });
+    groups.set(area, list);
+  }
+  const out = [...groups].map(([area, items]) => ({ area, items }));
+  if (other.length) out.push({ area: "Other", items: other });
+  return out;
 }
 
 /** `Batch 2 (4 cases)`. */

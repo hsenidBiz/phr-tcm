@@ -878,14 +878,16 @@ async function pausedRun(answers: { runId: string; continueRun: boolean }[]) {
   return emit;
 }
 
-test("a run paused before a batch shows Before Batch N, what to put back and what is left", async () => {
+// The pause heading is sentence case now ("Before batch N"); the region is named by it.
+test("a run paused before a batch shows Before batch N, what to put back and what is left", async () => {
   await pausedRun([]);
-  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
-  expect(within(panel).getByRole("heading", { name: "Before Batch 2" })).toBeInTheDocument();
+  const panel = await screen.findByRole("region", { name: "Before batch 2" });
+  expect(within(panel).getByRole("heading", { name: "Before batch 2" })).toBeInTheDocument();
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
-  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  // The panel now groups cases by area; titles without " - " fall in "Other".
+  const left = within(panel).getByRole("list", { name: "Cases in Other" });
   expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
     "#2 Edit a draft cycle",
     "#3 Other",
@@ -900,7 +902,7 @@ test("Continue at a reset point answers the run and the panel goes", async () =>
   await pausedRun(answers);
   fireEvent.click(await screen.findByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: true }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument());
 });
 
 test("Stop at a reset point answers Stop, and the run is shown stopping", async () => {
@@ -909,7 +911,7 @@ test("Stop at a reset point answers Stop, and the run is shown stopping", async 
   fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: false }]));
   expect(await screen.findByRole("button", { name: "Stopping after this step" })).toBeDisabled();
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 });
 
 test("a reset point of another run is not shown", async () => {
@@ -931,7 +933,7 @@ test("a reset point of another run is not shown", async () => {
       remaining: [2],
     });
   });
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 });
 
 // ---- the run outlives its window ----

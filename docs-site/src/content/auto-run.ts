@@ -1060,7 +1060,7 @@ export const autoRun: Screen = {
         "Press **Run N unattended**.",
         "Choose who to sign in as and whether to watch, then press **Start**.",
         "To carry on with other work, press **Run in background**. The pill in the title bar shows how far the run has got; click it to open the run again.",
-        "If the pill turns amber and reads **Paused before Batch 2** (or another batch), click it, do what the window lists under **Set** and **Put back**, and press **Continue**.",
+        "If the pill turns amber and reads **Paused before Batch 2** (or another batch), click it, do what the window lists under **Set up** (tick each one off as you go) and **Put back**, and press **Continue**.",
         "When the run finishes its review opens (from the background, click **Review** on the message or the pill): confirm each case, or press **Accept all**, then **Send to Azure DevOps**.",
       ],
     },
