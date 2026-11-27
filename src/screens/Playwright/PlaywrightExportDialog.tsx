@@ -508,7 +508,7 @@ export default function PlaywrightExportDialog({
           </div>
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
             <IconBrowse aria-hidden />
-            Choose…
+            Choose
           </Button>
         </div>
         {preview && !preview.clone_ok && preview.clone_problem && <p className="text-xs text-danger">{preview.clone_problem}</p>}

@@ -593,7 +593,7 @@ function ScriptEditorBody({
             {existing.data && (
               <Button variant="outline" size="sm" onClick={() => setCopying("to")}>
                 <IconCopyToEnvironment aria-hidden />
-                Copy to environment…
+                Copy to environment
               </Button>
             )}
             <Button
@@ -604,7 +604,7 @@ function ScriptEditorBody({
               onClick={() => setCopying("from")}
             >
               <IconCopyFromEnvironment aria-hidden />
-              Copy from environment…
+              Copy from environment
             </Button>
           </div>
         )}

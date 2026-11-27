@@ -1046,34 +1046,34 @@ test("offers Copy to environment only with two or more environments", async () =
   mountWithEnvironments(1, { case_id: 7, title: "t", steps: ONE_STEP });
   await screen.findByRole("button", { name: "Save script" });
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs as" })).toBeInTheDocument());
-  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Copy from environment…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy to environment" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy from environment" })).not.toBeInTheDocument();
   localStorage.clear();
 });
 
 test("with two environments and a saved script, Copy to environment opens the copy dialog", async () => {
   mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
-  fireEvent.click(await screen.findByRole("button", { name: "Copy to environment…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy to environment" }));
   expect(await screen.findByRole("combobox", { name: "Copy to" })).toBeInTheDocument();
   localStorage.clear();
 });
 
 test("Copy to environment needs a saved script; Copy from environment does not", async () => {
   mountWithEnvironments(2, null);
-  expect(await screen.findByRole("button", { name: "Copy from environment…" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Copy from environment" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy to environment" })).not.toBeInTheDocument();
   localStorage.clear();
 });
 
 test("Copy from environment is refused while the editor has unsaved edits", async () => {
   mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
-  const button = await screen.findByRole("button", { name: "Copy from environment…" });
+  const button = await screen.findByRole("button", { name: "Copy from environment" });
   expect(button).toBeEnabled();
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByRole("textbox", { name: /script/i });
   fireEvent.change(box, { target: { value: "[]" } });
-  expect(screen.getByRole("button", { name: "Copy from environment…" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Copy from environment…" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Copy from environment" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Copy from environment" })).toHaveAttribute(
     "title",
     "Save or discard your changes first",
   );
@@ -1110,7 +1110,7 @@ test("after a pull the editor shows the pulled script", async () => {
       <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Copy from environment…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy from environment" }));
   fireEvent.click(await screen.findByRole("combobox", { name: "Copy from" }));
   fireEvent.click(await screen.findByRole("option", { name: "Env 2" }));
   fireEvent.click(await screen.findByRole("button", { name: "Copy" }));

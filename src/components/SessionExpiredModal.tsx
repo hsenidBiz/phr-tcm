@@ -37,7 +37,7 @@ export default function SessionExpiredModal({
         </Button>
         <Button size="sm" onClick={onSignIn} disabled={signingIn}>
           <KeyRound size={14} aria-hidden />
-          {signingIn ? "Waiting for Microsoft..." : "Sign in again"}
+          {signingIn ? "Waiting for Microsoft" : "Sign in again"}
         </Button>
       </div>
     </Modal>

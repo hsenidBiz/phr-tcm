@@ -166,7 +166,7 @@ export default function FixturesTab({
                     onClick={() => void run(f.id)}
                   >
                     {built ? <IconRefresh aria-hidden /> : <IconRun aria-hidden />}
-                    {busy ? "Running…" : built ? "Rebuild" : "Run"}
+                    {busy ? "Running" : built ? "Rebuild" : "Run"}
                   </Button>
                   <Button
                     size="sm"

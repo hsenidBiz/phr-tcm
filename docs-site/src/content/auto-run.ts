@@ -1093,8 +1093,8 @@ export const autoRun: Screen = {
       title: "Copy a script to another environment",
       steps: [
         "Open the case's script. This needs two or more environments and a saved script.",
-        "Press **Copy to environment…**, choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
-        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy from environment…**; save or discard your changes to the open script first.",
+        "Press **Copy to environment**, choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
+        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy from environment**; save or discard your changes to the open script first.",
       ],
     },
     {

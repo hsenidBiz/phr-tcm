@@ -743,7 +743,7 @@ export default function SetupPanel({
                   }}
                 >
                   <IconImport aria-hidden />
-                  Import scripts…
+                  Import scripts
                 </Button>
               </SetupRow>
 

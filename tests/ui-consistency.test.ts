@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { buttonDots } from "./buttonDots";
 
 // import.meta.url, not __dirname: this file is ESM under vitest.
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "../src");
@@ -243,5 +244,20 @@ describe("dropdowns", () => {
   test("no native datalist dropdowns - use Combobox with allowCustom", () => {
     expect(violations(/<datalist\b/, new Set())).toEqual([]);
     expect(violations(/(?<![\w-])list=/, new Set())).toEqual([]);
+  });
+});
+
+describe("button labels", () => {
+  // The owner's rule: no button label ends in an ellipsis, whether it opens
+  // a dialog or shows progress. Status text in a <p>/<span> and select
+  // placeholders are not buttons and keep theirs. The scanner lives in
+  // tests/buttonDots.ts and has its own test.
+  test("no button label or aria-label ends in dots", () => {
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      if (!file.endsWith(".tsx")) continue;
+      for (const h of buttonDots(text, file)) hits.push(`${file}:${h.line}  ${h.label}`);
+    }
+    expect(hits).toEqual([]);
   });
 });

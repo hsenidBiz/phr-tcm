@@ -368,7 +368,7 @@ export default function CreateWorkItem({
           onClick={() => create.mutate()}
         >
           <IconAdd aria-hidden />
-          {create.isPending ? "Creating…" : `Create ${wiType}`}
+          {create.isPending ? "Creating" : `Create ${wiType}`}
         </Button>
       </div>
     </div>

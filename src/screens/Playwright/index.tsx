@@ -219,7 +219,7 @@ export default function Playwright({ org, project }: { org: string; project: str
             </Button>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
               <IconBrowse aria-hidden />
-              {clone ? "Change…" : "Choose…"}
+              {clone ? "Change" : "Choose"}
             </Button>
           </div>
         </div>

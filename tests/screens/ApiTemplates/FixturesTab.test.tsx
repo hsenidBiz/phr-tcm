@@ -135,7 +135,7 @@ test("while one fixture runs its button is busy and the others are off", async (
   await openTab();
   await screen.findByRole("listitem", { name: "Alpha" });
   fireEvent.click(screen.getByRole("button", { name: "Rebuild Alpha" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Rebuild Alpha" })).toHaveTextContent("Running…"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Rebuild Alpha" })).toHaveTextContent("Running"));
   expect(screen.getByRole("button", { name: "Rebuild Alpha" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Rebuild Beta" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Remove Beta" })).toBeDisabled();
