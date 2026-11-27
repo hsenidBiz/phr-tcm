@@ -33,10 +33,8 @@ pub const VERSION: &str = "Browser.getVersion";
 /// The first Chromium (and so Edge) major version that has the recorder.
 pub const FIRST_MAJOR: u32 = 153;
 
-/// What the case is recorded at: no larger than this, no faster than this.
-/// Kept small on purpose - a video of a failed case is evidence, not a film.
-pub const MAX_WIDTH: u32 = 1280;
-pub const MAX_HEIGHT: u32 = 720;
+/// What the case is recorded at: the page size in force (Auto Test settings),
+/// no faster than this frame rate. A video of a failed case is evidence, not a film.
 pub const FRAME_RATE: u32 = 30;
 
 /// How long a start or a stop may take before the recording is given up on.
@@ -50,9 +48,14 @@ const CHUNK: u64 = 1024 * 1024;
 /// the browser cannot record.
 pub const NOT_AVAILABLE: &str = "Video was not recorded: this browser version cannot record.";
 
-/// What `start` asks the browser for.
+/// What `start` asks the browser for, at the page size given.
+pub fn start_params_for(size: super::viewport::PageSize) -> Value {
+    json!({ "frameRate": FRAME_RATE, "maxWidth": size.width, "maxHeight": size.height, "audio": false })
+}
+
+/// What `start` asks the browser for: the page size in force.
 pub fn start_params() -> Value {
-    json!({ "frameRate": FRAME_RATE, "maxWidth": MAX_WIDTH, "maxHeight": MAX_HEIGHT, "audio": false })
+    start_params_for(super::viewport::current())
 }
 
 /// Whether the connected browser can record.

@@ -154,12 +154,16 @@ async fn a_probe_that_fails_or_is_unreadable_is_taken_as_unsupported() {
 }
 
 #[test]
-fn recording_is_asked_for_small_files() {
-    let p = recording::start_params();
-    assert_eq!(p["maxWidth"], 1280);
-    assert_eq!(p["maxHeight"], 720);
+fn recording_is_asked_at_the_page_size() {
+    use v2_lib::browser::viewport::PageSize;
+    let p = recording::start_params_for(PageSize { width: 1920, height: 1080 });
+    assert_eq!(p["maxWidth"], 1920);
+    assert_eq!(p["maxHeight"], 1080);
     assert_eq!(p["frameRate"], 30);
     assert_eq!(p["audio"], false);
+    let p = recording::start_params_for(PageSize { width: 800, height: 600 });
+    assert_eq!(p["maxWidth"], 800);
+    assert_eq!(p["maxHeight"], 600);
 }
 
 // ---- A case's recording ---------------------------------------------------------------
