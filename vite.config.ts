@@ -38,9 +38,30 @@ const woff2Only = {
   },
 };
 
+/**
+ * Sample-data files under src/dev/ (the demo case video) are imported by
+ * src/dev/demo.ts, which only dev builds load, so its code is tree-shaken out
+ * of a release. Vite still emits the asset it imports, which would ship in the
+ * app. This drops any emitted asset whose source lived under src/dev/, by the
+ * bundle's `originalFileNames`, with the `demo-` file name as a fallback for a
+ * Vite that does not report them.
+ */
+const devAssetsOutOfRelease = {
+  name: "dev-assets-out-of-release",
+  apply: "build" as const,
+  generateBundle(_options: unknown, bundle: Record<string, { type: string; name?: string; originalFileNames?: string[] }>) {
+    for (const [key, item] of Object.entries(bundle)) {
+      if (item.type !== "asset") continue;
+      const fromDev = (item.originalFileNames ?? []).some((f) => /(^|[\/])src[\/]dev[\/]/.test(f));
+      const byName = (item.name ?? "").startsWith("demo-");
+      if (fromDev || byName) delete bundle[key];
+    }
+  },
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), devAssetsOutOfRelease],
 
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
