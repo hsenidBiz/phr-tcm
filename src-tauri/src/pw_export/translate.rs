@@ -75,6 +75,12 @@ pub fn check(script: &CaseScript, origins: &[String]) -> Res<()> {
     Ok(())
 }
 
+/// Text as `//` comment lines: split on every line break TypeScript knows,
+/// so no part of it can run on as code.
+fn comment_lines(text: &str) -> Vec<&str> {
+    text.split(['\n', '\r', '\u{2028}', '\u{2029}']).collect()
+}
+
 fn check_action(a: &Action, origins: &[String]) -> Res<()> {
     match a {
         Action::Navigate { url } => goto_target("navigate", url, origins).map(|_| ()),
@@ -89,7 +95,8 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         // An `equals` goes through the same address rules as a navigation.
         Action::CheckUrl { equals: Some(want), .. } => goto_target("check_url", want, origins).map(|_| ()),
         Action::CheckUrl { .. } => Ok(()),
-        Action::ExpectDatabase { .. } => no("expect_database cannot be exported yet"),
+        // Written as a manual check: the export has no database to ask.
+        Action::ExpectDatabase { .. } => Ok(()),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
         Action::ExpectEach { selector, child, .. } => {
             check_target(selector)?;
@@ -1547,7 +1554,26 @@ impl Em<'_> {
         check_action(a, self.input.origins)?;
         let sc = self.scope.clone();
         match a {
-            Action::ExpectDatabase { .. } => return no("expect_database cannot be exported yet"),
+            Action::ExpectDatabase { sql, .. } => {
+                // The exported spec cannot reach the database: the check is
+                // left for a person, with the query beside it. Placeholders
+                // stay as written; a secret column's value is hidden by the
+                // same words the report uses.
+                let words = crate::autorun::report::action_words(a);
+                for part in comment_lines(&format!("Manual check (database): {words}")) {
+                    self.line(indent, &format!("// {part}"));
+                }
+                for part in comment_lines(sql) {
+                    self.line(indent, &format!("// {part}"));
+                }
+                self.line(
+                    indent,
+                    &format!(
+                        "test.info().annotations.push({{ type: \"manual-check\", description: {} }});",
+                        lit(&words)
+                    ),
+                );
+            }
             Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url, self.input.origins)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
             Action::Hover { selector, .. } => self.line(indent, &format!("await {}.hover();", one(selector))),
