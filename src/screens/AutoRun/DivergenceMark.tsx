@@ -171,12 +171,13 @@ export function DivergenceRow({
     return (
       <div className="space-y-1 pt-1">
         <div className="flex items-center gap-2">
-          <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-xs font-medium text-accent-fill">
-            Step {step}
+          <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent-fill">
+            <span className="label-trim">Step {step}</span>
           </span>
           <span className="min-w-0 flex-1 truncate text-xs text-text" title={decided}>
             {decided}
           </span>
+          {waiting && <DivergenceBadge divergence={divergence} />}
           <Button
             size="sm"
             variant="ghost"
@@ -191,15 +192,15 @@ export function DivergenceRow({
           </Button>
           {undoButton}
         </div>
+        {waiting && <p className="break-words pl-1 text-xs text-text">Ask the assistant to repair the script (/tcm:heal).</p>}
         {showDetails && (
           <div id={detailsId} className="space-y-1 pl-1">
             <div className="flex flex-wrap items-center gap-2">
-              <DivergenceBadge divergence={divergence} />
+              {!waiting && <DivergenceBadge divergence={divergence} />}
               <span className="min-w-0 flex-1 break-words text-xs text-text">
                 Step {step}: the case says &quot;{divergence.case_says}&quot;; the app shows &quot;{divergence.app_shows}
                 &quot;.
                 {divergence.proposal && <> Proposed: &quot;{divergence.proposal}&quot;.</>}
-                {waiting && " Ask the assistant to repair the script (/tcm:heal)."}
               </span>
             </div>
             {byAssistant && (

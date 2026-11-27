@@ -356,6 +356,14 @@ function CaseCard({
               ))}
             </div>
           )}
+            {rulings.length > 0 && (
+              <div className="space-y-1">
+                <SectionLabel>{`Rulings (${rulings.length})`}</SectionLabel>
+                {rulings.map((d) => (
+                  <DivergenceRow key={d.id} org={org} project={project} caseId={c.id} divergence={d} compact />
+                ))}
+              </div>
+            )}
           {!script ? (
             <p className="text-xs text-muted">No script yet. An assistant writes it.</p>
           ) : (
@@ -398,15 +406,6 @@ function CaseCard({
                 )}
                 {!defect && script.cleared_defect && <ClearedDefectNote cleared={script.cleared_defect} />}
               </div>
-
-              {rulings.length > 0 && (
-                <div className="space-y-1">
-                  <SectionLabel>{`Rulings (${rulings.length})`}</SectionLabel>
-                  {rulings.map((d) => (
-                    <DivergenceRow key={d.id} org={org} project={project} caseId={c.id} divergence={d} compact />
-                  ))}
-                </div>
-              )}
 
               <div className="space-y-1">
                 <SectionLabel>Steps</SectionLabel>
@@ -516,7 +515,7 @@ function CaseCard({
                 </div>
               )}
 
-                {notes.length > 0 && (
+              {notes.length > 0 && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-muted">Assistant notes ({notes.length})</summary>
                   <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">

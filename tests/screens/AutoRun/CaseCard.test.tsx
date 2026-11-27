@@ -659,3 +659,11 @@ test("a divergence still open keeps its buttons and is no ruling row", () => {
   const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
   expect(items[1]).not.toHaveTextContent("Ruled");
 });
+
+test("a case with no script still shows a ruling and its Undo", () => {
+  renderCard({ open: true, script: null, divergences: [RULED] });
+  expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
+  expect(screen.getByText("Rulings (1)")).toBeInTheDocument();
+  expect(screen.getByText("Four levels, as the case says")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Undo the ruling on #7 step 2" })).toBeInTheDocument();
+});
