@@ -713,9 +713,9 @@ function describeKnown(a: Action): Sentence {
       return [words(`Close the "${str(a.name)}" tab`)];
     case "expect_tab_closed":
       return [words(`Check the "${str(a.name)}" tab closes`)];
-    // Never the SQL: a plain sentence until the screens describe what it wants.
+    // What the check wants, never the SQL; the wording of `report::action_words`.
     case "expect_database":
-      return [words("Check the database")];
+      return [words(`Check the database: ${databaseWants(a)}`)];
     default: {
       // A new action kind fails the type check here until it is described;
       // one the app does not know (a typo in the JSON) is unreadable.
@@ -723,4 +723,20 @@ function describeKnown(a: Action): Sentence {
       throw new Unreadable(String((unknown as { kind?: unknown }).kind));
     }
   }
+}
+
+const rowsWord = (n: number) => (n === 1 ? "1 row" : `${n} rows`);
+
+/** What a database check wants, in the words of the run report
+ * (`db_check::describe`). The editor shows saved script text, which already
+ * holds the value, so a secret-looking column is not hidden here. */
+function databaseWants(a: Extract<Action, { kind: "expect_database" }>): string {
+  if (typeof a.exists === "boolean") return a.exists ? "a row" : "no row";
+  if (typeof a.count === "number") return rowsWord(a.count);
+  if (typeof a.at_least === "number") return `at least ${rowsWord(a.at_least)}`;
+  if (typeof a.at_most === "number") return `at most ${rowsWord(a.at_most)}`;
+  const name = optStr(a.column) ?? "";
+  if (typeof a.equals === "string") return `${name} is '${a.equals}'`;
+  if (typeof a.matches === "string") return `${name} matches '${a.matches}'`;
+  return name || "a row";
 }

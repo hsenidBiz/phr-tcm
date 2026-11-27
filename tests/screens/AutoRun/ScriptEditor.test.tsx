@@ -1351,3 +1351,20 @@ test("No sign-in, a real choice, is not drawn like an unselected placeholder", a
   expect(text).toHaveClass("text-text");
   expect(text).not.toHaveClass("text-faint");
 });
+
+test("script editor shows the SQL of a database check", async () => {
+  const sql = "select status from leave where id = 4";
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: [{ step_number: 1, actions: [{ kind: "expect_database", sql, column: "status", equals: "Approved" }] }],
+    },
+    ACCOUNTS,
+    [],
+  );
+  const text = await screen.findByText(sql);
+  expect(text.tagName).toBe("PRE");
+  expect(text).toHaveClass("font-mono", "whitespace-pre-wrap");
+  expect(screen.getByText("Check the database: status is 'Approved'")).toBeInTheDocument();
+});
