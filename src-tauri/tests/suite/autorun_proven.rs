@@ -47,7 +47,7 @@ fn script(case_id: i32, checked: bool, stamped: bool) -> CaseScript {
 }
 
 fn record(case_id: i32, proposed: &str, verdict: &str) -> CaseRecord {
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id,
         title: "t".into(),

@@ -1059,7 +1059,7 @@ export const commands = {
 	 */
 	autoRunSaveVideo: (name: string, destPath: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_video", { name, destPath })),
 	/**  The discovery recordings kept for this environment, newest first. */
-	autoRunRecordings: () => typedError<RecordingEntry[], string>(__TAURI_INVOKE("auto_run_recordings")),
+	autoRunRecordings: () => typedError<RecordingEntry_Serialize[], string>(__TAURI_INVOKE("auto_run_recordings")),
 	/**  Delete one discovery recording. */
 	autoRunRemoveRecording: (id: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_remove_recording", { id })),
 	/**
@@ -3939,6 +3939,12 @@ export type CaseRecord_Deserialize = {
 	 *  Left out when there is none, so older run files read the same.
 	 */
 	video?: string | null,
+	/**
+	 *  When each step and action of the case began, as offsets from the
+	 *  video's own start, so the player can mark them. Written only with a
+	 *  video; left out otherwise and for runs from before markers.
+	 */
+	video_marks?: VideoMarks_Deserialize | null,
 };
 
 /**
@@ -4015,6 +4021,12 @@ export type CaseRecord_Serialize = {
 	 *  Left out when there is none, so older run files read the same.
 	 */
 	video?: string | null,
+	/**
+	 *  When each step and action of the case began, as offsets from the
+	 *  video's own start, so the player can mark them. Written only with a
+	 *  video; left out otherwise and for runs from before markers.
+	 */
+	video_marks?: VideoMarks_Serialize | null,
 };
 
 /**
@@ -7369,12 +7381,36 @@ export type ReconciledCase = {
 };
 
 /**  One kept recording. */
-export type RecordingEntry = {
+export type RecordingEntry = RecordingEntry_Serialize | RecordingEntry_Deserialize;
+
+/**  One kept recording. */
+export type RecordingEntry_Deserialize = {
 	id: string,
 	title: string,
 	created: string,
 	duration_ms: number,
 	file: string,
+	/**
+	 *  One mark per action the assistant tried, each at its offset from the
+	 *  recording's start. Left out when there are none, so older entries read
+	 *  the same.
+	 */
+	marks?: VideoMark[],
+};
+
+/**  One kept recording. */
+export type RecordingEntry_Serialize = {
+	id: string,
+	title: string,
+	created: string,
+	duration_ms: number,
+	file: string,
+	/**
+	 *  One mark per action the assistant tried, each at its offset from the
+	 *  recording's start. Left out when there are none, so older entries read
+	 *  the same.
+	 */
+	marks?: VideoMark[],
 };
 
 /**
@@ -7969,7 +8005,7 @@ export type RuleProblem = {
 	reference_name: string,
 	/**  The field's display name, never only its reference name. */
 	field: string,
-	/**  "required" or "not_allowed". */
+	/**  Always "required" (a value is never checked against a list). */
 	kind: string,
 	/**  A sentence fit for the row. */
 	message: string,
@@ -9779,6 +9815,61 @@ export type VideoInfo = {
 	playable: boolean,
 	/**  Small enough to attach to a bug (`bugs::MAX_PICKED_FILE`). */
 	attachable: boolean,
+};
+
+/**
+ *  One marker on a video: where it is (milliseconds from the video's start)
+ *  and what to call it. Never a secret: the words come from the step
+ *  highlight's own label (`video_marks::mark_label`).
+ */
+export type VideoMark = {
+	at_ms: number,
+	label: string,
+};
+
+/**
+ *  The timings of a case's video: its length when the recording was
+ *  stopped, and each step's start, in the order the steps ran.
+ */
+export type VideoMarks = VideoMarks_Serialize | VideoMarks_Deserialize;
+
+/**
+ *  The timings of a case's video: its length when the recording was
+ *  stopped, and each step's start, in the order the steps ran.
+ */
+export type VideoMarks_Deserialize = {
+	length_ms: number,
+	steps?: VideoStep_Deserialize[],
+};
+
+/**
+ *  The timings of a case's video: its length when the recording was
+ *  stopped, and each step's start, in the order the steps ran.
+ */
+export type VideoMarks_Serialize = {
+	length_ms: number,
+	steps: VideoStep_Serialize[],
+};
+
+/**  One step's place on the video. */
+export type VideoStep = VideoStep_Serialize | VideoStep_Deserialize;
+
+/**  One step's place on the video. */
+export type VideoStep_Deserialize = {
+	step_number: number,
+	cleanup?: boolean,
+	at_ms: number,
+	failed?: boolean,
+	actions?: VideoMark[],
+};
+
+/**  One step's place on the video. */
+export type VideoStep_Serialize = {
+	step_number: number,
+	cleanup?: boolean,
+	at_ms: number,
+	failed?: boolean,
+	actions?: VideoMark[],
 };
 
 /**  What the app shows of a run waiting for the network. */

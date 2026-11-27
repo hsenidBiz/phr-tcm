@@ -97,6 +97,7 @@ pub mod test_made;
 pub mod timing;
 pub mod transient;
 pub mod unchecked;
+pub mod video_marks;
 
 use crate::browser::actions::{Action, ActionOutcome};
 
@@ -707,6 +708,42 @@ pub struct CaseRecord {
     /// Left out when there is none, so older run files read the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<String>,
+    /// When each step and action of the case began, as offsets from the
+    /// video's own start, so the player can mark them. Written only with a
+    /// video; left out otherwise and for runs from before markers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_marks: Option<VideoMarks>,
+}
+
+/// One marker on a video: where it is (milliseconds from the video's start)
+/// and what to call it. Never a secret: the words come from the step
+/// highlight's own label (`video_marks::mark_label`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct VideoMark {
+    pub at_ms: u32,
+    pub label: String,
+}
+
+/// One step's place on the video.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct VideoStep {
+    pub step_number: i32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cleanup: bool,
+    pub at_ms: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub failed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<VideoMark>,
+}
+
+/// The timings of a case's video: its length when the recording was
+/// stopped, and each step's start, in the order the steps ran.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct VideoMarks {
+    pub length_ms: u32,
+    #[serde(default)]
+    pub steps: Vec<VideoStep>,
 }
 
 /// A bug filed from a run's review for one case (`CaseRecord::bugs`).
