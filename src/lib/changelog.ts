@@ -27,6 +27,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.8-beta.11",
+    date: "2026-11-27",
+    items: [
+      "When you ask an assistant for evidence while it checks a fix, it can record a video of its checks. Recordings appear under Auto Test, Past runs, where you can play, save or remove them",
+      "Auto Test videos are now recorded at the browser page size you set in Auto Test settings",
+      "An assistant can move a saved script to another of your saved accounts when it says why. A repair never changes the account",
+      "Every account picker has a search box",
+      "The open test case reads step by step, with each step's assumed values and unchecked parts shown under it, and rulings on one line each",
+      "The manual run window lines up neatly and its Save button no longer drops off a short window",
+      "Before a batch, the setup tasks are a checklist you can tick off, and the remaining cases are grouped by area",
+      "On the Assistants card, Stop now reads Stop replay",
+      "In the run report, a row can be closed again with the keyboard",
+    ],
+  },
+  {
     version: "2.4.8-beta.10",
     date: "2026-11-26",
     items: [
