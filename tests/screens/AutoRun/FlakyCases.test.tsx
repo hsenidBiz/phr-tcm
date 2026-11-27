@@ -24,6 +24,11 @@ const ROW = {
   marked: false,
 };
 
+/** The section starts folded; its header is the one button that says "Flaky cases". */
+async function openList() {
+  fireEvent.click(await screen.findByRole("button", { name: /Flaky cases/ }));
+}
+
 function renderList(cases: unknown[], onCommand?: (cmd: string, args: unknown) => unknown) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_flaky_cases") return cases;
@@ -45,6 +50,8 @@ test("shows nothing when no case is flaky", async () => {
 
 test("a row shows the case, its environment, the run-by-run pattern and the last failure", async () => {
   renderList([ROW]);
+  // The section starts folded, so it is opened first.
+  await openList();
   const row = await screen.findByRole("listitem", { name: "Flaky case Valid login" });
   expect(within(row).getByText("#201")).toBeInTheDocument();
   expect(within(row).getByText("QA")).toBeInTheDocument();
@@ -72,6 +79,8 @@ test("marking a case calls the set command and refreshes the list", async () => 
     </QueryClientProvider>,
   );
 
+  // The section starts folded, so it is opened first.
+  await openList();
   fireEvent.click(await screen.findByRole("button", { name: "Mark case 201 as flaky" }));
   await waitFor(() => expect(calls).toEqual([{ caseId: 201, flaky: true }]));
   const unmark = await screen.findByRole("button", { name: "Unmark case 201 as flaky" });
@@ -88,7 +97,20 @@ test("a marked case that no longer alternates is listed and can be unmarked", as
     if (cmd === "auto_run_set_flaky") calls.push(args);
     return null;
   });
+  // The section starts folded, so it is opened first.
+  await openList();
   const unmark = await screen.findByRole("button", { name: "Unmark case 201 as flaky" });
   fireEvent.click(unmark);
   await waitFor(() => expect(calls).toEqual([{ caseId: 201, flaky: false }]));
+});
+
+test("the section starts folded and still says what is in it", async () => {
+  renderList([ROW, { ...ROW, case_id: 202, title: "Other", marked: true }]);
+  const header = await screen.findByRole("button", { name: /Flaky cases/ });
+  expect(header).toHaveAttribute("aria-expanded", "false");
+  expect(header).toHaveTextContent("2 passed and failed recently, 1 marked");
+  expect(screen.queryByRole("listitem", { name: "Flaky case Valid login" })).not.toBeInTheDocument();
+  fireEvent.click(header);
+  expect(header).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("listitem", { name: "Flaky case Valid login" })).toBeInTheDocument();
 });

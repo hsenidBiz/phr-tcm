@@ -618,6 +618,8 @@ test("Clear results refreshes the Flaky cases list, which reads the same run fil
     }
     return null;
   });
+  // The Flaky cases section starts folded: open it to see the list.
+  fireEvent.click(await screen.findByRole("button", { name: /Flaky cases/ }));
   expect(await screen.findByRole("listitem", { name: "Flaky case Valid login" })).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Clear results" }));
   fireEvent.click(await screen.findByRole("button", { name: "Clear 1 run" }));
