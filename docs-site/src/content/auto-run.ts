@@ -144,7 +144,7 @@ export const autoRun: Screen = {
     },
     {
       id: PLAYER,
-      route: [...TO_RUNS, { click: { role: "button", name: "Watch video" } }, { waitFor: { role: "list", name: "Steps" } }],
+      route: [...TO_RUNS, { click: { role: "button", name: "Watch the failure video" } }, { waitFor: { role: "list", name: "Steps" } }],
       alt: "The video player over Past runs: step markers on the timeline, the failed step in red and the step list beside the video",
     },
     {
@@ -713,9 +713,9 @@ export const autoRun: Screen = {
       id: "watch-video",
       shot: RUNS,
       group: "runs",
-      locate: { role: "button", name: "Watch video" },
-      name: "Watch video",
-      does: "Opens the video of a failed or blocked case in a player over the app, with its steps marked. **Download video** saves the file.",
+      locate: { role: "button", name: "Watch the failure video" },
+      name: "Watch and Download",
+      does: "The two small buttons beside a failed or blocked case. Watch (the play button) opens its video in a player over the app, with its steps marked. Download saves the file. In the review the same buttons read **Watch video** and **Download video**.",
     },
     {
       id: "video-timeline",
