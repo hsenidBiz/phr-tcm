@@ -2286,6 +2286,7 @@ pub async fn auto_run_step(
     project: String,
     case_id: i32,
     step: StepScript,
+    db_read_access: bool,
 ) -> Result<StepRun, String> {
     let root = root(&app)?;
     // The case's script is not deleted while it is run step by step: noted
@@ -2346,7 +2347,7 @@ pub async fn auto_run_step(
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let step_db = crate::autorun::preconditions::for_actions(
         step.actions.iter(),
-        crate::ai_bridge::db_switch_on(),
+        db_read_access,
         &root,
         Some(secrets.as_ref()),
     );

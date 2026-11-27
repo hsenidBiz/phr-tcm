@@ -876,7 +876,7 @@ pub(crate) async fn try_action<D: crate::browser::cdp::Driver>(
     let ctx = super::live_context();
     let try_db = crate::autorun::preconditions::for_actions(
         std::slice::from_ref(action),
-        ctx.as_ref().is_some_and(|c| c.db_id.is_some()),
+        ctx.as_ref().is_some_and(|c| crate::autorun::preconditions::db_query_on(&c.disabled_tools)),
         root,
         ctx.as_ref().and_then(|c| c.db_secrets.as_deref()),
     );

@@ -713,6 +713,9 @@ function describeKnown(a: Action): Sentence {
       return [words(`Close the "${str(a.name)}" tab`)];
     case "expect_tab_closed":
       return [words(`Check the "${str(a.name)}" tab closes`)];
+    // Never the SQL: a plain sentence until the screens describe what it wants.
+    case "expect_database":
+      return [words("Check the database")];
     default: {
       // A new action kind fails the type check here until it is described;
       // one the app does not know (a typo in the JSON) is unreadable.

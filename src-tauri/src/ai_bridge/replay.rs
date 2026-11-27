@@ -365,7 +365,7 @@ pub(crate) async fn replay_answer_with(
         return wait_for_replay(n, answer, id, case_id, step, wait).await;
     }
     let db_read_access =
-        crate::autorun::preconditions::read_access(!ctx.disabled_tools.iter().any(|t| t == "db_query"));
+        crate::autorun::preconditions::read_access(crate::autorun::preconditions::db_query_on(&ctx.disabled_tools));
     let req = ReplayRequest { case_id, step, db_read_access };
     if let Err(why) = replay_to::check(&root, &ctx.org, &ctx.project, &req) {
         return (409, why);

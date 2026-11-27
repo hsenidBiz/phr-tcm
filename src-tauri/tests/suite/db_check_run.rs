@@ -208,6 +208,14 @@ fn a_component_may_ask_the_database_so_its_source_is_resolved() {
     }
 }
 
+#[test]
+fn the_try_gate_follows_the_db_query_tool() {
+    use v2_lib::autorun::preconditions::db_query_on;
+    assert!(db_query_on(&[]));
+    assert!(db_query_on(&["other".to_string()]));
+    assert!(!db_query_on(&["db_query".to_string()]));
+}
+
 #[tokio::test]
 async fn switch_off_gives_reading_off_to_a_check() {
     use v2_lib::autorun::preconditions::for_actions;
@@ -288,4 +296,18 @@ async fn runner_step_without_a_database_says_so() {
     let out = run_one(&mut d, &mut run).await;
     assert!(!out[0].ok);
     assert_eq!(out[0].detail, NO_DATABASE);
+}
+
+/// `auto_run_step` takes the webview's `db_read_access` and hands it, through
+/// `for_actions`, to the step's database place (a source-level check: the
+/// command needs a running app).
+#[test]
+fn auto_run_step_passes_its_read_access_to_for_actions() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands/autorun.rs")).unwrap();
+    let at = src.find("pub async fn auto_run_step(").unwrap();
+    let head = &src[at..at + 400];
+    assert!(head.contains("db_read_access: bool"), "{head}");
+    let body = &src[at..];
+    let call = &body[body.find("for_actions(").unwrap()..];
+    assert!(call[..200].contains("db_read_access,"), "{}", &call[..200]);
 }

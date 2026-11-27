@@ -415,7 +415,7 @@ test("a step is sent with the project and the case it belongs to", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(await screen.findByRole("button", { name: /Run step 1/ }));
   await waitFor(() =>
-    expect(s.stepped).toEqual([{ organization: "acme", project: "Web", caseId: 1, step: STEPS[0] }]),
+    expect(s.stepped).toEqual([{ organization: "acme", project: "Web", caseId: 1, step: STEPS[0], dbReadAccess: true }]),
   );
 });
 

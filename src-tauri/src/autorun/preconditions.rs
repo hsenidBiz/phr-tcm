@@ -470,6 +470,12 @@ pub fn for_run(
     PreconditionDb::from_result(environment_db(root, store))
 }
 
+/// Whether the assistant's `db_query` tool is switched on: the switch the
+/// assistant's own replays and tries read (`disabled_tools`).
+pub fn db_query_on(disabled_tools: &[String]) -> bool {
+    !disabled_tools.iter().any(|t| t == "db_query")
+}
+
 /// The place a step's database checks are asked, when one of `actions` may
 /// ask (`db_check::may_ask`); `None` otherwise, so nothing is looked up for a
 /// step that never asks. Gated like preconditions: the AI Bridge Database
