@@ -244,7 +244,7 @@ pub fn set_live_bridge(shared: &SharedBridge) {
     *LIVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::downgrade(shared));
 }
 
-fn live_context() -> Option<BridgeContext> {
+pub(crate) fn live_context() -> Option<BridgeContext> {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.upgrade()?;
     let ctx = live.ctx.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Some(crate::simple_view::context_under(crate::simple_view::is_on(), &ctx))

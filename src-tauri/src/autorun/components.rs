@@ -391,7 +391,26 @@ pub fn expand(c: &Component, inputs: &serde_json::Map<String, Value>) -> Result<
             // The run-time marks go through the round trip.
             a = crate::browser::actions::with_run_marks(|| {
                 let mut v = serde_json::to_value(&a).map_err(unreadable)?;
-                fill_text_in(&mut v, &text);
+                if matches!(a, Action::ExpectDatabase { .. }) {
+                    // A check's SQL takes a text input as a quoted literal,
+                    // never as raw text: a value holding a quote must not
+                    // rewrite the query. A data placeholder stays one: the
+                    // run's own binding quotes it.
+                    let sql = v.get_mut("sql").map(Value::take);
+                    fill_text_in(&mut v, &text);
+                    if let (Some(Value::String(sql)), Some(slot)) = (sql, v.get_mut("sql")) {
+                        let quoted: BTreeMap<&str, String> = text
+                            .iter()
+                            .map(|(k, val)| {
+                                let q = if val.contains("{{") { val.clone() } else { super::setup_find::quoted_literal(val) };
+                                (*k, q)
+                            })
+                            .collect();
+                        *slot = Value::String(fill_text(&sql, &quoted));
+                    }
+                } else {
+                    fill_text_in(&mut v, &text);
+                }
                 serde_json::from_value(v).map_err(unreadable)
             })?;
         }
@@ -744,6 +763,12 @@ pub fn check_component(c: &Component) -> Result<(), String> {
     }
     if every.iter().any(|a| matches!(a, Action::Navigate { url } | Action::OpenTab { url, .. } if url.contains("{{"))) {
         return Err("A component's address cannot come from an input.".to_string());
+    }
+    let text_inputs: Vec<&str> = declared.iter().filter(|(_, k)| *k == InputKind::Text).map(|(n, _)| *n).collect();
+    for a in &every {
+        if let Action::ExpectDatabase { sql, .. } = a {
+            super::db_check::refuse_quoted_inputs(sql, &text_inputs).map_err(|why| format!("{name}: {why}"))?;
+        }
     }
     for (i, a) in c.actions.iter().enumerate() {
         a.validate().map_err(|why| format!("{name}, action {}: {why}", i + 1))?;

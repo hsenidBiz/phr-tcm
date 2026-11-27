@@ -12,6 +12,7 @@
 //! arrived, then run the steps. A project with none runs as it always has.
 
 use super::components::{ran_actions, ComponentFile, Ran};
+use super::db_check::{DbRows, DbSource};
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
@@ -419,7 +420,30 @@ pub async fn run_case_reusing<D: Driver>(
     reused: Option<u64>,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
-    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, reused, on_step).await;
+    run_case_reusing_db(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, reused, &DbSource::default(), on_step).await
+}
+
+/// `run_case_reusing`, with the database the case's `expect_database` steps
+/// ask (`db`): none, as a case run without one, when `run_case_reusing` is
+/// called.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_case_reusing_db<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    lease: &mut Held,
+    script: &CaseScript,
+    account: Option<&str>,
+    route: Option<&Route>,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    record_video: bool,
+    reused: Option<u64>,
+    db: &DbSource<'_>,
+    on_step: &mut (dyn FnMut(i32) + Send),
+) -> CaseRecord {
+    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, record_video, reused, db, on_step).await;
     d.close_other_tabs().await;
     record
 }
@@ -448,6 +472,7 @@ async fn run_case_in<D: Driver>(
     cancel: &AtomicBool,
     record_video: bool,
     reused: Option<u64>,
+    db: &DbSource<'_>,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
     let began = Instant::now();
@@ -677,6 +702,7 @@ async fn run_case_in<D: Driver>(
         // The step's record will be the case's next.
         noted.step = steps.len();
         let mut in_run = runner::InRun {
+            db: db.clone(),
             cancel: Some(cancel),
             areas: Some(&areas),
             files: Some(&files),
@@ -1121,6 +1147,8 @@ struct Go<'a> {
     route: Option<&'a Route>,
     timing: &'a Timing,
     cancel: &'a AtomicBool,
+    /// Where the case's `expect_database` steps are asked.
+    db: &'a DbSource<'a>,
 }
 
 /// How long a case's browser stays open, once its steps are done, for a
@@ -1256,7 +1284,7 @@ async fn go_once<B: Browsers>(
         progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
     };
     let record_video = go.video.decide(&mut d, case_id).await;
-    let mut rec = run_case_reusing(
+    let mut rec = run_case_reusing_db(
         &mut d,
         go.root,
         go.organization,
@@ -1269,6 +1297,7 @@ async fn go_once<B: Browsers>(
         go.cancel,
         record_video,
         check_ms,
+        go.db,
         &mut on_step,
     )
     .await;
@@ -1415,7 +1444,7 @@ pub async fn run_cases<B: Browsers>(
 /// not saved, a shared fixture never built or a setup run that failed Blocks it with
 /// that sentence, and its setup's browser comes from `browsers` too.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_cases_checked<B: Browsers, P: StageDb>(
+pub async fn run_cases_checked<B: Browsers, P: StageDb + DbRows>(
     browsers: &mut B,
     root: &Path,
     organization: &str,
@@ -1458,7 +1487,7 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
 /// (`stopped_at_pause`). Each pause is kept in `run.resets` with how long
 /// it lasted and how it ended. `cases` are in the order to run them.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
+pub async fn run_cases_planned<B: Browsers, P: StageDb + DbRows, G: ResetGate>(
     browsers: &mut B,
     root: &Path,
     organization: &str,
@@ -1474,6 +1503,9 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
     gate: &mut G,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
+    // Where this run's `expect_database` steps are asked: the place its
+    // preconditions are.
+    let db_source = precondition_db.source();
     // What this run has learned about the database for needed records; gone with the run.
     let needs_memory = super::needs_records::RunMemory::default();
     // Each error says for itself where the run got to, so the command can
@@ -1626,7 +1658,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             // says what to add, so no route is needed.
                             let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
                             let at = Place { run_id: &run_id, index, total, case_id, title, count };
-                            let go = Go { video: &video, root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
+                            let go = Go { video: &video, root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel, db: &db_source };
                             // Whether the browser the case before kept can be
                             // used; either way the app log says which.
                             let next = kept_browser::Next { account, has_route: route.is_some(), pause_between: paused };

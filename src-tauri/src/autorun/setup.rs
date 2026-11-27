@@ -248,7 +248,7 @@ pub fn fixture_values(root: &Path, org: &str, project: &str, steps: &[StepScript
 fn holds_secret_placeholder(action: &serde_json::Map<String, Value>) -> bool {
     let fields: &[&str] = match action.get("kind").and_then(Value::as_str) {
         Some("fill" | "check_text" | "expect_contains_text") => &["value"],
-        Some("expect_text") => &["equals", "matches"],
+        Some("expect_text" | "expect_database") => &["equals", "matches"],
         Some("use_component") => {
             let mut texts = Vec::new();
             if let Some(inputs) = action.get("inputs") {
@@ -274,8 +274,19 @@ fn substitute_steps(steps: &[StepScript], vars: &BTreeMap<String, Value>) -> Res
             Value::String(s) => Value::String(exec::substitute_str(s, vars)),
             Value::Array(items) => Value::Array(items.iter().map(|i| walk(i, vars)).collect()),
             Value::Object(map) => {
-                let mut out: serde_json::Map<String, Value> =
-                    map.iter().map(|(k, i)| (k.clone(), walk(i, vars))).collect();
+                // A database check's SQL takes each value as a quoted literal,
+                // never as bare text (`db_check::bind`).
+                let checks_database = map.get("kind").and_then(Value::as_str) == Some("expect_database");
+                let mut out: serde_json::Map<String, Value> = map
+                    .iter()
+                    .map(|(k, i)| match i {
+                        Value::String(sql) if checks_database && k == "sql" => {
+                            let bound = super::db_check::bind(sql, |name| vars.get(name).map(exec::var_text));
+                            (k.clone(), Value::String(bound.unwrap_or_else(|_| sql.clone())))
+                        }
+                        _ => (k.clone(), walk(i, vars)),
+                    })
+                    .collect();
                 if holds_secret_placeholder(map) {
                     out.insert("sensitive".to_string(), Value::Bool(true));
                 }

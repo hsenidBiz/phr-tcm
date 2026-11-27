@@ -913,6 +913,7 @@ pub(crate) fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(
         | Action::SignIn { .. }
         | Action::ExpectResponse { .. }
         | Action::ApiRequest { .. }
+        | Action::ExpectDatabase { .. }
         | Action::Reload
         | Action::ExpireSession
         | Action::ReturnToArea { .. }

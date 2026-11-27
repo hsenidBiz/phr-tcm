@@ -2006,7 +2006,7 @@ function applyPatches() {
       ok({ ok: true, detail: `Signed in as ${accountKey}`, used_saved_session: false, steps: [] }),
     autoRunForgetSession: () => ok(null),
     autoRunCheckPreconditions: () => ok({ blocked: null, notice: null }),
-    autoRunStep: (_o: string, _p: string, _caseId: number, step: DemoScript["steps"][number]) => {
+    autoRunStep: (_o: string, _p: string, _caseId: number, step: DemoScript["steps"][number], _dbReadAccess?: boolean) => {
       if (!step || typeof step !== "object" || !Array.isArray(step.actions)) return err("Demo mode: that step is not valid");
       return ok({ outcomes: step.actions.map((a) => ({ ok: true, detail: actionLine(a) })), tab: null });
     },

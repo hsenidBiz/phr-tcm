@@ -63,6 +63,10 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
             format!("{} {} {}", from.describe(), position.unwrap_or_default().word(), to.describe())
         }
         Action::ExpectDownload { name, .. } => name.trim().to_string(),
+        // What it wants, never the SQL.
+        Action::ExpectDatabase { .. } => crate::autorun::db_check::expectation(action)
+            .map(|e| crate::autorun::db_check::describe(&e))
+            .unwrap_or_default(),
         // A tab's name; an opened tab's path, never its host or query.
         Action::ExpectTab { name, .. }
         | Action::SwitchTab { name }
@@ -867,7 +871,22 @@ pub(crate) async fn try_action<D: crate::browser::cdp::Driver>(
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page
     // to the next action, as a run's steps carry it.
-    let mut run = InRun { areas: Some(&areas), saves_only_counted, noted, ..Default::default() };
+    // The active environment's database, looked at only for an action that
+    // checks it (or holds one that does).
+    let ctx = super::live_context();
+    let try_db = crate::autorun::preconditions::for_actions(
+        std::slice::from_ref(action),
+        ctx.as_ref().is_some_and(|c| crate::autorun::preconditions::db_query_on(&c.disabled_tools)),
+        root,
+        ctx.as_ref().and_then(|c| c.db_secrets.as_deref()),
+    );
+    let mut run = InRun {
+        db: try_db.as_ref().map(|p| p.source()).unwrap_or_default(),
+        areas: Some(&areas),
+        saves_only_counted,
+        noted,
+        ..Default::default()
+    };
     // An action that never answers is a failed action, so everything that
     // follows (what its writes and finds filed) still runs. It is given its
     // own wait and a margin, and no more than the call has left.

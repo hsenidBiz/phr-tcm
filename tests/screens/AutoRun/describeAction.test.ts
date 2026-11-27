@@ -699,3 +699,30 @@ describe("no host or query string in any sentence", () => {
     expect(say({ kind: "check_url", contains: "?mode=Create" })).toBe("Check the address has the expected query");
   });
 });
+
+describe("a database check", () => {
+  const SQL = "select status from leave where id = 4";
+  test("describes expect_database column equals", () => {
+    expect(say({ kind: "expect_database", sql: SQL, column: "status", equals: "Approved" })).toBe(
+      "Check the database: status is 'Approved'",
+    );
+  });
+  test("describes expect_database column matches", () => {
+    expect(say({ kind: "expect_database", sql: SQL, column: "status", matches: "^App" })).toBe(
+      "Check the database: status matches '^App'",
+    );
+  });
+  test("describes expect_database no row", () => {
+    expect(say({ kind: "expect_database", sql: SQL, exists: false })).toBe("Check the database: no row");
+    expect(say({ kind: "expect_database", sql: SQL, exists: true })).toBe("Check the database: a row");
+  });
+  test("describes expect_database count", () => {
+    expect(say({ kind: "expect_database", sql: SQL, count: 2 })).toBe("Check the database: 2 rows");
+    expect(say({ kind: "expect_database", sql: SQL, count: 1 })).toBe("Check the database: 1 row");
+    expect(say({ kind: "expect_database", sql: SQL, at_least: 2 })).toBe("Check the database: at least 2 rows");
+    expect(say({ kind: "expect_database", sql: SQL, at_most: 2 })).toBe("Check the database: at most 2 rows");
+  });
+  test("never puts the SQL in the sentence", () => {
+    expect(say({ kind: "expect_database", sql: SQL, exists: true })).not.toContain("select");
+  });
+});

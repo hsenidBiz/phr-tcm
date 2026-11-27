@@ -63,6 +63,20 @@ pub(crate) fn marked_sensitive(action: Action) -> Action {
         Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
             Action::ExpectContainsText { selector, value, timeout_ms, sensitive: true }
         }
+        Action::ExpectDatabase { sql, exists, count, at_least, at_most, column, equals, matches, timeout_ms, .. } => {
+            Action::ExpectDatabase {
+                sql,
+                exists,
+                count,
+                at_least,
+                at_most,
+                column,
+                equals,
+                matches,
+                timeout_ms,
+                sensitive: true,
+            }
+        }
         Action::WhenVisible { selector, within_ms, then } => {
             Action::WhenVisible { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
         }
@@ -85,7 +99,8 @@ fn hidden_texts(action: &Action) -> Vec<&str> {
     match action {
         Action::CheckText { value, sensitive: true } => vec![value],
         Action::ExpectContainsText { value, sensitive: true, .. } => vec![value],
-        Action::ExpectText { equals, matches, sensitive: true, .. } => {
+        Action::ExpectText { equals, matches, sensitive: true, .. }
+        | Action::ExpectDatabase { equals, matches, sensitive: true, .. } => {
             equals.iter().chain(matches.iter()).map(String::as_str).collect()
         }
         _ => vec![],
@@ -265,6 +280,35 @@ pub enum Action {
         /// The compared text came from a secret placeholder: the watcher's
         /// label never shows it. A run-time mark: read when sent in, never written (a saved
         /// script, a kept action or anything sent out comes back without it).
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
+    },
+    /// A read-only look at the database: `sql` is run (placeholders
+    /// `{{setup.*}}`, `{{fixture.*}}`, `{{noted.*}}` bound as quoted literals)
+    /// and the answer must satisfy exactly one expectation group: `exists`,
+    /// one of `count` / `at_least` / `at_most`, or `column` with one of
+    /// `equals` / `matches`. Carried out by the runner.
+    ExpectDatabase {
+        sql: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exists: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_least: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_most: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        matches: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+        /// The compared text came from a secret placeholder: the check's
+        /// detail and report never show it. A run-time mark: read when sent
+        /// in, never written (a saved script comes back without it).
         #[serde(default, skip_serializing_if = "hide_mark")]
         sensitive: bool,
     },
@@ -1649,6 +1693,10 @@ impl Action {
                 }
                 Ok(())
             }
+            Action::ExpectDatabase { sql, timeout_ms, .. } => {
+                let expect = crate::autorun::db_check::try_expectation(self).unwrap_or_else(|| Err(String::new()));
+                crate::autorun::db_check::validate(sql, expect, *timeout_ms)
+            }
             Action::ExpectContainsText { selector, value, .. } => {
                 if value.trim().is_empty() {
                     return Err("expect_contains_text has an empty value - everything contains nothing".to_string());
@@ -2103,6 +2151,7 @@ impl Action {
             | Action::SignIn { .. }
             | Action::ExpectResponse { .. }
             | Action::ApiRequest { .. }
+            | Action::ExpectDatabase { .. }
             | Action::Reload
             | Action::ExpireSession
             | Action::ReturnToArea { .. }
@@ -2165,6 +2214,7 @@ impl Action {
             | Action::SignIn { .. }
             | Action::ExpectResponse { .. }
             | Action::ApiRequest { .. }
+            | Action::ExpectDatabase { .. }
             | Action::Reload
             | Action::ExpireSession
             | Action::ReturnToArea { .. }
@@ -2209,6 +2259,7 @@ impl Action {
                 | Action::ExpectTextMoved { .. }
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
+                | Action::ExpectDatabase { .. }
                 | Action::ExpectAttribute { .. }
                 | Action::ExpectStyle { .. }
                 | Action::ExpectEnabled { .. }
@@ -3039,6 +3090,7 @@ async fn run<D: Driver>(
         // requests; this driver has neither.
         Action::ExpectResponse { .. } => ActionOutcome::failed("expect_response is carried out by the runner"),
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
+        Action::ExpectDatabase { .. } => ActionOutcome::failed("expect_database is carried out by the runner"),
         // Its `then` may hold an `upload`, which only the runner can place.
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
         Action::WhenHidden { .. } => ActionOutcome::failed("when_hidden is carried out by the runner"),

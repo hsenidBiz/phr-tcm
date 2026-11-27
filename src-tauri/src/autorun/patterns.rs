@@ -630,6 +630,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         }),
         Action::PressKey { key, .. } => Some(format!("the {} key", key.trim())),
         Action::ExpectDialog { .. } => Some("a dialog".to_string()),
+        Action::ExpectDatabase { .. } => Some("the database".to_string()),
         Action::ExpectRow { table, .. }
         | Action::ExpectNoRow { table, .. }
         | Action::ExpectSorted { table, .. }

@@ -713,6 +713,12 @@ function readAction(a: unknown): { sentence: Sentence; then: readonly unknown[] 
   }
 }
 
+/** The SQL of a database check, shown read-only under its sentence. */
+function databaseSql(a: unknown): string | null {
+  const rec = typeof a === "object" && a !== null ? (a as { kind?: unknown; sql?: unknown }) : null;
+  return rec?.kind === "expect_database" && typeof rec.sql === "string" ? rec.sql : null;
+}
+
 /** A step's actions as a list of sentences; a `when_visible`'s own actions
  * indented under its "If ... appears" line. */
 function ActionList({ actions }: { actions: readonly unknown[] }) {
@@ -723,6 +729,11 @@ function ActionList({ actions }: { actions: readonly unknown[] }) {
         return (
           <li key={i} className="break-words">
             <SentenceView sentence={sentence} />
+            {databaseSql(a) !== null && (
+              <pre className="mt-1 whitespace-pre-wrap break-words rounded border border-border bg-surface-2 px-2 py-1 font-mono text-xs text-text">
+                {databaseSql(a)}
+              </pre>
+            )}
             {then && (
               <div className="mt-0.5 border-l border-border/60 pl-3">
                 <ActionList actions={then} />

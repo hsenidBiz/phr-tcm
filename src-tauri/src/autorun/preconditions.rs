@@ -17,6 +17,7 @@
 //! No sentence here carries SQL, a server name or a connection detail: the
 //! activity log the gate writes is the one place those go.
 
+use super::db_check::{DbRows, DbSource, NO_DATABASE};
 use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
@@ -316,6 +317,24 @@ pub enum PreconditionDb<D> {
     ReadingOff,
 }
 
+impl<D: DbRows> PreconditionDb<D> {
+    /// The same place, as the database a run's `expect_database` steps ask
+    /// (`db_check::DbSource`). The sentence for none is the check's own: the
+    /// one about preconditions is reworded, any other is said after what the
+    /// step was doing.
+    pub fn source(&self) -> DbSource<'_> {
+        match self {
+            PreconditionDb::Ready(d) => DbSource::Ready(d),
+            PreconditionDb::ReadingOff => DbSource::ReadingOff,
+            PreconditionDb::Missing(why) if why == NEED_DB => DbSource::Missing(NO_DATABASE.to_string()),
+            PreconditionDb::Missing(why) => DbSource::Missing(format!(
+                "This step checks the database, but {}",
+                why.strip_prefix(&format!("{COULD_NOT}: ")).unwrap_or(why)
+            )),
+        }
+    }
+}
+
 impl<D> PreconditionDb<D> {
     /// The database `environment_db` found, or its sentence for none.
     pub fn from_result(db: Result<D, String>) -> Self {
@@ -449,6 +468,26 @@ pub fn for_run(
         return PreconditionDb::ReadingOff;
     }
     PreconditionDb::from_result(environment_db(root, store))
+}
+
+/// Whether the assistant's `db_query` tool is switched on: the switch the
+/// assistant's own replays and tries read (`disabled_tools`).
+pub fn db_query_on(disabled_tools: &[String]) -> bool {
+    !disabled_tools.iter().any(|t| t == "db_query")
+}
+
+/// The place a step's database checks are asked, when one of `actions` may
+/// ask (`db_check::may_ask`); `None` otherwise, so nothing is looked up for a
+/// step that never asks. Gated like preconditions: the AI Bridge Database
+/// Read Access `switch` AND the Database Access module (`read_access`).
+pub fn for_actions<'a>(
+    actions: impl IntoIterator<Item = &'a Action>,
+    switch: bool,
+    root: &Path,
+    store: Option<&dyn crate::db::SecretStore>,
+) -> Option<PreconditionDb<SqlcmdStageDb<crate::db::RealRunner>>> {
+    let asks = actions.into_iter().flat_map(|a| a.each()).any(super::db_check::may_ask);
+    asks.then(|| for_run(root, store, read_access(switch)))
 }
 
 /// A database that is never asked: the stand-in for callers that have no

@@ -451,6 +451,18 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                             i + 1
                         ));
                     }
+                    crate::browser::actions::Action::ExpectDatabase { sql, .. } => {
+                        for name in crate::autorun::db_check::noted_names(sql) {
+                            if !noted_texts.contains(name.as_str()) {
+                                return Err(format!(
+                                    "case {} step {} action {}: expect_database sql {{{{noted.{name}}}}} names no text an earlier remember_text of this case notes",
+                                    sc.case_id,
+                                    step.step_number,
+                                    i + 1
+                                ));
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }

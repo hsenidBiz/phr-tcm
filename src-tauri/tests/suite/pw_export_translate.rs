@@ -2032,3 +2032,41 @@ fn a_step_done_by_auto_run_has_no_unchecked_comment() {
     assert!(!got.contains("Auto Test opens the app"), "{got}");
     assert!(got.contains("// TODO unchecked: the step's expected result - the PDF cannot be read"), "{got}");
 }
+
+fn db_case(sql: &str, extra: Value) -> Fx {
+    let mut check = json!({ "kind": "expect_database", "sql": sql, "column": "status", "equals": "Approved" });
+    if let (Some(c), Some(e)) = (check.as_object_mut(), extra.as_object()) {
+        c.extend(e.clone());
+    }
+    one_step(json!([{ "kind": "click", "selector": "#save" }, check]))
+}
+
+#[test]
+fn export_writes_manual_check() {
+    let got = db_case("SELECT status\nFROM LeaveRequest\nWHERE no = {{noted.req}}", json!({})).run().unwrap();
+    assert!(got.contains("type: \"manual-check\""), "{got}");
+    assert!(got.contains("// Manual check (database): Check the database: status is 'Approved'"), "{got}");
+    assert!(got.contains("// SELECT status\n"), "{got}");
+    assert!(got.contains("// WHERE no = {{noted.req}}"), "{got}");
+    assert!(got.contains("description: 'Check the database: status is \\'Approved\\''"), "{got}");
+}
+
+#[test]
+fn export_does_not_refuse_case() {
+    let r = db_case("SELECT 1", json!({})).run();
+    assert!(r.is_ok(), "{r:?}");
+}
+
+#[test]
+fn export_hides_secret_value_and_keeps_sql_on_comment_lines() {
+    let got = db_case(
+        "SELECT password\r\nFROM u\n  \u{2028}DROP TABLE x",
+        json!({ "column": "password", "equals": "hunter2" }),
+    )
+    .run()
+    .unwrap();
+    assert!(!got.contains("hunter2"), "{got}");
+    for l in got.lines().filter(|l| l.contains("DROP TABLE x")) {
+        assert!(l.trim_start().starts_with("//"), "{l}");
+    }
+}

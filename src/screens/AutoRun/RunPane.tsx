@@ -260,7 +260,7 @@ export default function RunPane({
     }
     setBusy(true);
     try {
-      const r = await commands.autoRunStep(org, project, caseId, step);
+      const r = await commands.autoRunStep(org, project, caseId, step, dbReadAccessOn());
       if (r.status === "error") {
         // A no-save case whose guard could not be set up never runs
         // unguarded: Blocked, with the sentence, as an unattended run

@@ -11,6 +11,7 @@
 
 use super::lease::{CookieCheck, Held};
 use super::nav::{Route, TripFrom};
+use super::db_check::{DbRows, DbSource};
 use super::preconditions::{self, NoDb, PreconditionDb};
 use super::runner::{self, AreaRoute, InRun, AFTER_STOP};
 use super::recipe::SignInRecipe;
@@ -615,7 +616,7 @@ pub async fn replay_to<D: Driver>(
 /// step runs, `total` being `req.step - 1`. `replay` is the slot's replay
 /// state: its stop control, how far it has got and the action it is on.
 #[allow(clippy::too_many_arguments)]
-pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
+pub async fn replay_to_checked<D: Driver, P: StageDb + DbRows, B: Browsers>(
     d: &mut D,
     setup_browsers: &mut B,
     root: &Path,
@@ -673,7 +674,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
 /// passed (`Checkpoint`), for the stand a replay that reaches its step
 /// leaves.
 #[allow(clippy::too_many_arguments)]
-pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
+pub async fn replay_to_traced<D: Driver, P: StageDb + DbRows, B: Browsers>(
     d: &mut D,
     setup_browsers: &mut B,
     root: &Path,
@@ -714,10 +715,15 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 
     // Preconditions, exactly as a supervised case starts: one not met
     // stops the replay before anything is signed in.
-    let checked = match preconditions::check_script(root, organization, project, id, db).await {
-        Ok(c) => c,
-        Err(why) => return ReplayEnd::Refused(why),
+    // The place is looked at only when the script has preconditions or may
+    // check the database (a step of its own, or a component's).
+    let needs_check = !script.preconditions.is_empty() || !script.needs_records.is_empty();
+    let precondition_db = (needs_check || may_check_database(&script)).then(db);
+    let checked = match precondition_db.as_ref().filter(|_| needs_check) {
+        Some(place) => super::needs_records::check_script_case(place, root, organization, project, &script).await,
+        None => preconditions::PreconditionCheck::default(),
     };
+    let db_source = precondition_db.as_ref().map(|p| p.source()).unwrap_or_default();
     if let Some(why) = checked.blocked {
         return ReplayEnd::Blocked(why);
     }
@@ -860,7 +866,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 
     // Steps 1 to N-1, in the script's order.
     let ended =
-        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, replay, &mut progress, tabs, guarding_other, marks, false)
+        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, replay, &mut progress, tabs, guarding_other, marks, false, &db_source)
             .await;
     // Wherever the steps ended, the page they ran on may have re-issued the
     // sign-in's cookies: print them again, so a replay of the same case next
@@ -1315,6 +1321,12 @@ pub fn may_carry_on(script: &CaseScript, step: i32) -> bool {
     whole_case(script, step).is_none()
 }
 
+/// Could a step of `script` ask the database: an `expect_database` of its
+/// own (in a guard's `then` too), or a component, which may hold one?
+pub fn may_check_database(script: &CaseScript) -> bool {
+    script.steps.iter().flat_map(|s| &s.actions).flat_map(|a| a.each()).any(super::db_check::may_ask)
+}
+
 /// The number of the clean-up step, beside a replay to `step` that ran the
 /// whole case: it ran too when `step` is past it. `None` when the replay
 /// did not run the whole case or the script has no clean-up.
@@ -1349,6 +1361,7 @@ async fn run_steps<D: Driver>(
     guarding_other: Option<i32>,
     marks: &mut Marks,
     wrote_before: bool,
+    db: &DbSource<'_>,
 ) -> Option<ReplayEnd> {
     // One mark of the network record for the whole run, let go on every way
     // out; and how many tabs the browser had had by then.
@@ -1356,7 +1369,7 @@ async fn run_steps<D: Driver>(
     let tabs_before = d.tabs_opened();
     let ended = run_steps_marked(
         d, root, organization, project, script, route, from, n, account, lease, timing, replay, progress, tabs,
-        guarding_other, marks, wrote_before, mark, tabs_before,
+        guarding_other, marks, wrote_before, mark, tabs_before, db,
     )
     .await;
     d.net_unmark(mark);
@@ -1384,6 +1397,7 @@ async fn run_steps_marked<D: Driver>(
     wrote_before: bool,
     mark: u64,
     tabs_before: u64,
+    db: &DbSource<'_>,
 ) -> Option<ReplayEnd> {
     let stopped = || replay.cancel.load(Ordering::SeqCst);
     let in_range = |k: i32| k >= from && k < n;
@@ -1421,6 +1435,7 @@ async fn run_steps_marked<D: Driver>(
         noted.step = at;
         noted.take_late();
         let mut in_run = InRun {
+            db: db.clone(),
             cancel: Some(&replay.cancel),
             stop_before_each_action: true,
             areas: Some(&areas),
@@ -1922,6 +1937,7 @@ pub async fn carry_on<D: Driver>(
     tabs: &mut Vec<ReplayedTab>,
     wrote_before: bool,
     marks: &mut Marks,
+    db: &DbSource<'_>,
 ) -> ReplayEnd {
     marks.clear();
     let Checked { script, route } = match check(root, organization, project, req) {
@@ -1962,6 +1978,7 @@ pub async fn carry_on<D: Driver>(
         guarding_other,
         marks,
         wrote_before,
+        db,
     )
     .await
     {

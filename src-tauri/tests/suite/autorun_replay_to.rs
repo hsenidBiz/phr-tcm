@@ -1375,7 +1375,7 @@ async fn carry(
     guarded: &mut Option<i32>,
 ) -> ReplayEnd {
     let state = ReplayState::new();
-    carry_on(d, root, "acme", "Web", r, from, account, held, guarded, &quick(), &state, |_, _| {}, &mut Vec::new(), false, &mut Marks::default())
+    carry_on(d, root, "acme", "Web", r, from, account, held, guarded, &quick(), &state, |_, _| {}, &mut Vec::new(), false, &mut Marks::default(), &Default::default())
         .await
 }
 
@@ -3629,7 +3629,7 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
     let mut marks_b = Marks::default();
     let end = carry_on(
         &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
-        &mut Vec::new(), false, &mut marks_b,
+        &mut Vec::new(), false, &mut marks_b, &Default::default(),
     )
     .await;
     assert!(matches!(end, ReplayEnd::Ready { case_id: 78, whole: None, .. }), "{end:?}");
@@ -3671,7 +3671,7 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     let mut marks_b = Marks::default();
     let end = carry_on(
         &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
-        &mut Vec::new(), false, &mut marks_b,
+        &mut Vec::new(), false, &mut marks_b, &Default::default(),
     )
     .await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
@@ -3828,7 +3828,7 @@ async fn a_look_only_case_carried_on_after_a_post_never_says_saved() {
     // `wrote_before` is true: the first part of this case posted a request.
     let end = carry_on(
         &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
-        &mut Vec::new(), true, &mut marks,
+        &mut Vec::new(), true, &mut marks, &Default::default(),
     )
     .await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");

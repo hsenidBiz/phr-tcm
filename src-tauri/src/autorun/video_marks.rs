@@ -51,6 +51,7 @@ fn has_no_element(action: &Action) -> bool {
     matches!(
         action,
         Action::SignIn { .. }
+            | Action::ExpectDatabase { .. }
             | Action::ReturnToArea { .. }
             | Action::UseComponent { .. }
             | Action::WhenVisible { .. }

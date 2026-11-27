@@ -72,6 +72,10 @@ const EXAMPLES: &[(&str, &str)] = &[
     ),
     ("api_request", r#"{"kind":"api_request","path":"/api/cycles/42","expect":{"status":200}}"#),
     (
+        "expect_database",
+        r#"{"kind":"expect_database","sql":"SELECT TOP 1 status FROM LeaveRequest WHERE request_no = {{noted.request}} ORDER BY created_at DESC","column":"status","equals":"Approved"}"#,
+    ),
+    (
         "when_visible",
         r##"{"kind":"when_visible","selector":{"css":"#banner"},"within_ms":2000,"then":[{"kind":"click","selector":{"css":"#close"}}]}"##,
     ),

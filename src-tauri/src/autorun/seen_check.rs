@@ -424,6 +424,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::SignIn { .. }
         | Action::ExpectResponse { .. }
         | Action::ApiRequest { .. }
+        | Action::ExpectDatabase { .. }
         | Action::Reload
         | Action::ExpireSession
         | Action::ReturnToArea { .. }

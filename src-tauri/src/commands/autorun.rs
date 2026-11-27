@@ -2286,6 +2286,7 @@ pub async fn auto_run_step(
     project: String,
     case_id: i32,
     step: StepScript,
+    db_read_access: bool,
 ) -> Result<StepRun, String> {
     let root = root(&app)?;
     // The case's script is not deleted while it is run step by step: noted
@@ -2341,7 +2342,17 @@ pub async fn auto_run_step(
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
     let areas = area_routes(&root, &organization, &project, &named_areas(&step.actions));
+    // The database a step's `expect_database` asks: the active environment's,
+    // looked at only when the step has one.
+    let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+    let step_db = crate::autorun::preconditions::for_actions(
+        step.actions.iter(),
+        db_read_access,
+        &root,
+        Some(secrets.as_ref()),
+    );
     let mut run = crate::autorun::runner::InRun {
+        db: step_db.as_ref().map(|p| p.source()).unwrap_or_default(),
         areas: Some(&areas),
         fail_on_unexpected_dialog: saved.as_ref().is_some_and(|s| s.fail_on_unexpected_dialog),
         page_errors: saved.as_ref().and_then(|s| s.page_errors),
@@ -2630,6 +2641,13 @@ pub(crate) async fn replay_supervised(
         project,
     )
     .await;
+    // The place a carried-on replay's database checks are asked, looked at
+    // only when the script may have one.
+    let carry_db = saved
+        .as_ref()
+        .is_some_and(replay_to::may_check_database)
+        .then(|| crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access));
+    let carry_source = carry_db.as_ref().map(|p| p.source()).unwrap_or_default();
     let mut end = match (guard, from) {
         (Err(why), _) => ReplayEnd::Refused(why),
         (Ok(_), ReplayFrom::AlreadyThere) => ReplayEnd::Ready {
@@ -2658,6 +2676,7 @@ pub(crate) async fn replay_supervised(
                 &mut tabs,
                 replay_to::wrote_before(stand.as_ref(), k),
                 &mut marks,
+                &carry_source,
             )
             .await
         }
@@ -2681,6 +2700,7 @@ pub(crate) async fn replay_supervised(
                 &mut tabs,
                 false,
                 &mut marks,
+                &carry_source,
             )
             .await
         }
