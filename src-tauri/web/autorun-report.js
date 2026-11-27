@@ -392,24 +392,15 @@
     var g = lbList[lbIndex];
     var stage = $('.stage', lb);
     while (stage.firstChild) stage.removeChild(stage.firstChild);
-    var el;
-    if (g.k) {
-      el = document.createElement('video');
-      el.controls = true;
-      el.src = '../shots/' + g.n;
-    } else {
-      el = document.createElement('img');
-      el.src = '../shots/' + g.n;
-      el.alt = caption(g);
-    }
+    var el = document.createElement('img');
+    el.src = '../shots/' + g.n;
+    el.alt = caption(g);
     stage.appendChild(el);
     $('.lb-cap', lb).textContent = caption(g) + '  (' + (lbIndex + 1) + ' of ' + lbList.length + ')';
     lb.hidden = false;
   }
   function closeLightbox() {
     if (!lb) return;
-    var v = $('video', lb);
-    if (v && v.pause) v.pause();
     lb.hidden = true;
   }
   if (lb) {

@@ -134,8 +134,9 @@
     els.slider.setAttribute('aria-valuenow', String(now / 1000));
     els.slider.setAttribute('aria-valuetext', clockText(now) + ' of ' + clockText(len) + (named ? ', ' + named : ''));
     els.time.textContent = clockText(now) + ' / ' + clockText(len);
-    els.ticks.forEach(function (t) { place(t.node, t.at, len); });
+    els.ticks.forEach(function (t) { t.node.hidden = !len; place(t.node, t.at, len); });
     if (els.fail) {
+      els.fail.hidden = !len;
       els.fail.style.left = timelinePercent(failedFrom(tl), len) + '%';
     }
     stepButtons.forEach(function (b, i) {
@@ -345,8 +346,10 @@
       return;
     }
     var t = e.target;
-    var onButton = !!t && (t.tagName === 'BUTTON' || t.tagName === 'A');
+    var onButton = !!t && t.tagName === 'BUTTON';
+    var onLink = !!t && t.tagName === 'A';
     if ((k === ' ' || k === 'Enter') && onButton) return;
+    if (k === 'Enter' && onLink) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (k === ' ') { e.preventDefault(); toggle(); }
     else if (k === 'ArrowRight') { e.preventDefault(); seek(nowMs() + SKIP_MS); }
@@ -358,10 +361,29 @@
     }
   }
 
+  // Entries with no usable start are dropped, the rest sorted by start (ties keep their order),
+  // and a missing label becomes "Step N" / "Action N".
+  function tidy(list, fallback, key) {
+    var kept = [];
+    (list || []).forEach(function (m, i) {
+      if (!m || typeof m !== 'object' || !isNum(m.at_ms)) return;
+      var c = {};
+      for (var p in m) { if (Object.prototype.hasOwnProperty.call(m, p)) c[p] = m[p]; }
+      if (typeof c[key] !== 'string' || !c[key]) c[key] = fallback + ' ' + (i + 1);
+      c.at_ms = Math.max(0, m.at_ms);
+      c.i = i;
+      kept.push(c);
+    });
+    kept.sort(function (a, b) { return a.at_ms - b.at_ms || a.i - b.i; });
+    return kept;
+  }
+
   function open(timeline, src, from) {
     if (root) close();
     tl = timeline && typeof timeline === 'object' ? timeline : EMPTY;
-    tl = { title: tl.title || 'Video', length_ms: tl.length_ms, steps: tl.steps || [], marks: tl.marks || [] };
+    var steps = tidy(tl.steps, 'Step', 'name');
+    steps.forEach(function (s) { s.actions = tidy(s.actions, 'Action', 'label'); });
+    tl = { title: tl.title || 'Video', length_ms: tl.length_ms, steps: steps, marks: tidy(tl.marks, 'Action', 'label') };
     opener = from || null;
     var old = document.getElementById('vp');
     if (old && old.parentNode) old.parentNode.removeChild(old);
@@ -380,7 +402,11 @@
   function close() {
     if (!root) return;
     document.removeEventListener('keydown', onKey);
-    if (vid && vid.pause) vid.pause();
+    if (vid) {
+      if (vid.pause) vid.pause();
+      vid.removeAttribute('src');
+      if (vid.load) vid.load();
+    }
     root.hidden = true;
     root = null;
     setPlaying(false);

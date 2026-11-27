@@ -52,6 +52,7 @@ beforeEach(() => {
   const proto = HTMLMediaElement.prototype;
   Object.defineProperty(proto, "play", { configurable: true, value: play });
   Object.defineProperty(proto, "pause", { configurable: true, value: pause });
+  Object.defineProperty(proto, "load", { configurable: true, value: vi.fn() });
   Object.defineProperty(proto, "currentTime", { configurable: true, get: () => state.time, set: (v: number) => { state.time = v; } });
   Object.defineProperty(proto, "playbackRate", { configurable: true, get: () => state.rate, set: (v: number) => { state.rate = v; } });
   Object.defineProperty(proto, "duration", { configurable: true, get: () => state.duration });
@@ -224,4 +225,61 @@ test("the same maths as the app", () => {
   expect(player().percent(25000, 20000)).toBe(100);
   expect(player().clock(83000)).toBe("1:23");
   expect(player().clock(-5)).toBe("0:00");
+});
+
+test("untidy marks are sorted, dropped or labelled instead of breaking the player", () => {
+  open({
+    title: "Messy",
+    length_ms: 20000,
+    steps: [
+      { name: "Late", at_ms: 9000, failed: false, actions: [] },
+      { name: "No start", at_ms: null as unknown as number, failed: false, actions: [] },
+      { name: "", at_ms: 1000, failed: false, actions: [{ label: "", at_ms: 1500 }, { label: "Bad", at_ms: Number.NaN }] },
+    ],
+    marks: [],
+  });
+  const names = Array.from(dialog().querySelectorAll(".vp__steps > li .vp__jump .vp__name")).map((n) => n.textContent);
+  expect(names).toEqual(["Step 3", "Late"]);
+  expect(buttonNamed("No start at 0:00")).toBeNull();
+  press("Actions of Step 3");
+  expect(buttonNamed("Action 1 at 0:01")).toBeTruthy();
+  expect(buttonNamed("Bad at 0:00")).toBeNull();
+  player().close();
+  open({ title: "Flat", length_ms: 20000, steps: [], marks: [{ label: "B", at_ms: 5000 }, { label: "", at_ms: 2000 }, { label: "X", at_ms: null as unknown as number }] });
+  expect(Array.from(dialog().querySelectorAll(".vp__steps button")).map((b) => b.getAttribute("aria-label"))).toEqual(["Action 2 at 0:02", "B at 0:05"]);
+});
+
+test("closing releases the video file", () => {
+  open();
+  const v = video();
+  const load = vi.fn();
+  Object.defineProperty(v, "load", { configurable: true, value: load });
+  player().close();
+  expect(v.hasAttribute("src")).toBe(false);
+  expect(load).toHaveBeenCalled();
+});
+
+test("the failed stretch and ticks wait for a length", () => {
+  open({ ...timeline, length_ms: null });
+  const fail = () => dialog().querySelector(".vp__fail") as HTMLElement;
+  const tick = () => dialog().querySelector(".vp__tick") as HTMLElement;
+  expect(fail().hidden).toBe(true);
+  expect(tick().hidden).toBe(true);
+  state.duration = 30;
+  fireEvent.loadedMetadata(video());
+  expect(fail().hidden).toBe(false);
+  expect(tick().hidden).toBe(false);
+  expect(fail().style.left).toBe("30%");
+});
+
+test("Space on the Save video link is the player's; Enter on it stays the link's", () => {
+  open();
+  const save = within(dialog()).getByRole("link", { name: "Save video" });
+  const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+  save.dispatchEvent(space);
+  expect(space.defaultPrevented).toBe(true);
+  expect(play).toHaveBeenCalledTimes(1);
+  const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  save.dispatchEvent(enter);
+  expect(enter.defaultPrevented).toBe(false);
 });
