@@ -154,7 +154,7 @@ test("choosing_a_clone_saves_it", async () => {
   pick.mockResolvedValue("D:/work/clone");
   const { calls } = mount({ set_playwright_clone: () => ({ playwright_clone: "D:/work/clone" }) });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.click(screen.getByRole("button", { name: "Choose…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Choose" }));
   await waitFor(() => expect(calls.find((c) => c.cmd === "set_playwright_clone")?.args).toEqual({ path: "D:/work/clone" }));
   expect(pick).toHaveBeenCalledWith({ directory: true });
   expect(await screen.findByText("D:/work/clone")).toBeInTheDocument();

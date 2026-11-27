@@ -194,7 +194,7 @@ export const autoRun: Screen = {
       name: "Basic and Advanced",
       does:
         "Chooses how much of Auto Test you see. **Basic** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
-        "It hides the Discovery, Components and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
+        "It hides the Discovery, Components, Known quirks and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
         "A script card shows one header line, with the steps Auto Test does itself marked **Done by Auto Test** and the assistant's notes folded away under **Assistant notes**. " +
         "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
         "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Basic mode** is on in Settings, the switch is not shown and Auto Test stays in Basic; turn Basic mode off to pick **Advanced**.",
@@ -296,7 +296,7 @@ export const autoRun: Screen = {
       tips: [
         "To run the failed cases again: press **Failed**, then **Select all shown**.",
         "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
-        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then lists it under **Rulings**, and **Details** says **Ruled by the assistant** with your words, while **Undo ruling** puts the case back to needing a ruling.",
+        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then shows it on its step, and **Details** says **Ruled by the assistant** with your words, while **Undo ruling** puts the case back to needing a ruling.",
         "**Has a script**, after them, shows only the cases that already have a script, with how many there are. It works together with the result buttons, and the app remembers it for each project.",
       ],
     },
@@ -328,8 +328,8 @@ export const autoRun: Screen = {
       name: "Show details",
       does:
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
-        "Open, it shows what its script does as a line of chips (how many steps, the account it signs in as, its area, and **Must not save** when set), then its rules, its setup, any **Rulings** (each with **Details** and **Undo ruling**), its steps, the files it uploads and checks, and the last run's downloads, each with **Open**; the assistant's notes are folded at the bottom. " +
-        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, shows each under its own step as **Not checked**, with why. " +
+        "Open, it shows what its script does as a line of chips (how many steps, the account it signs in as, its area, and **Must not save** when set), then its rules, its setup, its steps (each one line, with the rulings, assumed values and unchecked expectations folded under it), a **Rulings** list only for a ruling that belongs to no step, the files it uploads and checks, and the last run's downloads, each with **Open**; the assistant's notes are folded at the bottom. " +
+        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, shows each under its own step as **Not checked**, with why, once you open that step. " +
         "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Test.",
     },
     {
@@ -338,7 +338,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "list", name: "Script steps of #5002" },
       name: "Steps",
-      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. A step also carries its own notes: **Assumed** for a value the assistant chose, **Not checked** for an expectation the script leaves out, and **Ruled** when you ruled on it. Read only: change them with **Script**.",
+      does: "The script's steps, numbered, each with the case's own words for it. Each step is one line, with its action count on the row when it has nothing to open and inside the opened step otherwise; the small tags on it (**Ruled**, **assumed**, **invented**, **unchecked**) count what it carries, and its arrow opens them: the ruling with **Details** and **Undo ruling**, each value with why, and each **Not checked** expectation. **Expand all steps** opens every one. Read only: change them with **Script**.",
     },
     {
       id: "suspected-defect",
@@ -410,9 +410,12 @@ export const autoRun: Screen = {
       id: "case-steps",
       shot: SCRIPT,
       group: "scripts",
-      locate: { text: "The case's steps" },
-      name: "The case's steps",
-      does: "The test case's own steps and expected results, to write the script against. They are read from Azure DevOps and do not change here.",
+      locate: { role: "heading", name: "Steps" },
+      name: "Steps",
+      does:
+        "Each of the test case's steps and its expected result on the left, and what the script does for it on the right, with the parts it leaves unchecked under it behind a **Not checked** tag. " +
+        "The header sums up how many steps are checked and how many parts are not; past three steps the rest fold behind a **N more steps** button that lists their numbers, and a step that is not checked, or has a divergence waiting, is never folded away. " +
+        "The case's own text is read from Azure DevOps and does not change here.",
     },
     {
       id: "runs-as",
@@ -440,7 +443,7 @@ export const autoRun: Screen = {
       name: "Must not save",
       does:
         "For a case that works on shared data and must never change it. While the case runs, any save the page tries to send is stopped before it reaches the site, and the case fails. " +
-        "Only you can turn it off, here.",
+        "Only you can turn it off, here. The (i) beside it reads the same explanation as a tooltip.",
     },
     {
       id: "readable-script",
@@ -449,7 +452,7 @@ export const autoRun: Screen = {
       locate: { role: "region", name: "Action script" },
       name: "Action script",
       does:
-        "What the app does at each step, in plain sentences under each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
+        "What the app does at each step, in plain sentences beside each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
         "A step whose expected result is not checked says why. A password is never shown: it reads **the account's password**. " +
         "A **Clean-up** at the end removes what the case made, and its failure never fails the case. " +
         "An unattended run plays it even after a step fails; in a watched run you press **Run clean-up**, and a replay runs it only when replayed past it. " +
@@ -474,7 +477,7 @@ export const autoRun: Screen = {
       group: "scripts",
       locate: { role: "button", name: "Edit script" },
       name: "Edit script",
-      does: "Shows the script as JSON in the same place, with every detail, to change it. The window always opens on the sentences.",
+      does: "At the top right of the window: shows the script as JSON in place of the steps, with every detail, to change it. The window always opens on the sentences.",
     },
     {
       id: "script-json",
@@ -500,7 +503,7 @@ export const autoRun: Screen = {
       locate: { text: "Checks" },
       name: "Checks",
       does:
-        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**.",
+        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**. It shows only while some step is not checked: when every step is, the Steps line, above the sentences and above the JSON, reads **all N checked** instead.",
     },
     {
       id: "preconditions",
@@ -812,7 +815,7 @@ export const autoRun: Screen = {
       group: "setup",
       locate: { role: "button", name: "Edit sign-in recipe" },
       name: "Edit (sign-in)",
-      does: "The saved sign-in (the recipe) as JSON, for what a recording cannot capture, and the notes kept about how the site behaves (quirks).",
+      does: "The saved sign-in (the recipe) as JSON, for what a recording cannot capture. The notes kept about how the site behaves have their own row, **Known quirks**.",
     },
     {
       id: "edit-accounts",
@@ -860,11 +863,21 @@ export const autoRun: Screen = {
       does:
         "The reusable steps your assistant has made for the site, such as picking a date in a date picker or confirming a dialog. A component takes text and target inputs, and every script that uses it gets its fixes. " +
         "The assistant makes a component during discovery, and only after it has tried the component live on the site. A component cannot use another component. " +
-        "The **Components** window lists each one with what it does and the inputs it takes, where and when it was tried, the cases that use it, and how many times it has been changed so far. A change is tried on the live app first, and it is checked against every script that uses it. " +
-        "**Remove** is greyed out while any script uses the component, and asks first otherwise; the scripts that use it have to be changed first. " +
+        "The **Components** window groups them by the area each was tried in, with one line per component showing how many cases use it, its version and **Unused** when no script does; **Search components** narrows the list by name, description, input or case number. " + "Open a component to see what it does, the inputs it takes, when it was tried, how many times it has been changed so far and the first cases that use it, and use **Expand all** or **Collapse all** to open or fold every line. A change is tried on the live app first, and it is checked against every script that uses it. " +
+        "**Remove**, at the bottom of an open component, is greyed out while any script uses the component, and asks first otherwise; the scripts that use it have to be changed first. " +
         "If the components file cannot be read, the window offers **Reset components**, which moves the damaged file aside (it is kept, never deleted) and starts with none. " +
         "The row reads **None yet** until the assistant has made one. Fixtures and delete templates do not use components.",
       tips: ["In your assistant, **/tcm:discover** is where components get made. In a run and in its review, the lines a component ran are grouped under its name."],
+    },
+    {
+      id: "view-quirks",
+      shot: SETUP_END,
+      group: "setup",
+      locate: { role: "button", name: "View known quirks" },
+      name: "View (known quirks)",
+      does:
+        "The notes kept about how this site behaves, so the next script or API template does not have to rediscover them. The **Known quirks** window lists each note with who wrote it and when, adds your own, and lets you edit, retire (and restore) or delete one, each change saved as you make it; closing with a note you typed and have not saved asks first. " +
+        "The row reads **N notes**, with **M retired** beside it when some are, and **None yet** until there is one.",
     },
     {
       id: "manage-test-files",
@@ -872,7 +885,7 @@ export const autoRun: Screen = {
       group: "setup",
       locate: { role: "button", name: "Manage test files" },
       name: "Manage (test files)",
-      does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder.",
+      does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder; the list folds by type, searches by file name, and shows how many of the listed cases upload each file.",
     },
 
     // --- Site address --------------------------------------------------------------
@@ -1028,7 +1041,7 @@ export const autoRun: Screen = {
       title: "Switch between Basic and Advanced",
       steps: [
         "At the top of Auto Test, press **Basic** or **Advanced**.",
-        "In Basic, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
+        "In Basic, the Setup panel leaves out Discovery, Components, Known quirks and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
         "If a run is stopped by Discovery or the sign-in recipe, Basic shows it with the note to ask the assistant or switch to Advanced. A failed fixture is not shown in Basic.",
       ],
     },
@@ -1082,8 +1095,8 @@ export const autoRun: Screen = {
     {
       title: "Run cases that need different settings",
       steps: [
-        "In the case's script, under **Needs these settings**, type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
-        "Under **Changes** and **Needs unchanged**, name shared data a case changes, such as a published cycle, and the cases that need it as it was.",
+        "In the case's script, under **Before it runs**, press **Setting** (**Add a setting** to a screen reader), type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
+        "In the same place, press **Change** or **Needs unchanged** and name shared data a case changes, such as a published cycle, and the cases that need it as it was. What you add shows as a chip you can remove.",
         "Run the selection. Auto Test puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
         "The run window says which batch is running, with a **Batch** label and a tab per batch, the current one tinted, such as **2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
@@ -1093,8 +1106,8 @@ export const autoRun: Screen = {
       title: "Copy a script to another environment",
       steps: [
         "Open the case's script. This needs two or more environments and a saved script.",
-        "Press **Copy to environment…**, choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
-        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy from environment…**; save or discard your changes to the open script first.",
+        "Press **Copy between environments** and choose **Copy to another environment**, then choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
+        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy between environments** and choose **Copy from another environment**; save or discard your changes to the open script first.",
       ],
     },
     {
@@ -1102,7 +1115,7 @@ export const autoRun: Screen = {
       steps: [
         "Open **Past runs** and filter by result if you want.",
         "Press **Review** on an unattended run to confirm its results and send them, or **Report** to read the run in your browser.",
-        "When a case has both passed and failed in its recent runs on an environment, **Flaky cases** lists it with how it went run by run and its last failure. Press **Mark flaky** to have Auto Test count its failures as flaky rather than failed; it is still sent to Azure DevOps as failed.",
+        "When a case has both passed and failed in its recent runs on an environment, **Flaky cases** lists it with how it went run by run and its last failure; the section starts folded, so press its header to open it. Press **Mark flaky** to have Auto Test count its failures as flaky rather than failed; it is still sent to Azure DevOps as failed.",
       ],
     },
   ],

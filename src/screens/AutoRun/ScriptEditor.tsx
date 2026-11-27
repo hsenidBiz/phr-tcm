@@ -7,9 +7,9 @@
 
 import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type Action, type NeededRecord, type Precondition, type StepScript } from "../../bindings";
+import { commands, type Action, type CaseScript, type NeededRecord, type Precondition, type StepScript } from "../../bindings";
 import { useEnvironments } from "../../lib/environments";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
@@ -23,21 +23,25 @@ import SharedStepLabel from "../../components/SharedStepLabel";
 import CaseText from "../../components/CaseText";
 import { unwrapStr } from "../../lib/ipc";
 import {
+  IconAbout,
   IconAdd,
   IconBack,
   IconCancel,
   IconConfirm,
+  IconCopyBetweenEnvironments,
   IconCopyFromEnvironment,
   IconCopyToEnvironment,
   IconEdit,
+  IconHideSteps,
   IconRemove,
+  IconShowSteps,
   IconUndo,
 } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
-import { caseTextLine } from "../../lib/markdown";
+import { plural } from "../../lib/plural";
 import { sameAreaName } from "../../lib/areaName";
-import { floorOf } from "./floor";
-import { uncheckedText } from "./unchecked";
+import { floorOf, type CheckState } from "./floor";
+import { uncheckedExpectations, uncheckedParts } from "./unchecked";
 import CopyCaseDialog from "./CopyCaseDialog";
 import SetupSection from "./SetupSection";
 import { canPutBack, preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
@@ -54,6 +58,10 @@ const PLACEHOLDER = `[
     ]
   }
 ]`;
+
+/** What Must not save does: the checkbox's tooltip and its accessible description. */
+const NO_SAVE_HELP =
+  "For a case that works on a shared draft: while it runs, any save the page tries to send is stopped before it reaches the server, and the case fails.";
 
 /** The button beside the script's label takes no more height than the
  * label line it replaced, so nothing under the script moves down. */
@@ -110,6 +118,20 @@ function ScriptEditorBody({
     queryFn: () => unwrapStr(commands.autoRunListAccounts()),
     retry: false,
   });
+  // The case's divergences, from the list the screen and the case card read
+  // (same key, so it costs nothing extra): a step with one that is open or
+  // waiting for a repair is never folded away.
+  const divergences = useQuery({
+    queryKey: ["autorun-divergences", org, project],
+    queryFn: () => unwrapStr(commands.autoRunLoadDivergences(org, project)),
+    enabled: Boolean(org && project),
+    retry: false,
+  });
+  const attention = new Set(
+    (divergences.data ?? [])
+      .filter((d) => d.case_id === caseId && (d.status === "open" || d.status === "awaiting_repair"))
+      .map((d) => d.step),
+  );
   // The project's recorded areas, for the Area select. Shares its key with
   // the Areas dialog, so a recording there updates this list.
   const areas = useQuery({
@@ -178,11 +200,14 @@ function ScriptEditorBody({
   // opening, which is the modal's own business.
   const swapped = useRef(false);
   const jsonView = useRef<HTMLDivElement>(null);
-  const readableView = useRef<HTMLDivElement>(null);
+  // The header holds Edit script, which takes the focus back after Back to
+  // readable view.
+  const headerView = useRef<HTMLDivElement>(null);
+  const noSaveHelpId = useId();
   useEffect(() => {
     if (!swapped.current) return;
     if (editing) jsonView.current?.querySelector("textarea")?.focus();
-    else readableView.current?.querySelector("button")?.focus();
+    else headerView.current?.querySelector("button")?.focus();
   }, [editing]);
   const swapTo = (toEditing: boolean) => {
     swapped.current = true;
@@ -293,50 +318,67 @@ function ScriptEditorBody({
     onClose();
   };
 
+  const showJson = editing && !readOnly;
+  const allChecked = checks.length > 0 && checks.every((c) => c.state.kind === "checked");
+  const checksBlock = checks.length > 0 && !allChecked && (
+    <div className="space-y-1">
+      <span className="text-xs font-medium text-muted">Checks</span>
+      <ul className="space-y-0.5 text-xs">
+        {checks.map(({ step_number, state }) => (
+          <li key={step_number} className={cn(state.kind === "unchecked" ? "text-warning" : "text-muted")}>
+            {state.kind === "checked" && `Step ${step_number}: checked`}
+            {state.kind === "explained" && `Step ${step_number}: not checked - ${state.reason}`}
+            {state.kind === "unchecked" && `Step ${step_number}: NOT CHECKED`}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 overflow-y-auto p-4`}>
-      <h2 className="text-sm font-semibold text-text">
-        <span className="id-mono text-faint">#{caseId}</span> {title}
-      </h2>
+      <div ref={headerView} className="flex items-start justify-between gap-3">
+        <h2 className="min-w-0 text-sm font-semibold text-text">
+          <span className="id-mono text-faint">#{caseId}</span> {title}
+        </h2>
+        {!readOnly && !showJson && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className={HEADER_BUTTON}
+            onClick={() => {
+              setProblem("");
+              swapTo(true);
+            }}
+          >
+            <IconEdit aria-hidden />
+            Edit script
+          </Button>
+        )}
+      </div>
 
-      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
-        <div className="space-y-1 lg:min-h-0 lg:overflow-y-auto">
-          <span className="text-xs font-medium text-muted">The case's steps</span>
-          <ol className="space-y-1 text-xs text-muted">
-            {steps.map((s, i) => (
-              <li key={i} className="rounded border border-border/60 px-2 py-1">
-                <div className="flex gap-1 text-text">
-                  <span className="shrink-0">{i + 1}.</span>
-                  {s.shared != null ? (
-                    <SharedStepLabel id={s.shared} org={org} />
-                  ) : (
-                    <CaseText kind="step" text={s.action} className="min-w-0 flex-1" />
-                  )}
-                </div>
-                {s.shared == null && s.expected && (
-                  <div className="flex gap-1 text-faint">
-                    <span className="shrink-0">→</span>
-                    <CaseText kind="step" text={s.expected} className="min-w-0 flex-1" />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        <div className="space-y-2 lg:min-h-0 lg:overflow-y-auto">
-          {readOnly ? (
-            <p className="text-xs text-muted">
-              Runs as{" "}
-              <span className="text-text">
-                {account === ""
-                  ? "No sign-in"
-                  : known
-                    ? `${(accounts.data ?? []).find((a) => a.key === account)?.label.trim() || account} (${account})`
-                    : `${account} (not on this machine)`}
-              </span>
-            </p>
-          ) : (
+      {/* Who it runs as, where, and whether it may save: one row, stacked
+          when the window is narrow. */}
+      <div
+        className={cn(
+          "grid gap-3",
+          readOnly
+            ? "sm:grid-cols-[repeat(auto-fit,minmax(10rem,auto))]"
+            : "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end",
+        )}
+      >
+        {readOnly ? (
+          <p className="text-xs text-muted">
+            Runs as{" "}
+            <span className="text-text">
+              {account === ""
+                ? "No sign-in"
+                : known
+                  ? `${(accounts.data ?? []).find((a) => a.key === account)?.label.trim() || account} (${account})`
+                  : `${account} (not on this machine)`}
+            </span>
+          </p>
+        ) : (
           <label className="block text-xs text-muted">
             Runs as
             <Combobox
@@ -353,13 +395,13 @@ function ScriptEditorBody({
               ]}
             />
           </label>
-          )}
+        )}
 
-          {readOnly ? (
-            <p className="text-xs text-muted">
-              Area <span className="text-text">{area === "" ? "the case's Module" : area}</span>
-            </p>
-          ) : (
+        {readOnly ? (
+          <p className="text-xs text-muted">
+            Area <span className="text-text">{area === "" ? "the case's Module" : area}</span>
+          </p>
+        ) : (
           <label className="block text-xs text-muted">
             Area
             <Select
@@ -377,69 +419,111 @@ function ScriptEditorBody({
               {area !== "" && !areaKnown && <option value={area}>{`${area} (not recorded)`}</option>}
             </Select>
           </label>
-          )}
+        )}
 
-          {readOnly ? (
-            noSave && <p className="text-xs text-muted">Must not save: a save the page tries to send is stopped.</p>
-          ) : (
-            <>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-                <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
-                Must not save
-              </label>
-              <p className="text-xs text-faint">
-                For a case that works on a shared draft: while it runs, any save the page tries to send
-                is stopped before it reaches the server, and the case fails.
-              </p>
-            </>
-          )}
+        {readOnly ? (
+          noSave && <p className="text-xs text-muted">Must not save: a save the page tries to send is stopped.</p>
+        ) : (
+          <div className="flex items-center gap-2 pb-2 text-xs text-muted">
+            <label className="flex cursor-pointer items-center gap-2">
+              <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
+              Must not save
+            </label>
+            {/* A button, so the keyboard reaches it; the app's tooltip layer
+                shows a title on focus as well as on hover. */}
+            <button
+              type="button"
+              aria-label="About Must not save"
+              aria-describedby={noSaveHelpId}
+              title={NO_SAVE_HELP}
+              className="inline-flex text-faint hover:text-text focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <IconAbout aria-hidden className="size-3.5" />
+            </button>
+            <span id={noSaveHelpId} className="sr-only">
+              {NO_SAVE_HELP}
+            </span>
+          </div>
+        )}
+      </div>
 
-          {existing.data && (existing.data.repairs ?? 0) > 0 && (
-            <p className="text-xs text-warning">
-              Repaired {existing.data.repairs} {existing.data.repairs === 1 ? "time" : "times"} by an assistant since you
-              last saved.
-              {existing.data.last_repair && ` Last reason: ${existing.data.last_repair}`}
+      {existing.data && (existing.data.repairs ?? 0) > 0 && (
+        <p className="text-xs text-warning">
+          Repaired {existing.data.repairs} {existing.data.repairs === 1 ? "time" : "times"} by an assistant since you
+          last saved.
+          {existing.data.last_repair && ` Last reason: ${existing.data.last_repair}`}
+        </p>
+      )}
+
+      {preconditionRepairs.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Precondition changes by an assistant</span>
+          <ul aria-label="Precondition changes by an assistant" className="space-y-1 text-xs">
+            {preconditionRepairs.map((r, i) => {
+              const done = putBack.includes(i);
+              // A later change changed its result again: putting this
+              // one back first would do nothing.
+              const changedLater = !done && !canPutBack(putBackList, r);
+              const label = done ? "Put back on Save" : "Put back";
+              return (
+                <li key={i} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 break-words text-text">
+                    {`${repairText(r)} - ${r.reason}`}
+                    {changedLater && (
+                      <span className="block text-faint">Changed again later - put back the newer change first.</span>
+                    )}
+                  </span>
+                  {!readOnly && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`${label}: precondition change ${i + 1}`}
+                      disabled={done || changedLater}
+                      onClick={() => setPutBack((b) => [...b, i])}
+                    >
+                      <IconUndo aria-hidden />
+                      {label}
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {showJson ? (
+        // Editing: the case's steps stay beside the JSON as the reference,
+        // all of them - nothing is folded while the script is being written.
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="space-y-1">
+            <span className="text-xs font-medium text-muted">The case's steps</span>
+            <ol className="space-y-1 text-xs text-muted">
+              {steps.map((s, i) => (
+                <li key={i} className="rounded border border-border/60 px-2 py-1">
+                  <div className="flex gap-1 text-text">
+                    <span className="shrink-0">{i + 1}.</span>
+                    {s.shared != null ? (
+                      <SharedStepLabel id={s.shared} org={org} />
+                    ) : (
+                      <CaseText kind="step" text={s.action} className="min-w-0 flex-1" />
+                    )}
+                  </div>
+                  {s.shared == null && s.expected && (
+                    <div className="flex gap-1 text-faint">
+                      <span className="shrink-0">→</span>
+                      <CaseText kind="step" text={s.expected} className="min-w-0 flex-1" />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs text-muted">
+              <span className="font-medium text-text">Steps</span>
+              {summaryLine(scriptForChecks, checks) && ` · ${summaryLine(scriptForChecks, checks)}`}
             </p>
-          )}
-
-          {preconditionRepairs.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-muted">Precondition changes by an assistant</span>
-              <ul aria-label="Precondition changes by an assistant" className="space-y-1 text-xs">
-                {preconditionRepairs.map((r, i) => {
-                  const done = putBack.includes(i);
-                  // A later change changed its result again: putting this
-                  // one back first would do nothing.
-                  const changedLater = !done && !canPutBack(putBackList, r);
-                  const label = done ? "Put back on Save" : "Put back";
-                  return (
-                    <li key={i} className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 break-words text-text">
-                        {`${repairText(r)} - ${r.reason}`}
-                        {changedLater && (
-                          <span className="block text-faint">Changed again later - put back the newer change first.</span>
-                        )}
-                      </span>
-                      {!readOnly && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`${label}: precondition change ${i + 1}`}
-                          disabled={done || changedLater}
-                          onClick={() => setPutBack((b) => [...b, i])}
-                        >
-                          <IconUndo aria-hidden />
-                          {label}
-                        </Button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-
-          {editing && !readOnly ? (
             <div ref={jsonView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script JSON</span>
@@ -456,118 +540,82 @@ function ScriptEditorBody({
                 onChange={(e) => setText(e.target.value)}
               />
             </div>
-          ) : (
-            <div ref={readableView} className="space-y-1">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted">Action script</span>
+            {checksBlock}
+          </div>
+        </div>
+      ) : (
+        <>
+          <StepsPanel
+            script={scriptForChecks}
+            loading={existing.isLoading}
+            steps={steps}
+            org={org}
+            checks={checks}
+            attention={attention}
+          />
+          {checksBlock}
+        </>
+      )}
+
+      <BeforeItRuns
+        changes={changes}
+        needsUnchanged={needsUnchanged}
+        settings={needsState}
+        readOnly={readOnly}
+        onChanges={setPickedChanges}
+        onNeeds={setPickedNeeds}
+        onSettings={setPickedState}
+      />
+
+      <SetupSection org={org} project={project} caseId={caseId} />
+
+      {needsRecords.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Needed records</span>
+          <ul aria-label="Needed records" className="space-y-1 text-xs">
+            {needsRecords.map((n) => (
+              <li key={`${n.setup}|${n.why}`} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 break-words text-text">{`${n.setup}: ${n.why}`}</span>
                 {!readOnly && (
                   <Button
                     size="sm"
                     variant="ghost"
-                    className={HEADER_BUTTON}
-                    onClick={() => {
-                      setProblem("");
-                      swapTo(true);
-                    }}
+                    aria-label={`Remove needed record ${n.setup}`}
+                    onClick={() => setRemovedNeeds((r) => [...r, n])}
                   >
-                    <IconEdit aria-hidden />
-                    Edit script
+                    <IconRemove aria-hidden />
+                    Remove
                   </Button>
                 )}
-              </div>
-              <ReadableScript script={scriptForChecks} loading={existing.isLoading} steps={steps} org={org} />
-            </div>
-          )}
-
-          {checks.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-muted">Checks</span>
-              <ul className="space-y-0.5 text-xs">
-                {checks.map(({ step_number, state }) => (
-                  <li
-                    key={step_number}
-                    className={cn(state.kind === "unchecked" ? "text-warning" : "text-muted")}
-                  >
-                    {state.kind === "checked" && `Step ${step_number}: checked`}
-                    {state.kind === "explained" && `Step ${step_number}: not checked - ${state.reason}`}
-                    {state.kind === "unchecked" && `Step ${step_number}: NOT CHECKED`}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Side by side where there is room, so the settings row below
-              them costs the window no height. */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MarkRow
-              label="Changes"
-              noun="change"
-              names={changes}
-              readOnly={readOnly}
-              onChange={setPickedChanges}
-            />
-            <MarkRow
-              label="Needs unchanged"
-              noun="needs unchanged"
-              names={needsUnchanged}
-              readOnly={readOnly}
-              onChange={setPickedNeeds}
-            />
-          </div>
-          <SettingRow settings={needsState} readOnly={readOnly} onChange={setPickedState} />
-
-          <SetupSection org={org} project={project} caseId={caseId} />
-
-          {needsRecords.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-muted">Needed records</span>
-              <ul aria-label="Needed records" className="space-y-1 text-xs">
-                {needsRecords.map((n) => (
-                  <li key={`${n.setup}|${n.why}`} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 break-words text-text">{`${n.setup}: ${n.why}`}</span>
-                    {!readOnly && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Remove needed record ${n.setup}`}
-                        onClick={() => setRemovedNeeds((r) => [...r, n])}
-                      >
-                        <IconRemove aria-hidden />
-                        Remove
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {preconditions.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-muted">Preconditions</span>
-              <ul aria-label="Preconditions" className="space-y-1 text-xs">
-                {preconditions.map(({ p, n }) => (
-                  <li key={n} className="flex items-center justify-between gap-2">
-                    <span className="id-mono min-w-0 break-words text-text">{preconditionText(p)}</span>
-                    {!readOnly && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Remove precondition ${n}`}
-                        onClick={() => setRemovedPre((r) => [...r, p])}
-                      >
-                        <IconRemove aria-hidden />
-                        Remove
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+              </li>
+            ))}
+          </ul>
         </div>
-      </div>
+      )}
+
+      {preconditions.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Preconditions</span>
+          <ul aria-label="Preconditions" className="space-y-1 text-xs">
+            {preconditions.map(({ p, n }) => (
+              <li key={n} className="flex items-center justify-between gap-2">
+                <span className="id-mono min-w-0 break-words text-text">{preconditionText(p)}</span>
+                {!readOnly && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove precondition ${n}`}
+                    onClick={() => setRemovedPre((r) => [...r, p])}
+                  >
+                    <IconRemove aria-hidden />
+                    Remove
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {existing.isError && (
         <p className="text-xs text-danger">
@@ -587,36 +635,23 @@ function ScriptEditorBody({
           </Button>
         </div>
       ) : (
-      <div className="flex flex-wrap justify-end gap-2">
-        {hasOthers && (
-          <div className="mr-auto flex flex-wrap gap-2">
-            {existing.data && (
-              <Button variant="outline" size="sm" onClick={() => setCopying("to")}>
-                <IconCopyToEnvironment aria-hidden />
-                Copy to environment…
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={unsaved}
-              title={unsaved ? UNSAVED_REASON : undefined}
-              onClick={() => setCopying("from")}
-            >
-              <IconCopyFromEnvironment aria-hidden />
-              Copy from environment…
-            </Button>
-          </div>
-        )}
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          <IconCancel aria-hidden />
-          Cancel
-        </Button>
-        <Button size="sm" onClick={save} disabled={Boolean(blockedReason)}>
-          <IconConfirm aria-hidden />
-          Save script
-        </Button>
-      </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {hasOthers && (
+            <CopyMenu
+              canCopyTo={Boolean(existing.data)}
+              fromBlocked={unsaved ? UNSAVED_REASON : undefined}
+              onPick={setCopying}
+            />
+          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <IconCancel aria-hidden />
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={Boolean(blockedReason)}>
+            <IconConfirm aria-hidden />
+            Save script
+          </Button>
+        </div>
       )}
       {copying && (
         <CopyCaseDialog
@@ -700,20 +735,111 @@ function ActionList({ actions }: { actions: readonly unknown[] }) {
   );
 }
 
-/** The script in plain sentences, a group per scripted step headed by the
- * step's number and the case's own words for it. The same size as the JSON
- * box it stands in for. */
-function ReadableScript({
+type CaseStep = { action: string; expected: string; shared?: number | null };
+
+/** Past this many steps the rest fold away behind one button. */
+const STEPS_SHOWN = 3;
+
+/** True when an action in the group cannot be read: the step is shown
+ * whatever the fold says, since it is the one that needs a look. */
+function groupUnreadable(g: StepScript): boolean {
+  if (!Array.isArray(g.actions)) return true;
+  return (g.actions as unknown[]).some((a) => sentenceText(readAction(a).sentence) === UNREADABLE);
+}
+
+/** One script step's actions, as sentences, and what it leaves unchecked
+ * under them, each part behind the warning tag "Not checked". */
+function ActionsCell({ g }: { g: StepScript }) {
+  const actions: unknown[] | null = Array.isArray(g.actions) ? g.actions : null;
+  const parts = uncheckedParts(g.unchecked);
+  return (
+    <>
+      {actions === null ? (
+        <p>{UNREADABLE}</p>
+      ) : actions.length > 0 ? (
+        <ActionList actions={actions} />
+      ) : (
+        <p className="text-muted">No actions</p>
+      )}
+      {parts.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {parts.map((p, i) => (
+            <li key={i} className="flex flex-wrap items-baseline gap-x-1.5 text-muted">
+              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-warning">
+                <span className="label-trim">Not checked</span>
+              </span>
+              <span className="min-w-0 break-words">{p}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+/** A script step that belongs to no step of the case (the clean-up, or a
+ * number the case does not have): its own heading, then its actions. */
+function ExtraGroup({ g }: { g: StepScript }) {
+  const label = g.cleanup === true ? "Clean-up" : `Step ${g.step_number}`;
+  return (
+    <section aria-label={label} className="space-y-1">
+      <h3 className="text-xs font-medium text-text">
+        <span className="text-faint">{label}</span>
+      </h3>
+      <div className="pl-3">
+        <ActionsCell g={g} />
+      </div>
+    </section>
+  );
+}
+
+/** "all N checked · M parts not checked", or "K of N checked": how the
+ * script stands against the case's expected results. The parts count is the
+ * one shown elsewhere as unchecked expectations (no clean-up, no step Auto
+ * Test does itself). Empty when there is nothing to say. */
+function summaryLine(script: StepScript[], checks: { step_number: number; state: CheckState }[]): string {
+  const shaped = (script as unknown[]).filter(
+    (s): s is StepScript =>
+      typeof s === "object" && s !== null && Number.isInteger((s as { step_number?: unknown }).step_number),
+  );
+  const checkedN = checks.filter((c) => c.state.kind === "checked").length;
+  const parts = uncheckedExpectations({
+    // The JSON may be mid-edit: a step without an actions list counts as having none.
+    steps: shaped.map((s) => ({ ...s, actions: Array.isArray(s.actions) ? s.actions : [] })),
+  } as unknown as CaseScript).length;
+  return [
+    checks.length === 0
+      ? null
+      : checkedN === checks.length
+        ? `all ${checks.length} checked`
+        : `${checkedN} of ${checks.length} checked`,
+    parts > 0 ? `${plural(parts, "part")} not checked` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The case's steps, each beside the script's actions for it: the step's
+ * words and expected result on the left, what the script does (and what it
+ * leaves unchecked) on the right. The header sums up the checks. Past
+ * three steps the rest fold, except the ones that need a look. */
+function StepsPanel({
   script,
   loading,
   steps,
   org,
+  checks,
+  attention,
 }: {
   script: StepScript[];
   loading: boolean;
-  steps: { action: string; expected: string; shared?: number | null }[];
+  steps: CaseStep[];
   org: string;
+  checks: { step_number: number; state: CheckState }[];
+  /** Steps with an open or awaiting-repair divergence. */
+  attention: ReadonlySet<number>;
 }) {
+  const [open, setOpen] = useState(false);
   // Only entries shaped like steps: the box can hold any JSON array. The
   // rest are counted, so nothing in the script goes unmentioned.
   const groups = (script as unknown[]).filter(
@@ -721,58 +847,103 @@ function ReadableScript({
       typeof s === "object" && s !== null && Number.isInteger((s as { step_number?: unknown }).step_number),
   );
   const skipped = script.length - groups.length;
+  const ofCase = (g: StepScript) => g.cleanup !== true && g.step_number >= 1 && g.step_number <= steps.length;
+  // Before the first step, as a sign-in step has always been shown; after
+  // the last, the clean-up and anything numbered beyond the case.
+  const before = groups.filter((g) => g.cleanup !== true && g.step_number < 1);
+  const after = groups.filter((g) => !ofCase(g) && !before.includes(g));
+
+  const rows = steps.map((s, i) => {
+    const n = i + 1;
+    const own = groups.filter((g) => ofCase(g) && g.step_number === n);
+    const kind = checks.find((c) => c.step_number === n)?.state.kind;
+    // Not checked, explained, or unreadable: never folded away.
+    const needsLook = kind === "unchecked" || kind === "explained" || attention.has(n) || own.some(groupUnreadable);
+    return { n, s, own, needsLook };
+  });
+  const foldable = rows.filter((r, i) => i >= STEPS_SHOWN && !r.needsLook);
+  const shown = rows.filter((r, i) => open || i < STEPS_SHOWN || r.needsLook);
+
+  const summary = summaryLine(script, checks);
+
+  // The fold never names a step that is showing: it says how many are
+  // folded and lists their numbers in its accessible name.
+  const foldLabel = foldable.length === 1 ? "1 more step" : `${foldable.length} more steps`;
+  const foldName = `${foldLabel}: ${foldable.map((r) => r.n).join(", ")}`;
+
   return (
-    <div
-      role="region"
-      aria-label="Action script"
-      tabIndex={0}
-      className="h-80 w-full space-y-3 overflow-y-auto rounded-md border border-border bg-surface px-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
-    >
+    <div role="region" aria-label="Action script" className="space-y-2 rounded-md border border-border bg-surface px-3 py-2 text-xs text-text">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h3 className="text-xs font-medium text-text">Steps</h3>
+        {summary && <span className="text-muted">{` · ${summary}`}</span>}
+      </div>
       {loading ? (
         <p className="text-muted">Loading the script...</p>
-      ) : groups.length === 0 && skipped === 0 ? (
-        <p className="text-muted">No actions yet. Press Edit script to write them.</p>
       ) : (
-        groups.map((s, i) => {
-          // The clean-up is no step of the case: named for what it is, with
-          // no case text beside it.
-          const tidy = s.cleanup === true;
-          const own = tidy ? undefined : steps[s.step_number - 1];
-          const label = tidy ? "Clean-up" : `Step ${s.step_number}`;
-          const actions: unknown[] | null = Array.isArray(s.actions) ? s.actions : null;
-          return (
-            <section key={`${i}-${s.step_number}`} aria-label={label} className="space-y-1">
-              <h3 className="text-xs font-medium text-text">
-                <span className="text-faint">{label}</span>
-                {own && (
-                  <>
-                    {" "}
-                    {own.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : caseTextLine(own.action)}
-                  </>
-                )}
-              </h3>
-              <div className="pl-3">
-                {actions === null ? (
-                  <p>{UNREADABLE}</p>
-                ) : actions.length > 0 ? (
-                  <ActionList actions={actions} />
-                ) : (
-                  <p className="text-muted">No actions</p>
-                )}
-                {uncheckedText(s.unchecked) && (
-                  <p className="mt-0.5 text-muted">Not checked: {uncheckedText(s.unchecked)}</p>
-                )}
-              </div>
-            </section>
-          );
-        })
-      )}
-      {!loading && skipped > 0 && (
-        <p className="text-muted">
-          {skipped === 1
-            ? "1 more entry is shown only in Edit script."
-            : `${skipped} more entries are shown only in Edit script.`}
-        </p>
+        <>
+          {groups.length === 0 && skipped === 0 && (
+            <p className="text-muted">No actions yet. Press Edit script to write them.</p>
+          )}
+          {before.map((g, i) => (
+            <ExtraGroup key={`before-${i}-${g.step_number}`} g={g} />
+          ))}
+          {rows.length > 0 && (
+            <ol className="divide-y divide-border/60">
+              {shown.map(({ n, s, own }) => (
+                <li key={n}>
+                  <section
+                    aria-label={`Step ${n}`}
+                    className="grid gap-x-4 gap-y-1 py-2 first:pt-0 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]"
+                  >
+                    <div className="flex min-w-0 gap-2">
+                      <span className="w-5 shrink-0 text-right tabular-nums text-faint" aria-hidden>
+                        {n}.
+                      </span>
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="text-text">
+                          {s.shared != null ? (
+                            <SharedStepLabel id={s.shared} org={org} />
+                          ) : (
+                            <CaseText kind="step" text={s.action} className="min-w-0" />
+                          )}
+                        </div>
+                        {s.shared == null && s.expected && (
+                          <div className="flex gap-1 text-faint">
+                            <span className="shrink-0">→</span>
+                            <CaseText kind="step" text={s.expected} className="min-w-0 flex-1" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      {own.length === 0 ? (
+                        <p className="text-faint">Nothing scripted</p>
+                      ) : (
+                        own.map((g, i) => <ActionsCell key={i} g={g} />)
+                      )}
+                    </div>
+                  </section>
+                </li>
+              ))}
+            </ol>
+          )}
+          {foldable.length > 0 && (
+            <Button size="sm" variant="ghost" aria-expanded={open} aria-label={foldName} onClick={() => setOpen((o) => !o)}>
+              {open ? <IconHideSteps aria-hidden /> : <IconShowSteps aria-hidden />}
+              {foldLabel}
+            </Button>
+          )}
+          {after.map((g, i) => (
+            <ExtraGroup key={`after-${i}-${g.step_number}`} g={g} />
+          ))}
+          {skipped > 0 && (
+            <p className="text-muted">
+              {skipped === 1
+                ? "1 more entry is shown only in Edit script."
+                : `${skipped} more entries are shown only in Edit script.`}
+            </p>
+          )}
+        </>
       )}
     </div>
   );
@@ -784,22 +955,95 @@ function markKey(name: string): string {
   return name.trim().split(/\s+/).join(" ").toLowerCase();
 }
 
-/** The settings a case needs: each `name: value` a chip with a remove
- * button, and a setting box and a value box to add one with Enter or Add.
- * A setting already in the row, as `markKey` compares names, takes the new
+/** One entry in "Before it runs": its kind, what it says, and (unless the
+ * window is read-only) a button that removes it. */
+function Chip({
+  kind,
+  text,
+  removeLabel,
+  onRemove,
+}: {
+  kind: string;
+  text: string;
+  removeLabel?: string;
+  onRemove: () => void;
+}) {
+  return (
+    <li className="flex max-w-full items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text">
+      <span className="min-w-0 break-words">
+        <span className="text-faint">{kind}:</span> {text}
+      </span>
+      {removeLabel === undefined ? (
+        <span className="pr-2" />
+      ) : (
+        <Button size="sm" variant="ghost" className="px-1.5 py-0.5" aria-label={removeLabel} onClick={onRemove}>
+          <IconRemove aria-hidden />
+        </Button>
+      )}
+    </li>
+  );
+}
+
+/** A box to add one name with Enter or Add. A name already present, as
+ * `markKey` compares them, is not added again. It takes the focus when it
+ * opens. */
+function MarkInput({
+  label,
+  noun,
+  names,
+  onChange,
+}: {
+  label: string;
+  noun: string;
+  names: string[];
+  onChange: (names: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => box.current?.focus(), []);
+  const add = () => {
+    const name = draft.trim();
+    setDraft("");
+    if (!name || names.some((n) => markKey(n) === markKey(name))) return;
+    onChange([...names, name]);
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        ref={box}
+        aria-label={`Add to ${label}`}
+        className="min-w-0 flex-1 px-2 py-1 text-xs"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            add();
+          }
+        }}
+      />
+      <Button size="sm" variant="outline" aria-label={`Add ${noun}`} onClick={add}>
+        <IconAdd aria-hidden />
+        Add
+      </Button>
+    </div>
+  );
+}
+
+/** A setting box and a value box to add a setting with Enter or Add. A
+ * setting already present, as `markKey` compares names, takes the new
  * value. The run pauses between batches to change them. */
-function SettingRow({
+function SettingInput({
   settings,
-  readOnly = false,
   onChange,
 }: {
   settings: [string, string][];
-  readOnly?: boolean;
   onChange: (settings: [string, string][]) => void;
 }) {
-  const label = "Needs these settings";
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => box.current?.focus(), []);
   const add = () => {
     const n = name.trim();
     const v = value.trim();
@@ -814,131 +1058,186 @@ function SettingRow({
       add();
     }
   };
-  if (readOnly && settings.length === 0) return null;
   return (
-    <div className="space-y-1">
-      <span className="text-xs font-medium text-muted">{label}</span>
-      {settings.length > 0 && (
-        <ul aria-label={label} className="flex flex-wrap gap-1 text-xs">
+    <div className="flex items-center gap-2">
+      <Input
+        ref={box}
+        aria-label="Setting"
+        placeholder="Setting"
+        className="min-w-0 flex-1 px-2 py-1 text-xs"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={onEnter}
+      />
+      <Input
+        aria-label="Value"
+        placeholder="Value"
+        className="w-32 px-2 py-1 text-xs"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={onEnter}
+      />
+      <Button size="sm" variant="outline" aria-label="Add setting" onClick={add}>
+        <IconAdd aria-hidden />
+        Add
+      </Button>
+    </div>
+  );
+}
+
+/** What the case needs in place before it runs: the shared state it
+ * changes, the shared state it needs unchanged, and the settings it needs.
+ * What is there shows as removable chips; a small button per kind opens
+ * that kind's box to add one. Nothing empty shows until one is pressed. */
+function BeforeItRuns({
+  changes,
+  needsUnchanged,
+  settings,
+  readOnly = false,
+  onChanges,
+  onNeeds,
+  onSettings,
+}: {
+  changes: string[];
+  needsUnchanged: string[];
+  settings: [string, string][];
+  readOnly?: boolean;
+  onChanges: (names: string[]) => void;
+  onNeeds: (names: string[]) => void;
+  onSettings: (settings: [string, string][]) => void;
+}) {
+  const [shown, setShown] = useState({ change: false, needs: false, setting: false });
+  const toggle = (k: keyof typeof shown) => setShown((s) => ({ ...s, [k]: !s[k] }));
+  const any = changes.length + needsUnchanged.length + settings.length > 0;
+  if (readOnly && !any) return null;
+  const opener = (k: keyof typeof shown, text: string, name: string) => (
+    <Button size="sm" variant="outline" aria-label={name} aria-expanded={shown[k]} onClick={() => toggle(k)}>
+      <IconAdd aria-hidden />
+      {text}
+    </Button>
+  );
+  return (
+    <div className="space-y-2">
+      <span className="text-xs font-medium text-muted">Before it runs</span>
+      {any && (
+        <ul aria-label="Before it runs" className="flex flex-wrap gap-1 text-xs">
+          {changes.map((name, i) => (
+            <Chip
+              key={`c-${i}-${name}`}
+              kind="Changes"
+              text={name}
+              removeLabel={readOnly ? undefined : `Remove change ${name}`}
+              onRemove={() => onChanges(changes.filter((_, j) => j !== i))}
+            />
+          ))}
+          {needsUnchanged.map((name, i) => (
+            <Chip
+              key={`n-${i}-${name}`}
+              kind="Needs unchanged"
+              text={name}
+              removeLabel={readOnly ? undefined : `Remove needs unchanged ${name}`}
+              onRemove={() => onNeeds(needsUnchanged.filter((_, j) => j !== i))}
+            />
+          ))}
           {settings.map(([k, v], i) => (
-            <li key={`${i}-${k}`} className="flex items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text">
-              {k}: {v}
-              {readOnly ? (
-                <span className="pr-2" />
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="px-1.5 py-0.5"
-                  aria-label={`Remove setting ${k}`}
-                  onClick={() => onChange(settings.filter((_, j) => j !== i))}
-                >
-                  <IconRemove aria-hidden />
-                </Button>
-              )}
-            </li>
+            <Chip
+              key={`s-${i}-${k}`}
+              kind="Setting"
+              text={`${k} = ${v}`}
+              removeLabel={readOnly ? undefined : `Remove setting ${k}`}
+              onRemove={() => onSettings(settings.filter((_, j) => j !== i))}
+            />
           ))}
         </ul>
       )}
       {!readOnly && (
-      <div className="flex items-center gap-2">
-        <Input
-          aria-label="Setting"
-          placeholder="Setting"
-          className="min-w-0 flex-1 px-2 py-1 text-xs"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={onEnter}
-        />
-        <Input
-          aria-label="Value"
-          placeholder="Value"
-          className="w-32 px-2 py-1 text-xs"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onEnter}
-        />
-        <Button size="sm" variant="outline" aria-label="Add setting" onClick={add}>
-          <IconAdd aria-hidden />
-          Add
-        </Button>
-      </div>
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {opener("change", "Change", "Add a change")}
+            {opener("needs", "Needs unchanged", "Add a needs-unchanged record")}
+            {opener("setting", "Setting", "Add a setting")}
+          </div>
+          {shown.change && <MarkInput label="Changes" noun="change" names={changes} onChange={onChanges} />}
+          {shown.needs && (
+            <MarkInput label="Needs unchanged" noun="needs unchanged" names={needsUnchanged} onChange={onNeeds} />
+          )}
+          {shown.setting && <SettingInput settings={settings} onChange={onSettings} />}
+        </>
       )}
     </div>
   );
 }
 
-/** One row of marks: each name a chip with a remove button, and a box to
- * add one with Enter or Add. A name already in the row, as `markKey`
- * compares them, is not added again. */
-function MarkRow({
-  label,
-  noun,
-  names,
-  readOnly = false,
-  onChange,
+/** The footer's one copy button: a disclosure with the two directions as
+ * plain buttons, each opening the copy dialog. Copying out needs a saved
+ * script; copying in is refused (and says why) while the editor holds
+ * unsaved edits. It closes when focus leaves it, and on Escape (which
+ * returns the focus to the button and leaves the window open). */
+function CopyMenu({
+  canCopyTo,
+  fromBlocked,
+  onPick,
 }: {
-  label: string;
-  noun: string;
-  names: string[];
-  readOnly?: boolean;
-  onChange: (names: string[]) => void;
+  canCopyTo: boolean;
+  fromBlocked?: string;
+  onPick: (direction: "to" | "from") => void;
 }) {
-  const [draft, setDraft] = useState("");
-  const add = () => {
-    const name = draft.trim();
-    setDraft("");
-    if (!name || names.some((n) => markKey(n) === markKey(name))) return;
-    onChange([...names, name]);
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open]);
+  const pick = (direction: "to" | "from") => {
+    setOpen(false);
+    onPick(direction);
   };
-  if (readOnly && names.length === 0) return null;
+  const item =
+    "flex w-full items-center gap-2 whitespace-nowrap rounded px-3 py-1.5 text-left text-xs font-medium text-text transition-colors hover:bg-accent-soft hover:text-accent focus-visible:bg-accent-soft focus-visible:text-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0";
   return (
-    <div className="space-y-1">
-      <span className="text-xs font-medium text-muted">{label}</span>
-      {names.length > 0 && (
-        <ul aria-label={label} className="flex flex-wrap gap-1 text-xs">
-          {names.map((name, i) => (
-            <li
-              key={`${i}-${name}`}
-              className="flex items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text"
-            >
-              {name}
-              {readOnly ? (
-                <span className="pr-2" />
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="px-1.5 py-0.5"
-                  aria-label={`Remove ${noun} ${name}`}
-                  onClick={() => onChange(names.filter((_, j) => j !== i))}
-                >
-                  <IconRemove aria-hidden />
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {!readOnly && (
-      <div className="flex items-center gap-2">
-        <Input
-          aria-label={`Add to ${label}`}
-          className="min-w-0 flex-1 px-2 py-1 text-xs"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <Button size="sm" variant="outline" aria-label={`Add ${noun}`} onClick={add}>
-          <IconAdd aria-hidden />
-          Add
-        </Button>
-      </div>
+    <div
+      ref={wrap}
+      className="relative mr-auto"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          // Closes this only, not the window behind it.
+          e.stopPropagation();
+          setOpen(false);
+          trigger.current?.focus();
+        }
+      }}
+      onBlur={(e) => {
+        if (open && !wrap.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <Button ref={trigger} variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <IconCopyBetweenEnvironments aria-hidden />
+        Copy between environments
+      </Button>
+      {open && (
+        <div className="absolute bottom-full left-0 z-10 mb-1 min-w-52 rounded-md border border-border bg-surface p-1 shadow-2xl">
+          {canCopyTo && (
+            <button type="button" className={item} onClick={() => pick("to")}>
+              <IconCopyToEnvironment aria-hidden />
+              Copy to another environment
+            </button>
+          )}
+          <button
+            type="button"
+            className={item}
+            disabled={fromBlocked !== undefined}
+            title={fromBlocked}
+            onClick={() => pick("from")}
+          >
+            <IconCopyFromEnvironment aria-hidden />
+            Copy from another environment
+          </button>
+        </div>
       )}
     </div>
   );

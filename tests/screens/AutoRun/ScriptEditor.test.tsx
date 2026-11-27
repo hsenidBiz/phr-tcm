@@ -45,6 +45,19 @@ function mountWith(
 const ONE_STEP = [{ step_number: 1, actions: [{ kind: "check_text", value: "ok" }] }];
 const ACCOUNTS = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "p" }];
 
+/** "Before it runs" shows no empty box: a + button opens the box for one kind
+ * (Change, Needs unchanged or Setting) and moves the focus into it. */
+function reveal(kind: "Change" | "Needs unchanged" | "Setting") {
+  const name = { Change: "Add a change", "Needs unchanged": "Add a needs-unchanged record", Setting: "Add a setting" }[kind];
+  fireEvent.click(screen.getByRole("button", { name }));
+}
+
+/** The footer's copy button opens a disclosure; a button in it opens the copy dialog. */
+function copyItem(name: "Copy to another environment" | "Copy from another environment") {
+  fireEvent.click(screen.getByRole("button", { name: "Copy between environments" }));
+  return screen.getByRole("button", { name });
+}
+
 test("the account a script runs as is chosen from the tester's own list", async () => {
   const saved: unknown[] = [];
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
@@ -459,7 +472,9 @@ test("a script whose preconditions no repair changed lists no changes", async ()
 
 // ---- Marks: the shared state a case changes or needs unchanged ----
 
-test("a script's marks show as chips in the Changes and Needs unchanged rows", async () => {
+// "Before it runs" replaced the Changes, Needs unchanged and settings rows
+// (each with an always-visible box) with one list of removable chips.
+test("a script's marks show as chips in Before it runs", async () => {
   mountWith(
     {
       case_id: 7,
@@ -471,13 +486,16 @@ test("a script's marks show as chips in the Changes and Needs unchanged rows", a
     ACCOUNTS,
     [],
   );
-  const changes = await screen.findByRole("list", { name: "Changes" });
-  expect(within(changes).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["cycle published"]);
-  const needs = screen.getByRole("list", { name: "Needs unchanged" });
-  expect(within(needs).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
-    "cycle published",
-    "appraisal submitted for A001",
+  const chips = await screen.findByRole("list", { name: "Before it runs" });
+  expect(within(chips).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+    "Changes: cycle published",
+    "Needs unchanged: cycle published",
+    "Needs unchanged: appraisal submitted for A001",
   ]);
+  // With entries and no box open, nothing empty shows.
+  expect(screen.queryByRole("textbox", { name: "Add to Changes" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Add to Needs unchanged" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Setting" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remove change cycle published" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remove needs unchanged cycle published" })).toBeInTheDocument();
   expect(
@@ -488,10 +506,15 @@ test("a script's marks show as chips in the Changes and Needs unchanged rows", a
 test("a name is added with Enter or the Add button, and saved with the script", async () => {
   const saved: unknown[] = [];
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
-  const change = await screen.findByRole("textbox", { name: "Add to Changes" });
+  await screen.findByRole("button", { name: "Save script" });
+  reveal("Change");
+  const change = screen.getByRole("textbox", { name: "Add to Changes" });
+  // The box takes the focus when it opens.
+  expect(change).toHaveFocus();
   fireEvent.change(change, { target: { value: "  cycle published " } });
   fireEvent.keyDown(change, { key: "Enter" });
   expect(change).toHaveValue("");
+  reveal("Needs unchanged");
   const need = screen.getByRole("textbox", { name: "Add to Needs unchanged" });
   fireEvent.change(need, { target: { value: "appraisal submitted for A001" } });
   fireEvent.click(screen.getByRole("button", { name: "Add needs unchanged" }));
@@ -508,12 +531,13 @@ test("a name is added with Enter or the Add button, and saved with the script", 
 
 test("a name that differs only in case or spacing from one in the row is not added twice", async () => {
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP, changes: ["Cycle Published"] }, ACCOUNTS, []);
-  const change = await screen.findByRole("textbox", { name: "Add to Changes" });
   await screen.findByRole("button", { name: "Remove change Cycle Published" });
+  reveal("Change");
+  const change = screen.getByRole("textbox", { name: "Add to Changes" });
   fireEvent.change(change, { target: { value: " cycle   published " } });
   fireEvent.keyDown(change, { key: "Enter" });
-  const list = screen.getByRole("list", { name: "Changes" });
-  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Cycle Published"]);
+  const list = screen.getByRole("list", { name: "Before it runs" });
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Changes: Cycle Published"]);
   // A blank box adds nothing.
   fireEvent.change(change, { target: { value: "   " } });
   fireEvent.click(screen.getByRole("button", { name: "Add change" }));
@@ -614,9 +638,10 @@ test("a script with no needed records is saved without the key", async () => {
 test("settings show as chips, a setting is added with its value, and Save sends them", async () => {
   const saved: unknown[] = [];
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP, needs_state: { "Approval workflow": "ON" } }, ACCOUNTS, saved);
-  const list = await screen.findByRole("list", { name: "Needs these settings" });
-  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Approval workflow: ON"]);
+  const list = await screen.findByRole("list", { name: "Before it runs" });
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Setting: Approval workflow = ON"]);
 
+  reveal("Setting");
   fireEvent.change(screen.getByRole("textbox", { name: "Setting" }), { target: { value: " Rating scale " } });
   const value = screen.getByRole("textbox", { name: "Value" });
   fireEvent.change(value, { target: { value: "5 point" } });
@@ -626,8 +651,8 @@ test("settings show as chips, a setting is added with its value, and Save sends 
   fireEvent.change(value, { target: { value: "OFF" } });
   fireEvent.click(screen.getByRole("button", { name: "Add setting" }));
   expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
-    "Rating scale: 5 point",
-    "approval  workflow: OFF",
+    "Setting: Rating scale = 5 point",
+    "Setting: approval  workflow = OFF",
   ]);
   fireEvent.click(screen.getByRole("button", { name: "Remove setting Rating scale" }));
 
@@ -751,16 +776,19 @@ test("the window opens on the script in plain sentences, grouped by the case's s
   mountWith(READABLE_SCRIPT, ACCOUNTS, [], READABLE_STEPS);
   const view = await screen.findByRole("region", { name: "Action script" });
   const one = await within(view).findByRole("region", { name: "Step 1" });
-  expect(within(one).getByRole("heading")).toHaveTextContent("Step 1 Sign in");
+  // The case's own words for the step sit beside its actions (the row is one region).
+  expect(one).toHaveTextContent("Sign in");
   expect(one).toHaveTextContent("Go to /hr/home/index");
   expect(one).toHaveTextContent("Type the account's password into the element #txtpassword");
   expect(one).not.toHaveTextContent("Hunter2");
   expect(one).toHaveTextContent('If the "Another active session" dialog appears within 2 s:');
   expect(one).toHaveTextContent('Click the "Continue" button');
   const two = within(view).getByRole("region", { name: "Step 2" });
-  expect(within(two).getByRole("heading")).toHaveTextContent("Step 2 Open the report");
+  expect(two).toHaveTextContent("Open the report");
   expect(within(two).getByText("#btnContinue-button")).toHaveAttribute("title", "#btnContinue-button");
-  expect(within(two).getByText("Not checked: the PDF cannot be read")).toHaveClass("text-muted");
+  // What a step leaves unchecked sits under it, behind the warning tag "Not checked".
+  expect(within(two).getByText("Not checked")).toBeInTheDocument();
+  expect(within(two).getByText("the PDF cannot be read")).toHaveClass("break-words");
   expect(screen.queryByRole("textbox", { name: "Action script JSON" })).not.toBeInTheDocument();
 });
 
@@ -769,6 +797,7 @@ test("the settings stay editable in the readable view", async () => {
   mountWith({ ...READABLE_SCRIPT, changes: [] }, ACCOUNTS, saved, READABLE_STEPS);
   await screen.findByRole("region", { name: "Step 1" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Must not save" }));
+  reveal("Change");
   const change = screen.getByRole("textbox", { name: "Add to Changes" });
   fireEvent.change(change, { target: { value: "cycle published" } });
   fireEvent.keyDown(change, { key: "Enter" });
@@ -935,7 +964,8 @@ test("a clean-up step is shown as the Clean-up, not as a step of the case", asyn
   const view = await screen.findByRole("region", { name: "Action script" });
   const tidy = await within(view).findByRole("region", { name: "Clean-up" });
   expect(within(tidy).getByRole("heading")).toHaveTextContent(/^Clean-up$/);
-  expect(tidy).toHaveTextContent("Not checked: removes the record step 1 made");
+  expect(tidy).toHaveTextContent("Not checked");
+  expect(tidy).toHaveTextContent("removes the record step 1 made");
   expect(within(view).queryByRole("region", { name: "Step 2" })).not.toBeInTheDocument();
 });
 
@@ -1022,6 +1052,7 @@ test("script_editor_closes_when_the_environment_changes", async () => {
 });
 
 function mountWithEnvironments(count: number, script: unknown) {
+  const onClose = vi.fn();
   setActiveEnvId("env-00000001");
   const env = (n: number) => ({
     id: `env-0000000${n}`, name: `Env ${n}`, start_url: "", allowed_origins: [], db_id: "d",
@@ -1037,43 +1068,76 @@ function mountWithEnvironments(count: number, script: unknown) {
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={onClose} />
     </QueryClientProvider>,
   );
+  return onClose;
 }
 
-test("offers Copy to environment only with two or more environments", async () => {
+// The two copy buttons became one menu: Copy between environments.
+test("offers Copy between environments only with two or more environments", async () => {
   mountWithEnvironments(1, { case_id: 7, title: "t", steps: ONE_STEP });
   await screen.findByRole("button", { name: "Save script" });
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs as" })).toBeInTheDocument());
-  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Copy from environment…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy between environments" })).not.toBeInTheDocument();
   localStorage.clear();
 });
 
-test("with two environments and a saved script, Copy to environment opens the copy dialog", async () => {
+test("with two environments and a saved script, Copy to another environment opens the copy dialog", async () => {
   mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
-  fireEvent.click(await screen.findByRole("button", { name: "Copy to environment…" }));
+  const trigger = await screen.findByRole("button", { name: "Copy between environments" });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(trigger);
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Copy to another environment" }));
   expect(await screen.findByRole("combobox", { name: "Copy to" })).toBeInTheDocument();
   localStorage.clear();
 });
 
-test("Copy to environment needs a saved script; Copy from environment does not", async () => {
-  mountWithEnvironments(2, null);
-  expect(await screen.findByRole("button", { name: "Copy from environment…" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
+test("Escape closes the copy menu and returns the focus to its button, without closing the window", async () => {
+  const onClose = mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  const trigger = await screen.findByRole("button", { name: "Copy between environments" });
+  fireEvent.click(trigger);
+  const item = screen.getByRole("button", { name: "Copy from another environment" });
+  item.focus();
+  fireEvent.keyDown(item, { key: "Escape" });
+  expect(screen.queryByRole("button", { name: "Copy from another environment" })).not.toBeInTheDocument();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(trigger).toHaveFocus();
+  expect(onClose).not.toHaveBeenCalled();
   localStorage.clear();
 });
 
-test("Copy from environment is refused while the editor has unsaved edits", async () => {
+test("the copy menu closes when focus leaves it", async () => {
   mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
-  const button = await screen.findByRole("button", { name: "Copy from environment…" });
-  expect(button).toBeEnabled();
+  const trigger = await screen.findByRole("button", { name: "Copy between environments" });
+  fireEvent.click(trigger);
+  const item = screen.getByRole("button", { name: "Copy to another environment" });
+  item.focus();
+  screen.getByRole("button", { name: "Save script" }).focus();
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  localStorage.clear();
+});
+
+test("Copy to another environment needs a saved script; Copy from another environment does not", async () => {
+  mountWithEnvironments(2, null);
+  await screen.findByRole("button", { name: "Copy between environments" });
+  expect(copyItem("Copy from another environment")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy to another environment" })).not.toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("Copy from another environment is refused while the editor has unsaved edits", async () => {
+  mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  await screen.findByRole("button", { name: "Copy between environments" });
+  expect(copyItem("Copy from another environment")).toBeEnabled();
+  // Close the menu again; it is opened afresh below.
+  fireEvent.click(screen.getByRole("button", { name: "Copy between environments" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByRole("textbox", { name: /script/i });
   fireEvent.change(box, { target: { value: "[]" } });
-  expect(screen.getByRole("button", { name: "Copy from environment…" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Copy from environment…" })).toHaveAttribute(
+  expect(copyItem("Copy from another environment")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Copy from another environment" })).toHaveAttribute(
     "title",
     "Save or discard your changes first",
   );
@@ -1110,7 +1174,8 @@ test("after a pull the editor shows the pulled script", async () => {
       <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Copy from environment…" }));
+  await screen.findByRole("button", { name: "Copy between environments" });
+  fireEvent.click(copyItem("Copy from another environment"));
   fireEvent.click(await screen.findByRole("combobox", { name: "Copy from" }));
   fireEvent.click(await screen.findByRole("option", { name: "Env 2" }));
   fireEvent.click(await screen.findByRole("button", { name: "Copy" }));

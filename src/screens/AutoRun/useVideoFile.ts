@@ -56,7 +56,7 @@ export function useVideoFile(name: string | null | undefined, saveAs?: string) {
       if (mounted.current) setSrc(url);
       else URL.revokeObjectURL(url);
     },
-    onError: (e) => toast.error(`Could not play the video: ${e.message}`),
+    // No toast: the player is open by then and says so itself.
   });
   const saving = useMutation({
     mutationFn: async () => {

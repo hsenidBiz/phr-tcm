@@ -63,6 +63,8 @@ export {
   // arrow out. Bringing one in from another environment: an arrow in.
   FolderOutput as IconCopyToEnvironment,
   FolderInput as IconCopyFromEnvironment,
+  // The one footer button that opens the copy menu: to or from another environment.
+  ArrowLeftRight as IconCopyBetweenEnvironments,
 
   // Undoing and stopping
   Undo2 as IconUndo,
@@ -118,6 +120,13 @@ export {
   // Watching a failed case's recorded video - the same triangle, named for
   // what the button does.
   Play as IconPlayVideo,
+  // The player's own controls: pause, one step back or on, and opening or
+  // folding a step's actions.
+  Pause as IconPauseVideo,
+  SkipBack as IconPreviousStep,
+  SkipForward as IconNextStep,
+  ChevronRight as IconShowActions,
+  ChevronDown as IconHideActions,
   // Starting a run nobody has to sit in front of - a person picks IconRun.
   Bot as IconUnattended,
   // Carrying on with a run that paused at a reset point.
@@ -195,6 +204,9 @@ export {
   // The project's components: steps saved once that scripts use (Auto
   // Run's Setup card) - a puzzle piece, since each fits into a script.
   Puzzle as IconComponents,
+  // The project's Known quirks: notes about how the application behaves
+  // (Auto Test's Setup card) - a sticky note, since each is a short note.
+  StickyNote as IconQuirks,
   // A project's Test files: the documents scripts and API templates upload
   // into the application (Auto Test's Setup card, the API Templates tab).
   Files as IconTestFiles,
@@ -225,6 +237,8 @@ export {
   // A line that warns without stopping anything - the export dialog's
   // per-case warnings: the case still goes, the person just sees this first.
   TriangleAlert as IconWarning,
+  // A ruling on a case card: the summary chip counting them.
+  Gavel as IconRuling,
   // A person's ruling that they changed the environment to match the case.
   Wrench as IconDataFixed,
   // Showing and hiding a secret on screen (a repo test account's password):

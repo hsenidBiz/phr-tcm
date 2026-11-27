@@ -635,7 +635,7 @@ export default function Settings({
                 <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide(true)}>
                   <IconDownload aria-hidden />
                   {downloadingGuide
-                    ? "Downloading..."
+                    ? "Downloading"
                     : guide.size !== null
                       ? `Download How to Use (${mbUp(guide.size)} MB)`
                       : "Download How to Use"}
@@ -672,7 +672,7 @@ export default function Settings({
                   {guide.state === "UpdateAvailable" && (
                     <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide(false)}>
                       <IconRefresh aria-hidden />
-                      {downloadingGuide ? "Downloading..." : "Update Guide"}
+                      {downloadingGuide ? "Downloading" : "Update Guide"}
                     </Button>
                   )}
                 </>

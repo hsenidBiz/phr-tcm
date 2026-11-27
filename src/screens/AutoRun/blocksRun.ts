@@ -15,13 +15,14 @@ export type SetupRowName =
   | "Areas"
   | "Discovery"
   | "Components"
+  | "Known quirks"
   | "Test files"
   | "Fixtures"
   | "Database";
 
 /** The rows Basic mode leaves out unless one of them blocks a run. The
  * Sign-in row stays, but hides its recipe editor and recording there. */
-export const SIMPLE_HIDDEN: ReadonlySet<SetupRowName> = new Set<SetupRowName>(["Discovery", "Components", "Fixtures"]);
+export const SIMPLE_HIDDEN: ReadonlySet<SetupRowName> = new Set<SetupRowName>(["Discovery", "Components", "Known quirks", "Fixtures"]);
 
 /** The hidden rows Simple does not bring back even when they block a run. */
 export const NEVER_SHOWN_IN_SIMPLE: ReadonlySet<SetupRowName> = new Set<SetupRowName>(["Fixtures"]);

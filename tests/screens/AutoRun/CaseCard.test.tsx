@@ -9,7 +9,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { CaseScript, Divergence } from "../../../src/bindings";
-import CaseCard, { actionFacts, assistantNotes, scriptFiles, scriptSummary } from "../../../src/screens/AutoRun/CaseCard";
+import CaseCard, { actionFacts, assistantNotes, scriptFiles, scriptSummary, stepBecauseParts } from "../../../src/screens/AutoRun/CaseCard";
 import { matchesSearch } from "../../../src/screens/AutoRun/CaseSearch";
 
 afterEach(() => {
@@ -313,14 +313,46 @@ test("the card lists assumed and invented values", () => {
   expect(actionFacts(BARE).some((f) => /Assumed|Invented/.test(f.label))).toBe(false);
   renderCard({ open: true, script });
   expect(screen.queryByText("Assumed values")).not.toBeInTheDocument();
-  expect(screen.getByText("Invented values")).toBeInTheDocument();
-  // The assumed value moved under its step (2), and under no other.
-  const group = screen.getByRole("group", { name: "Assumed in step 2" });
-  expect(group).toHaveTextContent("Assumed");
-  expect(group).toHaveTextContent("6 (one row per DEF level the precondition lists)");
-  expect(screen.queryByRole("group", { name: "Assumed in step 1" })).not.toBeInTheDocument();
+  // Invented values are no fact row either: they fold under their step.
+  expect(screen.queryByText("Invented values")).not.toBeInTheDocument();
   const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
-  expect(items[1]).toContainElement(group);
+  // Folded, step 2 only counts them (step 1 has nothing, so nothing to open).
+  expect(items[1]).toHaveTextContent("1 assumed");
+  expect(items[1]).toHaveTextContent("1 invented");
+  expect(items[0]).not.toHaveTextContent(/assumed|invented/);
+  expect(screen.queryByRole("button", { name: "Show step 1 of #7" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Assumed in step 2" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show step 2 of #7" }));
+  // Opened: the value, then its reason from the data, in two columns.
+  const assumed = screen.getByRole("group", { name: "Assumed in step 2" });
+  expect(within(assumed).getByText("6")).toBeInTheDocument();
+  expect(within(assumed).getByText("one row per DEF level the precondition lists").tagName).toBe("DD");
+  expect(within(assumed).getByText("6").tagName).toBe("DT");
+  const invented = screen.getByRole("group", { name: "Invented in step 2" });
+  expect(within(invented).getByText("USD")).toBeInTheDocument();
+  expect(within(invented).getByText("one currency the case leaves free")).toBeInTheDocument();
+  expect(items[1]).toContainElement(assumed);
+  expect(screen.queryByRole("group", { name: "Assumed in step 1" })).not.toBeInTheDocument();
+});
+
+test("a reason loses only a leading assumed: or invented: prefix, and no reason leaves the value alone", () => {
+  const step = {
+    step_number: 1,
+    actions: [],
+    because: [
+      { value: "UTC", why: "assumed: no zone given" },
+      { value: "USD", why: "Invented: one currency", provenance: "invented" },
+      { value: "7", why: "" },
+    ],
+  } as CaseScript["steps"][number];
+  expect(stepBecauseParts(step, false)).toEqual([
+    { value: "UTC", why: "no zone given" },
+    { value: "7", why: "" },
+  ]);
+  expect(stepBecauseParts(step, true)).toEqual([{ value: "USD", why: "one currency" }]);
+  // Leading spaces, and a space before the colon, are part of the prefix.
+  const spaced = { step_number: 1, actions: [], because: [{ value: "a", why: "  assumed: x" }, { value: "b", why: "assumed : y" }] } as CaseScript["steps"][number];
+  expect(stepBecauseParts(spaced, false).map((e) => e.why)).toEqual(["x", "y"]);
 });
 
 test("an assumed value with no step of the list stays a short list after the steps", () => {
@@ -486,7 +518,13 @@ test("an open passed card says how many too, and a card whose script leaves noth
 test("the open card lists each unchecked expectation with why and its stand-in", () => {
   mockIPC(() => null);
   renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Failed", open: true });
-  // The note moved under its step (2): a tag word, then the text, no separate list.
+  // The note is folded under its step (2): the row counts it, and opening the
+  // step shows a tag word, then the text, with no separate list.
+  const rows = within(screen.getByRole("list", { name: "Script steps of #5002" })).getAllByRole("listitem");
+  expect(rows[1]).toHaveTextContent("1 unchecked");
+  expect(rows[0]).not.toHaveTextContent("unchecked");
+  expect(screen.queryByRole("group", { name: "Not checked in step 2" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show step 2 of #5002" }));
   const group = screen.getByRole("group", { name: "Not checked in step 2" });
   expect(group).toHaveTextContent("Not checked");
   expect(group).toHaveTextContent("no access-denied message - the app never shows one (stand-in: expect_hidden)");
@@ -595,7 +633,10 @@ test("steps Auto Test does show Done by Auto Test, not 0 actions", () => {
 
 test("Not checked shows only under the step the script leaves out, and a passed case counts it", () => {
   renderCard({ open: true, c: SIX, script: AUTO_RUN_OPENING, result: "Passed" });
-  // The note moved under step 6; steps 1-3 are Auto Test's own and have none.
+  // The note is under step 6 (open it to see it); steps 1-3 are Auto Test's
+  // own and have none, so they have no chevron.
+  expect(screen.queryByRole("button", { name: "Show step 1 of #7" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show step 6 of #7" }));
   expect(screen.getAllByRole("group", { name: /Not checked in step/ })).toHaveLength(1);
   const group = screen.getByRole("group", { name: "Not checked in step 6" });
   expect(group).toHaveTextContent("the chart colours");
@@ -613,14 +654,22 @@ const RULED: Divergence = {
   proposal: "6 levels",
 } as Divergence;
 
-test("a ruling is one row: its step, one line of what was decided, Details and Undo", () => {
+/** Opens step 2 of the card (the one RULED sits on). */
+const openStep2 = () => fireEvent.click(screen.getByRole("button", { name: "Show step 2 of #7" }));
+
+test("a ruling sits on its step: one line of what was decided, Details and Undo", () => {
   const calls: string[] = [];
   mockIPC((cmd) => {
     calls.push(cmd);
     return null;
   });
   renderCard({ open: true, divergences: [RULED] });
-  expect(screen.getByText("Rulings (1)")).toBeInTheDocument();
+  // Folded into its step: no top list, and the line only shows once it opens.
+  expect(screen.queryByText(/Rulings \(/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Four levels, as the case says")).not.toBeInTheDocument();
+  openStep2();
+  const group = screen.getByRole("group", { name: "Ruling in step 2" });
+  expect(within(group).getByText("Ruling")).toBeInTheDocument();
   // The line is the assistant's note, cut on one line with the whole text in title.
   const line = screen.getByText("Four levels, as the case says");
   expect(line).toHaveClass("truncate");
@@ -640,13 +689,124 @@ test("a ruling is one row: its step, one line of what was decided, Details and U
   expect(calls).toContain("auto_run_undo_divergence_ruling");
 });
 
-test("a ruling with no note reads as its proposed text", () => {
+test("the summary counts the rulings in a chip, and has none without a ruling", () => {
+  const { unmount } = renderCard({ open: true, divergences: [RULED, { ...RULED, id: "d2", step: 1 } as Divergence] });
+  expect(within(screen.getByRole("group", { name: "Summary of #7" })).getByText("2 rulings")).toBeInTheDocument();
+  unmount();
+  renderCard({ open: true, divergences: [DIV] });
+  expect(within(screen.getByRole("group", { name: "Summary of #7" })).queryByText(/ruling/)).not.toBeInTheDocument();
+});
+
+test("a ruling that waits for a repair keeps its badge and the /tcm:heal line inside the opened step", () => {
+  renderCard({ open: true, divergences: [{ ...RULED, status: "awaiting_repair", ruling: "rewrite" } as Divergence] });
+  // Closed, only the row tag says it; the badge and the heal line are inside.
+  expect(screen.queryByRole("group", { name: "Ruling in step 2" })).not.toBeInTheDocument();
+  openStep2();
+  const group = screen.getByRole("group", { name: "Ruling in step 2" });
+  expect(within(group).getByText("Waits for a repair")).toBeInTheDocument();
+  expect(group).toHaveTextContent("/tcm:heal");
+  expect(within(group).getByRole("button", { name: "Undo the ruling on #7 step 2" })).toBeInTheDocument();
+});
+
+test("a ruling on a step the list lacks stays a short list at the top, with its Undo", () => {
+  renderCard({ open: true, divergences: [{ ...RULED, step: 9 } as Divergence] });
+  expect(screen.getByText("Rulings (1)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Undo the ruling on #7 step 9" })).toBeInTheDocument();
+  // And it marks no step: nothing to open.
+  expect(screen.queryByRole("button", { name: /Show step/ })).not.toBeInTheDocument();
+});
+
+test("a step's opened body shows its action count, and a step with nothing shows it on its row", () => {
+  renderCard({ open: true, divergences: [RULED] });
+  const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  // Step 1 has nothing to fold: no chevron, no tags, its count on the row.
+  expect(items[0]).toHaveTextContent("1 action");
+  // Step 2 folds its count away until opened.
+  expect(items[1]).not.toHaveTextContent("2 actions");
+  openStep2();
+  expect(items[1]).toHaveTextContent("2 actions");
+});
+
+test("steps start closed, Expand all opens each and Collapse all closes them", () => {
+  mockIPC(() => null);
+  renderCard({ c: SIX, script: AUTO_RUN_OPENING, open: true });
+  // Steps 1-3 are Auto Test's own: only step 6 can open.
+  expect(screen.getByRole("button", { name: "Show step 6 of #7" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("group", { name: /Not checked in step/ })).not.toBeInTheDocument();
+  const toggle = screen.getByRole("button", { name: "Expand all steps" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  expect(screen.getByRole("group", { name: "Not checked in step 6" })).toBeInTheDocument();
+  const collapse = screen.getByRole("button", { name: "Collapse all steps" });
+  expect(collapse).toHaveAttribute("aria-expanded", "true");
+  expect(collapse).toHaveAttribute("aria-controls", screen.getByRole("list", { name: "Script steps of #7" }).id);
+  fireEvent.click(collapse);
+  expect(screen.queryByRole("group", { name: /Not checked in step/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand all steps" })).toBeInTheDocument();
+});
+
+test("a card with one step opens it", () => {
+  renderCard({
+    open: true,
+    script: { ...BARE, steps: [{ step_number: 1, actions: [], because: [{ value: "UTC", why: "no zone given" }] }] } as CaseScript,
+  });
+  expect(screen.getByRole("button", { name: "Hide step 1 of #7" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("group", { name: "Assumed in step 1" })).toBeInTheDocument();
+});
+
+test("a script that arrives after the card mounts opens its one step once, and stays closed after the person closes it", () => {
+  mockIPC(() => null);
+  const one = { ...BARE, steps: [{ step_number: 1, actions: [], because: [{ value: "UTC", why: "no zone given" }] }] } as CaseScript;
+  const qc = new QueryClient();
+  const tree = (script: CaseScript | null) => (
+    <QueryClientProvider client={qc}>
+      <ul>
+        <CaseCard c={CASE} org="acme" project="Web" script={script} result="Failed" selected={false} open onSelect={vi.fn()}
+          onToggleOpen={vi.fn()} onEdit={vi.fn()} onRun={vi.fn()} confirmingClear={false} divergences={[]} onAskClear={vi.fn()} onClearDone={vi.fn()} />
+      </ul>
+    </QueryClientProvider>
+  );
+  const { rerender } = render(tree(null));
+  rerender(tree(one));
+  fireEvent.click(screen.getByRole("button", { name: "Hide step 1 of #7" }));
+  rerender(tree({ ...one }));
+  expect(screen.getByRole("button", { name: "Show step 1 of #7" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a step whose ruling waits for a repair says so on its closed row", () => {
+  renderCard({ open: true, divergences: [{ ...RULED, status: "awaiting_repair", ruling: "rewrite" } as Divergence] });
+  const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  expect(items[1]).toHaveTextContent("Waits for a repair");
+  expect(items[1]).not.toHaveTextContent(/Ruled/);
+});
+
+test("a card with nothing to fold has no Expand all", () => {
+  renderCard({ open: true, script: FULL });
+  expect(screen.queryByRole("button", { name: /all steps/ })).not.toBeInTheDocument();
+});
+
+test("an invented value of a step the list lacks stays a fact of the script", () => {
+  const script = {
+    ...BARE,
+    steps: [
+      { step_number: 0, actions: [], because: [{ value: "USD", why: "free currency", provenance: "invented" }] },
+      { step_number: 1, actions: [] },
+    ],
+  } as CaseScript;
+  renderCard({ open: true, script });
+  expect(screen.getByText("Invented values")).toBeInTheDocument();
+  expect(screen.getByText("step 0: USD (free currency)")).toBeInTheDocument();
+});
+
+test("a ruling with no note reads as its proposed text, on its opened step", () => {
   renderCard({ open: true, divergences: [{ ...RULED, note: null } as Divergence] });
+  openStep2();
   expect(screen.getByText("6 levels")).toHaveAttribute("title", "6 levels");
 });
 
 test("a step with a ruling shows the Ruled tag, and one without does not", () => {
   renderCard({ open: true, divergences: [RULED] });
+  // The tag is on the folded row.
   const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
   expect(items[1]).toHaveTextContent("Ruled");
   expect(items[0]).not.toHaveTextContent("Ruled");

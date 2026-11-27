@@ -184,7 +184,7 @@ function WatchedFileRow({
         </span>
         <Button variant="ghost" size="sm" disabled={save.isPending} onClick={() => void attach()}>
           <IconAttach aria-hidden />
-          Attach spec…
+          Attach spec
         </Button>
         {linkOpen ? (
           <Input

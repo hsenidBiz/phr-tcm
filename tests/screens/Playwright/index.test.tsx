@@ -351,12 +351,12 @@ test("with no folder chosen nothing is read, and Choose sets one", async () => {
   expect(calls.some((c) => c.cmd === "pw_repo_structure")).toBe(false);
 
   pick.mockResolvedValueOnce("D:/clone");
-  fireEvent.click(screen.getByRole("button", { name: "Choose…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Choose" }));
   expect(await screen.findByText("D:/clone")).toBeInTheDocument();
   expect(calls.find((c) => c.cmd === "set_playwright_clone")?.args).toEqual({ path: "D:/clone" });
   await screen.findByText("All good");
   expect(calls.find((c) => c.cmd === "pw_repo_structure")?.args).toEqual({ clone: "D:/clone" });
-  expect(screen.getByRole("button", { name: "Change…" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
 });
 
 test("Auto Test's Export request opens the Export dialog here, and closing it clears the request", async () => {

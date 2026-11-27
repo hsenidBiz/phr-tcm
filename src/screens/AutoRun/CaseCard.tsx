@@ -8,15 +8,18 @@
 // has neither: only an assistant writes one, so the card just says so.
 
 import { useQuery } from "@tanstack/react-query";
-import { memo, useId, type CSSProperties, type ReactNode } from "react";
+import { memo, useId, useState, type CSSProperties, type ReactNode } from "react";
 import type { Action, CaseScript, Divergence } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import {
   IconBug,
+  IconCollapseAll,
+  IconExpandAll,
   IconHideDetails,
   IconMustNotSave,
+  IconRuling,
   IconRun,
   IconRunsAs,
   IconScriptArea,
@@ -119,9 +122,19 @@ export function assistantNotes(script: CaseScript): Fact[] {
  * as assumed), each as "value (why)". The card shows the assumed ones under
  * their step; the invented ones are a fact of the whole script. */
 export function stepBecause(step: CaseScript["steps"][number], invented: boolean): string[] {
+  return stepBecauseParts(step, invented).map((p) => (p.why ? `${p.value} (${p.why})` : p.value));
+}
+
+/** The same entries with the value and its reason apart, for the opened step's
+ * grid. The reason is the entry's own `why`, with a leading "assumed:" or
+ * "invented:" taken off if the assistant wrote one; nothing else is cut. */
+export function stepBecauseParts(
+  step: CaseScript["steps"][number],
+  invented: boolean,
+): { value: string; why: string }[] {
   return (step.because ?? [])
     .filter((b) => (b.provenance === "invented") === invented)
-    .map((b) => `${b.value} (${b.why})`);
+    .map((b) => ({ value: b.value, why: (b.why ?? "").replace(/^\s*(assumed|invented)\s*:\s*/i, "").trim() }));
 }
 
 /** Every step's "because" entries of one source, as "step 2: 6 (why); ...". */
@@ -146,12 +159,14 @@ function NoteTag({ tone, children }: { tone: "neutral" | "warning" | "accent"; c
 }
 
 /** One chip of the summary line over an open card. */
-function SummaryChip({ icon, tone = "neutral", children }: { icon: ReactNode; tone?: "neutral" | "warning"; children: string }) {
+function SummaryChip({ icon, tone = "neutral", children }: { icon: ReactNode; tone?: "neutral" | "warning" | "accent"; children: string }) {
   return (
     <span
       className={cn(
         "inline-flex min-w-0 items-center gap-1 rounded-md px-2 py-0.5 text-xs [&_svg]:size-3 [&_svg]:shrink-0",
-        tone === "warning" ? "bg-warning/15 text-warning" : "bg-surface-2 text-muted",
+        tone === "warning" && "bg-warning/15 text-warning",
+        tone === "accent" && "bg-accent/15 text-accent-fill",
+        tone === "neutral" && "bg-surface-2 text-muted",
       )}
     >
       {icon}
@@ -167,6 +182,24 @@ function NoteLine({ tone, tag, children }: { tone: "neutral" | "warning"; tag: s
       <NoteTag tone={tone}>{tag}</NoteTag>
       <span className="min-w-0 flex-1 break-words text-text">{children}</span>
     </p>
+  );
+}
+
+/** An opened step's assumed or invented values: the value, then why in muted
+ * text beside it. The reason is the entry's own; with none, the value stands. */
+function BecauseGrid({ label, tag, entries }: { label: string; tag: string; entries: { value: string; why: string }[] }) {
+  return (
+    <div role="group" aria-label={label} className="flex min-w-0 items-start gap-2 text-xs">
+      <NoteTag tone="neutral">{tag}</NoteTag>
+      <dl className="grid min-w-0 flex-1 grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+        {entries.map((e, i) => (
+          <div key={i} className="contents">
+            <dt className="break-words text-text">{e.value}</dt>
+            <dd className="break-words text-muted">{e.why}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
@@ -231,20 +264,19 @@ function CaseCard({
   highlighted?: boolean;
 }) {
   const bodyId = useId();
+  const stepsId = useId();
   const ready = Boolean(script);
   const defect = script?.suspected_defect;
   const attention = divergences.find(needsAttention);
   const files = script ? scriptFiles(script) : { uploads: [], downloads: [] };
   const hasRunDownloads = (lastRun?.steps ?? []).some((s) => (s.downloads ?? []).length > 0);
   const showFiles = files.uploads.length > 0 || files.downloads.length > 0 || hasRunDownloads;
-  const facts = script ? actionFacts(script) : [];
   const notes = script ? assistantNotes(script) : [];
   const autoSteps = script ? doneByAutoRun(script) : new Set<number>();
   const summary = script ? scriptSummary(script) : null;
   // A divergence with a ruling is a ruling row; one still open keeps its buttons.
   const rulings = divergences.filter((d) => d.status !== "open");
   const pending = divergences.filter((d) => d.status === "open");
-  const ruledSteps = new Set(rulings.map((d) => d.step));
   // What the script's checks leave out. A passed case says how many beside
   // its result; the open card lists them whatever the result. Read only when
   // one of the two will show.
@@ -253,6 +285,57 @@ function CaseCard({
   // list (step 0, or a number the script has no step for) stays a short list
   // after the steps.
   const listed = new Set((script?.steps ?? []).map((s) => s.step_number).filter((n) => n >= 1));
+  // A ruling shows under its own step; one with no step of the list (or a case
+  // with no script) stays a short list at the top, so Undo is always reachable.
+  const stepRulings = rulings.filter((d) => listed.has(d.step));
+  const orphanRulings = rulings.filter((d) => !listed.has(d.step));
+  // What an opened step has to show. A step with none has no chevron.
+  const detailsOf = (n: number) => {
+    const step = (script?.steps ?? []).find((x) => x.step_number === n);
+    if (!step || !listed.has(n)) return null;
+    return {
+      rulings: stepRulings.filter((d) => d.step === n),
+      assumed: stepBecauseParts(step, false),
+      invented: stepBecauseParts(step, true),
+      notChecked: unchecked.filter((e) => e.step === n),
+    };
+  };
+  const expandable = (script?.steps ?? [])
+    .map((s) => s.step_number)
+    .filter((n) => {
+      const d = detailsOf(n);
+      return d && d.rulings.length + d.assumed.length + d.invented.length + d.notChecked.length > 0;
+    });
+  const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(
+    // Steps start closed; a card with one step opens it.
+    () => new Set(script?.steps.length === 1 ? [script.steps[0].step_number] : []),
+  );
+  // The script may arrive after the card mounts: a one-step script opens its
+  // step the first time it shows up, and never again once the person closes it.
+  const [seeded, setSeeded] = useState(Boolean(script));
+  if (!seeded && script) {
+    setSeeded(true);
+    if (script.steps.length === 1) setOpenSteps(new Set([script.steps[0].step_number]));
+  }
+  const toggleStep = (n: number) =>
+    setOpenSteps((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(n)) next.add(n);
+      return next;
+    });
+  const allOpen = expandable.length > 0 && expandable.every((n) => openSteps.has(n));
+  const orphanInvented = (script?.steps ?? [])
+    .filter((s) => !listed.has(s.step_number))
+    .flatMap((s) => stepBecause(s, true).map((t) => `step ${s.step_number}: ${t}`))
+    .join("; ");
+  // Each step's invented values show in its own opened step; only those of a
+  // step the list lacks stay a fact of the whole script.
+  const facts = script
+    ? [
+        ...actionFacts(script).filter((f) => f.label !== "Invented values"),
+        ...(orphanInvented ? [{ label: "Invented values", value: orphanInvented }] : []),
+      ]
+    : [];
   const orphanUnchecked = unchecked.filter((e) => !listed.has(e.step));
   const orphanAssumed = (script?.steps ?? [])
     .filter((s) => !listed.has(s.step_number))
@@ -356,14 +439,14 @@ function CaseCard({
               ))}
             </div>
           )}
-            {rulings.length > 0 && (
-              <div className="space-y-1">
-                <SectionLabel>{`Rulings (${rulings.length})`}</SectionLabel>
-                {rulings.map((d) => (
-                  <DivergenceRow key={d.id} org={org} project={project} caseId={c.id} divergence={d} compact />
-                ))}
-              </div>
-            )}
+          {orphanRulings.length > 0 && (
+            <div className="space-y-1">
+              <SectionLabel>{`Rulings (${orphanRulings.length})`}</SectionLabel>
+              {orphanRulings.map((d) => (
+                <DivergenceRow key={d.id} org={org} project={project} caseId={c.id} divergence={d} compact />
+              ))}
+            </div>
+          )}
           {!script ? (
             <p className="text-xs text-muted">No script yet. An assistant writes it.</p>
           ) : (
@@ -374,6 +457,11 @@ function CaseCard({
                     <SummaryChip icon={<IconScriptSteps aria-hidden />}>{summary.steps}</SummaryChip>
                     {summary.account && <SummaryChip icon={<IconRunsAs aria-hidden />}>{`Runs as ${summary.account}`}</SummaryChip>}
                     {summary.area && <SummaryChip icon={<IconScriptArea aria-hidden />}>{summary.area}</SummaryChip>}
+                    {rulings.length > 0 && (
+                      <SummaryChip tone="accent" icon={<IconRuling aria-hidden />}>
+                        {plural(rulings.length, "ruling")}
+                      </SummaryChip>
+                    )}
                     {summary.noSave && (
                       <SummaryChip tone="warning" icon={<IconMustNotSave aria-hidden />}>
                         Must not save
@@ -412,42 +500,76 @@ function CaseCard({
                 {script.steps.length === 0 ? (
                   <p className="text-xs text-muted">The script has no steps yet.</p>
                 ) : (
-                  <ol aria-label={`Script steps of #${c.id}`} className="space-y-0.5 text-xs">
+                  <ol id={stepsId} aria-label={`Script steps of #${c.id}`} className="space-y-0.5 text-xs">
                     {script.steps.map((s) => {
                       // The case's own words for the step, as the script
-                      // editor lists them, then its action count, as the
-                      // run pane does.
+                      // editor lists them.
                       const own = c.steps[s.step_number - 1];
-                      // This step's own notes, under it: what the script
-                      // assumed and what its checks leave out.
-                      const assumed = listed.has(s.step_number) ? stepBecause(s, false) : [];
-                      const notChecked = unchecked.filter((e) => e.step === s.step_number && listed.has(e.step));
+                      const d = detailsOf(s.step_number);
+                      const folds = expandable.includes(s.step_number);
+                      const isOpen = folds && openSteps.has(s.step_number);
+                      const panelId = `${stepsId}-step-${s.step_number}`;
+                      const actionsText = autoSteps.has(s.step_number) ? "Done by Auto Test" : plural(s.actions.length, "action");
                       return (
                         <li key={s.step_number} className="min-w-0">
-                          <div className="flex min-w-0 gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            {/* A step with nothing to show has no chevron; its
+                                action count stays on the row, since it has no
+                                opened step to sit in. */}
+                            {folds ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="size-5 shrink-0 p-0"
+                                aria-label={`${isOpen ? "Hide" : "Show"} step ${s.step_number} of #${c.id}`}
+                                aria-expanded={isOpen}
+                                aria-controls={isOpen ? panelId : undefined}
+                                onClick={() => toggleStep(s.step_number)}
+                              >
+                                {isOpen ? <IconHideDetails aria-hidden /> : <IconShowDetails aria-hidden />}
+                              </Button>
+                            ) : (
+                              <span aria-hidden className="size-5 shrink-0" />
+                            )}
                             <span className="shrink-0 text-faint">{s.step_number}.</span>
                             <span className="min-w-0 flex-1 truncate text-text" title={own ? caseTextLine(own.action) : undefined}>
                               {own?.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own && caseTextLine(own.action)}
                             </span>
-                            {ruledSteps.has(s.step_number) && <NoteTag tone="accent">Ruled</NoteTag>}
-                            <span className="shrink-0 text-faint">{autoSteps.has(s.step_number) ? "Done by Auto Test" : plural(s.actions.length, "action")}</span>
+                            {d && d.rulings.some((r) => r.status === "awaiting_repair") ? (
+                              <NoteTag tone="warning">Waits for a repair</NoteTag>
+                            ) : (
+                              d && d.rulings.length > 0 && <NoteTag tone="accent">Ruled</NoteTag>
+                            )}
+                            {d && d.assumed.length > 0 && <NoteTag tone="neutral">{`${d.assumed.length} assumed`}</NoteTag>}
+                            {d && d.invented.length > 0 && <NoteTag tone="neutral">{`${d.invented.length} invented`}</NoteTag>}
+                            {d && d.notChecked.length > 0 && <NoteTag tone="warning">{`${d.notChecked.length} unchecked`}</NoteTag>}
+                            {!folds && <span className="shrink-0 text-faint">{actionsText}</span>}
                           </div>
-                          {assumed.length > 0 && (
-                            <div role="group" aria-label={`Assumed in step ${s.step_number}`} className="ml-5 space-y-0.5 py-0.5">
-                              {assumed.map((t, i) => (
-                                <NoteLine key={i} tone="neutral" tag="Assumed">
-                                  {t}
-                                </NoteLine>
-                              ))}
-                            </div>
-                          )}
-                          {notChecked.length > 0 && (
-                            <div role="group" aria-label={`Not checked in step ${s.step_number}`} className="ml-5 space-y-0.5 py-0.5">
-                              {notChecked.map((e, i) => (
-                                <NoteLine key={i} tone="warning" tag="Not checked">
-                                  {uncheckedDetail(e)}
-                                </NoteLine>
-                              ))}
+                          {isOpen && d && (
+                            <div id={panelId} className="ml-12 space-y-1.5 py-1">
+                              {d.rulings.length > 0 && (
+                                <div role="group" aria-label={`Ruling in step ${s.step_number}`}>
+                                  {d.rulings.map((r) => (
+                                    <DivergenceRow key={r.id} org={org} project={project} caseId={c.id} divergence={r} compact tag="Ruling" />
+                                  ))}
+                                </div>
+                              )}
+                              {d.assumed.length > 0 && (
+                                <BecauseGrid label={`Assumed in step ${s.step_number}`} tag="Assumed" entries={d.assumed} />
+                              )}
+                              {d.invented.length > 0 && (
+                                <BecauseGrid label={`Invented in step ${s.step_number}`} tag="Invented" entries={d.invented} />
+                              )}
+                              {d.notChecked.length > 0 && (
+                                <div role="group" aria-label={`Not checked in step ${s.step_number}`} className="space-y-0.5">
+                                  {d.notChecked.map((e, i) => (
+                                    <NoteLine key={i} tone="warning" tag="Not checked">
+                                      {uncheckedDetail(e)}
+                                    </NoteLine>
+                                  ))}
+                                </div>
+                              )}
+                              <p className="text-xs text-faint">{actionsText}</p>
                             </div>
                           )}
                         </li>
@@ -515,18 +637,37 @@ function CaseCard({
                 </div>
               )}
 
-              {notes.length > 0 && (
-                <details className="text-xs">
-                  <summary className="cursor-pointer text-muted">Assistant notes ({notes.length})</summary>
-                  <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
-                    {notes.map(({ label, value }) => (
-                      <div key={label} className="contents">
-                        <dt className="text-muted">{label}</dt>
-                        <dd className="break-words text-text">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </details>
+              {(notes.length > 0 || expandable.length > 0) && (
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  {notes.length > 0 ? (
+                    <details className="min-w-0 flex-1 text-xs">
+                      <summary className="cursor-pointer text-muted">Assistant notes ({notes.length})</summary>
+                      <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+                        {notes.map(({ label, value }) => (
+                          <div key={label} className="contents">
+                            <dt className="text-muted">{label}</dt>
+                            <dd className="break-words text-text">{value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </details>
+                  ) : (
+                    <span />
+                  )}
+                  {expandable.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="shrink-0"
+                      aria-expanded={allOpen}
+                      aria-controls={stepsId}
+                      onClick={() => setOpenSteps(allOpen ? new Set() : new Set(expandable))}
+                    >
+                      {allOpen ? <IconCollapseAll aria-hidden /> : <IconExpandAll aria-hidden />}
+                      {allOpen ? "Collapse all steps" : "Expand all steps"}
+                    </Button>
+                  )}
+                </div>
               )}
             </>
           )}

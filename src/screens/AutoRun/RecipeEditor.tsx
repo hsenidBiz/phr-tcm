@@ -14,7 +14,6 @@ import { MODAL_LARGE } from "./modalWidths";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import { Term } from "../../components/Term";
-import QuirksList from "./QuirksList";
 
 const PLACEHOLDER = `{
   "start_url": "https://hr.example.internal/",
@@ -49,40 +48,23 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
     queryFn: () => unwrapStr(commands.autoRunLoadRecipe(org, project)),
     retry: false,
   });
-  const existingQuirks = useQuery({
-    queryKey: ["autorun-quirks", org, project],
-    queryFn: () => unwrapStr(commands.autoRunLoadQuirks(org, project)),
-    retry: false,
-  });
   const [text, setText] = useState<string | null>(null);
   const [recipeProblem, setRecipeProblem] = useState("");
-  /** A note typed into the quirks list and not saved yet - a recipe save
-   * leaves the dialog open rather than throw it away. */
-  const [quirksPending, setQuirksPending] = useState(false);
   const loadedRecipe = existing.data ? JSON.stringify(existing.data, null, 2) : "";
   const value = text ?? loadedRecipe;
   const recipeBlocked = existing.isLoading || existing.isError;
   const recipeEmpty = value.trim() === "";
 
-  // The recipe has its own Save and writes only its own file; each change
-  // to the quirks list below is saved the moment it is made, by its own
-  // command. Saving the recipe closes the dialog unless a note is still
-  // being typed below.
+  // The recipe has its own Save and writes only its own file. Saving it
+  // closes the dialog.
   const saveRecipe = useMutation({
-    mutationFn: async (v: { recipe: SignInRecipe_Deserialize; close: boolean }) => {
-      await unwrapStr(commands.autoRunSaveRecipe(org, project, v.recipe));
+    mutationFn: async (recipe: SignInRecipe_Deserialize) => {
+      await unwrapStr(commands.autoRunSaveRecipe(org, project, recipe));
     },
-    onSuccess: async (_data, v) => {
+    onSuccess: () => {
       toast.success("Sign-in recipe saved.");
-      if (v.close) {
-        qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
-        onClose();
-        return;
-      }
-      // Refetched before the box lets go of the typed text, so it never
-      // flashes back to the old recipe in between.
-      await qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
-      setText(null);
+      qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
+      onClose();
     },
     onError: (e) => setRecipeProblem(e instanceof Error ? e.message : String(e)),
   });
@@ -99,7 +81,7 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
       setRecipeProblem(`That is not valid JSON: ${(e as Error).message}`);
       return;
     }
-    saveRecipe.mutate({ recipe: parsed, close: !quirksPending });
+    saveRecipe.mutate(parsed);
   };
 
   return (
@@ -135,24 +117,6 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
             {saveRecipe.isPending ? "Saving" : "Save recipe"}
           </Button>
         </div>
-      </section>
-
-      <section className="space-y-2 border-t border-border pt-4">
-        <div>
-          <h3 className="text-sm font-semibold text-text">
-            Known <Term name="quirk">quirks</Term>
-          </h3>
-          <p className="mt-1 text-xs text-muted">
-            Things learned about this application that the next script or API template - written by a
-            person or an assistant - should not have to rediscover. A note an assistant filed with a repair
-            shows what the runs since have said about it. Retire a note that no longer helps; it can be
-            restored. Each change is saved as you make it.
-          </p>
-        </div>
-        {existingQuirks.isError && <p className="text-xs text-danger">{existingQuirks.error.message}</p>}
-        {existingQuirks.isSuccess && (
-          <QuirksList org={org} project={project} quirks={existingQuirks.data} onPendingChange={setQuirksPending} />
-        )}
       </section>
 
       <div className="flex justify-end border-t border-border pt-3">

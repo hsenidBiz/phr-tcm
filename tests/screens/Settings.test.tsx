@@ -1570,7 +1570,7 @@ test("downloading_shows_progress_then_the_guide_is_ready", async () => {
   expect(screen.queryByRole("progressbar")).toBeNull();
 
   fireEvent.click(await screen.findByRole("button", { name: "Download How to Use (31 MB)" }));
-  const busy = await screen.findByRole("button", { name: "Downloading..." });
+  const busy = await screen.findByRole("button", { name: "Downloading" });
   expect(busy).toBeDisabled();
   // A bar from the start; no figure on it until the first bytes arrive.
   const bar = await screen.findByRole("progressbar", { name: "Downloading How to Use" });
@@ -1621,8 +1621,8 @@ test("two quick clicks on Download start one download", async () => {
   const button = await screen.findByRole("button", { name: "Download How to Use (31 MB)" });
   fireEvent.click(button);
   fireEvent.click(button);
-  await screen.findByRole("button", { name: "Downloading..." });
-  fireEvent.click(screen.getByRole("button", { name: "Downloading..." }));
+  await screen.findByRole("button", { name: "Downloading" });
+  fireEvent.click(screen.getByRole("button", { name: "Downloading" }));
   await act(async () => {
     resolveDownload({ status: "ok", data: null });
   });
@@ -1655,7 +1655,7 @@ test("a_changed_guide_offers_update_guide", async () => {
   await waitFor(() => expect(asked).toEqual([false]));
 
   // Both buttons wait while the update runs.
-  expect(await screen.findByRole("button", { name: "Downloading..." })).toBeDisabled();
+  expect(await screen.findByRole("button", { name: "Downloading" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "How To Use" })).toBeDisabled();
 
   state = "Ready";

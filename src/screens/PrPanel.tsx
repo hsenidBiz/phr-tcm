@@ -1326,7 +1326,7 @@ function RepoPrSection({
             disabled={active.isFetchingNextPage}
             onClick={() => active.fetchNextPage()}
           >
-            <span className="label-trim">{active.isFetchingNextPage ? "Loading…" : "Load more"}</span>
+            <span className="label-trim">{active.isFetchingNextPage ? "Loading" : "Load more"}</span>
           </button>
         </div>
       )}
