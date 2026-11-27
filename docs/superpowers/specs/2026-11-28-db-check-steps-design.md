@@ -18,7 +18,7 @@ A script can check what the page shows, but not what got saved. In an HR app the
   - an optional `timeout_ms`.
 - **Finding this run's record (option C).** Values in the SQL come from:
   - placeholders for the case's setup outputs (`{{setup.x}}`, `{{fixture.id.x}}`);
-  - a value captured off the page earlier with `remember_text` / `remember_url`. The placeholder is new: `{{noted.<name>}}`.
+  - a value captured off the page earlier with `remember_text` (only that: `remember_url` stores a whole address, rarely a usable literal, and does not feed noted values). The placeholder is new: `{{noted.<name>}}`.
   - literals the assistant writes from the case text.
   - The guide tells the assistant to prefer a captured id. When there is no id, it matches on the values the script typed, plus `ORDER BY <newest> DESC`, so leftovers from earlier runs don't fool the check.
 - **Retry until right.** The step re-runs the query until the expectation holds or the timeout runs out, then fails.

@@ -63,6 +63,20 @@ pub(crate) fn marked_sensitive(action: Action) -> Action {
         Action::ExpectContainsText { selector, value, timeout_ms, .. } => {
             Action::ExpectContainsText { selector, value, timeout_ms, sensitive: true }
         }
+        Action::ExpectDatabase { sql, exists, count, at_least, at_most, column, equals, matches, timeout_ms, .. } => {
+            Action::ExpectDatabase {
+                sql,
+                exists,
+                count,
+                at_least,
+                at_most,
+                column,
+                equals,
+                matches,
+                timeout_ms,
+                sensitive: true,
+            }
+        }
         Action::WhenVisible { selector, within_ms, then } => {
             Action::WhenVisible { selector, within_ms, then: then.into_iter().map(marked_sensitive).collect() }
         }
@@ -85,7 +99,8 @@ fn hidden_texts(action: &Action) -> Vec<&str> {
     match action {
         Action::CheckText { value, sensitive: true } => vec![value],
         Action::ExpectContainsText { value, sensitive: true, .. } => vec![value],
-        Action::ExpectText { equals, matches, sensitive: true, .. } => {
+        Action::ExpectText { equals, matches, sensitive: true, .. }
+        | Action::ExpectDatabase { equals, matches, sensitive: true, .. } => {
             equals.iter().chain(matches.iter()).map(String::as_str).collect()
         }
         _ => vec![],
@@ -291,6 +306,11 @@ pub enum Action {
         matches: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// The compared text came from a secret placeholder: the check's
+        /// detail and report never show it. A run-time mark: read when sent
+        /// in, never written (a saved script comes back without it).
+        #[serde(default, skip_serializing_if = "hide_mark")]
+        sensitive: bool,
     },
     /// How many elements match: exactly `equals`, or `at_least` / `at_most`
     /// - exactly one of the three. Only `at_most` (like `equals: 0`) waits

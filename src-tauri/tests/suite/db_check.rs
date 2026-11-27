@@ -23,7 +23,7 @@ fn rows(columns: &[&str], data: &[&[&str]], capped: bool) -> Rows {
 }
 
 fn column(name: &str, equals: &str) -> Expect {
-    Expect::Column { name: name.into(), equals: Some(equals.into()), matches: None }
+    Expect::Column { name: name.into(), equals: Some(equals.into()), matches: None, sensitive: false }
 }
 
 // ---- validation ----
@@ -96,7 +96,7 @@ SELECT s FROM t WHERE n = {{noted.req}} ORDER BY id";
 
 #[test]
 fn validate_refuses_bad_regex() {
-    let e = Expect::Column { name: "s".into(), equals: None, matches: Some("(".into()) };
+    let e = Expect::Column { name: "s".into(), equals: None, matches: Some("(".into()), sensitive: false };
     assert!(validate("SELECT s FROM t ORDER BY id", Ok(e), None).is_err());
 }
 
@@ -273,6 +273,61 @@ fn judge_the_full_value_does_not_match_a_truncated_cell() {
 #[test]
 fn judge_matches_uses_the_pattern() {
     let r = rows(&["no"], &[&["LR-0457"]], false);
-    let e = Expect::Column { name: "no".into(), equals: None, matches: Some(r"^LR-\d+$".into()) };
+    let e = Expect::Column { name: "no".into(), equals: None, matches: Some(r"^LR-\d+$".into()), sensitive: false };
     assert!(matches!(judge(&e, &r), Verdict::Pass(_)));
+}
+
+// ---- final review: secrets, opaque spots, literals ----
+
+#[test]
+fn a_sensitive_column_check_never_prints_its_wanted_text() {
+    let a = act(json!({
+        "sql": "SELECT approver FROM t ORDER BY id", "column": "approver", "equals": "tok-abc123", "sensitive": true
+    }));
+    let e = v2_lib::autorun::db_check::expectation(&a).unwrap();
+    assert!(!v2_lib::autorun::db_check::describe(&e).contains("abc123"));
+    let r = rows(&["approver"], &[&["other"]], false);
+    let Verdict::Fail(why) = judge(&e, &r) else { panic!("should fail") };
+    assert!(!why.contains("abc123") && !why.contains("other"), "{why}");
+    let ok = rows(&["approver"], &[&["tok-abc123"]], false);
+    let Verdict::Pass(said) = judge(&e, &ok) else { panic!("should pass") };
+    assert!(!said.contains("abc123"), "{said}");
+    let words = v2_lib::autorun::report::action_words(&a);
+    assert!(!words.contains("abc123"), "{words}");
+}
+
+#[test]
+fn the_sensitive_mark_is_run_time_only() {
+    let a = act(json!({"sql": "SELECT 1", "exists": true, "sensitive": true}));
+    assert!(!serde_json::to_string(&a).unwrap().contains("sensitive"));
+    let kept = v2_lib::browser::actions::with_run_marks(|| serde_json::to_string(&a).unwrap());
+    assert!(kept.contains("sensitive"));
+}
+
+#[test]
+fn validate_refuses_a_placeholder_in_a_comment_or_a_quoted_name() {
+    for sql in [
+        "SELECT 1 /* {{noted.x}} */",
+        "SELECT 1 -- {{noted.x}}",
+        "SELECT [{{noted.x}}] FROM t",
+        "SELECT \"{{noted.x}}\" FROM t",
+    ] {
+        assert!(validate(sql, Ok(Expect::Exists(true)), None).is_err(), "{sql}");
+    }
+    assert!(validate("SELECT 1 FROM t -- it's here\nWHERE a = {{noted.x}}", Ok(Expect::Exists(true)), None).is_ok());
+}
+
+#[test]
+fn bind_leaves_a_placeholder_inside_a_literal_alone() {
+    let sql = "SELECT 1 WHERE a = N'{{noted.y}}' AND b = {{noted.x}}";
+    let bound = bind(sql, |n| Some(format!("<{n}>"))).unwrap();
+    assert_eq!(bound, "SELECT 1 WHERE a = N'{{noted.y}}' AND b = N'<noted.x>'");
+    assert!(unbound(&bound).is_empty());
+}
+
+#[test]
+fn validate_refuses_a_secret_named_value_in_sql() {
+    assert!(validate("SELECT 1 FROM t WHERE p = {{setup.password}}", Ok(Expect::Exists(true)), None).is_err());
+    assert!(validate("SELECT 1 FROM t WHERE p = {{fixture.api.token}}", Ok(Expect::Exists(true)), None).is_err());
+    assert!(validate("SELECT 1 FROM t WHERE p = {{setup.cycle_id}}", Ok(Expect::Exists(true)), None).is_ok());
 }

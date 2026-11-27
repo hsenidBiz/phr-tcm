@@ -86,3 +86,40 @@ fn guide_has_database_section() {
     assert!(g.contains("## Checking the database"));
     assert!(g.contains("{{noted."));
 }
+
+fn component(sql: &str) -> v2_lib::autorun::components::Component {
+    serde_json::from_value(json!({
+        "name": "who_approved", "description": "Checks who approved",
+        "inputs": [{ "name": "who", "kind": "text", "description": "the name" }],
+        "actions": [{ "kind": "expect_database", "sql": sql, "exists": true }]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_component_input_reaches_the_sql_as_a_quoted_literal() {
+    use v2_lib::autorun::components::{check_component, expand};
+    let c = component("SELECT 1 FROM leave WHERE emp = {{who}}");
+    assert_eq!(check_component(&c), Ok(()));
+    let inputs = json!({ "who": "O'Brien" }).as_object().unwrap().clone();
+    let out = expand(&c, &inputs).unwrap();
+    let v2_lib::browser::actions::Action::ExpectDatabase { sql, .. } = &out[0] else { panic!("kind") };
+    assert_eq!(sql, "SELECT 1 FROM leave WHERE emp = N'O''Brien'");
+    // A data placeholder stays one for the run's own binding.
+    let inputs = json!({ "who": "{{setup.emp}}" }).as_object().unwrap().clone();
+    let out = expand(&c, &inputs).unwrap();
+    let v2_lib::browser::actions::Action::ExpectDatabase { sql, .. } = &out[0] else { panic!("kind") };
+    assert_eq!(sql, "SELECT 1 FROM leave WHERE emp = {{setup.emp}}");
+}
+
+#[test]
+fn a_component_refuses_its_input_inside_quotes_in_a_check() {
+    use v2_lib::autorun::components::check_component;
+    for sql in [
+        "SELECT 1 FROM leave WHERE emp = '{{who}}'",
+        "SELECT 1 FROM leave /* {{who}} */",
+        "SELECT [{{who}}] FROM leave",
+    ] {
+        assert!(check_component(&component(sql)).is_err(), "{sql}");
+    }
+}

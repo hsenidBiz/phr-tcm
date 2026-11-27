@@ -35,6 +35,34 @@ pub fn without_server(said: &str) -> String {
     }
 }
 
+/// Said when the database refused the login or would not open the database:
+/// sqlcmd's own words name the login and the database, so they are only logged.
+pub const LOGIN_REFUSED: &str =
+    "The database refused this step's sign-in or could not be opened. Settings → Logs has the details.";
+/// Said when the login may not read what a check asks.
+pub const READ_DENIED: &str =
+    "The database login may not read what this step asks. Settings → Logs has the details.";
+
+/// The fixed sentence for an error that names a login or a database, `None`
+/// for an ordinary SQL error (which names only the query's own columns).
+fn refused_sentence(said: &str) -> Option<&'static str> {
+    let l = said.to_lowercase();
+    let msg = |n: &str| l.contains(&format!("msg {n},"));
+    if l.contains("login failed for user")
+        || l.contains("cannot open database")
+        || l.contains("not able to access the database")
+        || msg("18456")
+        || msg("4060")
+        || msg("916")
+    {
+        Some(LOGIN_REFUSED)
+    } else if l.contains("permission was denied") || msg("229") || msg("262") {
+        Some(READ_DENIED)
+    } else {
+        None
+    }
+}
+
 /// The longest a check may keep asking before it fails.
 pub const MAX_TIMEOUT_MS: u32 = 60_000;
 /// How long the runner waits between two asks.
@@ -50,6 +78,8 @@ const COLUMN_NAMED: &str = "expect_database equals / matches need a column to re
 const COUNT_ONE: &str = "expect_database takes one of count, at_least or at_most";
 const QUOTED_PLACEHOLDER: &str =
     "expect_database has a placeholder inside quotes - write it bare, like WHERE no = {{noted.req}}; the runner quotes the value";
+const OPAQUE_PLACEHOLDER: &str =
+    "expect_database has a placeholder inside a comment or a quoted name - write it bare, like WHERE no = {{noted.req}}";
 const NEEDS_ORDER_BY: &str =
     "expect_database reads the first row of its answer, so the SELECT needs an ORDER BY to make that row certain";
 const READ_ONLY: &str = "expect_database only reads - the SQL must be one SELECT";
@@ -61,13 +91,15 @@ const CAPPED_COUNT: &str =
 pub enum Expect {
     Exists(bool),
     Count { equals: Option<u32>, at_least: Option<u32>, at_most: Option<u32> },
-    Column { name: String, equals: Option<String>, matches: Option<String> },
+    /// `sensitive`: the wanted text came from a secret placeholder, so no
+    /// sentence prints it, as for a secret column.
+    Column { name: String, equals: Option<String>, matches: Option<String>, sensitive: bool },
 }
 
 /// The expectation an `expect_database` action states; `None` for any other
 /// kind, an `Err` sentence when it states none or more than one.
 pub fn try_expectation(a: &Action) -> Option<Result<Expect, String>> {
-    let Action::ExpectDatabase { exists, count, at_least, at_most, column, equals, matches, .. } = a else {
+    let Action::ExpectDatabase { exists, count, at_least, at_most, column, equals, matches, sensitive, .. } = a else {
         return None;
     };
     let has_count = count.is_some() || at_least.is_some() || at_most.is_some();
@@ -90,6 +122,7 @@ pub fn try_expectation(a: &Action) -> Option<Result<Expect, String>> {
                         name: c.trim().to_string(),
                         equals: equals.clone(),
                         matches: matches.clone(),
+                        sensitive: *sensitive,
                     }),
                     Some(_) => Err(COLUMN_ONE.to_string()),
                 }
@@ -105,9 +138,83 @@ pub fn expectation(a: &Action) -> Option<Expect> {
     try_expectation(a).and_then(Result::ok)
 }
 
+/// Where a placeholder sits in the SQL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ctx {
+    Code,
+    /// Inside a `'...'` literal.
+    Literal,
+    /// Inside a `--` or `/* */` comment.
+    Comment,
+    /// Inside a `[bracket]` or `"double-quoted"` identifier.
+    Ident,
+}
+
+/// What `sql[..pos]` leaves open at `pos`.
+fn ctx_at(sql: &str, pos: usize) -> Ctx {
+    let mut ctx = Ctx::Code;
+    let mut close = ' ';
+    let mut chars = sql[..pos].chars().peekable();
+    let mut last = ' ';
+    while let Some(c) = chars.next() {
+        match ctx {
+            Ctx::Code => match c {
+                '\'' => ctx = Ctx::Literal,
+                '-' if chars.peek() == Some(&'-') => {
+                    chars.next();
+                    ctx = Ctx::Comment;
+                    close = '\n';
+                }
+                '/' if chars.peek() == Some(&'*') => {
+                    chars.next();
+                    ctx = Ctx::Comment;
+                    close = '/';
+                    last = ' ';
+                }
+                '[' => {
+                    ctx = Ctx::Ident;
+                    close = ']';
+                }
+                '"' => {
+                    ctx = Ctx::Ident;
+                    close = '"';
+                }
+                _ => {}
+            },
+            Ctx::Literal => {
+                if c == '\'' {
+                    ctx = Ctx::Code;
+                }
+            }
+            Ctx::Comment => {
+                if close == '\n' {
+                    if c == '\n' {
+                        ctx = Ctx::Code;
+                    }
+                } else if last == '*' && c == '/' {
+                    ctx = Ctx::Code;
+                    last = ' ';
+                } else {
+                    last = c;
+                }
+            }
+            Ctx::Ident => {
+                if c == close {
+                    if chars.peek() == Some(&close) {
+                        chars.next();
+                    } else {
+                        ctx = Ctx::Code;
+                    }
+                }
+            }
+        }
+    }
+    ctx
+}
+
 /// Every `{{...}}` in `sql` that names a setup, fixture or noted value:
-/// byte range and the full name (`noted.req`).
-fn placeholders(sql: &str) -> Vec<(usize, usize, String)> {
+/// byte range, the full name (`noted.req`) and where it sits.
+fn located(sql: &str) -> Vec<(usize, usize, String, Ctx)> {
     let mut out = Vec::new();
     let mut from = 0;
     while let Some(open) = sql[from..].find("{{") {
@@ -119,7 +226,7 @@ fn placeholders(sql: &str) -> Vec<(usize, usize, String)> {
             matches!(kind, "setup" | "fixture" | "noted") && !rest.is_empty()
         });
         if named {
-            out.push((start, end, name.to_string()));
+            out.push((start, end, name.to_string(), ctx_at(sql, start)));
             from = end;
         } else {
             // Not one of ours: its `{{` may be a stray one, ahead of a real
@@ -128,6 +235,32 @@ fn placeholders(sql: &str) -> Vec<(usize, usize, String)> {
         }
     }
     out
+}
+
+/// A component's check: its text inputs go into `sql` as quoted literals, so
+/// none may be written inside a quote, a comment or a quoted name.
+pub fn refuse_quoted_inputs(sql: &str, inputs: &[&str]) -> Result<(), String> {
+    let mut from = 0;
+    while let Some(open) = sql[from..].find("{{") {
+        let start = from + open;
+        let Some(close) = sql[start + 2..].find("}}") else { break };
+        let end = start + 2 + close + 2;
+        if inputs.contains(&sql[start + 2..end - 2].trim()) {
+            match ctx_at(sql, start) {
+                Ctx::Literal => return Err(QUOTED_PLACEHOLDER.to_string()),
+                Ctx::Comment | Ctx::Ident => return Err(OPAQUE_PLACEHOLDER.to_string()),
+                Ctx::Code => {}
+            }
+        }
+        from = start + 2;
+    }
+    Ok(())
+}
+
+/// The placeholders a run binds: every one but those inside a quoted
+/// literal, which is text (a saved check has none: `validate` refuses them).
+fn placeholders(sql: &str) -> Vec<(usize, usize, String)> {
+    located(sql).into_iter().filter(|f| f.3 != Ctx::Literal).map(|(s, e, n, _)| (s, e, n)).collect()
 }
 
 /// The `{{noted.<name>}}` names, in the order they appear.
@@ -222,18 +355,24 @@ pub fn validate(sql: &str, e: Result<Expect, String>, timeout_ms: Option<u32>) -
     if timeout_ms.is_some_and(|t| t > MAX_TIMEOUT_MS) {
         return Err(format!("expect_database waits at most {MAX_TIMEOUT_MS} ms"));
     }
-    // Quotes and ORDER BY are read without the comments: an apostrophe in a
-    // comment opens no literal, and `-- order by x` orders nothing.
+    // ORDER BY is read without the comments: `-- order by x` orders nothing.
     let bare = without_comments(sql);
-    for (start, _, _) in placeholders(&bare) {
-        if bare[..start].matches('\'').count() % 2 == 1 {
-            return Err(QUOTED_PLACEHOLDER.to_string());
+    let all = located(sql);
+    for (_, _, name, ctx) in &all {
+        match ctx {
+            Ctx::Literal => return Err(QUOTED_PLACEHOLDER.to_string()),
+            Ctx::Comment | Ctx::Ident => return Err(OPAQUE_PLACEHOLDER.to_string()),
+            Ctx::Code => {}
+        }
+        if !name.starts_with("noted.") && secret_name(name) {
+            return Err(format!(
+                "expect_database cannot put {{{{{name}}}}} in its SQL - it holds a secret and the SQL is logged"
+            ));
         }
     }
-    let found = placeholders(sql);
     let mut probe = String::with_capacity(sql.len());
     let mut at = 0;
-    for (start, end, _) in &found {
+    for (start, end, _, _) in &all {
         probe.push_str(&sql[at..*start]);
         probe.push_str("N'x'");
         at = *end;
@@ -312,8 +451,8 @@ pub fn describe(e: &Expect) -> String {
         Expect::Count { at_least: Some(n), .. } => format!("at least {}", rows_word(*n as usize)),
         Expect::Count { at_most: Some(n), .. } => format!("at most {}", rows_word(*n as usize)),
         Expect::Count { .. } => "a count".to_string(),
-        Expect::Column { name, equals, matches } => {
-            let secret = secret_name(name);
+        Expect::Column { name, equals, matches, sensitive } => {
+            let secret = *sensitive || secret_name(name);
             match (equals, matches) {
                 (Some(v), _) => format!("{name} is {}", if secret { HIDDEN_VALUE.to_string() } else { format!("'{v}'") }),
                 (_, Some(p)) => {
@@ -365,17 +504,19 @@ pub fn judge(e: &Expect, rows: &Rows) -> Verdict {
                 Verdict::Fail(format!("expected {words}, found {n}"))
             }
         }
-        Expect::Column { name, equals, matches } => judge_column(name, equals.as_deref(), matches.as_deref(), rows),
+        Expect::Column { name, equals, matches, sensitive } => {
+            judge_column(name, equals.as_deref(), matches.as_deref(), *sensitive, rows)
+        }
     }
 }
 
-fn judge_column(name: &str, equals: Option<&str>, matches: Option<&str>, rows: &Rows) -> Verdict {
+fn judge_column(name: &str, equals: Option<&str>, matches: Option<&str>, sensitive: bool, rows: &Rows) -> Verdict {
     let wanted_name = name.to_lowercase();
     let Some(at) = rows.columns.iter().position(|c| c.to_lowercase() == wanted_name) else {
         return Verdict::Fail(format!("no column named '{name}'; the query returned {}", rows.columns.join(", ")));
     };
     let printed = rows.columns[at].as_str();
-    let secret = secret_name(printed) || secret_name(name);
+    let secret = sensitive || secret_name(printed) || secret_name(name);
     let Some(row) = rows.rows.first() else {
         return Verdict::Fail(if secret {
             format!("expected {printed} to hold {HIDDEN_VALUE}, found no row")
@@ -517,6 +658,10 @@ pub async fn run_check(
             Err(said) => {
                 if said == query::DB_UNREACHABLE || query::is_unreachable(&said) || gate::unreachable(&said) {
                     return ActionOutcome::failed(query::DB_UNREACHABLE);
+                }
+                if let Some(sentence) = refused_sentence(&said) {
+                    crate::applog::warn(format!("Auto Test: the database check was refused: {}", redact_text(&said)));
+                    return ActionOutcome::failed(sentence);
                 }
                 return ActionOutcome::failed(without_server(&redact_text(&said)));
             }

@@ -311,3 +311,55 @@ fn auto_run_step_passes_its_read_access_to_for_actions() {
     let call = &body[body.find("for_actions(").unwrap()..];
     assert!(call[..200].contains("db_read_access,"), "{}", &call[..200]);
 }
+
+#[tokio::test]
+async fn a_sensitive_check_says_nothing_of_its_wanted_text() {
+    let db = Fake::new(vec![status("Pending")]);
+    let a = act(json!({
+        "sql": "SELECT status FROM r ORDER BY id", "column": "status", "equals": "tok-abc123", "sensitive": true
+    }));
+    let out = check(&db, &a, &BTreeMap::new(), 0).await;
+    assert!(!out.ok);
+    assert!(!out.detail.contains("abc123") && !out.detail.contains("Pending"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_refused_login_or_database_names_neither() {
+    for said in [
+        "Login failed for user 'svc_tcm'.",
+        "Sqlcmd: Error: Microsoft ODBC Driver 18 for SQL Server : Login failed for user 'svc_tcm'.",
+        "Cannot open database \"PHR_TEST\" requested by the login. The login failed.",
+    ] {
+        let db = Fake::new(vec![Err(said.into())]);
+        let out = check(&db, &approved(), &BTreeMap::new(), 5_000).await;
+        assert!(!out.ok);
+        assert_eq!(out.detail, v2_lib::autorun::db_check::LOGIN_REFUSED);
+        assert!(!out.detail.contains("svc_tcm") && !out.detail.contains("PHR_TEST"), "{}", out.detail);
+        assert_eq!(db.asked().len(), 1);
+    }
+    let db = Fake::new(vec![Err("The SELECT permission was denied on the object 'Leave', database 'PHR_TEST', schema 'dbo'.".into())]);
+    let out = check(&db, &approved(), &BTreeMap::new(), 5_000).await;
+    assert_eq!(out.detail, v2_lib::autorun::db_check::READ_DENIED);
+    assert!(!out.detail.contains("PHR_TEST"));
+}
+
+#[tokio::test]
+async fn a_secret_setup_value_in_equals_is_marked_and_never_said() {
+    let sc: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "t", "setup": { "fixture": "own" },
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "expect_database", "sql": "SELECT status FROM r ORDER BY id", "column": "status", "equals": "{{setup.api_token}}" }
+        ] }]
+    }))
+    .unwrap();
+    let out = v2_lib::browser::actions::with_run_marks(|| {
+        resolve(&sc, &BTreeMap::new(), &BTreeMap::from([("api_token".to_string(), json!("tok-abc123"))])).unwrap()
+    });
+    let a = out.steps[0].actions[0].clone();
+    let db = Fake::new(vec![status("Pending")]);
+    let said = check(&db, &a, &BTreeMap::new(), 0).await;
+    assert!(!said.ok);
+    assert!(!said.detail.contains("abc123"), "{}", said.detail);
+    let words = v2_lib::autorun::report::action_words(&a);
+    assert!(!words.contains("abc123"), "{words}");
+}
