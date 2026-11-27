@@ -395,6 +395,7 @@
     root.hidden = false;
     refresh();
     document.addEventListener('keydown', onKey);
+    toggle();
     if (els.failedItem && els.failedItem.scrollIntoView) els.failedItem.scrollIntoView({ block: 'nearest' });
     els.play.focus();
   }

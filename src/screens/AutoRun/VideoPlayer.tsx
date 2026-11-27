@@ -149,10 +149,12 @@ export default function VideoPlayer({
       void v.play()?.catch(() => setPlaying(false));
     }
   };
-  const moveStep = (dir: -1 | 1) => {
+  // The Previous step button goes back to the start when there is no earlier
+  // step; the `[` key does nothing then.
+  const moveStep = (dir: -1 | 1, fromKey = false) => {
     const to = stepTarget(timeline, readNow(), dir);
     if (to !== null) seek(to);
-    else if (dir < 0) seek(0);
+    else if (dir < 0 && !fromKey) seek(0);
   };
 
   // The keys live on the dialog itself, so they work wherever the focus is
@@ -179,12 +181,27 @@ export default function VideoPlayer({
         h.seek(h.readNow() - SKIP_MS);
       } else if (k === "]" || k === "[") {
         e.preventDefault();
-        h.moveStep(k === "]" ? 1 : -1);
+        h.moveStep(k === "]" ? 1 : -1, true);
       }
     };
     dialog.addEventListener("keydown", onKey);
     return () => dialog.removeEventListener("keydown", onKey);
   }, []);
+
+  // Where the focus starts: the position slider until the video can play,
+  // then Play/Pause - never Close, which Space would press. The video starts
+  // playing once it has a source; a refused play() is ignored.
+  const playBtn = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    bar.current?.focus();
+  }, []);
+  useEffect(() => {
+    const v = video.current;
+    if (!src || cannotPlay || !v) return;
+    playBtn.current?.focus();
+    setPlaying(true);
+    void Promise.resolve(v.play()).catch(() => setPlaying(false));
+  }, [src, cannotPlay]);
 
   // The failed step is on screen when the player opens.
   useEffect(() => {
@@ -251,14 +268,14 @@ export default function VideoPlayer({
               className="relative h-4 cursor-pointer rounded bg-border focus-visible:outline-2 focus-visible:outline-accent"
               onClick={(e) => seekFromClick(e.clientX)}
             >
-              {failAt !== null && (
+              {len > 0 && failAt !== null && (
                 <span
                   data-testid="failed-stretch"
                   className="absolute inset-y-0 bg-danger/40"
                   style={{ left: `${timelinePercent(failAt, len)}%`, right: 0 }}
                 />
               )}
-              {ticks.map((t, i) => (
+              {len > 0 && ticks.map((t, i) => (
                 <span
                   key={`${t.at}-${i}`}
                   title={t.title}
@@ -272,7 +289,7 @@ export default function VideoPlayer({
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" disabled={!src || cannotPlay} onClick={toggle}>
+              <Button ref={playBtn} size="sm" variant="outline" disabled={!src || cannotPlay} onClick={toggle}>
                 {playing ? <IconPauseVideo aria-hidden /> : <IconPlayVideo aria-hidden />}
                 {playing ? "Pause" : "Play"}
               </Button>

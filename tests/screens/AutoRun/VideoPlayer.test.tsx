@@ -115,10 +115,11 @@ test("a jump clamps to the video's length", () => {
 test("Space plays and pauses, arrows skip 5 s, [ and ] move between steps", () => {
   const { video } = show();
   const dialog = screen.getByRole("dialog");
-  fireEvent.keyDown(dialog, { key: " " });
-  expect(play).toHaveBeenCalledTimes(1);
+  expect(play).toHaveBeenCalledTimes(1); // it starts playing by itself
   fireEvent.keyDown(dialog, { key: " " });
   expect(pause).toHaveBeenCalledTimes(1);
+  fireEvent.keyDown(dialog, { key: " " });
+  expect(play).toHaveBeenCalledTimes(2);
   video.currentTime = 4;
   fireEvent.keyDown(dialog, { key: "ArrowRight" });
   expect(video.currentTime).toBe(9);
@@ -133,6 +134,7 @@ test("Space plays and pauses, arrows skip 5 s, [ and ] move between steps", () =
 
 test("Space on a focused button presses it and does not toggle play", () => {
   show();
+  play.mockClear();
   const step = screen.getByRole("button", { name: "Step 1 at 0:04" });
   step.focus();
   fireEvent.keyDown(step, { key: " " });
@@ -199,4 +201,46 @@ test("a video element error says the same", () => {
   const { video } = show();
   fireEvent.error(video);
   expect(screen.getByText(VIDEO_WONT_PLAY)).toBeInTheDocument();
+});
+
+test("it starts playing, with the focus on Pause and never on Close", () => {
+  const { props } = show();
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Pause" })).toHaveFocus();
+  // Space straight after opening does not close the player.
+  fireEvent.keyDown(document.activeElement as Element, { key: " " });
+  fireEvent.keyDown(document.activeElement as Element, { key: "Enter" });
+  expect(props.onClose).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+test("until the video arrives the slider has the focus, then Play takes it", () => {
+  const props = { timeline: TIMELINE, loading: true, error: false, saving: false, onSave: vi.fn(), onClose: vi.fn() };
+  const { rerender } = render(<VideoPlayer {...props} src={null} />);
+  expect(screen.getByRole("slider", { name: "Position" })).toHaveFocus();
+  expect(play).not.toHaveBeenCalled();
+  rerender(<VideoPlayer {...props} loading={false} src="blob:the-video" />);
+  expect(screen.getByRole("button", { name: "Pause" })).toHaveFocus();
+  expect(play).toHaveBeenCalledTimes(1);
+});
+
+test("a refused play leaves it paused", async () => {
+  play.mockImplementationOnce(() => Promise.reject(new Error("blocked")));
+  show();
+  expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+});
+
+test("[ at the first step does nothing, but Previous step goes to the start", () => {
+  const { video } = show();
+  video.currentTime = 0.5;
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "[" });
+  expect(video.currentTime).toBe(0.5);
+  fireEvent.click(screen.getByRole("button", { name: "Previous step" }));
+  expect(video.currentTime).toBe(0);
+});
+
+test("with no usable length there are no ticks and no failed stretch", () => {
+  show({ timeline: { ...TIMELINE, length_ms: null } });
+  expect(screen.queryByTestId("failed-stretch")).toBeNull();
+  expect(screen.getByRole("slider", { name: "Position" }).querySelectorAll("[title]")).toHaveLength(0);
 });

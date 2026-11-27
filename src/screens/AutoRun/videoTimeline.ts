@@ -27,18 +27,36 @@ export function stepLabel(stepNumber: number): string {
   return `Step ${stepNumber}`;
 }
 
+/** Entries with no usable start are dropped, negatives become 0, the rest are
+ * sorted by start (ties keep their order), and a missing name becomes
+ * "<fallback> N" by its place in the list. The report player does the same. */
+function tidy<T extends { at_ms: number }>(list: T[], key: keyof T, fallback: string): T[] {
+  const kept: { item: T; i: number }[] = [];
+  list.forEach((m, i) => {
+    if (!m || typeof m.at_ms !== "number" || !Number.isFinite(m.at_ms)) return;
+    const name = m[key];
+    kept.push({ item: { ...m, at_ms: Math.max(0, m.at_ms), [key]: typeof name === "string" && name ? name : `${fallback} ${i + 1}` }, i });
+  });
+  kept.sort((a, b) => a.item.at_ms - b.item.at_ms || a.i - b.i);
+  return kept.map((k) => k.item);
+}
+
 /** The player's timeline for a case; empty when it kept no timings. */
 export function caseTimeline(c: CaseRecord): Timeline {
   const marks = c.video_marks;
   return {
     title: `Video of #${c.case_id} ${c.title}`,
     length_ms: marks?.length_ms ?? null,
-    steps: (marks?.steps ?? []).map((s) => ({
-      name: s.cleanup ? CLEANUP_LABEL : stepLabel(s.step_number),
-      at_ms: s.at_ms,
-      failed: Boolean(s.failed),
-      actions: (s.actions ?? []).map((a) => ({ at_ms: a.at_ms, label: a.label })),
-    })),
+    steps: tidy(
+      (marks?.steps ?? []).map((s) => ({
+        name: s.cleanup ? CLEANUP_LABEL : stepLabel(s.step_number),
+        at_ms: s.at_ms,
+        failed: Boolean(s.failed),
+        actions: tidy((s.actions ?? []).map((a) => ({ at_ms: a.at_ms, label: a.label })), "label", "Action"),
+      })),
+      "name",
+      "Step",
+    ),
     marks: [],
   };
 }
@@ -49,7 +67,7 @@ export function recordingTimeline(e: RecordingEntry): Timeline {
     title: `Recording: ${e.title}`,
     length_ms: e.duration_ms,
     steps: [],
-    marks: (e.marks ?? []).map((m) => ({ at_ms: m.at_ms, label: m.label })),
+    marks: tidy((e.marks ?? []).map((m) => ({ at_ms: m.at_ms, label: m.label })), "label", "Action"),
   };
 }
 

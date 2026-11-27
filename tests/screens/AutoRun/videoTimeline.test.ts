@@ -102,3 +102,27 @@ test("clockText", () => {
   expect(clockText(-5)).toBe("0:00");
   expect(clockText(Number.NaN)).toBe("0:00");
 });
+
+test("caseTimeline sorts by start, keeps ties in order, clamps negatives and drops unusable starts", () => {
+  const t = caseTimeline(
+    caseWith({
+      length_ms: 20000,
+      steps: [
+        { step_number: 2, at_ms: 9000, actions: [{ at_ms: 9500, label: "b" }, { at_ms: 9100, label: "a" }, { at_ms: null, label: "x" }] },
+        { step_number: 1, at_ms: -50 },
+        { step_number: 3, at_ms: null },
+        { step_number: 4, at_ms: 9000 },
+      ],
+    } as unknown as VideoMarks),
+  );
+  expect(t.steps.map((s) => [s.name, s.at_ms])).toEqual([["Step 1", 0], ["Step 2", 9000], ["Step 4", 9000]]);
+  expect(t.steps[1].actions.map((a) => a.label)).toEqual(["a", "b"]);
+});
+
+test("a recording's marks are tidied too, and a missing label becomes Action N", () => {
+  const e = {
+    id: "r1", title: "Bug 1", created: "x", duration_ms: 9000, file: "r1.mp4",
+    marks: [{ at_ms: 5000, label: "" }, { at_ms: 1000, label: "first" }, { at_ms: Number.NaN, label: "bad" }],
+  } as RecordingEntry;
+  expect(recordingTimeline(e).marks).toEqual([{ at_ms: 1000, label: "first" }, { at_ms: 5000, label: "Action 1" }]);
+});

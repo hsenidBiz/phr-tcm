@@ -254,3 +254,36 @@ test("compact: a case with no video shows nothing and asks nothing", () => {
   expect(screen.queryByRole("button")).toBeNull();
   expect(asked).toEqual([]);
 });
+
+test("a second Watch press while the video is loading does not fetch again", async () => {
+  const gate = deferred<string>();
+  let fetched = 0;
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") {
+      fetched++;
+      return gate.promise;
+    }
+    return null;
+  });
+  show(NAME);
+  const watchButton = await screen.findByRole("button", { name: "Watch video" });
+  fireEvent.click(watchButton);
+  fireEvent.click(watchButton);
+  await waitFor(() => expect(fetched).toBe(1));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(fetched).toBe(1);
+  gate.resolve(btoa("mp4"));
+});
+
+test("a failed fetch shows the player's own note and no toast", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") throw new Error("gone");
+    return null;
+  });
+  show(NAME);
+  fireEvent.click(await screen.findByRole("button", { name: "Watch video" }));
+  expect(await screen.findByText(VIDEO_WONT_PLAY)).toBeInTheDocument();
+  expect(toastMock.error).not.toHaveBeenCalled();
+});

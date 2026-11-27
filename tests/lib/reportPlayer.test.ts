@@ -85,7 +85,18 @@ test("open builds a dialog with the steps and the failed one marked", () => {
   expect((dialog().querySelector(".vp__fail") as HTMLElement).style.left).toBe("45%");
   expect(video().getAttribute("src")).toBe("../shots/video-1-1.mp4");
   expect(player().isOpen()).toBe(true);
-  expect(document.activeElement).toBe(buttonNamed("Play"));
+  // It starts playing, and the focus is on Play/Pause (now Pause), never on Close.
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(document.activeElement).toBe(buttonNamed("Pause"));
+  expect(document.activeElement).not.toBe(buttonNamed("Close player"));
+});
+
+test("a refused play leaves it paused and does not throw", async () => {
+  play.mockImplementation(() => Promise.reject(new Error("blocked")));
+  open();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(buttonNamed("Play")).toBeTruthy();
 });
 
 test("each step has a tick titled with its name, and Save video is a download link", () => {
@@ -124,8 +135,9 @@ test("clicking a step or an action seeks there", () => {
 test("keys: Space, arrows, [ ] act; Space on a button is left to the button; Esc closes and focus returns", () => {
   open();
   const key = (k: string, target: Element = dialog()) => fireEvent.keyDown(target, { key: k });
+  expect(play).toHaveBeenCalledTimes(1); // autoplay
   key(" ");
-  expect(play).toHaveBeenCalledTimes(1);
+  expect(pause).toHaveBeenCalledTimes(1);
   state.time = 4;
   key("ArrowRight");
   expect(state.time).toBe(9);
@@ -136,6 +148,9 @@ test("keys: Space, arrows, [ ] act; Space on a button is left to the button; Esc
   state.time = 9.2;
   key("[");
   expect(state.time).toBe(4);
+  state.time = 0.5;
+  key("[");
+  expect(state.time).toBe(0.5); // no earlier step: the key does nothing
   // Space on a focused button presses it and does not toggle play.
   play.mockClear();
   const step = buttonNamed("Step 1 at 0:04")!;
@@ -180,8 +195,9 @@ test("the playing step is marked as the video plays", () => {
 
 test("Play turns into Pause, and the speed buttons set the playback rate", () => {
   open();
-  press("Play");
-  expect(buttonNamed("Pause")).toBeTruthy();
+  expect(buttonNamed("Pause")).toBeTruthy(); // autoplay
+  press("Pause");
+  expect(buttonNamed("Play")).toBeTruthy();
   press("2x");
   expect(state.rate).toBe(2);
   expect(buttonNamed("2x")!.getAttribute("aria-pressed")).toBe("true");

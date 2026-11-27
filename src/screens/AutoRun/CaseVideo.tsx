@@ -61,6 +61,7 @@ export default function CaseVideo({
 
   if (!name || info.isLoading || info.isError) return null;
   const watch = () => {
+    if (play.isPending) return;
     setOpen(true);
     play.mutate();
   };
