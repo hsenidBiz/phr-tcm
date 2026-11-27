@@ -5,7 +5,7 @@ use serde_json::json;
 use v2_lib::ai_tools::AUTORUN_TOOLS;
 use v2_lib::autorun::failures::{CLASSIFY_FIRST, REPAIR_BOUNDS};
 use v2_lib::autorun::pw_rules::{shipped_line, Why, SHIPPED_COPY};
-use v2_lib::autorun::roles::{cases_repaired_by, role_for_call, Role, ROLE_MAX_CHARS, ROLE_MAX_LINES};
+use v2_lib::autorun::roles::{cases_repaired_by, declares_account_change, role_for_call, Role, ROLE_MAX_CHARS, ROLE_MAX_LINES};
 
 /// A text with every run of whitespace read as one space, so a sentence
 /// wrapped over lines still matches.
@@ -167,7 +167,6 @@ fn the_case_rewriter_carries_the_owners_rules() {
         Role::CaseRewriter,
         &[
             "every step you do not declare must come back exactly as it was",
-            "never changes the account",
             "change only the steps the rewrite touched",
             "a replay of the whole case as a separate step",
             "gives_up with why, and the person sees it",
@@ -465,5 +464,34 @@ fn every_role_tells_a_named_subagent_to_pass_its_name() {
 fn writer_and_rewriter_keep_the_cases_delete_in_its_step() {
     for r in [Role::Writer, Role::CaseRewriter] {
         assert!(flat(&r.tcm_rules()).contains("stays in its step with its check"), "{}", r.name());
+    }
+}
+
+#[test]
+fn an_account_declaration_is_found_in_every_shape() {
+    let edit = json!({"case_id": 7, "steps": [], "account": true, "why": "x"});
+    assert!(declares_account_change(&json!({"scripts": [], "edits": [edit.clone()]})));
+    assert!(declares_account_change(&json!({"edits": json!([edit.clone()]).to_string()})));
+    assert!(declares_account_change(&json!({"scripts": {"scripts": [], "edits": [edit.clone()]}})));
+    assert!(declares_account_change(&json!({"scripts": json!({"scripts": [], "edits": [edit.clone()]}).to_string()})));
+    assert!(declares_account_change(&json!({"scripts": [{"case_id": 7, "steps": [], "edits": [{"steps": [], "account": true, "why": "x"}]}]})));
+    assert!(declares_account_change(&json!({"edits": [{"case_id": 7, "steps": [], "account": "true", "why": "x"}]})));
+    assert!(!declares_account_change(&json!({"edits": [{"case_id": 7, "steps": [], "account": false, "why": "x"}]})));
+    assert!(!declares_account_change(&json!({"edits": [{"case_id": 7, "steps": [], "why": "x"}]})));
+    assert!(!declares_account_change(&json!({})));
+}
+
+#[test]
+fn the_roles_say_who_may_change_the_account() {
+    holds(Role::Writer, &["\"account\": true"]);
+    holds(Role::CaseRewriter, &["a healer never does"]);
+    holds(Role::Healer, &["never change the account"]);
+}
+
+#[test]
+fn the_writer_and_healer_read_the_repos_claude_md_and_gen_test_first() {
+    for role in [Role::Writer, Role::Healer] {
+        let text = flat(&role.tcm_rules());
+        assert!(text.contains("CLAUDE.md") && text.contains("gen-test"), "{}", role.name());
     }
 }

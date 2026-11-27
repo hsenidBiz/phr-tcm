@@ -445,7 +445,9 @@ fn the_guide_lists_every_refusal_the_edit_gate_can_give() {
     let g = autorun_guide();
     for term in [
         "an edit needs a reason",
-        "the account a script runs as cannot be changed by a repair",
+        "but was not declared - add \"account\": true",
+        "the account was declared but not changed",
+        "there is no saved account",
         "step N appears more than once in the script",
         "the steps are in a different order - a repair does not reorder a script",
     ] {

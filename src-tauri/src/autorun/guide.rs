@@ -3044,12 +3044,14 @@ a script - with one entry per case you are changing: the `case_id`, every
 step number whose actions were added, removed or changed, and one
 sentence of `why`. When the repair changes the script's `area` - and
 leaving out an `area` the saved script has is a change - the entry also
-says `"area": true`. This gate can refuse a save for any of these reasons:
+says `"area": true`. When the repair changes the account the script runs as (a writer's or a case rewriter's call, never a healer's), the entry says `"account": true` and the account is a saved key. This gate can refuse a save for any of these reasons:
 
 - a step you changed but left out of `edits` - `step N was changed but not declared`, naming every such step
 - a step named in `edits` that you did not actually touch - `step N was declared but not changed`
 - an `edits` entry with no reason - `an edit needs a reason`
-- a repair that tries to change which account the script signs in as - `the account a script runs as cannot be changed by a repair - a person picks it in the app`
+- a changed account without `"account": true` in the case's `edits` entry - `case N: the account changed from ... but was not declared - add "account": true with its "why" to the case's "edits" entry, or send the account as saved`
+- `"account": true` when the account did not change - `the account was declared but not changed`
+- an account that is not saved in this environment - `there is no saved account "..." in this environment`
 - a changed `area` without `"area": true` in the case's `edits` entry - `the area changed from ... but was not declared`; and `"area": true` when the area did not change - `the area was declared but not changed`
 - the same step number written twice in one script - `step N appears more than once in the script`
 - the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`

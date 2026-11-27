@@ -431,3 +431,70 @@ fn a_second_guide_section_leaves_the_rules_out_and_says_they_hold() {
     s.reset();
     assert!(ask(&mut s, args).contains(quick_rules().trim_end()));
 }
+
+fn repair_account_args() -> Value {
+    json!({
+        "scripts": [{ "case_id": 7, "title": "t", "account": "hr_user", "steps": [] }],
+        "edits": [{ "case_id": 7, "steps": [], "account": true, "why": "w" }]
+    })
+}
+
+fn saved(fake: &Fake) -> bool {
+    fake.calls.borrow().iter().any(|c| c.contains("/autorun-script"))
+}
+
+#[test]
+fn a_healer_session_cannot_declare_an_account_change() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    failures(&fake, &mut s);
+    let result = send(&fake, &mut s, "save_autorun_script", repair_account_args());
+    assert_eq!(result["isError"], json!(true));
+    assert_eq!(texts(&result), vec![roles::HEALER_KEEPS_ACCOUNT.to_string()]);
+    assert!(!saved(&fake), "nothing reaches the app");
+}
+
+#[test]
+fn a_writer_session_may_declare_an_account_change() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    send(&fake, &mut s, "start_autorun_discovery", json!({ "account": "a" }));
+    let result = send(&fake, &mut s, "save_autorun_script", repair_account_args());
+    assert_ne!(result["isError"], json!(true));
+    assert!(saved(&fake));
+}
+
+#[test]
+fn a_healer_may_still_save_a_repair_that_keeps_the_account() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    failures(&fake, &mut s);
+    send(&fake, &mut s, "save_autorun_script", repair_args());
+    assert!(saved(&fake));
+}
+
+#[test]
+fn only_the_healer_agent_is_refused_in_a_shared_book() {
+    use v2_lib::mcp::handle_message_shared;
+    use v2_lib::mcp_session::SessionBook;
+    let fake = Fake::new();
+    let book = SessionBook::new();
+    let call = |m: &str, p: &str, b: &str| fake.answer(m, p, b);
+    let ask = |agent: &str, tool: &str, mut arguments: Value| -> Value {
+        arguments["agent"] = json!(agent);
+        let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": tool, "arguments": arguments } }).to_string();
+        book.tick(Some(agent), 1_000);
+        let out = handle_message_shared(&msg, "1.0.0", &call, &book).expect("an answer");
+        serde_json::from_str::<Value>(&out).unwrap()["result"].clone()
+    };
+    ask("healer-1", "get_autorun_failures", json!({}));
+    ask("writer-1", "start_autorun_discovery", json!({ "account": "a" }));
+    let healer = ask("healer-1", "save_autorun_script", repair_account_args());
+    assert_eq!(healer["isError"], json!(true));
+    assert_eq!(texts(&healer), vec![roles::HEALER_KEEPS_ACCOUNT.to_string()]);
+    let writer = ask("writer-1", "save_autorun_script", repair_account_args());
+    assert_ne!(writer["isError"], json!(true));
+}

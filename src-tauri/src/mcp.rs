@@ -285,6 +285,8 @@ trait RoleNotes {
     fn note_kind(&mut self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note>;
     /// As `Session::quick_rules_given`.
     fn quick_rules_given(&mut self, agent: Option<&str>) -> bool;
+    /// Whether the agent's session has been given `role`'s rules (always false untracked).
+    fn delivered(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role) -> bool;
 }
 
 impl RoleNotes for crate::mcp_session::Session {
@@ -300,6 +302,9 @@ impl RoleNotes for crate::mcp_session::Session {
     fn quick_rules_given(&mut self, _agent: Option<&str>) -> bool {
         crate::mcp_session::Session::quick_rules_given(self)
     }
+    fn delivered(&mut self, _agent: Option<&str>, role: crate::autorun::roles::Role) -> bool {
+        crate::mcp_session::Session::delivered(self, role)
+    }
 }
 
 impl RoleNotes for &crate::mcp_session::SessionBook {
@@ -314,6 +319,9 @@ impl RoleNotes for &crate::mcp_session::SessionBook {
     }
     fn quick_rules_given(&mut self, agent: Option<&str>) -> bool {
         crate::mcp_session::SessionBook::quick_rules_given(self, agent)
+    }
+    fn delivered(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role) -> bool {
+        crate::mcp_session::SessionBook::delivered(self, agent, role)
     }
 }
 
@@ -397,6 +405,19 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             // same subagent.
             let _holding = CallingAgent::set(agent.clone());
             let agent = agent.as_deref();
+            // A healer's rules hold the account: the save never reaches the app.
+            if name == "save_autorun_script"
+                && crate::autorun::roles::declares_account_change(&args)
+                && session.delivered(agent, crate::autorun::roles::Role::Healer)
+            {
+                return Some(
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": { "content": [{ "type": "text", "text": crate::autorun::roles::HEALER_KEEPS_ACCOUNT }], "isError": true },
+                    })
+                    .to_string(),
+                );
+            }
             let (mut result, reached) = tools_call_outcome(params, call);
             if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
