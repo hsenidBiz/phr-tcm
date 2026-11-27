@@ -273,6 +273,20 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
                 out.push(pattern(step, p, s));
             }
         }
+        Action::ExpectDatabase { count: n, at_least, at_most, equals, .. } => {
+            if let Some(v) = equals {
+                out.push(text(step, v, true, s));
+            }
+            if let Some(n) = n {
+                out.push(count(step, *n, Rel::Equal, s));
+            }
+            if let Some(n) = at_least {
+                out.push(count(step, *n, Rel::AtLeast, s));
+            }
+            if let Some(n) = at_most {
+                out.push(count(step, *n, Rel::AtMost, s));
+            }
+        }
         Action::ExpectAttribute { equals, matches, .. } => {
             if let Some(v) = equals {
                 out.push(attribute_value(step, v, s));

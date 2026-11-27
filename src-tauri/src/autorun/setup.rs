@@ -248,7 +248,7 @@ pub fn fixture_values(root: &Path, org: &str, project: &str, steps: &[StepScript
 fn holds_secret_placeholder(action: &serde_json::Map<String, Value>) -> bool {
     let fields: &[&str] = match action.get("kind").and_then(Value::as_str) {
         Some("fill" | "check_text" | "expect_contains_text") => &["value"],
-        Some("expect_text") => &["equals", "matches"],
+        Some("expect_text" | "expect_database") => &["equals", "matches"],
         Some("use_component") => {
             let mut texts = Vec::new();
             if let Some(inputs) = action.get("inputs") {

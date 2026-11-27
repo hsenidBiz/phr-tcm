@@ -330,6 +330,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs (see "Components")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
+- `{ "kind": "expect_database", "sql": "SELECT TOP 1 status FROM LeaveRequest WHERE request_no = {{noted.request}} ORDER BY created_at DESC", "column": "status", "equals": "Approved" }` - read the environment's database and check the answer: `exists`, or `count` / `at_least` / `at_most` (of the rows), or `column` with `equals` / `matches`; exactly one of those. Read-only; see "Checking the database"
 - `{ "kind": "expect_tab", "name": "report" }` - wait for the tab the page opened since the previous step began, and call it `report`; `url_contains` and `within_ms` (default 10000) are optional (see "Tabs")
 - `{ "kind": "open_tab", "name": "second", "url": "/hr/employee/42" }` - open a new tab in the same signed-in session, at an address `navigate` could go to, and switch to it
 - `{ "kind": "switch_tab", "name": "report" }` - make that tab the current tab: every later action acts in it
@@ -948,6 +949,37 @@ try it waits at most 30 seconds, whatever `within_ms` says.
 
 Watched runs list no downloads, because their download folder is emptied
 when the browser closes; only an unattended run keeps its files.
+
+## Checking the database
+
+Use `expect_database` after a save, to prove the change reached the
+database and not only the page. It reads; it never writes.
+
+- Best: note the id the page shows with `remember_text` (`"as":
+  "request"`), then write `{{noted.request}}` in the SQL. The save refuses
+  a `{{noted.name}}` that no earlier `remember_text` of the case notes.
+- Otherwise match the values the script typed, and add `ORDER BY <the
+  newest column> DESC` with `TOP 1`, so the check reads the row the step
+  just made and not an older one.
+- Keep the SQL narrow: one table, a `WHERE` that names the row. `count`,
+  `at_least` and `at_most` count the rows the query returns, so select the
+  key column and not `COUNT(*)`, which always returns one row. To check a
+  total that `COUNT(*) AS total` computes, use `"column": "total"` with
+  `equals`, and give that query an `ORDER BY total`.
+- Only a `SELECT` is accepted. A write is refused when the script is saved.
+- Never put quotes round a placeholder. `{{noted.request}}`,
+  `{{setup.*}}` and `{{fixture.*}}` are filled in as quoted text for you.
+- A `column` check needs an `ORDER BY`, so the row it reads is the same
+  one each time. `exists` alone needs none.
+- It waits for the answer to hold, up to `timeout_ms`, so a slow save does
+  not fail it.
+
+It needs the Database Access module on and a database chosen for the
+environment on the AI Bridge tab. Without them the step fails and says
+which is missing: "This step checks the database, but Database Access is
+turned off", or "... no database is chosen for this environment on the AI
+Bridge tab". A database that cannot be reached is a failure to try again,
+not a finding about the app.
 
 ## Tables and grids
 
