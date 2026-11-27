@@ -410,9 +410,12 @@ export const autoRun: Screen = {
       id: "case-steps",
       shot: SCRIPT,
       group: "scripts",
-      locate: { text: "The case's steps" },
-      name: "The case's steps",
-      does: "The test case's own steps and expected results, to write the script against. They are read from Azure DevOps and do not change here.",
+      locate: { role: "heading", name: "Steps" },
+      name: "Steps",
+      does:
+        "Each of the test case's steps and its expected result on the left, and what the script does for it on the right, with the parts it leaves unchecked under it behind a **Not checked** tag. " +
+        "The header sums up how many steps are checked and how many parts are not; past three steps the rest fold behind a **Steps 4 to N** button, and a step that is not checked is never folded away. " +
+        "The case's own text is read from Azure DevOps and does not change here.",
     },
     {
       id: "runs-as",
@@ -440,7 +443,7 @@ export const autoRun: Screen = {
       name: "Must not save",
       does:
         "For a case that works on shared data and must never change it. While the case runs, any save the page tries to send is stopped before it reaches the site, and the case fails. " +
-        "Only you can turn it off, here.",
+        "Only you can turn it off, here. The (i) beside it reads the same explanation as a tooltip.",
     },
     {
       id: "readable-script",
@@ -449,7 +452,7 @@ export const autoRun: Screen = {
       locate: { role: "region", name: "Action script" },
       name: "Action script",
       does:
-        "What the app does at each step, in plain sentences under each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
+        "What the app does at each step, in plain sentences beside each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
         "A step whose expected result is not checked says why. A password is never shown: it reads **the account's password**. " +
         "A **Clean-up** at the end removes what the case made, and its failure never fails the case. " +
         "An unattended run plays it even after a step fails; in a watched run you press **Run clean-up**, and a replay runs it only when replayed past it. " +
@@ -474,7 +477,7 @@ export const autoRun: Screen = {
       group: "scripts",
       locate: { role: "button", name: "Edit script" },
       name: "Edit script",
-      does: "Shows the script as JSON in the same place, with every detail, to change it. The window always opens on the sentences.",
+      does: "At the top right of the window: shows the script as JSON in place of the steps, with every detail, to change it. The window always opens on the sentences.",
     },
     {
       id: "script-json",
@@ -500,7 +503,7 @@ export const autoRun: Screen = {
       locate: { text: "Checks" },
       name: "Checks",
       does:
-        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**.",
+        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**. It shows only while some step is not checked: when every step is, the Steps header reads **all N checked** instead.",
     },
     {
       id: "preconditions",
@@ -1082,8 +1085,8 @@ export const autoRun: Screen = {
     {
       title: "Run cases that need different settings",
       steps: [
-        "In the case's script, under **Needs these settings**, type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
-        "Under **Changes** and **Needs unchanged**, name shared data a case changes, such as a published cycle, and the cases that need it as it was.",
+        "In the case's script, under **Before it runs**, press **Setting**, type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
+        "In the same place, press **Change** or **Needs unchanged** and name shared data a case changes, such as a published cycle, and the cases that need it as it was. What you add shows as a chip you can remove.",
         "Run the selection. Auto Test puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
         "The run window says which batch is running, with a **Batch** label and a tab per batch, the current one tinted, such as **2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
@@ -1093,8 +1096,8 @@ export const autoRun: Screen = {
       title: "Copy a script to another environment",
       steps: [
         "Open the case's script. This needs two or more environments and a saved script.",
-        "Press **Copy to environment**, choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
-        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy from environment**; save or discard your changes to the open script first.",
+        "Press **Copy between environments** and choose **Copy to another environment**, then choose the environment, and read what the dialog says it brings: the areas, components and sign-in address the script uses, and anything the other environment lacks, such as an account.",
+        "Press **Copy**. If that environment already has a script for the case, the dialog says so and the button reads **Replace** with its name; nothing is replaced until you press it. To pull a script the other way, open the case in the environment that lacks it and press **Copy between environments** and choose **Copy from another environment**; save or discard your changes to the open script first.",
       ],
     },
     {

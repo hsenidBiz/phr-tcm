@@ -71,3 +71,15 @@ export function uncheckedLine(e: UncheckedExpectation): string {
 export function uncheckedWords(n: number): string {
   return `${plural(n, "expectation")} unchecked`;
 }
+
+/** What a step leaves unchecked, one line per part: the sentence as it
+ * stands, or each entry as "item - why". Empty for none or blank, and for
+ * a shape that is neither (the value comes from JSON a person may be
+ * typing). */
+export function uncheckedParts(u: Unchecked | null | undefined): string[] {
+  if (typeof u === "string") return u.trim() ? [u.trim()] : [];
+  if (!Array.isArray(u)) return [];
+  return u
+    .filter((e) => typeof e === "object" && e !== null && typeof e.item === "string" && e.item.trim() !== "")
+    .map((e) => `${e.item.trim()} - ${typeof e.why === "string" ? e.why.trim() : ""}`);
+}

@@ -63,6 +63,8 @@ export {
   // arrow out. Bringing one in from another environment: an arrow in.
   FolderOutput as IconCopyToEnvironment,
   FolderInput as IconCopyFromEnvironment,
+  // The one footer button that opens the copy menu: to or from another environment.
+  ArrowLeftRight as IconCopyBetweenEnvironments,
 
   // Undoing and stopping
   Undo2 as IconUndo,
