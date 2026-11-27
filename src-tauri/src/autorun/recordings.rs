@@ -82,7 +82,8 @@ pub fn safe_recording_name(name: &str) -> bool {
 fn is_format_char(c: char) -> bool {
     matches!(c,
         '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
-        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{E0001}' | '\u{E0020}'..='\u{E007F}')
 }
 
 /// A title for the list: whitespace and control characters folded to one

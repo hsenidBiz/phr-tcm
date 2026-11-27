@@ -25,6 +25,7 @@ fn titles_are_cleaned_and_bad_ones_refused() {
     assert_eq!(clean_title("www.app.com").unwrap_err(), address);
     assert_eq!(clean_title("https:\u{200B}//x").unwrap_err(), address);
     assert_eq!(clean_title("https:\u{202E}//x").unwrap_err(), address);
+    assert_eq!(clean_title("https:\u{E0041}//x").unwrap_err(), address);
 }
 
 #[test]
@@ -144,10 +145,15 @@ fn concurrent_adds_all_land_in_the_index() {
     let _lock = crate::serial::autorun();
     let dir = root();
     let path = dir.path().to_path_buf();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|i| {
             let path = path.clone();
-            std::thread::spawn(move || add(&path, &format!("rec {i}"), i, MP4).unwrap())
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                add(&path, &format!("rec {i}"), i, MP4).unwrap()
+            })
         })
         .collect();
     for t in threads {
@@ -167,14 +173,25 @@ fn a_failed_index_write_removes_the_file_just_written() {
     let _lock = crate::serial::autorun();
     let dir = root();
     let folder = recordings::recordings_dir(dir.path());
-    std::fs::create_dir_all(folder.join("index.json")).unwrap();
-    assert!(add(dir.path(), "t", 1, MP4).is_err());
+    let before = add(dir.path(), "before", 1, MP4).unwrap();
+    // A valid index that reads fine but cannot be replaced: read-only.
+    let index = folder.join("index.json");
+    let original = std::fs::read(&index).unwrap();
+    let mut perms = std::fs::metadata(&index).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&index, perms.clone()).unwrap();
+    let result = add(dir.path(), "t", 1, MP4);
+    perms.set_readonly(false);
+    std::fs::set_permissions(&index, perms).unwrap();
+    assert!(result.is_err(), "replacing a read-only index should fail");
     let mp4s = std::fs::read_dir(&folder)
         .unwrap()
         .flatten()
         .filter(|f| f.file_name().to_string_lossy().ends_with(".mp4"))
         .count();
-    assert_eq!(mp4s, 0);
+    assert_eq!(mp4s, 1, "only the first recording's file remains");
+    assert_eq!(std::fs::read(&index).unwrap(), original);
+    assert_eq!(list(dir.path()), vec![before]);
 }
 
 #[test]
