@@ -880,10 +880,11 @@ pub async fn route_as(
             (Some(going), _) => going,
             (None, Ok(root)) => {
                 let mut held = crate::commands::autorun::session_slot(slot).lock().await;
-                let answer = recording_start_in(&mut held, &root, body, crate::autorun::sessions::now_ms()).await;
+                let began = crate::autorun::sessions::now_ms();
+                let answer = recording_start_in(&mut held, &root, body, began).await;
                 drop(held);
                 if answer.0 == 200 {
-                    crate::commands::autorun::spawn_recording_cap(slot);
+                    crate::commands::autorun::spawn_recording_cap(slot, began);
                 }
                 answer
             }

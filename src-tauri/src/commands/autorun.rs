@@ -37,22 +37,24 @@ pub(crate) fn session_slot(n: SlotNo) -> &'static tokio::sync::Mutex<Option<Sess
     }
 }
 
-/// The ten-minute cap on a discovery's recording: after `recordings::CAP` it
-/// stops the recording slot `n`'s discovery has, if its own deadline has come
-/// (`ai_bridge::stop_recording_over_cap_in`). The deadline check means a later
-/// recording, started after the one this timer was for ended, is never
-/// stopped early.
-pub(crate) fn spawn_recording_cap(n: SlotNo) {
+/// The ten-minute cap on a discovery's recording: a timer for the recording
+/// that started at `started_ms` in slot `n`. It sleeps, then looks
+/// (`ai_bridge::cap_step_in`): due is read off the monotonic clock, and a
+/// recording that is not this one (it ended, or a newer one began) is left
+/// alone.
+pub(crate) fn spawn_recording_cap(n: SlotNo, started_ms: u64) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(crate::autorun::recordings::CAP).await;
         loop {
             let mut slot = session_slot(n).lock().await;
             let now = crate::autorun::sessions::now_ms();
-            crate::ai_bridge::stop_recording_over_cap_in(&mut slot, now).await;
-            // Woken early by the wall clock: the same recording, not yet due.
-            let Some(left) = crate::ai_bridge::cap_wait_left(&mut slot, now) else { break };
-            drop(slot);
-            tokio::time::sleep(left).await;
+            match crate::ai_bridge::cap_step_in(&mut slot, started_ms, now).await {
+                crate::ai_bridge::CapStep::Done => break,
+                crate::ai_bridge::CapStep::Wait(left) => {
+                    drop(slot);
+                    tokio::time::sleep(left).await;
+                }
+            }
         }
     });
 }
@@ -2197,6 +2199,9 @@ fn said_at_reset(
 /// A Playwright tab repo command still running (`pw_repo::process`) is
 /// ended first, its whole job with it.
 pub async fn close_autorun_browsers() {
+    // The recordings' one short budget runs from here, so the stops below
+    // cannot spend it and leave the closes without time.
+    let recordings_began = std::time::Instant::now();
     // The Playwright tab's repo command goes first: ending its job is
     // immediate, and nothing below can then hold it past the caller's bound.
     crate::pw_repo::process::stop_all();
@@ -2213,14 +2218,12 @@ pub async fn close_autorun_browsers() {
     // Every slot's browser, taken in slot order, one lock at a time. Each
     // closes on a blocking thread of its own, so the caller's bound is not
     // spent three times over.
-    // One short bound for every slot's recording together, not one each.
-    let recordings_began = std::time::Instant::now();
     let mut closing = Vec::new();
     for n in SlotNo::all() {
         let mut slot = session_slot(n).lock().await;
         // A recording going is stopped and kept, within a short bound of its
         // own: the exit is never held up for a video.
-        crate::ai_bridge::finish_recording_at_exit(&mut slot, crate::autorun::sessions::now_ms(), EXIT_RECORDING_BOUND.saturating_sub(recordings_began.elapsed())).await;
+        crate::ai_bridge::finish_recording_at_exit(&mut slot, crate::autorun::sessions::now_ms(), crate::ai_bridge::budget_left(EXIT_RECORDING_BOUND, recordings_began.elapsed())).await;
         // A mapping run going keeps its summary, as any other ending does.
         crate::ai_bridge::finish_mapping(&mut slot);
         // An explore session going has its change list closed the same way.
@@ -2245,7 +2248,7 @@ pub async fn close_autorun_browsers() {
 }
 
 /// How long a recording's stop and read may take as the app quits.
-pub(crate) const EXIT_RECORDING_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
+pub(crate) const EXIT_RECORDING_BOUND: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// What a supervised step answers: one outcome per action, the tab the
 /// step ran in when that was not `main` (`runner::InRun::tab`), and the

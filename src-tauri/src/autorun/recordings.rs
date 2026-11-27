@@ -32,6 +32,9 @@ pub struct Running {
     pub recording: crate::browser::recording::Recording,
     pub title: String,
     pub started_ms: u64,
+    /// The same moment on the monotonic clock: the cap is measured on it, so
+    /// a wall clock that jumps never lengthens or shortens a recording.
+    pub started: std::time::Instant,
     pub root: PathBuf,
 }
 

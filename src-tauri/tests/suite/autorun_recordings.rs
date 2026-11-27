@@ -214,8 +214,8 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::ai_bridge::{
-    cap_wait_left, close_browser_in, end_discovery_as, finish_recording_at_exit, end_discovery_in, end_discovery_releasing, finish_recording, forget_gone_browser,
-    recording_kept, recording_start_in, recording_stop_in, stop_recording_over_cap_in, EndedBy, ALREADY_RECORDING,
+    budget_left, cap_step_in, close_browser_in, end_discovery_as, end_discovery_in, end_discovery_releasing, finish_recording,
+    finish_recording_at_exit, forget_gone_browser, CapStep, recording_kept, recording_start_in, recording_stop_in, stop_recording_over_cap_in, EndedBy, ALREADY_RECORDING,
     NOT_RECORDING, RECORDING_LOST, RECORDING_NOT_AVAILABLE, RECORDING_NOT_STARTED, RECORDING_NO_DISCOVERY,
 };
 use v2_lib::browser::cdp::CdpError;
@@ -437,6 +437,11 @@ async fn stopping_puts_the_assistants_tab_back() {
     assert_eq!(recording_stop_in(&mut b, T0 + 2_000).await.0, 200);
     assert_eq!(b.as_ref().unwrap().d.tab_name(), "popup", "the assistant is back on its own tab");
     assert_eq!(list(dir.path()).len(), 1);
+    // The stream belongs to the recording's tab: it is read there, and the
+    // assistant's tab is only put back after.
+    let d = &b.as_ref().unwrap().d.tabs;
+    assert!(d.called_in("main").iter().any(|m| m == "IO.read"), "{:?}", d.called_in("main"));
+    assert!(!d.called_in("popup").iter().any(|m| m == "IO.read" || m == "IO.close"), "{:?}", d.called_in("popup"));
 }
 
 #[tokio::test]
@@ -455,52 +460,56 @@ async fn the_exit_stop_gives_up_at_its_bound_and_says_so() {
     let _lock = crate::serial::autorun();
     let dir = root();
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
-    // A bound already spent: the stop cannot finish within it.
+    // The browser never answers the stop.
+    b.as_mut().unwrap().d.hang_on = Some("Page.stopScreenRecording".to_string());
     let began = std::time::Instant::now();
-    finish_recording_at_exit(&mut b, T0 + 4_000, std::time::Duration::ZERO).await;
-    assert!(began.elapsed() < std::time::Duration::from_secs(2));
+    finish_recording_at_exit(&mut b, T0 + 4_000, std::time::Duration::from_millis(100)).await;
+    assert!(began.elapsed() < std::time::Duration::from_secs(2), "the exit is not held up");
     let said = v2_lib::applog::recent(200).iter().any(|l| l.message == "Auto Test recording: lost at exit");
     assert!(said, "the loss at exit is logged");
+    assert!(list(dir.path()).is_empty(), "nothing was kept, so \"lost\" is true");
+    assert!(b.as_mut().unwrap().discovery.as_ref().unwrap().recording.is_none());
     // Nothing going: nothing to wait for.
     let (mut idle, _) = slot(working(), exploring("Leave"));
     finish_recording_at_exit(&mut idle, T0, std::time::Duration::ZERO).await;
 }
 
-#[tokio::test]
-async fn the_cap_timer_sleeps_again_when_woken_early() {
-    let _lock = crate::serial::autorun();
-    let dir = root();
-    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
-    assert_eq!(cap_wait_left(&mut b, T0 + 599_000), Some(std::time::Duration::from_millis(1_000)));
-    assert_eq!(cap_wait_left(&mut b, T0 + 600_000), None);
-    let (mut none, _) = slot(working(), exploring("Leave"));
-    assert_eq!(cap_wait_left(&mut none, T0), None);
+#[test]
+fn a_spent_exit_budget_is_zero() {
+    use std::time::Duration;
+    assert_eq!(budget_left(Duration::from_secs(1), Duration::from_millis(400)), Duration::from_millis(600));
+    assert_eq!(budget_left(Duration::from_secs(1), Duration::from_secs(1)), Duration::ZERO);
+    assert_eq!(budget_left(Duration::from_secs(1), Duration::from_secs(5)), Duration::ZERO);
 }
 
 #[tokio::test]
-async fn the_cap_stops_a_recording_at_ten_minutes() {
+async fn the_cap_timer_waits_while_the_recording_is_not_due() {
     let _lock = crate::serial::autorun();
     let dir = root();
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
-    assert!(stop_recording_over_cap_in(&mut b, T0 + 599_999).await.is_none());
+    // A wall clock that jumped far ahead changes nothing: due is monotonic.
+    match cap_step_in(&mut b, T0, T0 + 10_000_000).await {
+        CapStep::Wait(left) => assert!(left > std::time::Duration::from_secs(590), "{left:?}"),
+        other => panic!("{other:?}"),
+    }
     assert!(list(dir.path()).is_empty());
-    let kept = stop_recording_over_cap_in(&mut b, T0 + 600_000).await.expect("kept at the cap");
-    assert_eq!(kept.duration_ms, 600_000);
-    assert_eq!(list(dir.path()), vec![kept]);
+    // A timer for another recording leaves this one alone.
+    assert_eq!(cap_step_in(&mut b, T0 + 1, T0).await, CapStep::Done);
+    let (mut none, _) = slot(working(), exploring("Leave"));
+    assert_eq!(cap_step_in(&mut none, T0, T0).await, CapStep::Done);
 }
 
 #[tokio::test]
-async fn the_cap_never_stops_a_newer_recording_early() {
+async fn the_cap_timer_stops_its_recording_once_the_monotonic_clock_says_so() {
     let _lock = crate::serial::autorun();
     let dir = root();
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
-    assert_eq!(recording_stop_in(&mut b, T0 + 10_000).await.0, 200);
-    let t2 = T0 + 100_000;
-    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body("second"), t2).await.0, 200);
-    assert!(stop_recording_over_cap_in(&mut b, T0 + 600_000).await.is_none());
+    let running = b.as_mut().unwrap().discovery.as_mut().unwrap().recording.as_mut().unwrap();
+    running.started = std::time::Instant::now() - std::time::Duration::from_secs(601);
+    assert_eq!(cap_step_in(&mut b, T0, T0 + 600_000).await, CapStep::Done);
     assert_eq!(list(dir.path()).len(), 1);
-    assert!(finish_recording(&mut b, t2 + 1_000).await.is_some());
-    assert_eq!(list(dir.path()).len(), 2);
+    // The recording is gone: a later look has nothing to do.
+    assert_eq!(cap_step_in(&mut b, T0, T0 + 700_000).await, CapStep::Done);
 }
 
 #[test]

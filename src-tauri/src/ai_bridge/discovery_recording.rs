@@ -77,7 +77,7 @@ pub async fn recording_start_in<B: DiscoveryBrowser>(
     let Some(started) = recording::start(p.driver, WHO).await else {
         return (409, RECORDING_NOT_STARTED.to_string());
     };
-    state.recording = Some(Running { recording: started, title: title.clone(), started_ms: now_ms, root: root.to_path_buf() });
+    state.recording = Some(Running { recording: started, title: title.clone(), started_ms: now_ms, started: std::time::Instant::now(), root: root.to_path_buf() });
     crate::applog::info(format!("{WHO}: started"));
     (200, recording_started(&title))
 }
@@ -97,25 +97,56 @@ pub async fn finish_recording<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms:
     take_and_keep(slot, now_ms).await.flatten()
 }
 
-/// The safety stop when the app quits or updates: `finish_recording`, but
-/// within `bound`. A recording that cannot be stopped and read in time is
-/// lost (logged), never waited for.
+/// What is left of `total` once `elapsed` has gone: zero when it is spent.
+pub fn budget_left(total: std::time::Duration, elapsed: std::time::Duration) -> std::time::Duration {
+    total.saturating_sub(elapsed)
+}
+
+/// The safety stop when the app quits or updates: the recording is stopped
+/// and read within `bound` (the browser's calls only), then written. A
+/// recording the browser cannot hand over in time is lost, and said so. The
+/// write itself is local and never timed out, so a video is never half kept.
 pub async fn finish_recording_at_exit<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64, bound: std::time::Duration) {
     let going = slot.as_mut().is_some_and(|b| b.parts().discovery.as_ref().is_some_and(|s| s.recording.is_some()));
     if !going {
         return;
     }
-    if tokio::time::timeout(bound, finish_recording(slot, now_ms)).await.is_err() {
-        crate::applog::warn("Auto Test recording: lost at exit");
+    match tokio::time::timeout(bound, take_and_read(slot, now_ms)).await {
+        Ok(Some(Some(video))) => {
+            keep_video(video).await;
+        }
+        Ok(_) => {}
+        Err(_) => crate::applog::warn("Auto Test recording: lost at exit"),
     }
 }
 
-/// What a recording's cap timer does when it wakes: how long to sleep again
-/// (the recording is still going and its deadline is not yet here), or
-/// `None` when there is nothing left to wait for.
-pub fn cap_wait_left<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64) -> Option<std::time::Duration> {
-    let deadline = slot.as_mut()?.parts().discovery.as_ref()?.recording.as_ref()?.deadline_ms();
-    deadline.checked_sub(now_ms).filter(|left| *left > 0).map(std::time::Duration::from_millis)
+/// What a recording's cap timer does next (`cap_step_in`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapStep {
+    /// Nothing left to wait for: the recording ended, or this timer's is not
+    /// the one going now, or it was stopped at the cap.
+    Done,
+    /// Still going and not yet due: sleep this long, then look again.
+    Wait(std::time::Duration),
+}
+
+/// One look of the cap timer spawned for the recording that started at
+/// `started_ms`. A recording that is not that one (ended, or a newer one
+/// began) is left alone. Due is measured on the monotonic clock.
+pub async fn cap_step_in<B: DiscoveryBrowser>(slot: &mut Option<B>, started_ms: u64, now_ms: u64) -> CapStep {
+    let age = slot
+        .as_mut()
+        .and_then(|b| b.parts().discovery.as_ref().and_then(|s| s.recording.as_ref()))
+        .filter(|r| r.started_ms == started_ms)
+        .map(|r| r.started.elapsed());
+    let Some(age) = age else { return CapStep::Done };
+    let left = budget_left(recordings::CAP, age);
+    if !left.is_zero() {
+        return CapStep::Wait(left);
+    }
+    crate::applog::info(format!("{WHO}: stopped at the 10-minute limit"));
+    finish_recording(slot, now_ms).await;
+    CapStep::Done
 }
 
 /// The ten-minute cap: stops the recording only when its own deadline has
@@ -135,39 +166,60 @@ pub async fn stop_recording_over_cap_in<B: DiscoveryBrowser>(slot: &mut Option<B
 /// `None`: no recording was going. `Some(None)`: it stopped but nothing was
 /// kept. `Some(Some(entry))`: kept.
 async fn take_and_keep<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64) -> Option<Option<RecordingEntry>> {
+    match take_and_read(slot, now_ms).await? {
+        Some(video) => Some(keep_video(video).await),
+        None => Some(None),
+    }
+}
+
+/// A recording's video, read, with what `recordings::add` needs.
+struct Video {
+    root: std::path::PathBuf,
+    title: String,
+    duration_ms: u32,
+    bytes: Vec<u8>,
+}
+
+/// Take the running recording, stop it and read its video: the browser's
+/// calls only. The stop and the read go out on the tab the recording started
+/// on (its stream belongs to that tab's session); the assistant's own tab is
+/// put back last, on every way out. `None`: none was going. `Some(None)`: no
+/// video came.
+async fn take_and_read<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64) -> Option<Option<Video>> {
     let browser = slot.as_mut()?;
     let p = browser.parts();
     let running = p.discovery.as_mut()?.recording.take()?;
     let duration_ms = u32::try_from(now_ms.saturating_sub(running.started_ms).min(recordings::CAP_MS)).unwrap_or(u32::MAX);
     let Running { recording: handle, title, root, .. } = running;
-    // The stop goes to the tab the recording started on; the assistant's own
-    // tab is where it is put back afterwards, whether the stop worked or not.
     let before = p.driver.tab_name();
-    let stopped = recording::stop(p.driver, handle, WHO).await;
+    let bytes = match recording::stop(p.driver, handle, WHO).await {
+        Some(stopped) => recording::read_video(p.driver, stopped, WHO).await,
+        None => None,
+    };
     if p.driver.tab_name() != before {
         if let Err(e) = p.driver.switch_tab(&before).await {
             crate::applog::warn(format!("{WHO}: the browser's tab could not be put back: {e}"));
         }
     }
-    let Some(stopped) = stopped else {
-        return Some(None);
-    };
-    let Some(bytes) = recording::read_video(p.driver, stopped, WHO).await else {
-        return Some(None);
-    };
-    let kept = tokio::task::spawn_blocking(move || recordings::add(&root, &title, duration_ms, &bytes)).await;
+    Some(bytes.map(|bytes| Video { root, title, duration_ms, bytes }))
+}
+
+/// Write a read video into the recordings. Every failure is logged.
+async fn keep_video(video: Video) -> Option<RecordingEntry> {
+    let duration_ms = video.duration_ms;
+    let kept = tokio::task::spawn_blocking(move || recordings::add(&video.root, &video.title, video.duration_ms, &video.bytes)).await;
     match kept {
         Ok(Ok(entry)) => {
             crate::applog::info(format!("{WHO}: kept ({}s)", duration_ms / 1000));
-            Some(Some(entry))
+            Some(entry)
         }
         Ok(Err(why)) => {
             crate::applog::warn(format!("{WHO}: the video could not be kept: {why}"));
-            Some(None)
+            None
         }
         Err(_) => {
             crate::applog::warn(format!("{WHO}: the video could not be kept"));
-            Some(None)
+            None
         }
     }
 }
