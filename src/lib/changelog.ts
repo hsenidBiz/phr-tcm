@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.5.1-beta.1",
+    date: "2026-11-28",
+    items: [
+      "Auto Test scripts can check the database after a save: a read-only check that the right row was saved with the expected value, retrying briefly for values the server fills in a moment later. It needs Database Access and a database chosen for the environment",
+      "The script editor shows each database check as a sentence with its query underneath, and a Playwright export marks it as a manual check",
+    ],
+  },
+  {
     version: "2.5.0",
     date: "2026-11-27",
     items: [
