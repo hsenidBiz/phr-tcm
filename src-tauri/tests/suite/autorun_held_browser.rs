@@ -119,7 +119,7 @@ fn discovering() -> Option<DiscoveryState> {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
-            recording: None,
+        recording: None,
     })
 }
 

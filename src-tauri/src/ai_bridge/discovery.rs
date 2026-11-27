@@ -183,8 +183,8 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     carried: Vec::new(),
                     kept: Default::default(),
                     signed_out: false,
-                    // A recording going stays with the discovery it was started in.
-                    recording: p.discovery.as_mut().and_then(|s| s.recording.take()),
+                    // None: a recording needs a signed-in discovery, so none can be going here.
+                    recording: None,
                 };
                 let must_not_save = discovery_must_not_save(root, &state);
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });

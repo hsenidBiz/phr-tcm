@@ -419,7 +419,7 @@ async fn an_area_save_records_the_preferences_in_force() {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
-            recording: None,
+        recording: None,
     });
     let mut browser = Some(FakeBrowser {
         d,
@@ -466,7 +466,7 @@ async fn an_area_save_records_the_mode_it_was_saved_in() {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
-            recording: None,
+        recording: None,
     });
     let mut browser = Some(FakeBrowser {
         d,
@@ -638,7 +638,7 @@ async fn map_again(root: &std::path::Path, d: ScriptedDriver) -> (u16, Value) {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
-            recording: None,
+        recording: None,
     });
     let mut browser = Some(FakeBrowser {
         d,
@@ -727,7 +727,7 @@ async fn a_repair_keeps_the_mode_and_preferences_it_read() {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
-            recording: None,
+        recording: None,
     });
     let mut browser = Some(FakeBrowser {
         d,

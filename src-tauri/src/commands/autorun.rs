@@ -45,8 +45,15 @@ pub(crate) fn session_slot(n: SlotNo) -> &'static tokio::sync::Mutex<Option<Sess
 pub(crate) fn spawn_recording_cap(n: SlotNo) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(crate::autorun::recordings::CAP).await;
-        let mut slot = session_slot(n).lock().await;
-        crate::ai_bridge::stop_recording_over_cap_in(&mut slot, crate::autorun::sessions::now_ms()).await;
+        loop {
+            let mut slot = session_slot(n).lock().await;
+            let now = crate::autorun::sessions::now_ms();
+            crate::ai_bridge::stop_recording_over_cap_in(&mut slot, now).await;
+            // Woken early by the wall clock: the same recording, not yet due.
+            let Some(left) = crate::ai_bridge::cap_wait_left(&mut slot, now) else { break };
+            drop(slot);
+            tokio::time::sleep(left).await;
+        }
     });
 }
 
@@ -1559,6 +1566,7 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
     }
     let mut held = false;
     for (n, slot) in SlotNo::all().into_iter().zip(slots.iter_mut()) {
+        crate::ai_bridge::forget_gone_browser(slot).await;
         held |= crate::ai_bridge::close_browser_in(slot).await;
         publish_discovery_in(n, slot);
         // Nobody holds a browser that is gone, one bound while it had none
@@ -2205,9 +2213,14 @@ pub async fn close_autorun_browsers() {
     // Every slot's browser, taken in slot order, one lock at a time. Each
     // closes on a blocking thread of its own, so the caller's bound is not
     // spent three times over.
+    // One short bound for every slot's recording together, not one each.
+    let recordings_began = std::time::Instant::now();
     let mut closing = Vec::new();
     for n in SlotNo::all() {
         let mut slot = session_slot(n).lock().await;
+        // A recording going is stopped and kept, within a short bound of its
+        // own: the exit is never held up for a video.
+        crate::ai_bridge::finish_recording_at_exit(&mut slot, crate::autorun::sessions::now_ms(), EXIT_RECORDING_BOUND.saturating_sub(recordings_began.elapsed())).await;
         // A mapping run going keeps its summary, as any other ending does.
         crate::ai_bridge::finish_mapping(&mut slot);
         // An explore session going has its change list closed the same way.
@@ -2230,6 +2243,9 @@ pub async fn close_autorun_browsers() {
     // Each is ended as a whole tree, and its profile removed.
     let _ = tauri::async_runtime::spawn_blocking(crate::browser::tree::end_all).await;
 }
+
+/// How long a recording's stop and read may take as the app quits.
+pub(crate) const EXIT_RECORDING_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// What a supervised step answers: one outcome per action, the tab the
 /// step ran in when that was not `main` (`runner::InRun::tab`), and the

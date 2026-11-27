@@ -214,7 +214,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::ai_bridge::{
-    close_browser_in, end_discovery_as, end_discovery_in, end_discovery_releasing, finish_recording, forget_gone_browser,
+    cap_wait_left, close_browser_in, end_discovery_as, finish_recording_at_exit, end_discovery_in, end_discovery_releasing, finish_recording, forget_gone_browser,
     recording_kept, recording_start_in, recording_stop_in, stop_recording_over_cap_in, EndedBy, ALREADY_RECORDING,
     NOT_RECORDING, RECORDING_LOST, RECORDING_NOT_AVAILABLE, RECORDING_NOT_STARTED, RECORDING_NO_DISCOVERY,
 };
@@ -412,6 +412,7 @@ async fn closing_the_browser_keeps_the_recording() {
 
 #[tokio::test]
 async fn a_gone_browser_loses_its_recording_quietly() {
+    let _log = crate::serial::log_tail();
     let _lock = crate::serial::autorun();
     let dir = root();
     let stops = no_stops();
@@ -421,6 +422,59 @@ async fn a_gone_browser_loses_its_recording_quietly() {
     assert!(list(dir.path()).is_empty());
     assert!(b.is_none());
     assert_eq!(stops.load(Ordering::SeqCst), 0, "a gone browser is sent no stop call");
+    let said = v2_lib::applog::recent(200).iter().any(|l| l.message == "Auto Test recording: lost, the browser had gone");
+    assert!(said, "the loss is logged");
+}
+
+#[tokio::test]
+async fn stopping_puts_the_assistants_tab_back() {
+    use v2_lib::browser::cdp::Driver;
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    b.as_mut().unwrap().d.open_tab("popup").await.unwrap();
+    assert_eq!(b.as_ref().unwrap().d.tab_name(), "popup");
+    assert_eq!(recording_stop_in(&mut b, T0 + 2_000).await.0, 200);
+    assert_eq!(b.as_ref().unwrap().d.tab_name(), "popup", "the assistant is back on its own tab");
+    assert_eq!(list(dir.path()).len(), 1);
+}
+
+#[tokio::test]
+async fn the_exit_stop_keeps_a_recording_that_answers_in_time() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    finish_recording_at_exit(&mut b, T0 + 4_000, std::time::Duration::from_secs(2)).await;
+    assert_eq!(list(dir.path()).len(), 1);
+    assert!(b.as_mut().unwrap().discovery.as_ref().unwrap().recording.is_none());
+}
+
+#[tokio::test]
+async fn the_exit_stop_gives_up_at_its_bound_and_says_so() {
+    let _log = crate::serial::log_tail();
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    // A bound already spent: the stop cannot finish within it.
+    let began = std::time::Instant::now();
+    finish_recording_at_exit(&mut b, T0 + 4_000, std::time::Duration::ZERO).await;
+    assert!(began.elapsed() < std::time::Duration::from_secs(2));
+    let said = v2_lib::applog::recent(200).iter().any(|l| l.message == "Auto Test recording: lost at exit");
+    assert!(said, "the loss at exit is logged");
+    // Nothing going: nothing to wait for.
+    let (mut idle, _) = slot(working(), exploring("Leave"));
+    finish_recording_at_exit(&mut idle, T0, std::time::Duration::ZERO).await;
+}
+
+#[tokio::test]
+async fn the_cap_timer_sleeps_again_when_woken_early() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    assert_eq!(cap_wait_left(&mut b, T0 + 599_000), Some(std::time::Duration::from_millis(1_000)));
+    assert_eq!(cap_wait_left(&mut b, T0 + 600_000), None);
+    let (mut none, _) = slot(working(), exploring("Leave"));
+    assert_eq!(cap_wait_left(&mut none, T0), None);
 }
 
 #[tokio::test]

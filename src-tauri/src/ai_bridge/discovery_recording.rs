@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::autorun::recordings::{self, RecordingEntry, Running};
+use crate::browser::cdp::Driver as _;
 use crate::browser::recording;
 use std::path::Path;
 
@@ -96,6 +97,27 @@ pub async fn finish_recording<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms:
     take_and_keep(slot, now_ms).await.flatten()
 }
 
+/// The safety stop when the app quits or updates: `finish_recording`, but
+/// within `bound`. A recording that cannot be stopped and read in time is
+/// lost (logged), never waited for.
+pub async fn finish_recording_at_exit<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64, bound: std::time::Duration) {
+    let going = slot.as_mut().is_some_and(|b| b.parts().discovery.as_ref().is_some_and(|s| s.recording.is_some()));
+    if !going {
+        return;
+    }
+    if tokio::time::timeout(bound, finish_recording(slot, now_ms)).await.is_err() {
+        crate::applog::warn("Auto Test recording: lost at exit");
+    }
+}
+
+/// What a recording's cap timer does when it wakes: how long to sleep again
+/// (the recording is still going and its deadline is not yet here), or
+/// `None` when there is nothing left to wait for.
+pub fn cap_wait_left<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64) -> Option<std::time::Duration> {
+    let deadline = slot.as_mut()?.parts().discovery.as_ref()?.recording.as_ref()?.deadline_ms();
+    deadline.checked_sub(now_ms).filter(|left| *left > 0).map(std::time::Duration::from_millis)
+}
+
 /// The ten-minute cap: stops the recording only when its own deadline has
 /// come, so a later recording is never stopped by an earlier one's timer.
 pub async fn stop_recording_over_cap_in<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64) -> Option<RecordingEntry> {
@@ -118,7 +140,16 @@ async fn take_and_keep<B: DiscoveryBrowser>(slot: &mut Option<B>, now_ms: u64) -
     let running = p.discovery.as_mut()?.recording.take()?;
     let duration_ms = u32::try_from(now_ms.saturating_sub(running.started_ms).min(recordings::CAP_MS)).unwrap_or(u32::MAX);
     let Running { recording: handle, title, root, .. } = running;
-    let Some(stopped) = recording::stop(p.driver, handle, WHO).await else {
+    // The stop goes to the tab the recording started on; the assistant's own
+    // tab is where it is put back afterwards, whether the stop worked or not.
+    let before = p.driver.tab_name();
+    let stopped = recording::stop(p.driver, handle, WHO).await;
+    if p.driver.tab_name() != before {
+        if let Err(e) = p.driver.switch_tab(&before).await {
+            crate::applog::warn(format!("{WHO}: the browser's tab could not be put back: {e}"));
+        }
+    }
+    let Some(stopped) = stopped else {
         return Some(None);
     };
     let Some(bytes) = recording::read_video(p.driver, stopped, WHO).await else {
