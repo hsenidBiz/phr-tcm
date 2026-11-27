@@ -28,6 +28,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
+import { stepLabel } from "./videoTimeline";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import OutcomeGroups from "./OutcomeGroups";
@@ -88,13 +89,7 @@ function mismatchSentence(run: { pbi_id: number; suite?: AutoRunSuiteRef | null 
   return `this run is for PBI #${run.pbi_id} - select that PBI to send it`;
 }
 
-/** What a step's line is called in the review: the sign-in, the runner's
- * own trip to the case's module, or the case's own step. */
-export function stepLabel(stepNumber: number): string {
-  if (stepNumber === 0) return "Sign in";
-  if (stepNumber === -1) return "Module";
-  return `Step ${stepNumber}`;
-}
+export { stepLabel } from "./videoTimeline";
 
 /** What failed in a case's clean-up, as the run recorded it; null when it
  * passed, never ran, or the script has none. Its own line, whatever the

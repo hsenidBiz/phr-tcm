@@ -120,6 +120,13 @@ export {
   // Watching a failed case's recorded video - the same triangle, named for
   // what the button does.
   Play as IconPlayVideo,
+  // The player's own controls: pause, one step back or on, and opening or
+  // folding a step's actions.
+  Pause as IconPauseVideo,
+  SkipBack as IconPreviousStep,
+  SkipForward as IconNextStep,
+  ChevronRight as IconShowActions,
+  ChevronDown as IconHideActions,
   // Starting a run nobody has to sit in front of - a person picks IconRun.
   Bot as IconUnattended,
   // Carrying on with a run that paused at a reset point.
