@@ -323,7 +323,15 @@ fn preconditions_need_database_access_as_well_as_the_switch() {
     let read = |p: &str| std::fs::read_to_string(format!("{}/src/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
     assert_eq!(read("commands/autorun.rs").matches("preconditions::read_access(db_read_access)").count(), 2);
     assert_eq!(read("commands/autorun_replay.rs").matches("preconditions::read_access(db_read_access)").count(), 1);
-    assert!(crate::bridge_source::ai_bridge_source().contains("crate::autorun::preconditions::read_access(!ctx.disabled_tools"));
+    // The assistant's replay reads the db_query switch, through the module.
+    assert!(crate::bridge_source::ai_bridge_source().contains(
+        "crate::autorun::preconditions::read_access(crate::autorun::preconditions::db_query_on(&ctx.disabled_tools))"
+    ));
+    // A step's database checks (watched step, try) go through `for_actions`,
+    // which passes the switch through the module; the try's switch is the
+    // db_query tool's.
+    assert_eq!(read("autorun/preconditions.rs").matches("for_run(root, store, read_access(switch))").count(), 1);
+    assert!(crate::bridge_source::ai_bridge_source().contains("preconditions::db_query_on(&c.disabled_tools)"));
 }
 
 mod commands {
