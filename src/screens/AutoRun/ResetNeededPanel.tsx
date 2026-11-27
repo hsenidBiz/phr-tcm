@@ -9,7 +9,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { IconContinue, IconHideDetails, IconShowDetails, IconStop, IconWarning } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
-import { groupByArea, parseSetLine, pauseHeading, resetLines, setLines } from "./plan";
+import { groupByArea, parseSetItem, pauseHeading, resetLines, setLines } from "./plan";
 
 /** Areas shown before the rest hide behind "N more areas". */
 const AREAS_SHOWN = 6;
@@ -34,8 +34,8 @@ export default function ResetNeededPanel(props: Props) {
   return <BatchPanel key={props.reset.batch ?? 0} {...props} />;
 }
 
-function SetRow({ line, done, onToggle }: { line: string; done: boolean; onToggle: () => void }) {
-  const parsed = parseSetLine(line);
+function SetRow({ line, pair, done, onToggle }: { line: string; pair: readonly string[]; done: boolean; onToggle: () => void }) {
+  const parsed = parseSetItem(pair[0], pair[1]);
   return (
     <li className="border-l-2 border-l-warning pl-2">
       <label className="flex items-start gap-2">
@@ -78,7 +78,7 @@ function BatchPanel({ reset, remaining, titleOf, busy = false, onContinue, onSto
   const [full, setFull] = useState<ReadonlySet<string>>(new Set());
   const [allAreas, setAllAreas] = useState(false);
   const shown = allAreas ? groups : groups.slice(0, AREAS_SHOWN);
-  const done = set.filter((line) => ticked.has(line)).length;
+  const done = set.filter((_, i) => ticked.has(String(i))).length;
   return (
     <section aria-label={heading} className="space-y-3 rounded-md border border-warning/40 bg-surface-2 p-3 text-xs">
       <div className="flex items-start justify-between gap-3">
@@ -106,8 +106,14 @@ function BatchPanel({ reset, remaining, titleOf, busy = false, onContinue, onSto
             Set up · {done} of {set.length} done
           </p>
           <ul aria-label="Set up" className="mt-1 space-y-1.5">
-            {set.map((line) => (
-              <SetRow key={line} line={line} done={ticked.has(line)} onToggle={() => flip(ticked, line, setTicked)} />
+            {set.map((line, i) => (
+              <SetRow
+                key={i}
+                line={line}
+                pair={(reset.set ?? [])[i]}
+                done={ticked.has(String(i))}
+                onToggle={() => flip(ticked, String(i), setTicked)}
+              />
             ))}
           </ul>
         </div>

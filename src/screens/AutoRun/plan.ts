@@ -82,39 +82,54 @@ export function pauseHeading(batch: number | undefined): string {
   return batch && batch > 0 ? `Before batch ${batch}` : "Before the next batch";
 }
 
-/** What a set line names, as chips, and the sentence left once those words
- * are taken out. */
+/** What a set item names, as chips, and the sentence to show for it. */
 export interface SetItem {
   chips: string[];
   text: string;
 }
 
-/** Split a set line like `Make sure 000015 stage intermediate_competency of
- * cycle 11892 is ON` into its employee number, cycle and stage plus the
- * rest. A line naming none of them is not recognised: null, and the caller
- * shows it whole. */
-export function parseSetLine(line: string): SetItem | null {
-  let rest = line.replace(/^\s*make sure\s+/i, "");
-  const chips: string[] = [];
-  const employee = /\b(\d{6})\b/.exec(rest);
-  if (employee) {
-    chips.push(`Employee ${employee[1]}`);
-    rest = rest.replace(employee[0], " ");
+const NOT_A_STAGE = new Set(["is", "to", "of"]);
+
+const upFirst = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
+/** Split a setting's name like `000015 stage intermediate_competency of cycle
+ * 11892` into chips (employee number at the start, cycle, stage) and the
+ * words left over. A name with none of them is not recognised: null. */
+export function parseSetName(name: string): { chips: string[]; rest: string } | null {
+  let text = name;
+  const found: { at: number; chip: string; first?: boolean }[] = [];
+  const employee = /^\s*(\d{6})\b/.exec(text);
+  if (employee) text = text.slice(employee[0].length);
+  const cycle = /(\s+of)?(?:^|\s+)cycle\s+(\d+)\b/i.exec(text);
+  let stage: RegExpExecArray | null = null;
+  for (const m of text.matchAll(/\bstage\s+([\w-]+)/gi)) {
+    if (!NOT_A_STAGE.has(m[1].toLowerCase())) {
+      stage = m;
+      break;
+    }
   }
-  const cycle = /(?:\s+of)?(?:^|\s+)cycle\s+(\d+)\b/i.exec(rest);
-  if (cycle) {
-    chips.push(`Cycle ${cycle[1]}`);
-    rest = rest.replace(cycle[0], " ");
-  }
-  const stage = /\bstage\s+(\S+)/i.exec(rest);
-  if (stage) {
-    chips.push(`Stage ${stage[1]}`);
-    rest = rest.replace(stage[0], " ");
-  }
-  if (chips.length === 0) return null;
-  const text = rest.replace(/\s+/g, " ").trim();
-  if (!text) return null;
-  return { chips, text: text.charAt(0).toUpperCase() + text.slice(1) };
+  const before = stage ? null : /([\w-]+)\s+stage\b/i.exec(text);
+  const stageHit = stage ?? before;
+  if (cycle) found.push({ at: cycle.index, chip: "Cycle " + cycle[2], first: !!cycle[1] });
+  if (stageHit) found.push({ at: stageHit.index, chip: "Stage " + stageHit[1] });
+  if (!employee && found.length === 0) return null;
+  // "stage X of cycle N" lists the cycle first; otherwise as written.
+  found.sort((x, y) => (x.first ? -1 : y.first ? 1 : x.at - y.at));
+  for (const m of [cycle, stageHit]) if (m) text = text.replace(m[0], " ");
+  const rest = text
+    .replace(/[,\s]+/g, " ")
+    .replace(/^(of )+|( of)+$/gi, "")
+    .trim();
+  return { chips: [...(employee ? ["Employee " + employee[1]] : []), ...found.map((f) => f.chip)], rest };
+}
+
+/** What a setting shows: its chips and `Rest: value` (just the value when
+ * nothing is left of the name). Null when the name is not recognised, and
+ * the caller shows the whole line. */
+export function parseSetItem(name: string, value: string): SetItem | null {
+  const parsed = parseSetName(name);
+  if (!parsed) return null;
+  return { chips: parsed.chips, text: parsed.rest ? upFirst(parsed.rest) + ": " + value : upFirst(value) };
 }
 
 /** The cases still to run, grouped by the area before a title's first
@@ -126,12 +141,13 @@ export function groupByArea(
 ): { area: string; items: { id: number; title: string }[] }[] {
   const groups = new Map<string, { id: number; title: string }[]>();
   const other: { id: number; title: string }[] = [];
+  // An area literally called Other joins the area-less cases, not a second group.
   for (const id of ids) {
     const title = titleOf(id)?.trim() ?? "";
     const at = title.indexOf(" - ");
     const area = at > 0 ? title.slice(0, at).trim() : "";
-    if (!area) {
-      other.push({ id, title });
+    if (!area || area === "Other") {
+      other.push({ id, title: area ? title.slice(at + 3).trim() : title });
       continue;
     }
     const list = groups.get(area) ?? [];
