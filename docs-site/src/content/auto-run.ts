@@ -24,6 +24,7 @@ const SCRIPT_SETUP = "auto-run-script-setup";
 const WATCH = "auto-run-watch";
 const UNATTENDED = "auto-run-unattended";
 const RUNS = "auto-run-past-runs";
+const RECORDINGS = "auto-run-recordings";
 const REVIEW = "auto-run-review";
 const SETUP = "auto-run-setup";
 const SETUP_END = "auto-run-setup-end";
@@ -135,6 +136,11 @@ export const autoRun: Screen = {
       alt: "The Unattended run window, before it starts",
     },
     { id: RUNS, route: TO_RUNS, alt: "Past runs: an unattended run with a passed, a failed, a blocked and a retried case" },
+    {
+      id: RECORDINGS,
+      route: [...TO_RUNS, { scrollTo: { role: "heading", name: "Recordings" } }],
+      alt: "The Recordings card under Past runs, with one recording an assistant made",
+    },
     {
       id: REVIEW,
       route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept all" } }],
@@ -713,7 +719,7 @@ export const autoRun: Screen = {
 
     {
       id: "recordings-card",
-      shot: RUNS,
+      shot: RECORDINGS,
       group: "runs",
       locate: { role: "heading", name: "Recordings" },
       name: "Recordings",

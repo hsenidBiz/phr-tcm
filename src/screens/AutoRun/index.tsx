@@ -1162,7 +1162,6 @@ export default function AutoRun({
 
             {shown === "runs" && (
               <div className="min-w-0 space-y-4">
-                <RecordingsCard />
                 <PastRuns
                   org={org}
                   project={project}
@@ -1174,6 +1173,9 @@ export default function AutoRun({
                   filter={runsFilter}
                   onFilterChange={setRunsFilter}
                 />
+                {/* Below the runs: the runs are what this tab is for, and the
+                    card draws nothing until an assistant has recorded something. */}
+                <RecordingsCard />
               </div>
             )}
           </div>
