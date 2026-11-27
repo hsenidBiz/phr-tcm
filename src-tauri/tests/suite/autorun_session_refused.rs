@@ -33,12 +33,14 @@ struct App {
     tampered: Arc<AtomicBool>,
     always: bool,
     cookies: Option<Value>,
+    /// The highlight box is drawn (its script answers true).
+    draws: bool,
 }
 
 impl App {
     fn new(cookie_is_good: bool, tampered: bool, always: bool) -> Self {
         let (inner, state) = stateful_app(cookie_is_good, None);
-        App { inner, state, tampered: Arc::new(AtomicBool::new(tampered)), always, cookies: None }
+        App { inner, state, tampered: Arc::new(AtomicBool::new(tampered)), always, cookies: None, draws: false }
     }
     fn methods(&self) -> Vec<String> {
         self.inner.calls.iter().map(|(m, _)| m.clone()).collect()
@@ -51,6 +53,10 @@ impl Driver for App {
             self.inner.calls.push((method.to_string(), params.clone()));
             let word = if self.tampered.load(Ordering::SeqCst) { "tampered" } else { "" };
             return Ok(json!({ "result": { "value": word } }));
+        }
+        if self.draws && method == "Runtime.callFunctionOn" && params["functionDeclaration"] == v2_lib::browser::actions::HIGHLIGHT_JS {
+            self.inner.calls.push((method.to_string(), params.clone()));
+            return Ok(json!({ "result": { "value": true } }));
         }
         if method == "Input.insertText" && params["text"] == PASSWORD && !self.always {
             self.tampered.store(false, Ordering::SeqCst);
@@ -74,6 +80,12 @@ impl Driver for App {
     }
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.inner.set_deadline(deadline);
+    }
+    fn note_drawn_label(&mut self, label: &str) {
+        self.inner.note_drawn_label(label);
+    }
+    fn take_drawn_label(&mut self) -> Option<String> {
+        self.inner.take_drawn_label()
     }
 }
 
@@ -287,4 +299,30 @@ async fn a_refused_session_is_logged_with_its_browser_its_kind_and_its_age() {
         .find(|m| m.starts_with("Auto Test, step 1:") && m.contains("refused the session for admin") && m.contains("3 min old"))
         .unwrap_or_else(|| panic!("no mid-case line: {logged:?}"));
     assert!(mid.contains("in the main Auto Test browser (the session was tampered with; the saved session was 3 min old)"), "{mid}");
+}
+
+/// The marker of the action the session was refused for keeps the action's
+/// own name: the fresh sign-in that follows draws its own boxes ("Type a
+/// hidden value"), and none of them is taken for the action's.
+#[tokio::test]
+async fn a_refused_session_does_not_rename_the_failed_actions_marker() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    saved_old_session(dir.path());
+    let (inner, state) = stateful_app(false, None);
+    let mut d = App { inner, state, tampered: Arc::new(AtomicBool::new(true)), always: false, cookies: None, draws: true };
+    let mut acc = Some("admin".to_string());
+    let look: Action = serde_json::from_value(json!({ "kind": "expect_visible", "selector": { "css": "#marker" } })).unwrap();
+    let mut run = InRun { clock: Some(Instant::now()), ..Default::default() };
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let out = run_step_in_run(
+        &mut d, dir.path(), "Acme", "Web", &step(vec![look]), &quick(), &mut acc, &mut lease, None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut run,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out[0].detail, session_refused_mid_case("admin"), "{:?}", out[0]);
+    assert_eq!(run.marks.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(), ["Check: visible"]);
 }

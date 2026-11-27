@@ -1452,6 +1452,9 @@ async fn run_expanded<D: Driver>(
         // tried again: what the earlier actions built is gone. Not looked at
         // once the step is already stopped (a save the guard caught
         // included), nor with a Stop pending.
+        // The box the action drew is taken before any fresh sign-in below
+        // draws its own, so the marker keeps the action's name.
+        let drawn = if mark_at.is_some() { d.take_drawn_label() } else { None };
         let stop_pending = run.cancel.is_some_and(|c| c.load(Ordering::SeqCst));
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP && blocked.is_none() && !stop_pending {
             if let Some(key) = account.clone() {
@@ -1577,7 +1580,7 @@ async fn run_expanded<D: Driver>(
             }
         }
         if let Some(at_ms) = mark_at {
-            let label = super::video_marks::mark_label(action, d.take_drawn_label().as_deref());
+            let label = super::video_marks::mark_label(action, drawn.as_deref());
             run.marks.push(super::VideoMark { at_ms, label });
         }
         // A Stop is no failure to picture.
