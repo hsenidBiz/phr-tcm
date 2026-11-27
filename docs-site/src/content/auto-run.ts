@@ -194,7 +194,7 @@ export const autoRun: Screen = {
       name: "Basic and Advanced",
       does:
         "Chooses how much of Auto Test you see. **Basic** keeps to the everyday path: choosing cases, running them, reading the results and deciding on a difference. " +
-        "It hides the Discovery, Components and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
+        "It hides the Discovery, Components, Known quirks and Fixtures rows of the Setup panel (a failed fixture stays hidden too: the assistant works that out on its own), the sign-in recipe tools, the **More** menu, the buttons **Replay to step** and **Run** on a case, and **Run N selected**, and it never lets a script open a page by address, so the **Scripts may open pages by address** switch is not shown there; a script opens to read only, and says **Switch to Advanced to edit.** " +
         "A script card shows one header line, with the steps Auto Test does itself marked **Done by Auto Test** and the assistant's notes folded away under **Assistant notes**. " +
         "The question **The case and the app disagree at step N. Which is right?** shows in both modes. " +
         "**Advanced** shows everything. Nothing is deleted by switching, and the choice is kept for next time. The switch is held while a run is going. While **Basic mode** is on in Settings, the switch is not shown and Auto Test stays in Basic; turn Basic mode off to pick **Advanced**.",
@@ -815,7 +815,7 @@ export const autoRun: Screen = {
       group: "setup",
       locate: { role: "button", name: "Edit sign-in recipe" },
       name: "Edit (sign-in)",
-      does: "The saved sign-in (the recipe) as JSON, for what a recording cannot capture, and the notes kept about how the site behaves (quirks).",
+      does: "The saved sign-in (the recipe) as JSON, for what a recording cannot capture. The notes kept about how the site behaves have their own row, **Known quirks**.",
     },
     {
       id: "edit-accounts",
@@ -868,6 +868,16 @@ export const autoRun: Screen = {
         "If the components file cannot be read, the window offers **Reset components**, which moves the damaged file aside (it is kept, never deleted) and starts with none. " +
         "The row reads **None yet** until the assistant has made one. Fixtures and delete templates do not use components.",
       tips: ["In your assistant, **/tcm:discover** is where components get made. In a run and in its review, the lines a component ran are grouped under its name."],
+    },
+    {
+      id: "view-quirks",
+      shot: SETUP_END,
+      group: "setup",
+      locate: { role: "button", name: "View known quirks" },
+      name: "View (known quirks)",
+      does:
+        "The notes kept about how this site behaves, so the next script or API template does not have to rediscover them. The **Known quirks** window lists each note with who wrote it and when, adds your own, and lets you edit, retire (and restore) or delete one, each change saved as you make it; closing with a note you typed and have not saved asks first. " +
+        "The row reads **N notes**, with **M retired** beside it when some are, and **None yet** until there is one.",
     },
     {
       id: "manage-test-files",
@@ -1031,7 +1041,7 @@ export const autoRun: Screen = {
       title: "Switch between Basic and Advanced",
       steps: [
         "At the top of Auto Test, press **Basic** or **Advanced**.",
-        "In Basic, the Setup panel leaves out Discovery, Components and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
+        "In Basic, the Setup panel leaves out Discovery, Components, Known quirks and Fixtures, and a script opens to read only. Press **Advanced** when you want to edit a script, replay to a step, run one case or a selection while you watch, use the More menu, or let scripts open pages by address.",
         "If a run is stopped by Discovery or the sign-in recipe, Basic shows it with the note to ask the assistant or switch to Advanced. A failed fixture is not shown in Basic.",
       ],
     },

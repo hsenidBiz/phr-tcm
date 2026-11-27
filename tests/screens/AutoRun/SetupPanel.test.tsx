@@ -1,6 +1,7 @@
 // The Setup panel in Simple and in Advanced: Simple leaves out Discovery,
-// Components, Fixtures and the sign-in recipe tools, unless one of them is
-// what stops a run.
+// Components, Known quirks, Fixtures and the sign-in recipe tools, unless
+// one of them is what stops a run. Known quirks follows the Components row's
+// rule exactly (it is in the same hidden set).
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -34,6 +35,8 @@ function mount(opts: {
   discovering?: () => boolean;
   project?: string;
   recipeError?: boolean;
+  /** The project's Known quirks, as the app would answer. */
+  quirks?: { id: string; text: string; status: string }[];
 }) {
   mockIPC((cmd) => {
     if (cmd === "get_app_settings") {
@@ -62,6 +65,12 @@ function mount(opts: {
     if (cmd === "api_fixtures_list") return opts.fixtures ?? [];
     if (cmd === "auto_run_list_runs") return [];
     if (cmd === "auto_run_load_recipe" && opts.recipeError) throw new Error("the recipe file is broken");
+    if (cmd === "auto_run_load_quirks") {
+      return (opts.quirks ?? []).map((q) => ({
+        by: "person", at: "1790812800000", sources: [], confirmed: 0, last_confirmed: null, doubted: 0,
+        retired_reason: null, retired_at: null, retired_by: null, from: "autorun", ...q,
+      }));
+    }
     if (cmd === "auto_run_discovery_active") return opts.discovering?.() ?? false;
     return null;
   });
@@ -84,12 +93,13 @@ async function expand() {
 
 const row = (name: string) => within(panel()).queryByRole("group", { name: name });
 
-test("Simple hides Discovery, Components and Fixtures, and the sign-in recipe tools", async () => {
+test("Simple hides Discovery, Components, Known quirks and Fixtures, and the sign-in recipe tools", async () => {
   mount({ mode: "simple" });
   await expand();
   await waitFor(() => expect(row("Sign-in")).toBeInTheDocument());
   expect(row("Discovery")).not.toBeInTheDocument();
   expect(row("Components")).not.toBeInTheDocument();
+  expect(row("Known quirks")).not.toBeInTheDocument();
   expect(row("Fixtures")).not.toBeInTheDocument();
   expect(within(panel()).queryByRole("button", { name: "Record sign-in" })).not.toBeInTheDocument();
   expect(within(panel()).queryByRole("button", { name: "Edit sign-in recipe" })).not.toBeInTheDocument();
@@ -103,7 +113,7 @@ test("the collapsed summary in Simple leaves the same rows out", async () => {
   mount({ mode: "simple" });
   const summary = await within(panel()).findByRole("list", { name: "Setup summary" });
   await within(summary).findByText("Accounts");
-  for (const name of ["Discovery", "Components", "Fixtures"]) {
+  for (const name of ["Discovery", "Components", "Known quirks", "Fixtures"]) {
     expect(within(summary).queryByText(name)).not.toBeInTheDocument();
   }
 });
@@ -111,7 +121,7 @@ test("the collapsed summary in Simple leaves the same rows out", async () => {
 test("Advanced shows all of them, as today", async () => {
   mount({ mode: "advanced" });
   await expand();
-  for (const name of ["Discovery", "Components", "Fixtures"]) {
+  for (const name of ["Discovery", "Components", "Known quirks", "Fixtures"]) {
     expect(await within(panel()).findByRole("group", { name })).toBeInTheDocument();
   }
   expect(within(panel()).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
@@ -223,7 +233,7 @@ test("Simple during a discovery shows Release Auto Test browser once, in the Dis
 test("the panel renders as Advanced while the mode is still loading", async () => {
   mount({ mode: "loading" });
   await expand();
-  for (const name of ["Discovery", "Components", "Fixtures"]) {
+  for (const name of ["Discovery", "Components", "Known quirks", "Fixtures"]) {
     expect(await within(panel()).findByRole("group", { name })).toBeInTheDocument();
   }
   expect(within(panel()).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
@@ -243,4 +253,71 @@ test("the collapsed summary puts the blocker note in its own block under the lin
   expect(line).not.toContainElement(note);
   expect(note.parentElement).toBe(item);
   expect(note.tagName).toBe("P");
+});
+
+// The Known quirks row: a count of the live notes (retired ones are named
+// apart, never counted), and a View button that opens the dialog.
+test("the Known quirks row counts the live notes and names the retired ones apart", async () => {
+  mount({
+    mode: "advanced",
+    quirks: [
+      { id: "q1", text: "the grid paginates at 50 rows", status: "active" },
+      { id: "q2", text: "dates render as dd/mm", status: "active" },
+      { id: "q3", text: "an old note", status: "retired" },
+    ],
+  });
+  await expand();
+  const quirks = await within(panel()).findByRole("group", { name: "Known quirks" });
+  await waitFor(() => expect(quirks).toHaveTextContent("2 notes, 1 retired"));
+  expect(quirks.querySelector("[data-status-dot]")).not.toBeNull();
+});
+
+test("the Known quirks row reads None yet with no notes, and one note is singular", async () => {
+  mount({ mode: "advanced" });
+  await expand();
+  const quirks = await within(panel()).findByRole("group", { name: "Known quirks" });
+  await waitFor(() => expect(quirks).toHaveTextContent("None yet"));
+  expect(quirks).not.toHaveTextContent("retired");
+});
+
+test("the Known quirks row says 1 note, not 1 notes, for a single note", async () => {
+  mount({ mode: "advanced", quirks: [{ id: "q1", text: "one", status: "active" }] });
+  await expand();
+  const one = await within(panel()).findByRole("group", { name: "Known quirks" });
+  await waitFor(() => expect(one).toHaveTextContent("1 note"));
+  expect(one).not.toHaveTextContent("1 notes");
+});
+
+test("only retired notes read None yet, with the retired count", async () => {
+  mount({
+    mode: "advanced",
+    quirks: [
+      { id: "q1", text: "a", status: "retired" },
+      { id: "q2", text: "b", status: "retired" },
+    ],
+  });
+  await expand();
+  const quirks = await within(panel()).findByRole("group", { name: "Known quirks" });
+  await waitFor(() => expect(quirks).toHaveTextContent("None yet, 2 retired"));
+});
+
+test("View opens the Known quirks dialog, and a note added there updates the row", async () => {
+  mount({ mode: "advanced", quirks: [{ id: "q1", text: "the grid paginates at 50 rows", status: "active" }] });
+  await expand();
+  const quirks = await within(panel()).findByRole("group", { name: "Known quirks" });
+  await waitFor(() => expect(quirks).toHaveTextContent("1 note"));
+  fireEvent.click(within(quirks).getByRole("button", { name: "View known quirks" }));
+  const dialog = await screen.findByRole("dialog", { name: "Known quirks" });
+  expect(await within(dialog).findByRole("listitem", { name: "the grid paginates at 50 rows" })).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Known quirks" })).not.toBeInTheDocument());
+});
+
+test("Basic mode shows the Known quirks row only like Components: never on its own account", async () => {
+  mount({ mode: "simple", quirks: [{ id: "q1", text: "a note", status: "active" }] });
+  await expand();
+  await waitFor(() => expect(row("Sign-in")).toBeInTheDocument());
+  expect(row("Components")).not.toBeInTheDocument();
+  expect(row("Known quirks")).not.toBeInTheDocument();
+  expect(within(panel()).queryByRole("button", { name: "View known quirks" })).not.toBeInTheDocument();
 });

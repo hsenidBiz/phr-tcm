@@ -197,6 +197,9 @@ export {
   // The project's components: steps saved once that scripts use (Auto
   // Run's Setup card) - a puzzle piece, since each fits into a script.
   Puzzle as IconComponents,
+  // The project's Known quirks: notes about how the application behaves
+  // (Auto Test's Setup card) - a sticky note, since each is a short note.
+  StickyNote as IconQuirks,
   // A project's Test files: the documents scripts and API templates upload
   // into the application (Auto Test's Setup card, the API Templates tab).
   Files as IconTestFiles,

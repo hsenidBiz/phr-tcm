@@ -23,6 +23,7 @@ import { unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
   IconComponents,
+  IconQuirks,
   IconDiscoveryMap,
   IconHideDetails,
   IconImport,
@@ -45,6 +46,7 @@ import { Term } from "../../components/Term";
 import type { TermName } from "../../lib/glossary";
 import AreasDialog from "./AreasDialog";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
+import QuirksDialog, { quirksSummary, useQuirks } from "./QuirksDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
 import ImportScriptsDialog from "./ImportScriptsDialog";
 import RecipeEditor from "./RecipeEditor";
@@ -109,6 +111,10 @@ export function useAutoRunSetup({
   // so Remove there updates the row.
   const components = useComponents(org, project);
   const componentsLine = componentsSummary(components.data);
+  // The project's Known quirks. Shares its key with the Known quirks dialog,
+  // so a change there updates the row.
+  const quirks = useQuirks(org, project);
+  const quirksInfo = quirksSummary(quirks.data);
 
   // The API fixtures, while that module is on. The same key and call as the
   // API Templates screen's own, so the two share one cache entry.
@@ -226,6 +232,8 @@ export function useAutoRunSetup({
     discoveryLine,
     components,
     componentsLine,
+    quirks,
+    quirksInfo,
     databases,
     activeDb,
     fixturesOn,
@@ -446,6 +454,13 @@ function summaryLines(
       : s.componentsLine == null
         ? ["quiet", "Loading…"]
         : [s.componentsLine === "None yet" ? "quiet" : "ready", s.componentsLine];
+  const quirks: [Status, string] = !s.setupReady
+    ? ["quiet", pickProject]
+    : s.quirks.isError
+      ? ["warning", "Could not be read"]
+      : s.quirksInfo == null
+        ? ["quiet", "Loading…"]
+        : [s.quirksInfo.active === 0 ? "quiet" : "ready", s.quirksInfo.line];
   const missingFiles = s.readiness.missingTestFiles.length;
   const files: [Status, string] = !s.setupReady
     ? ["quiet", pickProject]
@@ -484,6 +499,7 @@ function summaryLines(
     { label: "Areas", status: areas[0], value: areas[1] },
     { label: "Discovery", status: discovery[0], value: discovery[1] },
     { label: "Components", status: components[0], value: components[1] },
+    { label: "Known quirks", status: quirks[0], value: quirks[1] },
     {
       label: "Test files",
       status: files[0],
@@ -524,6 +540,7 @@ export default function SetupPanel({
   const [navOpen, setNavOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [componentsOpen, setComponentsOpen] = useState(false);
+  const [quirksOpen, setQuirksOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
   // The folder of scripts the person picked to import, and the environment it was picked for.
@@ -992,6 +1009,43 @@ export default function SetupPanel({
                 </>
               )}
 
+              {/* Notes about how the application behaves. */}
+              {showRow("Known quirks") && (
+                <>
+                  <SetupRow
+                    label="Known quirks"
+                    term="quirk"
+                    status={statusOf("Known quirks")}
+                    state={
+                      !setupReady ? (
+                        <span className="text-muted">{needsProject}</span>
+                      ) : s.quirks.isError ? (
+                        <span className="text-danger">The notes could not be read</span>
+                      ) : s.quirksInfo == null ? (
+                        <span className="text-muted">Loading…</span>
+                      ) : s.quirksInfo.active === 0 ? (
+                        <span className="text-muted">{s.quirksInfo.line}</span>
+                      ) : (
+                        s.quirksInfo.line
+                      )
+                    }
+                  >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="View known quirks"
+                      disabled={!setupReady}
+                      title={needsProject}
+                      onClick={() => setQuirksOpen(true)}
+                    >
+                      <IconQuirks aria-hidden />
+                      View
+                    </Button>
+                  </SetupRow>
+                  {blockerNote("Known quirks")}
+                </>
+              )}
+
               <SetupRow
                 label="Test files"
                 status={statusOf("Test files")}
@@ -1090,6 +1144,7 @@ export default function SetupPanel({
       {componentsOpen && (
         <ComponentsDialog org={org} project={project} onClose={() => setComponentsOpen(false)} />
       )}
+      {quirksOpen && <QuirksDialog org={org} project={project} onClose={() => setQuirksOpen(false)} />}
       {navOpen && (
         <AreasDialog org={org} project={project} caseModules={caseModules} onClose={() => setNavOpen(false)} />
       )}
