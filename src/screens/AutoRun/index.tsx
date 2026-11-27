@@ -59,6 +59,7 @@ import { useModule } from "../../lib/modules";
 import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
 import AssistantsCard from "./AssistantsCard";
+import RecordingsCard from "./RecordingsCard";
 import WaitingForYou from "./WaitingForYou";
 // Recent activity (./RecentActivity) is built and tested but not shown: the
 // owner is still deciding where on Auto Test it belongs (2026-11-13).
@@ -822,6 +823,7 @@ export default function AutoRun({
         <WaitingForYou org={org} project={project} />
         {/* Assistants work whatever PBI is open, or none. */}
         <AssistantsCard />
+        <RecordingsCard />
         <p className="max-w-prose text-sm text-muted">Pick a PBI or a suite in the bar above to run its cases automatically.</p>
         {playwrightNeeded}
       </div>
@@ -1159,7 +1161,8 @@ export default function AutoRun({
             )}
 
             {shown === "runs" && (
-              <div className="min-w-0">
+              <div className="min-w-0 space-y-4">
+                <RecordingsCard />
                 <PastRuns
                   org={org}
                   project={project}
