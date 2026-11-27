@@ -16,7 +16,7 @@ use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
 use super::kept_browser::{self, close_kept, KeptBrowser};
-use super::{preconditions, quirks, recipe, setup, signin, transient};
+use super::{preconditions, quirks, recipe, setup, signin, transient, video_marks};
 use super::plan::Pause;
 use super::network::{Network, WaitEnd, MAX_NETWORK_RERUNS};
 use super::{store, CasePhases, CaseRecord, CaseScript, LocalRun, NetworkPauseRecord, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
@@ -536,6 +536,10 @@ async fn run_case_in<D: Driver>(
         (true, None) => recording::start(d, &who(script.case_id)).await,
         _ => None,
     };
+    // The recording's start, and where each step began on it: one clock read
+    // per step, reusing the instants the steps already take.
+    let clock = recording.as_ref().map(|r| r.started());
+    let mut video_steps: Vec<super::VideoStep> = Vec::new();
     if skip.is_none() {
         if let (Some(_), Some(check_ms)) = (account, reused) {
             // Signed in already, by the case before: no sign-in, and the
@@ -543,6 +547,9 @@ async fn run_case_in<D: Driver>(
             sign_in_took = check_ms;
             let out = ActionOutcome::passed(super::kept_browser::reused_detail(check_ms));
             steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: vec![out], screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new(), duration_ms: Some(check_ms) });
+            if clock.is_some() {
+                video_steps.push(super::VideoStep { step_number: SIGN_IN_STEP, cleanup: false, at_ms: 0, failed: false, actions: Vec::new() });
+            }
         } else if let Some(key) = account {
             let signing_in = Instant::now();
             let out = match signin::prepare(root, organization, project, key) {
@@ -563,6 +570,9 @@ async fn run_case_in<D: Driver>(
                 retake_print(d, root, organization, project, lease, "the case's sign-in").await;
             }
             steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new(), duration_ms: Some(sign_in_took) });
+            if let Some(c) = clock {
+                video_steps.push(super::VideoStep { step_number: SIGN_IN_STEP, cleanup: false, at_ms: video_marks::offset_ms(c, signing_in), failed: false, actions: Vec::new() });
+            }
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
         if signed_in == Some(false)
@@ -604,6 +614,9 @@ async fn run_case_in<D: Driver>(
                 dialog: None,
                 components: Vec::new(), duration_ms: Some(area_took),
             });
+            if let Some(c) = clock {
+                video_steps.push(super::VideoStep { step_number: MODULE_STEP, cleanup: false, at_ms: video_marks::offset_ms(c, reaching), failed: false, actions: Vec::new() });
+            }
         }
     }
 
@@ -673,6 +686,7 @@ async fn run_case_in<D: Driver>(
             picture: pictures.last_mut().map(|(_, p)| p),
             noted: Some(&mut noted),
             next_step_first: order.get(at + 1).filter(|n| !n.cleanup).and_then(|n| n.actions.first()),
+            clock,
             ..Default::default()
         };
         let outcomes = match runner::run_step_in_run(
@@ -699,8 +713,17 @@ async fn run_case_in<D: Driver>(
         crate::ai_bridge::forget_fired_guards(root, organization, project, script, step, &outcomes);
         // A save the step before's picture was taken through: that step's.
         let mut late_save = in_run.picture.take().and_then(|p| p.late_save.take());
-        let (tab, dialog, components, seen_errors) =
-            (in_run.tab, in_run.dialog, in_run.components, in_run.page_errors_seen);
+        let (tab, dialog, components, seen_errors, marks) =
+            (in_run.tab, in_run.dialog, in_run.components, in_run.page_errors_seen, in_run.marks);
+        if let Some(c) = clock {
+            video_steps.push(super::VideoStep {
+                step_number: step.step_number,
+                cleanup: step.cleanup,
+                at_ms: video_marks::offset_ms(c, asked_at),
+                failed: false,
+                actions: marks,
+            });
+        }
         // The step's own start, the one its `expect_download` used.
         step_began.push((steps.len(), in_run.began.unwrap_or(asked_at)));
         // One picture still being taken at a time: the step before's is
@@ -767,6 +790,9 @@ async fn run_case_in<D: Driver>(
     // The recording stops with the steps; its video is read only once the
     // case's proposal says it is wanted. A browser that stopped answering is
     // not asked.
+    // Read just before the stop, so the length is the video's, less what the
+    // browser may cut.
+    let length_ms = clock.map(|c| video_marks::offset_ms(c, Instant::now()));
     let stopped_video = match recording {
         Some(r) if !gone => recording::stop(d, r, &who(script.case_id)).await,
         _ => None,
@@ -820,6 +846,11 @@ async fn run_case_in<D: Driver>(
         cleanup,
     };
     record.video = video;
+    if let (Some(_), Some(length_ms)) = (&record.video, length_ms) {
+        let mut marks = super::VideoMarks { length_ms, steps: video_steps };
+        video_marks::mark_failures(&mut marks, &record.steps, record.cleanup.as_ref());
+        record.video_marks = Some(marks);
+    }
     // A case that passed and whose clean-up failed says both.
     if record.proposed == "Passed" && record.cleanup_line().is_some() {
         record.reason = format!("{}{CLEANUP_FAILED}", record.reason);

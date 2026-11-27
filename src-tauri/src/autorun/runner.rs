@@ -485,6 +485,13 @@ pub struct InRun<'a> {
     /// refused save whose message the next step opens by checking is
     /// expected (`refusals::fails_the_action`).
     pub next_step_first: Option<&'a Action>,
+    /// The recording's start, when the case is being recorded: each action
+    /// reads the clock once against it. `None` records nothing and reads no
+    /// clock.
+    pub clock: Option<Instant>,
+    /// Learned back: one marker per action the step started, in order, for
+    /// the video (`video_marks`). Empty without a `clock`.
+    pub marks: Vec<super::VideoMark>,
 }
 
 /// The case's last action that changed the page, and what the page has
@@ -1015,6 +1022,7 @@ pub async fn run_step_in_run<D: Driver>(
     run: &mut InRun<'_>,
 ) -> Result<Vec<ActionOutcome>, String> {
     run.components = Vec::new();
+    run.marks = Vec::new();
     let (expanded, uses, places) = match components::expand_step_placed(root, organization, project, &step.actions) {
         Ok(x) => x,
         Err((at, why)) => {
@@ -1255,6 +1263,12 @@ async fn run_expanded<D: Driver>(
         }
         if let Some(p) = run.progress {
             p.began(index + 1, step.actions.len(), action);
+        }
+        // One clock read per action, and only while recording; an older
+        // drawn label is dropped so the marker names this action's own.
+        let mark_at = run.clock.map(|c| super::video_marks::offset_ms(c, Instant::now()));
+        if mark_at.is_some() {
+            d.take_drawn_label();
         }
         // What the page shows before an action that changes it, and where
         // the network record stands, so what is new after it is the
@@ -1561,6 +1575,10 @@ async fn run_expanded<D: Driver>(
             } else {
                 p.ended(outcome.ok);
             }
+        }
+        if let Some(at_ms) = mark_at {
+            let label = super::video_marks::mark_label(action, d.take_drawn_label().as_deref());
+            run.marks.push(super::VideoMark { at_ms, label });
         }
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
