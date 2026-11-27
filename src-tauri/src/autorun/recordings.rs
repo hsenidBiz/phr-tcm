@@ -77,11 +77,20 @@ pub fn safe_recording_name(name: &str) -> bool {
     ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
 }
 
+/// Unicode format characters (category Cf): zero-width and bidi controls,
+/// which would hide an address from the `://` check.
+fn is_format_char(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+}
+
 /// A title for the list: whitespace and control characters folded to one
 /// space, trimmed, cut to `MAX_TITLE` characters. A blank title and one
 /// that names an address are refused.
 pub fn clean_title(raw: &str) -> Result<String, String> {
-    let folded = raw
+    let stripped: String = raw.chars().filter(|c| !is_format_char(*c)).collect();
+    let folded = stripped
         .split(|c: char| c.is_whitespace() || c.is_control())
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
@@ -98,18 +107,38 @@ pub fn clean_title(raw: &str) -> Result<String, String> {
     Ok(title)
 }
 
-/// Read the index. Missing is empty; an unreadable one is set aside as
-/// `index.unreadable-<ms>.json`, logged, and read as empty.
-fn read_index(root: &Path) -> Index {
+/// One writer of the index at a time: `roots::guard` is a shared lock, so two
+/// calls could otherwise read, change and write at once and the later write
+/// would drop the earlier one's entry. Taken after the guard.
+static INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn index_lock() -> std::sync::MutexGuard<'static, ()> {
+    INDEX_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Read the index. Only "not found" is empty. Text that is not valid UTF-8
+/// or JSON is set aside as `index.unreadable-<ms>.json` (when `set_aside`,
+/// which needs the write guard held), logged, and read as empty. Any other
+/// I/O error is an error: nothing is overwritten.
+fn read_index(root: &Path, set_aside: bool) -> Result<Index, String> {
     let path = index_path(root);
-    let Ok(text) = std::fs::read_to_string(&path) else { return Index::default() };
-    match serde_json::from_str::<Index>(&text) {
-        Ok(index) => index,
-        Err(_) => {
-            let aside = recordings_dir(root).join(format!("index.unreadable-{}.json", now_ms()));
-            let _ = std::fs::rename(&path, &aside);
-            crate::applog::warn("the recordings index could not be read; it was set aside and the list starts empty");
-            Index::default()
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Index::default()),
+        Err(e) => {
+            crate::applog::warn(format!("the recordings index could not be read: {}", e.kind()));
+            return Err("the list of recordings could not be read; see Settings > Logs".to_string());
+        }
+    };
+    match std::str::from_utf8(&bytes).ok().and_then(|t| serde_json::from_str::<Index>(t).ok()) {
+        Some(index) => Ok(index),
+        None => {
+            if set_aside {
+                let aside = recordings_dir(root).join(format!("index.unreadable-{}.json", now_ms()));
+                let _ = std::fs::rename(&path, &aside);
+            }
+            crate::applog::warn("the recordings index could not be understood; it was set aside and the list starts empty");
+            Ok(Index::default())
         }
     }
 }
@@ -149,7 +178,14 @@ pub fn add(root: &Path, title: &str, duration_ms: u32, bytes: &[u8]) -> Result<R
             }
         };
         let entry = RecordingEntry { id, title, created: crate::applog::iso_stamp(), duration_ms, file };
-        let mut index = read_index(root);
+        let _index = index_lock();
+        let mut index = match read_index(root, true) {
+            Ok(i) => i,
+            Err(e) => {
+                let _ = std::fs::remove_file(dir.join(&entry.file));
+                return Err(e);
+            }
+        };
         index.recordings.push(entry.clone());
         if let Err(e) = write_index(&held, root, &index) {
             let _ = std::fs::remove_file(dir.join(&entry.file));
@@ -165,7 +201,8 @@ pub fn add(root: &Path, title: &str, duration_ms: u32, bytes: &[u8]) -> Result<R
 /// not a regular file.
 pub fn list(root: &Path) -> Vec<RecordingEntry> {
     let dir = recordings_dir(root);
-    let mut entries: Vec<RecordingEntry> = read_index(root)
+    let mut entries: Vec<RecordingEntry> = read_index(root, false)
+        .unwrap_or_default()
         .recordings
         .into_iter()
         .filter(|e| {
@@ -181,14 +218,17 @@ pub fn list(root: &Path) -> Vec<RecordingEntry> {
 pub fn remove(root: &Path, id: &str) -> Result<(), String> {
     {
         let held = super::roots::guard(root)?;
-        let mut index = read_index(root);
+        let _index = index_lock();
+        let mut index = read_index(root, true)?;
         let Some(at) = index.recordings.iter().position(|e| e.id == id) else {
             return Err("that recording is gone".to_string());
         };
         let entry = index.recordings.remove(at);
         write_index(&held, root, &index)?;
         if safe_recording_name(&entry.file) {
-            let _ = std::fs::remove_file(recordings_dir(root).join(&entry.file));
+            if let Err(e) = std::fs::remove_file(recordings_dir(root).join(&entry.file)) {
+                crate::applog::warn(format!("a removed recording's file could not be deleted: {}", e.kind()));
+            }
         }
     }
     super::data_changed::notify(root, AutorunDataKind::Recordings);

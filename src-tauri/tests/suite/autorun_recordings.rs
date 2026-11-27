@@ -23,6 +23,8 @@ fn titles_are_cleaned_and_bad_ones_refused() {
     let address = "a recording's title names no address";
     assert_eq!(clean_title("see https://app/x").unwrap_err(), address);
     assert_eq!(clean_title("www.app.com").unwrap_err(), address);
+    assert_eq!(clean_title("https:\u{200B}//x").unwrap_err(), address);
+    assert_eq!(clean_title("https:\u{202E}//x").unwrap_err(), address);
 }
 
 #[test]
@@ -114,4 +116,73 @@ fn an_empty_video_is_not_kept() {
     let dir = root();
     assert_eq!(add(dir.path(), "t", 1, &[]).unwrap_err(), "the browser gave no video");
     assert!(list(dir.path()).is_empty());
+}
+
+#[test]
+fn an_index_that_is_not_utf8_is_set_aside_with_its_bytes() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let folder = recordings::recordings_dir(dir.path());
+    std::fs::create_dir_all(&folder).unwrap();
+    let bad: &[u8] = b"{\"recordings\":[]}\xff\xfe";
+    std::fs::write(folder.join("index.json"), bad).unwrap();
+    assert!(list(dir.path()).is_empty());
+    assert!(folder.join("index.json").exists(), "list must not set it aside");
+    let e = add(dir.path(), "after", 10, MP4).unwrap();
+    assert_eq!(list(dir.path()), vec![e]);
+    let aside: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .flatten()
+        .filter(|f| f.file_name().to_string_lossy().starts_with("index.unreadable-"))
+        .collect();
+    assert_eq!(aside.len(), 1);
+    assert_eq!(std::fs::read(aside[0].path()).unwrap(), bad);
+}
+
+#[test]
+fn concurrent_adds_all_land_in_the_index() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let path = dir.path().to_path_buf();
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let path = path.clone();
+            std::thread::spawn(move || add(&path, &format!("rec {i}"), i, MP4).unwrap())
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    assert_eq!(list(&path).len(), 8);
+    let mp4s = std::fs::read_dir(recordings::recordings_dir(&path))
+        .unwrap()
+        .flatten()
+        .filter(|f| f.file_name().to_string_lossy().ends_with(".mp4"))
+        .count();
+    assert_eq!(mp4s, 8);
+}
+
+#[test]
+fn a_failed_index_write_removes_the_file_just_written() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let folder = recordings::recordings_dir(dir.path());
+    std::fs::create_dir_all(folder.join("index.json")).unwrap();
+    assert!(add(dir.path(), "t", 1, MP4).is_err());
+    let mp4s = std::fs::read_dir(&folder)
+        .unwrap()
+        .flatten()
+        .filter(|f| f.file_name().to_string_lossy().ends_with(".mp4"))
+        .count();
+    assert_eq!(mp4s, 0);
+}
+
+#[test]
+fn a_listed_entry_whose_file_is_missing_is_left_out() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let keep = add(dir.path(), "keep", 1, MP4).unwrap();
+    let lost = add(dir.path(), "lost", 1, MP4).unwrap();
+    std::fs::remove_file(recordings::recordings_dir(dir.path()).join(&lost.file)).unwrap();
+    assert_eq!(list(dir.path()), vec![keep]);
 }
