@@ -69,3 +69,31 @@ Rejected alternatives:
 - How the safety stop hooks into discovery end, stop and the cap.
 - The card's placement on the Auto Test screen: near the existing results or activity, matching its patterns.
 - Reusing the existing video player (`CaseVideo.tsx`) and save command where possible.
+
+## Also in this round: the assistant may change a script's account (owner, 27 November 2026)
+
+**Today.** Rule 5 in `autorun/edits.rs` (~311) refuses any re-save that changes `account`:
+
+> "the account a script runs as cannot be changed by a repair - a person picks it in the app"
+
+The rule exists so that a failing case is never "fixed" by quietly moving it to an account with more access.
+
+**Owner's decision.**
+- **The writer and the case rewriter may change it.** The healer may not.
+- **Declared like an area change.** The case's `edits` entry says `"account": true` with its `why`. An undeclared change is still refused, with a sentence telling the assistant how to declare it. A declaration that changes nothing is refused, as `area` is.
+- **Saved accounts only.** The new account must be one of the environment's saved accounts. An unknown key is refused, and nothing is invented.
+- **The healer is kept out by the tool connector** (`mcp_session` already tracks which roles' rules each agent has been given; the app does not know the role).
+  - A `save_autorun_script` that declares `"account": true` from an agent session that has been given the healer's rules is refused in the connector with a plain sentence, before it reaches the app.
+  - `healer.md` says it never changes the account. The new account is a person's or a writer's call.
+- **Rule text.**
+  - `writer.md` and `case-rewriter.md` say how to declare the change.
+  - `case-rewriter.md`'s "A repair never changes the account a script runs as" is reworded.
+  - The guide's refusal list (`guide.rs` ~3041) is updated.
+- **Recorded.** The edit's `why` is kept with the repair, as other declared edits are. A person sees the change in the script editor.
+
+**Tests.**
+- A declared change by a writer or rewriter save is accepted.
+- An undeclared change is refused.
+- A declared no-op is refused.
+- An unknown account is refused.
+- The connector refuses the declaration in a session that has the healer's rules.
