@@ -835,7 +835,7 @@ pub async fn explore_undo_in<S: DiscoveryBrowser, B: crate::autorun::replay::Bro
     let mut ended = None;
     let mut explore_end = None;
     if held == Some(true) {
-        explore_end = close_discovery(slot).and_then(|(_, explore)| explore);
+        explore_end = close_discovery(slot).await.and_then(|(_, explore)| explore);
         ended = Some(ENDED_FOR_UNDO);
     }
 

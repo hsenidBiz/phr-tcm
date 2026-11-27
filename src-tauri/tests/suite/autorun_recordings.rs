@@ -203,3 +203,254 @@ fn a_listed_entry_whose_file_is_missing_is_left_out() {
     std::fs::remove_file(recordings::recordings_dir(dir.path()).join(&lost.file)).unwrap();
     assert_eq!(list(dir.path()), vec![keep]);
 }
+
+
+// ----------------------------------------------- a discovery's recording
+
+use crate::autorun_discovery::{exploring, opened_for_discovery, slot, FakeBrowser};
+use crate::common::{FakePage, ScriptedDriver};
+use base64::Engine;
+use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use v2_lib::ai_bridge::{
+    close_browser_in, end_discovery_as, end_discovery_in, end_discovery_releasing, finish_recording, forget_gone_browser,
+    recording_kept, recording_start_in, recording_stop_in, stop_recording_over_cap_in, EndedBy, ALREADY_RECORDING,
+    NOT_RECORDING, RECORDING_LOST, RECORDING_NOT_AVAILABLE, RECORDING_NOT_STARTED, RECORDING_NO_DISCOVERY,
+};
+use v2_lib::browser::cdp::CdpError;
+use v2_lib::commands::autorun_slots::{need_of, Need};
+
+const T0: u64 = 5_000_000;
+const TITLE: &str = "Bug 4521: leave balance fix";
+
+/// A browser that records as asked: its product, whether the start and the
+/// stop work, and one chunk of video for every stop. `stops` counts the stop
+/// calls it was sent.
+fn recorder(product: &'static str, start_ok: bool, stop_ok: bool, stops: Arc<AtomicUsize>) -> ScriptedDriver {
+    let unread = Arc::new(Mutex::new(false));
+    let page = FakePage::default();
+    ScriptedDriver::new(move |method, params| match method {
+        "Browser.getVersion" => Ok(json!({ "product": product })),
+        "Page.startScreenRecording" if start_ok => Ok(json!({})),
+        "Page.startScreenRecording" => Err(CdpError::Protocol { method: method.to_string(), message: "no".into() }),
+        "Page.stopScreenRecording" => {
+            stops.fetch_add(1, Ordering::SeqCst);
+            if !stop_ok {
+                return Err(CdpError::Protocol { method: method.to_string(), message: "no".into() });
+            }
+            *unread.lock().unwrap() = true;
+            Ok(json!({ "stream": "stream-1" }))
+        }
+        "IO.read" => {
+            let first = std::mem::replace(&mut *unread.lock().unwrap(), false);
+            let data = if first { base64::engine::general_purpose::STANDARD.encode(MP4) } else { String::new() };
+            Ok(json!({ "data": data, "base64Encoded": true, "eof": true }))
+        }
+        "IO.close" => Ok(json!({})),
+        _ => page.answer(method, params),
+    })
+}
+
+fn working() -> ScriptedDriver {
+    recorder("Edg/157.0.3456.78", true, true, Arc::new(AtomicUsize::new(0)))
+}
+
+fn sent(b: &Option<FakeBrowser>, method: &str) -> usize {
+    b.as_ref().unwrap().d.methods().iter().filter(|m| m.as_str() == method).count()
+}
+
+fn start_body(title: &str) -> String {
+    json!({ "title": title }).to_string()
+}
+
+#[tokio::test]
+async fn a_discovery_records_its_checks_and_keeps_the_video() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    let (status, said) = recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await;
+    assert_eq!(status, 200, "{said}");
+    assert!(said.contains("Recording \"Bug 4521: leave balance fix\" started"), "{said}");
+    let (status, said) = recording_stop_in(&mut b, T0 + 83_000).await;
+    assert_eq!(status, 200, "{said}");
+    assert_eq!(said, recording_kept(TITLE, 83_000));
+    assert!(said.contains("(1:23)"), "{said}");
+    let listed = list(dir.path());
+    assert_eq!(listed.len(), 1);
+    assert_eq!((listed[0].title.as_str(), listed[0].duration_ms), (TITLE, 83_000));
+    assert_eq!(store::load_video(dir.path(), &listed[0].file).unwrap(), MP4);
+}
+
+#[tokio::test]
+async fn a_second_start_is_refused_while_one_is_going() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let again = recording_start_in(&mut b, dir.path(), &start_body("another"), T0 + 1).await;
+    assert_eq!(again, (409, ALREADY_RECORDING.to_string()));
+    assert_eq!(sent(&b, "Page.startScreenRecording"), 1);
+}
+
+#[tokio::test]
+async fn a_bad_title_or_body_is_a_400() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    let (status, said) = recording_start_in(&mut b, dir.path(), &start_body("  "), T0).await;
+    assert_eq!((status, said.as_str()), (400, "a recording needs a short title, e.g. \"Bug 4521: leave balance fix\""));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body("see https://x/y"), T0).await.0, 400);
+    assert_eq!(recording_start_in(&mut b, dir.path(), "not json", T0).await.0, 400);
+    assert_eq!(recording_start_in(&mut b, dir.path(), "{}", T0).await.0, 400);
+    assert_eq!(sent(&b, "Page.startScreenRecording"), 0);
+}
+
+#[tokio::test]
+async fn no_recording_without_a_signed_in_discovery() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let refused = (409, RECORDING_NO_DISCOVERY.to_string());
+    let mut empty: Option<FakeBrowser> = None;
+    assert_eq!(recording_start_in(&mut empty, dir.path(), &start_body(TITLE), T0).await, refused);
+    let (mut not_signed_in, _) = slot(working(), opened_for_discovery());
+    assert_eq!(recording_start_in(&mut not_signed_in, dir.path(), &start_body(TITLE), T0).await, refused);
+    let (mut persons, _) = slot(working(), None);
+    assert_eq!(recording_start_in(&mut persons, dir.path(), &start_body(TITLE), T0).await, refused);
+    assert_eq!(sent(&persons, "Page.startScreenRecording"), 0);
+}
+
+#[tokio::test]
+async fn an_old_browser_says_recording_is_not_available() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let old = recorder("Edg/152.0.1.1", true, true, Arc::new(AtomicUsize::new(0)));
+    let (mut b, _) = slot(old, exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await, (409, RECORDING_NOT_AVAILABLE.to_string()));
+    assert_eq!(sent(&b, "Page.startScreenRecording"), 0);
+    assert!(b.as_mut().unwrap().discovery.is_some());
+}
+
+#[tokio::test]
+async fn a_start_the_browser_refuses_says_so_and_the_discovery_goes_on() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let refusing = recorder("Edg/157.0.1.1", false, true, Arc::new(AtomicUsize::new(0)));
+    let (mut b, _) = slot(refusing, exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await, (409, RECORDING_NOT_STARTED.to_string()));
+    assert!(b.as_mut().unwrap().discovery.as_ref().unwrap().recording.is_none());
+}
+
+#[tokio::test]
+async fn stopping_with_none_going_says_so() {
+    let _lock = crate::serial::autorun();
+    let _dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_stop_in(&mut b, T0).await, (409, NOT_RECORDING.to_string()));
+    let mut empty: Option<FakeBrowser> = None;
+    assert_eq!(recording_stop_in(&mut empty, T0).await, (409, NOT_RECORDING.to_string()));
+}
+
+#[tokio::test]
+async fn a_stop_the_browser_refuses_keeps_nothing_and_says_so() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let refusing = recorder("Edg/157.0.1.1", true, false, Arc::new(AtomicUsize::new(0)));
+    let (mut b, _) = slot(refusing, exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    assert_eq!(recording_stop_in(&mut b, T0 + 5_000).await, (200, RECORDING_LOST.to_string()));
+    assert!(list(dir.path()).is_empty());
+    assert_eq!(recording_stop_in(&mut b, T0 + 6_000).await, (409, NOT_RECORDING.to_string()));
+}
+
+async fn recording_slot(
+    dir: &std::path::Path,
+    assistant: bool,
+    stops: Arc<AtomicUsize>,
+) -> (Option<FakeBrowser>, Arc<std::sync::atomic::AtomicBool>) {
+    let (mut b, closed) = slot(recorder("Edg/157.0.3456.78", true, true, stops), exploring("Leave"));
+    b.as_mut().unwrap().assistant = assistant;
+    assert_eq!(recording_start_in(&mut b, dir, &start_body(TITLE), T0).await.0, 200);
+    (b, closed)
+}
+
+fn no_stops() -> Arc<AtomicUsize> {
+    Arc::new(AtomicUsize::new(0))
+}
+
+#[tokio::test]
+async fn ending_the_discovery_keeps_the_recording() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    assert_eq!(end_discovery_in(&mut b).await.0, 200);
+    assert_eq!(list(dir.path()).len(), 1);
+    let (mut b, _) = recording_slot(dir.path(), true, no_stops()).await;
+    assert_eq!(end_discovery_releasing(&mut b).await.0, 200);
+    assert_eq!(list(dir.path()).len(), 2);
+}
+
+#[tokio::test]
+async fn a_persons_end_discovery_keeps_the_recording() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, closed) = recording_slot(dir.path(), true, no_stops()).await;
+    assert_eq!(end_discovery_as(&mut b, EndedBy::Person).await.0, 200);
+    assert_eq!(list(dir.path()).len(), 1);
+    assert!(closed.load(Ordering::SeqCst) && b.is_none());
+}
+
+#[tokio::test]
+async fn closing_the_browser_keeps_the_recording() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, closed) = recording_slot(dir.path(), true, no_stops()).await;
+    assert!(close_browser_in(&mut b).await);
+    assert_eq!(list(dir.path()).len(), 1);
+    assert!(closed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn a_gone_browser_loses_its_recording_quietly() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let stops = no_stops();
+    let (mut b, _) = recording_slot(dir.path(), true, stops.clone()).await;
+    b.as_ref().unwrap().gone.store(true, Ordering::SeqCst);
+    assert!(forget_gone_browser(&mut b).await);
+    assert!(list(dir.path()).is_empty());
+    assert!(b.is_none());
+    assert_eq!(stops.load(Ordering::SeqCst), 0, "a gone browser is sent no stop call");
+}
+
+#[tokio::test]
+async fn the_cap_stops_a_recording_at_ten_minutes() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    assert!(stop_recording_over_cap_in(&mut b, T0 + 599_999).await.is_none());
+    assert!(list(dir.path()).is_empty());
+    let kept = stop_recording_over_cap_in(&mut b, T0 + 600_000).await.expect("kept at the cap");
+    assert_eq!(kept.duration_ms, 600_000);
+    assert_eq!(list(dir.path()), vec![kept]);
+}
+
+#[tokio::test]
+async fn the_cap_never_stops_a_newer_recording_early() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
+    assert_eq!(recording_stop_in(&mut b, T0 + 10_000).await.0, 200);
+    let t2 = T0 + 100_000;
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body("second"), t2).await.0, 200);
+    assert!(stop_recording_over_cap_in(&mut b, T0 + 600_000).await.is_none());
+    assert_eq!(list(dir.path()).len(), 1);
+    assert!(finish_recording(&mut b, t2 + 1_000).await.is_some());
+    assert_eq!(list(dir.path()).len(), 2);
+}
+
+#[test]
+fn the_recording_routes_act_on_the_browser() {
+    assert_eq!(need_of("POST", "/autorun-recording-start"), Some(Need::Act));
+    assert_eq!(need_of("POST", "/autorun-recording-stop"), Some(Need::Act));
+}

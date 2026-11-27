@@ -155,10 +155,10 @@ pub async fn discard<D: Driver>(d: &mut D, stopped: Stopped) {
     let _ = d.call_within(CLOSE, json!({ "handle": stopped.handle }), Duration::from_millis(CALL_MS)).await;
 }
 
-/// Read the video and keep it beside the run's pictures: its name there, or
-/// `None` when it could not be read or written (logged). The stream is let
-/// go either way.
-pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str) -> Option<String> {
+/// Read the video out of the browser: its bytes, or `None` when it could not
+/// be read, took too long, or was empty (logged). The stream is let go either
+/// way.
+pub async fn read_video<D: Driver>(d: &mut D, stopped: Stopped, who: &str) -> Option<Vec<u8>> {
     let read = tokio::time::timeout(Duration::from_millis(READ_MS), read_all(d, &stopped.handle)).await;
     let _ = d.call_within(CLOSE, json!({ "handle": stopped.handle }), Duration::from_millis(CALL_MS)).await;
     let bytes = match read {
@@ -176,6 +176,14 @@ pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str
         crate::applog::warn(format!("{who}: the video of this case was empty"));
         return None;
     }
+    Some(bytes)
+}
+
+/// Read the video and keep it beside the run's pictures: its name there, or
+/// `None` when it could not be read or written (logged). The stream is let
+/// go either way.
+pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str) -> Option<String> {
+    let bytes = read_video(d, stopped, who).await?;
     let root = root.to_path_buf();
     let len = bytes.len();
     match tokio::task::spawn_blocking(move || store::save_video(&root, &bytes)).await {

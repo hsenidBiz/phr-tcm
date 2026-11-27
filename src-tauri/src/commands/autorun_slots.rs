@@ -43,6 +43,8 @@ pub fn need_of(method: &str, path: &str) -> Option<Need> {
             | "/autorun-discover-actions"
             | "/autorun-discover-area"
             | "/autorun-discover-end"
+            | "/autorun-recording-start"
+            | "/autorun-recording-stop"
             | "/autorun-setup-run"
             | "/autorun-replay-stop"
             | "/autorun-release"

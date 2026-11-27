@@ -57,6 +57,7 @@ mod discovery;
 mod discovery_areas;
 mod discovery_browser;
 mod discovery_end;
+mod discovery_recording;
 mod explore;
 mod guide_routes;
 mod replay;
@@ -82,6 +83,7 @@ pub use self::discovery::*;
 pub use self::discovery_areas::*;
 pub use self::discovery_browser::*;
 pub use self::discovery_end::*;
+pub use self::discovery_recording::*;
 pub use self::explore::*;
 pub use self::guide_routes::*;
 pub use self::replay::*;
@@ -871,6 +873,29 @@ pub async fn route_as(
                 end_claims_of(holder, answer.0);
                 answer
             }
+        },
+        // A discovery's video: started just before its checks, stopped right
+        // after. Nothing here sends a request to the application.
+        ("POST", "/autorun-recording-start") => match (replay_is_holding_the_browser(slot), autorun_root()) {
+            (Some(going), _) => going,
+            (None, Ok(root)) => {
+                let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+                let answer = recording_start_in(&mut held, &root, body, crate::autorun::sessions::now_ms()).await;
+                drop(held);
+                if answer.0 == 200 {
+                    crate::commands::autorun::spawn_recording_cap(slot);
+                }
+                answer
+            }
+            (None, Err(refused)) => refused,
+        },
+        ("POST", "/autorun-recording-stop") => match (replay_is_holding_the_browser(slot), autorun_root()) {
+            (Some(going), _) => going,
+            (None, Ok(_)) => {
+                let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+                recording_stop_in(&mut held, crate::autorun::sessions::now_ms()).await
+            }
+            (None, Err(refused)) => refused,
         },
         // An explore session's change list, recorded and read back. Files
         // on this machine only: nothing here sends a request to the

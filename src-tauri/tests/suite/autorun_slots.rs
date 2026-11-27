@@ -254,6 +254,8 @@ mod routing {
             "/autorun-discover-actions",
             "/autorun-discover-area",
             "/autorun-discover-end",
+            "/autorun-recording-start",
+            "/autorun-recording-stop",
             "/autorun-replay-stop",
             "/autorun-release",
             "/autorun-reset",

@@ -37,6 +37,19 @@ pub(crate) fn session_slot(n: SlotNo) -> &'static tokio::sync::Mutex<Option<Sess
     }
 }
 
+/// The ten-minute cap on a discovery's recording: after `recordings::CAP` it
+/// stops the recording slot `n`'s discovery has, if its own deadline has come
+/// (`ai_bridge::stop_recording_over_cap_in`). The deadline check means a later
+/// recording, started after the one this timer was for ended, is never
+/// stopped early.
+pub(crate) fn spawn_recording_cap(n: SlotNo) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(crate::autorun::recordings::CAP).await;
+        let mut slot = session_slot(n).lock().await;
+        crate::ai_bridge::stop_recording_over_cap_in(&mut slot, crate::autorun::sessions::now_ms()).await;
+    });
+}
+
 /// Serialises a change to the imported capture sets (an import), so two
 /// imports at once cannot both pass the five-set cap or lose each other's
 /// set. Coordination only: the sets themselves live in the Rust cache.
@@ -380,6 +393,10 @@ pub struct DiscoveryState {
     /// refused unsent (`api_templates::one_off::SIGNED_OUT_BEFORE`). It goes
     /// with the discovery.
     pub signed_out: bool,
+    /// The video this discovery is recording of its checks, if one is going
+    /// (`ai_bridge::recording_start_in`). It is stopped and kept however the
+    /// discovery ends (`ai_bridge::finish_recording`).
+    pub recording: Option<crate::autorun::recordings::Running>,
 }
 
 impl DiscoveryState {
@@ -712,6 +729,7 @@ pub(crate) async fn open_for_discovery(
             carried: Vec::new(),
             kept: Default::default(),
             signed_out: false,
+            recording: None,
         });
     }
     publish_discovery_in(n, &slot);
@@ -1477,7 +1495,7 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     crate::ai_bridge::stop_batch();
     // A discovery going in it ends with it: its state lives in the session.
     let mut slot = SESSION.lock().await;
-    if crate::ai_bridge::close_browser_in(&mut slot) {
+    if crate::ai_bridge::close_browser_in(&mut slot).await {
         crate::applog::info("Auto-run browser closed");
     }
     publish_discovery(&slot);
@@ -1541,7 +1559,7 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
     }
     let mut held = false;
     for (n, slot) in SlotNo::all().into_iter().zip(slots.iter_mut()) {
-        held |= crate::ai_bridge::close_browser_in(slot);
+        held |= crate::ai_bridge::close_browser_in(slot).await;
         publish_discovery_in(n, slot);
         // Nobody holds a browser that is gone, one bound while it had none
         // included.
@@ -1744,11 +1762,11 @@ pub async fn release_outcome_in<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mu
         Some(b) => b.parts().discovery.is_some(),
     };
     if discovering {
-        let (status, said) = crate::ai_bridge::end_discovery_closing(slot);
+        let (status, said) = crate::ai_bridge::end_discovery_closing(slot).await;
         return ReleaseOutcome::EndedDiscovery(status, said);
     }
     if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) {
-        crate::ai_bridge::close_browser_in(slot);
+        crate::ai_bridge::close_browser_in(slot).await;
         return ReleaseOutcome::ClosedAssistants;
     }
     ReleaseOutcome::PersonsKept
@@ -2697,7 +2715,7 @@ pub(crate) async fn replay_supervised(
     // stopped early and the browser is then found gone.
     let gone = match &end {
         ReplayEnd::BrowserGone { .. } => {
-            crate::ai_bridge::close_browser_in(&mut slot);
+            crate::ai_bridge::close_browser_in(&mut slot).await;
             publish_discovery_in(n, &slot);
             true
         }

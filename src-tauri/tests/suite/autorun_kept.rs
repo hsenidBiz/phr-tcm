@@ -199,7 +199,7 @@ async fn the_list_outlives_the_end_of_the_discovery() {
     started(dir.path(), "a", Some(&id), Some("Leave"));
     assert_eq!(run(&mut b, dir.path(), &click("#a")).await["ok"], true);
 
-    let (status, out) = end_discovery_closing(&mut b);
+    let (status, out) = end_discovery_closing(&mut b).await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(last_of(dir.path(), "a").unwrap().actions.len(), 1);
 }

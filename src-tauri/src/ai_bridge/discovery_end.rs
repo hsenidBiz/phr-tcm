@@ -60,7 +60,7 @@ pub async fn end_discovery_as<B: DiscoveryBrowser>(slot: &mut Option<B>, by: End
     match by {
         EndedBy::Assistant => end_discovery_releasing(slot).await,
         EndedBy::AssistantKeeping => end_discovery_in(slot).await,
-        EndedBy::Person => end_discovery_closing(slot),
+        EndedBy::Person => end_discovery_closing(slot).await,
     }
 }
 
@@ -80,12 +80,12 @@ pub async fn end_discovery_releasing<B: DiscoveryBrowser>(slot: &mut Option<B>) 
             None => (200, "no discovery is going".to_string()),
         };
     }
-    match close_discovery(slot) {
+    match close_discovery(slot).await {
         Some((summary, explore)) => ended_answer(DISCOVERY_ENDED_RELEASED, summary, explore),
         // No discovery, but a replay left the assistant's own browser: this
         // end frees it (and its account) the same way. A person's stays.
         None if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) => {
-            close_browser_in(slot);
+            close_browser_in(slot).await;
             crate::applog::info("Auto Test: the assistant's end closed the browser its replay left open");
             (200, DISCOVERY_ENDED_RELEASED.to_string())
         }
@@ -99,8 +99,8 @@ pub async fn end_discovery_releasing<B: DiscoveryBrowser>(slot: &mut Option<B>) 
 /// so Auto Test can run again, and release is the repair for a broken
 /// browser, so neither keeps one. The answer is `end_discovery_in`'s, with
 /// the browser closed.
-pub fn end_discovery_closing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
-    match close_discovery(slot) {
+pub async fn end_discovery_closing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+    match close_discovery(slot).await {
         Some((summary, explore)) => ended_answer(DISCOVERY_ENDED_CLOSED, summary, explore),
         None => (200, "no discovery is going".to_string()),
     }
@@ -150,6 +150,7 @@ pub(crate) async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option
     if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
         return None;
     }
+    finish_recording(slot, crate::autorun::sessions::now_ms()).await;
     let summary = finish_mapping(slot);
     let explore = finish_explore(slot);
     let (lifted, assistants) = match slot.as_mut() {
@@ -182,12 +183,13 @@ pub(crate) async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option
 /// End discovery and the assistant's release (`end_discovery_closing`).
 /// `None` with no discovery going, else the mapping run's summary, if it
 /// was one, and the explore session's end, if it was one.
-pub(crate) fn close_discovery<B: DiscoveryBrowser>(
+pub(crate) async fn close_discovery<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
 ) -> Option<(Option<crate::autorun::mapping_summary::MappingSummary>, Option<crate::autorun::explore::ExploreEnd>)> {
     if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
         return None;
     }
+    finish_recording(slot, crate::autorun::sessions::now_ms()).await;
     let summary = finish_mapping(slot);
     let explore = finish_explore(slot);
     if let Some(browser) = slot.take() {
@@ -296,7 +298,8 @@ pub fn after_ended_discovery(ended: bool, said: &str) -> String {
 
 /// Close whatever browser `slot` holds - a discovery ends with it. Whether
 /// there was one.
-pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+pub async fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+    finish_recording(slot, crate::autorun::sessions::now_ms()).await;
     finish_mapping(slot);
     finish_explore(slot);
     match slot.take() {
