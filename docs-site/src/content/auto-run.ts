@@ -711,6 +711,15 @@ export const autoRun: Screen = {
       does: "The case failed on something passing and was run once more. Hover it to see why the first try failed. A case that says **Not checked** went on without its preconditions being checked.",
     },
 
+    {
+      id: "recordings-card",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "heading", name: "Recordings" },
+      name: "Recordings",
+      does: "Videos an assistant recorded of its checks while discovering, when you asked it for evidence, each with its title, date and length: **Play** watches one here, **Save** copies it where you choose, and **Remove** deletes it from this computer.",
+    },
+
     // --- Review --------------------------------------------------------------------
     {
       id: "review-case",
