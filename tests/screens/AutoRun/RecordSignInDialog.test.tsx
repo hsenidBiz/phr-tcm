@@ -489,6 +489,7 @@ test("the checking account can be changed in the review, and not while the check
   await toReview();
   const pick = screen.getByRole("combobox", { name: "Check with account" });
   expect(pick).toHaveTextContent("HR Admin (hr.admin)");
+  // The picker is searchable: it opens like a combobox and the account is picked from its list.
   fireEvent.click(pick);
   fireEvent.click(await screen.findByRole("option", { name: "HR Clerk (hr.clerk)" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Fixed text for step 4" }), { target: { value: "CORP" } });
@@ -519,4 +520,31 @@ test("a check picked in plain view carries no menu note", async () => {
   mount(recorder(), { recipe: RECIPE });
   await toReview();
   expect(screen.queryByText(/inside a menu/)).not.toBeInTheDocument();
+});
+
+test("searching the Check with account list narrows it to the matching accounts, and picking one is saved by key", async () => {
+  const saves: { account: string }[] = [];
+  mount(
+    recorder((_cmd, args) => {
+      saves.push(args as never);
+      return { saved: true, failure: "" };
+    }),
+    {
+      recipe: RECIPE,
+      accounts: [
+        { key: "evelyn1", label: "Evelyn Perez (001739)", username: "e", password: "p" },
+        { key: "kim.lee", label: "Kim Lee (000214)", username: "k", password: "p" },
+      ],
+    },
+  );
+  await toReview();
+  fireEvent.click(screen.getByRole("combobox", { name: "Check with account" }));
+  await screen.findByRole("option", { name: "Kim Lee (000214) (kim.lee)" });
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "Perez" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Evelyn Perez (001739) (evelyn1)"]);
+  fireEvent.click(screen.getByRole("option", { name: "Evelyn Perez (001739) (evelyn1)" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Fixed text for step 4" }), { target: { value: "CORP" } });
+  fireEvent.click(screen.getByRole("button", { name: "Check and save" }));
+  await waitFor(() => expect(saves).toHaveLength(1));
+  expect(saves[0].account).toBe("evelyn1");
 });

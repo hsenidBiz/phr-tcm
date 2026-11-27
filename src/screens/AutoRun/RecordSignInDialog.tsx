@@ -23,6 +23,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
+import Combobox from "../../components/ui/combobox";
 import { Select } from "../../components/ui/select";
 import {
   IconCancel,
@@ -317,20 +318,16 @@ export default function RecordSignInDialog({
   const accountPicker = (disabled: boolean) => (
     <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
       Check with account
-      <Select
-        aria-label="Check with account"
+      <Combobox
+        ariaLabel="Check with account"
         className="w-56"
         value={who}
         disabled={disabled || keys.length === 0}
-        onChange={(e) => setPicked(e.target.value)}
-      >
-        {keys.length === 0 && <option value="">No accounts yet</option>}
-        {(accounts.data ?? []).map((a) => (
-          <option key={a.key} value={a.key}>
-            {a.label ? `${a.label} (${a.key})` : a.key}
-          </option>
-        ))}
-      </Select>
+        clearable={false}
+        placeholder="No accounts yet"
+        onChange={setPicked}
+        items={(accounts.data ?? []).map((a) => ({ value: a.key, label: a.label ? `${a.label} (${a.key})` : a.key }))}
+      />
     </label>
   );
 

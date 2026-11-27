@@ -423,6 +423,7 @@ test("the account for the run is remembered per project and sent with each case'
   const { unmount } = mountForAccount(calls);
   const pick = await screen.findByRole("combobox", { name: "Sign in as" });
   expect(pick).toHaveTextContent("Each script's own account");
+  // The picker is searchable: it opens like a combobox and the account is picked from its list.
   fireEvent.click(pick);
   fireEvent.click(await screen.findByRole("option", { name: "HR Admin (hr.admin)" }));
   expect(localStorage.getItem("tcm-v2-autorun-run-account:acme/Web")).toBe("hr.admin");
@@ -1017,4 +1018,26 @@ test("the run window's dialog is named by its Unattended run title", async () =>
   mockIPC(() => null, { shouldMockEvents: true });
   renderPane([{ id: 1, title: "A" }]);
   expect(await screen.findByRole("dialog", { name: "Unattended run" })).toBeInTheDocument();
+});
+
+test("searching the Sign in as list narrows it to the matching accounts, and picking one is remembered by key", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_list_accounts") {
+        return [
+          { key: "evelyn1", label: "Evelyn Perez (001739)", username: "e", password: "p" },
+          { key: "kim.lee", label: "Kim Lee (000214)", username: "k", password: "p" },
+        ];
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  mountPane([{ id: 1, title: "A", module: "Leave" }]);
+  fireEvent.click(await screen.findByRole("combobox", { name: "Sign in as" }));
+  await screen.findByRole("option", { name: "Kim Lee (000214) (kim.lee)" });
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "Perez" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Evelyn Perez (001739) (evelyn1)"]);
+  fireEvent.click(screen.getByRole("option", { name: "Evelyn Perez (001739) (evelyn1)" }));
+  expect(localStorage.getItem("tcm-v2-autorun-run-account:acme/Web")).toBe("evelyn1");
 });

@@ -21,6 +21,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
+import Combobox from "../../components/ui/combobox";
 import { Select } from "../../components/ui/select";
 import { toast } from "../../lib/toast";
 import {
@@ -356,26 +357,24 @@ function RunWindow({ run }: { run: BackgroundRun }) {
           {planBatches(plan).length > 0 && plan && <PlanSummary plan={plan} cases={cases} />}
           <label className="flex items-center gap-2 text-xs text-muted">
             Sign in as
-            <Select
-              aria-label="Sign in as"
+            <Combobox
+              ariaLabel="Sign in as"
               className="w-56"
               value={runAccount}
-              onChange={(e) => {
-                setPicked(e.target.value);
+              clearable={false}
+              onChange={(v) => {
+                setPicked(v);
                 try {
-                  localStorage.setItem(runAccountKey(org, project), e.target.value);
+                  localStorage.setItem(runAccountKey(org, project), v);
                 } catch {
                   // storage unavailable - the choice lasts this session
                 }
               }}
-            >
-              <option value="">Each script's own account</option>
-              {accounts.map((a) => (
-                <option key={a.key} value={a.key}>
-                  {a.label ? `${a.label} (${a.key})` : a.key}
-                </option>
-              ))}
-            </Select>
+              items={[
+                { value: "", label: "Each script's own account" },
+                ...accounts.map((a) => ({ value: a.key, label: a.label ? `${a.label} (${a.key})` : a.key })),
+              ]}
+            />
           </label>
           <p className="text-xs text-faint">
             An account picked here signs in every case, over the account a script names.

@@ -50,6 +50,7 @@ test("the account a script runs as is chosen from the tester's own list", async 
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
   const pick = await screen.findByRole("combobox", { name: "Runs as" });
   expect(pick).toHaveTextContent("No sign-in");
+  // The picker is searchable: it opens like a combobox and the account is picked from its list.
   fireEvent.click(pick);
   fireEvent.click(await screen.findByRole("option", { name: "HR Admin (hr.admin)" }));
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
@@ -71,6 +72,7 @@ test("choosing No sign-in writes a script with no account", async () => {
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP, account: "hr.admin" }, ACCOUNTS, saved);
   const pick = await screen.findByRole("combobox", { name: "Runs as" });
   await waitFor(() => expect(pick).toHaveTextContent("HR Admin (hr.admin)"));
+  // The picker is searchable: open it and pick the item.
   fireEvent.click(pick);
   fireEvent.click(await screen.findByRole("option", { name: "No sign-in" }));
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
@@ -770,6 +772,7 @@ test("the settings stay editable in the readable view", async () => {
   const change = screen.getByRole("textbox", { name: "Add to Changes" });
   fireEvent.change(change, { target: { value: "cycle published" } });
   fireEvent.keyDown(change, { key: "Enter" });
+  // The picker is searchable: open it and pick the item.
   fireEvent.click(screen.getByRole("combobox", { name: "Runs as" }));
   fireEvent.click(await screen.findByRole("option", { name: "HR Admin (hr.admin)" }));
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
@@ -1238,4 +1241,40 @@ test("read-only: a script that cannot be read says so without mentioning saving"
   );
   const msg = await screen.findByText(/Could not read the script/);
   expect(msg.textContent).not.toMatch(/sav/i);
+});
+
+const PEREZ_ACCOUNTS = [
+  { key: "evelyn1", label: "Evelyn Perez (001739)", username: "e", password: "p" },
+  { key: "kim.lee", label: "Kim Lee (000214)", username: "k", password: "p" },
+  { key: "sam.perez", label: "Sam Perez (000300)", username: "s", password: "p" },
+];
+
+test("searching the Runs as list narrows it to the matching accounts, and picking one sets its key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, PEREZ_ACCOUNTS, saved);
+  const pick = await screen.findByRole("combobox", { name: "Runs as" });
+  await waitFor(() => expect(screen.queryByText("Loading")).toBeNull());
+  fireEvent.click(pick);
+  await screen.findByRole("option", { name: "Kim Lee (000214) (kim.lee)" });
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "Perez" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+    "Evelyn Perez (001739) (evelyn1)",
+    "Sam Perez (000300) (sam.perez)",
+  ]);
+  fireEvent.click(screen.getByRole("option", { name: "Evelyn Perez (001739) (evelyn1)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: "evelyn1" }]));
+});
+
+test("No sign-in leads the Runs as list, and choosing it sets no account", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, account: "evelyn1" }, PEREZ_ACCOUNTS, saved);
+  const pick = await screen.findByRole("combobox", { name: "Runs as" });
+  await waitFor(() => expect(pick).toHaveTextContent("Evelyn Perez (001739) (evelyn1)"));
+  fireEvent.click(pick);
+  const options = await screen.findAllByRole("option");
+  expect(options[0]).toHaveTextContent("No sign-in");
+  fireEvent.click(options[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: null }]));
 });
