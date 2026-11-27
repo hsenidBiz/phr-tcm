@@ -609,13 +609,15 @@ pub async fn save_autorun_scripts_carrying(
                     }
                     let checked = match saved_account_keys.as_ref() {
                         Some(Ok(keys)) => crate::autorun::edits::check_new_account(sent.case_id, sent.account.as_deref(), keys),
-                        Some(Err(e)) => Err(e.clone()),
+                        Some(Err(e)) => Err(format!("case {}: the saved accounts could not be read - {e}", sent.case_id)),
                         None => Ok(()),
                     };
                     if let Err(why) = checked {
                         refused.push(why);
                         continue;
                     }
+                    // Keys are saved exactly as get_accounts lists them: store the one that matched.
+                    script.account = sent.account.as_deref().map(|k| k.trim().to_string());
                 }
                 script.repairs = old.repairs.saturating_add(1);
                 // What was given up before stays; this repair's own entries
@@ -669,7 +671,8 @@ pub async fn save_autorun_scripts_carrying(
                             line
                         });
                     if !dry_run {
-                        if !why.is_empty() {
+                        let account_only = e.account && e.steps.is_empty() && !e.area && e.precondition.is_none();
+                        if !why.is_empty() && !account_only {
                             crate::applog::info(format!(
                                 "AI repaired case {} steps {:?}: {why}",
                                 script.case_id, e.steps

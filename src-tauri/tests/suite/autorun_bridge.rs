@@ -3345,6 +3345,39 @@ async fn a_declared_account_change_by_a_writer_or_rewriter_is_saved() {
 }
 
 #[tokio::test]
+async fn a_declared_account_key_is_saved_trimmed_and_an_unreadable_file_is_said_without_a_path() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_two_accounts(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let (status, out) = post_as(&dir, &client, case_7_as("hr_admin").to_string()).await;
+    assert_eq!(status, 200, "{out}");
+
+    let declared = serde_json::json!({
+        "scripts": case_7_as(" hr_user "),
+        "edits": [{ "case_id": 7, "steps": [], "account": true, "why": "the case is the approver's" }],
+    })
+    .to_string();
+    let (status, out) = post_as(&dir, &client, declared.clone()).await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().account.as_deref(), Some("hr_user"));
+
+    // Break the accounts file: the refusal names the case and no path.
+    let path = v2_lib::autorun::accounts::accounts_path_for(dir.path(), &v2_lib::environments::active_id(dir.path()).unwrap());
+    std::fs::write(&path, "{ not json").unwrap();
+    let back = serde_json::json!({
+        "scripts": case_7_as("hr_admin"),
+        "edits": [{ "case_id": 7, "steps": [], "account": true, "why": "back again" }],
+    })
+    .to_string();
+    let (status, out) = post_as(&dir, &client, back).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("case 7: the saved accounts could not be read - "), "{out}");
+    assert!(!out.contains(&path.to_string_lossy().to_string()) && !out.contains("accounts\\") , "{out}");
+}
+
+#[tokio::test]
 async fn a_declared_change_to_an_unsaved_account_is_refused() {
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
