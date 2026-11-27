@@ -735,6 +735,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// When (epoch ms, `timing::wall_ms`) the browser last answered an `Input.*` command that delivers
     /// input, for a request timed from the input that caused it.
     last_input_ms: Option<u64>,
+    /// The label the step highlight last drew (`note_drawn_label`), taken by
+    /// the runner for the video's marker.
+    drawn_label: Option<String>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -927,6 +930,7 @@ impl<T: Transport> Cdp<T> {
             noted: std::collections::BTreeMap::new(),
             noted_text: std::collections::BTreeMap::new(),
             last_input_ms: None,
+            drawn_label: None,
         }
     }
 
@@ -1995,6 +1999,17 @@ impl<T: Transport> Cdp<T> {
     /// claimed by `expect_tab`.
     pub fn step_began(&mut self) {
         self.step_marks = (self.step_marks.1, Some(Instant::now()));
+    }
+
+    /// The label the step highlight drew for the action now running, kept
+    /// for the video's marker (`autorun::video_marks::mark_label`).
+    pub fn note_drawn_label(&mut self, label: &str) {
+        self.drawn_label = Some(label.to_string());
+    }
+
+    /// The label noted since the last call, leaving none behind.
+    pub fn take_drawn_label(&mut self) -> Option<String> {
+        self.drawn_label.take()
     }
 
     /// The current tab's name: `main`, a name a script gave, or the name of
@@ -3133,6 +3148,12 @@ pub trait Driver {
 
     /// See `Cdp::step_began`.
     fn step_began(&mut self) {}
+    /// See `Cdp::note_drawn_label`.
+    fn note_drawn_label(&mut self, _label: &str) {}
+    /// See `Cdp::take_drawn_label`.
+    fn take_drawn_label(&mut self) -> Option<String> {
+        None
+    }
     /// See `Cdp::tab_name`.
     fn tab_name(&self) -> String {
         MAIN_TAB.to_string()
@@ -3328,6 +3349,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn step_began(&mut self) {
         Cdp::step_began(self)
+    }
+    fn note_drawn_label(&mut self, label: &str) {
+        Cdp::note_drawn_label(self, label)
+    }
+    fn take_drawn_label(&mut self) -> Option<String> {
+        Cdp::take_drawn_label(self)
     }
     fn tab_name(&self) -> String {
         Cdp::tab_name(self)

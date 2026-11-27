@@ -268,6 +268,13 @@ export const commands = {
 	 */
 	devProbeBoardsSuite: (organization: string, project: string, pbiId: number, caseId: number, planId: number) => typedError<string, string>(__TAURI_INVOKE("dev_probe_boards_suite", { organization, project, pbiId, caseId, planId })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
+	/**
+	 *  Check a queue against the project's Test Case field rules before it is
+	 *  sent: a required field left empty, a value outside a fixed list. Read
+	 *  only, and it never fails - rules that cannot be read come back
+	 *  `checked: false`, and the upload goes on as it always did.
+	 */
+	checkFieldRules: (organization: string, project: string, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null) => __TAURI_INVOKE<RuleCheck>("check_field_rules", { organization, project, queue, moduleRef, preconditionsRef }),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull_Serialize[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**
 	 *  A test suite's own cases (not its child suites'), in the suite's order,
@@ -1052,7 +1059,7 @@ export const commands = {
 	 */
 	autoRunSaveVideo: (name: string, destPath: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_video", { name, destPath })),
 	/**  The discovery recordings kept for this environment, newest first. */
-	autoRunRecordings: () => typedError<RecordingEntry[], string>(__TAURI_INVOKE("auto_run_recordings")),
+	autoRunRecordings: () => typedError<RecordingEntry_Serialize[], string>(__TAURI_INVOKE("auto_run_recordings")),
 	/**  Delete one discovery recording. */
 	autoRunRemoveRecording: (id: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_remove_recording", { id })),
 	/**
@@ -3932,6 +3939,12 @@ export type CaseRecord_Deserialize = {
 	 *  Left out when there is none, so older run files read the same.
 	 */
 	video?: string | null,
+	/**
+	 *  When each step and action of the case began, as offsets from the
+	 *  video's own start, so the player can mark them. Written only with a
+	 *  video; left out otherwise and for runs from before markers.
+	 */
+	video_marks?: VideoMarks_Deserialize | null,
 };
 
 /**
@@ -4008,6 +4021,12 @@ export type CaseRecord_Serialize = {
 	 *  Left out when there is none, so older run files read the same.
 	 */
 	video?: string | null,
+	/**
+	 *  When each step and action of the case began, as offsets from the
+	 *  video's own start, so the player can mark them. Written only with a
+	 *  video; left out otherwise and for runs from before markers.
+	 */
+	video_marks?: VideoMarks_Serialize | null,
 };
 
 /**
@@ -7362,12 +7381,36 @@ export type ReconciledCase = {
 };
 
 /**  One kept recording. */
-export type RecordingEntry = {
+export type RecordingEntry = RecordingEntry_Serialize | RecordingEntry_Deserialize;
+
+/**  One kept recording. */
+export type RecordingEntry_Deserialize = {
 	id: string,
 	title: string,
 	created: string,
 	duration_ms: number,
 	file: string,
+	/**
+	 *  One mark per action the assistant tried, each at its offset from the
+	 *  recording's start. Left out when there are none, so older entries read
+	 *  the same.
+	 */
+	marks?: VideoMark[],
+};
+
+/**  One kept recording. */
+export type RecordingEntry_Serialize = {
+	id: string,
+	title: string,
+	created: string,
+	duration_ms: number,
+	file: string,
+	/**
+	 *  One mark per action the assistant tried, each at its offset from the
+	 *  recording's start. Left out when there are none, so older entries read
+	 *  the same.
+	 */
+	marks?: VideoMark[],
 };
 
 /**
@@ -7944,6 +7987,28 @@ export type ResultFailureDetail = {
 export type RowCheck = {
 	table: string,
 	has: string,
+};
+
+/**
+ *  What the check found. `checked` is false when the rules could not be
+ *  read: the queue is then sent as it always was and the screen says so once.
+ */
+export type RuleCheck = {
+	checked: boolean,
+	problems: RuleProblem[],
+};
+
+/**  One thing wrong with one queued case. */
+export type RuleProblem = {
+	/**  Position in the queue that was checked. */
+	index: number,
+	reference_name: string,
+	/**  The field's display name, never only its reference name. */
+	field: string,
+	/**  Always "required" (a value is never checked against a list). */
+	kind: string,
+	/**  A sentence fit for the row. */
+	message: string,
 };
 
 /**
@@ -9750,6 +9815,61 @@ export type VideoInfo = {
 	playable: boolean,
 	/**  Small enough to attach to a bug (`bugs::MAX_PICKED_FILE`). */
 	attachable: boolean,
+};
+
+/**
+ *  One marker on a video: where it is (milliseconds from the video's start)
+ *  and what to call it. Never a secret: the words come from the step
+ *  highlight's own label (`video_marks::mark_label`).
+ */
+export type VideoMark = {
+	at_ms: number,
+	label: string,
+};
+
+/**
+ *  The timings of a case's video: its length when the recording was
+ *  stopped, and each step's start, in the order the steps ran.
+ */
+export type VideoMarks = VideoMarks_Serialize | VideoMarks_Deserialize;
+
+/**
+ *  The timings of a case's video: its length when the recording was
+ *  stopped, and each step's start, in the order the steps ran.
+ */
+export type VideoMarks_Deserialize = {
+	length_ms: number,
+	steps?: VideoStep_Deserialize[],
+};
+
+/**
+ *  The timings of a case's video: its length when the recording was
+ *  stopped, and each step's start, in the order the steps ran.
+ */
+export type VideoMarks_Serialize = {
+	length_ms: number,
+	steps: VideoStep_Serialize[],
+};
+
+/**  One step's place on the video. */
+export type VideoStep = VideoStep_Serialize | VideoStep_Deserialize;
+
+/**  One step's place on the video. */
+export type VideoStep_Deserialize = {
+	step_number: number,
+	cleanup?: boolean,
+	at_ms: number,
+	failed?: boolean,
+	actions?: VideoMark[],
+};
+
+/**  One step's place on the video. */
+export type VideoStep_Serialize = {
+	step_number: number,
+	cleanup?: boolean,
+	at_ms: number,
+	failed?: boolean,
+	actions?: VideoMark[],
 };
 
 /**  What the app shows of a run waiting for the network. */

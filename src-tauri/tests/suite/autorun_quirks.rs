@@ -402,7 +402,7 @@ fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
 }
 
 fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id,
         title: "a case".into(),

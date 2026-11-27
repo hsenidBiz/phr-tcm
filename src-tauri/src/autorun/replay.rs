@@ -219,7 +219,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
     }
 }
 
-fn was_run(o: &ActionOutcome) -> bool {
+pub(crate) fn was_run(o: &ActionOutcome) -> bool {
     !o.detail.starts_with("not run:")
 }
 
@@ -801,7 +801,7 @@ async fn run_case_in<D: Driver>(
         }
         None => None,
     };
-    let mut record = CaseRecord { video: None,
+    let mut record = CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id: script.case_id,
         title: script.title.clone(),
@@ -876,7 +876,7 @@ async fn stop_asked(cancel: &AtomicBool) {
 const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecord {
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id,
         title: title.to_string(),
@@ -966,7 +966,7 @@ fn leave_for_network(
 /// verdict proposed is Blocked, and no browser was opened for it.
 fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: String) -> CaseRecord {
     let why = format!("not run: {reason}");
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id: script.case_id,
         title: script.title.clone(),

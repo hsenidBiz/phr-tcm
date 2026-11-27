@@ -102,6 +102,16 @@ pub async fn support<D: Driver>(d: &mut D) -> Support {
 pub struct Recording {
     /// The tab the recording was started on; it is stopped on the same one.
     tab: String,
+    /// When the browser accepted the start: every marker on the video is an
+    /// offset from here (`autorun::video_marks::offset_ms`).
+    started: std::time::Instant,
+}
+
+impl Recording {
+    /// The moment the recording started, on the monotonic clock.
+    pub fn started(&self) -> std::time::Instant {
+        self.started
+    }
 }
 
 /// A recording that was stopped and whose video is waiting in the browser to
@@ -116,7 +126,7 @@ pub struct Stopped {
 pub async fn start<D: Driver>(d: &mut D, who: &str) -> Option<Recording> {
     let tab = d.tab_name();
     match d.call_within(START, start_params(), Duration::from_millis(CALL_MS)).await {
-        Ok(_) => Some(Recording { tab }),
+        Ok(_) => Some(Recording { tab, started: std::time::Instant::now() }),
         Err(e) => {
             crate::applog::warn(format!("{who}: the video of this case could not be started: {e}"));
             None

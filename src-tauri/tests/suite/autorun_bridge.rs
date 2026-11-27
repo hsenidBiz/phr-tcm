@@ -2486,7 +2486,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         id: id.to_string(),
         pbi_id: 42,
         started_at: "1700000000000".to_string(),
-        cases: vec![CaseRecord { video: None,
+        cases: vec![CaseRecord { video: None, video_marks: None,
             bugs: vec![],
             case_id,
             title: "Save a rating".to_string(),

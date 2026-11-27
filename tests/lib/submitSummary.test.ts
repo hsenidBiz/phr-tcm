@@ -65,3 +65,19 @@ test("an unknown outcome is counted apart, never as uploaded or failed", () => {
   expect(s.failed).toBe(0);
   expect(s.headline).toBe("1 test case uploaded - 1 created, 1 unknown");
 });
+
+// 64 cases refused for the same missing field is one line, not 64.
+test("identical failure reasons are grouped, most common first", () => {
+  const s = summariseSubmit([
+    ...Array.from({ length: 64 }, (_, i) => r({ index: i, action: "failed", id: null, error: "Module is required" })),
+    r({ index: 64, action: "failed", id: null, error: "Test Type must be one of the allowed values" }),
+    r({ index: 65, action: "failed", id: null, error: null }),
+    r({ index: 66, action: "created" }),
+  ]);
+  expect(s.failures).toEqual([
+    "64 failed: Module is required",
+    "1 failed: Test Type must be one of the allowed values",
+    "1 failed: Azure DevOps gave no reason",
+  ]);
+  expect(summariseSubmit([r({ index: 0, action: "created" })]).failures).toEqual([]);
+});

@@ -357,7 +357,7 @@ fn a_run_file_with_a_video_reads_back_and_one_without_writes_no_field() {
     store::save_run(dir.path(), &run_naming(&name, false)).unwrap();
     let back = store::load_run(dir.path(), "r").unwrap().unwrap();
     assert_eq!(back.cases[0].video.as_deref(), Some(name.as_str()));
-    let plain = serde_json::to_value(CaseRecord { video: None, ..common::component_case(1, "x") }).unwrap();
+    let plain = serde_json::to_value(CaseRecord { video: None, video_marks: None, ..common::component_case(1, "x") }).unwrap();
     assert!(plain.get("video").is_none(), "{plain}");
 }
 
