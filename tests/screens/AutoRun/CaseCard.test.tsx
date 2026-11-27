@@ -9,7 +9,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { CaseScript, Divergence } from "../../../src/bindings";
-import CaseCard, { actionFacts, assistantNotes, scriptFiles, scriptHeaderLine } from "../../../src/screens/AutoRun/CaseCard";
+import CaseCard, { actionFacts, assistantNotes, scriptFiles, scriptSummary } from "../../../src/screens/AutoRun/CaseCard";
 import { matchesSearch } from "../../../src/screens/AutoRun/CaseSearch";
 
 afterEach(() => {
@@ -123,9 +123,13 @@ test("an open card shows the Script, Steps and Files sections, then View script 
   const { onEdit, onRun } = renderCard({ open: true });
   expect(screen.getByRole("button", { name: "Hide details for #7" })).toHaveAttribute("aria-expanded", "true");
 
-  // Script: every fact this script has.
-  expect(screen.getByText("Script · 2 steps · runs as emp1 · Leave requests")).toBeInTheDocument();
-  expect(screen.getByText("Yes, saves are stopped while it runs")).toBeInTheDocument();
+  // Summary chips (they replaced the "Script · ..." line and the Must not
+  // save fact row), then every fact this script has.
+  const summary = screen.getByRole("group", { name: "Summary of #7" });
+  expect(within(summary).getByText("2 steps")).toBeInTheDocument();
+  expect(within(summary).getByText("Runs as emp1")).toBeInTheDocument();
+  expect(within(summary).getByText("Leave requests")).toBeInTheDocument();
+  expect(within(summary).getByText("Must not save")).toBeInTheDocument();
   expect(screen.getByText("leave-cycle: open")).toBeInTheDocument();
   expect(screen.getByText("cycle published")).toBeInTheDocument();
   expect(screen.getByText("draft untouched")).toBeInTheDocument();
@@ -172,7 +176,12 @@ test("an open card shows the script's dialog and ignored page-error settings", (
 
 test("an open card leaves out every fact with no value, and Files when there is nothing to list", () => {
   renderCard({ open: true, script: BARE });
-  expect(screen.getByText("Script · 1 step")).toBeInTheDocument();
+  const summary = screen.getByRole("group", { name: "Summary of #7" });
+  expect(within(summary).getByText("1 step")).toBeInTheDocument();
+  // No account, area or no-save: no chip for them.
+  expect(within(summary).queryByText(/Runs as/)).not.toBeInTheDocument();
+  expect(within(summary).queryByText("Must not save")).not.toBeInTheDocument();
+  expect(summary.children).toHaveLength(1);
   expect(screen.queryByText(/Assistant notes/)).not.toBeInTheDocument();
   for (const label of [
     "Runs as", "Area", "Must not save", "Page errors", "Ignored page errors", "Unexpected dialogs",
@@ -295,19 +304,37 @@ test("the card lists assumed and invented values", () => {
       },
     ],
   } as CaseScript;
-  expect(actionFacts(script)).toContainEqual({
-    label: "Assumed values",
-    value: "step 2: 6 (one row per DEF level the precondition lists)",
-  });
+  // Assumed values are no fact row any more: each shows under its step.
+  expect(actionFacts(script).some((f) => f.label === "Assumed values")).toBe(false);
   expect(actionFacts(script)).toContainEqual({
     label: "Invented values",
     value: "step 2: USD (one currency the case leaves free)",
   });
   expect(actionFacts(BARE).some((f) => /Assumed|Invented/.test(f.label))).toBe(false);
   renderCard({ open: true, script });
-  expect(screen.getByText("Assumed values")).toBeInTheDocument();
+  expect(screen.queryByText("Assumed values")).not.toBeInTheDocument();
   expect(screen.getByText("Invented values")).toBeInTheDocument();
-  expect(screen.getByText("step 2: 6 (one row per DEF level the precondition lists)")).toBeInTheDocument();
+  // The assumed value moved under its step (2), and under no other.
+  const group = screen.getByRole("group", { name: "Assumed in step 2" });
+  expect(group).toHaveTextContent("Assumed");
+  expect(group).toHaveTextContent("6 (one row per DEF level the precondition lists)");
+  expect(screen.queryByRole("group", { name: "Assumed in step 1" })).not.toBeInTheDocument();
+  const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  expect(items[1]).toContainElement(group);
+});
+
+test("an assumed value with no step of the list stays a short list after the steps", () => {
+  const script = {
+    ...BARE,
+    steps: [
+      { step_number: 0, actions: [], because: [{ value: "UTC", why: "no zone given" }] },
+      { step_number: 1, actions: [] },
+    ],
+  } as CaseScript;
+  renderCard({ open: true, script });
+  const list = screen.getByRole("list", { name: "Assumed values of #7" });
+  expect(list).toHaveTextContent("step 0: UTC (no zone given)");
+  expect(screen.queryByRole("group", { name: /Assumed in step/ })).not.toBeInTheDocument();
 });
 
 test("the card lists checks given up", () => {
@@ -459,10 +486,28 @@ test("an open passed card says how many too, and a card whose script leaves noth
 test("the open card lists each unchecked expectation with why and its stand-in", () => {
   mockIPC(() => null);
   renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Failed", open: true });
-  expect(screen.getByText("Not checked")).toBeInTheDocument();
-  const list = screen.getByRole("list", { name: "Not checked expectations of #5002" });
-  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-  expect(list).toHaveTextContent("step 2: no access-denied message - the app never shows one (stand-in: expect_hidden)");
+  // The note moved under its step (2): a tag word, then the text, no separate list.
+  const group = screen.getByRole("group", { name: "Not checked in step 2" });
+  expect(group).toHaveTextContent("Not checked");
+  expect(group).toHaveTextContent("no access-denied message - the app never shows one (stand-in: expect_hidden)");
+  expect(screen.queryByRole("list", { name: "Not checked expectations of #5002" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Not checked in step 1" })).not.toBeInTheDocument();
+  const items = within(screen.getByRole("list", { name: "Script steps of #5002" })).getAllByRole("listitem");
+  expect(items[1]).toContainElement(group);
+});
+
+test("an unchecked expectation with no step of the list stays a short list after the steps", () => {
+  mockIPC(() => null);
+  const script = {
+    ...BARE,
+    steps: [
+      { step_number: 0, actions: [], unchecked: "setup is not checked" },
+      { step_number: 1, actions: [] },
+    ],
+  } as CaseScript;
+  renderCard({ open: true, script });
+  const list = screen.getByRole("list", { name: "Not checked expectations of #7" });
+  expect(list).toHaveTextContent("step 0: the step's expected result - setup is not checked");
 });
 
 test("scriptFacts names each needed record with its reason", () => {
@@ -487,17 +532,18 @@ test("the open card shows a clean-up guard that has never fired, whatever the ca
   expect(screen.queryByText("Clean-up guard never fired")).not.toBeInTheDocument();
 });
 
-test("the header line leaves out an account or area it does not have", () => {
-  expect(scriptHeaderLine(FULL)).toBe("Script · 2 steps · runs as emp1 · Leave requests");
-  expect(scriptHeaderLine({ ...FULL, area: undefined } as CaseScript)).toBe("Script · 2 steps · runs as emp1");
-  expect(scriptHeaderLine({ ...FULL, account: " ", area: "Self Service > Insights" } as CaseScript)).toBe(
-    "Script · 2 steps · Self Service > Insights",
-  );
-  expect(scriptHeaderLine(BARE)).toBe("Script · 1 step");
+test("the summary leaves out an account or area it does not have, and Must not save unless set", () => {
+  expect(scriptSummary(FULL)).toEqual({ steps: "2 steps", account: "emp1", area: "Leave requests", noSave: true });
+  expect(scriptSummary({ ...FULL, area: undefined } as CaseScript).area).toBeNull();
+  expect(scriptSummary({ ...FULL, account: " ", area: "Self Service > Insights" } as CaseScript)).toMatchObject({
+    account: null,
+    area: "Self Service > Insights",
+  });
+  expect(scriptSummary(BARE)).toEqual({ steps: "1 step", account: null, area: null, noSave: false });
 });
 
 test("the action facts are the ones to act on, the assistant's notes the rest", () => {
-  expect(actionFacts(FULL).map((f) => f.label)).toEqual(["Must not save", "Preconditions"]);
+  expect(actionFacts(FULL).map((f) => f.label)).toEqual(["Preconditions"]);
   expect(assistantNotes(FULL).map((f) => f.label)).toEqual(["Changes", "Needs unchanged", "Last repair"]);
 });
 
@@ -509,6 +555,9 @@ test("assistant notes are a closed details with a count, and their items inside"
   expect(within(details).getByText("cycle published")).toBeInTheDocument();
   expect(within(details).getByText("The Save button moved into a menu")).toBeInTheDocument();
   expect(screen.getByText("Must not save").closest("details")).toBeNull();
+  // At the bottom of the card, after the steps.
+  const steps = screen.getByRole("list", { name: "Script steps of #7" });
+  expect(steps.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 /** The owner's example: steps 1-3 are Auto Test's own, step 6 leaves one check out. */
@@ -544,10 +593,69 @@ test("steps Auto Test does show Done by Auto Test, not 0 actions", () => {
   expect(lines[3]).toHaveTextContent("1 action");
 });
 
-test("Not checked lists only the step the script leaves out, and a passed case counts it", () => {
+test("Not checked shows only under the step the script leaves out, and a passed case counts it", () => {
   renderCard({ open: true, c: SIX, script: AUTO_RUN_OPENING, result: "Passed" });
-  const list = screen.getByRole("list", { name: "Not checked expectations of #7" });
-  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-  expect(list).toHaveTextContent("step 6: the chart colours");
+  // The note moved under step 6; steps 1-3 are Auto Test's own and have none.
+  expect(screen.getAllByRole("group", { name: /Not checked in step/ })).toHaveLength(1);
+  const group = screen.getByRole("group", { name: "Not checked in step 6" });
+  expect(group).toHaveTextContent("the chart colours");
   expect(screen.getByText("1 expectation unchecked")).toBeInTheDocument();
+});
+
+const RULED: Divergence = {
+  ...DIV,
+  status: "ruled",
+  ruling: "case_stands",
+  ruled_at: "2",
+  ruled_by: "assistant",
+  said: "the app is wrong",
+  note: "Four levels, as the case says",
+  proposal: "6 levels",
+} as Divergence;
+
+test("a ruling is one row: its step, one line of what was decided, Details and Undo", () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    return null;
+  });
+  renderCard({ open: true, divergences: [RULED] });
+  expect(screen.getByText("Rulings (1)")).toBeInTheDocument();
+  // The line is the assistant's note, cut on one line with the whole text in title.
+  const line = screen.getByText("Four levels, as the case says");
+  expect(line).toHaveClass("truncate");
+  expect(line).toHaveAttribute("title", "Four levels, as the case says");
+  // Details opens the full block; the full text is not there before.
+  const details = screen.getByRole("button", { name: "Details of the ruling on #7 step 2" });
+  expect(details).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText(/Ruled by the assistant, on your words/)).not.toBeInTheDocument();
+  fireEvent.click(details);
+  expect(details).toHaveAttribute("aria-expanded", "true");
+  const block = document.getElementById(details.getAttribute("aria-controls") ?? "") as HTMLElement;
+  expect(block).toHaveTextContent('the case says "exactly 4 levels"; the app shows "6 levels".');
+  expect(block).toHaveTextContent('Proposed: "6 levels".');
+  expect(block).toHaveTextContent('Ruled by the assistant, on your words: "the app is wrong"');
+  // Undo is the same command, under the same name.
+  fireEvent.click(screen.getByRole("button", { name: "Undo the ruling on #7 step 2" }));
+  expect(calls).toContain("auto_run_undo_divergence_ruling");
+});
+
+test("a ruling with no note reads as its proposed text", () => {
+  renderCard({ open: true, divergences: [{ ...RULED, note: null } as Divergence] });
+  expect(screen.getByText("6 levels")).toHaveAttribute("title", "6 levels");
+});
+
+test("a step with a ruling shows the Ruled tag, and one without does not", () => {
+  renderCard({ open: true, divergences: [RULED] });
+  const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  expect(items[1]).toHaveTextContent("Ruled");
+  expect(items[0]).not.toHaveTextContent("Ruled");
+});
+
+test("a divergence still open keeps its buttons and is no ruling row", () => {
+  renderCard({ open: true, divergences: [DIV] });
+  expect(screen.queryByText(/Rulings \(/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "The app is wrong for #7 step 2" })).toBeInTheDocument();
+  const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  expect(items[1]).not.toHaveTextContent("Ruled");
 });

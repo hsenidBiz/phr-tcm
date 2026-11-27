@@ -1402,7 +1402,8 @@ test("an open card shows the script's facts and its numbered steps", async () =>
   await screen.findByText("Alpha check");
   openCard(1);
   expect(await screen.findByRole("button", { name: "Run #1" })).toBeInTheDocument();
-  expect(screen.getByText("Script · 1 step")).toBeInTheDocument();
+  // The "Script · 1 step" line is now the summary chips.
+  expect(within(screen.getByRole("group", { name: "Summary of #1" })).getByText("1 step")).toBeInTheDocument();
   const steps = screen.getByRole("list", { name: "Script steps of #1" });
   expect(within(steps).getAllByRole("listitem")).toHaveLength(1);
   // A script with no account, area or marks prints no empty labels.

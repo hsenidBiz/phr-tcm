@@ -246,4 +246,10 @@ export {
   // Auto Test's case card: look at a saved script, never change it from the
   // card. An eye, since the button only shows it.
   Eye as IconViewScript,
+  // The summary chips over an open Auto Test case card: how many steps the
+  // script has, who it runs as, where it works, and that it must not save.
+  ListOrdered as IconScriptSteps,
+  User as IconRunsAs,
+  MapPin as IconScriptArea,
+  Lock as IconMustNotSave,
 } from "lucide-react";

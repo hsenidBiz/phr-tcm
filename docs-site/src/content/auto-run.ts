@@ -290,7 +290,7 @@ export const autoRun: Screen = {
       tips: [
         "To run the failed cases again: press **Failed**, then **Select all shown**.",
         "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
-        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then says **Ruled by the assistant** with your words, and **Undo ruling** puts the case back to needing a ruling.",
+        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then lists it under **Rulings**, and **Details** says **Ruled by the assistant** with your words, while **Undo ruling** puts the case back to needing a ruling.",
         "**Has a script**, after them, shows only the cases that already have a script, with how many there are. It works together with the result buttons, and the app remembers it for each project.",
       ],
     },
@@ -322,8 +322,8 @@ export const autoRun: Screen = {
       name: "Show details",
       does:
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
-        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
-        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, lists each under **Unchecked** with why. " +
+        "Open, it shows what its script does as a line of chips (how many steps, the account it signs in as, its area, and **Must not save** when set), then its rules, its setup, any **Rulings** (each with **Details** and **Undo ruling**), its steps, the files it uploads and checks, and the last run's downloads, each with **Open**; the assistant's notes are folded at the bottom. " +
+        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, shows each under its own step as **Not checked**, with why. " +
         "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Test.",
     },
     {
@@ -332,7 +332,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "list", name: "Script steps of #5002" },
       name: "Steps",
-      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. Read only: change them with **Script**.",
+      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. A step also carries its own notes: **Assumed** for a value the assistant chose, **Not checked** for an expectation the script leaves out, and **Ruled** when you ruled on it. Read only: change them with **Script**.",
     },
     {
       id: "suspected-defect",
