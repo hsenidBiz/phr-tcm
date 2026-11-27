@@ -303,6 +303,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_video_info,
             autorun::auto_run_video,
             autorun::auto_run_save_video,
+            autorun::auto_run_recordings,
+            autorun::auto_run_remove_recording,
             autorun::auto_run_list_accounts,
             autorun::auto_run_save_accounts,
             autorun::auto_run_load_recipe,

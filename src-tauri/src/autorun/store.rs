@@ -1568,6 +1568,9 @@ pub fn save_video(root: &Path, bytes: &[u8]) -> Result<String, String> {
 /// A video's bytes, for playing or saving it. Only a name `safe_video_name`
 /// accepts, and only a file no larger than `MAX_VIDEO_BYTES`.
 pub fn load_video(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+    if super::recordings::safe_recording_name(name) {
+        return super::recordings::load(root, name);
+    }
     if !safe_video_name(name) {
         return Err("that is not a video name".to_string());
     }
@@ -1584,6 +1587,9 @@ pub fn load_video(root: &Path, name: &str) -> Result<Vec<u8>, String> {
 
 /// A video's size in bytes, or `None` when it is not on this machine.
 pub fn video_size(root: &Path, name: &str) -> Option<u64> {
+    if super::recordings::safe_recording_name(name) {
+        return super::recordings::size(root, name);
+    }
     if !safe_video_name(name) {
         return None;
     }

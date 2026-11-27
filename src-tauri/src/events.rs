@@ -75,6 +75,8 @@ pub enum AutorunDataKind {
     /// The environments list: an assistant changed an environment's account
     /// lookup, so an open Edit environments shows it.
     Environments,
+    /// The discovery recordings list: one was kept or removed.
+    Recordings,
 }
 
 /// Emitted after a successful write to that data, whoever made it, so the

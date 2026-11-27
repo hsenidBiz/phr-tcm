@@ -3142,6 +3142,20 @@ pub fn auto_run_save_video(app: tauri::AppHandle, name: String, dest_path: Strin
     })
 }
 
+/// The discovery recordings kept for this environment, newest first.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_recordings(app: tauri::AppHandle) -> Result<Vec<crate::autorun::recordings::RecordingEntry>, String> {
+    Ok(crate::autorun::recordings::list(&root(&app)?))
+}
+
+/// Delete one discovery recording.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_remove_recording(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    crate::autorun::recordings::remove(&root(&app)?, &id)
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_script(
