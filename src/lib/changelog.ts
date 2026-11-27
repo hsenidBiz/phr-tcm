@@ -27,6 +27,29 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.5.0",
+    date: "2026-11-27",
+    items: [
+      "Watch a failed case's video in a player with its steps marked on the timeline: the failed step shows in red, the step list sits beside the video, and you can jump to any step or action. The run report plays each failed case's video the same way",
+      "Auto Test can now work on a test suite as well as a PBI: choose Suite in the top bar, or Auto Test from a suite's More menu in Search Suites. Results go to the suite's own test points",
+      "While Auto Test runs a watched case, each step is marked on the page with a box and a short label, green when it worked and red when it failed. Passwords and other hidden values are never shown",
+      "When you ask an assistant for evidence while it checks a fix, it can record a video of its checks. Recordings appear under Past runs, where you can play, save or remove them",
+      "Videos are recorded at the browser page size you set in the new Auto Test Settings, which also sets how many Auto Test browsers can be open at once",
+      "Before sending, TCM checks your cases against the project's field rules and names any required field left empty. If Azure DevOps still refuses a case, its row says why in plain words instead of a generic error",
+      "Past runs show one line per case, with small Watch and Download buttons for a failed case's video. Flaky cases start folded",
+      "The open test case reads step by step, one line per step, with its assumed values and unchecked parts under it",
+      "The script view pairs each test case step with the actions that carry it out",
+      "Known quirks have their own row in Setup. The Components and Test files dialogs are grouped, searchable and can be folded",
+      "API template flows and the test map are easier to read, and a failed template shows where and why it failed right on the flow",
+      "Every account picker has a search box, and Add accounts from the database has Select all",
+      "An assistant writing or rewriting a script can move it to another of your saved accounts when it says why. An assistant fixing a failed case never changes the account",
+      "On a test environment, your assistant can ask TCM to reset an expired password by signing in as that account. It never types a password",
+      "Registering Claude Code from AI Bridge now works with Claude Code for VS Code",
+      "Snow falls gently across the app in December. You can turn it off in Settings",
+      "No button label ends in three dots any more, and many smaller layout and wording fixes across Auto Test, the run report and the manual run window",
+    ],
+  },
+  {
     version: "2.4.8-beta.11",
     date: "2026-11-27",
     items: [
