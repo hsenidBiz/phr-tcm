@@ -150,7 +150,7 @@ pub(crate) async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option
     if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
         return None;
     }
-    finish_recording(slot, crate::autorun::sessions::now_ms()).await;
+    finish_recording(slot).await;
     let summary = finish_mapping(slot);
     let explore = finish_explore(slot);
     let (lifted, assistants) = match slot.as_mut() {
@@ -189,7 +189,7 @@ pub(crate) async fn close_discovery<B: DiscoveryBrowser>(
     if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
         return None;
     }
-    finish_recording(slot, crate::autorun::sessions::now_ms()).await;
+    finish_recording(slot).await;
     let summary = finish_mapping(slot);
     let explore = finish_explore(slot);
     if let Some(browser) = slot.take() {
@@ -299,7 +299,7 @@ pub fn after_ended_discovery(ended: bool, said: &str) -> String {
 /// Close whatever browser `slot` holds - a discovery ends with it. Whether
 /// there was one.
 pub async fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
-    finish_recording(slot, crate::autorun::sessions::now_ms()).await;
+    finish_recording(slot).await;
     finish_mapping(slot);
     finish_explore(slot);
     match slot.take() {

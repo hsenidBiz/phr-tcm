@@ -894,7 +894,7 @@ pub async fn route_as(
             (Some(going), _) => going,
             (None, Ok(_)) => {
                 let mut held = crate::commands::autorun::session_slot(slot).lock().await;
-                recording_stop_in(&mut held, crate::autorun::sessions::now_ms()).await
+                recording_stop_in(&mut held).await
             }
             (None, Err(refused)) => refused,
         },

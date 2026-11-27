@@ -47,8 +47,7 @@ pub(crate) fn spawn_recording_cap(n: SlotNo, started_ms: u64) {
         tokio::time::sleep(crate::autorun::recordings::CAP).await;
         loop {
             let mut slot = session_slot(n).lock().await;
-            let now = crate::autorun::sessions::now_ms();
-            match crate::ai_bridge::cap_step_in(&mut slot, started_ms, now).await {
+            match crate::ai_bridge::cap_step_in(&mut slot, started_ms).await {
                 crate::ai_bridge::CapStep::Done => break,
                 crate::ai_bridge::CapStep::Wait(left) => {
                     drop(slot);
@@ -2219,11 +2218,12 @@ pub async fn close_autorun_browsers() {
     // closes on a blocking thread of its own, so the caller's bound is not
     // spent three times over.
     let mut closing = Vec::new();
+    let mut writing = Vec::new();
     for n in SlotNo::all() {
         let mut slot = session_slot(n).lock().await;
         // A recording going is stopped and kept, within a short bound of its
         // own: the exit is never held up for a video.
-        crate::ai_bridge::finish_recording_at_exit(&mut slot, crate::autorun::sessions::now_ms(), crate::ai_bridge::budget_left(EXIT_RECORDING_BOUND, recordings_began.elapsed())).await;
+        let video = crate::ai_bridge::finish_recording_at_exit(&mut slot, crate::ai_bridge::budget_left(EXIT_RECORDING_BOUND, recordings_began.elapsed())).await;
         // A mapping run going keeps its summary, as any other ending does.
         crate::ai_bridge::finish_mapping(&mut slot);
         // An explore session going has its change list closed the same way.
@@ -2235,6 +2235,11 @@ pub async fn close_autorun_browsers() {
         if let Some(s) = session {
             closing.push(tauri::async_runtime::spawn_blocking(move || close_session(s)));
         }
+        // The video is written only now the close is under way, and on a task
+        // of its own: the disk (or a held switch lock) never delays a close.
+        if let Some(video) = video {
+            writing.push(tauri::async_runtime::spawn(crate::ai_bridge::keep_video(video)));
+        }
     }
     for done in closing {
         let _ = done.await;
@@ -2245,6 +2250,10 @@ pub async fn close_autorun_browsers() {
     // unattended run's, which nothing above closes, and any other one.
     // Each is ended as a whole tree, and its profile removed.
     let _ = tauri::async_runtime::spawn_blocking(crate::browser::tree::end_all).await;
+    // Last, the recordings' files: nothing above waited for them.
+    for done in writing {
+        let _ = done.await;
+    }
 }
 
 /// How long a recording's stop and read may take as the app quits.

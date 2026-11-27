@@ -214,8 +214,8 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::ai_bridge::{
-    budget_left, cap_step_in, close_browser_in, end_discovery_as, end_discovery_in, end_discovery_releasing, finish_recording,
-    finish_recording_at_exit, forget_gone_browser, CapStep, recording_kept, recording_start_in, recording_stop_in, stop_recording_over_cap_in, EndedBy, ALREADY_RECORDING,
+    budget_left, cap_step_in, close_browser_in, end_discovery_as, end_discovery_in, end_discovery_releasing, finish_recording_at_exit,
+    keep_video, forget_gone_browser, CapStep, recording_kept, recording_start_in, recording_stop_in, EndedBy, ALREADY_RECORDING,
     NOT_RECORDING, RECORDING_LOST, RECORDING_NOT_AVAILABLE, RECORDING_NOT_STARTED, RECORDING_NO_DISCOVERY,
 };
 use v2_lib::browser::cdp::CdpError;
@@ -272,13 +272,17 @@ async fn a_discovery_records_its_checks_and_keeps_the_video() {
     let (status, said) = recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await;
     assert_eq!(status, 200, "{said}");
     assert!(said.contains("Recording \"Bug 4521: leave balance fix\" started"), "{said}");
-    let (status, said) = recording_stop_in(&mut b, T0 + 83_000).await;
+    // The length is read off the monotonic clock: it started 83 s ago.
+    let running = b.as_mut().unwrap().discovery.as_mut().unwrap().recording.as_mut().unwrap();
+    running.started = std::time::Instant::now() - std::time::Duration::from_secs(83);
+    let (status, said) = recording_stop_in(&mut b).await;
     assert_eq!(status, 200, "{said}");
-    assert_eq!(said, recording_kept(TITLE, 83_000));
-    assert!(said.contains("(1:23)"), "{said}");
     let listed = list(dir.path());
     assert_eq!(listed.len(), 1);
-    assert_eq!((listed[0].title.as_str(), listed[0].duration_ms), (TITLE, 83_000));
+    assert!((83_000..84_000).contains(&listed[0].duration_ms), "{}", listed[0].duration_ms);
+    assert_eq!(said, recording_kept(TITLE, listed[0].duration_ms));
+    assert!(said.contains("(1:23)"), "{said}");
+    assert_eq!(listed[0].title, TITLE);
     assert_eq!(store::load_video(dir.path(), &listed[0].file).unwrap(), MP4);
 }
 
@@ -346,9 +350,9 @@ async fn stopping_with_none_going_says_so() {
     let _lock = crate::serial::autorun();
     let _dir = root();
     let (mut b, _) = slot(working(), exploring("Leave"));
-    assert_eq!(recording_stop_in(&mut b, T0).await, (409, NOT_RECORDING.to_string()));
+    assert_eq!(recording_stop_in(&mut b).await, (409, NOT_RECORDING.to_string()));
     let mut empty: Option<FakeBrowser> = None;
-    assert_eq!(recording_stop_in(&mut empty, T0).await, (409, NOT_RECORDING.to_string()));
+    assert_eq!(recording_stop_in(&mut empty).await, (409, NOT_RECORDING.to_string()));
 }
 
 #[tokio::test]
@@ -358,9 +362,9 @@ async fn a_stop_the_browser_refuses_keeps_nothing_and_says_so() {
     let refusing = recorder("Edg/157.0.1.1", true, false, Arc::new(AtomicUsize::new(0)));
     let (mut b, _) = slot(refusing, exploring("Leave"));
     assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
-    assert_eq!(recording_stop_in(&mut b, T0 + 5_000).await, (200, RECORDING_LOST.to_string()));
+    assert_eq!(recording_stop_in(&mut b).await, (200, RECORDING_LOST.to_string()));
     assert!(list(dir.path()).is_empty());
-    assert_eq!(recording_stop_in(&mut b, T0 + 6_000).await, (409, NOT_RECORDING.to_string()));
+    assert_eq!(recording_stop_in(&mut b).await, (409, NOT_RECORDING.to_string()));
 }
 
 async fn recording_slot(
@@ -434,7 +438,7 @@ async fn stopping_puts_the_assistants_tab_back() {
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
     b.as_mut().unwrap().d.open_tab("popup").await.unwrap();
     assert_eq!(b.as_ref().unwrap().d.tab_name(), "popup");
-    assert_eq!(recording_stop_in(&mut b, T0 + 2_000).await.0, 200);
+    assert_eq!(recording_stop_in(&mut b).await.0, 200);
     assert_eq!(b.as_ref().unwrap().d.tab_name(), "popup", "the assistant is back on its own tab");
     assert_eq!(list(dir.path()).len(), 1);
     // The stream belongs to the recording's tab: it is read there, and the
@@ -449,7 +453,10 @@ async fn the_exit_stop_keeps_a_recording_that_answers_in_time() {
     let _lock = crate::serial::autorun();
     let dir = root();
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
-    finish_recording_at_exit(&mut b, T0 + 4_000, std::time::Duration::from_secs(2)).await;
+    let video = finish_recording_at_exit(&mut b, std::time::Duration::from_secs(2)).await.expect("read in time");
+    // Read, but not written: the caller writes it once its closes are under way.
+    assert!(list(dir.path()).is_empty());
+    assert!(keep_video(video).await.is_some());
     assert_eq!(list(dir.path()).len(), 1);
     assert!(b.as_mut().unwrap().discovery.as_ref().unwrap().recording.is_none());
 }
@@ -463,7 +470,7 @@ async fn the_exit_stop_gives_up_at_its_bound_and_says_so() {
     // The browser never answers the stop.
     b.as_mut().unwrap().d.hang_on = Some("Page.stopScreenRecording".to_string());
     let began = std::time::Instant::now();
-    finish_recording_at_exit(&mut b, T0 + 4_000, std::time::Duration::from_millis(100)).await;
+    assert!(finish_recording_at_exit(&mut b, std::time::Duration::from_millis(100)).await.is_none());
     assert!(began.elapsed() < std::time::Duration::from_secs(2), "the exit is not held up");
     let said = v2_lib::applog::recent(200).iter().any(|l| l.message == "Auto Test recording: lost at exit");
     assert!(said, "the loss at exit is logged");
@@ -471,7 +478,7 @@ async fn the_exit_stop_gives_up_at_its_bound_and_says_so() {
     assert!(b.as_mut().unwrap().discovery.as_ref().unwrap().recording.is_none());
     // Nothing going: nothing to wait for.
     let (mut idle, _) = slot(working(), exploring("Leave"));
-    finish_recording_at_exit(&mut idle, T0, std::time::Duration::ZERO).await;
+    finish_recording_at_exit(&mut idle, std::time::Duration::ZERO).await;
 }
 
 #[test]
@@ -488,15 +495,15 @@ async fn the_cap_timer_waits_while_the_recording_is_not_due() {
     let dir = root();
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
     // A wall clock that jumped far ahead changes nothing: due is monotonic.
-    match cap_step_in(&mut b, T0, T0 + 10_000_000).await {
+    match cap_step_in(&mut b, T0).await {
         CapStep::Wait(left) => assert!(left > std::time::Duration::from_secs(590), "{left:?}"),
         other => panic!("{other:?}"),
     }
     assert!(list(dir.path()).is_empty());
     // A timer for another recording leaves this one alone.
-    assert_eq!(cap_step_in(&mut b, T0 + 1, T0).await, CapStep::Done);
+    assert_eq!(cap_step_in(&mut b, T0 + 1).await, CapStep::Done);
     let (mut none, _) = slot(working(), exploring("Leave"));
-    assert_eq!(cap_step_in(&mut none, T0, T0).await, CapStep::Done);
+    assert_eq!(cap_step_in(&mut none, T0).await, CapStep::Done);
 }
 
 #[tokio::test]
@@ -506,10 +513,10 @@ async fn the_cap_timer_stops_its_recording_once_the_monotonic_clock_says_so() {
     let (mut b, _) = recording_slot(dir.path(), false, no_stops()).await;
     let running = b.as_mut().unwrap().discovery.as_mut().unwrap().recording.as_mut().unwrap();
     running.started = std::time::Instant::now() - std::time::Duration::from_secs(601);
-    assert_eq!(cap_step_in(&mut b, T0, T0 + 600_000).await, CapStep::Done);
+    assert_eq!(cap_step_in(&mut b, T0).await, CapStep::Done);
     assert_eq!(list(dir.path()).len(), 1);
     // The recording is gone: a later look has nothing to do.
-    assert_eq!(cap_step_in(&mut b, T0, T0 + 700_000).await, CapStep::Done);
+    assert_eq!(cap_step_in(&mut b, T0).await, CapStep::Done);
 }
 
 #[test]
