@@ -38,13 +38,6 @@ pub struct Running {
     pub root: PathBuf,
 }
 
-impl Running {
-    /// When this recording must be stopped, in the clock of `started_ms`.
-    pub fn deadline_ms(&self) -> u64 {
-        self.started_ms + CAP_MS
-    }
-}
-
 #[derive(Serialize, Deserialize, Default)]
 struct Index {
     #[serde(default)]

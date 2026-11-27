@@ -87,7 +87,7 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
               Play
             </Button>
           )}
-          <Button size="sm" variant="outline" aria-label={`Save ${entry.title}`} disabled={save.isPending} onClick={() => save.mutate()}>
+          <Button size="sm" variant="outline" aria-label={`Save ${entry.title}`} disabled={gone || save.isPending} onClick={() => save.mutate()}>
             <IconExport aria-hidden />
             Save
           </Button>

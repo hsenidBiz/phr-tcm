@@ -129,4 +129,5 @@ test("a recording whose file is gone says so and cannot be played", async () => 
   show();
   expect(await screen.findByText(VIDEO_GONE)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: `Play ${ENTRY.title}` })).toBeDisabled();
+  expect(screen.getByRole("button", { name: `Save ${ENTRY.title}` })).toBeDisabled();
 });

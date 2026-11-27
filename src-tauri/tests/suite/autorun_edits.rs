@@ -290,6 +290,16 @@ fn a_declared_account_change_passes_the_gate() {
 }
 
 #[test]
+fn padding_around_the_same_account_is_not_a_change() {
+    let e = Edit { account: true, ..edit(&[], "case 1 needs the approver's login") };
+    assert_eq!(
+        check_edits(&with_account("admin"), &with_account(" admin "), Some(&e)),
+        Err(ACCOUNT_DECLARED_UNCHANGED.to_string())
+    );
+    assert_eq!(check_edits(&with_account("admin"), &with_account(" admin "), None), Ok(()));
+}
+
+#[test]
 fn a_declared_account_change_that_changes_nothing_is_refused() {
     let e = Edit { account: true, ..edit(&[], "case 1 needs the approver's login") };
     assert_eq!(

@@ -330,7 +330,10 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     // Rule 5: a repair may move a script to another saved account only when
     // it says so (`account: true`, with its why). Undeclared changes and
     // declarations of nothing are refused; the save checks the new key.
-    let account_changed = old.account != new.account;
+    // Compared trimmed: the save stores the trimmed key, so padding alone
+    // changes nothing.
+    let trimmed = |a: &Option<String>| a.as_ref().map(|k| k.trim().to_string());
+    let account_changed = trimmed(&old.account) != trimmed(&new.account);
     let account_declared = declared.is_some_and(|e| e.account);
     if account_changed && !account_declared {
         let say = |a: &Option<String>| match a {

@@ -530,6 +530,9 @@ fn a_backup_carries_every_environment_and_the_seed_but_not_shots_or_the_removed_
     let a = src.join("autorun");
     put(&a, "envs/_seed/scripts/case-3.json", "seed");
     put(&a, &format!("envs/{ENV_A}/shots/s1.png"), "png");
+    put(&a, &format!("envs/{ENV_A}/recordings/recording-1.mp4"), "mp4");
+    put(&a, &format!("envs/{ENV_A}/recordings/index.json"), "{}");
+    put(&a, "recordings/recording-2.mp4", "mp4");
     put(&a, &format!("envs/.copying-{ENV_A}-5/scripts/x.json"), "half");
     put(&a, "removed-envs/env-00000001-5/scripts/old.json", "old");
     put(&a, ".envs-staging-5/env-0000000a/scripts/y.json", "stage");
@@ -544,12 +547,15 @@ fn a_backup_carries_every_environment_and_the_seed_but_not_shots_or_the_removed_
     ] {
         assert!(paths.contains(&want.as_str()), "{want} missing from {paths:?}");
     }
-    for bad in ["shots", "removed-envs", ".copying-", ".envs-staging-", ".import-"] {
+    for bad in ["shots", "recordings", "removed-envs", ".copying-", ".envs-staging-", ".import-"] {
         assert!(!paths.iter().any(|p| p.contains(bad)), "{bad} travelled: {paths:?}");
     }
     // And an import refuses them too, in any letter case or separator.
     assert!(!safe_relative_path(&format!("autorun/envs/{ENV_A}/shots/s1.png")));
     assert!(!safe_relative_path(&format!("AUTORUN\\envs\\{ENV_A}\\SHOTS\\s1.png")));
+    assert!(!safe_relative_path(&format!("autorun/envs/{ENV_A}/recordings/recording-1.mp4")));
+    assert!(!safe_relative_path(&format!("AUTORUN\\envs\\{ENV_A}\\Recordings\\index.json")));
+    assert!(!safe_relative_path("autorun/recordings/recording-2.mp4"));
     assert!(!safe_relative_path("autorun/removed-envs/env-00000001-5/removed.json"));
     assert!(!safe_relative_path("autorun/.import-5/flat/scripts/z.json"));
     assert!(safe_relative_path(&format!("autorun/envs/{ENV_A}/scripts/case-1.json")));
