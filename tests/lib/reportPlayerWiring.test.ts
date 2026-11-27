@@ -61,7 +61,7 @@ test("a video tile opens the player; a video without a timeline gets an empty on
   expect(open).toHaveBeenCalledWith(timeline, "../shots/video-2-1.mp4", tiles()[1]);
   mount({ gallery: data.gallery });
   fireEvent.click(document.getElementById("vlink")!);
-  expect(open.mock.calls.at(-1)![0]).toEqual({ title: "Video", length_ms: null, steps: [], marks: [] });
+  expect(open.mock.calls[open.mock.calls.length - 1]![0]).toEqual({ title: "Video", length_ms: null, steps: [], marks: [] });
 });
 
 test("a picture opens the lightbox over the pictures only", () => {
