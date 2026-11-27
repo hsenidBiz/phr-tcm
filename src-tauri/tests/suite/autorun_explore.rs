@@ -191,7 +191,7 @@ async fn ending_an_explore_session_names_the_saves_not_on_the_change_list() {
     let mut browser = browser_that_saves(&id);
     let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
     assert_eq!(status, 200, "{body}");
-    let (status, out) = end_discovery_closing(&mut browser);
+    let (status, out) = end_discovery_closing(&mut browser).await;
     assert_eq!(status, 200, "{out}");
     let v = parsed(&out);
     assert_eq!(v["explore"]["saves_not_on_the_change_list"], json!(["POST /hr/leave/save"]), "{out}");

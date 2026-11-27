@@ -75,6 +75,12 @@ pub async fn forget_gone_browser<B: DiscoveryBrowser>(slot: &mut Option<B>) -> b
         }
     }
     let discovering = slot.as_mut().is_some_and(|b| b.parts().discovery.is_some());
+    // The browser has gone: its recorder cannot be asked for the video.
+    if let Some(state) = slot.as_mut().and_then(|b| b.parts().discovery.as_mut()) {
+        if state.recording.take().is_some() {
+            crate::applog::info("Auto Test recording: lost, the browser had gone");
+        }
+    }
     finish_mapping(slot);
     finish_explore(slot);
     if let Some(b) = slot.take() {
@@ -164,7 +170,7 @@ pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
         _ => false,
     };
     if other_browser {
-        close_browser_in(slot);
+        close_browser_in(slot).await;
         crate::applog::info("Auto Test: a discovery asked for another browser than the one the assistant's replay left open, so it closed that one");
         return Ok(MadeWay::Closed);
     }

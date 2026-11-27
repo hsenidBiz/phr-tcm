@@ -86,6 +86,8 @@ fn it_ships_as_1280_by_720_and_a_fresh_install_has_it() {
     // Nothing in this process has saved or loaded a size.
     assert_eq!(current(), DEFAULT_PAGE);
     assert_eq!(get_page_size(), DEFAULT_PAGE);
+    assert_eq!(v2_lib::browser::recording::start_params()["maxWidth"], 1280);
+    assert_eq!(v2_lib::browser::recording::start_params()["maxHeight"], 720);
     assert_eq!(
         device_metrics_params(),
         json!({ "width": 1280, "height": 720, "deviceScaleFactor": DEVICE_SCALE, "mobile": false })
@@ -181,6 +183,10 @@ fn a_saved_size_is_loaded_at_start_up_and_every_user_of_it_follows() {
         );
         // The page plus the browser's frame (16 x 140).
         assert_eq!(window_size_arg(), "--window-size=1616,1040");
+        assert_eq!(
+            v2_lib::browser::recording::start_params(),
+            json!({ "frameRate": 30, "maxWidth": 1600, "maxHeight": 900, "audio": false })
+        );
         assert!(launch_args(9333, std::path::Path::new("C:/tmp/p")).contains(&"--window-size=1616,1040".to_string()));
         assert_eq!(background_args(), ["--headless=new".to_string(), "--window-size=1616,1040".to_string()]);
 

@@ -39,7 +39,7 @@ pub enum CopyTo {
 /// leaves behind and keeps in place. `flows` is not listed
 /// ([`LEGACY_API_ITEMS`]). Accounts are not listed either: a copy never
 /// touches them.
-pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
+pub const PER_ENV_ITEMS: [(&str, CopyTo); 15] = [
     ("scripts", CopyTo::Every),
     ("deleted-scripts", CopyTo::Every),
     ("orders", CopyTo::Every),
@@ -48,6 +48,7 @@ pub const PER_ENV_ITEMS: [(&str, CopyTo); 14] = [
     ("fixtures", CopyTo::ActiveOnly),
     ("runs", CopyTo::ActiveOnly),
     ("shots", CopyTo::ActiveOnly),
+    ("recordings", CopyTo::ActiveOnly),
     ("downloads", CopyTo::ActiveOnly),
     ("reports", CopyTo::ActiveOnly),
     ("replays", CopyTo::ActiveOnly),

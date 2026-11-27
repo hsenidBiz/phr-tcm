@@ -37,6 +37,11 @@ pub struct Edit {
     /// is part of the script, so this is declared like a changed step.
     #[serde(default)]
     pub area: bool,
+    /// The repair moves the case to another saved account (a key
+    /// `get_accounts` lists). Who a script signs in as is part of the
+    /// script, so this is declared like `area`, with its `why`.
+    #[serde(default)]
+    pub account: bool,
     /// The one precondition this repair adds, removes or changes, with its
     /// reason. At most one per case per save.
     #[serde(default)]
@@ -74,6 +79,22 @@ pub struct PreconditionEdit {
     /// the case no longer needs it.
     #[serde(default)]
     pub reason: String,
+}
+
+/// Said when a repair declares an account change that changes nothing.
+pub const ACCOUNT_DECLARED_UNCHANGED: &str = "the account was declared but not changed";
+
+/// Checks the account a declared change moves to against the saved keys.
+pub fn check_new_account(case_id: i32, new: Option<&str>, saved_keys: &[String]) -> Result<(), String> {
+    match new.map(str::trim).filter(|k| !k.is_empty()) {
+        None => Err(format!(
+            "case {case_id}: a declared account change needs the key of a saved account (get_accounts lists them)"
+        )),
+        Some(key) if !saved_keys.iter().any(|k| k == key) => Err(format!(
+            "case {case_id}: there is no saved account \"{key}\" in this environment - use a key get_accounts lists"
+        )),
+        Some(_) => Ok(()),
+    }
 }
 
 /// Said when a repair would turn `no_save` off.
@@ -300,19 +321,34 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     // about it is even looked at. An edit of a precondition alone gives
     // its reason in the precondition edit itself (rule 12).
     if let Some(e) = declared {
-        let precondition_only = e.precondition.is_some() && e.steps.is_empty() && !e.area;
+        let precondition_only = e.precondition.is_some() && e.steps.is_empty() && !e.area && !e.account;
         if e.why.trim().is_empty() && !precondition_only {
             return Err("an edit needs a reason".to_string());
         }
     }
 
-    // Rule 5: only a person, in the app, picks who a script signs in as -
-    // never a repair, declared or not.
-    if old.account != new.account {
-        return Err(
-            "the account a script runs as cannot be changed by a repair - a person picks it in the app"
-                .to_string(),
-        );
+    // Rule 5: a repair may move a script to another saved account only when
+    // it says so (`account: true`, with its why). Undeclared changes and
+    // declarations of nothing are refused; the save checks the new key.
+    // Compared trimmed: the save stores the trimmed key, so padding alone
+    // changes nothing.
+    let trimmed = |a: &Option<String>| a.as_ref().map(|k| k.trim().to_string());
+    let account_changed = trimmed(&old.account) != trimmed(&new.account);
+    let account_declared = declared.is_some_and(|e| e.account);
+    if account_changed && !account_declared {
+        let say = |a: &Option<String>| match a {
+            Some(k) => format!("\"{k}\""),
+            None => "the case's own (none)".to_string(),
+        };
+        return Err(format!(
+            "case {}: the account changed from {} to {} but was not declared - add \"account\": true with its \"why\" to the case's \"edits\" entry, or send the account as saved",
+            old.case_id,
+            say(&old.account),
+            say(&new.account)
+        ));
+    }
+    if !account_changed && account_declared {
+        return Err(ACCOUNT_DECLARED_UNCHANGED.to_string());
     }
 
     // Rule 11: a script that must not save keeps that promise through every

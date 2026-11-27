@@ -4,7 +4,7 @@
 //! Pure functions over `CaseScript` - no browser, no filesystem.
 
 use serde_json::json;
-use v2_lib::autorun::edits::{apply_precondition_edit, check_edits, Edit, PreconditionEdit};
+use v2_lib::autorun::edits::{apply_precondition_edit, check_edits, check_new_account, ACCOUNT_DECLARED_UNCHANGED, Edit, PreconditionEdit};
 use v2_lib::autorun::{PreconditionOp, PreconditionRepair};
 use v2_lib::autorun::CaseScript;
 
@@ -14,7 +14,7 @@ fn script(json: serde_json::Value) -> CaseScript {
 }
 
 fn edit(steps: &[i32], why: &str) -> Edit {
-    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, quirk_class: None, area: false, precondition: None, gives_up: Vec::new() }
+    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, quirk_class: None, area: false, account: false, precondition: None, gives_up: Vec::new() }
 }
 
 #[test]
@@ -270,15 +270,65 @@ fn a_locator_fix_with_the_same_check_count_is_refused_when_not_declared() {
     );
 }
 
+fn with_account(a: &str) -> CaseScript {
+    script(json!({ "case_id": 1, "title": "t", "account": a, "steps": [] }))
+}
+
 #[test]
-fn the_account_a_script_runs_as_cannot_be_changed_by_a_repair() {
-    let old = script(json!({ "case_id": 1, "title": "t", "account": "tester1", "steps": [] }));
-    let new = script(json!({ "case_id": 1, "title": "t", "account": "tester2", "steps": [] }));
-    let err = check_edits(&old, &new, None).unwrap_err();
+fn an_undeclared_account_change_is_refused_with_how_to_declare_it() {
+    let err = check_edits(&with_account("tester1"), &with_account("tester2"), None).unwrap_err();
     assert_eq!(
         err,
-        "the account a script runs as cannot be changed by a repair - a person picks it in the app"
+        "case 1: the account changed from \"tester1\" to \"tester2\" but was not declared - add \"account\": true with its \"why\" to the case's \"edits\" entry, or send the account as saved"
     );
+}
+
+#[test]
+fn a_declared_account_change_passes_the_gate() {
+    let e = Edit { account: true, ..edit(&[], "case 1 needs the approver's login") };
+    assert_eq!(check_edits(&with_account("tester1"), &with_account("tester2"), Some(&e)), Ok(()));
+}
+
+#[test]
+fn padding_around_the_same_account_is_not_a_change() {
+    let e = Edit { account: true, ..edit(&[], "case 1 needs the approver's login") };
+    assert_eq!(
+        check_edits(&with_account("admin"), &with_account(" admin "), Some(&e)),
+        Err(ACCOUNT_DECLARED_UNCHANGED.to_string())
+    );
+    assert_eq!(check_edits(&with_account("admin"), &with_account(" admin "), None), Ok(()));
+}
+
+#[test]
+fn a_declared_account_change_that_changes_nothing_is_refused() {
+    let e = Edit { account: true, ..edit(&[], "case 1 needs the approver's login") };
+    assert_eq!(
+        check_edits(&with_account("tester1"), &with_account("tester1"), Some(&e)),
+        Err(ACCOUNT_DECLARED_UNCHANGED.to_string())
+    );
+}
+
+#[test]
+fn an_account_only_edit_still_needs_a_reason() {
+    let e = Edit { account: true, ..edit(&[], "") };
+    assert_eq!(
+        check_edits(&with_account("tester1"), &with_account("tester2"), Some(&e)),
+        Err("an edit needs a reason".to_string())
+    );
+}
+
+#[test]
+fn the_new_account_must_be_a_saved_one() {
+    let keys = vec!["hr_admin".to_string()];
+    assert_eq!(
+        check_new_account(1, Some("ghost"), &keys),
+        Err("case 1: there is no saved account \"ghost\" in this environment - use a key get_accounts lists".to_string())
+    );
+    assert_eq!(
+        check_new_account(1, None, &keys),
+        Err("case 1: a declared account change needs the key of a saved account (get_accounts lists them)".to_string())
+    );
+    assert_eq!(check_new_account(1, Some("hr_admin"), &keys), Ok(()));
 }
 
 #[test]
@@ -524,7 +574,7 @@ fn pre_edit(v: serde_json::Value) -> PreconditionEdit {
 
 /// The declaration of a precondition edit alone: no steps, no `why`.
 fn pre_only(v: serde_json::Value) -> Edit {
-    Edit { case_id: 1, steps: vec![], why: String::new(), quirk: None, quirk_class: None, area: false, precondition: Some(pre_edit(v)), gives_up: Vec::new() }
+    Edit { case_id: 1, steps: vec![], why: String::new(), quirk: None, quirk_class: None, area: false, account: false, precondition: Some(pre_edit(v)), gives_up: Vec::new() }
 }
 
 /// Remove, add and change: each accepted with a reason, and each comes back

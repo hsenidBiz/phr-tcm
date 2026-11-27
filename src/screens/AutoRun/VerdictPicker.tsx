@@ -9,7 +9,10 @@
 // also lets a second press on the same one clear it.
 
 import { cn } from "../../lib/cn";
+import { IconVerdictBlocked, IconVerdictFailed, IconVerdictPassed } from "../../lib/actionIcons";
 import { VERDICTS, verdictTone } from "./verdicts";
+
+const VERDICT_ICON = { Passed: IconVerdictPassed, Failed: IconVerdictFailed, Blocked: IconVerdictBlocked } as const;
 
 /** What names the group: its own `label` when nothing on screen says it
  * (the review names each case's row "Verdict for #201"), or `labelledBy`,
@@ -30,9 +33,10 @@ export default function VerdictPicker({
   disabled?: boolean;
 } & Naming) {
   return (
-    <div role="group" aria-label={label} aria-labelledby={labelledBy} className="flex gap-2">
+    <div role="group" aria-label={label} aria-labelledby={labelledBy} className="flex w-fit">
       {VERDICTS.map((v) => {
         const pressed = value === v;
+        const Icon = VERDICT_ICON[v];
         return (
           <button
             key={v}
@@ -40,11 +44,15 @@ export default function VerdictPicker({
             aria-pressed={pressed}
             disabled={disabled}
             className={cn(
-              "rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors",
+              // One joined group: shared borders (-ml-px), rounded at the outer ends only.
+              "-ml-px inline-flex items-center gap-1.5 border border-border px-3 py-1.5 text-xs font-medium transition-colors first:ml-0 first:rounded-l-md last:rounded-r-md [&_svg]:size-3.5",
+              pressed && "relative z-10",
+              "hover:relative hover:z-[5] focus-visible:relative focus-visible:z-20",
               pressed ? verdictTone[v] : "text-muted hover:border-border-strong",
             )}
             onClick={() => onPick(v)}
           >
+            <Icon aria-hidden />
             <span className="label-trim">{v}</span>
           </button>
         );

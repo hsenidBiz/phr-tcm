@@ -1883,6 +1883,18 @@ function applyPatches() {
     },
     autoRunClearRuns: () => ok(autoRuns.splice(0).length),
     autoRunNewId: () => Promise.resolve(`run-${Date.now()}`),
+    autoRunRecordings: () =>
+      ok([
+        {
+          id: "rec-1",
+          title: "Discovery of the Leave module",
+          created: "2026-11-27T09:30:00Z",
+          duration_ms: 94000,
+          file: "rec-1.webm",
+        },
+      ]),
+    autoRunVideoInfo: (name: string) =>
+      Promise.resolve(name === "rec-1.webm" ? { size: 3_400_000, playable: true, attachable: true } : null),
     autoRunOpenReport: () => err("Demo mode: run reports are off in sample data"),
     autoRunShot: () => ok(captureShotData()),
     autoRunCountEvidence: () => ok(false),

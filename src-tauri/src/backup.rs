@@ -39,8 +39,9 @@ const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Inside an allowed root, but never exported and never imported: session
 /// files hold live cookies, and the screenshots folder is evidence for the
-/// run in front of the person, up to 200 images of it.
-pub const EXCLUDED: [&str; 2] = ["autorun/sessions", "autorun/shots"];
+/// run in front of the person, up to 200 images of it, and recordings are
+/// videos like the failed-case ones.
+pub const EXCLUDED: [&str; 3] = ["autorun/sessions", "autorun/shots", "autorun/recordings"];
 
 /// The path's segments, split on either separator (Windows splits a path on
 /// both, so an entry written as `autorun/sessions\admin.json` is still the
@@ -60,8 +61,8 @@ fn raw_segments(rel: &str) -> Vec<&str> {
 /// - the removed-environments area, and the staging folders an update, a
 ///   copy and an import leave (`.envs-staging-*`, `envs/.copying-*`,
 ///   `.import-*`);
-/// - every environment's screenshots (`envs/<id>/shots`), as the flat
-///   layout's were.
+/// - every environment's screenshots (`envs/<id>/shots`) and discovery
+///   recordings (`envs/<id>/recordings`), as the flat layout's were.
 fn excluded(rel: &str) -> bool {
     let seg: Vec<String> = raw_segments(rel).iter().map(|s| s.to_ascii_lowercase()).collect();
     if EXCLUDED.iter().any(|x| {
@@ -84,7 +85,7 @@ fn excluded(rel: &str) -> bool {
         }
         Some("envs") => {
             seg.get(2).is_some_and(|n| n.starts_with(".copying-") || n.starts_with(".seed-replaced-"))
-                || seg.get(3).map(String::as_str) == Some("shots")
+                || matches!(seg.get(3).map(String::as_str), Some("shots") | Some("recordings"))
         }
         _ => false,
     }

@@ -33,10 +33,8 @@ pub const VERSION: &str = "Browser.getVersion";
 /// The first Chromium (and so Edge) major version that has the recorder.
 pub const FIRST_MAJOR: u32 = 153;
 
-/// What the case is recorded at: no larger than this, no faster than this.
-/// Kept small on purpose - a video of a failed case is evidence, not a film.
-pub const MAX_WIDTH: u32 = 1280;
-pub const MAX_HEIGHT: u32 = 720;
+/// What the case is recorded at: the page size in force (Auto Test settings),
+/// no faster than this frame rate. A video of a failed case is evidence, not a film.
 pub const FRAME_RATE: u32 = 30;
 
 /// How long a start or a stop may take before the recording is given up on.
@@ -50,9 +48,14 @@ const CHUNK: u64 = 1024 * 1024;
 /// the browser cannot record.
 pub const NOT_AVAILABLE: &str = "Video was not recorded: this browser version cannot record.";
 
-/// What `start` asks the browser for.
+/// What `start` asks the browser for, at the page size given.
+pub fn start_params_for(size: super::viewport::PageSize) -> Value {
+    json!({ "frameRate": FRAME_RATE, "maxWidth": size.width, "maxHeight": size.height, "audio": false })
+}
+
+/// What `start` asks the browser for: the page size in force.
 pub fn start_params() -> Value {
-    json!({ "frameRate": FRAME_RATE, "maxWidth": MAX_WIDTH, "maxHeight": MAX_HEIGHT, "audio": false })
+    start_params_for(super::viewport::current())
 }
 
 /// Whether the connected browser can record.
@@ -152,10 +155,10 @@ pub async fn discard<D: Driver>(d: &mut D, stopped: Stopped) {
     let _ = d.call_within(CLOSE, json!({ "handle": stopped.handle }), Duration::from_millis(CALL_MS)).await;
 }
 
-/// Read the video and keep it beside the run's pictures: its name there, or
-/// `None` when it could not be read or written (logged). The stream is let
-/// go either way.
-pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str) -> Option<String> {
+/// Read the video out of the browser: its bytes, or `None` when it could not
+/// be read, took too long, or was empty (logged). The stream is let go either
+/// way.
+pub async fn read_video<D: Driver>(d: &mut D, stopped: Stopped, who: &str) -> Option<Vec<u8>> {
     let read = tokio::time::timeout(Duration::from_millis(READ_MS), read_all(d, &stopped.handle)).await;
     let _ = d.call_within(CLOSE, json!({ "handle": stopped.handle }), Duration::from_millis(CALL_MS)).await;
     let bytes = match read {
@@ -173,6 +176,14 @@ pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str
         crate::applog::warn(format!("{who}: the video of this case was empty"));
         return None;
     }
+    Some(bytes)
+}
+
+/// Read the video and keep it beside the run's pictures: its name there, or
+/// `None` when it could not be read or written (logged). The stream is let
+/// go either way.
+pub async fn keep<D: Driver>(d: &mut D, stopped: Stopped, root: &Path, who: &str) -> Option<String> {
+    let bytes = read_video(d, stopped, who).await?;
     let root = root.to_path_buf();
     let len = bytes.len();
     match tokio::task::spawn_blocking(move || store::save_video(&root, &bytes)).await {

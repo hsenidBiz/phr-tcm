@@ -1,5 +1,5 @@
 // The Assistants card: every connected assistant that has an Auto Test browser
-// (one without is left out), the browser it has, what it is doing, and the three things a person can do about it - Stop its replay,
+// (one without is left out), the browser it has, what it is doing, and the three things a person can do about it - Stop its replay (the button reads "Stop replay"),
 // End its discovery, Release its browser. It draws nothing until an assistant
 // is doing something: while every connected assistant is idle (or none is
 // connected) it is gone, and while it shows, an idle assistant keeps its row
@@ -17,7 +17,7 @@ import { useAgents } from "../../hooks/useAgents";
 import { activityText, isWorking } from "../../lib/agentActivity";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { IconRelease, IconStop } from "../../lib/actionIcons";
+import { IconRelease, IconStop, IconStopReplay } from "../../lib/actionIcons";
 import { logUi } from "../../lib/uiLog";
 import AssistantOffice, { hueFor } from "./AssistantScene";
 
@@ -150,14 +150,14 @@ export default function AssistantsCard() {
                     <Button
                       size="sm"
                       variant="outline"
-                      aria-label={`Stop ${a.label}`}
+                      aria-label={`Stop ${a.label}'s replay`}
                       disabled={working}
                       onClick={() =>
                         void press(a.label, () => commands.autoRunStopAgent(slot), "stop", `Could not stop ${a.label}.`)
                       }
                     >
-                      <IconStop aria-hidden />
-                      Stop
+                      <IconStopReplay aria-hidden />
+                      Stop replay
                     </Button>
                   )}
                   {isDiscovering(a.activity) && slot !== null && (

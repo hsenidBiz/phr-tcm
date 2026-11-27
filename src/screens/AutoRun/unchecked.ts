@@ -56,10 +56,15 @@ export function uncheckedExpectations(script: CaseScript): UncheckedExpectation[
   return out;
 }
 
+/** "item - why" + " (stand-in: kind)": the entry without its step, for a line shown under that step. */
+export function uncheckedDetail(e: UncheckedExpectation): string {
+  const line = `${e.item} - ${e.why}`;
+  return e.stand_in ? `${line} (stand-in: ${e.stand_in})` : line;
+}
+
 /** "step 3: item - why" + " (stand-in: kind)". */
 export function uncheckedLine(e: UncheckedExpectation): string {
-  const line = `step ${e.step}: ${e.item} - ${e.why}`;
-  return e.stand_in ? `${line} (stand-in: ${e.stand_in})` : line;
+  return `step ${e.step}: ${uncheckedDetail(e)}`;
 }
 
 /** "1 expectation unchecked" / "N expectations unchecked". */

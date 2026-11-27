@@ -278,7 +278,7 @@ test("progress moves the rows and the finished run is handed on", async () => {
     });
 
   await send({ phase: "opening" });
-  expect(await screen.findByText("case 1 of 1")).toBeInTheDocument();
+  expect(await screen.findByText("Case 1 of 1")).toBeInTheDocument();
   expect(
     within(screen.getByText("Case A").closest("li")!).getByText("Opening the browser"),
   ).toBeInTheDocument();
@@ -299,7 +299,7 @@ test("progress moves the rows and the finished run is handed on", async () => {
   ).toBeInTheDocument();
 
   await send({ index: 1, total: 2, case_id: 2, title: "Case B", phase: "opening" });
-  expect(await screen.findByText("case 2 of 2")).toBeInTheDocument();
+  expect(await screen.findByText("Case 2 of 2")).toBeInTheDocument();
 
   await send({ index: 1, total: 2, case_id: 2, title: "Case B", phase: "done", proposed: "" });
   expect(
@@ -423,6 +423,7 @@ test("the account for the run is remembered per project and sent with each case'
   const { unmount } = mountForAccount(calls);
   const pick = await screen.findByRole("combobox", { name: "Sign in as" });
   expect(pick).toHaveTextContent("Each script's own account");
+  // The picker is searchable: it opens like a combobox and the account is picked from its list.
   fireEvent.click(pick);
   fireEvent.click(await screen.findByRole("option", { name: "HR Admin (hr.admin)" }));
   expect(localStorage.getItem("tcm-v2-autorun-run-account:acme/Web")).toBe("hr.admin");
@@ -877,14 +878,16 @@ async function pausedRun(answers: { runId: string; continueRun: boolean }[]) {
   return emit;
 }
 
-test("a run paused before a batch shows Before Batch N, what to put back and what is left", async () => {
+// The pause heading is sentence case now ("Before batch N"); the region is named by it.
+test("a run paused before a batch shows Before batch N, what to put back and what is left", async () => {
   await pausedRun([]);
-  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
-  expect(within(panel).getByRole("heading", { name: "Before Batch 2" })).toBeInTheDocument();
+  const panel = await screen.findByRole("region", { name: "Before batch 2" });
+  expect(within(panel).getByRole("heading", { name: "Before batch 2" })).toBeInTheDocument();
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
-  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  // The panel now groups cases by area; titles without " - " fall in "Other".
+  const left = within(panel).getByRole("list", { name: "Cases in Other" });
   expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
     "#2 Edit a draft cycle",
     "#3 Other",
@@ -899,7 +902,7 @@ test("Continue at a reset point answers the run and the panel goes", async () =>
   await pausedRun(answers);
   fireEvent.click(await screen.findByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: true }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument());
 });
 
 test("Stop at a reset point answers Stop, and the run is shown stopping", async () => {
@@ -908,7 +911,7 @@ test("Stop at a reset point answers Stop, and the run is shown stopping", async 
   fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: false }]));
   expect(await screen.findByRole("button", { name: "Stopping after this step" })).toBeDisabled();
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 });
 
 test("a reset point of another run is not shown", async () => {
@@ -930,7 +933,7 @@ test("a reset point of another run is not shown", async () => {
       remaining: [2],
     });
   });
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 });
 
 // ---- the run outlives its window ----
@@ -1017,4 +1020,26 @@ test("the run window's dialog is named by its Unattended run title", async () =>
   mockIPC(() => null, { shouldMockEvents: true });
   renderPane([{ id: 1, title: "A" }]);
   expect(await screen.findByRole("dialog", { name: "Unattended run" })).toBeInTheDocument();
+});
+
+test("searching the Sign in as list narrows it to the matching accounts, and picking one is remembered by key", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_list_accounts") {
+        return [
+          { key: "evelyn1", label: "Evelyn Perez (001739)", username: "e", password: "p" },
+          { key: "kim.lee", label: "Kim Lee (000214)", username: "k", password: "p" },
+        ];
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  mountPane([{ id: 1, title: "A", module: "Leave" }]);
+  fireEvent.click(await screen.findByRole("combobox", { name: "Sign in as" }));
+  await screen.findByRole("option", { name: "Kim Lee (000214) (kim.lee)" });
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "Perez" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Evelyn Perez (001739) (evelyn1)"]);
+  fireEvent.click(screen.getByRole("option", { name: "Evelyn Perez (001739) (evelyn1)" }));
+  expect(localStorage.getItem("tcm-v2-autorun-run-account:acme/Web")).toBe("evelyn1");
 });

@@ -6,30 +6,17 @@
 // exists at all - a case without a video, or whose file has been pruned,
 // gets no controls.
 
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { IconCancel, IconExport, IconPlayVideo } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
-import { unwrapStr } from "../../lib/ipc";
-import { pickSavePath } from "../../lib/runnerFiles";
 import { toast } from "../../lib/toast";
 import { fileSize } from "./TestFilesDialog";
+import { useVideoFile, videoInfoKey } from "./useVideoFile";
 
 /** What the row says when the file is gone. */
 export const VIDEO_GONE = "The video of this case is no longer on this machine.";
 
-/** The query one video's facts are read through. */
-export const videoInfoKey = (name: string) => ["autorun-video-info", name] as const;
-
-/** The bytes of a base64 string, for a Blob. */
-function bytesOf(b64: string): Uint8Array<ArrayBuffer> {
-  const raw = atob(b64);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
+export { videoInfoKey };
 
 /** Said once for a run that was meant to keep videos of failed cases but ran in
  * a browser that cannot record. Quiet text, never a badge on a case: nothing
@@ -42,42 +29,7 @@ export function VideoUnavailableNote({ run }: { run: { video_unavailable?: boole
 }
 
 export default function CaseVideo({ name, className }: { name?: string | null; className?: string }) {
-  const info = useQuery({
-    queryKey: videoInfoKey(name ?? ""),
-    queryFn: () => commands.autoRunVideoInfo(name as string),
-    enabled: Boolean(name),
-    // Read again whenever a list mounts: a file pruned since the last look
-    // must show as gone.
-    staleTime: 0,
-    refetchOnMount: "always",
-    retry: false,
-  });
-  /** The object URL of the video being watched, if it is. */
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => () => {
-    if (src) URL.revokeObjectURL(src);
-  }, [src]);
-
-  const play = useMutation({
-    mutationFn: async () => {
-      const b64 = await unwrapStr(commands.autoRunVideo(name as string));
-      return URL.createObjectURL(new Blob([bytesOf(b64)], { type: "video/mp4" }));
-    },
-    onSuccess: setSrc,
-    onError: (e) => toast.error(`Could not play the video: ${e.message}`),
-  });
-  const save = useMutation({
-    mutationFn: async () => {
-      const path = await pickSavePath(name as string);
-      if (!path) return false;
-      await unwrapStr(commands.autoRunSaveVideo(name as string, path));
-      return true;
-    },
-    onSuccess: (saved) => {
-      if (saved) toast.success("Saved the video");
-    },
-    onError: (e) => toast.error(`Could not save the video: ${e.message}`),
-  });
+  const { info, src, close, play, save } = useVideoFile(name);
 
   if (!name || info.isLoading || info.isError) return null;
   if (!info.data) return <p className={cn("text-xs text-faint", className)}>{VIDEO_GONE}</p>;
@@ -89,7 +41,7 @@ export default function CaseVideo({ name, className }: { name?: string | null; c
         <p className="text-xs font-medium text-muted">Video of the failure</p>
         <span className="text-xs text-faint">{fileSize(size)}</span>
         {src ? (
-          <Button size="sm" variant="outline" onClick={() => setSrc(null)}>
+          <Button size="sm" variant="outline" onClick={close}>
             <IconCancel aria-hidden />
             Close video
           </Button>

@@ -5,7 +5,7 @@ that does the same job, your own browser, an editor or a sub-agent included.
 
 - A repair, or bringing a script to its rewritten case, keeps what the script does and changes how. Declare in
   `edits` every step whose actions change; every step you do not declare must come back exactly as it was, or
-  the save refuses it. A repair never changes the account a script runs as.
+  the save refuses it. To move a script to another saved account, declare `"account": true` with its why; a healer never does.
 - After the person rewrites a case, change only the steps the rewrite touched, to the case as it now reads,
   then prove the script with a replay of the whole case as a separate step.
 - Keep every check and every value the case gives. A check is given up only when the case no longer asks for

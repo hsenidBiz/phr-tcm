@@ -160,6 +160,7 @@ pub(crate) fn opened_for_discovery() -> Option<DiscoveryState> {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
+        recording: None,
     })
 }
 
@@ -178,6 +179,7 @@ pub(crate) fn exploring(area: &str) -> Option<DiscoveryState> {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
+        recording: None,
     })
 }
 
@@ -542,14 +544,14 @@ async fn close_browser_ends_a_discovery_session() {
     let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = slot(FakePage::default().driver(), exploring("Leave"));
-    assert!(close_browser_in(&mut browser), "there was a browser to close");
+    assert!(close_browser_in(&mut browser).await, "there was a browser to close");
     assert!(closed.load(Ordering::SeqCst));
     assert!(browser.is_none());
     let save = Action::Click { selector: "#save".into() };
     let (status, out) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
     assert_eq!(status, 409, "{out}");
     assert!(out.contains("start_autorun_discovery"), "{out}");
-    assert!(!close_browser_in(&mut browser), "nothing left to close");
+    assert!(!close_browser_in(&mut browser).await, "nothing left to close");
 }
 
 /// Ending a discovery keeps its browser, signed in, for the next replay or
@@ -1386,6 +1388,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         carried: Vec::new(),
         kept: Default::default(),
         signed_out: false,
+        recording: None,
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
@@ -3755,7 +3758,7 @@ async fn a_mapping_run_closed_mid_way_keeps_its_summary() {
     assert_eq!(status, 200, "{body}");
     browser.as_mut().unwrap().d.saves_stopped.push(("PUT".into(), "/api/x".into()));
 
-    assert!(close_browser_in(&mut browser));
+    assert!(close_browser_in(&mut browser).await);
     assert!(closed.load(Ordering::SeqCst));
     let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().expect("closing lost the summary");
     assert_eq!(kept.added, vec!["Leave Apply".to_string()]);
@@ -3770,7 +3773,7 @@ async fn a_mapping_run_closed_mid_way_keeps_its_summary() {
 
     // The next run, closed with nothing done, replaces it.
     let (mut browser, _) = mapping_browser_in(dir.path());
-    assert!(close_browser_in(&mut browser));
+    assert!(close_browser_in(&mut browser).await);
     let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().unwrap();
     assert!(kept.added.is_empty() && kept.blocked_writes == 0, "{kept:?}");
 }

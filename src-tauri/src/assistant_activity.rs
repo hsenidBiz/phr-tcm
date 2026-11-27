@@ -97,6 +97,8 @@ pub fn route_action(method: &str, path: &str, body: &str) -> Option<(ActivityGro
         "/autorun-inspect-sign-in" => (Tried, "Inspected a sign-in"),
         "/autorun-discover-start" => (Tried, "Started discovery"),
         "/autorun-discover-end" => (Tried, "Ended discovery"),
+        "/autorun-recording-start" => (Tried, "Started a recording"),
+        "/autorun-recording-stop" => (Saved, "Kept a recording"),
         "/api-template-prove" => (Tried, "Proved an API template"),
         "/api-template-run" => (Tried, "Ran an API template"),
         "/api-template-fixture-run" => (Tried, "Ran an API fixture"),

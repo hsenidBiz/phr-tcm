@@ -967,6 +967,7 @@ fn old_script_and_component_files_with_counts_still_load() {
         quirk: None,
         quirk_class: None,
         area: false,
+        account: false,
         precondition: None,
         gives_up: Vec::new(),
     };

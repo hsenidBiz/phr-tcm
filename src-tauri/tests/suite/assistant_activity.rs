@@ -35,6 +35,8 @@ fn the_table_names_writes_only() {
     assert_eq!(route_action("POST", "/autorun-try", "{}"), Some((ActivityGroup::Tried, "Tried an action")));
     assert_eq!(route_action("POST", "/autorun-script-delete", "{}"), Some((ActivityGroup::Saved, "Removed a script")));
     assert_eq!(route_action("POST", "/api-template-fixture-run", "{}"), Some((ActivityGroup::Tried, "Ran an API fixture")));
+    assert_eq!(route_action("POST", "/autorun-recording-start", "{}"), Some((ActivityGroup::Tried, "Started a recording")));
+    assert_eq!(route_action("POST", "/autorun-recording-stop", "{}"), Some((ActivityGroup::Saved, "Kept a recording")));
     assert_eq!(route_action("GET", "/autorun-page", ""), None);
     assert_eq!(route_action("GET", "/autorun-quirk", ""), None);
     assert_eq!(route_action("POST", "/autorun-requests", "{}"), None);

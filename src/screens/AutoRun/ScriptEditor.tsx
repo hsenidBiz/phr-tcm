@@ -14,6 +14,7 @@ import { useEnvironments } from "../../lib/environments";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
+import Combobox from "../../components/ui/combobox";
 import { Select } from "../../components/ui/select";
 import { Input, Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
@@ -338,22 +339,19 @@ function ScriptEditorBody({
           ) : (
           <label className="block text-xs text-muted">
             Runs as
-            <Select
-              aria-label="Runs as"
+            <Combobox
+              ariaLabel="Runs as"
               className="mt-1 w-full"
               value={account}
-              onChange={(e) => setPicked(e.target.value)}
-            >
-              <option value="">No sign-in</option>
-              {(accounts.data ?? []).map((a) => (
-                <option key={a.key} value={a.key}>
-                  {`${a.label.trim() || a.key} (${a.key})`}
-                </option>
-              ))}
-              {account !== "" && !known && (
-                <option value={account}>{`${account} (not on this machine)`}</option>
-              )}
-            </Select>
+              onChange={setPicked}
+              clearable={false}
+              triggerClassName="px-3 py-2"
+              items={[
+                { value: "", label: "No sign-in" },
+                ...(accounts.data ?? []).map((a) => ({ value: a.key, label: `${a.label.trim() || a.key} (${a.key})` })),
+                ...(account !== "" && !known ? [{ value: account, label: `${account} (not on this machine)` }] : []),
+              ]}
+            />
           </label>
           )}
 

@@ -100,6 +100,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "End the assistant's exploration in its own Auto Test browser.",
   },
   {
+    name: "start_autorun_recording",
+    label: "Start a recording",
+    summary: "Record the assistant's checks in its discovery browser, when you asked for video evidence.",
+  },
+  {
+    name: "stop_autorun_recording",
+    label: "Stop the recording",
+    summary: "Stop the recording and keep its video under Auto Test, Recordings.",
+  },
+  {
     name: "reset_autorun_browser",
     label: "Reset the Auto Test browser",
     summary: "Give the assistant's own Auto Test browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
@@ -392,6 +402,8 @@ export const AUTORUN_TOOLS = [
   "discover_autorun_actions",
   "save_autorun_area",
   "end_autorun_discovery",
+  "start_autorun_recording",
+  "stop_autorun_recording",
   "reset_autorun_browser",
   "save_autorun_component",
   "get_autorun_failures",

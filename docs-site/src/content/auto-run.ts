@@ -24,6 +24,7 @@ const SCRIPT_SETUP = "auto-run-script-setup";
 const WATCH = "auto-run-watch";
 const UNATTENDED = "auto-run-unattended";
 const RUNS = "auto-run-past-runs";
+const RECORDINGS = "auto-run-recordings";
 const REVIEW = "auto-run-review";
 const SETUP = "auto-run-setup";
 const SETUP_END = "auto-run-setup-end";
@@ -135,6 +136,11 @@ export const autoRun: Screen = {
       alt: "The Unattended run window, before it starts",
     },
     { id: RUNS, route: TO_RUNS, alt: "Past runs: an unattended run with a passed, a failed, a blocked and a retried case" },
+    {
+      id: RECORDINGS,
+      route: [...TO_RUNS, { scrollTo: { role: "heading", name: "Recordings" } }],
+      alt: "The Recordings card under Past runs, with one recording an assistant made",
+    },
     {
       id: REVIEW,
       route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept all" } }],
@@ -290,7 +296,7 @@ export const autoRun: Screen = {
       tips: [
         "To run the failed cases again: press **Failed**, then **Select all shown**.",
         "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
-        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then says **Ruled by the assistant** with your words, and **Undo ruling** puts the case back to needing a ruling.",
+        "When an assistant finds that a case and the application disagree (a divergence), the case shows **Needs a ruling** and waits. The card asks which is right, the case or the app. Choose **The app is wrong**, **The app is right, update the case** or, when the environment's data was the difference, **I fixed the data**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then lists it under **Rulings**, and **Details** says **Ruled by the assistant** with your words, while **Undo ruling** puts the case back to needing a ruling.",
         "**Has a script**, after them, shows only the cases that already have a script, with how many there are. It works together with the result buttons, and the app remembers it for each project.",
       ],
     },
@@ -322,8 +328,8 @@ export const autoRun: Screen = {
       name: "Show details",
       does:
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
-        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
-        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, lists each under **Unchecked** with why. " +
+        "Open, it shows what its script does as a line of chips (how many steps, the account it signs in as, its area, and **Must not save** when set), then its rules, its setup, any **Rulings** (each with **Details** and **Undo ruling**), its steps, the files it uploads and checks, and the last run's downloads, each with **Open**; the assistant's notes are folded at the bottom. " +
+        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, shows each under its own step as **Not checked**, with why. " +
         "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Test.",
     },
     {
@@ -332,7 +338,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "list", name: "Script steps of #5002" },
       name: "Steps",
-      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. Read only: change them with **Script**.",
+      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. A step also carries its own notes: **Assumed** for a value the assistant chose, **Not checked** for an expectation the script leaves out, and **Ruled** when you ruled on it. Read only: change them with **Script**.",
     },
     {
       id: "suspected-defect",
@@ -711,6 +717,15 @@ export const autoRun: Screen = {
       does: "The case failed on something passing and was run once more. Hover it to see why the first try failed. A case that says **Not checked** went on without its preconditions being checked.",
     },
 
+    {
+      id: "recordings-card",
+      shot: RECORDINGS,
+      group: "runs",
+      locate: { role: "heading", name: "Recordings" },
+      name: "Recordings",
+      does: "Videos an assistant recorded of its checks while discovering, when you asked it for evidence, each with its title, date and length: **Play** watches one here, **Save** copies it where you choose, and **Remove** deletes it from this computer.",
+    },
+
     // --- Review --------------------------------------------------------------------
     {
       id: "review-case",
@@ -953,8 +968,8 @@ export const autoRun: Screen = {
       id: "assistants-stop",
       shot: ASSISTANTS,
       group: "assistants",
-      locate: { role: "button", name: "Stop Assistant 1" },
-      name: "Stop",
+      locate: { role: "button", name: "Stop Assistant 1's replay" },
+      name: "Stop replay",
       does: "Ends the replay or the run of actions that assistant is in the middle of. Its browser stays open.",
     },
     {
@@ -997,7 +1012,7 @@ export const autoRun: Screen = {
   tips: [
     "**Work from a suite.** Instead of a Product Backlog Item you can work from a test suite: switch the bar at the top from **PBI** to **Suite** and search for it, or choose **More > Auto Test** on a suite in Search Suites. Auto Test then lists the suite's own cases (not those of the suites inside it). You run and review them the same way; results go to the suite's own test points, and a bug you raise is linked to the failed case only. Past runs say **for suite** and its name. Choosing a Product Backlog Item clears the suite, and choosing a suite clears the Product Backlog Item.",
     "**Waiting for you**, at the top of Auto Test, lists what an assistant left for you to decide: the accounts it proposed (one line saying how many are waiting, however many there are) and a sign-in it proposed. It shows only while something waits. **Open** on a row takes you to where the decision is made: the Proposed tab of the Accounts window, or the sign-in proposal. A divergence is not listed here; you rule on it in its own case's card. The **Auto Test** tab in the sidebar shows a red dot while something is waiting, and the bell tells you when something new arrives.",
-    "While an assistant works, a thin line above whichever screen you are on says so in a few words (**Discovery is running** and the screen's name while one is discovering, otherwise how many assistants are working); hover it for each assistant's detail. While a sign-in is being tried it says **Trying a sign-in**. **Open Auto Test** on the line goes to Auto Test, and each assistant's **Stop** is in the Assistants card there. The line takes up no room while no assistant is working.",
+    "While an assistant works, a thin line above whichever screen you are on says so in a few words (**Discovery is running** and the screen's name while one is discovering, otherwise how many assistants are working); hover it for each assistant's detail. While a sign-in is being tried it says **Trying a sign-in**. **Open Auto Test** on the line goes to Auto Test, and each assistant's **Stop replay** is in the Assistants card there. The line takes up no room while no assistant is working.",
     "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
@@ -1060,7 +1075,7 @@ export const autoRun: Screen = {
         "Press **Run N unattended**.",
         "Choose who to sign in as and whether to watch, then press **Start**.",
         "To carry on with other work, press **Run in background**. The pill in the title bar shows how far the run has got; click it to open the run again.",
-        "If the pill turns amber and reads **Paused before Batch 2** (or another batch), click it, do what the window lists under **Set** and **Put back**, and press **Continue**.",
+        "If the pill turns amber and reads **Paused before Batch 2** (or another batch), click it, do what the window lists under **Set up** (tick each one off as you go) and **Put back**, and press **Continue**.",
         "When the run finishes its review opens (from the background, click **Review** on the message or the pill): confirm each case, or press **Accept all**, then **Send to Azure DevOps**.",
       ],
     },
@@ -1071,7 +1086,7 @@ export const autoRun: Screen = {
         "Under **Changes** and **Needs unchanged**, name shared data a case changes, such as a published cycle, and the cases that need it as it was.",
         "Run the selection. Auto Test puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
-        "The run window says which batch is running, such as **Batch 2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
+        "The run window says which batch is running, with a **Batch** label and a tab per batch, the current one tinted, such as **2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
       ],
     },
     {

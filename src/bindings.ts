@@ -1051,6 +1051,10 @@ export const commands = {
 	 *  the shots folder to that path and never through the webview.
 	 */
 	autoRunSaveVideo: (name: string, destPath: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_video", { name, destPath })),
+	/**  The discovery recordings kept for this environment, newest first. */
+	autoRunRecordings: () => typedError<RecordingEntry[], string>(__TAURI_INVOKE("auto_run_recordings")),
+	/**  Delete one discovery recording. */
+	autoRunRemoveRecording: (id: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_remove_recording", { id })),
 	/**
 	 *  The tester's accounts, passwords included: the Accounts dialog edits
 	 *  them in place. This is the one IPC call that carries a password, by the
@@ -3398,7 +3402,9 @@ export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" 
  *  The environments list: an assistant changed an environment's account
  *  lookup, so an open Edit environments shows it.
  */
-"environments";
+"environments" | 
+/**  The discovery recordings list: one was kept or removed. */
+"recordings";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Test browser: while
@@ -7353,6 +7359,15 @@ export type ReconcileAnswer = {
 export type ReconciledCase = {
 	title: string,
 	id: number,
+};
+
+/**  One kept recording. */
+export type RecordingEntry = {
+	id: string,
+	title: string,
+	created: string,
+	duration_ms: number,
+	file: string,
 };
 
 /**

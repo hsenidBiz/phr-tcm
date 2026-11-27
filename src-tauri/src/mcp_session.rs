@@ -142,4 +142,9 @@ impl SessionBook {
     pub fn quick_rules_given(&self, agent: Option<&str>) -> bool {
         self.with(agent, |s| s.quick_rules_given())
     }
+
+    /// As `Session::delivered`, for the agent's session.
+    pub fn delivered(&self, agent: Option<&str>, role: Role) -> bool {
+        self.with(agent, |s| s.delivered(role))
+    }
 }

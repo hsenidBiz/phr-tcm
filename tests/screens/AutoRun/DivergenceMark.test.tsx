@@ -207,3 +207,20 @@ test("a person's own ruling offers no undo", () => {
   expect(screen.queryByRole("button", { name: /Undo the ruling/ })).not.toBeInTheDocument();
   expect(screen.queryByText(/Ruled by the assistant/)).not.toBeInTheDocument();
 });
+
+test("a compact row waiting on a repair keeps its badge and /tcm:heal line without Details", () => {
+  const qc = new QueryClient();
+  render(
+    <QueryClientProvider client={qc}>
+      <DivergenceRow
+        org="acme"
+        project="Web"
+        caseId={147556}
+        divergence={{ ...byAssistant, status: "awaiting_repair", ruling: "rewrite" }}
+        compact
+      />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText("Waits for a repair")).toBeInTheDocument();
+  expect(screen.getByText(/Ask the assistant to repair the script \(\/tcm:heal\)\./)).toBeInTheDocument();
+});

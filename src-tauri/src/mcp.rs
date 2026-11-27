@@ -285,6 +285,8 @@ trait RoleNotes {
     fn note_kind(&mut self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note>;
     /// As `Session::quick_rules_given`.
     fn quick_rules_given(&mut self, agent: Option<&str>) -> bool;
+    /// Whether the agent's session has been given `role`'s rules (always false untracked).
+    fn delivered(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role) -> bool;
 }
 
 impl RoleNotes for crate::mcp_session::Session {
@@ -300,6 +302,9 @@ impl RoleNotes for crate::mcp_session::Session {
     fn quick_rules_given(&mut self, _agent: Option<&str>) -> bool {
         crate::mcp_session::Session::quick_rules_given(self)
     }
+    fn delivered(&mut self, _agent: Option<&str>, role: crate::autorun::roles::Role) -> bool {
+        crate::mcp_session::Session::delivered(self, role)
+    }
 }
 
 impl RoleNotes for &crate::mcp_session::SessionBook {
@@ -314,6 +319,9 @@ impl RoleNotes for &crate::mcp_session::SessionBook {
     }
     fn quick_rules_given(&mut self, agent: Option<&str>) -> bool {
         crate::mcp_session::SessionBook::quick_rules_given(self, agent)
+    }
+    fn delivered(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role) -> bool {
+        crate::mcp_session::SessionBook::delivered(self, agent, role)
     }
 }
 
@@ -397,7 +405,11 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             // same subagent.
             let _holding = CallingAgent::set(agent.clone());
             let agent = agent.as_deref();
-            let (mut result, reached) = tools_call_outcome(params, call);
+            // A healer's rules hold the account: its save is refused (after the module checks).
+            let healer_keeps_account = name == "save_autorun_script"
+                && crate::autorun::roles::declares_account_change(&args)
+                && session.delivered(agent, crate::autorun::roles::Role::Healer);
+            let (mut result, reached) = tools_call_outcome(params, call, healer_keeps_account);
             if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
                     session.mark_read(agent, role);
@@ -751,7 +763,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Only when a script already exists: one entry per case you change, { case_id, steps (every step number you changed), why, area? (true when you changed the script's area, including leaving out one it had), quirk?, quirk_class? (\"app quirk\", \"environment flake\" or \"product bug\", the quirk's class), precondition? (at most one per case per save), gives_up? (the checks this repair removes, each { step, kind (expect_count, expect_text...), why }, why one line: the person sees each one; only when the case no longer asks for the check or another check already proves the same - a check the app fails is a divergence, report_case_divergence, never a check to give up) }: get_guide (topic autorun), section \"Saving it\".",
+                    "description": "Only when a script already exists: one entry per case you change, { case_id, steps (every step number you changed), why, area? (true when you changed the script's area, including leaving out one it had), account? (true when you changed the account the script runs as: a saved account's key), quirk?, quirk_class? (\"app quirk\", \"environment flake\" or \"product bug\", the quirk's class), precondition? (at most one per case per save), gives_up? (the checks this repair removes, each { step, kind (expect_count, expect_text...), why }, why one line: the person sees each one; only when the case no longer asks for the check or another check already proves the same - a check the app fails is a divergence, report_case_divergence, never a check to give up) }: get_guide (topic autorun), section \"Saving it\".",
                     "items": { "type": "object" },
                 },
                 "dry_run": { "type": "boolean", "description": DRY_RUN_SCRIPT },
@@ -901,6 +913,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({
                 "keep_browser": { "type": "boolean", "description": "Optional, default false: true keeps the browser open and signed in for your next replay or discovery, and its account stays held." },
             }), &[]),
+        },
+        {
+            "name": "start_autorun_recording",
+            "description": "Start recording video of your discovery browser. Only when the person's prompt asks for evidence or a recording, or says a fix is being verified: never by default. Start just before the checks that prove the point, never during sign-in or navigation, and stop right after them with stop_autorun_recording. `title` is short, for example \"Bug 4521: leave balance fix\", at most 80 characters, with no address or secret. One recording at a time. It stops by itself when your discovery ends or after 10 minutes. When the app itself quits, a recording still going may be lost. The video stays in the app: it is not sent to you. The video shows the tab the recording started on. A browser that cannot record says so: carry on without one.",
+            "inputSchema": schema(serde_json::json!({
+                "title": { "type": "string", "description": "A short title for the video, at most 80 characters, e.g. \"Bug 4521: leave balance fix\". No address, login or secret." },
+            }), &["title"]),
+        },
+        {
+            "name": "stop_autorun_recording",
+            "description": "Stop your recording. It keeps the video, and its answer says it is ready under Auto Test → Recordings (the Past runs tab): tell the person where to find it.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "reset_autorun_browser",
@@ -2556,7 +2580,7 @@ pub fn coerce_args(name: &str, args: &serde_json::Value) -> serde_json::Value {
 }
 
 /// The answer to a tool call, and whether the call reached the app (the dispatch answered, with any status).
-fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_json::Value, bool) {
+fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall, healer_keeps_account: bool) -> (serde_json::Value, bool) {
     let name = params["name"].as_str().unwrap_or_default();
     // Every bridge request from here on names the tool, so the app logs the
     // call once: a refusal on the `/tools` read, otherwise the route's answer.
@@ -2617,6 +2641,16 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                     "type": "text",
                     "text": text,
                 }],
+                "isError": true,
+            }),
+            false,
+        );
+    }
+    if healer_keeps_account {
+        crate::applog::info(format!("mcp relay: refused {name}: a healer's save declares an account change"));
+        return (
+            serde_json::json!({
+                "content": [{ "type": "text", "text": crate::autorun::roles::HEALER_KEEPS_ACCOUNT }],
                 "isError": true,
             }),
             false,
@@ -2886,6 +2920,8 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "discover_autorun_actions" => discover_call(args, call),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
+        "start_autorun_recording" => call("POST", "/autorun-recording-start", &args.to_string()),
+        "stop_autorun_recording" => call("POST", "/autorun-recording-stop", &args.to_string()),
         "reset_autorun_browser" => reset_call(args, call),
         // Components: each route reads its own named fields out of the body.
         "save_autorun_component" => component_call(args, call),

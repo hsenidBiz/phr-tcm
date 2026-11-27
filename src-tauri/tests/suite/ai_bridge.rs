@@ -4850,7 +4850,7 @@ fn an_empty_unchecked_patch_clears_the_list_as_null_does() {
     assert!(by_null.steps[0].unchecked.is_none());
     assert!(by_empty.steps[0].unchecked.is_none());
     assert_eq!(by_null, by_empty);
-    let edit = |steps: &[i32]| Edit { case_id: 7, steps: steps.to_vec(), why: "drops the list".into(), quirk: None, quirk_class: None, area: false, precondition: None, gives_up: Vec::new() };
+    let edit = |steps: &[i32]| Edit { case_id: 7, steps: steps.to_vec(), why: "drops the list".into(), quirk: None, quirk_class: None, area: false, account: false, precondition: None, gives_up: Vec::new() };
     assert!(check_edits(&saved, &by_empty, Some(&edit(&[]))).unwrap_err().contains("step 1"));
     check_edits(&saved, &by_empty, Some(&edit(&[1]))).unwrap();
 }
@@ -4888,7 +4888,7 @@ fn an_added_step_must_be_declared_in_edits() {
         { "step_number": 4, "actions": [{ "kind": "reload" }] }
     ]));
     let out = patched(&saved, serde_json::json!([{ "step": 3, "actions": [{ "kind": "reload" }] }])).unwrap();
-    let edit = |steps: &[i32]| Edit { case_id: 7, steps: steps.to_vec(), why: "adds a step".into(), quirk: None, quirk_class: None, area: false, precondition: None, gives_up: Vec::new() };
+    let edit = |steps: &[i32]| Edit { case_id: 7, steps: steps.to_vec(), why: "adds a step".into(), quirk: None, quirk_class: None, area: false, account: false, precondition: None, gives_up: Vec::new() };
     let err = check_edits(&saved, &out, Some(&edit(&[1]))).unwrap_err();
     assert!(err.contains("step 3"), "{err}");
     check_edits(&saved, &out, Some(&edit(&[3]))).unwrap();

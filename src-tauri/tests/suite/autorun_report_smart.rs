@@ -1125,3 +1125,24 @@ fn the_average_line_has_a_page_coloured_halo_so_it_shows_over_the_highlighted_ba
     let line = html.find("<polyline class=\"trend__avg\"").expect("the line");
     assert!(halo < line, "the halo is drawn first, under the line");
 }
+
+/// Enter on a group header or a section header must reach that control. The page's own
+/// Enter shortcut (focus the details pane) once ran first and moved focus off the button
+/// during keydown, so the browser never sent it the click and a row could not be closed.
+#[test]
+fn a_group_and_a_section_header_toggle_from_the_keyboard_too() {
+    let (now, all) = history_fixture();
+    let html = page(&now, &all, &[], &no_shots);
+    // The group is a real button that reports its state; the section is a details/summary.
+    assert!(html.contains("<button type=\"button\" class=\"group\" aria-expanded=\"true\">"), "{html}");
+    assert!(html.contains("<details class=\"section\" open><summary class=\"section__header\">"), "{html}");
+    // The handler flips the state both ways and nothing reopens it.
+    let js = include_str!("../../web/autorun-report.js");
+    assert!(js.contains("var open = grp.getAttribute('aria-expanded') !== 'true';"));
+    assert!(js.contains("grp.parentNode.classList.toggle('closed', !open);"));
+    // The Enter shortcut leaves a button, link or summary alone.
+    let enter = js.split("k === 'Enter'").nth(1).expect("the Enter shortcut");
+    let guard = enter.find("closest('button, a, summary')").expect("the Enter guard");
+    let focus = enter.find("pane.focus()").expect("the focus move");
+    assert!(guard < focus, "the guard must come before the focus move");
+}

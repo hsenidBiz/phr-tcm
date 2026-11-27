@@ -181,7 +181,7 @@ impl Role {
 }
 
 pub const ROLE_MAX_LINES: usize = 45;
-pub const ROLE_MAX_CHARS: usize = 4000;
+pub const ROLE_MAX_CHARS: usize = 4200; // 4200: raised from 4000 on the owner's word (27 Nov 2026) for the account-change and Playwright-reading lines
 
 /// The line a later answer of the role's tool opens with.
 pub fn pointer(role: Role) -> String {
@@ -222,13 +222,14 @@ fn case_id_of(v: &serde_json::Value) -> Option<i32> {
     }
 }
 
-/// Walks a value for the `edits` it holds. `inherited` is the case id of
-/// the script an entry sits in, taken by an entry without its own.
-fn collect_repairs(v: &serde_json::Value, inherited: Option<i32>, out: &mut Vec<i32>) {
+/// Walks a value for the `edits` entries it holds, calling `each` with an
+/// entry and the case id it counts for. `inherited` is the case id of the
+/// script an entry sits in, taken by an entry without its own.
+fn walk_edits(v: &serde_json::Value, inherited: Option<i32>, each: &mut dyn FnMut(&serde_json::Value, Option<i32>)) {
     match structured(v) {
         serde_json::Value::Array(items) => {
             for item in &items {
-                collect_repairs(item, inherited, out);
+                walk_edits(item, inherited, each);
             }
         }
         serde_json::Value::Object(map) => {
@@ -238,21 +239,15 @@ fn collect_repairs(v: &serde_json::Value, inherited: Option<i32>, out: &mut Vec<
                 match structured(edits) {
                     serde_json::Value::Array(entries) => {
                         for e in &entries {
-                            if let Some(id) = case_id_of(e).or(own) {
-                                out.push(id);
-                            }
+                            each(e, case_id_of(e).or(own));
                         }
                     }
-                    entry @ serde_json::Value::Object(_) => {
-                        if let Some(id) = case_id_of(&entry).or(own) {
-                            out.push(id);
-                        }
-                    }
+                    entry @ serde_json::Value::Object(_) => each(&entry, case_id_of(&entry).or(own)),
                     _ => {}
                 }
             }
             if let Some(scripts) = obj.get("scripts") {
-                collect_repairs(scripts, own, out);
+                walk_edits(scripts, own, each);
             }
         }
         _ => {}
@@ -267,10 +262,22 @@ fn collect_repairs(v: &serde_json::Value, inherited: Option<i32>, out: &mut Vec<
 /// `case_id` is a number or a numeric string. Sorted, each once.
 pub fn cases_repaired_by(args: &serde_json::Value) -> Vec<i32> {
     let mut out = vec![];
-    collect_repairs(args, None, &mut out);
+    walk_edits(args, None, &mut |_, id| out.extend(id));
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// What the connector says in place of saving a healer's `"account": true`.
+pub const HEALER_KEEPS_ACCOUNT: &str = "A healer never changes the account a script runs as: send the account as saved and leave \"account\" out of the edit. If the case needs another account, tell the person; the account is a person's or a writer's call.";
+
+/// Whether any `edits` entry of a `save_autorun_script` call's arguments
+/// declares an account change: `account` true or "true". Reads the same
+/// shapes as `cases_repaired_by`.
+pub fn declares_account_change(args: &serde_json::Value) -> bool {
+    let mut found = false;
+    walk_edits(args, None, &mut |e, _| found |= is_true(&e["account"]));
+    found
 }
 
 /// Whether an argument is true, as a boolean or as the text "true".

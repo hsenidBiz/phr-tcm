@@ -77,9 +77,87 @@ export function planBatches(plan: PlanView | null | undefined): { n: number; ids
   }));
 }
 
-/** A pause's heading: `Before Batch N`. */
+/** A pause's heading: `Before batch N`. */
 export function pauseHeading(batch: number | undefined): string {
-  return batch && batch > 0 ? `Before Batch ${batch}` : "Before the next batch";
+  return batch && batch > 0 ? `Before batch ${batch}` : "Before the next batch";
+}
+
+/** What a set item names, as chips, and the sentence to show for it. */
+export interface SetItem {
+  chips: string[];
+  text: string;
+}
+
+const NOT_A_STAGE = new Set(["is", "to", "of"]);
+
+const upFirst = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
+/** Split a setting's name like `000015 stage intermediate_competency of cycle
+ * 11892` into chips (employee number at the start, cycle, stage) and the
+ * words left over. A name with none of them is not recognised: null. */
+export function parseSetName(name: string): { chips: string[]; rest: string } | null {
+  let text = name;
+  const employee = /^\s*(\d{6})\b/.exec(text);
+  if (employee) text = text.slice(employee[0].length);
+  const cycle = /(\s+of)?(?:^|\s+)cycle\s+(\d+)\b/i.exec(text);
+  let stage: RegExpExecArray | null = null;
+  for (const m of text.matchAll(/\bstage\s+([\w-]+)/gi)) {
+    if (!NOT_A_STAGE.has(m[1].toLowerCase())) {
+      stage = m;
+      break;
+    }
+  }
+  const before = stage ? null : /([\w-]+)\s+stage\b/i.exec(text);
+  const stageHit = stage ?? before;
+  if (!employee && !cycle && !stageHit) return null;
+  for (const m of [cycle, stageHit]) if (m) text = text.replace(m[0], " ");
+  const rest = text
+    .replace(/[,\s]+/g, " ")
+    .replace(/^(of )+|( of)+$/gi, "")
+    .trim();
+  // Always employee, cycle, stage, whatever order the name uses.
+  const chips = [
+    ...(employee ? ["Employee " + employee[1]] : []),
+    ...(cycle ? ["Cycle " + cycle[2]] : []),
+    ...(stageHit ? ["Stage " + stageHit[1]] : []),
+  ];
+  return { chips, rest };
+}
+
+/** What a setting shows: its chips and `Rest: value` (just the value when
+ * nothing is left of the name). Null when the name is not recognised, and
+ * the caller shows the whole line. */
+export function parseSetItem(name: string, value: string): SetItem | null {
+  const parsed = parseSetName(name);
+  if (!parsed) return null;
+  return { chips: parsed.chips, text: parsed.rest ? upFirst(parsed.rest) + ": " + value : upFirst(value) };
+}
+
+/** The cases still to run, grouped by the area before a title's first
+ * ` - `. Areas keep the order they first appear in; a case without one goes
+ * in `Other`, last. The title in each item has the area taken off. */
+export function groupByArea(
+  ids: readonly number[],
+  titleOf: (id: number) => string | undefined,
+): { area: string; items: { id: number; title: string }[] }[] {
+  const groups = new Map<string, { id: number; title: string }[]>();
+  const other: { id: number; title: string }[] = [];
+  // An area literally called Other joins the area-less cases, not a second group.
+  for (const id of ids) {
+    const title = titleOf(id)?.trim() ?? "";
+    const at = title.indexOf(" - ");
+    const area = at > 0 ? title.slice(0, at).trim() : "";
+    if (!area || area === "Other") {
+      other.push({ id, title: area ? title.slice(at + 3).trim() : title });
+      continue;
+    }
+    const list = groups.get(area) ?? [];
+    list.push({ id, title: title.slice(at + 3).trim() });
+    groups.set(area, list);
+  }
+  const out = [...groups].map(([area, items]) => ({ area, items }));
+  if (other.length) out.push({ area: "Other", items: other });
+  return out;
 }
 
 /** `Batch 2 (4 cases)`. */

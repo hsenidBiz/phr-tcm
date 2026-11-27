@@ -37,6 +37,27 @@ pub(crate) fn session_slot(n: SlotNo) -> &'static tokio::sync::Mutex<Option<Sess
     }
 }
 
+/// The ten-minute cap on a discovery's recording: a timer for the recording
+/// that started at `started_ms` in slot `n`. It sleeps, then looks
+/// (`ai_bridge::cap_step_in`): due is read off the monotonic clock, and a
+/// recording that is not this one (it ended, or a newer one began) is left
+/// alone.
+pub(crate) fn spawn_recording_cap(n: SlotNo, started_ms: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(crate::autorun::recordings::CAP).await;
+        loop {
+            let mut slot = session_slot(n).lock().await;
+            match crate::ai_bridge::cap_step_in(&mut slot, started_ms).await {
+                crate::ai_bridge::CapStep::Done => break,
+                crate::ai_bridge::CapStep::Wait(left) => {
+                    drop(slot);
+                    tokio::time::sleep(left).await;
+                }
+            }
+        }
+    });
+}
+
 /// Serialises a change to the imported capture sets (an import), so two
 /// imports at once cannot both pass the five-set cap or lose each other's
 /// set. Coordination only: the sets themselves live in the Rust cache.
@@ -380,6 +401,10 @@ pub struct DiscoveryState {
     /// refused unsent (`api_templates::one_off::SIGNED_OUT_BEFORE`). It goes
     /// with the discovery.
     pub signed_out: bool,
+    /// The video this discovery is recording of its checks, if one is going
+    /// (`ai_bridge::recording_start_in`). It is stopped and kept however the
+    /// discovery ends (`ai_bridge::finish_recording`).
+    pub recording: Option<crate::autorun::recordings::Running>,
 }
 
 impl DiscoveryState {
@@ -712,6 +737,7 @@ pub(crate) async fn open_for_discovery(
             carried: Vec::new(),
             kept: Default::default(),
             signed_out: false,
+            recording: None,
         });
     }
     publish_discovery_in(n, &slot);
@@ -1477,7 +1503,7 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     crate::ai_bridge::stop_batch();
     // A discovery going in it ends with it: its state lives in the session.
     let mut slot = SESSION.lock().await;
-    if crate::ai_bridge::close_browser_in(&mut slot) {
+    if crate::ai_bridge::close_browser_in(&mut slot).await {
         crate::applog::info("Auto-run browser closed");
     }
     publish_discovery(&slot);
@@ -1541,7 +1567,8 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
     }
     let mut held = false;
     for (n, slot) in SlotNo::all().into_iter().zip(slots.iter_mut()) {
-        held |= crate::ai_bridge::close_browser_in(slot);
+        crate::ai_bridge::forget_gone_browser(slot).await;
+        held |= crate::ai_bridge::close_browser_in(slot).await;
         publish_discovery_in(n, slot);
         // Nobody holds a browser that is gone, one bound while it had none
         // included.
@@ -1744,11 +1771,11 @@ pub async fn release_outcome_in<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mu
         Some(b) => b.parts().discovery.is_some(),
     };
     if discovering {
-        let (status, said) = crate::ai_bridge::end_discovery_closing(slot);
+        let (status, said) = crate::ai_bridge::end_discovery_closing(slot).await;
         return ReleaseOutcome::EndedDiscovery(status, said);
     }
     if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) {
-        crate::ai_bridge::close_browser_in(slot);
+        crate::ai_bridge::close_browser_in(slot).await;
         return ReleaseOutcome::ClosedAssistants;
     }
     ReleaseOutcome::PersonsKept
@@ -2171,6 +2198,9 @@ fn said_at_reset(
 /// A Playwright tab repo command still running (`pw_repo::process`) is
 /// ended first, its whole job with it.
 pub async fn close_autorun_browsers() {
+    // The recordings' one short budget runs from here, so the stops below
+    // cannot spend it and leave the closes without time.
+    let recordings_began = std::time::Instant::now();
     // The Playwright tab's repo command goes first: ending its job is
     // immediate, and nothing below can then hold it past the caller's bound.
     crate::pw_repo::process::stop_all();
@@ -2188,8 +2218,12 @@ pub async fn close_autorun_browsers() {
     // closes on a blocking thread of its own, so the caller's bound is not
     // spent three times over.
     let mut closing = Vec::new();
+    let mut writing = Vec::new();
     for n in SlotNo::all() {
         let mut slot = session_slot(n).lock().await;
+        // A recording going is stopped and kept, within a short bound of its
+        // own: the exit is never held up for a video.
+        let video = crate::ai_bridge::finish_recording_at_exit(&mut slot, crate::ai_bridge::budget_left(EXIT_RECORDING_BOUND, recordings_began.elapsed())).await;
         // A mapping run going keeps its summary, as any other ending does.
         crate::ai_bridge::finish_mapping(&mut slot);
         // An explore session going has its change list closed the same way.
@@ -2201,6 +2235,11 @@ pub async fn close_autorun_browsers() {
         if let Some(s) = session {
             closing.push(tauri::async_runtime::spawn_blocking(move || close_session(s)));
         }
+        // The video is written only now the close is under way, and on a task
+        // of its own: the disk (or a held switch lock) never delays a close.
+        if let Some(video) = video {
+            writing.push(tauri::async_runtime::spawn(crate::ai_bridge::keep_video(video)));
+        }
     }
     for done in closing {
         let _ = done.await;
@@ -2211,7 +2250,14 @@ pub async fn close_autorun_browsers() {
     // unattended run's, which nothing above closes, and any other one.
     // Each is ended as a whole tree, and its profile removed.
     let _ = tauri::async_runtime::spawn_blocking(crate::browser::tree::end_all).await;
+    // Last, the recordings' files: nothing above waited for them.
+    for done in writing {
+        let _ = done.await;
+    }
 }
+
+/// How long a recording's stop and read may take as the app quits.
+pub(crate) const EXIT_RECORDING_BOUND: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// What a supervised step answers: one outcome per action, the tab the
 /// step ran in when that was not `main` (`runner::InRun::tab`), and the
@@ -2697,7 +2743,7 @@ pub(crate) async fn replay_supervised(
     // stopped early and the browser is then found gone.
     let gone = match &end {
         ReplayEnd::BrowserGone { .. } => {
-            crate::ai_bridge::close_browser_in(&mut slot);
+            crate::ai_bridge::close_browser_in(&mut slot).await;
             publish_discovery_in(n, &slot);
             true
         }
@@ -3140,6 +3186,20 @@ pub fn auto_run_save_video(app: tauri::AppHandle, name: String, dest_path: Strin
         crate::applog::warn(format!("saving a case video failed: {e}"));
         format!("Could not save the file: {e}")
     })
+}
+
+/// The discovery recordings kept for this environment, newest first.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_recordings(app: tauri::AppHandle) -> Result<Vec<crate::autorun::recordings::RecordingEntry>, String> {
+    Ok(crate::autorun::recordings::list(&root(&app)?))
+}
+
+/// Delete one discovery recording.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_remove_recording(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    crate::autorun::recordings::remove(&root(&app)?, &id)
 }
 
 #[tauri::command(async)]

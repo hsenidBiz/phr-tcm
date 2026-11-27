@@ -157,6 +157,7 @@ mod autorun_suite_scope;
 mod autorun_tables;
 mod autorun_transient;
 mod autorun_video;
+mod autorun_recordings;
 mod autorun_unchecked;
 mod autorun_waiting;
 mod autorun_repeat_while_visible;

@@ -19,7 +19,6 @@ import { Input } from "../../components/ui/input";
 import { Term } from "../../components/Term";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
-import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { IconBack, IconCancel, IconRecord, IconRemove, IconRun, IconStop, IconUndo } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
@@ -415,19 +414,16 @@ export default function AreasDialog({
 
       <label className="flex items-center gap-2 text-xs text-muted">
         Record and try as
-        <Select
-          aria-label="Record and try as"
+        <Combobox
+          ariaLabel="Record and try as"
           className="w-56"
           value={who}
-          onChange={(e) => setPicked(e.target.value)}
-        >
-          {keys.length === 0 && <option value="">No accounts yet</option>}
-          {(accounts.data ?? []).map((a) => (
-            <option key={a.key} value={a.key}>
-              {a.label ? `${a.label} (${a.key})` : a.key}
-            </option>
-          ))}
-        </Select>
+          clearable={false}
+          triggerClassName="px-3 py-2"
+          placeholder="No accounts yet"
+          onChange={setPicked}
+          items={(accounts.data ?? []).map((a) => ({ value: a.key, label: a.label ? `${a.label} (${a.key})` : a.key }))}
+        />
       </label>
 
       {phase.kind === "list" && (

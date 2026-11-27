@@ -64,6 +64,7 @@ pub mod quirks;
 pub mod recipe;
 pub mod backup_import;
 pub mod env_copy;
+pub mod recordings;
 pub mod roots;
 pub mod recorder;
 pub mod refusals;

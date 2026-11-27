@@ -90,6 +90,9 @@ export {
   ArchiveRestore as IconRestore,
   EyeOff as IconStopWatching,
   Square as IconStop,
+  // Halting an assistant's script replay (Auto Test's Assistants card): a
+  // circled stop, so it reads apart from IconStop, which ends a discovery.
+  CircleStop as IconStopReplay,
   Unplug as IconUnregister,
   // Wiping saved script FILES for a PBI's cases (Auto Test, dev builds only).
   FileX2 as IconClearScripts,
@@ -120,6 +123,11 @@ export {
   // Carrying on with a run that paused at a reset point.
   StepForward as IconContinue,
   Flag as IconFinish,
+  // The three verdicts a person gives a case in a run: named for the
+  // verdict, not the glyph.
+  CircleCheck as IconVerdictPassed,
+  CircleX as IconVerdictFailed,
+  Ban as IconVerdictBlocked,
   // Opening and folding a row's detail - the steps under a case in the
   // unattended run. One glyph per direction, named for the result.
   ChevronRight as IconShowSteps,
@@ -243,4 +251,10 @@ export {
   // Auto Test's case card: look at a saved script, never change it from the
   // card. An eye, since the button only shows it.
   Eye as IconViewScript,
+  // The summary chips over an open Auto Test case card: how many steps the
+  // script has, who it runs as, where it works, and that it must not save.
+  ListOrdered as IconScriptSteps,
+  User as IconRunsAs,
+  MapPin as IconScriptArea,
+  Lock as IconMustNotSave,
 } from "lucide-react";

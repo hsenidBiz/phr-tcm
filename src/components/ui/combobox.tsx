@@ -22,6 +22,8 @@ export default function Combobox({
   details,
   pins,
   seedQuery = false,
+  disabled = false,
+  clearable = true,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -52,6 +54,10 @@ export default function Combobox({
   /** Open with the search box holding the current value, so a picked value
    * (a folder's parent) can be extended by typing instead of retyped. */
   seedQuery?: boolean;
+  /** The trigger cannot be opened. */
+  disabled?: boolean;
+  /** Show the x that empties the value. Off for a pick that always has one. */
+  clearable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -148,8 +154,9 @@ export default function Combobox({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
+        disabled={disabled}
         className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong focus:border-accent focus:outline-none",
+          "flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60",
           // While open, focus lives in the panel's search input - the
           // trigger keeps the accent explicitly so every dropdown shows
           // the same lit border as a focused Input.
@@ -164,11 +171,11 @@ export default function Combobox({
           setOpen((o) => !o);
         }}
       >
-        <span className={cn("truncate", value ? "text-text" : "text-faint")} title={selectedLabel || undefined}>
+        <span className={cn("truncate", rows.some((r) => r.value === value) || value ? "text-text" : "text-faint")} title={selectedLabel || undefined}>
           {selectedLabel || placeholder}
         </span>
         <span className="flex shrink-0 items-center gap-1">
-          {value && (
+          {value && clearable && !disabled && (
             <span
               role="button"
               aria-label="Clear"

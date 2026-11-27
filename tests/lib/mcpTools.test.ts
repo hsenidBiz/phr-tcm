@@ -553,6 +553,10 @@ test("the browser summaries say whose browser it is", () => {
     "Open an Auto Test browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
   );
   expect(summary("end_autorun_discovery")).toBe("End the assistant's exploration in its own Auto Test browser.");
+  expect(summary("start_autorun_recording")).toBe(
+    "Record the assistant's checks in its discovery browser, when you asked for video evidence.",
+  );
+  expect(summary("stop_autorun_recording")).toBe("Stop the recording and keep its video under Auto Test, Recordings.");
   expect(summary("reset_autorun_browser")).toBe(
     "Give the assistant's own Auto Test browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
   );

@@ -9,7 +9,15 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useId, useState } from "react";
 import { commands, type Divergence, type Ruling } from "../../bindings";
 import { Button } from "../../components/ui/button";
-import { IconCancel, IconConfirm, IconDataFixed, IconOpenInBrowser, IconUndo } from "../../lib/actionIcons";
+import {
+  IconCancel,
+  IconConfirm,
+  IconDataFixed,
+  IconHideDetails,
+  IconOpenInBrowser,
+  IconShowDetails,
+  IconUndo,
+} from "../../lib/actionIcons";
 import { Term } from "../../components/Term";
 import { toast } from "../../lib/toast";
 
@@ -68,12 +76,18 @@ export function DivergenceRow({
   project,
   caseId,
   divergence,
+  compact = false,
 }: {
   org: string;
   project: string;
   caseId: number;
   divergence: Divergence;
+  /** A ruling as one line (its step, what was decided, Details and Undo) for the
+   * open case card. Only a ruled divergence draws so; an open one keeps its buttons. */
+  compact?: boolean;
 }) {
+  const detailsId = useId();
+  const [showDetails, setShowDetails] = useState(false);
   const queryClient = useQueryClient();
   const [asking, setAsking] = useState<Ruling | null>(null);
   const [busy, setBusy] = useState(false);
@@ -134,6 +148,77 @@ export function DivergenceRow({
   // renumbered. Any other assistant ruling keeps its Undo as long as it shows.
   const repaired = divergence.status === "ruled" && divergence.ruling === "rewrite";
   const canUndo = waiting || (byAssistant && !repaired);
+  const undoButton = canUndo && (
+    <Button
+      size="sm"
+      variant="outline"
+      className="shrink-0"
+      disabled={busy}
+      aria-label={`Undo the ruling on #${caseId} step ${step}`}
+      onClick={() => void undo()}
+    >
+      <IconUndo aria-hidden />
+      Undo ruling
+    </Button>
+  );
+  if (compact && divergence.status !== "open") {
+    const decided =
+      divergence.note?.trim() ||
+      divergence.proposal?.trim() ||
+      (divergence.ruling
+        ? SENTENCE[divergence.ruling](step)
+        : `The case says "${divergence.case_says}"; the app shows "${divergence.app_shows}".`);
+    return (
+      <div className="space-y-1 pt-1">
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent-fill">
+            <span className="label-trim">Step {step}</span>
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs text-text" title={decided}>
+            {decided}
+          </span>
+          {waiting && <DivergenceBadge divergence={divergence} />}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0"
+            aria-label={`Details of the ruling on #${caseId} step ${step}`}
+            aria-expanded={showDetails}
+            aria-controls={showDetails ? detailsId : undefined}
+            onClick={() => setShowDetails((v) => !v)}
+          >
+            {showDetails ? <IconHideDetails aria-hidden /> : <IconShowDetails aria-hidden />}
+            Details
+          </Button>
+          {undoButton}
+        </div>
+        {waiting && <p className="break-words pl-1 text-xs text-text">Ask the assistant to repair the script (/tcm:heal).</p>}
+        {showDetails && (
+          <div id={detailsId} className="space-y-1 pl-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {!waiting && <DivergenceBadge divergence={divergence} />}
+              <span className="min-w-0 flex-1 break-words text-xs text-text">
+                Step {step}: the case says &quot;{divergence.case_says}&quot;; the app shows &quot;{divergence.app_shows}
+                &quot;.
+                {divergence.proposal && <> Proposed: &quot;{divergence.proposal}&quot;.</>}
+              </span>
+            </div>
+            {byAssistant && (
+              <p className="break-words text-xs text-muted">
+                Ruled by the assistant, on your words: &quot;{divergence.said}&quot;
+                {divergence.note ? ` Its note: ${divergence.note}` : ""}
+              </p>
+            )}
+          </div>
+        )}
+        {problem && (
+          <p role="status" className="break-words text-xs text-danger">
+            {problem}
+          </p>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       <DivergenceBadge divergence={divergence} />
@@ -189,19 +274,7 @@ export function DivergenceRow({
           {divergence.note ? ` Its note: ${divergence.note}` : ""}
         </span>
       )}
-      {canUndo && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0"
-          disabled={busy}
-          aria-label={`Undo the ruling on #${caseId} step ${step}`}
-          onClick={() => void undo()}
-        >
-          <IconUndo aria-hidden />
-          Undo ruling
-        </Button>
-      )}
+      {undoButton}
       {asking && (
         <div className="flex w-full flex-wrap items-center gap-2 border-t border-border/60 pt-2">
           <span className="min-w-0 flex-1 text-xs text-text">{SENTENCE[asking](step)}</span>

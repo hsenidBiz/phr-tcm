@@ -51,6 +51,9 @@ pub struct ScriptedDriver {
     /// When no event is waiting, `wait_event` says the browser closed
     /// instead of timing out - a window the person shut.
     pub closed_when_drained: bool,
+    /// A call to this method never answers: how a test says "the browser
+    /// hung on it".
+    pub hang_on: Option<String>,
     /// What `page_log` reports - the lines a real page's requests and
     /// console would have given.
     pub page_log: Vec<String>,
@@ -241,6 +244,7 @@ impl ScriptedDriver {
             dialogs: vec![],
             deadlines: vec![],
             closed_when_drained: false,
+            hang_on: None,
             page_log: vec![],
             net: None,
             block_after: None,
@@ -387,6 +391,9 @@ impl Driver for ScriptedDriver {
             }
         }
         self.calls.push((method.to_string(), params.clone()));
+        if self.hang_on.as_deref() == Some(method) {
+            std::future::pending::<()>().await;
+        }
         if v2_lib::browser::timing::delivers_input(method) {
             self.last_input = Some(v2_lib::browser::timing::wall_ms());
         }

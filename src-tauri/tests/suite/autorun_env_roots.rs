@@ -83,7 +83,7 @@ fn the_pinned_lists_are_what_the_plan_says() {
     assert_eq!(every, ["scripts", "deleted-scripts", "orders", "projects"]);
     assert_eq!(
         active_only,
-        ["templates", "fixtures", "runs", "shots", "downloads", "reports", "replays", "explore", "captures", "api-state"]
+        ["templates", "fixtures", "runs", "shots", "recordings", "downloads", "reports", "replays", "explore", "captures", "api-state"]
     );
     assert_eq!(roots::LEGACY_API_ITEMS, ["templates", "fixtures", "flows"]);
     assert!(roots::is_export_record(Path::new("projects/acme-hr.pwexport.json")));
