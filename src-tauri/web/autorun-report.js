@@ -460,6 +460,9 @@
       var b = selected ? $('#case-' + selected + ' [data-copy="summary"]') : null;
       if (b) b.click();
     } else if (k === 'Enter') {
+      // On a button, link or section header Enter is that control's own key (it opens or closes it):
+      // moving focus away here would swallow it.
+      if (e.target.closest && e.target.closest('button, a, summary')) return;
       var pane = $('#details');
       if (pane && selected) { pane.setAttribute('tabindex', '-1'); pane.focus(); }
     } else if (/^[1-5]$/.test(k)) { nav(ORDER[Number(k) - 1]); }
