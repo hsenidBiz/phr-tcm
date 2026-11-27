@@ -252,7 +252,10 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   // only what actually reached Azure DevOps.
   expect(await screen.findByText("1 test case uploaded - 1 created, 1 failed")).toBeInTheDocument();
   expect(screen.getByText("Failed")).toBeInTheDocument();
-  expect(screen.getByText("boom")).toBeInTheDocument();
+  // The reason is said on the results line and on the failed row itself,
+  // and once more, counted, in the grouped summary.
+  expect(screen.getAllByText("boom")).toHaveLength(2);
+  expect(screen.getByText("1 failed: boom")).toBeInTheDocument();
   expect(screen.getByText(/2 queued/)).toBeInTheDocument();
 
   // Both rows stay. "Good" was created, so it now carries its new id - it

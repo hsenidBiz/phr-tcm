@@ -34,6 +34,7 @@ import { useNoteSync } from "./queue/useNoteSync";
 import { useQueueEdits } from "./queue/useQueueEdits";
 import { useQueueReport } from "./queue/useQueueReport";
 import { useAreaGrouping, useQueueSelection } from "./queue/useQueueSelection";
+import { useFieldRules } from "./queue/useFieldRules";
 import { useQueueUpload } from "./queue/useQueueUpload";
 import { useReviewGate } from "./queue/useReviewGate";
 import { useRowViewState } from "./queue/useRowViewState";
@@ -118,6 +119,8 @@ export default function QueueSection({
   // Failed rows by key; uploaded rows by work item id, which every one of
   // them now carries and which does not shift as rows around it change.
   const [failedRows, setFailedRows] = useState<Set<string>>(() => new Set());
+  // Why each failed row failed, in Azure DevOps' words made plain.
+  const [failedReasons, setFailedReasons] = useState<Map<string, string>>(() => new Map());
   const [uploadedIds, setUploadedIds] = useState<Set<number>>(() => new Set());
   // Progress lives at MODULE scope (lib/submitRun), not in this component:
   // the upload takes minutes and the person watching it is exactly the
@@ -128,7 +131,7 @@ export default function QueueSection({
 
   // Everything a finished submit owes the user, wherever they are now.
   const finishUpload = (outcome: Outcome) =>
-    applyOutcome({ qc, org, project, setFailedRows, setUploadedIds }, outcome);
+    applyOutcome({ qc, org, project, setFailedRows, setFailedReasons, setUploadedIds }, outcome);
 
   // Creates from an interrupted upload that Azure DevOps could not confirm,
   // and the Check / Release that settle them.
@@ -281,7 +284,12 @@ export default function QueueSection({
   // it by value.
   const qualities = useMemo(() => queue.map((tc) => qualityWarnings(tc).join("\n")), [queue]);
 
-  const hasBlockers = problems.some(Boolean);
+  // The project's own field rules (a required Module, a fixed list), asked
+  // of Azure DevOps before anything is sent. They block like any flagged
+  // row: the whole upload waits until every case is put right, the way it
+  // already does for a case with no title.
+  const fieldRules = useFieldRules({ org, project, queue, prefs });
+  const hasBlockers = problems.some(Boolean) || fieldRules.blocked;
 
   // What the primary action is about to do, in words. Lifted out of the
   // review branch because the floating copy has to say the same thing.
@@ -376,6 +384,8 @@ export default function QueueSection({
         touched={flash?.[rowKeys[i]]}
         fileChange={tc.update_id == null ? fileChanges?.[rowKeys[i]] : undefined}
         reviewing={reviewing}
+        failedReason={failedReasons.get(rowKeys[i])}
+        fieldProblem={fieldRules.rowProblems[i]}
         problem={problems[i]}
         duplicate={duplicates[i]}
         quality={qualities[i]}
@@ -442,12 +452,15 @@ export default function QueueSection({
         onShare={() => share.mutate()}
         onClear={() => {
           const failed = failedRows;
+          const reasons = failedReasons;
           const uploaded = uploadedIds;
           clearQueue(() => {
             setFailedRows((cur) => new Set([...cur, ...failed]));
+            setFailedReasons((cur) => new Map([...cur, ...reasons]));
             setUploadedIds((cur) => new Set([...cur, ...uploaded]));
           });
           setFailedRows(new Set());
+          setFailedReasons(new Map());
           setUploadedIds(new Set());
         }}
       />
@@ -493,6 +506,19 @@ export default function QueueSection({
           onRename={() => setRenameOpen(true)}
           onRemove={() => bulkRemove()}
         />
+      )}
+
+      {/* Why cases cannot be sent yet, grouped: "3 cases need a Module".
+          Each of those rows carries its own warning too. */}
+      {queue.length > 0 && fieldRules.summary.length > 0 && (
+        <div
+          role="alert"
+          className="space-y-0.5 rounded-md border border-danger/60 bg-danger/5 px-3 py-2 text-sm text-danger"
+        >
+          {fieldRules.summary.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
       )}
 
       {/* Click a case to select it, Ctrl+click to add or remove one,
@@ -586,6 +612,7 @@ export default function QueueSection({
             setResults(null);
             setChangeNotes(null);
             setFailedRows(new Set());
+            setFailedReasons(new Map());
             setUploadedIds(new Set());
           }}
         />

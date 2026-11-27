@@ -18,6 +18,8 @@ export type OutcomeContext = {
   org: string;
   project: string;
   setFailedRows: Dispatch<SetStateAction<Set<string>>>;
+  /** Why each failed row failed, by the same keys. */
+  setFailedReasons?: Dispatch<SetStateAction<Map<string, string>>>;
   setUploadedIds: Dispatch<SetStateAction<Set<number>>>;
 };
 
@@ -36,7 +38,7 @@ export type Outcome = {
 /** Everything a finished submit owes the user, wherever they are now.
  * Runs inside the mutation promise, so navigating away cannot skip it. */
 export function applyOutcome(
-  { qc, org, project, setFailedRows, setUploadedIds }: OutcomeContext,
+  { qc, org, project, setFailedRows, setFailedReasons, setUploadedIds }: OutcomeContext,
   { results, sent, sentFor, skipped, prevQueue, since, preExisting }: Outcome,
 ) {
   // Only what Azure DevOps confirmed counts as done. "unknown" is neither
@@ -64,6 +66,7 @@ export function applyOutcome(
   // number the same way in both.
   const marks = keepUploaded(sent, sent, results);
   setFailedRows(marks.failed);
+  setFailedReasons?.(marks.failedReasons);
   setUploadedIds(marks.uploadedIds);
 
   const writer = queueWriterFor(org, sentFor);

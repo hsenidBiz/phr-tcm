@@ -159,6 +159,19 @@ pub fn area_team(base_url: &str, org: &str, project: &str, area: &str) -> String
     format!("area-team:{base_url}|{org}|{project}|{area}")
 }
 
+/// How long a project's Test Case field rules (which fields are required,
+/// which have a fixed list) are reused before a submit's check. The process
+/// is edited by an administrator, rarely, and the check runs on every edit
+/// of the queue.
+pub const TEST_CASE_RULES_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// The Test Case field rules of one project (session tier only). The
+/// base_url is in the key for the same reason as `suite`'s; `refs` are the
+/// module and prerequisites fields, whose allowed values were read too.
+pub fn test_case_rules(base_url: &str, org: &str, project: &str, refs: &str) -> String {
+    format!("tc-rules:{base_url}|{org}|{project}|{refs}")
+}
+
 /// How long the AI bridge reuses a database lookup's answer. A schema
 /// changes when a deploy script runs, not while an assistant explores it,
 /// and a lookup costs up to three sqlcmd runs - so asking the same thing

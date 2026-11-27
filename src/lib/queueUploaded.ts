@@ -57,6 +57,9 @@ export type KeepResult = {
   unmatched: number;
   /** Keys, over `queue`, of the rows that failed. */
   failed: Set<string>;
+  /** Why each of them failed, by the same keys - what Azure DevOps said,
+   * in plain words. A row it gave no reason for is not in here. */
+  failedReasons: Map<string, string>;
   /** Work item ids written by this upload, created and updated alike. A
    * row carrying one of these was uploaded; an id is exact, where a key's
    * occurrence number moves as rows are edited or removed. */
@@ -91,7 +94,7 @@ export function keepUploaded(sent: TestCase[], live: TestCase[], results: Submit
   );
 
   const queue = [...live];
-  const failedAt: number[] = [];
+  const failedAt: { at: number; why: string }[] = [];
   const uploadedIds = new Set<number>();
   let unmatched = 0;
 
@@ -109,13 +112,14 @@ export function keepUploaded(sent: TestCase[], live: TestCase[], results: Submit
       if (id != null) uploadedIds.add(id);
       if (at != null && sent[r.index]) queue[at] = stampResult(queue[at], sent[r.index], r);
     } else if (r.action === "failed" && at != null) {
-      failedAt.push(at);
+      failedAt.push({ at, why: (r.error ?? "").trim() });
     }
   });
 
   // Keyed over the stamped queue, the list the rows render from: a created
   // row's key changes to its id, which renumbers same-titled rows after it.
   const queueKeys = keysFor(queue);
-  const failed = new Set(failedAt.map((i) => queueKeys[i]));
-  return { queue, unmatched, failed, uploadedIds };
+  const failed = new Set(failedAt.map((f) => queueKeys[f.at]));
+  const failedReasons = new Map(failedAt.filter((f) => f.why).map((f) => [queueKeys[f.at], f.why]));
+  return { queue, unmatched, failed, failedReasons, uploadedIds };
 }

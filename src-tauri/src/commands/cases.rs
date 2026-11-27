@@ -148,6 +148,34 @@ pub async fn update_test_case(
         .map(|(notes, attached)| UpdateSaved { notes, attached })
 }
 
+/// Check a queue against the project's Test Case field rules before it is
+/// sent: a required field left empty, a value outside a fixed list. Read
+/// only, and it never fails - rules that cannot be read come back
+/// `checked: false`, and the upload goes on as it always did.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_field_rules(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    queue: Vec<model::TestCase>,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> ado::field_rules::RuleCheck {
+    let Ok(token) = get_fresh_token(&app).await else {
+        return ado::field_rules::RuleCheck::unchecked();
+    };
+    ado::field_rules::check_queue(
+        &ado::AdoClient::new(token),
+        &organization,
+        &project,
+        &queue,
+        module_ref.as_deref(),
+        preconditions_ref.as_deref(),
+    )
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn list_test_case_fields(

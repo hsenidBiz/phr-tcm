@@ -19,11 +19,12 @@ export default function QueueResults({
   changeNotes: string | null;
   onClear: () => void;
 }) {
+  const summary = summariseSubmit(results);
   return (
     <div className="space-y-2 rounded-md border border-border bg-surface-2 p-3">
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-sm font-semibold text-text">
-          {summariseSubmit(results).headline}
+          {summary.headline}
         </h3>
         {/* Dismiss the results once read - the button goes with them,
             and so do the marks on the rows: once the results are
@@ -53,6 +54,15 @@ export default function QueueResults({
           </Button>
         </div>
       </div>
+      {/* The same reason said once per kind, not once per case: 64 cases
+          refused for one missing field read as one line. */}
+      {summary.failures.length > 0 && (
+        <ul aria-label="Why cases failed" className="space-y-0.5 text-sm text-danger">
+          {summary.failures.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
       <ul className="space-y-1 text-sm">
         {results.map((r) => (
           <li key={r.index} className="flex items-baseline gap-2">

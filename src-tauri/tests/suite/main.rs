@@ -31,6 +31,7 @@ mod ado;
 mod ado_retry;
 mod ado_boards;
 mod ado_case_meta;
+mod field_rules;
 mod ado_git;
 mod ado_network;
 mod bug_reads;
