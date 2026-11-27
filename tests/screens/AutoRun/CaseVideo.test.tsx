@@ -287,3 +287,26 @@ test("a failed fetch shows the player's own note and no toast", async () => {
   expect(await screen.findByText(VIDEO_WONT_PLAY)).toBeInTheDocument();
   expect(toastMock.error).not.toHaveBeenCalled();
 });
+
+test("watching again while the first load is still running reopens the player with its bytes", async () => {
+  const gate = deferred<string>();
+  let loads = 0;
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_video_info") return { size: 9, playable: true, attachable: true };
+    if (cmd === "auto_run_video") {
+      loads++;
+      return gate.promise;
+    }
+    return null;
+  });
+  show(NAME);
+  fireEvent.click(await screen.findByRole("button", { name: "Watch video" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Close player" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Watch video" }));
+  const dialog = await screen.findByRole("dialog");
+  gate.resolve(btoa("mp4"));
+  await waitFor(() => expect(within(dialog).getByLabelText("Video of #7 Leave request")).toHaveAttribute("src", "blob:the-video"));
+  expect(loads).toBe(1);
+  expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+});

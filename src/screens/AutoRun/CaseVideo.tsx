@@ -61,9 +61,9 @@ export default function CaseVideo({
 
   if (!name || info.isLoading || info.isError) return null;
   const watch = () => {
-    if (play.isPending) return;
     setOpen(true);
-    play.mutate();
+    // A load still running feeds the reopened player; start no second one.
+    if (!play.isPending) play.mutate();
   };
   const player = open ? (
     <VideoPlayer

@@ -224,6 +224,13 @@ test("a video that will not play says so and keeps the list", () => {
   fireEvent.error(video());
   expect(dialog().textContent).toContain("This video cannot be played here - save it instead.");
   expect(within(dialog()).getByRole("list", { name: "Steps" })).toBeTruthy();
+  expect((buttonNamed("Play") as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("the video is muted and inline so autoplay is never refused", () => {
+  open();
+  expect(video().muted).toBe(true);
+  expect(video().hasAttribute("playsinline")).toBe(true);
 });
 
 test("Close player closes it", () => {

@@ -224,6 +224,22 @@ test("until the video arrives the slider has the focus, then Play takes it", () 
   expect(play).toHaveBeenCalledTimes(1);
 });
 
+test("when the video arrives, focus the person moved elsewhere stays there", () => {
+  const props = { timeline: TIMELINE, loading: true, error: false, saving: false, onSave: vi.fn(), onClose: vi.fn() };
+  const { rerender } = render(<VideoPlayer {...props} src={null} />);
+  const elsewhere = screen.getByRole("button", { name: "Save video" });
+  elsewhere.focus();
+  rerender(<VideoPlayer {...props} loading={false} src="blob:the-video" />);
+  expect(elsewhere).toHaveFocus();
+  expect(play).toHaveBeenCalledTimes(1);
+});
+
+test("the video is muted and inline so autoplay is never refused", () => {
+  const { video } = show();
+  expect(video.muted).toBe(true);
+  expect(video).toHaveAttribute("playsinline");
+});
+
 test("a refused play leaves it paused", async () => {
   play.mockImplementationOnce(() => Promise.reject(new Error("blocked")));
   show();

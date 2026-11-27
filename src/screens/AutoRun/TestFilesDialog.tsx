@@ -8,7 +8,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useId, useMemo, useState, type ComponentType } from "react";
+import { useEffect, useId, useMemo, useState, type ComponentType } from "react";
 import { commands, type Action, type CaseScript } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -246,6 +246,12 @@ export default function TestFilesDialog({
   // Closed to start with, unless there is only one group to look at. A
   // search opens every group it matches in.
   const isOpen = (kind: string) => searching || (folded[kind] ?? groups.length === 1);
+  // A lone group starts open; record that, so a second kind appearing later
+  // does not shut it.
+  const lone = groups.length === 1 && !searching ? groups[0].kind.name : null;
+  useEffect(() => {
+    if (lone) setFolded((prev) => (lone in prev ? prev : { ...prev, [lone]: true }));
+  }, [lone]);
   const allOpen = groups.every((g) => isOpen(g.kind.name));
   const setAll = (open: boolean) => {
     setRemoving(null);

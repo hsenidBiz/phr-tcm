@@ -235,6 +235,8 @@
     var stage = el('div', 'vp__stage');
     vid = document.createElement('video');
     vid.preload = 'metadata';
+    vid.muted = true;
+    vid.setAttribute('playsinline', '');
     vid.setAttribute('aria-label', tl.title);
     stage.appendChild(vid);
     els.msg = el('p', 'vp__msg muted');
@@ -326,6 +328,8 @@
     vid.addEventListener('error', function () {
       els.msg.textContent = VIDEO_WONT_PLAY;
       els.msg.hidden = false;
+      els.play.disabled = true;
+      setPlaying(false);
     });
     return o;
   }

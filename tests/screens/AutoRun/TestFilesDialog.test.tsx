@@ -335,6 +335,15 @@ test("a lone group starts open", async () => {
   expect(screen.getByRole("button", { name: /Spreadsheets/ })).toHaveAttribute("aria-expanded", "true");
 });
 
+test("a lone group stays open when a second kind is added", async () => {
+  mount({ files: [many[0], many[1]], picked: ["C:\Docs\appraisal.pdf"] });
+  expect(await screen.findByText("a.xlsx")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Add files" }));
+  await screen.findByText(/Documents/);
+  expect(screen.getByRole("button", { name: /Spreadsheets/ })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("a.xlsx")).toBeVisible();
+});
+
 test("Expand all opens every group, and the same button then collapses them", async () => {
   mount({ files: many });
   fireEvent.click(await screen.findByRole("button", { name: "Expand all" }));

@@ -78,9 +78,9 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
             disabled={!playable}
             title={playable ? "Watch the recording with its actions" : "This recording is too large to play here - save it instead"}
             onClick={() => {
-              if (play.isPending) return;
               setOpen(true);
-              play.mutate();
+              // A load still running feeds the reopened player.
+              if (!play.isPending) play.mutate();
             }}
           >
             <IconPlayVideo aria-hidden />

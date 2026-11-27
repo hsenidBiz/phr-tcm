@@ -198,7 +198,9 @@ export default function VideoPlayer({
   useEffect(() => {
     const v = video.current;
     if (!src || cannotPlay || !v) return;
-    playBtn.current?.focus();
+    // Only if the focus is still where the player put it: the person may
+    // have tabbed on while the bytes were loading.
+    if (document.activeElement === bar.current) playBtn.current?.focus();
     setPlaying(true);
     void Promise.resolve(v.play()).catch(() => setPlaying(false));
   }, [src, cannotPlay]);
@@ -242,6 +244,8 @@ export default function VideoPlayer({
                 aria-label={timeline.title}
                 src={src ?? undefined}
                 preload="metadata"
+                muted
+                playsInline
                 hidden={loading || cannotPlay}
                 className="max-h-[60vh] max-w-full rounded border border-border"
                 onTimeUpdate={sync}
