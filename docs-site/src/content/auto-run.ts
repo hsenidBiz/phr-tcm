@@ -863,8 +863,8 @@ export const autoRun: Screen = {
       does:
         "The reusable steps your assistant has made for the site, such as picking a date in a date picker or confirming a dialog. A component takes text and target inputs, and every script that uses it gets its fixes. " +
         "The assistant makes a component during discovery, and only after it has tried the component live on the site. A component cannot use another component. " +
-        "The **Components** window lists each one with what it does and the inputs it takes, where and when it was tried, the cases that use it, and how many times it has been changed so far. A change is tried on the live app first, and it is checked against every script that uses it. " +
-        "**Remove** is greyed out while any script uses the component, and asks first otherwise; the scripts that use it have to be changed first. " +
+        "The **Components** window groups them by the area each was tried in, with one line per component showing how many cases use it, its version and **Unused** when no script does; **Search components** narrows the list by name, description, input or case number. " + "Open a component to see what it does, the inputs it takes, when it was tried, how many times it has been changed so far and the first cases that use it, and use **Expand all** or **Collapse all** to open or fold every line. A change is tried on the live app first, and it is checked against every script that uses it. " +
+        "**Remove**, at the bottom of an open component, is greyed out while any script uses the component, and asks first otherwise; the scripts that use it have to be changed first. " +
         "If the components file cannot be read, the window offers **Reset components**, which moves the damaged file aside (it is kept, never deleted) and starts with none. " +
         "The row reads **None yet** until the assistant has made one. Fixtures and delete templates do not use components.",
       tips: ["In your assistant, **/tcm:discover** is where components get made. In a run and in its review, the lines a component ran are grouped under its name."],
