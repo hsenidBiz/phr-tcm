@@ -165,6 +165,7 @@
    - Any other `select` error, for example a syntax error or a bad column, fails **at once** with that error, passed through `capture_redact::redact_text`.
    - At the timeout, the last `Fail` detail is the outcome.
 4. Each query goes to `applog` as `db_query`'s does, already done inside `run_query`. Nothing else is logged.
+5. The unreachable outcome counts as a transient failure, not a suspected defect: add `expect_database` to `autorun/transient.rs`'s per-kind network-glitch handling, like an `api_request` network failure. Test: `unreachable_db_check_is_transient` in the same suite file.
 
 - [ ] **Step 1: Write the failing tests**, using a fake `DbRows` that returns queued answers and records the SQL it was given.
   - `run_retries_until_row_appears`: the answers are `[0 rows, 0 rows, 1 row Approved]`, with a column equals `Approved` and timeout 5 000. The outcome is ok, and the fake saw 3 queries.
