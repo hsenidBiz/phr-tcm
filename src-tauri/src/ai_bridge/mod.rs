@@ -244,6 +244,12 @@ pub fn set_live_bridge(shared: &SharedBridge) {
     *LIVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::downgrade(shared));
 }
 
+/// Whether the AI Bridge tab's Database Read Access switch is on: a database
+/// is chosen in the live context.
+pub(crate) fn db_switch_on() -> bool {
+    live_context().is_some_and(|c| c.db_id.is_some())
+}
+
 pub(crate) fn live_context() -> Option<BridgeContext> {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.upgrade()?;
     let ctx = live.ctx.lock().unwrap_or_else(|e| e.into_inner()).clone();

@@ -175,6 +175,48 @@ fn substitute_steps_binds_setup_in_sql_as_literal() {
     assert!(text.contains("\"value\":\"O'Brien\""), "{text}");
 }
 
+#[tokio::test]
+async fn run_error_keeps_the_message_and_drops_the_server() {
+    let db = Fake::new(vec![Err("the database refused the statement: Msg 207, Level 16, State 1, Server SQLPROD01, Line 1
+Invalid column name 'stauts'.".into())]);
+    let out = check(&db, &approved(), &BTreeMap::new(), 5_000).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("Invalid column name 'stauts'"), "{}", out.detail);
+    assert!(!out.detail.contains("SQLPROD01"), "{}", out.detail);
+    assert!(out.detail.contains("Msg 207"), "{}", out.detail);
+}
+
+fn component_step() -> Vec<Action> {
+    vec![serde_json::from_value(json!({"kind": "use_component", "component": "approved"})).unwrap()]
+}
+
+#[test]
+fn a_component_may_ask_the_database_so_its_source_is_resolved() {
+    use v2_lib::autorun::preconditions::{for_actions, PreconditionDb};
+    let dir = tempfile::tempdir().unwrap();
+    // A step with a component resolves a place; one with nothing to ask does not.
+    assert!(for_actions(&component_step(), true, dir.path(), None).is_some());
+    let plain: Vec<Action> = vec![serde_json::from_value(json!({"kind": "reload"})).unwrap()];
+    assert!(for_actions(&plain, true, dir.path(), None).is_none());
+    assert!(for_actions(&[approved()], true, dir.path(), None).is_some());
+    // The switch off: reading is off, whatever else is set up.
+    let off = for_actions(&component_step(), false, dir.path(), None).unwrap();
+    assert!(matches!(off, PreconditionDb::ReadingOff));
+    match off.source() {
+        DbSource::ReadingOff => {}
+        _ => panic!("expected reading off"),
+    }
+}
+
+#[tokio::test]
+async fn switch_off_gives_reading_off_to_a_check() {
+    use v2_lib::autorun::preconditions::for_actions;
+    let dir = tempfile::tempdir().unwrap();
+    let place = for_actions(&[approved()], false, dir.path(), None).unwrap();
+    let out = run_check(&place.source(), &approved(), &BTreeMap::new(), 1_000, None).await;
+    assert_eq!(out.detail, READING_OFF);
+}
+
 #[test]
 fn unreachable_db_check_is_transient() {
     use v2_lib::autorun::{CaseRecord, StepRecord};

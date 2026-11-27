@@ -18,6 +18,23 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+/// May this action ask the database: an `expect_database`, or a component,
+/// which may hold one? The one test every path that resolves the database
+/// lazily reads.
+pub fn may_ask(a: &Action) -> bool {
+    matches!(a, Action::ExpectDatabase { .. } | Action::UseComponent { .. })
+}
+
+/// `sql` error text without the server's name: sqlcmd's `Msg 207, Level 16,
+/// State 1, Server NAME, Line 1` header keeps its numbers and loses `Server`
+/// and `Procedure` parts.
+pub fn without_server(said: &str) -> String {
+    match regex::Regex::new(r"(?i),\s*(?:Server|Procedure)\s+[^,\r\n]+") {
+        Ok(re) => re.replace_all(said, "").into_owned(),
+        Err(_) => said.to_string(),
+    }
+}
+
 /// The longest a check may keep asking before it fails.
 pub const MAX_TIMEOUT_MS: u32 = 60_000;
 /// How long the runner waits between two asks.
@@ -499,10 +516,9 @@ pub async fn run_check(
         let last = match db.select(&bound).await {
             Err(said) => {
                 if said == query::DB_UNREACHABLE || query::is_unreachable(&said) || gate::unreachable(&said) {
-                    crate::applog::warn(format!("db: a database check could not reach the database: {said}"));
                     return ActionOutcome::failed(query::DB_UNREACHABLE);
                 }
-                return ActionOutcome::failed(redact_text(&said));
+                return ActionOutcome::failed(without_server(&redact_text(&said)));
             }
             Ok(text) => match parse(&text) {
                 Err(why) => return ActionOutcome::failed(why),

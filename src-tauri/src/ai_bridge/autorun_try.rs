@@ -873,18 +873,13 @@ pub(crate) async fn try_action<D: crate::browser::cdp::Driver>(
     // to the next action, as a run's steps carry it.
     // The active environment's database, looked at only for an action that
     // checks it (or holds one that does).
-    let try_db = action
-        .each()
-        .into_iter()
-        .any(|a| matches!(a, crate::browser::actions::Action::ExpectDatabase { .. }))
-        .then(|| {
-            let ctx = super::live_context();
-            crate::autorun::preconditions::for_run(
-                root,
-                ctx.as_ref().and_then(|c| c.db_secrets.as_deref()),
-                crate::modules::on(crate::modules::Module::DbAccess),
-            )
-        });
+    let ctx = super::live_context();
+    let try_db = crate::autorun::preconditions::for_actions(
+        std::slice::from_ref(action),
+        ctx.as_ref().is_some_and(|c| c.db_id.is_some()),
+        root,
+        ctx.as_ref().and_then(|c| c.db_secrets.as_deref()),
+    );
     let mut run = InRun {
         db: try_db.as_ref().map(|p| p.source()).unwrap_or_default(),
         areas: Some(&areas),

@@ -1324,9 +1324,7 @@ pub fn may_carry_on(script: &CaseScript, step: i32) -> bool {
 /// Could a step of `script` ask the database: an `expect_database` of its
 /// own (in a guard's `then` too), or a component, which may hold one?
 pub fn may_check_database(script: &CaseScript) -> bool {
-    script.steps.iter().flat_map(|s| &s.actions).flat_map(|a| a.each()).any(|a| {
-        matches!(a, crate::browser::actions::Action::ExpectDatabase { .. } | crate::browser::actions::Action::UseComponent { .. })
-    })
+    script.steps.iter().flat_map(|s| &s.actions).flat_map(|a| a.each()).any(super::db_check::may_ask)
 }
 
 /// The number of the clean-up step, beside a replay to `step` that ran the

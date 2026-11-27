@@ -470,6 +470,20 @@ pub fn for_run(
     PreconditionDb::from_result(environment_db(root, store))
 }
 
+/// The place a step's database checks are asked, when one of `actions` may
+/// ask (`db_check::may_ask`); `None` otherwise, so nothing is looked up for a
+/// step that never asks. Gated like preconditions: the AI Bridge Database
+/// Read Access `switch` AND the Database Access module (`read_access`).
+pub fn for_actions<'a>(
+    actions: impl IntoIterator<Item = &'a Action>,
+    switch: bool,
+    root: &Path,
+    store: Option<&dyn crate::db::SecretStore>,
+) -> Option<PreconditionDb<SqlcmdStageDb<crate::db::RealRunner>>> {
+    let asks = actions.into_iter().flat_map(|a| a.each()).any(super::db_check::may_ask);
+    asks.then(|| for_run(root, store, read_access(switch)))
+}
+
 /// A database that is never asked: the stand-in for callers that have no
 /// database to give, alongside the sentence that says so.
 pub struct NoDb;

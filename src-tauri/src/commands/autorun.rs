@@ -2343,15 +2343,13 @@ pub async fn auto_run_step(
     let areas = area_routes(&root, &organization, &project, &named_areas(&step.actions));
     // The database a step's `expect_database` asks: the active environment's,
     // looked at only when the step has one.
-    let step_db = step
-        .actions
-        .iter()
-        .flat_map(|a| a.each())
-        .any(|a| matches!(a, crate::browser::actions::Action::ExpectDatabase { .. }))
-        .then(|| {
-            let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
-            crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), crate::modules::on(crate::modules::Module::DbAccess))
-        });
+    let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+    let step_db = crate::autorun::preconditions::for_actions(
+        step.actions.iter(),
+        crate::ai_bridge::db_switch_on(),
+        &root,
+        Some(secrets.as_ref()),
+    );
     let mut run = crate::autorun::runner::InRun {
         db: step_db.as_ref().map(|p| p.source()).unwrap_or_default(),
         areas: Some(&areas),
