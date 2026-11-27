@@ -293,7 +293,7 @@ pub async fn relink_test_cases(
         .map(|id| async move {
             match client.relink_test_case(organization, project, id, from_pbi, to_pbi).await {
                 Ok(()) => ado::RelinkOutcome { id, moved: true, error: None },
-                Err(e) => ado::RelinkOutcome { id, moved: false, error: Some(e) },
+                Err(e) => ado::RelinkOutcome { id, moved: false, error: Some(e.with_plain_body()) },
             }
         })
         .buffered(ado::READ_CONCURRENCY)

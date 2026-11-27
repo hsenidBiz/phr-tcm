@@ -187,19 +187,18 @@ async fn rules_server() -> MockServer {
 }
 
 #[tokio::test]
-async fn an_empty_required_field_and_an_outside_value_are_found() {
+async fn an_empty_required_field_is_found_and_a_value_outside_a_list_is_not_blocked() {
     let server = rules_server().await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    // "Billing" is outside the listing's allowedValues, but the listing does
+    // not say whether that list is closed or only suggested - so it is sent.
     let queue = vec![case("A", ""), case("B", "Leave"), case("C", "  claims  "), case("D", "Billing")];
     let check = check_queue(&client, "org", "Web", &queue, Some("Custom.Module"), Some("Custom.Prereq")).await;
     assert!(check.checked);
-    assert_eq!(check.problems.len(), 2, "{:?}", check.problems);
+    assert_eq!(check.problems.len(), 1, "{:?}", check.problems);
     let a = &check.problems[0];
     assert_eq!((a.index, a.kind.as_str(), a.field.as_str()), (0, "required", "Module"));
     assert_eq!(a.message, "Module is required for a Test Case in this project - pick one.");
-    let d = &check.problems[1];
-    assert_eq!((d.index, d.kind.as_str(), d.reference_name.as_str()), (3, "not_allowed", "Custom.Module"));
-    assert!(d.message.contains("\"Billing\"") && d.message.contains("Payroll, Leave, Claims"), "{}", d.message);
 }
 
 #[tokio::test]
@@ -216,7 +215,6 @@ fn a_field_with_a_default_is_not_required() {
         reference_name: "Custom.Module".into(),
         name: "Module".into(),
         required: false,
-        allowed_values: vec![],
     }];
     assert!(check_case(0, &case("A", ""), &rules, Some("Custom.Module"), None).is_empty());
 }
@@ -246,17 +244,41 @@ async fn unreadable_rules_fail_open() {
 }
 
 #[test]
-fn an_update_row_is_not_asked_for_a_field_it_leaves_blank() {
-    let rules = vec![FieldRule {
-        reference_name: "Custom.Module".into(),
-        name: "Module".into(),
-        required: true,
-        allowed_values: vec!["Payroll".into()],
-    }];
+fn an_update_row_is_never_blocked() {
+    let rules = vec![FieldRule { reference_name: "Custom.Module".into(), name: "Module".into(), required: true }];
     let mut update = case("A", "");
     update.update_id = Some(77);
     assert!(check_case(0, &update, &rules, Some("Custom.Module"), None).is_empty());
-    // A value it DOES write is still held to the list.
+    // A value outside what the field lists is not held against an update
+    // either: Azure DevOps keeps a stored value that has left the list.
     update.module_value = "Billing".into();
-    assert_eq!(check_case(0, &update, &rules, Some("Custom.Module"), None).len(), 1);
+    assert!(check_case(0, &update, &rules, Some("Custom.Module"), None).is_empty());
+}
+
+#[test]
+fn a_suggested_list_never_blocks() {
+    let rules = vec![FieldRule { reference_name: "Custom.Module".into(), name: "Module".into(), required: true }];
+    assert!(check_case(0, &case("A", "Typed by hand"), &rules, Some("Custom.Module"), None).is_empty());
+}
+
+#[test]
+fn a_required_field_given_a_wrong_value_reads_as_a_wrong_value() {
+    let body = serde_json::json!({
+        "ruleValidationErrors": [
+            {"fieldReferenceName": "Custom.Module", "fieldStatusFlags": "required, hasValues, limitedToValues, invalidListValue"},
+            {"fieldReferenceName": "Custom.Note", "fieldStatusFlags": "required, invalidTooLong"},
+        ],
+    })
+    .to_string();
+    assert_eq!(
+        plain_reason(&body, &none()).as_deref(),
+        Some("Module must be one of the allowed values; Note is too long")
+    );
+}
+
+#[tokio::test]
+async fn a_relinked_case_refused_by_a_rule_shows_the_plain_sentence() {
+    let e = AdoError::Http { status: 400, body: owners_body() }.with_plain_body();
+    assert_eq!(e.user_text(), "Module is required");
+    assert_eq!(AdoError::Forbidden.with_plain_body().user_text(), "forbidden");
 }

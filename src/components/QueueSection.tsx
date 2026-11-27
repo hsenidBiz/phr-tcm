@@ -592,6 +592,7 @@ export default function QueueSection({
         setReviewing={setReviewing}
         holdActive={holdActive}
         hasBlockers={hasBlockers}
+        checkingRules={fieldRules.checking}
         submitPending={submit.isPending}
         online={online}
         pureUpdates={pureUpdates}

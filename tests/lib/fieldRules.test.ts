@@ -21,12 +21,12 @@ test("the summary counts the cases per field and kind", () => {
   expect(
     fieldRuleSummary([
       problem(0),
-      problem(0, { reference_name: "Custom.Type", field: "Test Type", kind: "not_allowed" }),
-      problem(1, { reference_name: "Custom.Type", field: "Test Type", kind: "not_allowed" }),
+      problem(0, { reference_name: "Custom.Type", field: "Test Type" }),
+      problem(1, { reference_name: "Custom.Type", field: "Test Type" }),
     ]),
   ).toEqual([
     "1 case needs a Module before it can be sent",
-    "2 cases have a Test Type that is not one of the allowed values",
+    "2 cases need a Test Type before they can be sent",
   ]);
 });
 

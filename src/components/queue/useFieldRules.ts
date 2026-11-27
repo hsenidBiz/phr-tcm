@@ -45,5 +45,8 @@ export function useFieldRules({
 
   const rowProblems = useMemo(() => rowFieldProblems(data, queue.length), [data, queue.length]);
   const summary = useMemo(() => fieldRuleSummary(data?.problems ?? []), [data]);
-  return { rowProblems, summary, blocked: rowProblems.some(Boolean) };
+  // Asked and not yet answered. Confirm waits for it; an error ends it, and
+  // the check then fails open (no data, nothing blocked).
+  const checking = check.isFetching;
+  return { rowProblems, summary, blocked: rowProblems.some(Boolean), checking };
 }

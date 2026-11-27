@@ -27,20 +27,18 @@ export function rowFieldProblems(check: RuleCheck | null | undefined, length: nu
   return out;
 }
 
-/** Why the cases cannot be sent yet, one line per field and kind of
- * problem: "3 cases need a Module before they can be sent". */
+/** Why the cases cannot be sent yet, one line per field:
+ * "3 cases need a Module before they can be sent". */
 export function fieldRuleSummary(problems: RuleProblem[]): string[] {
-  const groups = new Map<string, { kind: string; field: string; rows: Set<number> }>();
+  const groups = new Map<string, { field: string; rows: Set<number> }>();
   for (const p of problems) {
-    const key = `${p.kind}\u0000${p.reference_name}`;
-    const g = groups.get(key) ?? { kind: p.kind, field: p.field, rows: new Set<number>() };
+    const g = groups.get(p.reference_name) ?? { field: p.field, rows: new Set<number>() };
     g.rows.add(p.index);
-    groups.set(key, g);
+    groups.set(p.reference_name, g);
   }
-  return [...groups.values()].map((g) =>
-    g.kind === "required"
-      ? `${plural(g.rows.size, "case")} ${g.rows.size === 1 ? "needs" : "need"} a ${g.field} before ${g.rows.size === 1 ? "it" : "they"} can be sent`
-      : `${plural(g.rows.size, "case")} ${g.rows.size === 1 ? "has" : "have"} a ${g.field} that is not one of the allowed values`,
+  return [...groups.values()].map(
+    (g) =>
+      `${plural(g.rows.size, "case")} ${g.rows.size === 1 ? "needs" : "need"} a ${g.field} before ${g.rows.size === 1 ? "it" : "they"} can be sent`,
   );
 }
 

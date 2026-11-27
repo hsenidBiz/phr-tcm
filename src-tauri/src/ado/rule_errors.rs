@@ -168,11 +168,26 @@ pub fn field_reasons(body: &str, names: &FieldNames) -> Vec<String> {
             .cloned()
             .or_else(|| named_in_message(said))
             .unwrap_or_else(|| humanise(r));
+        // What the rule REFUSED (the Invalid* flags) decides the sentence;
+        // what the field is ("required", "hasValues") only describes it. A
+        // required field given a wrong value is a wrong value, not a missing one.
         let flags = format!("{} {}", key_ci(e, "fieldStatusFlags").as_str().unwrap_or_default(), codes_in_message(said))
             .to_ascii_lowercase();
-        out.push(if flags.contains("required") || flags.contains("invalidempty") {
+        let tokens: std::collections::HashSet<&str> =
+            flags.split(|c: char| !c.is_ascii_alphanumeric()).filter(|t| !t.is_empty()).collect();
+        let has = |t: &str| tokens.contains(t);
+        let refused = tokens.iter().any(|t| t.starts_with("invalid"));
+        out.push(if has("invalidempty") {
             format!("{field} is required")
-        } else if flags.contains("invalidlistvalue") || flags.contains("limitedtovalues") {
+        } else if has("invalidlistvalue") {
+            format!("{field} must be one of the allowed values")
+        } else if has("invalidtoolong") {
+            format!("{field} is too long")
+        } else if has("invalidformat") || has("invalidtype") {
+            format!("{field} is not in the right format")
+        } else if !refused && has("required") {
+            format!("{field} is required")
+        } else if !refused && has("limitedtovalues") {
             format!("{field} must be one of the allowed values")
         } else {
             let why = strip_urls(RULE_PREFIX.replace(&TF_CODE.replace(said, ""), "").trim());

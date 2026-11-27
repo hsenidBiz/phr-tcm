@@ -705,15 +705,7 @@ impl AdoClient {
             .await
             // A rule refusal says which field, in plain words, for whoever
             // shows `user_text()`; the raw body is in the log (transport).
-            .map_err(|e| match e {
-                AdoError::Http { status, ref body } if (400..500).contains(&status) => {
-                    match super::rule_errors::plain_reason(body, &Default::default()) {
-                        Some(said) => AdoError::Http { status, body: said },
-                        None => e,
-                    }
-                }
-                other => other,
-            })?;
+            .map_err(AdoError::with_plain_body)?;
         // A create with no id is not a create. `unwrap_or_default` handed
         // back work item 0 and called it success, so the queue reported
         // "created #0" and the link that followed went looking for a work

@@ -671,7 +671,7 @@ export const importFile: Screen = {
       name: "Yes, create and update",
       does:
         "Uploads the queue. New cases are created, linked to the Product Backlog Item and added to its test suite; cases with an id are updated. " +
-        "The button says how many of each, and stays greyed out while a duplicate waits for an answer or a case has a problem to fix, including a case that leaves out a field this project requires for a Test Case (a Module, say) or has a value outside that field's list: the row says which, and a line above the queue counts the cases affected. " +
+        "The button says how many of each, and stays greyed out while a duplicate waits for an answer or a case has a problem to fix, including a case that leaves out a field this project requires for a Test Case (a Module, say): the row says which, and a line above the queue counts the cases affected. " +
         "With only updates in the queue there is no Product Backlog Item to check, so it reads **Confirm & update** and the number, and uploads at once.",
     },
     {

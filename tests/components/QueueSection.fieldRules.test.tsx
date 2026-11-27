@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { RuleCheck, SubmitItemResult, TestCase } from "../../src/bindings";
@@ -102,22 +102,42 @@ test("cases missing a required field are warned on their rows, summarised, and n
   expect(state.submitted).toBe(0);
 });
 
-test("a value outside the allowed values reads in its own words", async () => {
-  mocks({
-    checked: true,
-    problems: [
-      {
-        index: 0,
-        reference_name: "Custom.Module",
-        field: "Module",
-        kind: "not_allowed",
-        message: 'Module "Billing" is not one of the allowed values for a Test Case in this project - pick one of: Payroll.',
-      },
-    ],
+test("Confirm waits while the rules are being read, then goes ahead", async () => {
+  let answer: (c: RuleCheck) => void = () => {};
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "check_field_rules") return new Promise<RuleCheck>((r) => (answer = r));
+    return undefined;
   });
-  renderQueue([makeCase("First", { module_value: "Billing" })]);
-  expect(await screen.findByText("1 case has a Module that is not one of the allowed values")).toBeInTheDocument();
-  expect(screen.getByText(/is not one of the allowed values for a Test Case/)).toBeInTheDocument();
+  renderQueue([makeCase("First")]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /create 1/ });
+  expect(go).toBeDisabled();
+  expect(screen.getByText("Checking the project's field rules")).toBeInTheDocument();
+  await act(async () => answer({ checked: true, problems: [] }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /create 1/ })).toBeEnabled());
+  expect(screen.queryByText("Checking the project's field rules")).not.toBeInTheDocument();
+});
+
+test("an error reading the rules fails open and does not hold Confirm", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "check_field_rules") throw new Error("boom");
+    return undefined;
+  });
+  renderQueue([makeCase("First")]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /create 1/ })).toBeEnabled());
 });
 
 test("rules that could not be read block nothing and say so once", async () => {
