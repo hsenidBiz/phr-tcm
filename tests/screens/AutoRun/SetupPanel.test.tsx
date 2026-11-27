@@ -288,7 +288,7 @@ test("the Known quirks row says 1 note, not 1 notes, for a single note", async (
   expect(one).not.toHaveTextContent("1 notes");
 });
 
-test("only retired notes read None yet, with the retired count", async () => {
+test("only retired notes read just the retired count", async () => {
   mount({
     mode: "advanced",
     quirks: [
@@ -298,7 +298,7 @@ test("only retired notes read None yet, with the retired count", async () => {
   });
   await expand();
   const quirks = await within(panel()).findByRole("group", { name: "Known quirks" });
-  await waitFor(() => expect(quirks).toHaveTextContent("None yet, 2 retired"));
+  await waitFor(() => expect(quirks).toHaveTextContent("2 retired"));
 });
 
 test("View opens the Known quirks dialog, and a note added there updates the row", async () => {

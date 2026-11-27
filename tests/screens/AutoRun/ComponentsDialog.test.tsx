@@ -152,7 +152,7 @@ test("search filters by name, description, input name and case id, and says when
   expect(shown()).toContain("pick-date");
   expect(shown()).not.toContain("close-toast");
   fireEvent.change(box, { target: { value: "zzz" } });
-  expect(screen.getByText("No components match \u201czzz\u201d.")).toBeInTheDocument();
+  expect(screen.getByText('No components match "zzz"')).toBeInTheDocument();
 });
 
 test("Expand all and Collapse all open and fold every row", async () => {
@@ -266,4 +266,24 @@ test("the summary line counts components or says none", () => {
   expect(componentsSummary({ components: [component({ name: "a" }), component({ name: "b" })] })).toBe(
     "2 components",
   );
+});
+
+test("Expand all adds to the rows already open, and a changed search drops an armed Remove", async () => {
+  mount([component({ name: "a", description: "first" }), component({ name: "b", description: "second" })]);
+  await screen.findByRole("listitem", { name: "a" });
+  const box = screen.getByRole("textbox", { name: "Search components" });
+  // Open b, then hide it with a search; Expand all there must not fold it.
+  fireEvent.click(within(screen.getByRole("listitem", { name: "b" })).getAllByRole("button")[0]);
+  expect(screen.getByText("second")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "first" } });
+  fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+  fireEvent.change(box, { target: { value: "" } });
+  expect(screen.getByText("second")).toBeInTheDocument();
+  expect(screen.getByText("first")).toBeInTheDocument();
+
+  // An armed Remove goes when the search changes.
+  fireEvent.click(screen.getByRole("button", { name: "Remove a" }));
+  expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "a" } });
+  expect(screen.queryByRole("button", { name: "Keep" })).not.toBeInTheDocument();
 });

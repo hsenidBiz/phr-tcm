@@ -38,7 +38,8 @@ export function quirksSummary(list: Quirk_Serialize[] | undefined): { line: stri
   const retired = list.filter((q) => q.status === "retired").length;
   const active = list.length - retired;
   const notes = active === 0 ? "None yet" : plural(active, "note");
-  return { line: retired > 0 ? `${notes}, ${retired} retired` : notes, active };
+  const line = retired === 0 ? notes : active === 0 ? `${retired} retired` : `${notes}, ${retired} retired`;
+  return { line, active };
 }
 
 export default function QuirksDialog({

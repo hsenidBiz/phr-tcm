@@ -130,9 +130,7 @@ function ComponentRow({
         <span className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
           <Chip>{plural(c.used_by_cases.length, "case")}</Chip>
           <Chip>v{c.version}</Chip>
-          {!inUse && (
-            <Chip warn>Unused</Chip>
-          )}
+          {!inUse && <Chip warn>Unused</Chip>}
         </span>
       </div>
       <div id={bodyId} hidden={!open} className="space-y-1.5 py-2 pl-8 text-xs">
@@ -254,12 +252,15 @@ export default function ComponentsDialog({
   };
 
   const components = view.data?.components ?? [];
-  const toggle = (name: string) =>
+  const toggle = (name: string) => {
+    // A row that folds takes its armed Remove confirm with it.
+    if (open.has(name)) setRemoving((r) => (r === name ? null : r));
     setOpen((prev) => {
       const next = new Set(prev);
       if (!next.delete(name)) next.add(name);
       return next;
     });
+  };
   const visible = components.filter((c) => matches(c, query));
   const groups = groupByArea(visible);
   const allOpen = visible.length > 0 && visible.every((c) => open.has(c.name));
@@ -302,9 +303,17 @@ export default function ComponentsDialog({
       )}
       {components.length > 0 && (
         <>
-          <SearchInput aria-label="Search components" placeholder="Search components" value={query} onChange={setQuery} />
+          <SearchInput
+            aria-label="Search components"
+            placeholder="Search components"
+            value={query}
+            onChange={(text) => {
+              setRemoving(null);
+              setQuery(text);
+            }}
+          />
           {groups.length === 0 ? (
-            <p className="text-sm text-muted">No components match “{query.trim()}”.</p>
+            <p className="text-sm text-muted">No components match "{query.trim()}"</p>
           ) : (
             <div role="list" aria-label="Saved components" className="min-h-0 flex-1 space-y-3 overflow-y-auto">
               {groups.map((g) => (
@@ -340,12 +349,27 @@ export default function ComponentsDialog({
       <div className="flex flex-wrap items-center justify-between gap-2">
         {visible.length > 0 ? (
           allOpen ? (
-            <Button size="sm" variant="ghost" onClick={() => setOpen(new Set())}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setRemoving(null);
+                setOpen((prev) => {
+                  const next = new Set(prev);
+                  for (const c of visible) next.delete(c.name);
+                  return next;
+                });
+              }}
+            >
               <IconCollapseAll aria-hidden />
               Collapse all
             </Button>
           ) : (
-            <Button size="sm" variant="ghost" onClick={() => setOpen(new Set(visible.map((c) => c.name)))}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setOpen((prev) => new Set([...prev, ...visible.map((c) => c.name)]))}
+            >
               <IconExpandAll aria-hidden />
               Expand all
             </Button>
