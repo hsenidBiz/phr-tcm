@@ -123,6 +123,11 @@ export {
   // Carrying on with a run that paused at a reset point.
   StepForward as IconContinue,
   Flag as IconFinish,
+  // The three verdicts a person gives a case in a run: named for the
+  // verdict, not the glyph.
+  CircleCheck as IconVerdictPassed,
+  CircleX as IconVerdictFailed,
+  Ban as IconVerdictBlocked,
   // Opening and folding a row's detail - the steps under a case in the
   // unattended run. One glyph per direction, named for the result.
   ChevronRight as IconShowSteps,

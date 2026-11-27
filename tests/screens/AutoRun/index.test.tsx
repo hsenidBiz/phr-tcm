@@ -312,8 +312,9 @@ test("Run N selected opens one pane for the whole selection, in list order", asy
 
   // The pane opens on the FIRST case in list order (#3 "Alpha check"),
   // not the first one clicked.
-  const progress = await screen.findByText("case 1 of 2");
-  expect(progress.closest("h2")).toHaveTextContent("#3 Alpha check");
+  const progress = await screen.findByText("Case 1 of 2");
+  // Re-laid out panel: the progress sits beside the title, in one header row.
+  expect(progress.parentElement).toHaveTextContent("#3 Alpha check");
 });
 
 test("Clear selection drops the selection without opening a run", async () => {
@@ -374,8 +375,9 @@ test("Run selected starts from the planned order, not list order", async () => {
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
   fireEvent.click(await screen.findByRole("button", { name: "Run 2 selected" }));
 
-  const progress = await screen.findByText("case 1 of 2");
-  expect(progress.closest("h2")).toHaveTextContent("#2 Beta check");
+  const progress = await screen.findByText("Case 1 of 2");
+  // Re-laid out panel: the progress sits beside the title, in one header row.
+  expect(progress.parentElement).toHaveTextContent("#2 Beta check");
 });
 
 test("Run unattended starts from the planned order and shows no plan for a single phase", async () => {
@@ -413,8 +415,9 @@ test("a selection with setups starts at once: no approval is asked first", async
   for (const id of [1, 2, 3]) fireEvent.click(screen.getByRole("checkbox", { name: `Select #${id}` }));
   fireEvent.click(await screen.findByRole("button", { name: "Run 3 selected" }));
 
-  const progress = await screen.findByText("case 1 of 3");
-  expect(progress.closest("h2")).toHaveTextContent("#1 Alpha check");
+  const progress = await screen.findByText("Case 1 of 3");
+  // Re-laid out panel: the progress sits beside the title, in one header row.
+  expect(progress.parentElement).toHaveTextContent("#1 Alpha check");
   expect(screen.queryByRole("dialog", { name: /approv/i })).not.toBeInTheDocument();
   expect(asked.some((cmd) => cmd.includes("approv"))).toBe(false);
 });
@@ -450,7 +453,7 @@ test("when the plan fails no run starts and a fixed sentence is shown, not the r
     expect(toast.error).toHaveBeenCalledWith("Could not work out the order. Try again, or see Settings → Logs."),
   );
   expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).not.toContain("unreadable");
-  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Case 1 of/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Run 1 selected" })).toBeEnabled();
 });
 
@@ -472,7 +475,7 @@ test("a run is not started if the PBI changed while the plan was on its way", as
     resolvePlan(PLANNED([1]));
     await new Promise((r) => setTimeout(r, 20));
   });
-  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Case 1 of/)).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /#1 Alpha check/ })).not.toBeInTheDocument();
 });
 
@@ -485,8 +488,9 @@ test("a plan that is not these cases runs in list order", async () => {
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
   fireEvent.click(await screen.findByRole("button", { name: "Run 2 selected" }));
-  const progress = await screen.findByText("case 1 of 2");
-  expect(progress.closest("h2")).toHaveTextContent("#1 Alpha check");
+  const progress = await screen.findByText("Case 1 of 2");
+  // Re-laid out panel: the progress sits beside the title, in one header row.
+  expect(progress.parentElement).toHaveTextContent("#1 Alpha check");
 });
 
 test("the Execution order item in More opens the dialog", async () => {

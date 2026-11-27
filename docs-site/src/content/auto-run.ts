@@ -1071,7 +1071,7 @@ export const autoRun: Screen = {
         "Under **Changes** and **Needs unchanged**, name shared data a case changes, such as a published cycle, and the cases that need it as it was.",
         "Run the selection. Auto Test puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
-        "The run window says which batch is running, such as **Batch 2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
+        "The run window says which batch is running, with a **Batch** label and a tab per batch, the current one tinted, such as **2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
       ],
     },
     {
