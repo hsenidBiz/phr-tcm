@@ -352,6 +352,7 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::ExpectDisabled { .. }
             | Action::ExpectChecked { .. }
             | Action::ExpectResponse { .. }
+            | Action::ExpectDatabase { .. }
             | Action::ExpectFocused { .. }
             | Action::ExpectDownload { .. }
             | Action::ExpectTab { .. }

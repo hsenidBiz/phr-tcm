@@ -63,6 +63,10 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
             format!("{} {} {}", from.describe(), position.unwrap_or_default().word(), to.describe())
         }
         Action::ExpectDownload { name, .. } => name.trim().to_string(),
+        // What it wants, never the SQL.
+        Action::ExpectDatabase { .. } => crate::autorun::db_check::expectation(action)
+            .map(|e| crate::autorun::db_check::describe(&e))
+            .unwrap_or_default(),
         // A tab's name; an opened tab's path, never its host or query.
         Action::ExpectTab { name, .. }
         | Action::SwitchTab { name }

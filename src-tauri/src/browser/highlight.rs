@@ -112,6 +112,7 @@ pub fn kind_of(action: &Action) -> Kind {
         | Action::ExpectNoChange { .. }
         | Action::ExpectResponse { .. }
         | Action::ApiRequest { .. }
+        | Action::ExpectDatabase { .. }
         | Action::ExpectRow { .. }
         | Action::ExpectNoRow { .. }
         | Action::ExpectSorted { .. }
@@ -287,6 +288,7 @@ fn label_of(action: &Action) -> (String, Option<String>) {
         Action::SwitchTab { .. } => ("Switch tab".into(), None),
         Action::CloseTab { .. } => ("Close a tab".into(), None),
         Action::SignIn { .. } => ("Sign in".into(), None),
+        Action::ExpectDatabase { .. } => ("Check the database".into(), None),
         other => (
             match kind_of(other) {
                 Kind::Click => "Click",

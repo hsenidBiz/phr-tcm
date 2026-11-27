@@ -89,6 +89,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         // An `equals` goes through the same address rules as a navigation.
         Action::CheckUrl { equals: Some(want), .. } => goto_target("check_url", want, origins).map(|_| ()),
         Action::CheckUrl { .. } => Ok(()),
+        Action::ExpectDatabase { .. } => no("expect_database cannot be exported yet"),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
         Action::ExpectEach { selector, child, .. } => {
             check_target(selector)?;
@@ -1546,6 +1547,7 @@ impl Em<'_> {
         check_action(a, self.input.origins)?;
         let sc = self.scope.clone();
         match a {
+            Action::ExpectDatabase { .. } => return no("expect_database cannot be exported yet"),
             Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url, self.input.origins)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
             Action::Hover { selector, .. } => self.line(indent, &format!("await {}.hover();", one(selector))),

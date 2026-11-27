@@ -24,6 +24,7 @@ pub mod defects;
 pub mod divergences;
 pub mod components;
 pub mod data_changed;
+pub mod db_check;
 pub mod discovery_map;
 pub mod downloads;
 pub mod edits;

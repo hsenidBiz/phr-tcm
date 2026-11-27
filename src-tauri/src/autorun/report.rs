@@ -196,6 +196,13 @@ pub fn action_words(action: &Action) -> String {
         Action::ApiRequest { path, expect, .. } => {
             format!("ask {} and expect {}", without_query(path), expect.status)
         }
+        Action::ExpectDatabase { .. } => {
+            // What is wanted, never the SQL: a query can name anything.
+            let want = crate::autorun::db_check::expectation(action)
+                .map(|e| crate::autorun::db_check::describe(&e))
+                .unwrap_or_default();
+            format!("Check the database: {want}")
+        }
         Action::WhenVisible { selector, then, .. } => {
             let what: Vec<String> = then.iter().map(action_words).collect();
             format!("if {} shows up, {}", selector.describe(), what.join(", then "))
