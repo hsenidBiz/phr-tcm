@@ -11,6 +11,7 @@ import { Button } from "../../components/ui/button";
 import { IconCancel, IconExport, IconPlayVideo, IconRemove } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
+import { VIDEO_GONE } from "./CaseVideo";
 import { useVideoFile } from "./useVideoFile";
 
 /** The query the list is read through (a local file list, like Past runs). */
@@ -25,10 +26,19 @@ function lengthText(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** A title made safe as a file name: characters Windows refuses are dropped. */
-function fileNameFor(title: string): string {
-  const clean = title.replace(/[<>:"/\|?*\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim();
-  return `${clean || "recording"}.mp4`;
+/** Names Windows reserves for devices, with or without an extension. */
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/** A title made safe as a file name: characters Windows refuses (including
+ * both slashes) are dropped, and a reserved device name falls back. */
+export function fileNameFor(title: string): string {
+  const clean = title
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "");
+  if (!clean || RESERVED.test(clean)) return "recording.mp4";
+  return `${clean}.mp4`;
 }
 
 function RecordingRow({ entry }: { entry: RecordingEntry }) {
@@ -43,7 +53,8 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
     },
     onError: (e) => toast.error(`Could not remove the recording: ${e.message}`),
   });
-  const playable = info.data?.playable !== false;
+  const gone = !info.isLoading && !info.isError && !info.data;
+  const playable = !gone && info.data?.playable !== false;
 
   return (
     <li className="space-y-2 py-2 first:pt-0 last:pb-0">
@@ -55,6 +66,7 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
             {" · "}
             <span>{lengthText(entry.duration_ms)}</span>
           </p>
+          {gone && <p className="text-faint">{VIDEO_GONE}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {src ? (

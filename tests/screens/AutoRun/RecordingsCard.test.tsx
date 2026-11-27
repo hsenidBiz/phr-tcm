@@ -11,6 +11,7 @@ const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi
 vi.mock("../../../src/lib/toast", () => ({ toast: toastMock }));
 
 import RecordingsCard, { REMOVE_CONFIRM } from "../../../src/screens/AutoRun/RecordingsCard";
+import { VIDEO_GONE } from "../../../src/screens/AutoRun/CaseVideo";
 
 const ENTRY = {
   id: "recording-1764238500000-000001",
@@ -106,4 +107,26 @@ test("Remove asks first and then removes it", async () => {
   await waitFor(() => expect(calls.some((c) => c.cmd === "auto_run_remove_recording")).toBe(true));
   expect(calls.find((c) => c.cmd === "auto_run_remove_recording")?.args).toEqual({ id: ENTRY.id });
   await waitFor(() => expect(calls.filter((c) => c.cmd === "auto_run_recordings").length).toBeGreaterThan(1));
+});
+
+test("a title with slashes or a device name gives a safe default file name", async () => {
+  dialog.save.mockResolvedValue(null);
+  for (const [title, want] of [["Fix C:\\Payroll\\export", "Fix CPayrollexport.mp4"], ["CON", "recording.mp4"]]) {
+    mockIPC((cmd) => (cmd === "auto_run_recordings" ? [{ ...ENTRY, title }] : null));
+    const { unmount } = show();
+    fireEvent.click(await screen.findByRole("button", { name: `Save ${title}` }));
+    await waitFor(() => expect(dialog.save).toHaveBeenCalled());
+    const path = dialog.save.mock.calls[dialog.save.mock.calls.length - 1][0].defaultPath as string;
+    expect(path.endsWith("/" + want) || path === want).toBe(true);
+    expect(path).not.toContain("\\");
+    unmount();
+    dialog.save.mockClear();
+  }
+});
+
+test("a recording whose file is gone says so and cannot be played", async () => {
+  mockIPC((cmd) => (cmd === "auto_run_recordings" ? [ENTRY] : null));
+  show();
+  expect(await screen.findByText(VIDEO_GONE)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: `Play ${ENTRY.title}` })).toBeDisabled();
 });

@@ -3,7 +3,7 @@
 // a failed case and by the Recordings card, which has the same file kind.
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands } from "../../bindings";
 import { unwrapStr } from "../../lib/ipc";
 import { pickSavePath } from "../../lib/runnerFiles";
@@ -38,13 +38,24 @@ export function useVideoFile(name: string | null | undefined, saveAs?: string) {
   useEffect(() => () => {
     if (src) URL.revokeObjectURL(src);
   }, [src]);
+  // A play finishing after the component is gone must not leak its URL.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const playing = useMutation({
     mutationFn: async () => {
       const b64 = await unwrapStr(commands.autoRunVideo(name as string));
       return URL.createObjectURL(new Blob([bytesOf(b64)], { type: "video/mp4" }));
     },
-    onSuccess: setSrc,
+    onSuccess: (url) => {
+      if (mounted.current) setSrc(url);
+      else URL.revokeObjectURL(url);
+    },
     onError: (e) => toast.error(`Could not play the video: ${e.message}`),
   });
   const saving = useMutation({
