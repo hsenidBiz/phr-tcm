@@ -90,6 +90,9 @@ export {
   ArchiveRestore as IconRestore,
   EyeOff as IconStopWatching,
   Square as IconStop,
+  // Halting an assistant's script replay (Auto Test's Assistants card): a
+  // circled stop, so it reads apart from IconStop, which ends a discovery.
+  CircleStop as IconStopReplay,
   Unplug as IconUnregister,
   // Wiping saved script FILES for a PBI's cases (Auto Test, dev builds only).
   FileX2 as IconClearScripts,

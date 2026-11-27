@@ -265,8 +265,9 @@ test("Stop shows only when the assistant can be stopped, End discovery only whil
     agent({ label: "Assistant 2", slot: 1, can_stop: false, activity: { kind: "discovering", area: null } }),
     agent({ label: "Assistant 3", slot: null, activity: { kind: "idle" } }),
   ]);
-  expect(screen.getByRole("button", { name: "Stop Assistant 1" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Stop Assistant 2" })).toBeNull();
+  // The button now reads "Stop replay", so its aria-label is "Stop <label>'s replay".
+  expect(screen.getByRole("button", { name: "Stop Assistant 1's replay" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop Assistant 2's replay" })).toBeNull();
   expect(screen.queryByRole("button", { name: "End discovery for Assistant 1" })).toBeNull();
   expect(screen.getByRole("button", { name: "End discovery for Assistant 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Release Assistant 1's browser" })).toBeInTheDocument();
@@ -289,7 +290,8 @@ test("Stop, End discovery and Release send the row's slot", async () => {
     agent({ label: "Assistant 1", slot: 0, can_stop: true }),
     agent({ label: "Assistant 2", slot: 3, own_browser: true, activity: { kind: "exploring" } }),
   ]);
-  fireEvent.click(screen.getByRole("button", { name: "Stop Assistant 1" }));
+  // The button now reads "Stop replay", so its aria-label is "Stop <label>'s replay".
+  fireEvent.click(screen.getByRole("button", { name: "Stop Assistant 1's replay" }));
   await waitFor(() => expect(h.stop).toHaveBeenCalledWith(0));
   fireEvent.click(screen.getByRole("button", { name: "End discovery for Assistant 2" }));
   await waitFor(() => expect(h.end).toHaveBeenCalledWith(3));
@@ -307,15 +309,17 @@ test("a Release answer shows under its own row", async () => {
 });
 
 test("an error shows in the danger colour under the row", async () => {
+  // The button now reads "Stop replay" (aria-label "Stop Assistant 1's replay").
   h.stop.mockResolvedValue({ status: "error", error: "That assistant is not running a replay." });
   await mount([agent({ can_stop: true })]);
-  fireEvent.click(screen.getByRole("button", { name: "Stop Assistant 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Stop Assistant 1's replay" }));
   const msg = await screen.findByText("That assistant is not running a replay.");
   expect(msg.className).toContain("text-danger");
 });
 
 test.each([
-  ["stop", "Stop Assistant 1", "Could not stop Assistant 1. Try again, or see Settings → Logs."],
+  // The stop button now reads "Stop replay"; its aria-label is below.
+  ["stop", "Stop Assistant 1's replay", "Could not stop Assistant 1. Try again, or see Settings → Logs."],
   ["end", "End discovery for Assistant 1", "Could not end Assistant 1's discovery. Try again, or see Settings → Logs."],
   ["release", "Release Assistant 1's browser", "Could not release Assistant 1's browser. Try again, or see Settings → Logs."],
 ] as const)("when %s throws, the row says which action failed and the cause is logged", async (which, button, sentence) => {
@@ -339,8 +343,9 @@ test("a row's buttons wait while its own command is on its way", async () => {
     agent({ label: "Assistant 2", slot: 1, can_stop: true }),
   ]);
   fireEvent.click(screen.getByRole("button", { name: "Release Assistant 1's browser" }));
-  const one = ["Stop Assistant 1", "End discovery for Assistant 1", "Release Assistant 1's browser"];
-  const two = ["Stop Assistant 2", "Release Assistant 2's browser"];
+  // The stop button now reads "Stop replay".
+  const one = ["Stop Assistant 1's replay", "End discovery for Assistant 1", "Release Assistant 1's browser"];
+  const two = ["Stop Assistant 2's replay", "Release Assistant 2's browser"];
   await waitFor(() => expect(screen.getByRole("button", { name: one[0] })).toBeDisabled());
   for (const n of one) expect(screen.getByRole("button", { name: n })).toBeDisabled();
   for (const n of two) expect(screen.getByRole("button", { name: n })).toBeEnabled();
@@ -459,4 +464,12 @@ test("the office renders once, above a plain list of rows, each with a square in
   expect(squares).toHaveLength(2);
   expect(squares[0].style.background).toBe(hueFor(0));
   expect(squares[1].style.background).toBe(hueFor(1));
+});
+
+test("Stop replay and End discovery do not share an icon", async () => {
+  await mount([agent({ can_stop: true, activity: { kind: "exploring" } })]);
+  // The button now reads "Stop replay"; it used to share IconStop with End discovery.
+  const icon = (name: string) => screen.getByRole("button", { name }).querySelector("svg")?.getAttribute("class");
+  expect(icon("Stop Assistant 1's replay")).toBeTruthy();
+  expect(icon("Stop Assistant 1's replay")).not.toBe(icon("End discovery for Assistant 1"));
 });
