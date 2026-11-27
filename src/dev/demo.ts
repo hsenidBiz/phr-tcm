@@ -7,6 +7,7 @@
  * store keeps state for the session (submit -> the new cases show up in
  * Edit/View/Run), and resets on reload.
  */
+import demoVideoUrl from "./demo-case-video.webm?url";
 import {
   commands,
   events,
@@ -1164,6 +1165,7 @@ function applyPatches() {
     signIn: () => ok(auth),
     signOut: () => err("Demo mode: signing out is disabled"),
     setStaySignedIn: () => err("Demo mode: sign-in settings are disabled"),
+    checkFieldRules: () => Promise.resolve({ checked: true, problems: [] }),
     checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
     applyUpdate: () => err("Demo mode: updates are disabled"),
     // Adding, renaming or removing one of your own databases would write
@@ -1924,6 +1926,14 @@ function applyPatches() {
             ? { size: 2_100_000, playable: true, attachable: true }
             : null,
       ),
+    autoRunVideo: async (name: string) => {
+      if (name !== DEMO_CASE_VIDEO && name !== "rec-1.webm") return err("Demo mode: that video is not in the sample data");
+      const bytes = new Uint8Array(await (await fetch(demoVideoUrl)).arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return ok(btoa(bin));
+    },
+    autoRunSaveVideo: () => ok(null),
     autoRunOpenReport: () => err("Demo mode: run reports are off in sample data"),
     autoRunShot: () => ok(captureShotData()),
     autoRunCountEvidence: () => ok(false),
