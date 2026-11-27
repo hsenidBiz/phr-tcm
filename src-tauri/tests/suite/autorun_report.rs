@@ -12,7 +12,7 @@ use v2_lib::autorun::{CaseScript, LocalRun};
 use v2_lib::commands::autorun::{write_report_at, REPORT_RUN_GONE};
 
 /// Every `<script` in the page is one of the page's own: inline (no `src`),
-/// either its data blob or a plain script - and there are exactly the three
+/// either its data blob or a plain script - and there are exactly the four
 /// it writes. Anything a case wrote that looked like a tag was escaped.
 pub fn only_the_pages_own_scripts(html: &str) {
     let lower = html.to_lowercase();

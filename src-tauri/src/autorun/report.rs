@@ -1147,7 +1147,7 @@ pub fn build_smart(
         if let Some(v) = case.video.as_deref().filter(|v| super::store::safe_video_name(v) && exists(v)) {
             if seen_pictures.insert(v.to_string()) {
                 gallery.push(serde_json::json!({ "n": v, "c": case.case_id, "s": "Video", "k": 1 }));
-                timelines.insert(v.to_string(), serde_json::to_value(super::video_marks::case_timeline(case)).unwrap_or_default());
+                timelines.insert(v.to_string(), serde_json::json!(super::video_marks::case_timeline(case)));
                 videos += 1;
             }
         }

@@ -26,6 +26,7 @@ const UNATTENDED = "auto-run-unattended";
 const RUNS = "auto-run-past-runs";
 const RECORDINGS = "auto-run-recordings";
 const REVIEW = "auto-run-review";
+const PLAYER = "auto-run-video-player";
 const SETUP = "auto-run-setup";
 const SETUP_END = "auto-run-setup-end";
 const SITE = "auto-run-site-address";
@@ -140,6 +141,11 @@ export const autoRun: Screen = {
       id: RECORDINGS,
       route: [...TO_RUNS, { scrollTo: { role: "heading", name: "Recordings" } }],
       alt: "The Recordings card under Past runs, with one recording an assistant made",
+    },
+    {
+      id: PLAYER,
+      route: [...TO_RUNS, { click: { role: "button", name: "Watch video" } }, { waitFor: { role: "list", name: "Steps" } }],
+      alt: "The video player over Past runs: step markers on the timeline, the failed step in red and the step list beside the video",
     },
     {
       id: REVIEW,
@@ -701,7 +707,39 @@ export const autoRun: Screen = {
       group: "runs",
       locate: { role: "button", nameRe: "^Open a report of the run from" },
       name: "Report",
-      does: "Opens a report of the run in your browser: each case, its steps, what failed and the screenshots. It changes nothing.",
+      does: "Opens a report of the run in your browser: each case, its steps, what failed, the screenshots, and each failed case's video in a player with its steps marked. It changes nothing.",
+    },
+    {
+      id: "watch-video",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "button", name: "Watch video" },
+      name: "Watch video",
+      does: "Opens the video of a failed or blocked case in a player over the app, with its steps marked. **Download video** saves the file.",
+    },
+    {
+      id: "video-timeline",
+      shot: PLAYER,
+      group: "runs",
+      locate: { role: "slider", name: "Position" },
+      name: "Timeline",
+      does: "A mark for each step of the case (hover one for its name). The failed step is red from where it started to the end of the video. Click anywhere to go there.",
+    },
+    {
+      id: "video-steps",
+      shot: PLAYER,
+      group: "runs",
+      locate: { role: "list", name: "Steps" },
+      name: "Steps",
+      does: "The case's steps beside the video, the one playing now highlighted. Click a step to go to it, or open it to see its actions (\"Click Save\", \"Type 'Smith'\") and click one. The failed step is marked and opens first. Passwords and other secret values read **Type a hidden value**.",
+    },
+    {
+      id: "video-controls",
+      shot: PLAYER,
+      group: "runs",
+      locate: { role: "group", name: "Speed" },
+      name: "Play, speed and save",
+      does: "**Play** and **Pause**, the speed (0.5x, 1x, 2x) and **Save video**. Keys: [[Space]] plays or pauses, [[Left]] and [[Right]] skip 5 seconds, [[[]] and [[]]] go to the previous or next step, [[Escape]] closes the player.",
     },
     {
       id: "run-results",
@@ -726,7 +764,7 @@ export const autoRun: Screen = {
       group: "runs",
       locate: { role: "heading", name: "Recordings" },
       name: "Recordings",
-      does: "Videos an assistant recorded of its checks while discovering, when you asked it for evidence, each with its title, date and length: **Play** watches one here, **Save** copies it where you choose, and **Remove** deletes it from this computer.",
+      does: "Videos an assistant recorded of its checks while discovering, when you asked it for evidence, each with its title, date and length: **Play** opens it in the player, with a mark for each action the assistant tried, **Save** copies it where you choose, and **Remove** deletes it from this computer.",
     },
 
     // --- Review --------------------------------------------------------------------
