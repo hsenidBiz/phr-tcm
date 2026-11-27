@@ -13,7 +13,15 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { pagePalette } from "../../lib/reportTheme";
-import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
+import {
+  IconCancel,
+  IconClearResults,
+  IconExportReport,
+  IconHideDetails,
+  IconReview,
+  IconShowDetails,
+} from "../../lib/actionIcons";
+import { plural } from "../../lib/plural";
 import FiledBugs from "./FiledBugs";
 import FlakyBadge from "./FlakyBadge";
 import FlakyCases from "./FlakyCases";
@@ -22,6 +30,7 @@ import { invalidateRuns, useFlakyMarks } from "./flaky";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import CaseVideo, { VideoUnavailableNote } from "./CaseVideo";
+import { caseTimeline } from "./videoTimeline";
 import NoticeBadge from "./NoticeBadge";
 import ProductBugBadge from "./ProductBugBadge";
 import { useAutoRunMode } from "./useAutoRunMode";
@@ -122,6 +131,14 @@ export default function PastRuns({
   /** Cases the person marked Flaky: their failures are counted apart, so a run does not read as failed for them. */
   const flakyIds = useFlakyMarks();
   const [clearOpen, setClearOpen] = useState(false);
+  // The batches whose setup lines are open, by run and the case they come before.
+  const [openSetup, setOpenSetup] = useState<ReadonlySet<string>>(new Set());
+  const toggleSetup = (key: string) =>
+    setOpenSetup((s) => {
+      const next = new Set(s);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
 
   /** Which runs show: every one, or those with at least one case in a
    * bucket - and inside each of those, only its cases in that bucket, the
@@ -275,6 +292,9 @@ export default function PastRuns({
                 {run.cases.filter((c) => matchesFilter(c, filter, flakyIds)).map((c, i, shown) => {
                   const replayTo = onReplay && !otherScope ? replayStep(c) : null;
                   const heading = shownBatchHeading(recordedBatches(run), shown, i);
+                  const setupLines = resetLinesBefore(run.resets, c.case_id);
+                  const setupKey = `${run.id}-${c.case_id}`;
+                  const setupOpen = openSetup.has(setupKey);
                   return (
                     <Fragment key={`${run.id}-${c.case_id}`}>
                       {/* The batch that starts here (or its first case this
@@ -285,18 +305,41 @@ export default function PastRuns({
                           <h3 className="text-xs font-semibold text-text">{heading}</h3>
                         </li>
                       )}
-                      {resetLinesBefore(run.resets, c.case_id).map((line) => (
-                        <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">
-                          {line}
+                      {/* The pause lines the run recorded before this case,
+                          folded into one line; their words are the report's
+                          and are shown unchanged once it is opened. */}
+                      {setupLines.length > 0 && (
+                        <li className="flex">
+                          <button
+                            type="button"
+                            aria-expanded={setupOpen}
+                            onClick={() => toggleSetup(setupKey)}
+                            className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/25 focus-visible:outline-2 focus-visible:outline-accent [&_svg]:size-3 [&_svg]:shrink-0"
+                          >
+                            {setupOpen ? <IconHideDetails aria-hidden /> : <IconShowDetails aria-hidden />}
+                            <span className="label-trim">
+                              {`${plural(setupLines.length, "setup task")} done before this batch`}
+                            </span>
+                          </button>
                         </li>
-                      ))}
+                      )}
+                      {setupOpen &&
+                        setupLines.map((line) => (
+                          <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">
+                            {line}
+                          </li>
+                        ))}
                       <li
                         aria-label={`Run of ${c.title}`}
                         className="rounded-md border border-border/60 bg-surface px-3 py-2 text-sm"
                       >
-                        <div className="flex items-center gap-2">
+                        {/* One line: id, title, result, then the buttons. It wraps
+                            only when the window is narrow, the title giving way first. */}
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className="id-mono text-faint">#{c.case_id}</span>
-                          <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
+                          <span className="min-w-0 flex-1 basis-40 truncate text-text" title={c.title}>
+                            {c.title}
+                          </span>
                           <RetriedBadge first={c.retried} />
                           <NoticeBadge notice={c.notice} />
                           <ProductBugBadge bugs={c.product_bugs} />
@@ -312,6 +355,7 @@ export default function PastRuns({
                           )}
                           {isFlakyFailure(c, flakyIds) && <FlakyBadge />}
                           <FiledBugs bugs={c.bugs} />
+                          <CaseVideo compact name={c.video} timeline={caseTimeline(c)} />
                           {replayTo !== null && !simple && (
                             <Button
                               size="sm"
@@ -329,7 +373,6 @@ export default function PastRuns({
                         {c.note && <p className="mt-0.5 text-xs text-muted">{c.note}</p>}
                         {/* The files its steps saved; nothing for a case that saved none. */}
                         <RunDownloads runId={run.id} steps={c.steps} className="mt-1" />
-                        <CaseVideo name={c.video} className="mt-1" />
                       </li>
                     </Fragment>
                   );

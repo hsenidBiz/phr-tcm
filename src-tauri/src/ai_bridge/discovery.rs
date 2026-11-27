@@ -851,6 +851,10 @@ pub(crate) async fn discover_action_heard<B: DiscoveryBrowser>(
     let mut after = String::new();
     for (i, one) in runs.iter().copied().enumerate() {
         heard.begin(at);
+        let mark_at = recording_now(p.discovery);
+        if mark_at.is_some() {
+            crate::browser::cdp::Driver::take_drawn_label(d);
+        }
         let ran = discover_one(
             d,
             p.signed_in,
@@ -869,6 +873,7 @@ pub(crate) async fn discover_action_heard<B: DiscoveryBrowser>(
             Ok(ran) => ran,
             Err(refused) => return refused,
         };
+        note_recording_mark(p.discovery, mark_at, one, crate::browser::cdp::Driver::take_drawn_label(d).as_deref());
         heard.ran(at, &ran.outcome, one);
         if !ran.outcome.ok {
             ran.outcome.detail = crate::browser::input::with_offscreen_hint(&ran.outcome.detail);

@@ -5,26 +5,22 @@
 // error, or with no recordings, and it is shown in Basic mode too.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { commands, type RecordingEntry } from "../../bindings";
 import { Button } from "../../components/ui/button";
-import { IconCancel, IconExport, IconPlayVideo, IconRemove } from "../../lib/actionIcons";
+import { IconExport, IconPlayVideo, IconRemove } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { VIDEO_GONE } from "./CaseVideo";
 import { useVideoFile } from "./useVideoFile";
+import VideoPlayer from "./VideoPlayer";
+import { clockText, recordingTimeline } from "./videoTimeline";
 
 /** The query the list is read through (a local file list, like Past runs). */
 export const RECORDINGS_KEY = ["autorun-recordings"] as const;
 
 /** What the inline question says before a recording is deleted. */
 export const REMOVE_CONFIRM = "Remove this recording? It cannot be undone.";
-
-/** `83000` ms as `1:23`. */
-function lengthText(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
 
 /** Names Windows reserves for devices, with or without an extension. */
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
@@ -45,6 +41,12 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
   const qc = useQueryClient();
   const { info, src, close, play, save } = useVideoFile(entry.file, fileNameFor(entry.title));
   const [asking, setAsking] = useState(false);
+  const [open, setOpen] = useState(false);
+  // The bytes can land after the player was closed: let that URL go at once.
+  useEffect(() => {
+    if (!open && src) close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `close` is a fresh closure each render
+  }, [open, src]);
   const remove = useMutation({
     mutationFn: async () => unwrapStr(commands.autoRunRemoveRecording(entry.id)),
     onSuccess: () => {
@@ -64,29 +66,26 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
           <p className="text-faint">
             <span>{new Date(entry.created).toLocaleString()}</span>
             {" · "}
-            <span>{lengthText(entry.duration_ms)}</span>
+            <span>{clockText(entry.duration_ms)}</span>
           </p>
           {gone && <p className="text-faint">{VIDEO_GONE}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {src ? (
-            <Button size="sm" variant="outline" aria-label={`Close ${entry.title}`} onClick={close}>
-              <IconCancel aria-hidden />
-              Close
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={`Play ${entry.title}`}
-              disabled={!playable || play.isPending}
-              title={playable ? "Watch the recording here" : "This recording is too large to play here - save it instead"}
-              onClick={() => play.mutate()}
-            >
-              <IconPlayVideo aria-hidden />
-              Play
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={`Play ${entry.title}`}
+            disabled={!playable}
+            title={playable ? "Watch the recording with its actions" : "This recording is too large to play here - save it instead"}
+            onClick={() => {
+              setOpen(true);
+              // A load still running feeds the reopened player.
+              if (!play.isPending) play.mutate();
+            }}
+          >
+            <IconPlayVideo aria-hidden />
+            Play
+          </Button>
           <Button size="sm" variant="outline" aria-label={`Save ${entry.title}`} disabled={gone || save.isPending} onClick={() => save.mutate()}>
             <IconExport aria-hidden />
             Save
@@ -108,14 +107,18 @@ function RecordingRow({ entry }: { entry: RecordingEntry }) {
           </Button>
         </div>
       )}
-      {src && (
-        <video
-          aria-label={`Recording: ${entry.title}`}
+      {open && (
+        <VideoPlayer
+          timeline={recordingTimeline(entry)}
           src={src}
-          controls
-          autoPlay
-          onError={() => toast.error("This recording cannot be played here - save it instead.")}
-          className="max-h-96 max-w-full rounded border border-border"
+          loading={play.isPending}
+          error={play.isError}
+          saving={save.isPending}
+          onSave={() => save.mutate()}
+          onClose={() => {
+            setOpen(false);
+            close();
+          }}
         />
       )}
     </li>

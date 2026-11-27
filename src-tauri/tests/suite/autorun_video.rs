@@ -357,7 +357,7 @@ fn a_run_file_with_a_video_reads_back_and_one_without_writes_no_field() {
     store::save_run(dir.path(), &run_naming(&name, false)).unwrap();
     let back = store::load_run(dir.path(), "r").unwrap().unwrap();
     assert_eq!(back.cases[0].video.as_deref(), Some(name.as_str()));
-    let plain = serde_json::to_value(CaseRecord { video: None, ..common::component_case(1, "x") }).unwrap();
+    let plain = serde_json::to_value(CaseRecord { video: None, video_marks: None, ..common::component_case(1, "x") }).unwrap();
     assert!(plain.get("video").is_none(), "{plain}");
 }
 
@@ -381,6 +381,48 @@ fn the_report_links_the_video_beside_the_pictures_and_never_embeds_it() {
     let bad = build_with_downloads(&run_naming("../runs/x.json", false), &[], "now", &|_| true, &|_| None);
     assert!(!bad.contains("href=\"../shots/../runs"), "{bad}");
     assert!(bad.contains("is not a video name"), "{bad}");
+}
+
+/// The JSON the report's script reads.
+fn report_blob(html: &str) -> serde_json::Value {
+    let open = "<script type=\"application/json\" id=\"report-data\">";
+    let at = html.find(open).expect("the data blob") + open.len();
+    let end = html[at..].find("</script>").unwrap();
+    serde_json::from_str(&html[at..at + end]).expect("the blob is JSON")
+}
+
+#[test]
+fn the_report_carries_each_videos_timeline() {
+    use v2_lib::autorun::report::build_with_downloads;
+    use v2_lib::autorun::{VideoMark, VideoMarks, VideoStep};
+    let name = "video-1700000000000-000001.mp4";
+    let mut run = run_naming(name, false);
+    run.cases[0].video_marks = Some(VideoMarks {
+        length_ms: 20_000,
+        steps: vec![VideoStep { step_number: 1, cleanup: false, at_ms: 4_000, failed: true, actions: vec![VideoMark { at_ms: 4_200, label: "Click".into() }] }],
+    });
+    let html = build_with_downloads(&run, &[], "now", &|_| true, &|_| None);
+    let blob = report_blob(&html);
+    let t = &blob["videos"][name];
+    assert_eq!(t["title"], format!("Video of #{} {}", run.cases[0].case_id, run.cases[0].title));
+    assert_eq!(t["length_ms"], 20000);
+    assert_eq!(t["steps"][0], json!({ "name": "Step 1", "at_ms": 4000, "failed": true, "actions": [{ "at_ms": 4200, "label": "Click" }] }));
+    assert!(!html.contains("<video"), "still never embedded");
+}
+
+#[test]
+fn an_old_video_has_an_empty_timeline_and_a_missing_one_none() {
+    use v2_lib::autorun::report::build_with_downloads;
+    let name = "video-1700000000000-000001.mp4";
+    let run = run_naming(name, false);
+    let blob = report_blob(&build_with_downloads(&run, &[], "now", &|_| true, &|_| None));
+    assert_eq!(blob["videos"][name]["length_ms"], serde_json::Value::Null);
+    assert_eq!(blob["videos"][name]["steps"], json!([]));
+    assert_eq!(blob["videos"][name]["marks"], json!([]));
+    let gone = report_blob(&build_with_downloads(&run, &[], "now", &|_| false, &|_| None));
+    assert!(gone["videos"].get(name).is_none(), "{gone}");
+    let bad = report_blob(&build_with_downloads(&run_naming("../runs/x.json", false), &[], "now", &|_| true, &|_| None));
+    assert!(bad["videos"].as_object().is_none_or(|o| o.is_empty()), "{bad}");
 }
 
 #[test]
@@ -611,6 +653,7 @@ async fn the_recording_starts_before_the_sign_in_and_stops_after_the_last_step()
     assert!(stop > start, "{m:?}");
     // Started once.
     assert_eq!(m.iter().filter(|x| *x == "Page.startScreenRecording").count(), 1);
+    assert_eq!(case.video_marks.as_ref().unwrap().steps[0].step_number, 0, "the sign-in is the first marker");
 }
 
 /// A case stopped before it begins is never recorded: nothing of it ran, so
@@ -684,4 +727,206 @@ async fn a_reused_case_starts_its_recording_before_the_reuse_check() {
     assert_eq!(record.steps[0].step_number, v2_lib::autorun::replay::SIGN_IN_STEP);
     assert_eq!(d.methods().first().map(String::as_str), Some("Page.startScreenRecording"), "{:?}", d.methods());
     assert!(pos(&d, "Page.stopScreenRecording").is_some());
+}
+
+
+// ---- Where each step and action began -------------------------------------------------
+
+#[tokio::test]
+async fn a_kept_video_knows_where_each_step_and_action_began() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut gate = DropsOnce(vec![]);
+    // A page whose address change is a fragment move: nothing loads, so the
+    // first step passes and the check fails.
+    let page = FakePage { navigate_reply: json!({ "frameId": "F" }), body_has_text: false, ..FakePage::default() };
+    let run = plan_run(dir.path(), vec![driver_on(Recorder::working(), page)], &mut gate, false).await;
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    let steps: Vec<(i32, bool)> = marks.steps.iter().map(|s| (s.step_number, s.failed)).collect();
+    assert_eq!(steps, vec![(1, false), (2, true)], "{:?}", run.cases[0].steps);
+    assert_eq!(marks.steps[0].actions.iter().map(|a| a.label.as_str()).collect::<Vec<_>>(), ["Open a page"]);
+    assert_eq!(marks.steps[1].actions.iter().map(|a| a.label.as_str()).collect::<Vec<_>>(), ["Check: shows 'x'"]);
+    assert!(marks.steps[0].at_ms <= marks.steps[1].at_ms && marks.steps[1].at_ms <= marks.steps[1].actions[0].at_ms);
+    assert!(marks.steps[1].actions[0].at_ms <= marks.length_ms);
+}
+
+#[tokio::test]
+async fn a_step_that_never_ran_has_no_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let case: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "c",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "x" }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "y" }] }
+        ]
+    }))
+    .unwrap();
+    store::save_script(dir.path(), &case).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, dir.path(), "Acme", "Web", &mut run, &[(1, "c".into())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    let steps: Vec<(i32, bool)> = marks.steps.iter().map(|s| (s.step_number, s.failed)).collect();
+    assert_eq!(steps, vec![(1, true)]);
+}
+
+#[tokio::test]
+async fn a_passed_case_and_a_run_without_video_keep_no_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let (run, _) = go(dir.path(), true, vec![driver(Recorder::working(), true)], &[2]).await;
+    assert_eq!(run.cases[0].proposed, "Passed");
+    assert!(run.cases[0].video_marks.is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let (run, _) = go(dir.path(), false, vec![driver(Recorder::working(), false)], &[3]).await;
+    assert_eq!(run.cases[0].proposed, "Failed");
+    assert!(run.cases[0].video_marks.is_none());
+}
+
+/// A label left by an earlier case on a kept browser is never taken for the
+/// first action's own.
+#[tokio::test]
+async fn a_stale_drawn_label_is_never_reused_for_the_first_action() {
+    let dir = tempfile::tempdir().unwrap();
+    store::save_script(dir.path(), &script(1)).unwrap();
+    let mut d = driver(Recorder::working(), false);
+    d.drawn_label = Some("Stale from the case before".into());
+    let mut browsers = Fake { drivers: vec![d], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, dir.path(), "Acme", "Web", &mut run, &[(1, "c".into())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    assert_eq!(marks.steps[0].actions[0].label, "Check: shows 'x'");
+}
+
+// ---- The markers of the trip, a reused browser, the clean-up and components ------------
+
+/// The recorder's answers laid over `d`'s own, so a page that answers the
+/// app (a menu, a sign-in) is recorded as well.
+fn recorded(d: ScriptedDriver) -> ScriptedDriver {
+    let rec = Recorder::working();
+    let sent = Arc::new(Mutex::new(false));
+    d.answering_first(move |method, _| match method {
+        "Browser.getVersion" => Some(Ok(json!({ "product": rec.product }))),
+        "Page.startScreenRecording" => Some(Ok(json!({}))),
+        "Page.stopScreenRecording" => Some(Ok(json!({ "stream": "stream-1" }))),
+        "IO.read" => {
+            let first = !std::mem::replace(&mut *sent.lock().unwrap(), true);
+            let data = if first { base64::engine::general_purpose::STANDARD.encode(MP4) } else { String::new() };
+            Some(Ok(json!({ "data": data, "base64Encoded": true, "eof": true })))
+        }
+        "IO.close" => Some(Ok(json!({}))),
+        _ => None,
+    })
+}
+
+fn steps_of(marks: &v2_lib::autorun::VideoMarks) -> Vec<(i32, bool, bool)> {
+    marks.steps.iter().map(|s| (s.step_number, s.cleanup, s.failed)).collect()
+}
+
+#[tokio::test]
+async fn the_trip_to_the_module_has_its_own_marker_between_the_sign_in_and_the_first_step() {
+    use v2_lib::autorun::replay::{CaseToRun, MODULE_STEP, SIGN_IN_STEP};
+    let _leases = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    v2_lib::autorun::recipe::save_recipe(root, "Acme", "Web", &common::menu_recipe()).unwrap();
+    v2_lib::autorun::accounts::save_accounts(root, &[common::account()]).unwrap();
+    let nav: v2_lib::autorun::nav::NavFile = serde_json::from_value(json!({
+        "direct_urls": true,
+        "modules": [{
+            "module": "Leave",
+            "clicks": [{ "role": "link", "name": "Leave", "exact": true }, { "role": "link", "name": "Apply Leave", "exact": true }],
+            "arrived": "/hr/leave/apply",
+            "recorded": "2026-09-24T10:00:00Z"
+        }]
+    }))
+    .unwrap();
+    v2_lib::autorun::nav::save_nav(root, "Acme", "Web", &nav).unwrap();
+    let mut case = script_as(1, "admin");
+    case.steps[0].actions = vec![serde_json::from_value(json!({ "kind": "check_text", "value": "never on the page" })).unwrap()];
+    store::save_script(root, &case).unwrap();
+    let (d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave"), ("link", "Apply Leave", "/hr/leave/apply")], "/hr/home/index", 0);
+    let mut browsers = Fake { drivers: vec![recorded(d)], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    v2_lib::autorun::replay::run_cases(
+        &mut browsers, root, "Acme", "Web", &mut run,
+        &[CaseToRun { case_id: 1, title: "c".into(), module: Some("Leave".into()) }],
+        None, false, &common::quick(), &cancel, &mut |_| {},
+    )
+    .await
+    .unwrap();
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    assert_eq!(
+        marks.steps.iter().map(|s| s.step_number).collect::<Vec<_>>(),
+        vec![SIGN_IN_STEP, MODULE_STEP, 1],
+        "{:?}",
+        run.cases[0].steps
+    );
+    assert!(marks.steps[0].at_ms <= marks.steps[1].at_ms && marks.steps[1].at_ms <= marks.steps[2].at_ms);
+    assert!(marks.steps[2].failed);
+}
+
+/// A browser reused from the case before has no sign-in to time: its first
+/// marker is at the very start of the video.
+#[tokio::test]
+async fn a_reused_browsers_first_marker_is_at_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = script_as(1, "admin");
+    let mut d = driver(Recorder::working(), false);
+    let mut lease = v2_lib::autorun::lease::Held::new(v2_lib::autorun::lease::Holder::Case { run: String::new() }, std::time::Duration::from_millis(300));
+    let cancel = AtomicBool::new(false);
+    let record = v2_lib::autorun::replay::run_case_reusing(
+        &mut d, dir.path(), "Acme", "Web", &mut lease, &case, Some("admin"), None, &common::quick(), &cancel, true, Some(12), &mut |_| {},
+    )
+    .await;
+    let marks = record.video_marks.expect("a kept video has its marks");
+    let first = &marks.steps[0];
+    assert_eq!((first.step_number, first.at_ms, first.failed), (v2_lib::autorun::replay::SIGN_IN_STEP, 0, false));
+}
+
+/// The clean-up runs after a failed step, and has its own marker, flagged
+/// as a clean-up and not failed when it did what it was for.
+#[tokio::test]
+async fn the_clean_up_has_its_own_marker_after_a_failed_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let case: CaseScript = serde_json::from_value(json!({
+        "case_id": 1, "title": "c",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "x" }] },
+            { "step_number": 2, "cleanup": true, "actions": [{ "kind": "click", "selector": "#undo" }] }
+        ]
+    }))
+    .unwrap();
+    store::save_script(dir.path(), &case).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, dir.path(), "Acme", "Web", &mut run, &[(1, "c".into())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    assert_eq!(steps_of(&marks), vec![(1, false, true), (2, true, false)], "{:?}", run.cases[0].steps);
+    assert_eq!(marks.steps[1].actions.iter().map(|a| a.label.as_str()).collect::<Vec<_>>(), ["Click"]);
+    assert!(marks.steps[0].at_ms <= marks.steps[1].at_ms);
+}
+
+/// A component is its actions in the video: one marker for each.
+#[tokio::test]
+async fn a_component_gets_one_marker_for_each_of_its_actions() {
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::components::put(dir.path(), "Acme", "Web", common::pick_a_date()).unwrap();
+    store::save_script(dir.path(), &common::component_script(1)).unwrap();
+    let mut browsers = Fake { drivers: vec![driver(Recorder::working(), false)], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, dir.path(), "Acme", "Web", &mut run, &[(1, "c".into())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    let actions = &marks.steps[0].actions;
+    // click New, the component's three, then the check.
+    assert_eq!(actions.len(), 5, "{actions:?}");
+    assert_eq!(actions[0].label, "Click");
+    assert_eq!(actions[1].label, "Click");
+    assert_eq!(actions[3].label, "Click");
+    assert_eq!(actions[4].label, "Check: shows 'Saved'");
+    assert!(actions[2].label.starts_with("Type"), "{actions:?}");
+    assert!(actions.windows(2).all(|w| w[0].at_ms <= w[1].at_ms));
 }

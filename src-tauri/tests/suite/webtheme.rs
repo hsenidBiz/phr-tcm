@@ -107,6 +107,7 @@ mod diagram_contrast {
             let mut texts = vec![
                 ("text on surface", contrast(&p.text, &p.surface)),
                 ("muted on surface (under line, failure line)", contrast(&p.muted, &p.surface)),
+                ("muted on surface (the outline tag: Unconfirmed here, Failed here)", contrast(&p.muted, &p.surface)),
                 ("muted on page (subtitle, legend)", contrast(&p.muted, &p.bg)),
                 ("text on surface-2 (template chips)", contrast(&p.text, &p.surface_2)),
             ];

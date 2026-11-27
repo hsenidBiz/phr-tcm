@@ -14,7 +14,7 @@ fn record(case_id: i32, outcome: &str, detail: &str) -> CaseRecord {
     };
     let mut step = step_defaults();
     step.outcomes = outcomes;
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id,
         title: format!("Case {case_id}"),

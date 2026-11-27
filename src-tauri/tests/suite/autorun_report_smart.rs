@@ -509,9 +509,11 @@ fn nothing_is_fetched_only_relative_pictures_and_anchors_are_linked() {
     assert!(!html.contains("http://") && !html.contains("https://"), "no address at all in a page with none in its run");
     assert!(!html.contains("url(") && !html.contains("@import"), "the style loads nothing");
     // The page's own script reaches nothing on the network either.
-    let js = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/autorun-report.js")).unwrap();
-    for banned in ["fetch(", "XMLHttpRequest", "WebSocket", "import(", "sendBeacon", "eval(", "new Function"] {
-        assert!(!js.contains(banned), "{banned}");
+    for file in ["web/autorun-report.js", "web/autorun-report-player.js"] {
+        let js = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        for banned in ["fetch(", "XMLHttpRequest", "WebSocket", "import(", "sendBeacon", "eval(", "new Function"] {
+            assert!(!js.contains(banned), "{banned} in {file}");
+        }
     }
 }
 

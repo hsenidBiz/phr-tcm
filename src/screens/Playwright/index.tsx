@@ -219,7 +219,7 @@ export default function Playwright({ org, project }: { org: string; project: str
             </Button>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
               <IconBrowse aria-hidden />
-              {clone ? "Change…" : "Choose…"}
+              {clone ? "Change" : "Choose"}
             </Button>
           </div>
         </div>
@@ -236,7 +236,7 @@ export default function Playwright({ org, project }: { org: string; project: str
       {s && !usable && (
         <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-8 text-center">
           <p className="text-sm font-medium text-text">{HEALTH_TEXT.NotTheRepo}</p>
-          <Hint className="mt-1">Press Change… and pick your clone of the PHR-PLAYWRIGHT-AUTOMATION repo.</Hint>
+          <Hint className="mt-1">Press Change and pick your clone of the PHR-PLAYWRIGHT-AUTOMATION repo.</Hint>
         </div>
       )}
 

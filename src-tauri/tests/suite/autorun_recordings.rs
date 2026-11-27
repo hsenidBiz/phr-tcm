@@ -46,6 +46,19 @@ fn a_recording_is_kept_listed_newest_first_and_read_back() {
 }
 
 #[test]
+fn a_marks_list_over_the_cap_is_cut() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let marks: Vec<v2_lib::autorun::VideoMark> =
+        (0..recordings::MAX_MARKS as u32 + 1).map(|i| v2_lib::autorun::VideoMark { at_ms: i, label: "Click".into() }).collect();
+    assert_eq!(marks.len(), 2_001);
+    let e = recordings::add_with_marks(dir.path(), "many", 10, MP4, marks).unwrap();
+    assert_eq!(recordings::MAX_MARKS, 2_000);
+    assert_eq!(e.marks.len(), 2_000);
+    assert_eq!(list(dir.path())[0].marks.len(), 2_000);
+}
+
+#[test]
 fn removing_a_recording_deletes_its_file_and_entry() {
     let _lock = crate::serial::autorun();
     let dir = root();
@@ -523,4 +536,164 @@ async fn the_cap_timer_stops_its_recording_once_the_monotonic_clock_says_so() {
 fn the_recording_routes_act_on_the_browser() {
     assert_eq!(need_of("POST", "/autorun-recording-start"), Some(Need::Act));
     assert_eq!(need_of("POST", "/autorun-recording-stop"), Some(Need::Act));
+}
+
+// ------------------------------------------- marks on a discovery's recording
+
+use v2_lib::browser::cdp::Driver as _;
+use v2_lib::ai_bridge::{begin_try_mark, discover_action_in, finish_try_mark, note_recording_mark, recording_now};
+use v2_lib::autorun::VideoMark;
+use v2_lib::browser::actions::Action;
+
+#[tokio::test]
+async fn a_discovery_recording_keeps_a_mark_for_each_action_tried() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let _ = discover_action_in(&mut b, dir.path(), "Acme", "Web", &click, None, None).await;
+    assert_eq!(recording_stop_in(&mut b).await.0, 200);
+    let e = &list(dir.path())[0];
+    assert_eq!(e.marks.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(), ["Click"]);
+    assert!(e.marks[0].at_ms <= e.duration_ms);
+}
+
+#[tokio::test]
+async fn a_mark_needs_a_running_recording_and_names_no_secret() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let fill = v2_lib::autorun::action_help::fill_form_from(&json!({ "kind": "fill_form", "fields": { "#pw": "hunter2" } })).unwrap().unwrap();
+    let mut none = None;
+    assert_eq!(recording_now(&none), None);
+    note_recording_mark(&mut none, Some(5), &fill, None);
+    assert!(none.is_none());
+
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_now(&b.as_mut().unwrap().discovery), None);
+    note_recording_mark(&mut b.as_mut().unwrap().discovery, Some(5), &fill, None);
+    assert!(b.as_ref().unwrap().discovery.as_ref().unwrap().recording.is_none());
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let d = &mut b.as_mut().unwrap().discovery;
+    let at = recording_now(d);
+    assert!(at.is_some());
+    note_recording_mark(d, None, &fill, None);
+    note_recording_mark(d, at, &fill, Some("Type hunter2"));
+    assert_eq!(d.as_ref().unwrap().recording.as_ref().unwrap().marks[0].label, "Fill the form");
+    let marks = &d.as_ref().unwrap().recording.as_ref().unwrap().marks;
+    assert_eq!(marks.len(), 1);
+    assert!(!format!("{marks:?}").contains("hunter2"), "{marks:?}");
+}
+
+#[tokio::test]
+async fn marks_stop_at_the_cap() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let d = &mut b.as_mut().unwrap().discovery;
+    for _ in 0..recordings::MAX_MARKS + 5 {
+        note_recording_mark(d, Some(1), &click, None);
+    }
+    assert_eq!(d.as_ref().unwrap().recording.as_ref().unwrap().marks.len(), recordings::MAX_MARKS);
+}
+
+#[tokio::test]
+async fn a_mark_noted_during_a_recording_is_kept_with_the_video() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let at = recording_now(&b.as_mut().unwrap().discovery);
+    note_recording_mark(&mut b.as_mut().unwrap().discovery, at, &click, None);
+    assert_eq!(recording_stop_in(&mut b).await.0, 200);
+    let e = &list(dir.path())[0];
+    assert_eq!(e.marks.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(), ["Click"]);
+    assert_eq!(e.marks[0].at_ms, at.unwrap());
+}
+
+/// The marks and the length share one clock, and a mark is never later than
+/// the length.
+#[tokio::test]
+async fn a_mark_is_never_later_than_the_kept_length() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let running = b.as_mut().unwrap().discovery.as_mut().unwrap().recording.as_mut().unwrap();
+    running.marks.push(VideoMark { at_ms: u32::MAX, label: "Click".into() });
+    assert_eq!(recording_stop_in(&mut b).await.0, 200);
+    let e = &list(dir.path())[0];
+    assert!(e.marks[0].at_ms <= e.duration_ms, "{} > {}", e.marks[0].at_ms, e.duration_ms);
+}
+
+// The try route's two steps, around the action (`autorun_try`).
+
+async fn recording_now_slot(dir: &std::path::Path) -> Option<FakeBrowser> {
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir, &start_body(TITLE), T0).await.0, 200);
+    b
+}
+
+fn marks_of(b: &Option<FakeBrowser>) -> Vec<String> {
+    let d = b.as_ref().unwrap().discovery.as_ref().unwrap();
+    d.recording.as_ref().unwrap().marks.iter().map(|m| m.label.clone()).collect()
+}
+
+#[tokio::test]
+async fn a_try_that_ran_is_marked_and_a_refused_one_is_not() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let mut b = recording_now_slot(dir.path()).await;
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let browser = b.as_mut().unwrap();
+    let at = begin_try_mark(&browser.discovery, &mut browser.d);
+    assert!(at.is_some());
+    finish_try_mark(&mut browser.discovery, &mut browser.d, at, &click, 200);
+    let at = begin_try_mark(&browser.discovery, &mut browser.d);
+    finish_try_mark(&mut browser.discovery, &mut browser.d, at, &click, 409);
+    assert_eq!(marks_of(&b), ["Click"]);
+}
+
+#[tokio::test]
+async fn a_try_with_no_recording_is_never_marked() {
+    let _lock = crate::serial::autorun();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let browser = b.as_mut().unwrap();
+    browser.d.drawn_label = Some("kept".into());
+    let at = begin_try_mark(&browser.discovery, &mut browser.d);
+    assert_eq!(at, None);
+    assert_eq!(browser.d.drawn_label.as_deref(), Some("kept"), "nothing is dropped without a recording");
+    finish_try_mark(&mut browser.discovery, &mut browser.d, at, &click, 200);
+    assert!(browser.discovery.as_ref().unwrap().recording.is_none());
+}
+
+#[tokio::test]
+async fn a_tried_fill_form_gets_one_fill_the_form_mark() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let mut b = recording_now_slot(dir.path()).await;
+    let form = v2_lib::autorun::action_help::fill_form_from(&json!({ "kind": "fill_form", "fields": { "#a": "x", "#pw": "hunter2" } })).unwrap().unwrap();
+    let browser = b.as_mut().unwrap();
+    let at = begin_try_mark(&browser.discovery, &mut browser.d);
+    // The fields drew their own boxes while the form ran.
+    browser.d.note_drawn_label("Type password");
+    finish_try_mark(&mut browser.discovery, &mut browser.d, at, &form, 200);
+    assert_eq!(marks_of(&b), ["Fill the form"]);
+}
+
+#[tokio::test]
+async fn a_label_drawn_before_a_try_is_not_reused_for_it() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let mut b = recording_now_slot(dir.path()).await;
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let browser = b.as_mut().unwrap();
+    browser.d.note_drawn_label("Stale from the try before");
+    let at = begin_try_mark(&browser.discovery, &mut browser.d);
+    finish_try_mark(&mut browser.discovery, &mut browser.d, at, &click, 200);
+    assert_eq!(marks_of(&b), ["Click"]);
 }

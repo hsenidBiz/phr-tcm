@@ -279,6 +279,14 @@ fn label_of(action: &Action) -> (String, Option<String>) {
         Action::ExpectOrder { .. } => ("Check: order".into(), None),
         Action::ExpectPosition { .. } => ("Check: position".into(), None),
         Action::WaitFor { .. } => ("Wait for it".into(), None),
+        Action::Navigate { .. } => ("Open a page".into(), None),
+        Action::Reload => ("Reload the page".into(), None),
+        Action::ExpireSession => ("End the session".into(), None),
+        Action::ReturnToArea { .. } => ("Go back to the area".into(), None),
+        Action::OpenTab { .. } => ("Open a tab".into(), None),
+        Action::SwitchTab { .. } => ("Switch tab".into(), None),
+        Action::CloseTab { .. } => ("Close a tab".into(), None),
+        Action::SignIn { .. } => ("Sign in".into(), None),
         other => (
             match kind_of(other) {
                 Kind::Click => "Click",
@@ -457,7 +465,12 @@ pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Tim
     let drawn =
         page::call_value(d, handle, SHOW_JS, &[json!(say.kind.key()), json!(label), json!(timing.highlight_ms)]).await?;
     // The script answers false when it caught an error: nothing was drawn.
-    Ok(drawn.as_bool().unwrap_or(false))
+    let drawn = drawn.as_bool().unwrap_or(false);
+    if drawn {
+        // The words on the box, after the password swap: the video's marker.
+        d.note_drawn_label(label);
+    }
+    Ok(drawn)
 }
 
 /// Turn the box green or red, and let it go. Quiet by design: a page that

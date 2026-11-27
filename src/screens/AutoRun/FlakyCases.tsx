@@ -24,7 +24,7 @@ function Pattern({ pattern }: { pattern: boolean[] }) {
 }
 
 export default function FlakyCases() {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const setFlaky = useSetFlaky();
   const flaky = useQuery({
     queryKey: FLAKY_CASES_KEY,

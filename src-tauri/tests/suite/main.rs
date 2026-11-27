@@ -295,6 +295,7 @@ mod tray;
 mod updater;
 mod upload_journal;
 mod upload_timeout;
+mod video_marks;
 mod webtheme;
 mod wit_batch;
 mod work_board;

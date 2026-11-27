@@ -112,7 +112,7 @@ export const apiTemplates: Screen = {
       group: "templates",
       locate: { role: "button", name: "Test files" },
       name: "Test files",
-      does: "The documents and pictures templates and scripts upload, kept on this computer. The same list as on the Auto Test tab.",
+      does: "The documents and pictures templates and scripts upload, kept on this computer. The same list as on the Auto Test tab, folded by type and searchable by file name.",
     },
     {
       id: "export",

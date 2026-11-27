@@ -157,7 +157,7 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
         id: format!("a replay to step {}", r.to_step),
         pbi_id: 0,
         started_at: r.at.to_string(),
-        cases: vec![CaseRecord { video: None,
+        cases: vec![CaseRecord { video: None, video_marks: None,
             bugs: vec![],
             case_id: r.case_id,
             title: r.title.clone(),

@@ -150,10 +150,7 @@
     var vid = e.target.closest ? e.target.closest('a[data-video]') : null;
     if (vid) {
       e.preventDefault();
-      var name = vid.getAttribute('data-video');
-      var at = -1;
-      all.forEach(function (g, k) { if (g.n === name) at = k; });
-      if (at >= 0) openLightbox(at, all);
+      openPlayer(vid.getAttribute('data-video'), vid);
       return;
     }
     var a = e.target.closest ? e.target.closest('a[data-case]') : null;
@@ -347,7 +344,11 @@
           img.src = '../shots/' + g.n;
           b.appendChild(img);
         }
-        b.addEventListener('click', function () { openLightbox(i, shown); });
+        b.addEventListener('click', function () {
+          if (g.k) { openPlayer(g.n, b); return; }
+          var pics = shown.filter(function (p) { return !p.k; });
+          openLightbox(pics.indexOf(g), pics);
+        });
         var cap = document.createElement('span');
         cap.className = 'gallery__caption';
         cap.textContent = caption(g);
@@ -372,6 +373,15 @@
     });
   });
 
+  // A video opens in the report's own player, with the case's step markers.
+  var NO_TIMELINE = { title: 'Video', length_ms: null, steps: [], marks: [] };
+  function openPlayer(name, opener) {
+    if (!window.ReportPlayer) return;
+    window.ReportPlayer.open((D.videos && D.videos[name]) || NO_TIMELINE, '../shots/' + name, opener);
+  }
+  function playerOpen() {
+    return !!window.ReportPlayer && window.ReportPlayer.isOpen();
+  }
   var lb = $('#lb');
   var lbIndex = 0;
   var lbList = [];
@@ -382,24 +392,15 @@
     var g = lbList[lbIndex];
     var stage = $('.stage', lb);
     while (stage.firstChild) stage.removeChild(stage.firstChild);
-    var el;
-    if (g.k) {
-      el = document.createElement('video');
-      el.controls = true;
-      el.src = '../shots/' + g.n;
-    } else {
-      el = document.createElement('img');
-      el.src = '../shots/' + g.n;
-      el.alt = caption(g);
-    }
+    var el = document.createElement('img');
+    el.src = '../shots/' + g.n;
+    el.alt = caption(g);
     stage.appendChild(el);
     $('.lb-cap', lb).textContent = caption(g) + '  (' + (lbIndex + 1) + ' of ' + lbList.length + ')';
     lb.hidden = false;
   }
   function closeLightbox() {
     if (!lb) return;
-    var v = $('video', lb);
-    if (v && v.pause) v.pause();
     lb.hidden = true;
   }
   if (lb) {
@@ -419,7 +420,7 @@
     return !!t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
   }
   function overlayOpen() {
-    return (help && !help.hidden) || (lb && !lb.hidden);
+    return (help && !help.hidden) || (lb && !lb.hidden) || playerOpen();
   }
   var chord = 0;
   var CHORDS = { f: 'failures', l: 'flaky', i: 'insights', h: 'history' };
@@ -427,6 +428,7 @@
   document.addEventListener('keydown', function (e) {
     var mod = e.ctrlKey || e.metaKey;
     var k = e.key;
+    if (playerOpen()) return;
     if (mod && (k === 'b' || k === 'B')) { e.preventDefault(); railToggle(); return; }
     if (mod && (k === 'k' || k === 'K')) { e.preventDefault(); focusFilter(); return; }
     if (lb && !lb.hidden) {

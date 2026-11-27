@@ -12,7 +12,7 @@ use v2_lib::autorun::setup::{resolve, FixtureValues};
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::actions::{execute_in, execute_with, Action, Policy, HIGHLIGHT_JS};
 use v2_lib::browser::expect::IS_PASSWORD_JS;
-use v2_lib::browser::cdp::CdpError;
+use v2_lib::browser::cdp::{CdpError, Driver};
 use v2_lib::browser::highlight::{self, kind_of, Kind, Say, CHECK_HIDDEN, RESULT_JS, SHOW_JS, TYPE_HIDDEN, TYPE_PASSWORD};
 use v2_lib::browser::timing::Timing;
 
@@ -716,4 +716,41 @@ async fn a_marked_checks_failure_says_the_hidden_value_in_place_of_the_text() {
     let out = execute_with(&mut d, &check, &off()).await;
     assert!(!out.ok);
     assert!(out.detail.contains("the hidden value") && !out.detail.contains("S3cret"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn the_label_drawn_is_noted_for_the_video() {
+    let mut d = FakePage { password: true, ..FakePage::default() }.driver();
+    execute_with(&mut d, &act(json!({ "kind": "fill", "selector": "#a", "value": "hunter2" })), &off()).await;
+    assert_eq!(d.take_drawn_label().as_deref(), Some(TYPE_PASSWORD));
+    assert_eq!(d.take_drawn_label(), None, "taking it empties it");
+    let mut d = FakePage::default().driver();
+    execute_with(&mut d, &act(json!({ "kind": "fill", "selector": "#a", "value": "Smith" })), &off()).await;
+    assert_eq!(d.take_drawn_label().as_deref(), Some("Type 'Smith'"));
+}
+
+#[tokio::test]
+async fn a_box_the_page_would_not_draw_leaves_no_drawn_label() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if m == "Runtime.callFunctionOn" && p["functionDeclaration"] == HIGHLIGHT_JS {
+            Ok(json!({ "result": { "value": false } }))
+        } else {
+            page.answer(m, p)
+        }
+    });
+    execute_with(&mut d, &act(json!({ "kind": "fill", "selector": "#a", "value": "Smith" })), &off()).await;
+    assert_eq!(d.take_drawn_label(), None);
+}
+
+#[test]
+fn page_level_actions_say_what_they_do_in_words() {
+    let say = |v: Value| Say::of(&act(v)).label;
+    assert_eq!(say(json!({ "kind": "navigate", "url": "https://app.test/" })), "Open a page");
+    assert_eq!(say(json!({ "kind": "reload" })), "Reload the page");
+    assert_eq!(say(json!({ "kind": "expire_session" })), "End the session");
+    assert_eq!(say(json!({ "kind": "open_tab", "name": "t", "url": "https://app.test/" })), "Open a tab");
+    assert_eq!(say(json!({ "kind": "switch_tab", "name": "t" })), "Switch tab");
+    assert_eq!(say(json!({ "kind": "close_tab", "name": "t" })), "Close a tab");
+    assert_eq!(say(json!({ "kind": "sign_in", "account": "admin" })), "Sign in");
 }

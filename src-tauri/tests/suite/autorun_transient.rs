@@ -31,7 +31,7 @@ fn api_get() -> serde_json::Value {
 /// A case that stopped at step 2 with `failed` as that step's one outcome.
 fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
     let reason = format!("step 2: {}", failed.detail);
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         bugs: vec![],
         case_id: 7,
         title: "Save a cycle".into(),
@@ -187,7 +187,7 @@ fn only_the_first_failure_counts() {
 
 #[test]
 fn a_case_that_passed_was_stopped_or_needs_its_script_is_never_transient() {
-    let passed = CaseRecord { video: None, proposed: "Passed".into(), ..failed_at_2("", ActionOutcome::failed("x")) };
+    let passed = CaseRecord { video: None, video_marks: None, proposed: "Passed".into(), ..failed_at_2("", ActionOutcome::failed("x")) };
     assert_eq!(is_transient(&passed, Some(&script(expect_save()))), None);
 
     let gateway = ActionOutcome::failed("POST /hr/Cycle/Save answered 503, expected 200");
@@ -219,7 +219,7 @@ fn an_api_request_the_network_dropped_is_transient_but_its_timeout_is_not() {
 /// A case whose sign-in is the first thing that failed.
 fn sign_in_failed(outcomes: Vec<ActionOutcome>) -> CaseRecord {
     let last = outcomes.last().unwrap().detail.clone();
-    CaseRecord { video: None,
+    CaseRecord { video: None, video_marks: None,
         steps: vec![StepRecord { step_number: SIGN_IN_STEP, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
         proposed: "Blocked".into(),
         reason: format!("while signing in: {last}"),

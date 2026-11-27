@@ -11,6 +11,7 @@ const ALL: SetupRowName[] = [
   "Areas",
   "Discovery",
   "Components",
+  "Known quirks",
   "Test files",
   "Fixtures",
   "Database",
@@ -44,9 +45,9 @@ test("several blockers add up", () => {
   expect([...b].sort()).toEqual(["Discovery", "Fixtures", "Sign-in"]);
 });
 
-test("Simple shows every row but the hidden three when nothing blocks", () => {
+test("Simple shows every row but the hidden four when nothing blocks", () => {
   for (const row of ALL) expect(shownInSimple(row, new Set())).toBe(!SIMPLE_HIDDEN.has(row));
-  expect([...SIMPLE_HIDDEN].sort()).toEqual(["Components", "Discovery", "Fixtures"]);
+  expect([...SIMPLE_HIDDEN].sort()).toEqual(["Components", "Discovery", "Fixtures", "Known quirks"]);
 });
 
 test("a blocking hidden row is shown, and only that one", () => {

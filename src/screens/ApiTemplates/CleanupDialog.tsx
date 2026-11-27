@@ -306,7 +306,7 @@ export default function CleanupDialog({
           {busy ? (
             <Button size="sm" variant="outline" disabled={stopping} onClick={() => void stop()}>
               <IconStop aria-hidden />
-              {stopping ? "Stopping…" : "Stop"}
+              {stopping ? "Stopping" : "Stop"}
             </Button>
           ) : (
             <>

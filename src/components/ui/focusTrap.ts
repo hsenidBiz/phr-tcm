@@ -11,6 +11,14 @@ const FOCUSABLE = [
 ].join(",");
 
 /**
+ * Panels whose trap is active, oldest first. Every trap listens on the
+ * document, so with a dialog open inside another dialog both would act on
+ * the same Tab; only the top of this stack may (the same rule `Modal` uses
+ * for Escape).
+ */
+const active: HTMLElement[] = [];
+
+/**
  * Keep Tab inside `panel` while it is mounted, and hand focus back to
  * whatever opened it on the way out.
  *
@@ -47,8 +55,10 @@ export function useFocusTrap(panel: RefObject<HTMLElement | null>) {
       (first ?? el).focus();
     }
 
+    active.push(el);
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
+      if (active[active.length - 1] !== el) return;
       const stops = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
         (n) => n.offsetParent !== null || n === document.activeElement,
       );
@@ -74,6 +84,8 @@ export function useFocusTrap(panel: RefObject<HTMLElement | null>) {
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
+      const at = active.indexOf(el);
+      if (at >= 0) active.splice(at, 1);
       // Back to whatever opened it, so the next Tab carries on from where
       // the user was rather than restarting at the top of the app. Only if
       // it is still on the page - a dialog that removed its own trigger

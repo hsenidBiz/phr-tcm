@@ -25,7 +25,7 @@ use crate::webtheme::PagePalette;
 
 /// A column's width, and the gaps between columns and between the boxes
 /// in one - the page's CSS reads these.
-pub const COL_W: u32 = 260;
+pub const COL_W: u32 = 320;
 pub const GAP_X: u32 = 96;
 pub const GAP_Y: u32 = 24;
 
@@ -169,8 +169,8 @@ fn by_stage<'a>(flow: &Flow, templates: &'a [SavedTemplate]) -> HashMap<String, 
 fn here_mark(here: &Here) -> Option<&'static str> {
     match here {
         Here::Confirmed { .. } => None,
-        Here::Unconfirmed => Some("unconfirmed here"),
-        Here::Failed { .. } => Some("failed here"),
+        Here::Unconfirmed => Some("Unconfirmed here"),
+        Here::Failed { .. } => Some("Failed here"),
     }
 }
 
@@ -242,12 +242,23 @@ fn failure_line(here: &Here) -> Option<String> {
     }
 }
 
+/// The word on a template's kind tag, in sentence case.
 fn effect_word(e: &Effect) -> &'static str {
     match e {
-        Effect::Create => "create",
-        Effect::Edit => "edit",
-        Effect::Delete => "delete",
-        Effect::Read => "read",
+        Effect::Create => "Create",
+        Effect::Edit => "Edit",
+        Effect::Delete => "Delete",
+        Effect::Read => "Read",
+    }
+}
+
+/// The tone a template's own effect is tinted in (the stage's, when they agree).
+fn effect_tone(e: &Effect) -> Tone {
+    match e {
+        Effect::Create => Tone::Create,
+        Effect::Edit => Tone::Edit,
+        Effect::Delete => Tone::Delete,
+        Effect::Read => Tone::Read,
     }
 }
 
@@ -309,7 +320,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
                 .map(|saved| {
                     let tpl = &saved.template;
                     let mark = match here_mark(&saved.here) {
-                        Some(word) => format!("<span class='fx' title='{}'>{word}</span>", esc_attr(&here_hint(&saved.here))),
+                        Some(word) => format!("<span class='fx here' title='{}'>{word}</span>", esc_attr(&here_hint(&saved.here))),
                         None => String::new(),
                     };
                     // The reason is on the page, not only in the hover.
@@ -320,8 +331,9 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
                         None => String::new(),
                     };
                     format!(
-                        "<li><span class='name'>{}</span>{mark}<span class='fx'>{}</span>{why}</li>",
+                        "<li><span class='name'>{}</span><span class='tags'>{mark}<span class='fx kind' style='--tone:var({})'>{}</span></span>{why}</li>",
                         esc(&tpl.title),
+                        effect_tone(&tpl.effect).var(),
                         effect_word(&tpl.effect)
                     )
                 })
@@ -468,10 +480,13 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-ap
  color:var(--text);background:color-mix(in srgb,var(--tone) 14%,var(--surface))}
 .under{margin:0 0 8px;font-size:12px;color:var(--muted)}
 .stage ul{margin:0;padding:0;list-style:none}
-.stage li{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0 8px;padding:4px 0;font-size:12px;line-height:16px}
-.stage li .name{flex:1;min-width:0;overflow-wrap:anywhere}
-.stage li .fx{flex:none;padding:0 8px;border-radius:4px;font-size:10px;font-weight:600;line-height:16px;text-transform:uppercase;color:var(--text);background:var(--surface-2)}
-.stage li .why{flex-basis:100%;color:var(--muted);overflow-wrap:anywhere}
+.stage li{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:4px 0;font-size:12px;line-height:16px}
+.stage li .name{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.stage li .tags{display:flex;flex-wrap:wrap;gap:4px 8px}
+.stage li .fx{flex:none;padding:0 8px;border-radius:4px;font-size:11px;font-weight:600;line-height:16px}
+.stage li .fx.kind{color:var(--text);background:color-mix(in srgb,var(--tone) 14%,var(--surface))}
+.stage li .fx.here{color:var(--muted);background:none;border:1px solid var(--border);padding:0 7px}
+.stage li .why{color:var(--muted);overflow-wrap:anywhere}
 .stage li.none{color:var(--muted);font-style:italic}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 ";

@@ -990,9 +990,12 @@ mod page_tests {
         let mut unconfirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         unconfirmed.here = Here::Unconfirmed;
         let html = page_html(&flow(), &[unconfirmed], &PagePalette::default());
-        assert!(html.contains("Save the rules</span><span class='fx' title='Not confirmed on this environment yet."), "{html}");
-        assert!(html.contains(">unconfirmed here</span>"), "{html}");
-        assert!(html.contains("Templates: Save the rules (unconfirmed here).</li>"), "{html}");
+        // Updated 27 Nov 2026: the name has its own line, the tags follow it in a row of their own,
+        // and the mark reads in sentence case ("Unconfirmed here").
+        assert!(html.contains("Save the rules</span><span class='tags'><span class='fx here' title='Not confirmed on this environment yet."), "{html}");
+        assert!(html.contains(">Unconfirmed here</span>"), "{html}");
+        // The screen-reader list repeats the tag, in its new wording.
+        assert!(html.contains("Templates: Save the rules (Unconfirmed here).</li>"), "{html}");
 
         let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         failed.here = Here::Failed {
@@ -1000,16 +1003,76 @@ mod page_tests {
         };
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("Failed on this environment at 2: HTTP 500. Ask the assistant to make it work here."), "{html}");
-        assert!(html.contains(">failed here</span>"), "{html}");
+        assert!(html.contains(">Failed here</span>"), "{html}");
         // The reason is visible and in the screen-reader list, not only in
         // the hover title.
         assert!(html.contains("failed at step 2: HTTP 500</span>"), "{html}");
-        assert!(html.contains("Templates: Save the rules (failed here, failed at step 2: HTTP 500).</li>"), "{html}");
+        // (Updated 27 Nov 2026: the mark is "Failed here", in the tag's own wording.)
+        assert!(html.contains("Templates: Save the rules (Failed here, failed at step 2: HTTP 500).</li>"), "{html}");
         assert!(!html.to_lowercase().contains("unproven"), "{html}");
 
         let confirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
         let html = page_html(&flow(), &[confirmed], &PagePalette::default());
-        assert!(!html.contains("unconfirmed here") && !html.contains("failed here"), "{html}");
+        assert!(!html.contains("Unconfirmed here") && !html.contains("Failed here"), "{html}");
+    }
+
+    // ---- Template rows read on full lines (27 Nov 2026).
+
+    #[test]
+    fn a_template_name_has_its_own_full_width_line_and_the_tags_follow_it() {
+        let mut unconfirmed = on("pms-save-rules", "Complete the Rating Methods step (Save & Continue)", Effect::Edit, "rules");
+        unconfirmed.here = Here::Unconfirmed;
+        let html = page_html(&flow(), &[unconfirmed], &PagePalette::default());
+        let css = css_of(&html);
+        // A column, so the name is never squeezed beside the tags, and wraps on whole words.
+        assert!(css.contains(".stage li{display:flex;flex-direction:column;"), "{css}");
+        assert!(css.contains(".stage li .name{") && !css.contains(".stage li .name{flex:1"), "{css}");
+        assert!(css.contains("overflow-wrap:anywhere"), "last resort only: {css}");
+        assert!(!css.contains("word-break:break-all"), "never mid-word by default: {css}");
+        // The tags come after the name, in a wrapping row, and the failure line after them.
+        let li = html.split("<li><span class='name'>").nth(1).unwrap().split("</li>").next().unwrap();
+        assert!(li.starts_with("Complete the Rating Methods step (Save &amp; Continue)</span><span class='tags'>"), "{li}");
+        assert!(css.contains(".stage li .tags{display:flex;flex-wrap:wrap;"), "{css}");
+        let mut failed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        failed.here = Here::Failed { failure: HereFailure { at: "t".into(), step: Some("2".into()), detail: Some("HTTP 500".into()), reason: None } };
+        let html = page_html(&flow(), &[failed], &PagePalette::default());
+        let li = html.split("<li><span class='name'>").nth(1).unwrap().split("</li>").next().unwrap();
+        assert!(li.find("class='tags'").unwrap() < li.find("class='why'").unwrap(), "{li}");
+    }
+
+    #[test]
+    fn the_tags_read_in_sentence_case_and_the_here_mark_is_an_outline() {
+        let mut unconfirmed = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        unconfirmed.here = Here::Unconfirmed;
+        let html = page_html(&flow(), &[unconfirmed], &PagePalette::default());
+        assert!(html.contains(">Unconfirmed here</span>"), "{html}");
+        assert!(!html.contains(">UNCONFIRMED"), "{html}");
+        for (effect, word) in [(Effect::Create, "Create"), (Effect::Edit, "Edit"), (Effect::Delete, "Delete"), (Effect::Read, "Read")] {
+            let html = page_html(&flow(), &[on("pms-save-rules", "Save the rules", effect, "rules")], &PagePalette::default());
+            assert!(html.contains("<span class='fx kind' style='--tone:var(") && html.contains(&format!(">{word}</span></span>")), "{word}: {html}");
+        }
+        let css = css_of(&html);
+        let tags = css.split(".stage li .fx{").nth(1).unwrap().split('}').next().unwrap();
+        assert!(!tags.contains("text-transform"), "the template tags are not capitals: {tags}");
+        // The here mark: muted text, a 1px border, no fill. The kind tag: the tone tint in normal text.
+        let here = css.split(".stage li .fx.here{").nth(1).unwrap().split('}').next().unwrap();
+        assert!(here.contains("color:var(--muted)") && here.contains("border:1px solid var(--border)") && here.contains("background:none"), "{here}");
+        let kind = css.split(".stage li .fx.kind{").nth(1).unwrap().split('}').next().unwrap();
+        assert!(kind.contains("color:var(--text)") && kind.contains("color-mix(in srgb,var(--tone) 14%,var(--surface))"), "{kind}");
+        assert!(!css.contains("color:#fff"), "{css}");
+    }
+
+    #[test]
+    fn a_stage_box_is_wide_enough_for_most_names_on_one_or_two_lines() {
+        use v2_lib::api_templates::flow_page::{COL_W, GAP_X};
+        // 320px: about 45 characters of a 12px name beside the box's padding and tone edge.
+        assert_eq!(COL_W, 320);
+        assert_eq!(COL_W % 4, 0, "on the 4px grid");
+        assert_eq!(GAP_X % 4, 0);
+        let html = page_html(&flow(), &[], &PagePalette::default());
+        assert!(css_of(&html).contains(&format!("width:{COL_W}px")), "{html}");
+        // The connectors are measured from the placed boxes, so a wider column needs nothing else.
+        assert!(include_str!("../../web/flow-page.js").contains("getBoundingClientRect"));
     }
 
     fn css_of(html: &str) -> &str {
@@ -1077,7 +1140,8 @@ mod page_tests {
         let html = page_html(&flow(), &[failed], &PagePalette::default());
         assert!(html.contains("<span class='why' title='Failed on this environment at 3: the server said no."), "{html}");
         assert!(html.contains(">failed at step 3: the server said no</span>"), "{html}");
-        assert!(css_of(&html).contains(".stage li .why{flex-basis:100%"), "on its own line");
+        // Updated 27 Nov 2026: the failure line sits under the tags, which are their own row.
+        assert!(css_of(&html).contains(".stage li .why{color:var(--muted)"), "under the tags");
 
         // A long reason is cut on the page, whole in the title.
         let long = "x".repeat(300);
@@ -1129,7 +1193,7 @@ mod page_tests {
         assert_eq!(visible.matches("failed at").count(), 1, "{visible}");
         assert!(!visible.contains("SaveEvalRulesProgress") && !visible.contains("cycleId") && !visible.contains("response began"), "{visible}");
         // The screen-reader list: the same short line.
-        assert!(html.contains("Templates: Save the rules (failed here, failed at Evaluation rules: expected status 200, got 400).</li>"), "{html}");
+        assert!(html.contains("Templates: Save the rules (Failed here, failed at Evaluation rules: expected status 200, got 400).</li>"), "{html}");
         let list = html.split("<ol class='sr-only'").nth(1).unwrap();
         assert!(!list.contains("Server secret page"), "the application's page is never printed: {list}");
         // The title keeps the full sentence.

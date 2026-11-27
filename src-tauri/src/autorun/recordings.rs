@@ -14,6 +14,8 @@ pub const CAP_MS: u64 = 600_000;
 pub const CAP: std::time::Duration = std::time::Duration::from_millis(CAP_MS);
 /// The longest a recording's title is kept, in characters.
 pub const MAX_TITLE: usize = 80;
+/// The most marks one recording keeps; later ones are dropped.
+pub const MAX_MARKS: usize = 2_000;
 
 /// One kept recording.
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
@@ -23,6 +25,11 @@ pub struct RecordingEntry {
     pub created: String,
     pub duration_ms: u32,
     pub file: String,
+    /// One mark per action the assistant tried, each at its offset from the
+    /// recording's start. Left out when there are none, so older entries read
+    /// the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<super::VideoMark>,
 }
 
 /// A recording that is running: the browser's recorder, what it is called
@@ -36,6 +43,8 @@ pub struct Running {
     /// a wall clock that jumps never lengthens or shortens a recording.
     pub started: std::time::Instant,
     pub root: PathBuf,
+    /// One mark per action tried while this recording ran.
+    pub marks: Vec<super::VideoMark>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -148,6 +157,19 @@ fn write_index(held: &std::sync::RwLockReadGuard<'static, ()>, root: &Path, inde
 /// Keep one recording: the file (created new), then the index entry. If the
 /// index cannot be written the file is removed again.
 pub fn add(root: &Path, title: &str, duration_ms: u32, bytes: &[u8]) -> Result<RecordingEntry, String> {
+    add_with_marks(root, title, duration_ms, bytes, Vec::new())
+}
+
+/// `add`, with the marks of the actions tried while it recorded (at most
+/// `MAX_MARKS`; the rest are dropped).
+pub fn add_with_marks(
+    root: &Path,
+    title: &str,
+    duration_ms: u32,
+    bytes: &[u8],
+    mut marks: Vec<super::VideoMark>,
+) -> Result<RecordingEntry, String> {
+    marks.truncate(MAX_MARKS);
     if bytes.is_empty() {
         return Err("the browser gave no video".to_string());
     }
@@ -174,7 +196,7 @@ pub fn add(root: &Path, title: &str, duration_ms: u32, bytes: &[u8]) -> Result<R
                 Err(e) => return Err(e.to_string()),
             }
         };
-        let entry = RecordingEntry { id, title, created: crate::applog::iso_stamp(), duration_ms, file };
+        let entry = RecordingEntry { id, title, created: crate::applog::iso_stamp(), duration_ms, file, marks };
         let _index = index_lock();
         let mut index = match read_index(root, true) {
             Ok(i) => i,

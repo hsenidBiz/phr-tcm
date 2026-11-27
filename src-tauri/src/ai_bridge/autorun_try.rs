@@ -248,6 +248,7 @@ pub(crate) async fn autorun_try(
     let explore_session = session.discovery.as_ref().and_then(|s| s.explore_session()).map(str::to_string);
     // An action that never answers ends inside `try_action`, as a failed
     // action; the call as a whole is bounded by `CALL_BUDGET_MS`.
+    let mark_at = begin_try_mark(&session.discovery, &mut session.cdp);
     let answer = crate::autorun::action_help::CALL_STARTED
         .scope(
             std::time::Instant::now(),
@@ -292,6 +293,7 @@ pub(crate) async fn autorun_try(
             },
         )
         .await;
+    finish_try_mark(&mut session.discovery, &mut session.cdp, mark_at, &action, answer.0);
     let answer = with_wait_notes(answer, &wait_notes);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);

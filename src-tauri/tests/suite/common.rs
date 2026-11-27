@@ -29,6 +29,8 @@ type Handler =
 /// A browser that answers from a closure and remembers every call.
 pub struct ScriptedDriver {
     pub calls: Vec<(String, serde_json::Value)>,
+    /// The label the highlight last drew (`note_drawn_label`), until taken.
+    pub drawn_label: Option<String>,
     handler: Handler,
     /// Events already waiting.
     pub events: VecDeque<Event>,
@@ -261,6 +263,7 @@ impl ScriptedDriver {
             downloads: vec![],
             downloads_on_call: vec![],
             tabs: Tabs::default(),
+            drawn_label: None,
             book: DialogBook::default(),
             dialogs_on_call: vec![],
             dialog_when: None,
@@ -647,6 +650,12 @@ impl Driver for ScriptedDriver {
 
     fn step_began(&mut self) {
         self.tabs.steps_begun += 1;
+    }
+    fn note_drawn_label(&mut self, label: &str) {
+        self.drawn_label = Some(label.to_string());
+    }
+    fn take_drawn_label(&mut self) -> Option<String> {
+        self.drawn_label.take()
     }
     fn tab_name(&self) -> String {
         self.tabs.now()

@@ -7,6 +7,7 @@
  * store keeps state for the session (submit -> the new cases show up in
  * Edit/View/Run), and resets on reload.
  */
+import demoVideoUrl from "./demo-case-video.webm?url";
 import {
   commands,
   events,
@@ -423,6 +424,7 @@ const passedStep = (script: DemoScript, n: number) => ({
 });
 
 const FAIL_SHOT = "case-5002-step-2.png";
+const DEMO_CASE_VIDEO = "video-1700000000000-000001.mp4";
 
 /** One unattended run with a case of each result, one of them retried,
  * waiting to be reviewed. One run, so its Report button is the only one on
@@ -453,6 +455,23 @@ const autoRuns: LocalRun_Serialize[] = [
         proposed: "Failed",
         reason: "Step 2: the error message did not appear within 5 seconds.",
         duration_ms: 12100,
+        video: DEMO_CASE_VIDEO,
+        video_marks: {
+          length_ms: 18000,
+          steps: [
+            { step_number: 0, at_ms: 0 },
+            {
+              step_number: 1,
+              at_ms: 3000,
+              actions: [
+                { label: "Click", at_ms: 3200 },
+                { label: "Type 'Annual'", at_ms: 3900 },
+              ],
+            },
+            { step_number: 2, at_ms: 8000, failed: true, actions: [{ label: "Check: shows 'Saved'", at_ms: 8300 }] },
+            { step_number: 3, cleanup: true, at_ms: 14000 },
+          ],
+        },
         steps: [
           passedStep(scripts.get(5002)!, 1),
           {
@@ -1146,6 +1165,7 @@ function applyPatches() {
     signIn: () => ok(auth),
     signOut: () => err("Demo mode: signing out is disabled"),
     setStaySignedIn: () => err("Demo mode: sign-in settings are disabled"),
+    checkFieldRules: () => Promise.resolve({ checked: true, problems: [] }),
     checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
     applyUpdate: () => err("Demo mode: updates are disabled"),
     // Adding, renaming or removing one of your own databases would write
@@ -1891,10 +1911,29 @@ function applyPatches() {
           created: "2026-11-27T09:30:00Z",
           duration_ms: 94000,
           file: "rec-1.webm",
+          marks: [
+            { label: "Click", at_ms: 2000 },
+            { label: "Type 'Leave'", at_ms: 5500 },
+            { label: "Take a picture", at_ms: 9000 },
+          ],
         },
       ]),
     autoRunVideoInfo: (name: string) =>
-      Promise.resolve(name === "rec-1.webm" ? { size: 3_400_000, playable: true, attachable: true } : null),
+      Promise.resolve(
+        name === "rec-1.webm"
+          ? { size: 3_400_000, playable: true, attachable: true }
+          : name === DEMO_CASE_VIDEO
+            ? { size: 2_100_000, playable: true, attachable: true }
+            : null,
+      ),
+    autoRunVideo: async (name: string) => {
+      if (name !== DEMO_CASE_VIDEO && name !== "rec-1.webm") return err("Demo mode: that video is not in the sample data");
+      const bytes = new Uint8Array(await (await fetch(demoVideoUrl)).arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return ok(btoa(bin));
+    },
+    autoRunSaveVideo: () => ok(null),
     autoRunOpenReport: () => err("Demo mode: run reports are off in sample data"),
     autoRunShot: () => ok(captureShotData()),
     autoRunCountEvidence: () => ok(false),

@@ -1,7 +1,7 @@
-// The Components card: the project's saved components, each with its
-// inputs, when and where it was tried, its version and changes, and the
-// scripts that use it. Remove is held while a script uses one and asks
-// first otherwise; a file that cannot be read offers Reset.
+// The Components dialog: the project's saved components grouped by the
+// area each was tried in, one line each (cases, version, Unused); a row
+// opens to its inputs, history and cases. Remove is held while a script
+// uses one and asks first otherwise; a file that cannot be read offers Reset.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -55,7 +55,44 @@ function mount(components: ComponentView[]) {
   return { calls };
 }
 
-test("lists_components_with_inputs_users_and_changes", async () => {
+const open = (name: string) => fireEvent.click(screen.getByRole("button", { name: `Show ${name}` }));
+
+test("groups_by_area_with_counts_and_other_last", async () => {
+  mount([
+    component({ name: "close-toast", tried_area: "", tried_at: null }),
+    component({ name: "pick-date", tried_area: "Leave" }),
+    component({ name: "pick-month", tried_area: "Leave" }),
+    component({ name: "save-form", tried_area: "Payroll" }),
+  ]);
+  await screen.findByRole("listitem", { name: "pick-date" });
+  const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+  // First appearance orders the groups; a component with no area is Other, last.
+  expect(headings).toEqual(["Leave· 2", "Payroll· 1", "Other· 1"]);
+  expect(screen.getByText("4 components · used by 0 cases")).toBeInTheDocument();
+});
+
+test("the summary counts distinct cases", async () => {
+  mount([component({ name: "a", used_by_cases: [1, 2] }), component({ name: "b", used_by_cases: [2, 3] })]);
+  expect(await screen.findByText("2 components · used by 3 cases")).toBeInTheDocument();
+});
+
+test("a row shows its cases, version and Unused", async () => {
+  mount([
+    component({ name: "pick-date", version: 4, used_by_cases: [4, 12] }),
+    component({ name: "one", used_by_cases: [7] }),
+    component({ name: "unused" }),
+  ]);
+  const pick = await screen.findByRole("listitem", { name: "pick-date" });
+  expect(within(pick).getByText("2 cases")).toBeInTheDocument();
+  expect(within(pick).getByText("v4")).toBeInTheDocument();
+  expect(within(pick).queryByText("Unused")).not.toBeInTheDocument();
+  expect(within(screen.getByRole("listitem", { name: "one" })).getByText("1 case")).toBeInTheDocument();
+  expect(within(screen.getByRole("listitem", { name: "unused" })).getByText("Unused")).toBeInTheDocument();
+  // Collapsed: the detail is not rendered until a row opens.
+  expect(screen.queryByText(/never changed/)).not.toBeInTheDocument();
+});
+
+test("opening a component shows its detail, five cases first and the rest on request", async () => {
   mount([
     component({
       name: "pick-date",
@@ -66,57 +103,85 @@ test("lists_components_with_inputs_users_and_changes", async () => {
       ],
       version: 4,
       changes: 3,
-      used_by_cases: [4, 12],
+      used_by_cases: [1, 2, 3, 4, 5, 6, 7],
     }),
-    component({ name: "close-toast", tried_at: null, tried_area: "", used_by_cases: [7] }),
-    component({ name: "unused" }),
+    component({ name: "close-toast", tried_at: null, tried_area: "", changes: 0 }),
   ]);
-  expect(screen.getByRole("heading", { name: "Components" })).toBeInTheDocument();
-  const pick = await screen.findByRole("listitem", { name: "pick-date" });
-  expect(pick).toHaveTextContent("Picks a day in the date picker");
+  await screen.findByRole("listitem", { name: "pick-date" });
+  const toggle = screen.getByRole("button", { name: "Show pick-date" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  const pick = screen.getByRole("listitem", { name: "pick-date" });
+  expect(screen.getByRole("button", { name: "Hide pick-date" })).toHaveAttribute("aria-expanded", "true");
+  expect(within(pick).getByText("Picks a day in the date picker")).toBeInTheDocument();
   const inputs = within(pick).getByRole("list", { name: "Inputs of pick-date" });
   expect(within(inputs).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-    "field (target): the date field",
-    "day (text): the day to pick",
+    "field · target · the date field",
+    "day · text · the day to pick",
   ]);
   const date = new Date(TRIED).toLocaleDateString();
-  expect(within(pick).getByText(`Tried ${date} in Leave`)).toBeInTheDocument();
-  expect(within(pick).getByText("Version 4")).toBeInTheDocument();
-  // Changes are counted for the person to see; there is no limit on them.
-  expect(within(pick).getByText("Changed 3 times")).toBeInTheDocument();
-  expect(within(pick).getByText("Used by cases 4, 12")).toBeInTheDocument();
-  expect(within(pick).queryByText("Needs a look")).not.toBeInTheDocument();
+  expect(within(pick).getByText(`Tried ${date} · changed 3 times`)).toBeInTheDocument();
+  for (const id of ["1", "2", "3", "4", "5"]) expect(within(pick).getByText(id)).toBeInTheDocument();
+  expect(within(pick).queryByText("6")).not.toBeInTheDocument();
+  fireEvent.click(within(pick).getByRole("button", { name: "and 2 more" }));
+  expect(within(pick).getByText("6")).toBeInTheDocument();
+  expect(within(pick).getByText("7")).toBeInTheDocument();
+  expect(within(pick).queryByRole("button", { name: /more/ })).not.toBeInTheDocument();
 
-  const toast = screen.getByRole("listitem", { name: "close-toast" });
-  expect(within(toast).getByText("Not tried yet")).toBeInTheDocument();
-  expect(within(toast).getByText("Used by case 7")).toBeInTheDocument();
-  expect(within(toast).queryByText(/Changed/)).not.toBeInTheDocument();
-  expect(within(toast).queryByText("Needs a look")).not.toBeInTheDocument();
-  expect(within(toast).queryByRole("list", { name: "Inputs of close-toast" })).not.toBeInTheDocument();
+  open("close-toast");
+  expect(screen.getByText("Not tried yet · never changed")).toBeInTheDocument();
+});
 
-  expect(within(screen.getByRole("listitem", { name: "unused" })).getByText("Not used by any script")).toBeInTheDocument();
+test("search filters by name, description, input name and case id, and says when nothing matches", async () => {
+  mount([
+    component({ name: "pick-date", description: "Picks a day", used_by_cases: [412] }),
+    component({ name: "close-toast", inputs: [{ name: "selector", kind: "target", description: "" }] }),
+  ]);
+  await screen.findByRole("listitem", { name: "pick-date" });
+  const box = screen.getByRole("textbox", { name: "Search components" });
+  const shown = () => screen.queryAllByRole("listitem").map((li) => li.getAttribute("aria-label"));
+  fireEvent.change(box, { target: { value: "toast" } });
+  expect(shown()).toContain("close-toast");
+  expect(shown()).not.toContain("pick-date");
+  fireEvent.change(box, { target: { value: "a day" } });
+  expect(shown()).toContain("pick-date");
+  expect(shown()).not.toContain("close-toast");
+  fireEvent.change(box, { target: { value: "selector" } });
+  expect(shown()).toContain("close-toast");
+  fireEvent.change(box, { target: { value: "412" } });
+  expect(shown()).toContain("pick-date");
+  expect(shown()).not.toContain("close-toast");
+  fireEvent.change(box, { target: { value: "zzz" } });
+  expect(screen.getByText('No components match "zzz"')).toBeInTheDocument();
+});
+
+test("Expand all and Collapse all open and fold every row", async () => {
+  mount([component({ name: "a", description: "first" }), component({ name: "b", description: "second" })]);
+  await screen.findByRole("listitem", { name: "a" });
+  fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+  expect(screen.getByText("first")).toBeInTheDocument();
+  expect(screen.getByText("second")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand all" })).toBeInTheDocument();
 });
 
 test("an empty file says none are saved yet", async () => {
   mount([]);
   expect(await screen.findByText(/None yet/)).toBeInTheDocument();
   expect(screen.queryByRole("list", { name: "Saved components" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Search components" })).not.toBeInTheDocument();
 });
 
 test("remove_is_disabled_while_in_use_and_confirms_otherwise", async () => {
-  const { calls } = mount([
-    component({ name: "pick-date", used_by_cases: [4, 12] }),
-    component({ name: "close-toast", used_by_cases: [7] }),
-    component({ name: "unused" }),
-  ]);
+  const { calls } = mount([component({ name: "pick-date", used_by_cases: [4, 12] }), component({ name: "unused" })]);
   await screen.findByRole("listitem", { name: "pick-date" });
+  fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
 
+  // Held while a script uses it; the reason is the title.
   const held = screen.getByRole("button", { name: "Remove pick-date" });
   expect(held).toBeDisabled();
-  expect(held).toHaveAttribute("title", "Used by cases 4, 12: change those scripts first.");
-  const one = screen.getByRole("button", { name: "Remove close-toast" });
-  expect(one).toBeDisabled();
-  expect(one).toHaveAttribute("title", "Used by case 7: change that script first.");
+  expect(held).toHaveAttribute("title", "Scripts still use it");
 
   const free = screen.getByRole("button", { name: "Remove unused" });
   expect(free).toBeEnabled();
@@ -152,7 +217,9 @@ test("a refused remove says why", async () => {
       <ComponentsDialog org="acme" project="Web" onClose={vi.fn()} />
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Remove unused" }));
+  // Remove now lives in the opened row, so the row opens first.
+  fireEvent.click(await screen.findByRole("button", { name: "Show unused" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove unused" }));
   fireEvent.click(within(screen.getByRole("group", { name: "Remove unused?" })).getByRole("button", { name: "Remove" }));
   expect(await screen.findByText("unused is used by case 9: change that script first.")).toBeInTheDocument();
 });
@@ -199,4 +266,24 @@ test("the summary line counts components or says none", () => {
   expect(componentsSummary({ components: [component({ name: "a" }), component({ name: "b" })] })).toBe(
     "2 components",
   );
+});
+
+test("Expand all adds to the rows already open, and a changed search drops an armed Remove", async () => {
+  mount([component({ name: "a", description: "first" }), component({ name: "b", description: "second" })]);
+  await screen.findByRole("listitem", { name: "a" });
+  const box = screen.getByRole("textbox", { name: "Search components" });
+  // Open b, then hide it with a search; Expand all there must not fold it.
+  fireEvent.click(within(screen.getByRole("listitem", { name: "b" })).getAllByRole("button")[0]);
+  expect(screen.getByText("second")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "first" } });
+  fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+  fireEvent.change(box, { target: { value: "" } });
+  expect(screen.getByText("second")).toBeInTheDocument();
+  expect(screen.getByText("first")).toBeInTheDocument();
+
+  // An armed Remove goes when the search changes.
+  fireEvent.click(screen.getByRole("button", { name: "Remove a" }));
+  expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "a" } });
+  expect(screen.queryByRole("button", { name: "Keep" })).not.toBeInTheDocument();
 });
