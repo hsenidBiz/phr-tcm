@@ -362,6 +362,7 @@ function RunWindow({ run }: { run: BackgroundRun }) {
               className="w-56"
               value={runAccount}
               clearable={false}
+              triggerClassName="px-3 py-2"
               onChange={(v) => {
                 setPicked(v);
                 try {

@@ -419,6 +419,7 @@ export default function AreasDialog({
           className="w-56"
           value={who}
           clearable={false}
+          triggerClassName="px-3 py-2"
           placeholder="No accounts yet"
           onChange={setPicked}
           items={(accounts.data ?? []).map((a) => ({ value: a.key, label: a.label ? `${a.label} (${a.key})` : a.key }))}

@@ -345,6 +345,7 @@ function ScriptEditorBody({
               value={account}
               onChange={setPicked}
               clearable={false}
+              triggerClassName="px-3 py-2"
               items={[
                 { value: "", label: "No sign-in" },
                 ...(accounts.data ?? []).map((a) => ({ value: a.key, label: `${a.label.trim() || a.key} (${a.key})` })),

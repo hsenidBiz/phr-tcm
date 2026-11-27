@@ -1278,3 +1278,11 @@ test("No sign-in leads the Runs as list, and choosing it sets no account", async
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
   await waitFor(() => expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: null }]));
 });
+
+test("No sign-in, a real choice, is not drawn like an unselected placeholder", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, PEREZ_ACCOUNTS, []);
+  const pick = await screen.findByRole("combobox", { name: "Runs as" });
+  const text = within(pick).getByText("No sign-in");
+  expect(text).toHaveClass("text-text");
+  expect(text).not.toHaveClass("text-faint");
+});

@@ -171,7 +171,7 @@ export default function Combobox({
           setOpen((o) => !o);
         }}
       >
-        <span className={cn("truncate", value ? "text-text" : "text-faint")} title={selectedLabel || undefined}>
+        <span className={cn("truncate", rows.some((r) => r.value === value) || value ? "text-text" : "text-faint")} title={selectedLabel || undefined}>
           {selectedLabel || placeholder}
         </span>
         <span className="flex shrink-0 items-center gap-1">

@@ -40,10 +40,10 @@ const MANAGE_CYCLE = {
   recorded: "2026-09-24T10:00:00Z",
 };
 
-function mount(handler: (cmd: string, args: Record<string, unknown>) => unknown) {
+function mount(handler: (cmd: string, args: Record<string, unknown>) => unknown, accounts: unknown[] = ACCOUNTS) {
   mockIPC(
     (cmd, args) => {
-      if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+      if (cmd === "auto_run_list_accounts") return accounts;
       const out = handler(String(cmd), (args ?? {}) as Record<string, unknown>);
       return out === undefined ? null : out;
     },
@@ -746,4 +746,28 @@ test("Put old path back that is refused says why and keeps the note", async () =
   fireEvent.click(await screen.findByRole("button", { name: "Put old path back for Leave" }));
   expect(await screen.findByText(/has no repaired path to put back/)).toBeInTheDocument();
   expect(screen.getByText("Path repaired by an assistant: Moved")).toBeInTheDocument();
+});
+
+test("searching the Record and try as list narrows it to the matching accounts, and the pick is the account recorded with", async () => {
+  const calls: Record<string, unknown>[] = [];
+  mount(
+    (cmd, args) => {
+      if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+      if (cmd === "auto_run_record_start") {
+        calls.push(args);
+        return null;
+      }
+    },
+    [
+      { key: "kim.lee", label: "Kim Lee (000214)", username: "k", password: "p" },
+      { key: "evelyn1", label: "Evelyn Perez (001739)", username: "e", password: "p" },
+    ],
+  );
+  fireEvent.click(await screen.findByRole("combobox", { name: "Record and try as" }));
+  await screen.findByRole("option", { name: "Kim Lee (000214) (kim.lee)" });
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "Perez" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Evelyn Perez (001739) (evelyn1)"]);
+  fireEvent.click(screen.getByRole("option", { name: "Evelyn Perez (001739) (evelyn1)" }));
+  await startRecording();
+  expect(calls[0]).toEqual(expect.objectContaining({ account: "evelyn1" }));
 });

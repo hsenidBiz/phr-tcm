@@ -324,6 +324,7 @@ export default function RecordSignInDialog({
         value={who}
         disabled={disabled || keys.length === 0}
         clearable={false}
+        triggerClassName="px-3 py-2"
         placeholder="No accounts yet"
         onChange={setPicked}
         items={(accounts.data ?? []).map((a) => ({ value: a.key, label: a.label ? `${a.label} (${a.key})` : a.key }))}
