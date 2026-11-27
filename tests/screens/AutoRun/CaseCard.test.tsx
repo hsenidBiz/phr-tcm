@@ -350,6 +350,9 @@ test("a reason loses only a leading assumed: or invented: prefix, and no reason 
     { value: "7", why: "" },
   ]);
   expect(stepBecauseParts(step, true)).toEqual([{ value: "USD", why: "one currency" }]);
+  // Leading spaces, and a space before the colon, are part of the prefix.
+  const spaced = { step_number: 1, actions: [], because: [{ value: "a", why: "  assumed: x" }, { value: "b", why: "assumed : y" }] } as CaseScript["steps"][number];
+  expect(stepBecauseParts(spaced, false).map((e) => e.why)).toEqual(["x", "y"]);
 });
 
 test("an assumed value with no step of the list stays a short list after the steps", () => {
@@ -696,7 +699,8 @@ test("the summary counts the rulings in a chip, and has none without a ruling", 
 
 test("a ruling that waits for a repair keeps its badge and the /tcm:heal line inside the opened step", () => {
   renderCard({ open: true, divergences: [{ ...RULED, status: "awaiting_repair", ruling: "rewrite" } as Divergence] });
-  expect(screen.queryByText("Waits for a repair")).not.toBeInTheDocument();
+  // Closed, only the row tag says it; the badge and the heal line are inside.
+  expect(screen.queryByRole("group", { name: "Ruling in step 2" })).not.toBeInTheDocument();
   openStep2();
   const group = screen.getByRole("group", { name: "Ruling in step 2" });
   expect(within(group).getByText("Waits for a repair")).toBeInTheDocument();
@@ -748,6 +752,32 @@ test("a card with one step opens it", () => {
   });
   expect(screen.getByRole("button", { name: "Hide step 1 of #7" })).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByRole("group", { name: "Assumed in step 1" })).toBeInTheDocument();
+});
+
+test("a script that arrives after the card mounts opens its one step once, and stays closed after the person closes it", () => {
+  mockIPC(() => null);
+  const one = { ...BARE, steps: [{ step_number: 1, actions: [], because: [{ value: "UTC", why: "no zone given" }] }] } as CaseScript;
+  const qc = new QueryClient();
+  const tree = (script: CaseScript | null) => (
+    <QueryClientProvider client={qc}>
+      <ul>
+        <CaseCard c={CASE} org="acme" project="Web" script={script} result="Failed" selected={false} open onSelect={vi.fn()}
+          onToggleOpen={vi.fn()} onEdit={vi.fn()} onRun={vi.fn()} confirmingClear={false} divergences={[]} onAskClear={vi.fn()} onClearDone={vi.fn()} />
+      </ul>
+    </QueryClientProvider>
+  );
+  const { rerender } = render(tree(null));
+  rerender(tree(one));
+  fireEvent.click(screen.getByRole("button", { name: "Hide step 1 of #7" }));
+  rerender(tree({ ...one }));
+  expect(screen.getByRole("button", { name: "Show step 1 of #7" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a step whose ruling waits for a repair says so on its closed row", () => {
+  renderCard({ open: true, divergences: [{ ...RULED, status: "awaiting_repair", ruling: "rewrite" } as Divergence] });
+  const items = within(screen.getByRole("list", { name: "Script steps of #7" })).getAllByRole("listitem");
+  expect(items[1]).toHaveTextContent("Waits for a repair");
+  expect(items[1]).not.toHaveTextContent(/Ruled/);
 });
 
 test("a card with nothing to fold has no Expand all", () => {

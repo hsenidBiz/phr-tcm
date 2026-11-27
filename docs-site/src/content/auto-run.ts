@@ -338,7 +338,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "list", name: "Script steps of #5002" },
       name: "Steps",
-      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. Each step is one line; the small tags on it (**Ruled**, **assumed**, **invented**, **unchecked**) count what it carries, and its arrow opens them: the ruling with **Details** and **Undo ruling**, each value with why, and each **Not checked** expectation. **Expand all steps** opens every one. Read only: change them with **Script**.",
+      does: "The script's steps, numbered, each with the case's own words for it. Each step is one line, with its action count on the row when it has nothing to open and inside the opened step otherwise; the small tags on it (**Ruled**, **assumed**, **invented**, **unchecked**) count what it carries, and its arrow opens them: the ruling with **Details** and **Undo ruling**, each value with why, and each **Not checked** expectation. **Expand all steps** opens every one. Read only: change them with **Script**.",
     },
     {
       id: "suspected-defect",

@@ -134,7 +134,7 @@ export function stepBecauseParts(
 ): { value: string; why: string }[] {
   return (step.because ?? [])
     .filter((b) => (b.provenance === "invented") === invented)
-    .map((b) => ({ value: b.value, why: (b.why ?? "").replace(/^s*(assumed|invented)s*:s*/i, "").trim() }));
+    .map((b) => ({ value: b.value, why: (b.why ?? "").replace(/^\s*(assumed|invented)\s*:\s*/i, "").trim() }));
 }
 
 /** Every step's "because" entries of one source, as "step 2: 6 (why); ...". */
@@ -310,6 +310,13 @@ function CaseCard({
     // Steps start closed; a card with one step opens it.
     () => new Set(script?.steps.length === 1 ? [script.steps[0].step_number] : []),
   );
+  // The script may arrive after the card mounts: a one-step script opens its
+  // step the first time it shows up, and never again once the person closes it.
+  const [seeded, setSeeded] = useState(Boolean(script));
+  if (!seeded && script) {
+    setSeeded(true);
+    if (script.steps.length === 1) setOpenSteps(new Set([script.steps[0].step_number]));
+  }
   const toggleStep = (n: number) =>
     setOpenSteps((prev) => {
       const next = new Set(prev);
@@ -528,7 +535,11 @@ function CaseCard({
                             <span className="min-w-0 flex-1 truncate text-text" title={own ? caseTextLine(own.action) : undefined}>
                               {own?.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own && caseTextLine(own.action)}
                             </span>
-                            {d && d.rulings.length > 0 && <NoteTag tone="accent">Ruled</NoteTag>}
+                            {d && d.rulings.some((r) => r.status === "awaiting_repair") ? (
+                              <NoteTag tone="warning">Waits for a repair</NoteTag>
+                            ) : (
+                              d && d.rulings.length > 0 && <NoteTag tone="accent">Ruled</NoteTag>
+                            )}
                             {d && d.assumed.length > 0 && <NoteTag tone="neutral">{`${d.assumed.length} assumed`}</NoteTag>}
                             {d && d.invented.length > 0 && <NoteTag tone="neutral">{`${d.invented.length} invented`}</NoteTag>}
                             {d && d.notChecked.length > 0 && <NoteTag tone="warning">{`${d.notChecked.length} unchecked`}</NoteTag>}
