@@ -25,7 +25,7 @@ test("the parser reads the owner's four items into chips and text", () => {
     text: "Submitted, Goals flagged, rejected",
   });
   expect(parseSetItem(...ITEMS[3])).toEqual({
-    chips: ["Employee 000015", "Stage competency", "Cycle 11892"],
+    chips: ["Employee 000015", "Cycle 11892", "Stage competency"],
     text: "Submitted by the employee, not rated by the manager",
   });
 });

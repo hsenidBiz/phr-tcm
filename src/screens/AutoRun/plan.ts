@@ -97,7 +97,6 @@ const upFirst = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
  * words left over. A name with none of them is not recognised: null. */
 export function parseSetName(name: string): { chips: string[]; rest: string } | null {
   let text = name;
-  const found: { at: number; chip: string; first?: boolean }[] = [];
   const employee = /^\s*(\d{6})\b/.exec(text);
   if (employee) text = text.slice(employee[0].length);
   const cycle = /(\s+of)?(?:^|\s+)cycle\s+(\d+)\b/i.exec(text);
@@ -110,17 +109,19 @@ export function parseSetName(name: string): { chips: string[]; rest: string } | 
   }
   const before = stage ? null : /([\w-]+)\s+stage\b/i.exec(text);
   const stageHit = stage ?? before;
-  if (cycle) found.push({ at: cycle.index, chip: "Cycle " + cycle[2], first: !!cycle[1] });
-  if (stageHit) found.push({ at: stageHit.index, chip: "Stage " + stageHit[1] });
-  if (!employee && found.length === 0) return null;
-  // "stage X of cycle N" lists the cycle first; otherwise as written.
-  found.sort((x, y) => (x.first ? -1 : y.first ? 1 : x.at - y.at));
+  if (!employee && !cycle && !stageHit) return null;
   for (const m of [cycle, stageHit]) if (m) text = text.replace(m[0], " ");
   const rest = text
     .replace(/[,\s]+/g, " ")
     .replace(/^(of )+|( of)+$/gi, "")
     .trim();
-  return { chips: [...(employee ? ["Employee " + employee[1]] : []), ...found.map((f) => f.chip)], rest };
+  // Always employee, cycle, stage, whatever order the name uses.
+  const chips = [
+    ...(employee ? ["Employee " + employee[1]] : []),
+    ...(cycle ? ["Cycle " + cycle[2]] : []),
+    ...(stageHit ? ["Stage " + stageHit[1]] : []),
+  ];
+  return { chips, rest };
 }
 
 /** What a setting shows: its chips and `Rest: value` (just the value when
