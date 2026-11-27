@@ -405,20 +405,11 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             // same subagent.
             let _holding = CallingAgent::set(agent.clone());
             let agent = agent.as_deref();
-            // A healer's rules hold the account: the save never reaches the app.
-            if name == "save_autorun_script"
+            // A healer's rules hold the account: its save is refused (after the module checks).
+            let healer_keeps_account = name == "save_autorun_script"
                 && crate::autorun::roles::declares_account_change(&args)
-                && session.delivered(agent, crate::autorun::roles::Role::Healer)
-            {
-                return Some(
-                    serde_json::json!({
-                        "jsonrpc": "2.0", "id": id,
-                        "result": { "content": [{ "type": "text", "text": crate::autorun::roles::HEALER_KEEPS_ACCOUNT }], "isError": true },
-                    })
-                    .to_string(),
-                );
-            }
-            let (mut result, reached) = tools_call_outcome(params, call);
+                && session.delivered(agent, crate::autorun::roles::Role::Healer);
+            let (mut result, reached) = tools_call_outcome(params, call, healer_keeps_account);
             if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
                     session.mark_read(agent, role);
@@ -2589,7 +2580,7 @@ pub fn coerce_args(name: &str, args: &serde_json::Value) -> serde_json::Value {
 }
 
 /// The answer to a tool call, and whether the call reached the app (the dispatch answered, with any status).
-fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_json::Value, bool) {
+fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall, healer_keeps_account: bool) -> (serde_json::Value, bool) {
     let name = params["name"].as_str().unwrap_or_default();
     // Every bridge request from here on names the tool, so the app logs the
     // call once: a refusal on the `/tools` read, otherwise the route's answer.
@@ -2650,6 +2641,16 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                     "type": "text",
                     "text": text,
                 }],
+                "isError": true,
+            }),
+            false,
+        );
+    }
+    if healer_keeps_account {
+        crate::applog::info(format!("mcp relay: refused {name}: a healer's save declares an account change"));
+        return (
+            serde_json::json!({
+                "content": [{ "type": "text", "text": crate::autorun::roles::HEALER_KEEPS_ACCOUNT }],
                 "isError": true,
             }),
             false,

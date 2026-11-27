@@ -115,6 +115,7 @@ fn the_writer_carries_the_owners_rules() {
             "Known quirks",
             "Carry out every step live before you write it",
             "Never guess a locator, an address or a menu path",
+            "use only what the page showed",
             "report the step word for word",
             "never fit a check to the page",
             "an icon too",

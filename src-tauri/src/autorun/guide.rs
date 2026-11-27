@@ -3044,7 +3044,9 @@ a script - with one entry per case you are changing: the `case_id`, every
 step number whose actions were added, removed or changed, and one
 sentence of `why`. When the repair changes the script's `area` - and
 leaving out an `area` the saved script has is a change - the entry also
-says `"area": true`. When the repair changes the account the script runs as (a writer's or a case rewriter's call, never a healer's), the entry says `"account": true` and the account is a saved key. This gate can refuse a save for any of these reasons:
+says `"area": true`. When the repair changes the account the script runs as
+(a writer's or a case rewriter's call, never a healer's), the entry says
+`"account": true` and the account is a saved key. This gate can refuse a save for any of these reasons:
 
 - a step you changed but left out of `edits` - `step N was changed but not declared`, naming every such step
 - a step named in `edits` that you did not actually touch - `step N was declared but not changed`
