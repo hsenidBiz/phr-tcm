@@ -9,28 +9,40 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useId, useMemo, useState, type ComponentType } from "react";
-import { commands } from "../../bindings";
+import { commands, type CaseScript } from "../../bindings";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
+import { SearchInput } from "../../components/ui/search-input";
 import { MODAL_LARGE } from "./modalWidths";
 import {
   IconAddFiles,
   IconBrowse,
   IconCancel,
+  IconCollapseAll,
   IconConfirm,
+  IconExpandAll,
   IconFileArchive,
   IconFileData,
   IconFileDocument,
   IconFileImage,
   IconFileOther,
   IconFileSpreadsheet,
+  IconHideDetails,
   IconRemove,
+  IconShowDetails,
 } from "../../lib/actionIcons";
 import { fileName } from "../../lib/fileSync";
 import { unwrapStr } from "../../lib/ipc";
+import { plural } from "../../lib/plural";
+import { scriptFiles } from "./CaseCard";
 
 /** The query key every view of a project's Test files shares. */
-export const testFilesKey = (org: string, project: string) => ["test-files", org, project];
+export const testFilesKey = (org: string, project: string) => [
+  "test-files",
+  org,
+  project,
+];
 
 /** The list, for the dialog and the rows that report a count. Plain local
  * files read through Rust, so no persistent cache: a copy on disk could only
@@ -38,7 +50,8 @@ export const testFilesKey = (org: string, project: string) => ["test-files", org
 export function useTestFiles(org: string, project: string) {
   return useQuery({
     queryKey: testFilesKey(org, project),
-    queryFn: async () => (await unwrapStr(commands.testFilesList(org, project))) ?? [],
+    queryFn: async () =>
+      (await unwrapStr(commands.testFilesList(org, project))) ?? [],
     enabled: Boolean(org && project),
     retry: false,
   });
@@ -60,15 +73,41 @@ const KINDS: {
   extensions: string[];
   icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 }[] = [
-  { name: "Spreadsheets", extensions: ["xlsx", "xls", "xlsm", "csv", "tsv", "ods"], icon: IconFileSpreadsheet },
-  { name: "Documents", extensions: ["pdf", "doc", "docx", "txt", "rtf", "odt", "md"], icon: IconFileDocument },
+  {
+    name: "Spreadsheets",
+    extensions: ["xlsx", "xls", "xlsm", "csv", "tsv", "ods"],
+    icon: IconFileSpreadsheet,
+  },
+  {
+    name: "Documents",
+    extensions: ["pdf", "doc", "docx", "txt", "rtf", "odt", "md"],
+    icon: IconFileDocument,
+  },
   {
     name: "Images",
-    extensions: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tif", "tiff"],
+    extensions: [
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "bmp",
+      "webp",
+      "svg",
+      "tif",
+      "tiff",
+    ],
     icon: IconFileImage,
   },
-  { name: "Data", extensions: ["json", "xml", "yaml", "yml"], icon: IconFileData },
-  { name: "Archives", extensions: ["zip", "7z", "rar", "gz", "tar"], icon: IconFileArchive },
+  {
+    name: "Data",
+    extensions: ["json", "xml", "yaml", "yml"],
+    icon: IconFileData,
+  },
+  {
+    name: "Archives",
+    extensions: ["zip", "7z", "rar", "gz", "tar"],
+    icon: IconFileArchive,
+  },
   { name: "Other", extensions: [], icon: IconFileOther },
 ];
 
@@ -104,10 +143,16 @@ const ALREADY_THERE = "is already in Test files";
 export default function TestFilesDialog({
   org,
   project,
+  scripts,
   onClose,
 }: {
   org: string;
   project: string;
+  /** The listed cases' scripts, as Auto Test's own queries hold them
+   * (`["autorun-script", id]`): `undefined` for one not read yet or that
+   * could not be. Left out where no cases are listed (API Templates), the
+   * rows then say nothing about use. */
+  scripts?: (CaseScript | null | undefined)[];
   onClose: () => void;
 }) {
   const headingId = useId();
@@ -120,8 +165,12 @@ export default function TestFilesDialog({
   // The file whose Remove is waiting for its confirm.
   const [removing, setRemoving] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  // Groups the person opened or closed; a kind not here follows the default.
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
 
-  const refresh = () => qc.invalidateQueries({ queryKey: testFilesKey(org, project) });
+  const refresh = () =>
+    qc.invalidateQueries({ queryKey: testFilesKey(org, project) });
 
   const addFiles = async () => {
     setProblems([]);
@@ -132,7 +181,8 @@ export default function TestFilesDialog({
       setProblems([message(e)]);
       return;
     }
-    const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
+    const paths =
+      picked == null ? [] : Array.isArray(picked) ? picked : [picked];
     if (paths.length === 0) return;
     setBusy(true);
     const have = new Set((files.data ?? []).map((f) => f.name.toLowerCase()));
@@ -198,71 +248,204 @@ export default function TestFilesDialog({
   };
 
   const list = files.data ?? [];
-  const groups = useMemo(() => groupTestFiles(files.data ?? []), [files.data]);
+  const needle = query.trim().toLowerCase();
+  const searching = needle !== "";
+  const groups = useMemo(() => {
+    const all = groupTestFiles(files.data ?? []);
+    if (!needle) return all;
+    return all
+      .map((g) => ({
+        ...g,
+        files: g.files.filter((f) => f.name.toLowerCase().includes(needle)),
+      }))
+      .filter((g) => g.files.length > 0);
+  }, [files.data, needle]);
+  // Closed to start with, unless there is only one group to look at. A
+  // search opens every group it matches in.
+  const isOpen = (kind: string) =>
+    searching || (folded[kind] ?? groups.length === 1);
+  const allOpen = groups.every((g) => isOpen(g.kind.name));
+  const setAll = (open: boolean) =>
+    setFolded(Object.fromEntries(groups.map((g) => [g.kind.name, open])));
+
+  // How many cases upload each file, by lower-cased name (Windows names are
+  // not case-sensitive). Null unless every listed case's script has been
+  // read: a count from some of them would be a wrong one.
+  const usage = useMemo(() => {
+    if (
+      !scripts ||
+      scripts.length === 0 ||
+      scripts.some((sc) => sc === undefined)
+    )
+      return null;
+    const counts = new Map<string, number>();
+    for (const sc of scripts) {
+      if (!sc) continue;
+      for (const f of new Set(
+        scriptFiles(sc).uploads.map((u) => u.toLowerCase()),
+      )) {
+        counts.set(f, (counts.get(f) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [scripts]);
   const asking = clashes[0];
 
   return (
-    <Modal onClose={onClose} labelledBy={headingId} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
+    <Modal
+      onClose={onClose}
+      labelledBy={headingId}
+      className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}
+    >
       <h2 id={headingId} className="text-sm font-semibold text-text">
         Test files
       </h2>
       <p className="text-xs text-muted">
-        Scripts and API templates upload these by name. They stay on this machine.
+        Scripts and API templates upload these by name. They stay on this
+        machine.
       </p>
 
       {files.isLoading && <p className="text-xs text-muted">Loading…</p>}
-      {files.isError && <p className="text-xs text-danger">{files.error.message}</p>}
+      {files.isError && (
+        <p className="text-xs text-danger">{files.error.message}</p>
+      )}
       {files.isSuccess && list.length === 0 && (
-        <p className="text-sm text-muted">No test files yet - add the documents your tests upload.</p>
+        <p className="text-sm text-muted">
+          No test files yet - add the documents your tests upload.
+        </p>
       )}
       {list.length > 0 && (
+        <SearchInput
+          aria-label="Search test files"
+          placeholder="Search test files"
+          value={query}
+          onChange={setQuery}
+        />
+      )}
+      {list.length > 0 && searching && groups.length === 0 && (
+        <p className="text-sm text-muted">No files match "{query.trim()}"</p>
+      )}
+      {groups.length > 0 && (
         // One labelled wrapper, then one labelled group per kind. Groups are
         // told apart by the gap between them, wider than the one between rows.
-        <div role="group" aria-label="Test files" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
-          {groups.map(({ kind, files: inGroup }) => (
-            <div key={kind.name} role="group" aria-label={kind.name}>
-              <h3 className="pb-1 text-xs text-muted">
-                {kind.name} · {inGroup.length}
-              </h3>
-              <ul className="divide-y divide-border/60">
-                {inGroup.map((f) => (
-                  <li key={f.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-                    <kind.icon aria-hidden className="size-4 shrink-0 text-faint" />
-                    <span className="min-w-0 flex-1 basis-40 truncate text-sm text-text" title={f.name}>
-                      {f.name}
-                    </span>
-                    <span className="w-20 shrink-0 text-right text-xs tabular-nums text-faint">
-                      {fileSize(f.size)}
-                    </span>
-                    {removing === f.name ? (
-                      <span role="group" aria-label={`Remove ${f.name}?`} className="flex basis-full items-center justify-end gap-2">
-                        <span className="min-w-0 break-all text-xs text-muted">Remove {f.name}?</span>
-                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(null)}>
-                          <IconCancel aria-hidden />
-                          Keep
-                        </Button>
-                        <Button size="sm" variant="danger" disabled={busy} onClick={() => void remove(f.name)}>
-                          <IconRemove aria-hidden />
-                          Remove
-                        </Button>
-                      </span>
+        <div
+          role="group"
+          aria-label="Test files"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto"
+        >
+          {groups.map(({ kind, files: inGroup }) => {
+            const open = isOpen(kind.name);
+            const listId = `${headingId}-${kind.name}`;
+            return (
+              <div key={kind.name} role="group" aria-label={kind.name}>
+                <h3 className="text-xs text-muted">
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    aria-controls={listId}
+                    disabled={searching}
+                    onClick={() =>
+                      setFolded((f) => ({ ...f, [kind.name]: !open }))
+                    }
+                    className="flex w-full items-center gap-1.5 rounded py-1 text-left hover:text-text focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default"
+                  >
+                    {open ? (
+                      <IconHideDetails
+                        aria-hidden
+                        className="size-3.5 shrink-0"
+                      />
                     ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Remove ${f.name}`}
-                        disabled={busy}
-                        onClick={() => setRemoving(f.name)}
-                      >
-                        <IconRemove aria-hidden />
-                        Remove
-                      </Button>
+                      <IconShowDetails
+                        aria-hidden
+                        className="size-3.5 shrink-0"
+                      />
                     )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+                    {kind.name} · {inGroup.length}
+                  </button>
+                </h3>
+                {open && (
+                  <ul id={listId} className="divide-y divide-border/60">
+                    {inGroup.map((f) => {
+                      const uses = usage
+                        ? (usage.get(f.name.toLowerCase()) ?? 0)
+                        : null;
+                      return (
+                        <li
+                          key={f.name}
+                          className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5"
+                        >
+                          <kind.icon
+                            aria-hidden
+                            className="size-4 shrink-0 text-faint"
+                          />
+                          <span
+                            className="min-w-0 flex-1 basis-40 truncate text-sm text-text"
+                            title={f.name}
+                          >
+                            {f.name}
+                          </span>
+                          {uses !== null &&
+                            (uses === 0 ? (
+                              <Badge className="bg-warning/10 text-warning">
+                                Unused
+                              </Badge>
+                            ) : (
+                              <Badge>{plural(uses, "case")}</Badge>
+                            ))}
+                          <span className="w-20 shrink-0 text-right text-xs tabular-nums text-faint">
+                            {fileSize(f.size)}
+                          </span>
+                          {removing === f.name ? (
+                            <span
+                              role="group"
+                              aria-label={`Remove ${f.name}?`}
+                              className="flex basis-full items-center justify-end gap-2"
+                            >
+                              <span className="min-w-0 break-all text-xs text-muted">
+                                {uses
+                                  ? `${plural(uses, "case")} upload${uses === 1 ? "s" : ""} this file. Remove it anyway?`
+                                  : `Remove ${f.name}?`}
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => setRemoving(null)}
+                              >
+                                <IconCancel aria-hidden />
+                                Keep
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                disabled={busy}
+                                onClick={() => void remove(f.name)}
+                              >
+                                <IconRemove aria-hidden />
+                                {uses ? "Remove file" : "Remove"}
+                              </Button>
+                            </span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="px-2"
+                              aria-label={`Remove ${f.name}`}
+                              title={`Remove ${f.name}`}
+                              disabled={busy}
+                              onClick={() => setRemoving(f.name)}
+                            >
+                              <IconRemove aria-hidden />
+                            </Button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -275,7 +458,12 @@ export default function TestFilesDialog({
           <span className="min-w-0 flex-1 text-sm text-text">
             Replace {asking.name}? A file of that name is already in Test files.
           </span>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void answer(false)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void answer(false)}
+          >
             <IconCancel aria-hidden />
             Keep the old one
           </Button>
@@ -292,19 +480,43 @@ export default function TestFilesDialog({
         </p>
       ))}
 
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button size="sm" variant="outline" onClick={() => void openFolder()}>
-          <IconBrowse aria-hidden />
-          Open folder
-        </Button>
-        <Button size="sm" variant="outline" disabled={busy || Boolean(asking)} onClick={() => void addFiles()}>
-          <IconAddFiles aria-hidden />
-          Add files
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          <IconCancel aria-hidden />
-          Close
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {groups.length > 1 ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={searching}
+            onClick={() => setAll(!allOpen)}
+          >
+            {allOpen ? (
+              <IconCollapseAll aria-hidden />
+            ) : (
+              <IconExpandAll aria-hidden />
+            )}
+            {allOpen ? "Collapse all" : "Expand all"}
+          </Button>
+        ) : (
+          <span />
+        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={() => void openFolder()}>
+            <IconBrowse aria-hidden />
+            Open folder
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || Boolean(asking)}
+            onClick={() => void addFiles()}
+          >
+            <IconAddFiles aria-hidden />
+            Add files
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            <IconCancel aria-hidden />
+            Close
+          </Button>
+        </div>
       </div>
     </Modal>
   );

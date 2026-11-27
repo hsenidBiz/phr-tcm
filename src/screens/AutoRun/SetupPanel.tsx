@@ -228,6 +228,7 @@ export function useAutoRunSetup({
     accounts,
     nav,
     testFiles,
+    scripts,
     discoveryMap,
     discoveryLine,
     components,
@@ -1136,7 +1137,7 @@ export default function SetupPanel({
       {accountsOpen && <AccountsDialog org={org} project={project} onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />}
       {recordOpen && <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />}
-      {testFilesOpen && <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />}
+      {testFilesOpen && <TestFilesDialog org={org} project={project} scripts={s.scripts} onClose={() => setTestFilesOpen(false)} />}
       {siteOpen && <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />}
       {discoveryOpen && (
         <DiscoveryDialog org={org} project={project} onClose={() => setDiscoveryOpen(false)} />

@@ -885,7 +885,7 @@ export const autoRun: Screen = {
       group: "setup",
       locate: { role: "button", name: "Manage test files" },
       name: "Manage (test files)",
-      does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder.",
+      does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder; the list folds by type, searches by file name, and shows how many of the listed cases upload each file.",
     },
 
     // --- Site address --------------------------------------------------------------
