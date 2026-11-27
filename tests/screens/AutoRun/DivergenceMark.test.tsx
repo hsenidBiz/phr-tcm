@@ -224,3 +224,17 @@ test("a compact row waiting on a repair keeps its badge and /tcm:heal line witho
   expect(screen.getByText("Waits for a repair")).toBeInTheDocument();
   expect(screen.getByText(/Ask the assistant to repair the script \(\/tcm:heal\)\./)).toBeInTheDocument();
 });
+
+test("a compact row says Step N by default and a given tag instead", () => {
+  const qc = new QueryClient();
+  const row = (tag?: string) => (
+    <QueryClientProvider client={qc}>
+      <DivergenceRow org="acme" project="Web" caseId={147556} divergence={{ ...byAssistant, ruling: "rewrite" }} compact tag={tag} />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(row());
+  expect(screen.getByText("Step 2")).toBeInTheDocument();
+  rerender(row("Ruling"));
+  expect(screen.getByText("Ruling")).toBeInTheDocument();
+  expect(screen.queryByText("Step 2")).not.toBeInTheDocument();
+});

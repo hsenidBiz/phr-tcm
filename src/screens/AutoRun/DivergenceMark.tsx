@@ -77,6 +77,7 @@ export function DivergenceRow({
   caseId,
   divergence,
   compact = false,
+  tag,
 }: {
   org: string;
   project: string;
@@ -85,6 +86,9 @@ export function DivergenceRow({
   /** A ruling as one line (its step, what was decided, Details and Undo) for the
    * open case card. Only a ruled divergence draws so; an open one keeps its buttons. */
   compact?: boolean;
+  /** The small word before a compact ruling's line. Default "Step N"; the open
+   * case card shows a ruling under its own step and says "Ruling" there. */
+  tag?: string;
 }) {
   const detailsId = useId();
   const [showDetails, setShowDetails] = useState(false);
@@ -172,7 +176,7 @@ export function DivergenceRow({
       <div className="space-y-1 pt-1">
         <div className="flex items-center gap-2">
           <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent-fill">
-            <span className="label-trim">Step {step}</span>
+            <span className="label-trim">{tag ?? `Step ${step}`}</span>
           </span>
           <span className="min-w-0 flex-1 truncate text-xs text-text" title={decided}>
             {decided}
