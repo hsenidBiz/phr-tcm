@@ -61,6 +61,11 @@ fn a_mark_label_is_the_highlight_label_and_never_a_secret() {
     assert_eq!(mark_label(&a(json!({ "kind": "check_text", "value": "Saved" })), None), "Check: shows 'Saved'");
     assert_eq!(mark_label(&a(json!({ "kind": "navigate", "url": "https://app.test/x?token=abc" })), None), "Open a page");
     assert_eq!(mark_label(&a(json!({ "kind": "sign_in", "account": "admin" })), None), "Sign in");
+    // An action with no element of its own keeps its own name: the box
+    // drawn is a nested action's.
+    assert_eq!(mark_label(&a(json!({ "kind": "sign_in", "account": "admin" })), Some("Click")), "Sign in");
+    assert_eq!(mark_label(&a(json!({ "kind": "sign_in", "account": "admin" })), Some("Type a hidden value")), "Sign in");
+    assert_eq!(mark_label(&a(json!({ "kind": "return_to_area" })), Some("Click")), "Go back to the area");
     let form = action_help::fill_form_from(&json!({ "kind": "fill_form", "fields": { "#pw": "hunter2" } })).unwrap().unwrap();
     assert_eq!(mark_label(&form, None), FILL_FORM_LABEL);
     assert_eq!(mark_label(&action_help::screenshot_action(false), None), SHOT_LABEL);

@@ -739,3 +739,19 @@ async fn a_passed_case_and_a_run_without_video_keep_no_marks() {
     assert_eq!(run.cases[0].proposed, "Failed");
     assert!(run.cases[0].video_marks.is_none());
 }
+
+/// A label left by an earlier case on a kept browser is never taken for the
+/// first action's own.
+#[tokio::test]
+async fn a_stale_drawn_label_is_never_reused_for_the_first_action() {
+    let dir = tempfile::tempdir().unwrap();
+    store::save_script(dir.path(), &script(1)).unwrap();
+    let mut d = driver(Recorder::working(), false);
+    d.drawn_label = Some("Stale from the case before".into());
+    let mut browsers = Fake { drivers: vec![d], closed: vec![], wanted: true };
+    let mut run = new_run();
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, dir.path(), "Acme", "Web", &mut run, &[(1, "c".into())], &common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    let marks = run.cases[0].video_marks.clone().expect("a kept video has its marks");
+    assert_eq!(marks.steps[0].actions[0].label, "Check: shows 'x'");
+}

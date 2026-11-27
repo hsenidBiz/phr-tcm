@@ -468,8 +468,7 @@ pub async fn show<D: Driver>(d: &mut D, handle: &Handle, say: &Say, timing: &Tim
     let drawn = drawn.as_bool().unwrap_or(false);
     if drawn {
         // The words on the box, after the password swap: the video's marker.
-        let label = label.to_string();
-        d.note_drawn_label(&label);
+        d.note_drawn_label(label);
     }
     Ok(drawn)
 }

@@ -46,6 +46,19 @@ fn a_recording_is_kept_listed_newest_first_and_read_back() {
 }
 
 #[test]
+fn a_marks_list_over_the_cap_is_cut() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let marks: Vec<v2_lib::autorun::VideoMark> =
+        (0..recordings::MAX_MARKS as u32 + 1).map(|i| v2_lib::autorun::VideoMark { at_ms: i, label: "Click".into() }).collect();
+    assert_eq!(marks.len(), 2_001);
+    let e = recordings::add_with_marks(dir.path(), "many", 10, MP4, marks).unwrap();
+    assert_eq!(recordings::MAX_MARKS, 2_000);
+    assert_eq!(e.marks.len(), 2_000);
+    assert_eq!(list(dir.path())[0].marks.len(), 2_000);
+}
+
+#[test]
 fn removing_a_recording_deletes_its_file_and_entry() {
     let _lock = crate::serial::autorun();
     let dir = root();

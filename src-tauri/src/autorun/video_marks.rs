@@ -33,11 +33,30 @@ pub fn mark_label(action: &Action, drawn: Option<&str>) -> String {
     if super::action_help::screenshot_ask(action).is_some() {
         return SHOT_LABEL.to_string();
     }
-    if let Some(label) = drawn {
-        return label.to_string();
+    // An action with no element of its own runs other actions nested in it
+    // (a sign-in's clicks and typing): the box drawn is the nested one's, so
+    // the marker keeps the action's own name.
+    if !has_no_element(action) {
+        if let Some(label) = drawn {
+            return label.to_string();
+        }
     }
     let say = Say::of(action);
     say.if_password.unwrap_or(say.label)
+}
+
+/// Is `action` one with no element of its own, whose highlight (if any) is
+/// that of an action nested in it?
+fn has_no_element(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::SignIn { .. }
+            | Action::ReturnToArea { .. }
+            | Action::UseComponent { .. }
+            | Action::WhenVisible { .. }
+            | Action::WhenHidden { .. }
+            | Action::RepeatWhileVisible { .. }
+    )
 }
 
 /// Flag the steps of `marks` whose record has an outcome that failed after

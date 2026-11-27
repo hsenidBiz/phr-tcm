@@ -729,6 +729,20 @@ async fn the_label_drawn_is_noted_for_the_video() {
     assert_eq!(d.take_drawn_label().as_deref(), Some("Type 'Smith'"));
 }
 
+#[tokio::test]
+async fn a_box_the_page_would_not_draw_leaves_no_drawn_label() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |m, p| {
+        if m == "Runtime.callFunctionOn" && p["functionDeclaration"] == HIGHLIGHT_JS {
+            Ok(json!({ "result": { "value": false } }))
+        } else {
+            page.answer(m, p)
+        }
+    });
+    execute_with(&mut d, &act(json!({ "kind": "fill", "selector": "#a", "value": "Smith" })), &off()).await;
+    assert_eq!(d.take_drawn_label(), None);
+}
+
 #[test]
 fn page_level_actions_say_what_they_do_in_words() {
     let say = |v: Value| Say::of(&act(v)).label;
