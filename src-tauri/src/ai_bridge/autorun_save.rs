@@ -23,7 +23,7 @@ pub(crate) fn bad_scripts(e: serde_json::Error) -> String {
 
 pub(crate) fn bad_edits(e: serde_json::Error) -> String {
     format!(
-        "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional), precondition (optional: {{ op: \"add\" | \"remove\" | \"change\", flow, stage, value (only when two share the flow and stage), to (for add and change), reason }}) }}."
+        "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), account (optional: true when the account changed), quirk (optional), precondition (optional: {{ op: \"add\" | \"remove\" | \"change\", flow, stage, value (only when two share the flow and stage), to (for add and change), reason }}) }}."
     )
 }
 
@@ -510,6 +510,8 @@ pub async fn save_autorun_scripts_carrying(
     // Every case's refusal from this gate, said together: a bundle with two
     // bad repairs is told about both in one answer.
     let mut refused: Vec<String> = Vec::new();
+    // The saved account keys, read once per save and only when a repair declares an account change.
+    let mut saved_account_keys: Option<Result<Vec<String>, String>> = None;
     // What each repair's precondition edit did, one line per case, said
     // after the save's first line. The flows name the stages, read only
     // when a precondition edit is declared; without them the ids are said.
@@ -601,6 +603,20 @@ pub async fn save_autorun_scripts_carrying(
                     refused.push(why);
                     continue;
                 }
+                if declared.is_some_and(|e| e.account) {
+                    if saved_account_keys.is_none() {
+                        saved_account_keys = Some(crate::autorun::accounts::load_accounts(&root).map(|a| a.into_iter().map(|x| x.key).collect::<Vec<_>>()));
+                    }
+                    let checked = match saved_account_keys.as_ref() {
+                        Some(Ok(keys)) => crate::autorun::edits::check_new_account(sent.case_id, sent.account.as_deref(), keys),
+                        Some(Err(e)) => Err(e.clone()),
+                        None => Ok(()),
+                    };
+                    if let Err(why) = checked {
+                        refused.push(why);
+                        continue;
+                    }
+                }
                 script.repairs = old.repairs.saturating_add(1);
                 // What was given up before stays; this repair's own entries
                 // are added from its edit, never from what was sent.
@@ -661,6 +677,15 @@ pub async fn save_autorun_scripts_carrying(
                         }
                         if let Some(line) = &precondition_line {
                             crate::applog::info(format!("AI repaired case {}: {line}", script.case_id));
+                        }
+                        if e.account {
+                            let say = |a: &Option<String>| a.clone().unwrap_or_else(|| "(none)".to_string());
+                            crate::applog::info(format!(
+                                "AI changed case {}'s account from {} to {}: {why}",
+                                script.case_id,
+                                say(&old.account),
+                                say(&script.account)
+                            ));
                         }
                     }
                     script.last_repair = Some(match &precondition_line {

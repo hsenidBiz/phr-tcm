@@ -3294,6 +3294,99 @@ async fn a_resend_that_only_changes_the_area_is_a_repair() {
     assert_eq!(on_disk.repairs, 1);
 }
 
+/// Case 7 as a given saved account.
+fn case_7_as(account: &str) -> serde_json::Value {
+    let mut sc = case_7("#toast", "Saved");
+    sc[0]["account"] = serde_json::json!(account);
+    sc
+}
+
+/// Two saved accounts in a fresh environment of the temp root.
+fn save_two_accounts(root: &std::path::Path) {
+    use v2_lib::autorun::accounts::{save_accounts, Account};
+    v2_lib::environments::load_or_init(root, None).unwrap();
+    let acc = |k: &str| Account { key: k.into(), label: k.into(), username: format!("{k}-user"), password: "pw".into(), password_source: None };
+    save_accounts(root, &[acc("hr_admin"), acc("hr_user")]).unwrap();
+}
+
+async fn post_as(dir: &TempDir, client: &AdoClient, body: String) -> (u16, String) {
+    see_scripts(dir.path(), &body);
+    route(&ctx(), Some(client), "POST", "/autorun-script", &body, "1.0.0").await
+}
+
+#[tokio::test]
+async fn a_declared_account_change_by_a_writer_or_rewriter_is_saved() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_two_accounts(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let (status, out) = post_as(&dir, &client, case_7_as("hr_admin").to_string()).await;
+    assert_eq!(status, 200, "{out}");
+
+    let (status, out) = post_as(&dir, &client, case_7_as("hr_user").to_string()).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("the account changed from \"hr_admin\" to \"hr_user\" but was not declared"), "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().account.as_deref(), Some("hr_admin"));
+
+    let declared = serde_json::json!({
+        "scripts": case_7_as("hr_user"),
+        "edits": [{ "case_id": 7, "steps": [], "account": true, "why": "the case is the approver's" }],
+    })
+    .to_string();
+    let (status, out) = post_as(&dir, &client, declared).await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.account.as_deref(), Some("hr_user"));
+    assert_eq!(on_disk.repairs, 1);
+    assert_eq!(on_disk.last_repair.as_deref(), Some("the case is the approver's"));
+}
+
+#[tokio::test]
+async fn a_declared_change_to_an_unsaved_account_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_two_accounts(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let (status, out) = post_as(&dir, &client, case_7_as("hr_admin").to_string()).await;
+    assert_eq!(status, 200, "{out}");
+
+    let declared = serde_json::json!({
+        "scripts": case_7_as("ghost"),
+        "edits": [{ "case_id": 7, "steps": [], "account": true, "why": "the case is the approver's" }],
+    })
+    .to_string();
+    let (status, out) = post_as(&dir, &client, declared).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("there is no saved account \"ghost\""), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.account.as_deref(), Some("hr_admin"));
+    assert_eq!(on_disk.repairs, 0);
+}
+
+#[tokio::test]
+async fn a_declared_account_change_that_changes_nothing_is_refused_by_the_save() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_two_accounts(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let (status, out) = post_as(&dir, &client, case_7_as("hr_admin").to_string()).await;
+    assert_eq!(status, 200, "{out}");
+
+    let declared = serde_json::json!({
+        "scripts": case_7_as("hr_admin"),
+        "edits": [{ "case_id": 7, "steps": [], "account": true, "why": "the case is the approver's" }],
+    })
+    .to_string();
+    let (status, out) = post_as(&dir, &client, declared).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("the account was declared but not changed"), "{out}");
+}
+
 /// A repair to a step that leaves `area` out does not erase the area the
 /// saved script has: declaring the step is not declaring the area, so the
 /// save is refused and the area stays on disk.
