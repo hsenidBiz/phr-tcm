@@ -845,16 +845,18 @@ export default function RunPane({
 
   return (
     // Walking away at a reset point ends the run there, as Stop does.
-    <Modal onClose={pausedAt ? stopAtReset : close} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
-      <h2 className="text-sm font-semibold text-text">
-        <span className="id-mono text-faint">#{pausedAt ? cases[pausedAt.next]?.id : caseId}</span>{" "}
-        {pausedAt ? cases[pausedAt.next]?.title : title}
+    <Modal onClose={pausedAt ? stopAtReset : close} className={`${MODAL_LARGE} space-y-4 overflow-y-auto p-4`}>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="min-w-0 text-sm font-semibold text-text">
+          <span className="id-mono text-faint">#{pausedAt ? cases[pausedAt.next]?.id : caseId}</span>{" "}
+          {pausedAt ? cases[pausedAt.next]?.title : title}
+        </h2>
         {cases.length > 1 && (
-          <span className="ml-2 text-xs font-normal text-faint">
-            case {pausedAt ? pausedAt.next + 1 : idx + 1} of {cases.length}
+          <span className="shrink-0 text-xs text-muted">
+            Case {pausedAt ? pausedAt.next + 1 : idx + 1} of {cases.length}
           </span>
         )}
-      </h2>
+      </div>
       <BatchList plan={plan} currentId={pausedAt ? cases[pausedAt.next]?.id : caseId} />
 
       {pausedAt ? (
@@ -896,38 +898,45 @@ export default function RunPane({
         {!opened ? (
           // A replay opens its own browser: nothing to pick while it goes.
           replay?.state === "going" ? null : (
-          <div className="space-y-2">
+          <div className="space-y-2 border-t border-border pt-4">
+            <span className="block text-xs font-medium text-muted">
+              Browser
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                aria-label="Browser to run in"
+                className="w-40"
+                triggerClassName="h-8 py-0 text-xs"
+                value={browserName}
+                onChange={(e) => {
+                  setBrowserName(e.target.value);
+                  try {
+                    localStorage.setItem("tcm-v2-autorun-browser", e.target.value);
+                  } catch {
+                    // storage unavailable - the choice lasts this session
+                  }
+                }}
+              >
+                {BROWSERS.map((b) => (
+                  <option key={b.value} value={b.value}>
+                    {b.label}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                size="sm"
+                className="h-8 py-0"
+                disabled={busy || Boolean(browserBlocked)}
+                title={browserBlocked}
+                onClick={openBrowser}
+              >
+                Open browser
+              </Button>
+            </div>
             <p className="text-xs text-muted">
               A real browser window opens with a fresh profile. Keep it beside this one and
               watch each step as it runs.
             </p>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-muted">
-                Browser
-                <Select
-                  aria-label="Browser to run in"
-                  className="ml-2 w-40"
-                  value={browserName}
-                  onChange={(e) => {
-                    setBrowserName(e.target.value);
-                    try {
-                      localStorage.setItem("tcm-v2-autorun-browser", e.target.value);
-                    } catch {
-                      // storage unavailable - the choice lasts this session
-                    }
-                  }}
-                >
-                  {BROWSERS.map((b) => (
-                    <option key={b.value} value={b.value}>
-                      {b.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <Button size="sm" disabled={busy || Boolean(browserBlocked)} title={browserBlocked} onClick={openBrowser}>
-                Open browser
-              </Button>
-            </div>
           </div>
           )
         ) : (
@@ -1018,8 +1027,8 @@ export default function RunPane({
           </div>
         )}
 
-        <div className="space-y-2 border-t border-border pt-3">
-          <span id={verdictLabelId} className="text-xs font-medium text-muted">
+        <div className="space-y-2 border-t border-border pt-4">
+          <span id={verdictLabelId} className="block text-xs font-medium text-muted">
             Your verdict
           </span>
           <VerdictPicker value={verdict} onPick={setVerdict} labelledBy={verdictLabelId} />
@@ -1032,7 +1041,7 @@ export default function RunPane({
           />
         </div>
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" size="sm" disabled={saving} onClick={close}>
             <IconCancel aria-hidden />
             Close

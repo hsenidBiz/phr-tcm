@@ -175,7 +175,7 @@ test("Run in background closes the window, and the pill reopens it from another 
   mockScreen();
   renderShell();
   await startUnattended();
-  expect(await screen.findByText("case 1 of 2")).toBeInTheDocument();
+  expect(await screen.findByText("Case 1 of 2")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Run in background" }));
   await waitFor(() => expect(heading()).not.toBeInTheDocument());
@@ -191,7 +191,7 @@ test("Run in background closes the window, and the pill reopens it from another 
   fireEvent.click(pill);
   expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
   expect(screen.getByText("Manual Entry screen")).toBeInTheDocument();
-  expect(screen.getByText("case 2 of 2")).toBeInTheDocument();
+  expect(screen.getByText("Case 2 of 2")).toBeInTheDocument();
   expect(within(screen.getByText("Beta check").closest("li")!).getByText("Step 1 of 1")).toBeInTheDocument();
 });
 
@@ -289,15 +289,16 @@ test("a pause at a reset point while in the background turns the pill amber and 
   });
 
   // One place shows the pause: not the screen's own fallback modal.
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  // The pause heading is sentence case now ("Before batch N"); the region is named by it.
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
   const pill = screen.getByRole("button", {
     name: "Paused before Batch 2. Open the run window to continue or stop the run",
   });
   expect(pill.className).toMatch(/text-warning/);
 
   fireEvent.click(pill);
-  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
-  expect(screen.getAllByRole("region", { name: "Before Batch 2" })).toHaveLength(1);
+  const panel = await screen.findByRole("region", { name: "Before batch 2" });
+  expect(screen.getAllByRole("region", { name: "Before batch 2" })).toHaveLength(1);
   fireEvent.click(within(panel).getByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: true }]));
 });

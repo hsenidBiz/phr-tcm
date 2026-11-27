@@ -68,6 +68,8 @@ function renderPane(cases: { id: number; title: string }[], onClose = vi.fn()) {
   return onClose;
 }
 
+// The panel was re-laid out: its progress line now reads "Case N of M"
+// (capital C) at the right of the header, which these tests find by text.
 test("two cases are one run: the browser opens once and one file is written", async () => {
   const s = mockSession();
   const onClose = renderPane([
@@ -81,7 +83,7 @@ test("two cases are one run: the browser opens once and one file is written", as
   // Case 1: mark, then advance. Nothing may reach disk yet.
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  expect(await screen.findByText("case 2 of 2")).toBeInTheDocument();
+  expect(await screen.findByText("Case 2 of 2")).toBeInTheDocument();
   expect(s.saved).toHaveLength(0);
 
   // The verdict does not carry over to the next case - each is decided
@@ -109,7 +111,7 @@ test("closing part-way keeps the verdicts already marked", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  await screen.findByText("case 2 of 2");
+  await screen.findByText("Case 2 of 2");
 
   // Walking away with case 2 unmarked must not throw away case 1.
   fireEvent.click(screen.getByRole("button", { name: /Close/ }));
@@ -144,7 +146,7 @@ test("a single case shows no progress counter and saves on the first verdict", a
   renderPane([{ id: 1, title: "Valid login" }]);
 
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
-  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Case 1 of/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Blocked" }));
   fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
@@ -164,7 +166,7 @@ test("each case in a selection gets a fresh browser, so none inherits the last o
 
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  await screen.findByText("case 2 of 2");
+  await screen.findByText("Case 2 of 2");
 
   // Case 1 signed in; case 2 must not start signed in. The old window is
   // closed and a new one - new profile, no cookies - takes its place.
@@ -183,7 +185,7 @@ test("a failed write keeps the pane open instead of closing over lost verdicts",
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  await screen.findByText("case 2 of 2");
+  await screen.findByText("Case 2 of 2");
   // Case 2 gets a fresh browser, and Close is unavailable while that is
   // being opened: wait for it, or the click below does nothing at all and
   // the assertions after it pass without the write ever being tried.
@@ -196,7 +198,7 @@ test("a failed write keeps the pane open instead of closing over lost verdicts",
   await waitFor(() => expect(failed).toHaveBeenCalledWith(expect.stringContaining("Could not save the result")));
   // ... so the pane stays put with the verdict still in hand - closing
   // here would destroy it with no way back.
-  expect(screen.getByText("case 2 of 2")).toBeInTheDocument();
+  expect(screen.getByText("Case 2 of 2")).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
   expect(s.saved).toHaveLength(0);
   expect(s.counted, "nothing on disk, nothing counted").toEqual([]);
@@ -1245,7 +1247,8 @@ async function reachTheReset(s: ReturnType<typeof mockSession>) {
   await waitFor(() => expect(s.launched).toEqual(["edge"]));
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  return screen.findByRole("region", { name: "Before Batch 2" });
+  // The pause heading is sentence case now ("Before batch N"); the region is named by it.
+  return screen.findByRole("region", { name: "Before batch 2" });
 }
 
 test("the supervised pane pauses at a reset point before the next case's browser is used", async () => {
@@ -1259,7 +1262,8 @@ test("the supervised pane pauses at a reset point before the next case's browser
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
-  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  // The panel now groups cases by area; titles without " - " fall in "Other".
+  const left = within(panel).getByRole("list", { name: "Cases in Other" });
   expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
     "#2 Edit a draft cycle",
     "#3 Other",
@@ -1275,14 +1279,14 @@ test("Continue at a reset point opens a fresh browser for the next case and the 
   await reachTheReset(s);
 
   fireEvent.click(screen.getByRole("button", { name: "Continue the run" }));
-  expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
+  expect(await screen.findByText("Case 2 of 3")).toBeInTheDocument();
   await waitFor(() => expect(s.launched).toEqual(["edge", "edge"]));
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 
   // Case 2 and 3, then the one write.
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  expect(await screen.findByText("case 3 of 3")).toBeInTheDocument();
+  expect(await screen.findByText("Case 3 of 3")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: "Save result" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -1324,8 +1328,8 @@ test("without a plan the supervised pane never pauses", async () => {
   await waitFor(() => expect(s.launched).toEqual(["edge"]));
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
+  expect(await screen.findByText("Case 2 of 3")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before batch 2" })).not.toBeInTheDocument();
 });
 
 test("while discovery holds the browser, Open browser is off and says why", async () => {
@@ -1378,24 +1382,30 @@ test("a run whose Batch 1 needs settings starts paused, then pauses again with S
       <RunPane org="acme" project="Web" pbiId={42} cases={RESET_CASES} plan={BATCH_PLAN} onClose={onClose} />
     </QueryClientProvider>,
   );
-  const first = await screen.findByRole("region", { name: "Before Batch 1" });
-  expect(within(first).getByRole("list", { name: "Set" })).toHaveTextContent("Make sure Approval workflow is ON");
+  const first = await screen.findByRole("region", { name: "Before batch 1" });
+  // Heading is sentence case now and the Set list is the "Set up" checklist.
+  expect(within(first).getByRole("list", { name: "Set up" })).toHaveTextContent("Make sure Approval workflow is ON");
   expect(within(first).queryByRole("list", { name: "Put back" })).not.toBeInTheDocument();
-  expect(screen.getByRole("status")).toHaveTextContent("Batch 1 of 2");
-  expect(within(screen.getByRole("list", { name: "Batches" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-    "Batch 1 (1 case)",
-    "Batch 2 (2 cases)",
-  ]);
+  // The panel was re-laid out: a "Batch" label row with "1 of 2" beside
+  // it, and one small tab per batch ("1 · 1 case").
+  expect(screen.getByRole("status")).toHaveTextContent("1 of 2");
+  const tabs = within(screen.getByRole("list", { name: "Batches" })).getAllByRole("listitem");
+  expect(tabs.map((li) => li.textContent)).toEqual(["1 · 1 case", "2 · 2 cases"]);
+  expect(tabs[0]).toHaveAttribute("aria-current", "step");
+  expect(tabs[1]).not.toHaveAttribute("aria-current");
+  expect(tabs[0]).toHaveAccessibleName("Batch 1 (1 case)");
   // Nothing opened before Continue.
   expect(s.launched).toEqual([]);
 
   fireEvent.click(within(first).getByRole("button", { name: "Continue the run" }));
-  const panel = await reachTheResetNamed(s, "Before Batch 2");
-  expect(within(panel).getByRole("list", { name: "Set" })).toHaveTextContent("Set Approval workflow to OFF");
+  const panel = await reachTheResetNamed(s, "Before batch 2");
+  // The "Set" list is now the "Set up" checklist.
+  expect(within(panel).getByRole("list", { name: "Set up" })).toHaveTextContent("Set Approval workflow to OFF");
   expect(within(panel).getByRole("list", { name: "Put back" })).toHaveTextContent(
     'Reset: revert "cycle published" (changed by #1 Publish the cycle)',
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Batch 2 of 2");
+  // Re-laid out panel: the label row reads "2 of 2".
+  expect(screen.getByRole("status")).toHaveTextContent("2 of 2");
 
   fireEvent.click(within(panel).getByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -1492,4 +1502,59 @@ test("a case that needs a ruling is blocked before it signs in", async () => {
   expect(seen).not.toContain("auto_run_sign_in");
   expect(seen).not.toContain("auto_run_check_preconditions");
   expect(screen.getByRole("button", { name: /Run step 1/ })).toBeDisabled();
+});
+
+// The panel was re-laid out: the verdict is one joined group, and the
+// footer sits inside the panel.
+test("the verdict group still picks Passed, Failed and Blocked, and Save follows a pick", async () => {
+  mockSession();
+  renderPane([{ id: 1, title: "Valid login" }]);
+  const group = await screen.findByRole("group", { name: "Your verdict" });
+  const save = screen.getByRole("button", { name: /Save result/ });
+  expect(save).toBeDisabled();
+  for (const v of ["Passed", "Failed", "Blocked"]) {
+    fireEvent.click(within(group).getByRole("button", { name: v }));
+    expect(within(group).getByRole("button", { name: v })).toHaveAttribute("aria-pressed", "true");
+    expect(save).toBeEnabled();
+  }
+  expect(within(group).getByRole("button", { name: "Passed" })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("Save and next case is enabled once a verdict is picked", async () => {
+  mockSession();
+  renderPane([
+    { id: 1, title: "Valid login" },
+    { id: 2, title: "Locked account" },
+  ]);
+  const next = await screen.findByRole("button", { name: /Save and next case/ });
+  expect(next).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Blocked" }));
+  expect(next).toBeEnabled();
+});
+
+test("the batch label row shows 1 of N and the current batch tab is marked current", async () => {
+  mockSession();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane org="acme" project="Web" pbiId={42} cases={RESET_CASES} plan={BATCH_PLAN} onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("list", { name: "Batches" });
+  const label = screen.getAllByRole("status").find((n) => /^Batch \d+ of \d+$/.test(n.textContent ?? ""));
+  expect(label).toHaveTextContent("Batch 1 of 2");
+  const current = within(screen.getByRole("list", { name: "Batches" }))
+    .getAllByRole("listitem")
+    .filter((li) => li.getAttribute("aria-current") === "step");
+  expect(current.map((li) => li.textContent)).toEqual(["1 · 1 case"]);
+});
+
+// A window shorter than the panel must not push Save off-screen: the panel
+// is capped to the space under the title bar (max-h-full), not 90vh.
+test("the run panel is capped to the space it sits in so Save stays reachable", async () => {
+  mockSession();
+  renderPane([{ id: 1, title: "Valid login" }]);
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.className).toContain("max-h-full");
+  expect(dialog.className).not.toContain("90vh");
 });

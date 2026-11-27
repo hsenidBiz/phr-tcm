@@ -477,7 +477,7 @@ function RunWindow({ run }: { run: BackgroundRun }) {
         <div className="space-y-3">
           {position && (
             <p className="text-xs text-muted">
-              case {position.index + 1} of {position.total}
+              Case {position.index + 1} of {position.total}
             </p>
           )}
           <BatchList plan={plan} currentId={resetNeeded ? resetNeeded.before_case_id : afterId} />
