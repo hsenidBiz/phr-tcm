@@ -6,6 +6,7 @@
 // exists at all - a case without a video, or whose file has been pruned,
 // gets no controls.
 
+import { useEffect, useRef } from "react";
 import { Button } from "../../components/ui/button";
 import { IconCancel, IconDownload, IconExport, IconPlayVideo } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
@@ -37,7 +38,7 @@ const VIDEO_PLAYER =
 /**
  * `compact` is the variant for a case's one-line row (Past runs): two icon
  * buttons, Watch and Download, that sit in the row beside its result, with
- * the video itself opening on a line of its own under the row's buttons. A
+ * the video itself opening on a line of its own below everything else on the row (order-last), so Replay stays on the row. A
  * video that is gone leaves the same note, short, and both buttons off.
  */
 export default function CaseVideo({
@@ -50,6 +51,17 @@ export default function CaseVideo({
   compact?: boolean;
 }) {
   const { info, src, close, play, save } = useVideoFile(name);
+  // The Watch and Close buttons swap places: the focus stays with the one
+  // that was pressed.
+  const watchBtn = useRef<HTMLButtonElement>(null);
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  const wasPlaying = useRef(false);
+  useEffect(() => {
+    if (!compact) return;
+    if (src) closeBtn.current?.focus();
+    else if (wasPlaying.current) watchBtn.current?.focus();
+    wasPlaying.current = Boolean(src);
+  }, [src, compact]);
 
   if (!name || info.isLoading || info.isError) return null;
   if (compact) {
@@ -74,17 +86,18 @@ export default function CaseVideo({
     return (
       <>
         {src ? (
-          <Button size="sm" variant="outline" className={iconButton} aria-label="Close the failure video" title="Close the video" onClick={close}>
+          <Button ref={closeBtn} size="sm" variant="outline" className={iconButton} aria-label="Close the failure video" title="Close the video" onClick={close}>
             <IconCancel aria-hidden />
           </Button>
         ) : (
           <Button
+            ref={watchBtn}
             size="sm"
             variant="outline"
             className={iconButton}
             aria-label="Watch the failure video"
             disabled={!playable || play.isPending}
-            title={playable ? `Watch the failure video (${sized})` : TOO_LARGE}
+            title={playable ? `Watch the failure video (${sized})` : `${TOO_LARGE} (${sized})`}
             onClick={() => play.mutate()}
           >
             <IconPlayVideo aria-hidden />
@@ -108,7 +121,7 @@ export default function CaseVideo({
             controls
             autoPlay
             onError={() => toast.error("This video cannot be played here - download it instead.")}
-            className={cn("basis-full", VIDEO_PLAYER)}
+            className={cn("order-last basis-full", VIDEO_PLAYER)}
           />
         )}
       </>

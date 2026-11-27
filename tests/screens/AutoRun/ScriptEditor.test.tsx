@@ -48,13 +48,14 @@ const ACCOUNTS = [{ key: "hr.admin", label: "HR Admin", username: "kim", passwor
 /** "Before it runs" shows no empty box: a + button opens the box for one kind
  * (Change, Needs unchanged or Setting) and moves the focus into it. */
 function reveal(kind: "Change" | "Needs unchanged" | "Setting") {
-  fireEvent.click(screen.getByRole("button", { name: kind }));
+  const name = { Change: "Add a change", "Needs unchanged": "Add a needs-unchanged record", Setting: "Add a setting" }[kind];
+  fireEvent.click(screen.getByRole("button", { name }));
 }
 
-/** The footer's copy button opens a menu; an item of it opens the copy dialog. */
+/** The footer's copy button opens a disclosure; a button in it opens the copy dialog. */
 function copyItem(name: "Copy to another environment" | "Copy from another environment") {
   fireEvent.click(screen.getByRole("button", { name: "Copy between environments" }));
-  return screen.getByRole("menuitem", { name });
+  return screen.getByRole("button", { name });
 }
 
 test("the account a script runs as is chosen from the tester's own list", async () => {
@@ -1051,6 +1052,7 @@ test("script_editor_closes_when_the_environment_changes", async () => {
 });
 
 function mountWithEnvironments(count: number, script: unknown) {
+  const onClose = vi.fn();
   setActiveEnvId("env-00000001");
   const env = (n: number) => ({
     id: `env-0000000${n}`, name: `Env ${n}`, start_url: "", allowed_origins: [], db_id: "d",
@@ -1066,9 +1068,10 @@ function mountWithEnvironments(count: number, script: unknown) {
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={onClose} />
     </QueryClientProvider>,
   );
+  return onClose;
 }
 
 // The two copy buttons became one menu: Copy between environments.
@@ -1086,8 +1089,33 @@ test("with two environments and a saved script, Copy to another environment open
   expect(trigger).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(trigger);
   expect(trigger).toHaveAttribute("aria-expanded", "true");
-  fireEvent.click(screen.getByRole("menuitem", { name: "Copy to another environment" }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy to another environment" }));
   expect(await screen.findByRole("combobox", { name: "Copy to" })).toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("Escape closes the copy menu and returns the focus to its button, without closing the window", async () => {
+  const onClose = mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  const trigger = await screen.findByRole("button", { name: "Copy between environments" });
+  fireEvent.click(trigger);
+  const item = screen.getByRole("button", { name: "Copy from another environment" });
+  item.focus();
+  fireEvent.keyDown(item, { key: "Escape" });
+  expect(screen.queryByRole("button", { name: "Copy from another environment" })).not.toBeInTheDocument();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(trigger).toHaveFocus();
+  expect(onClose).not.toHaveBeenCalled();
+  localStorage.clear();
+});
+
+test("the copy menu closes when focus leaves it", async () => {
+  mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  const trigger = await screen.findByRole("button", { name: "Copy between environments" });
+  fireEvent.click(trigger);
+  const item = screen.getByRole("button", { name: "Copy to another environment" });
+  item.focus();
+  screen.getByRole("button", { name: "Save script" }).focus();
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
   localStorage.clear();
 });
 
@@ -1095,7 +1123,7 @@ test("Copy to another environment needs a saved script; Copy from another enviro
   mountWithEnvironments(2, null);
   await screen.findByRole("button", { name: "Copy between environments" });
   expect(copyItem("Copy from another environment")).toBeInTheDocument();
-  expect(screen.queryByRole("menuitem", { name: "Copy to another environment" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy to another environment" })).not.toBeInTheDocument();
   localStorage.clear();
 });
 
@@ -1109,7 +1137,7 @@ test("Copy from another environment is refused while the editor has unsaved edit
   const box = await screen.findByRole("textbox", { name: /script/i });
   fireEvent.change(box, { target: { value: "[]" } });
   expect(copyItem("Copy from another environment")).toBeDisabled();
-  expect(screen.getByRole("menuitem", { name: "Copy from another environment" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Copy from another environment" })).toHaveAttribute(
     "title",
     "Save or discard your changes first",
   );

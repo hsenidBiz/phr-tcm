@@ -59,7 +59,8 @@ test("Runs as, Area and Must not save sit in one row, and the long note is a too
   expect(row).toContainElement(area);
   expect(row).toContainElement(box);
   // The explanation is unchanged, now behind an (i): a title and an accessible description.
-  const info = screen.getByRole("img", { name: "About Must not save" });
+  // A button, so the keyboard reaches it too.
+  const info = screen.getByRole("button", { name: "About Must not save" });
   const note = "any save the page tries to send is stopped before it reaches the server";
   expect(info.getAttribute("title")).toContain(note);
   const describedBy = info.getAttribute("aria-describedby") ?? "";
@@ -131,7 +132,7 @@ test("with some steps not checked the header counts them and the Checks block st
   expect(screen.getByText("Step 2: NOT CHECKED")).toBeInTheDocument();
 });
 
-test("past three steps the rest fold behind Steps 4 to N, and a step needing a look is never folded", async () => {
+test("past three steps the rest fold behind N more steps, and a step needing a look is never folded", async () => {
   // Six steps, all checked but step 5, which has no check: it must show.
   const script = {
     case_id: 7,
@@ -144,7 +145,8 @@ test("past three steps the rest fold behind Steps 4 to N, and a step needing a l
   expect(screen.queryByRole("region", { name: "Step 4" })).not.toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Step 5" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Step 6" })).not.toBeInTheDocument();
-  const fold = screen.getByRole("button", { name: "Steps 4 to 6" });
+  // The fold names only the steps it holds: 5 is showing, so it is not listed.
+  const fold = screen.getByRole("button", { name: "2 more steps: 4, 6" });
   expect(fold).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(fold);
   expect(fold).toHaveAttribute("aria-expanded", "true");
@@ -157,7 +159,7 @@ test("past three steps the rest fold behind Steps 4 to N, and a step needing a l
 test("three steps or fewer have no fold", async () => {
   mount({ case_id: 7, title: "t", steps: [checked(1), checked(2), checked(3)] }, caseSteps(3));
   await screen.findByRole("region", { name: "Step 3" });
-  expect(screen.queryByRole("button", { name: /^Steps? \d/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /more steps?:/ })).not.toBeInTheDocument();
 });
 
 test("while the script is edited every case step shows, none folded", async () => {
@@ -166,7 +168,7 @@ test("while the script is edited every case step shows, none folded", async () =
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   await screen.findByRole("textbox", { name: "Action script JSON" });
   for (let n = 1; n <= 5; n++) expect(screen.getByText(`Do thing ${n}`)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /^Steps? \d/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /more steps?:/ })).not.toBeInTheDocument();
 });
 
 test("Before it runs shows chips, and a + button opens its box and adds through the same save", async () => {
@@ -181,7 +183,7 @@ test("Before it runs shows chips, and a + button opens its box and adds through 
   expect(screen.getByRole("button", { name: "Remove needs unchanged 00002773 90-degree goal plan not submitted" })).toBeInTheDocument();
   // Nothing empty shows until a + button is pressed.
   expect(screen.queryByRole("textbox", { name: "Setting" })).not.toBeInTheDocument();
-  const plus = screen.getByRole("button", { name: "Setting" });
+  const plus = screen.getByRole("button", { name: "Add a setting" });
   expect(plus).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(plus);
   expect(plus).toHaveAttribute("aria-expanded", "true");
@@ -200,8 +202,57 @@ test("with no entries, Before it runs shows only the three + buttons", async () 
   mount({ case_id: 7, title: "t", steps: [checked(1)] }, caseSteps(1));
   await screen.findByRole("button", { name: "Save script" });
   expect(screen.queryByRole("list", { name: "Before it runs" })).not.toBeInTheDocument();
-  for (const name of ["Change", "Needs unchanged", "Setting"]) {
+  for (const name of ["Add a change", "Add a needs-unchanged record", "Add a setting"]) {
     expect(screen.getByRole("button", { name })).toBeInTheDocument();
   }
   expect(screen.queryByRole("textbox", { name: "Add to Changes" })).not.toBeInTheDocument();
+});
+
+test("editing keeps the Steps summary line, which follows the JSON as it is typed", async () => {
+  mount({ case_id: 7, title: "t", steps: [{ step_number: 1, actions: [{ kind: "reload" }] }] }, caseSteps(1));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  const box = await screen.findByRole("textbox", { name: "Action script JSON" });
+  expect(screen.getByText("Steps", { selector: "span" }).parentElement).toHaveTextContent("Steps · 0 of 1 checked");
+  fireEvent.change(box, { target: { value: JSON.stringify([checked(1)]) } });
+  expect(screen.getByText("Steps", { selector: "span" }).parentElement).toHaveTextContent("Steps · all 1 checked");
+  // All checked: no Checks block in the editor either.
+  expect(screen.queryByText("Checks")).not.toBeInTheDocument();
+});
+
+test("the unchecked-parts count leaves out the clean-up, like the expectations shown elsewhere", async () => {
+  const script = {
+    case_id: 7,
+    title: "t",
+    steps: [
+      { ...checked(1), unchecked: [{ item: "the footer", why: "decorative" }] },
+      { step_number: 2, actions: [{ kind: "click", selector: "#x" }], unchecked: "removes the record", cleanup: true },
+    ],
+  };
+  mount(script, caseSteps(1));
+  await screen.findByRole("region", { name: "Step 1" });
+  expect(screen.getByRole("heading", { name: "Steps" }).parentElement).toHaveTextContent("Steps · all 1 checked · 1 part not checked");
+});
+
+test("a step with an open divergence is never folded", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_script")
+      return { case_id: 7, title: "t", steps: [1, 2, 3, 4, 5].map(checked) };
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_load_divergences")
+      return [
+        { id: "d1", case_id: 7, step: 5, case_says: "a", app_shows: "b", kind: "data", reported_at: "1", status: "open" },
+        { id: "d2", case_id: 8, step: 4, case_says: "a", app_shows: "b", kind: "data", reported_at: "1", status: "open" },
+      ];
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={caseSteps(5)} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("region", { name: "Step 1" });
+  await waitFor(() => expect(screen.getByRole("region", { name: "Step 5" })).toBeInTheDocument());
+  expect(screen.queryByRole("region", { name: "Step 4" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "1 more step: 4" })).toBeInTheDocument();
 });

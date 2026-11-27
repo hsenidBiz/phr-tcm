@@ -152,9 +152,14 @@ test("compact: Watch shows the video, and the same button's place then closes it
   showCompact(NAME);
   fireEvent.click(await screen.findByRole("button", { name: "Watch the failure video" }));
   expect(await screen.findByLabelText("Video of the failed case")).toHaveAttribute("src", "blob:the-video");
+  // The video takes its own line after everything else on the row, so Replay stays on the row.
+  expect(screen.getByLabelText("Video of the failed case")).toHaveClass("order-last", "basis-full");
+  // The focus follows the swap: Close when it appears, Watch again after closing.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Close the failure video" })).toHaveFocus());
   fireEvent.click(screen.getByRole("button", { name: "Close the failure video" }));
   await waitFor(() => expect(screen.queryByLabelText("Video of the failed case")).toBeNull());
   expect(screen.getByRole("button", { name: "Watch the failure video" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Watch the failure video" })).toHaveFocus();
 });
 
 test("compact: a video too large to play can still be downloaded", async () => {
@@ -162,7 +167,7 @@ test("compact: a video too large to play can still be downloaded", async () => {
   showCompact(NAME);
   const watch = await screen.findByRole("button", { name: "Watch the failure video" });
   expect(watch).toBeDisabled();
-  expect(watch).toHaveAttribute("title", "This video is too large to play here - download it instead");
+  expect(watch).toHaveAttribute("title", "This video is too large to play here - download it instead (80.0 MB)");
   expect(screen.getByRole("button", { name: "Download the failure video" })).toBeEnabled();
 });
 

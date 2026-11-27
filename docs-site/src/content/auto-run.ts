@@ -414,7 +414,7 @@ export const autoRun: Screen = {
       name: "Steps",
       does:
         "Each of the test case's steps and its expected result on the left, and what the script does for it on the right, with the parts it leaves unchecked under it behind a **Not checked** tag. " +
-        "The header sums up how many steps are checked and how many parts are not; past three steps the rest fold behind a **Steps 4 to N** button, and a step that is not checked is never folded away. " +
+        "The header sums up how many steps are checked and how many parts are not; past three steps the rest fold behind a **N more steps** button that lists their numbers, and a step that is not checked, or has a divergence waiting, is never folded away. " +
         "The case's own text is read from Azure DevOps and does not change here.",
     },
     {
@@ -503,7 +503,7 @@ export const autoRun: Screen = {
       locate: { text: "Checks" },
       name: "Checks",
       does:
-        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**. It shows only while some step is not checked: when every step is, the Steps header reads **all N checked** instead.",
+        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**. It shows only while some step is not checked: when every step is, the Steps line, above the sentences and above the JSON, reads **all N checked** instead.",
     },
     {
       id: "preconditions",
@@ -1085,7 +1085,7 @@ export const autoRun: Screen = {
     {
       title: "Run cases that need different settings",
       steps: [
-        "In the case's script, under **Before it runs**, press **Setting**, type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
+        "In the case's script, under **Before it runs**, press **Setting** (**Add a setting** to a screen reader), type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
         "In the same place, press **Change** or **Needs unchanged** and name shared data a case changes, such as a published cycle, and the cases that need it as it was. What you add shows as a chip you can remove.",
         "Run the selection. Auto Test puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
         "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",

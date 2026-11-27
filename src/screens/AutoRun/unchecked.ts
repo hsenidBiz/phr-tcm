@@ -10,11 +10,7 @@ import { doneByAutoRun } from "./byAutoRun";
  * null for none or blank. The value comes from JSON a person may be typing,
  * so anything that is not one of the two shapes counts as none. */
 export function uncheckedText(u: Unchecked | null | undefined): string | null {
-  if (typeof u === "string") return u.trim() || null;
-  if (!Array.isArray(u)) return null;
-  const parts = u
-    .filter((e) => typeof e === "object" && e !== null && typeof e.item === "string" && e.item.trim() !== "")
-    .map((e) => `${e.item.trim()} - ${typeof e.why === "string" ? e.why.trim() : ""}`);
+  const parts = uncheckedParts(u);
   return parts.length > 0 ? parts.join("; ") : null;
 }
 

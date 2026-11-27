@@ -259,5 +259,6 @@ describe("button labels", () => {
       for (const h of buttonDots(text, file)) hits.push(`${file}:${h.line}  ${h.label}`);
     }
     expect(hits).toEqual([]);
-  });
+    // Parsing every screen with the TypeScript compiler takes a few seconds.
+  }, 60_000);
 });

@@ -9,7 +9,7 @@ import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentCh
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type Action, type NeededRecord, type Precondition, type StepScript } from "../../bindings";
+import { commands, type Action, type CaseScript, type NeededRecord, type Precondition, type StepScript } from "../../bindings";
 import { useEnvironments } from "../../lib/environments";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
@@ -41,7 +41,7 @@ import { cn } from "../../lib/cn";
 import { plural } from "../../lib/plural";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf, type CheckState } from "./floor";
-import { uncheckedParts } from "./unchecked";
+import { uncheckedExpectations, uncheckedParts } from "./unchecked";
 import CopyCaseDialog from "./CopyCaseDialog";
 import SetupSection from "./SetupSection";
 import { canPutBack, preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
@@ -118,6 +118,20 @@ function ScriptEditorBody({
     queryFn: () => unwrapStr(commands.autoRunListAccounts()),
     retry: false,
   });
+  // The case's divergences, from the list the screen and the case card read
+  // (same key, so it costs nothing extra): a step with one that is open or
+  // waiting for a repair is never folded away.
+  const divergences = useQuery({
+    queryKey: ["autorun-divergences", org, project],
+    queryFn: () => unwrapStr(commands.autoRunLoadDivergences(org, project)),
+    enabled: Boolean(org && project),
+    retry: false,
+  });
+  const attention = new Set(
+    (divergences.data ?? [])
+      .filter((d) => d.case_id === caseId && (d.status === "open" || d.status === "awaiting_repair"))
+      .map((d) => d.step),
+  );
   // The project's recorded areas, for the Area select. Shares its key with
   // the Areas dialog, so a recording there updates this list.
   const areas = useQuery({
@@ -415,16 +429,17 @@ function ScriptEditorBody({
               <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
               Must not save
             </label>
-            <span
-              role="img"
-              tabIndex={0}
+            {/* A button, so the keyboard reaches it; the app's tooltip layer
+                shows a title on focus as well as on hover. */}
+            <button
+              type="button"
               aria-label="About Must not save"
               aria-describedby={noSaveHelpId}
               title={NO_SAVE_HELP}
               className="inline-flex text-faint hover:text-text focus-visible:outline-2 focus-visible:outline-accent"
             >
               <IconAbout aria-hidden className="size-3.5" />
-            </span>
+            </button>
             <span id={noSaveHelpId} className="sr-only">
               {NO_SAVE_HELP}
             </span>
@@ -505,6 +520,10 @@ function ScriptEditorBody({
             </ol>
           </div>
           <div className="space-y-2">
+            <p className="text-xs text-muted">
+              <span className="font-medium text-text">Steps</span>
+              {summaryLine(scriptForChecks, checks) && ` · ${summaryLine(scriptForChecks, checks)}`}
+            </p>
             <div ref={jsonView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script JSON</span>
@@ -526,7 +545,14 @@ function ScriptEditorBody({
         </div>
       ) : (
         <>
-          <StepsPanel script={scriptForChecks} loading={existing.isLoading} steps={steps} org={org} checks={checks} />
+          <StepsPanel
+            script={scriptForChecks}
+            loading={existing.isLoading}
+            steps={steps}
+            org={org}
+            checks={checks}
+            attention={attention}
+          />
           {checksBlock}
         </>
       )}
@@ -767,6 +793,32 @@ function ExtraGroup({ g }: { g: StepScript }) {
   );
 }
 
+/** "all N checked · M parts not checked", or "K of N checked": how the
+ * script stands against the case's expected results. The parts count is the
+ * one shown elsewhere as unchecked expectations (no clean-up, no step Auto
+ * Test does itself). Empty when there is nothing to say. */
+function summaryLine(script: StepScript[], checks: { step_number: number; state: CheckState }[]): string {
+  const shaped = (script as unknown[]).filter(
+    (s): s is StepScript =>
+      typeof s === "object" && s !== null && Number.isInteger((s as { step_number?: unknown }).step_number),
+  );
+  const checkedN = checks.filter((c) => c.state.kind === "checked").length;
+  const parts = uncheckedExpectations({
+    // The JSON may be mid-edit: a step without an actions list counts as having none.
+    steps: shaped.map((s) => ({ ...s, actions: Array.isArray(s.actions) ? s.actions : [] })),
+  } as unknown as CaseScript).length;
+  return [
+    checks.length === 0
+      ? null
+      : checkedN === checks.length
+        ? `all ${checks.length} checked`
+        : `${checkedN} of ${checks.length} checked`,
+    parts > 0 ? `${plural(parts, "part")} not checked` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /** The case's steps, each beside the script's actions for it: the step's
  * words and expected result on the left, what the script does (and what it
  * leaves unchecked) on the right. The header sums up the checks. Past
@@ -777,12 +829,15 @@ function StepsPanel({
   steps,
   org,
   checks,
+  attention,
 }: {
   script: StepScript[];
   loading: boolean;
   steps: CaseStep[];
   org: string;
   checks: { step_number: number; state: CheckState }[];
+  /** Steps with an open or awaiting-repair divergence. */
+  attention: ReadonlySet<number>;
 }) {
   const [open, setOpen] = useState(false);
   // Only entries shaped like steps: the box can hold any JSON array. The
@@ -803,31 +858,18 @@ function StepsPanel({
     const own = groups.filter((g) => ofCase(g) && g.step_number === n);
     const kind = checks.find((c) => c.step_number === n)?.state.kind;
     // Not checked, explained, or unreadable: never folded away.
-    const needsLook = kind === "unchecked" || kind === "explained" || own.some(groupUnreadable);
+    const needsLook = kind === "unchecked" || kind === "explained" || attention.has(n) || own.some(groupUnreadable);
     return { n, s, own, needsLook };
   });
   const foldable = rows.filter((r, i) => i >= STEPS_SHOWN && !r.needsLook);
   const shown = rows.filter((r, i) => open || i < STEPS_SHOWN || r.needsLook);
 
-  const checkedN = checks.filter((c) => c.state.kind === "checked").length;
-  const parts = groups.reduce((n, g) => n + uncheckedParts(g.unchecked).length, 0);
-  const summary = [
-    checks.length === 0
-      ? null
-      : checkedN === checks.length
-        ? `all ${checks.length} checked`
-        : `${checkedN} of ${checks.length} checked`,
-    parts > 0 ? `${plural(parts, "part")} not checked` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const summary = summaryLine(script, checks);
 
-  const foldLabel =
-    foldable.length === 1
-      ? `Step ${foldable[0].n}`
-      : foldable.length > 1
-        ? `Steps ${foldable[0].n} to ${foldable[foldable.length - 1].n}`
-        : "";
+  // The fold never names a step that is showing: it says how many are
+  // folded and lists their numbers in its accessible name.
+  const foldLabel = foldable.length === 1 ? "1 more step" : `${foldable.length} more steps`;
+  const foldName = `${foldLabel}: ${foldable.map((r) => r.n).join(", ")}`;
 
   return (
     <div role="region" aria-label="Action script" className="space-y-2 rounded-md border border-border bg-surface px-3 py-2 text-xs text-text">
@@ -886,7 +928,7 @@ function StepsPanel({
             </ol>
           )}
           {foldable.length > 0 && (
-            <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            <Button size="sm" variant="ghost" aria-expanded={open} aria-label={foldName} onClick={() => setOpen((o) => !o)}>
               {open ? <IconHideSteps aria-hidden /> : <IconShowSteps aria-hidden />}
               {foldLabel}
             </Button>
@@ -1068,8 +1110,8 @@ function BeforeItRuns({
   const toggle = (k: keyof typeof shown) => setShown((s) => ({ ...s, [k]: !s[k] }));
   const any = changes.length + needsUnchanged.length + settings.length > 0;
   if (readOnly && !any) return null;
-  const opener = (k: keyof typeof shown, text: string) => (
-    <Button size="sm" variant="outline" aria-expanded={shown[k]} onClick={() => toggle(k)}>
+  const opener = (k: keyof typeof shown, text: string, name: string) => (
+    <Button size="sm" variant="outline" aria-label={name} aria-expanded={shown[k]} onClick={() => toggle(k)}>
       <IconAdd aria-hidden />
       {text}
     </Button>
@@ -1111,9 +1153,9 @@ function BeforeItRuns({
       {!readOnly && (
         <>
           <div className="flex flex-wrap gap-1.5">
-            {opener("change", "Change")}
-            {opener("needs", "Needs unchanged")}
-            {opener("setting", "Setting")}
+            {opener("change", "Change", "Add a change")}
+            {opener("needs", "Needs unchanged", "Add a needs-unchanged record")}
+            {opener("setting", "Setting", "Add a setting")}
           </div>
           {shown.change && <MarkInput label="Changes" noun="change" names={changes} onChange={onChanges} />}
           {shown.needs && (
@@ -1126,9 +1168,11 @@ function BeforeItRuns({
   );
 }
 
-/** The footer's one copy button: a small menu with the two directions, each
- * opening the copy dialog. Copying out needs a saved script; copying in is
- * refused (and says why) while the editor holds unsaved edits. */
+/** The footer's one copy button: a disclosure with the two directions as
+ * plain buttons, each opening the copy dialog. Copying out needs a saved
+ * script; copying in is refused (and says why) while the editor holds
+ * unsaved edits. It closes when focus leaves it, and on Escape (which
+ * returns the focus to the button and leaves the window open). */
 function CopyMenu({
   canCopyTo,
   fromBlocked,
@@ -1140,6 +1184,7 @@ function CopyMenu({
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent) => {
@@ -1158,33 +1203,32 @@ function CopyMenu({
     <div
       ref={wrap}
       className="relative mr-auto"
-      // Escape closes the menu only, not the window behind it.
       onKeyDown={(e) => {
         if (e.key === "Escape" && open) {
+          // Closes this only, not the window behind it.
           e.stopPropagation();
           setOpen(false);
+          trigger.current?.focus();
         }
       }}
+      onBlur={(e) => {
+        if (open && !wrap.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
     >
-      <Button variant="outline" size="sm" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <Button ref={trigger} variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <IconCopyBetweenEnvironments aria-hidden />
         Copy between environments
       </Button>
       {open && (
-        <div
-          role="menu"
-          aria-label="Copy between environments"
-          className="absolute bottom-full left-0 z-10 mb-1 min-w-52 rounded-md border border-border bg-surface p-1 shadow-2xl"
-        >
+        <div className="absolute bottom-full left-0 z-10 mb-1 min-w-52 rounded-md border border-border bg-surface p-1 shadow-2xl">
           {canCopyTo && (
-            <button type="button" role="menuitem" className={item} onClick={() => pick("to")}>
+            <button type="button" className={item} onClick={() => pick("to")}>
               <IconCopyToEnvironment aria-hidden />
               Copy to another environment
             </button>
           )}
           <button
             type="button"
-            role="menuitem"
             className={item}
             disabled={fromBlocked !== undefined}
             title={fromBlocked}
