@@ -537,3 +537,72 @@ fn the_recording_routes_act_on_the_browser() {
     assert_eq!(need_of("POST", "/autorun-recording-start"), Some(Need::Act));
     assert_eq!(need_of("POST", "/autorun-recording-stop"), Some(Need::Act));
 }
+
+// ------------------------------------------- marks on a discovery's recording
+
+use v2_lib::ai_bridge::{discover_action_in, note_recording_mark, recording_now};
+use v2_lib::autorun::VideoMark;
+use v2_lib::browser::actions::Action;
+
+#[tokio::test]
+async fn a_discovery_recording_keeps_a_mark_for_each_action_tried() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let _ = discover_action_in(&mut b, dir.path(), "Acme", "Web", &click, None, None).await;
+    assert_eq!(recording_stop_in(&mut b).await.0, 200);
+    let e = &list(dir.path())[0];
+    assert_eq!(e.marks.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(), ["Click"]);
+    assert!(e.marks[0].at_ms <= e.duration_ms);
+}
+
+#[tokio::test]
+async fn a_mark_needs_a_running_recording_and_names_no_secret() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let fill = v2_lib::autorun::action_help::fill_form_from(&json!({ "kind": "fill_form", "fields": { "#pw": "hunter2" } })).unwrap().unwrap();
+    let mut none = None;
+    assert_eq!(recording_now(&none), None);
+    note_recording_mark(&mut none, Some(5), &fill, None);
+    assert!(none.is_none());
+
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_now(&b.as_mut().unwrap().discovery), None);
+    note_recording_mark(&mut b.as_mut().unwrap().discovery, Some(5), &fill, None);
+    assert!(b.as_ref().unwrap().discovery.as_ref().unwrap().recording.is_none());
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let d = &mut b.as_mut().unwrap().discovery;
+    let at = recording_now(d);
+    assert!(at.is_some());
+    note_recording_mark(d, None, &fill, None);
+    note_recording_mark(d, at, &fill, Some("Type hunter2"));
+    assert_eq!(d.as_ref().unwrap().recording.as_ref().unwrap().marks[0].label, "Fill the form");
+    let marks = &d.as_ref().unwrap().recording.as_ref().unwrap().marks;
+    assert_eq!(marks.len(), 1);
+    assert!(!format!("{marks:?}").contains("hunter2"), "{marks:?}");
+}
+
+#[tokio::test]
+async fn marks_stop_at_the_cap() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let (mut b, _) = slot(working(), exploring("Leave"));
+    assert_eq!(recording_start_in(&mut b, dir.path(), &start_body(TITLE), T0).await.0, 200);
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let d = &mut b.as_mut().unwrap().discovery;
+    for _ in 0..recordings::MAX_MARKS + 5 {
+        note_recording_mark(d, Some(1), &click, None);
+    }
+    assert_eq!(d.as_ref().unwrap().recording.as_ref().unwrap().marks.len(), recordings::MAX_MARKS);
+}
+
+#[test]
+fn a_recording_written_with_marks_reads_them_back() {
+    let _lock = crate::serial::autorun();
+    let dir = root();
+    let marks = vec![VideoMark { at_ms: 3, label: "Click".into() }];
+    recordings::add_with_marks(dir.path(), "t", 10, MP4, marks.clone()).unwrap();
+    assert_eq!(list(dir.path())[0].marks, marks);
+}

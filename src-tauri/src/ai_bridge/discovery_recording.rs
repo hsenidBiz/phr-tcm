@@ -77,7 +77,7 @@ pub async fn recording_start_in<B: DiscoveryBrowser>(
     let Some(started) = recording::start(p.driver, WHO).await else {
         return (409, RECORDING_NOT_STARTED.to_string());
     };
-    state.recording = Some(Running { recording: started, title: title.clone(), started_ms: now_ms, started: std::time::Instant::now(), root: root.to_path_buf() });
+    state.recording = Some(Running { recording: started, title: title.clone(), started_ms: now_ms, started: std::time::Instant::now(), root: root.to_path_buf(), marks: Vec::new() });
     crate::applog::info(format!("{WHO}: started"));
     (200, recording_started(&title))
 }
@@ -165,6 +165,7 @@ pub struct Video {
     title: String,
     duration_ms: u32,
     bytes: Vec<u8>,
+    marks: Vec<crate::autorun::VideoMark>,
 }
 
 /// Take the running recording, stop it and read its video: the browser's
@@ -178,7 +179,7 @@ async fn take_and_read<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Option<Opti
     let running = p.discovery.as_mut()?.recording.take()?;
     // Measured on the monotonic clock, as the cap is.
     let duration_ms = u32::try_from(running.started.elapsed().as_millis().min(u128::from(recordings::CAP_MS))).unwrap_or(u32::MAX);
-    let Running { recording: handle, title, root, .. } = running;
+    let Running { recording: handle, title, root, marks, .. } = running;
     let before = p.driver.tab_name();
     let bytes = match recording::stop(p.driver, handle, WHO).await {
         Some(stopped) => recording::read_video(p.driver, stopped, WHO).await,
@@ -189,13 +190,36 @@ async fn take_and_read<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Option<Opti
             crate::applog::warn(format!("{WHO}: the browser's tab could not be put back: {e}"));
         }
     }
-    Some(bytes.map(|bytes| Video { root, title, duration_ms, bytes }))
+    Some(bytes.map(|bytes| Video { root, title, duration_ms, bytes, marks }))
+}
+
+/// The running recording's clock now (one read), or None with no recording going.
+pub fn recording_now(discovery: &Option<crate::commands::autorun::DiscoveryState>) -> Option<u32> {
+    let running = discovery.as_ref()?.recording.as_ref()?;
+    Some(crate::autorun::video_marks::offset_ms(running.recording.started(), std::time::Instant::now()))
+}
+
+/// One mark at `at_ms` (from `recording_now`), labelled by `mark_label`.
+/// Nothing when `at_ms` is None, no recording is going, or `MAX_MARKS` are held.
+pub fn note_recording_mark(
+    discovery: &mut Option<crate::commands::autorun::DiscoveryState>,
+    at_ms: Option<u32>,
+    action: &crate::browser::actions::Action,
+    drawn: Option<&str>,
+) {
+    let Some(at_ms) = at_ms else { return };
+    let Some(running) = discovery.as_mut().and_then(|s| s.recording.as_mut()) else { return };
+    if running.marks.len() >= recordings::MAX_MARKS {
+        return;
+    }
+    let label = crate::autorun::video_marks::mark_label(action, drawn);
+    running.marks.push(crate::autorun::VideoMark { at_ms, label });
 }
 
 /// Write a read video into the recordings. Every failure is logged.
 pub async fn keep_video(video: Video) -> Option<RecordingEntry> {
     let duration_ms = video.duration_ms;
-    let kept = tokio::task::spawn_blocking(move || recordings::add(&video.root, &video.title, video.duration_ms, &video.bytes)).await;
+    let kept = tokio::task::spawn_blocking(move || recordings::add_with_marks(&video.root, &video.title, video.duration_ms, &video.bytes, video.marks)).await;
     match kept {
         Ok(Ok(entry)) => {
             crate::applog::info(format!("{WHO}: kept ({}s)", duration_ms / 1000));

@@ -43,6 +43,8 @@ pub struct Running {
     /// a wall clock that jumps never lengthens or shortens a recording.
     pub started: std::time::Instant,
     pub root: PathBuf,
+    /// One mark per action tried while this recording ran.
+    pub marks: Vec<super::VideoMark>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
