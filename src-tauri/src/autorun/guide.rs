@@ -2211,6 +2211,17 @@ What you see with no area named is filed under no area. Starting a
 discovery does not mark its area explored; what you see in the area
 does.
 
+### Recording your checks
+
+Record only when the person's prompt asks for evidence or a recording, or says
+a fix is being verified. Never record by default. With `start_autorun_recording`
+and a short `title` ("Bug 4521: leave balance fix"), start just before the checks
+that prove the point, never during the sign-in or the trip to the screen, and
+call `stop_autorun_recording` right after them. One recording at a time; it stops
+by itself when your discovery ends or after 10 minutes. The video stays in the
+app: tell the person it is under Auto Test → Recordings, on the Past runs tab.
+A browser that cannot record says so: carry on without one.
+
 ### What the application refuses
 
 After an action, the answer can carry two more things, each only when

@@ -903,6 +903,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             }), &[]),
         },
         {
+            "name": "start_autorun_recording",
+            "description": "Start recording video of your discovery browser. Only when the person's prompt asks for evidence or a recording, or says a fix is being verified: never by default. Start just before the checks that prove the point, never during sign-in or navigation, and stop right after them with stop_autorun_recording. `title` is short, for example \"Bug 4521: leave balance fix\", at most 80 characters, with no address or secret. One recording at a time. It stops by itself when your discovery ends or after 10 minutes. The video stays in the app: it is not sent to you. The video shows the tab the recording started on. A browser that cannot record says so: carry on without one.",
+            "inputSchema": schema(serde_json::json!({
+                "title": { "type": "string", "description": "A short title for the video, at most 80 characters, e.g. \"Bug 4521: leave balance fix\". No address, login or secret." },
+            }), &["title"]),
+        },
+        {
+            "name": "stop_autorun_recording",
+            "description": "Stop your recording. It keeps the video, and its answer says it is ready under Auto Test → Recordings (the Past runs tab): tell the person where to find it.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "reset_autorun_browser",
             "description": "Start clean in the Auto Test browser your replay or discovery left open, without signing out: it closes the other tabs, forgets the dialogs and the stopping point of your last replay, lifts your save guard and loads the page the browser landed on when it signed in (the home page when none is known), with the sign-in kept, ending your discovery if one is going (what it mapped is kept). If the sign-in has gone it says so and says why, and the next replay signs in again. Refused while a replay is running (replay_autorun_to_step with `stop: true` stops one), and for the person's own browser. `release: true` instead lets go of your own browser only - and only when it is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Test browser is really open. Never release between replays: your replays, discovery and resets share your browser and its sign-in. Never ask the person to restart the app. A release frees a held browser that has gone, ends your own discovery, and closes a browser your own replay left open, freeing its account; it never closes the person's own browser while it is open and answering (it says the person must close it or press Release Auto Test browser), and never stops a replay that is going. The answer ends with the other assistants' live holds (who has which browser, account and cases, and for how long it has made no call). A named subagent's browser and case holds are let go after 10 minutes without a call from it (the main browser only when an assistant opened it; the person's own browser never), any other assistant's after 30.",
             "inputSchema": schema(serde_json::json!({
@@ -2886,6 +2898,8 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "discover_autorun_actions" => discover_call(args, call),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
+        "start_autorun_recording" => call("POST", "/autorun-recording-start", &args.to_string()),
+        "stop_autorun_recording" => call("POST", "/autorun-recording-stop", &args.to_string()),
         "reset_autorun_browser" => reset_call(args, call),
         // Components: each route reads its own named fields out of the body.
         "save_autorun_component" => component_call(args, call),

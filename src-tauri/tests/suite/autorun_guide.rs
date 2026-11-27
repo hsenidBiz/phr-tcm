@@ -2926,3 +2926,20 @@ fn the_guide_tells_the_assistant_to_ask_tcm_to_reset_an_expired_password() {
     assert!(g.contains("with `check_autorun_sign_in` (give the account"), "tool not named");
     assert!(g.contains("never offer to type a"), "the never-type line is missing");
 }
+
+/// The guide says when to record, and keeps recording off by default.
+#[test]
+fn the_guide_says_when_to_record() {
+    let g = autorun_guide();
+    let part = g.split("\n## Discovering the app\n").nth(1).unwrap().split("\n## ").next().unwrap();
+    let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "### Recording your checks",
+        "Never record by default",
+        "never during the sign-in",
+        "Auto Test \u{2192} Recordings",
+    ] {
+        assert!(flat.contains(said), "{said:?} missing: {flat}");
+    }
+    assert!(!flat.contains('\u{2014}'));
+}

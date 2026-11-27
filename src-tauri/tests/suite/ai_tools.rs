@@ -554,6 +554,18 @@ fn strings(names: &[&str]) -> Vec<String> {
     names.iter().map(|s| s.to_string()).collect()
 }
 
+/// The recording tools stay on in Basic mode and are allowed without asking.
+#[test]
+fn the_recording_tools_stay_on_in_basic_mode() {
+    use v2_lib::ai_tools::CLAUDE_AUTORUN_RULES;
+    use v2_lib::simple_view::SIMPLE_HIDDEN_TOOLS;
+    for name in ["start_autorun_recording", "stop_autorun_recording"] {
+        assert!(!SIMPLE_HIDDEN_TOOLS.contains(&name), "{name}");
+        let rule = format!("mcp__tcm__{name}");
+        assert!(CLAUDE_AUTORUN_RULES.contains(&rule.as_str()), "{rule}");
+    }
+}
+
 /// Every module tool belongs to exactly one module, and the rest are Core.
 #[test]
 fn each_tool_belongs_to_its_module() {
@@ -571,6 +583,8 @@ fn each_tool_belongs_to_its_module() {
             "discover_autorun_actions",
             "save_autorun_area",
             "end_autorun_discovery",
+            "start_autorun_recording",
+            "stop_autorun_recording",
             "reset_autorun_browser",
             "save_autorun_component",
             "get_autorun_failures",

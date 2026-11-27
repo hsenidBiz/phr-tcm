@@ -160,6 +160,8 @@ fn the_lists_are_the_owners_less_the_retired_names() {
             "mcp__tcm__save_autorun_script",
             "mcp__tcm__save_setup",
             "mcp__tcm__start_autorun_discovery",
+            "mcp__tcm__start_autorun_recording",
+            "mcp__tcm__stop_autorun_recording",
             "mcp__tcm__try_autorun_action",
         ]
     );
