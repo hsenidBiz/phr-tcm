@@ -930,6 +930,8 @@ const STYLE: &str = include_str!("../../web/autorun-report.css");
 
 /// The page's own script: views, filter, keys, copy, gallery.
 const SCRIPT: &str = include_str!("../../web/autorun-report.js");
+/// The video player the page opens a video in (`web/autorun-report-player.js`).
+const PLAYER: &str = include_str!("../../web/autorun-report-player.js");
 
 /// The whole page. `ran_at` is the run's start as the person reads time
 /// (the webview formats it in their own locale); blank falls back to UTC.
@@ -1129,6 +1131,8 @@ pub fn build_smart(
     let mut gallery: Vec<serde_json::Value> = Vec::new();
     let (mut shots, mut videos) = (0usize, 0usize);
     let mut seen_pictures = std::collections::HashSet::new();
+    // Each linked video's markers, by the video's file name, for the player.
+    let mut timelines = serde_json::Map::new();
     for case in &run.cases {
         let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
         let tidy = case.cleanup.iter().map(|s| (super::CLEANUP_LABEL.to_string(), s));
@@ -1143,6 +1147,7 @@ pub fn build_smart(
         if let Some(v) = case.video.as_deref().filter(|v| super::store::safe_video_name(v) && exists(v)) {
             if seen_pictures.insert(v.to_string()) {
                 gallery.push(serde_json::json!({ "n": v, "c": case.case_id, "s": "Video", "k": 1 }));
+                timelines.insert(v.to_string(), serde_json::to_value(super::video_marks::case_timeline(case)).unwrap_or_default());
                 videos += 1;
             }
         }
@@ -1398,12 +1403,14 @@ pub fn build_smart(
     let history_html = report_view::history_view(&trend, &scope, report_view::scope_noun(run), run.environment.as_deref(), &titles, &shared);
 
     // ---- The page.
-    let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery }));
+    let blob = report_view::data_blob(&serde_json::json!({ "sum": summaries, "gallery": gallery, "videos": timelines }));
     let head_js = HEAD_JS;
     // A checkout may have turned the file's line ends into CRLF; a browser reads a script's CRLF
     // as LF before it hashes it, so the hash is of the LF text, and that is the text written.
     let app_js_lf = SCRIPT.replace("\r\n", "\n");
     let app_js = app_js_lf.as_str();
+    let player_js_lf = PLAYER.replace("\r\n", "\n");
+    let player_js = player_js_lf.as_str();
     let (accent_l, accent_d) = palette.accents();
     let mut accent = String::new();
     if let Some(a) = accent_l {
@@ -1420,8 +1427,8 @@ pub fn build_smart(
     // Defence in depth: everything below is escaped and nothing is fetched,
     // but should either ever slip, the page still may load nothing beyond
     // its linked pictures and videos and its own inline style, and run only
-    // the two scripts it carries (by hash).
-    h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", csp(&[head_js, app_js])));
+    // the three scripts it carries (by hash).
+    h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", csp(&[head_js, player_js, app_js])));
     h.push_str(&format!("<script>{head_js}</script>"));
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
     h.push_str(&format!("<title>Auto Test report - {}</title>", esc_attr(run.suite.as_ref().map_or(&scope, |r| &r.title))));
@@ -1451,6 +1458,7 @@ pub fn build_smart(
     h.push_str("</main></div></div>");
     h.push_str(&report_view::dialogs());
     h.push_str(&format!("<script type=\"application/json\" id=\"report-data\">{blob}</script>"));
+    h.push_str(&format!("<script>{player_js}</script>"));
     h.push_str(&format!("<script>{app_js}</script>"));
     h.push_str("</body></html>\n");
     h

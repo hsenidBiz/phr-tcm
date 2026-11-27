@@ -383,6 +383,48 @@ fn the_report_links_the_video_beside_the_pictures_and_never_embeds_it() {
     assert!(bad.contains("is not a video name"), "{bad}");
 }
 
+/// The JSON the report's script reads.
+fn report_blob(html: &str) -> serde_json::Value {
+    let open = "<script type=\"application/json\" id=\"report-data\">";
+    let at = html.find(open).expect("the data blob") + open.len();
+    let end = html[at..].find("</script>").unwrap();
+    serde_json::from_str(&html[at..at + end]).expect("the blob is JSON")
+}
+
+#[test]
+fn the_report_carries_each_videos_timeline() {
+    use v2_lib::autorun::report::build_with_downloads;
+    use v2_lib::autorun::{VideoMark, VideoMarks, VideoStep};
+    let name = "video-1700000000000-000001.mp4";
+    let mut run = run_naming(name, false);
+    run.cases[0].video_marks = Some(VideoMarks {
+        length_ms: 20_000,
+        steps: vec![VideoStep { step_number: 1, cleanup: false, at_ms: 4_000, failed: true, actions: vec![VideoMark { at_ms: 4_200, label: "Click".into() }] }],
+    });
+    let html = build_with_downloads(&run, &[], "now", &|_| true, &|_| None);
+    let blob = report_blob(&html);
+    let t = &blob["videos"][name];
+    assert_eq!(t["title"], format!("Video of #{} {}", run.cases[0].case_id, run.cases[0].title));
+    assert_eq!(t["length_ms"], 20000);
+    assert_eq!(t["steps"][0], json!({ "name": "Step 1", "at_ms": 4000, "failed": true, "actions": [{ "at_ms": 4200, "label": "Click" }] }));
+    assert!(!html.contains("<video"), "still never embedded");
+}
+
+#[test]
+fn an_old_video_has_an_empty_timeline_and_a_missing_one_none() {
+    use v2_lib::autorun::report::build_with_downloads;
+    let name = "video-1700000000000-000001.mp4";
+    let run = run_naming(name, false);
+    let blob = report_blob(&build_with_downloads(&run, &[], "now", &|_| true, &|_| None));
+    assert_eq!(blob["videos"][name]["length_ms"], serde_json::Value::Null);
+    assert_eq!(blob["videos"][name]["steps"], json!([]));
+    assert_eq!(blob["videos"][name]["marks"], json!([]));
+    let gone = report_blob(&build_with_downloads(&run, &[], "now", &|_| false, &|_| None));
+    assert!(gone["videos"].get(name).is_none(), "{gone}");
+    let bad = report_blob(&build_with_downloads(&run_naming("../runs/x.json", false), &[], "now", &|_| true, &|_| None));
+    assert!(bad["videos"].as_object().is_none_or(|o| o.is_empty()), "{bad}");
+}
+
 #[test]
 fn an_assistant_is_told_the_videos_name_and_never_a_path() {
     use v2_lib::autorun::failures::describe_failures_in;

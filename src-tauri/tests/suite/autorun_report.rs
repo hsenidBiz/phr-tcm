@@ -17,7 +17,7 @@ use v2_lib::commands::autorun::{write_report_at, REPORT_RUN_GONE};
 pub fn only_the_pages_own_scripts(html: &str) {
     let lower = html.to_lowercase();
     let opens: Vec<usize> = lower.match_indices("<script").map(|(i, _)| i).collect();
-    assert_eq!(opens.len(), 3, "the page writes three scripts and nothing else may open one");
+    assert_eq!(opens.len(), 4, "the page writes four scripts and nothing else may open one");
     for i in opens {
         let tag_end = lower[i..].find('>').map(|n| i + n).unwrap();
         let tag = &lower[i..=tag_end];
@@ -421,13 +421,13 @@ fn the_policy_loads_nothing_and_names_the_pages_own_scripts_by_hash() {
     let script_src = csp.split("; ").find(|p| p.starts_with("script-src")).expect("a script-src");
     assert!(!script_src.contains("'unsafe-inline'") && !script_src.contains("'unsafe-eval'"), "{script_src}");
     let scripts = page_scripts(&html);
-    assert_eq!(scripts.len(), 2, "the head script and the page's own");
+    assert_eq!(scripts.len(), 3, "the head script, the player and the page's own");
     for body in &scripts {
         let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(body.as_bytes()));
         assert!(script_src.contains(&format!("'sha256-{hash}'")), "no hash for a script in {script_src}");
     }
     // A script that is not one of those is not covered: one hash per script, no more.
-    assert_eq!(script_src.matches("'sha256-").count(), 2);
+    assert_eq!(script_src.matches("'sha256-").count(), 3);
 }
 
 #[test]
